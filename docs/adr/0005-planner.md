@@ -28,8 +28,8 @@ One table, where a node is a card. It has the ported kb fields (`#seq`, title, d
 | Column | Meaning | Written by |
 |---|---|---|
 | `kind` | `epic`, `story` or `subtask` (the leaf) | create, split |
-| `parent_id`, `rank` | Tree position. Kind rank is epic < story < subtask, a parent must outrank its child, and the root may hold any kind | agents (in scope, unconfirmed nodes only), owner |
-| `win_condition` | One line saying what done means | agents on unconfirmed nodes, owner |
+| `parent_id`, `rank` | Tree position. Kind rank is epic < story < subtask, a parent must outrank its child, and the root may hold any kind | agents (in scope, nodes not started, decision 8), owner |
+| `win_condition` | One line saying what done means | agents on nodes not started (decision 8), owner |
 | `expires_at` | NULL means **confirmed**. Agent-created nodes start at now + 14 days; any owner save, launch, accept or restore, or an automatic acceptance (decision 5), sets it to NULL | uam |
 | `held_by` | The Task holding a leaf. Invariant: `doing ⇔ held_by is set` | launch, claim, release |
 | `pinned_sha` | HEAD at the last owner touch | uam |
@@ -66,9 +66,9 @@ A static actor table (owner or agent) sits in one transition function in `intern
 
 **Agents, within scope, may:**
 - create stories and subtasks;
-- edit anything on an unconfirmed node, where the last write wins;
-- on a confirmed node: tick, untick or add checklist items, comment, add children (under containers), and add blocker links. Any other change is filed as a `change` request, one pending per node per Task, with a newer request replacing the older one;
-- claim a leaf, moving it from planned or todo to doing;
+- plan any node not started, confirmed or not: edit, move within the tree rules, edit the checklist, link and unlink, split, and dismiss proposals, all applied directly, where the last write wins (decision 8);
+- on a started subtask (held, doing or done): tick and untick (the holding Task only) and comment. A planning change to it is filed as a `change` or `split` request, one pending per node per Task, with a newer request replacing the older one, and the owner releases it before accepting;
+- claim a confirmed leaf, moving it from planned or todo to doing (decision 6);
 - file `done`, `cancel`, `blocked` and `split` requests.
 
 **A Task with no scope**, one neither launched from a card nor planning under one (§4), may propose epics at the root, and write nothing else (decision 4).
@@ -81,7 +81,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 
 **The owner** may do everything. That includes marking a leaf done directly, with a comment: the finishing guard applies, and `force` exists on leaves only.
 
-**Blocker links** may point only at confirmed cards. A link stays open while its blocker is not terminal, so cancelling the blocker releases it.
+**Blocker links** join two cards of one kind under one parent, either or both of which may be a proposal (decisions 6 and 7). A link stays open while its blocker is not terminal, so cancelling the blocker, which expiry and dismissal do, releases it.
 
 ## 4. Scope and caps
 
@@ -97,7 +97,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 
 ## 5. Launch, holds and release
 
-- **Launch** is an owner action on a leaf only. It moves the leaf from planned or todo to doing, sets `held_by` to the new Task, and counts as a touch (it confirms and re-pins the leaf). The start of a hold records HEAD and `git status` as the evidence baseline.
+- **Launch** is an owner action on a leaf only. It moves the leaf from planned or todo to doing, sets `held_by` to the new Task, and counts as a touch (it confirms and re-pins the leaf). Launching a proposal, or a leaf under one, needs the owner's explicit confirm, which confirms the chain in the launch's transaction (decision 6). The start of a hold records HEAD and `git status` as the evidence baseline.
 - **"Do whole story"** launches the first pending confirmed leaf. The preamble carries the story's pending list, and the Task claims further leaves through the tool.
 - **A hold persists while the Task is Active.** It can end only through one `releaseHold` path:
 
@@ -151,7 +151,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
   - Ticked items become children with a pending done request that cites the tick.
   - A split never creates done children.
 - **Unconfirmed, unheld leaf:** the split applies directly.
-- **Confirmed or held leaf,** including the holder's own leaf: the split is one inbox row. Accepting it applies the structure and accepts the ticked children together. A live hold moves to the first pending child.
+- **Started leaf** (held, doing or done): an agent's split is one inbox row, which the owner accepts after releasing the leaf; the owner's own split is refused until then (decision 8). Any other leaf splits directly. Accepting applies the structure and accepts the ticked children together.
 
 ## 8. Cancel, restore, purge
 
@@ -234,7 +234,7 @@ Each item is a store, tool or UI test.
 **Agent limits**
 
 10. For the agent actor, moving to done or cancelled, setting the blocked flag, restoring and purging are all refused.
-11. A split never produces a done child, and a split of a confirmed or held leaf is exactly one pending request.
+11. A split never produces a done child, and an agent's split of a started leaf is exactly one pending request.
 
 **Containers**
 
@@ -245,7 +245,7 @@ Each item is a store, tool or UI test.
 
 14. The sweep never cancels a held node, a node with a pending request, or an ancestor of a held or confirmed node.
 15. Restore reopens exactly one cascade's nodes and confirms them, and a restore without a comment is refused.
-16. A cancelled blocker doesn't block, and a link to an unconfirmed card is refused.
+16. A cancelled blocker doesn't block, a link between cards of different kinds or parents is refused, and links to proposals are allowed (decisions 6 and 7).
 
 **Caps, staleness and import**
 
@@ -436,10 +436,12 @@ The preamble is deterministic. It contains:
 | `board_get` | `{ref}` — for a container, also the pending subtasks depth-first, blocked ones last |
 | `board_list` | `{query, status, kind, parent}` |
 | `board_create` | `{kind: epic|story|subtask, parent, title, desc, win_condition, prio, effort, labels, checklist}` — an epic takes no `parent` |
-| `board_edit` | `{ref, title, desc, win_condition, prio, effort, labels, parent, rank}` — on a confirmed card this becomes a `change` request |
+| `board_edit` | `{ref, title, desc, win_condition, prio, effort, labels, parent, rank}` — applies directly on a card not started; on a started one it becomes a `change` request |
 | `board_checklist` | `{ref, tick: [index], untick: [index], add: [text]}` |
 | `board_comment` | `{ref, body}` |
-| `board_link` | `{blocker, blocked}` |
+| `board_link` | `{blocker, blocked}` — one kind under one parent; either may be a proposal, neither may be started |
+| `board_unlink` | `{ref, blocker}` — removes a link in scope; neither end may be started |
+| `board_dismiss` | `{ref}` — cancels a proposal in scope and everything under it, restorable by the owner |
 | `board_claim` | `{ref}` |
 | `board_split` | `{ref, children: [{title, win_condition}]}` |
 | `board_request` | `{ref, kind: done|cancel|blocked, comment, blocker}` |
@@ -489,7 +491,7 @@ These record how `internal/board` reads this contract, plus five later decisions
 - **`scopes` table** (added to §13): one row per Task, holding its Project, its container and whether it is planning or working. Launch and Start planning write it, and §4 is enforced from it.
 - **Extra error codes:** `not_found`, `forbidden`, `limit`, `duplicate`, `acceptance_busy` and `acceptance_failed`, alongside §14's. `unconfirmed_parent` is gone (decision 2).
 - **Evidence (§6):** it is gathered before the acceptance run. A hold's baseline also keeps a blob hash for each dirty path (`holds.baseline_blobs`), so a path dirty at the start counts only if its content changed, marked `pre_dirty` on its file row. When the baseline commit no longer exists, the done request is filed with the flag `baseline_missing`, the touched files compared with HEAD, and no commits.
-- **Links:** both ends must be in one Project. Only the owner can unlink.
+- **Links:** both ends must be in one Project. Agents unlink in scope too, and neither end of a new link or an unlink may be started (decisions 7 and 8).
 - **Cancelled checks** use the card's own stored status. Nothing is created or moved under a cancelled card or anything below one, nothing is edited on a cancelled card until it is restored, and cancelled siblings don't count in the duplicate-title check. Ready, Launch and Claim refuse a subtask with a cancelled ancestor, as Restore does (§8).
 - **Restore** reopens a leaf as todo if it was ever held, otherwise as planned, and runs the duplicate-title check.
 - **Limits:** Purge deletes only subtrees that are entirely cancelled. A card moves between Projects only out of Unassigned.
@@ -510,11 +512,14 @@ These record how `internal/board` reads this contract, plus five later decisions
 
 **Decisions**
 
-1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A live hold moves to the first pending sibling. An unconfirmed, unheld leaf splits directly; a confirmed or held one files one split request, and accepting it applies everything at once. Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
+1. **Split under a story.** A leaf whose parent is a story splits into sibling leaves under that story, placed right after it and in order. Unticked items become planned siblings; ticked items become siblings with a pending done request that cites the tick. The original is cancelled with the automatic comment "split into #a, #b, …" and its own `cascade_id`, so Restore brings it back and leaves the siblings. A leaf not started splits directly; an agent's split of a started one files one split request, which the owner accepts, applying everything at once, after releasing the leaf, so no hold moves (decision 8). Under an epic or at the root, §7 is unchanged: the leaf becomes a story.
 2. **An owner touch confirms ancestors.** Any owner touch on a card (save, create, launch, accept, restore, confirm or a status change) also confirms and re-pins each unconfirmed ancestor in the same transaction. This replaces the `unconfirmed_parent` refusal. So launching a leaf under an agent-suggested story confirms the story, and the sweep can't expire it.
 3. **Board revisions in the snapshot** (added to §15). While the planner is on, the `snapshot` frame carries `boards`: each Project's board revision, plus `""` for Unassigned. It is omitted while the planner is off. A client reloads only the boards it holds an older revision of.
 4. **Agents propose epics** (2026-09-30; changes §3, §4 and §16). `board_create` also takes kind `epic` with no parent, from a Task with no scope: one that was neither launched from a card nor started with Plan with agent. Such a Task sees the whole Project board (§16) and before this decision could write nothing. Now it may propose epics at the root and nothing else, so it can't edit, comment on or add under an epic it proposed. A Task with a scope writes only within its container, so a planning Task, a working Task (one launched on a root subtask included) and a Utility job propose no epics. An agent's epic is a proposal like any other: it expires 14 days after creation unless the owner confirms it, it counts toward the 20 created cards, the root counts as its container for the 10 unconfirmed children, and a duplicate live title at the root is refused. The owner confirms or dismisses it in the Tree, where root proposals fold into "+N suggested" at the root, and can confirm or cancel it from the card panel; the epic filter shows a proposed epic too, and lists no cancelled epic except the one it is set to, so expired proposals don't linger there. Stories and subtasks still need a parent, and an epic under any card is refused by the kind rule (`invalid`), as it is for the owner.
-5. **A done request with a green acceptance command is accepted automatically** (2026-09-30; changes §1, §3, §5, §6, §10 and §14). An agent files `board_request` kind `done` on the subtask it holds, and uam accepts it as it files it, in the same transaction and through the owner's Accept path, when all of these hold: the finishing guard passes; a resolved acceptance command exists (the subtask's `accept_cmd`, else the Project default, both written by the owner only; a blank command is none, since commands are stored trimmed and one stored blank earlier resolves to none); that command exits 0; the request carries no flag (`no_change_in_tree`, no diff and no commits since the hold's baseline, is now raised whether or not a command exists, §6); the subtask still resolves to the command that ran; and accepting it would not close a container that still has live unconfirmed subtasks, which closing cancels (§2) and which may be the Task's own follow-up proposals or the owner's unreviewed suggestions. The store checks the flags, the command and the containers in the filing transaction. The accepted subtask is done and its hold ends as accepted. It and its unconfirmed ancestors are confirmed but not re-pinned, since no owner HEAD is known; that includes a subtask the agent proposed itself and holds (§1: an automatic acceptance also sets `expires_at` to NULL). Its other pending requests are withdrawn, and its story and epic roll up as on any accept. The claim text is the close comment, and uam adds the automatic comment "Accepted automatically: the acceptance command passed". The request records `decided_by: uam` and keeps its evidence for review; the owner's decisions record `owner`, and decisions stored before `decided_by` existed are backfilled as the owner's, so the owner's own acceptances stay distinguishable. Otherwise the request waits in the Inbox for the owner, and the store says why: no command is set, the shell could not start, a flag is raised, the command changed during the run, or accepting it would close containers with proposals. A non-zero exit still refuses the claim. Cancel, blocked, split and change requests are never accepted automatically, and a `proposed_accept_cmd` never runs and never counts. The `board_request` result says the subtask is done, or why the request waits, naming its flags and, for containers, every proposal closing would cancel. The owner can move a done subtask back to To do from the card panel or a card's menu (`status: todo`, with an optional comment); the action is hidden under a cancelled card, where the store refuses it until that card is restored.
+5. **A done request with a green acceptance command is accepted automatically** (2026-09-30; changes §1, §3, §5, §6, §10 and §14). An agent files `board_request` kind `done` on the subtask it holds, and uam accepts it as it files it, in the same transaction and through the owner's Accept path, when all of these hold: the finishing guard passes; a resolved acceptance command exists (the subtask's `accept_cmd`, else the Project default, both written by the owner only; a blank command is none, since commands are stored trimmed and one stored blank earlier resolves to none); that command exits 0; the request carries no flag (`no_change_in_tree`, no diff and no commits since the hold's baseline, is now raised whether or not a command exists, §6); the subtask still resolves to the command that ran; and accepting it would not close a container that still has live unconfirmed subtasks, which closing cancels (§2) and which may be the Task's own follow-up proposals or the owner's unreviewed suggestions. The store checks the flags, the command and the containers in the filing transaction. The accepted subtask is done and its hold ends as accepted. It and its unconfirmed ancestors are confirmed but not re-pinned, since no owner HEAD is known; (§1: an automatic acceptance also sets `expires_at` to NULL). Since decision 6 a held subtask and its ancestors are already confirmed. Its other pending requests are withdrawn, and its story and epic roll up as on any accept. The claim text is the close comment, and uam adds the automatic comment "Accepted automatically: the acceptance command passed". The request records `decided_by: uam` and keeps its evidence for review; the owner's decisions record `owner`, and decisions stored before `decided_by` existed are backfilled as the owner's, so the owner's own acceptances stay distinguishable. Otherwise the request waits in the Inbox for the owner, and the store says why: no command is set, the shell could not start, a flag is raised, the command changed during the run, or accepting it would close containers with proposals. A non-zero exit still refuses the claim. Cancel, blocked, split and change requests are never accepted automatically, and a `proposed_accept_cmd` never runs and never counts. The `board_request` result says the subtask is done, or why the request waits, naming its flags and, for containers, every proposal closing would cancel. The owner can move a done subtask back to To do from the card panel or a card's menu (`status: todo`, with an optional comment); the action is hidden under a cancelled card, where the store refuses it until that card is restored.
+6. **Confirm gates execution, not planning** (2026-10-02; changes §3, §5, §7 and §14). Agents and the owner link proposals, confirmed or not, so a plan's order is mapped before the owner confirms it. Nothing agentic runs on a proposal or under one: every hold starts in one place, which refuses with `unconfirmed` (409) and the proposals as `refs`, so Launch, Do whole story and Claim need the card and all its ancestors confirmed. Launch takes `confirm` in its body: without it a launch that would confirm proposals is refused before any Task is created; with it the card and its unconfirmed ancestors are confirmed in the launch's transaction. The UI asks first, listing what launching confirms and the proposals the card still waits on, which stay proposals and keep blocking. Blockers never stop a launch or a claim; they stop finishing (§6) and order Do whole story. Plan with agent and Suggest still run on proposals, since they only plan. Expiry and Dismiss cancel cards, which releases their links; Purge deletes the links with the cards. A split no longer moves a hold.
+7. **One level per link** (2026-10-02; changes §3, §10 and test 16). A link joins two cards of one kind under one parent: epics with epics, stories with stories in one epic, subtasks with subtasks in one story or epic, and root stories or subtasks with root siblings of their kind. Other links are refused with `invalid`, naming the containers to link instead. Cycles are refused within each level. A card waits on its own open blockers and on each ancestor's, so a subtask in a story blocked by another story is held back with it: the finishing guard names those as "#n (via its story #s)", and the UI shows them the same way. Moving a linked card to another parent, or splitting it into a story, is refused until its links are removed. Links made before this rule are kept, honoured, shown and can be removed; only new ones are refused. A Task with no scope may link the epics it proposed, so several agent-proposed epics can be ordered.
+8. **A started card keeps its plan** (2026-10-02; changes §3, §7, §16 and §18). Until a subtask starts, agents in scope plan it fully and directly, confirmed or not: edit, move, checklist, link, unlink, split and dismiss, within the tree and link rules; owner-only fields and lifecycle actions stay the owner's. An agent's move of a confirmed card under a proposal is still a change request, since confirmed never sits under unconfirmed. A started subtask, held, doing or done, is locked for agents and the owner alike: no edit to its title, description, win condition, priority, due date, effort, labels, checklist text, place or parent, no link or unlink touching it, and no split. Refusals are `in_progress` (409), "Release #n first" (or "Move #n back to To do first" when done). Still allowed: ticks by the holding Task and the owner, comments, requests (an agent's planning change becomes a request the owner accepts after Release), and the owner's Release, cancel, done and back to To do. Going back to To do keeps pending change and split requests. A container with a started subtask stays plannable, but moving it while a subtask under it is started, or dismissing it while one is held, is refused; the owner may still cancel it, which releases the holds (§8). A blocked request on a started card can't name a blocker; the comment names it.
 
 ## Amendment: `uam_create_task` (2026-09-30)
 

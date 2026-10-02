@@ -307,7 +307,7 @@ func TestConcurrentMixedOperations(t *testing.T) {
 					snap, err = f.s.Board(f.ctx, proj)
 					for _, c := range snap.Cards {
 						if c.Kind == KindSubtask && c.Status == StatusPlanned {
-							_, err = f.s.Launch(f.ctx, owner, c.ID, fmt.Sprintf("t%d", g), Baseline{})
+							_, err = f.s.Launch(f.ctx, owner, c.ID, fmt.Sprintf("t%d", g), Baseline{}, false)
 							break
 						}
 					}

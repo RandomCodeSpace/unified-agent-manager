@@ -354,6 +354,34 @@ func (o *outline) underCancelled(n *node, skip map[string]bool) error {
 	return nil
 }
 
+// unconfirmed lists n and its ancestors that the owner has not confirmed,
+// n first.
+func (o *outline) unconfirmed(n *node) []*node {
+	var out []*node
+	for m := n; m != nil; m = o.byID[m.ParentID] {
+		if !m.Confirmed() {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// unconfirmedRefusal refuses starting work on the unconfirmed cards un,
+// listing them in Refs; why ends the message, with %[1]s for "it" or
+// "them".
+func unconfirmedRefusal(un []*node, why string) *Error {
+	refs := make([]string, len(un))
+	for i, m := range un {
+		refs[i] = m.ref()
+	}
+	verb, pron := "is a proposal", "it"
+	if len(un) > 1 {
+		verb, pron = "are proposals", "them"
+	}
+	return &Error{Code: CodeUnconfirmed, Refs: refs,
+		Message: fmt.Sprintf("%s %s; %s", strings.Join(refs, ", "), verb, fmt.Sprintf(why, pron))}
+}
+
 // duplicate returns a live sibling under parentID whose normalised title
 // matches title, ignoring except and cancelled siblings.
 func (o *outline) duplicate(parentID, title, except string) error {
@@ -416,19 +444,50 @@ func (t *txn) guard(o *outline, n *node) error {
 	if n.Blocked {
 		return refuse(CodeGuardBlocked, "%s is flagged blocked", n.ref())
 	}
-	open, err := t.openBlockers(o, n)
+	waits, err := t.waitsOn(o, n)
 	if err != nil {
 		return err
 	}
-	if len(open) > 0 {
-		refs := make([]string, len(open))
-		for i, b := range open {
-			refs[i] = b.ref()
+	if len(waits) > 0 {
+		refs := make([]string, len(waits))
+		named := make([]string, len(waits))
+		for i, w := range waits {
+			refs[i], named[i] = w.blocker.ref(), w.blocker.ref()
+			if w.via != nil {
+				named[i] += fmt.Sprintf(" (via its %s %s)", w.via.Kind, w.via.ref())
+			}
 		}
 		return &Error{Code: CodeGuardBlockers, Refs: refs,
-			Message: fmt.Sprintf("%s still blocks %s", strings.Join(refs, ", "), n.ref())}
+			Message: fmt.Sprintf("%s still waits on %s", n.ref(), strings.Join(named, ", "))}
 	}
 	return nil
+}
+
+// waiting is an open blocker a card waits on: one of its own, or, through
+// via, one of an ancestor's.
+type waiting struct {
+	blocker, via *node
+}
+
+// waitsOn lists the open blockers n waits on: its own, then each
+// ancestor's, nearest first. Links join cards of one level (ADR 0005 §3), so
+// a blocked epic or story holds back everything under it.
+func (t *txn) waitsOn(o *outline, n *node) ([]waiting, error) {
+	var out []waiting
+	for m := n; m != nil; m = o.byID[m.ParentID] {
+		open, err := t.openBlockers(o, m)
+		if err != nil {
+			return nil, err
+		}
+		for _, b := range open {
+			w := waiting{blocker: b}
+			if m != n {
+				w.via = m
+			}
+			out = append(out, w)
+		}
+	}
+	return out, nil
 }
 
 // scope is where a Task may write (ADR 0005 §4): the container it plans
@@ -560,7 +619,7 @@ func (t *txn) settle(project string, before map[string]Status) error {
 				return err
 			}
 		}
-		if err := t.withdraw(c); err != nil {
+		if err := t.withdraw(c, false); err != nil {
 			return err
 		}
 		if err := t.rollUp(o, c); err != nil {

@@ -179,7 +179,7 @@ const lastNode = new WeakMap<Card, MapNode>();
  * the root holds directly still sits in its kind's column; each leaf takes the next row and
  * a parent is centred on its first and last child. Sibling trees are a half row apart.
  * Nodes come parents first (epic, then its stories, then their subtasks), which is the Tab
- * order. Blocker links are secondary edges between cards that are both drawn.
+ * order. Blocker links are secondary edges between drawn cards of one level.
  */
 export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: MapNode[]; edges: MapEdge[]; width: number; height: number } {
   const index = childIndex(cards);
@@ -215,8 +215,15 @@ export function layoutMap(cards: readonly Card[], filters: Filters): { nodes: Ma
     if (i > 0) row += 0.5;
     place(r);
   });
-  const drawn = new Set(nodes.map((n) => n.card.id));
-  for (const n of nodes) for (const blocker of n.card.blocked_by ?? []) if (drawn.has(blocker)) edges.push({ from: blocker, to: n.card.id, kind: 'blocker' });
+  // Each level's links are its own DAG: an edge joins cards of one kind under one parent (§3), so a
+  // link made before that rule, across levels, shows in the card panel and not here.
+  const drawn = new Map(nodes.map((n) => [n.card.id, n.card]));
+  for (const n of nodes) {
+    for (const id of n.card.blocked_by ?? []) {
+      const b = drawn.get(id);
+      if (b && b.kind === n.card.kind && (b.parent_id ?? null) === (n.card.parent_id ?? null)) edges.push({ from: id, to: n.card.id, kind: 'blocker' });
+    }
+  }
   const width = nodes.length ? Math.max(...nodes.map((n) => n.x)) + MAP_NODE_W : 0;
   return { nodes, edges, width, height: Math.max(0, row * MAP_ROW - (MAP_ROW - MAP_NODE_H)) };
 }
@@ -247,14 +254,44 @@ export function fitView(layout: { nodes: readonly MapNode[]; width: number; heig
   return { k, x, y: pad };
 }
 
-/** A card's open blockers as `#8, #20` ('' for none): a plain string, so a row that takes it stays equal while they do. */
+const isOpen = (b: Card | undefined): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled';
+
+/**
+ * The open blockers a card waits on as `#8, #20, #3 (via its story #2)` ('' for none): its own,
+ * then each parent's, nearest first, since a blocked epic or story holds back everything under it
+ * (§3). A plain string, so a row that takes it stays equal while they do.
+ */
 export function openBlockerSeqs(card: Card, byId: ReadonlyMap<string, Card>): string {
-  if (!card.blocked_by.length) return '';
-  return card.blocked_by
-    .map((id) => byId.get(id))
-    .filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled')
-    .map((b) => `#${b.seq}`)
-    .join(', ');
+  const out: string[] = [];
+  for (let at: Card | undefined = card, depth = 0; at && depth < 8; at = at.parent_id ? byId.get(at.parent_id) : undefined, depth++) {
+    for (const b of at.blocked_by.map((id) => byId.get(id)).filter(isOpen)) out.push(at === card ? `#${b.seq}` : `#${b.seq} (via its ${at.kind} #${at.seq})`);
+  }
+  return out.join(', ');
+}
+
+/**
+ * Whether a subtask has started: a Task holds it, or it is done. A started subtask keeps its plan
+ * (ADR 0005 decision 8): its fields, place, links and checklist items wait until it is released.
+ */
+export function isStarted(c: Card): boolean {
+  return c.kind === 'subtask' && (!!c.held_by || c.status === 'doing' || c.status === 'done');
+}
+
+/** Why a started subtask's plan can't change, or null when it can. */
+export function lockedReason(c: Card): string | null {
+  if (!isStarted(c)) return null;
+  return c.status === 'done' ? 'Done: move it back to To do to change the plan.' : 'In progress: release it to change the plan.';
+}
+
+/**
+ * The cards `card` may be blocked by (§3): links map one level at a time, so only cards of its
+ * kind under its parent (epics with epics), not cancelled, not started, and not linked already.
+ */
+export function linkTargets(card: Card, cards: readonly Card[]): Card[] {
+  const parent = card.parent_id ?? null;
+  return cards.filter(
+    (x) => x.id !== card.id && x.kind === card.kind && (x.parent_id ?? null) === parent && x.project_id === card.project_id && x.status !== 'cancelled' && !isStarted(x) && !card.blocked_by.includes(x.id) && !card.blocks.includes(x.id),
+  );
 }
 
 /** The key of the loaded Board that holds card `id` (a Project id or `unassigned`), if any does. */

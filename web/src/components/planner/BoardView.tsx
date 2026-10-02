@@ -1,7 +1,7 @@
 import { Pencil } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
 import { api, type Card, type CardStatus } from '../../api';
-import { BOARD_COLUMNS, STATUS_LABEL, childIndex, openBlockerSeqs } from '../../lib/board';
+import { BOARD_COLUMNS, STATUS_LABEL, childIndex, lockedReason, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { ActionItem } from '../ui/menu';
 import { CardMenuButton, CardMenus, useCardActions, useCardMenuHandle, type CardMenuHandle } from './actions';
@@ -69,9 +69,10 @@ export function BoardView({ menus = true }: Readonly<{ menus?: boolean }>) {
 
   /** A card's menu: Edit (in place, like the Tree's), then its actions. An Unassigned card is read-only. */
   function menu(c: Card): ActionItem[] {
-    const edit: ActionItem = c.project_id
-      ? { key: 'edit', label: 'Edit', icon: <Pencil />, takesFocus: true, onSelect: () => setEditing(c.id) }
-      : { key: 'edit', label: 'Edit', icon: <Pencil />, disabled: true, reason: 'An Unassigned card is read-only until it moves into a Project.', onSelect: () => {} };
+    const locked = c.project_id ? lockedReason(c) : 'An Unassigned card is read-only until it moves into a Project.';
+    const edit: ActionItem = locked
+      ? { key: 'edit', label: 'Edit', icon: <Pencil />, disabled: true, reason: locked, onSelect: () => {} }
+      : { key: 'edit', label: 'Edit', icon: <Pencil />, takesFocus: true, onSelect: () => setEditing(c.id) };
     return cardActions.menuOf(c, [edit]);
   }
 

@@ -1,6 +1,7 @@
 import { Plus, X } from 'lucide-react';
 import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { api, plannerErrorText, doneGuard, type Card, type CardKind, type DoneGuard } from '../../api';
+import { KIND_LABEL } from '../../lib/board';
 import { Field } from '../TaskDefaults';
 import { Button } from '../ui/button';
 import { Dialog } from '../ui/dialog';
@@ -65,6 +66,84 @@ export function ReasonDialog({ ask, onClose }: Readonly<{ ask: ReasonAsk | null;
           </Button>
           <Button type="submit" variant={shown?.danger ? 'danger' : 'primary'} className={shown?.danger ? 'bg-sunken' : undefined} loading={busy} disabled={!!shown?.required && !text.trim()}>
             {shown?.confirm ?? 'Save'}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+export interface LaunchAsk {
+  card: Card;
+  /** The suggestions launching confirms: the subtask, then its suggested parents. */
+  confirms: Card[];
+  /** Suggested blockers still open: they stay suggestions and keep blocking. */
+  waits: Card[];
+  run: () => Promise<unknown>;
+}
+
+const cardItem = (c: Card) => (
+  <li key={c.id}>
+    #{c.seq} {c.title} <span className="text-muted">· {KIND_LABEL[c.kind]}</span>
+  </li>
+);
+
+/**
+ * The step before launching a suggestion (§5): work starts only on confirmed cards, so the
+ * launch confirms the subtask and its suggested parents in the same action. Suggested blockers
+ * are listed, and stay as they are. It stays open, with the refusal, when the service says no.
+ */
+export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null; onClose: () => void }>) {
+  const [shown, setShown] = useState(ask);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (ask && ask !== shown) {
+    setShown(ask);
+    setError(null);
+  }
+  const submit = async (e: SubmitEvent) => {
+    e.preventDefault();
+    if (!shown) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await shown.run();
+      onClose();
+    } catch (err) {
+      setError(plannerErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const seq = shown ? `#${shown.card.seq}` : '';
+  return (
+    <Dialog
+      open={!!ask}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={() => setShown(null)}
+      title={`Confirm and launch ${seq}?`}
+      description="A task starts work only on confirmed cards. Launching confirms these suggestions:"
+    >
+      <form className="flex flex-col gap-2" onSubmit={(e) => void submit(e)}>
+        <ul aria-label="Launching confirms" className="list-disc pl-4 text-ui text-body">
+          {shown?.confirms.map(cardItem)}
+        </ul>
+        {!!shown?.waits.length && (
+          <div className="mt-1 flex flex-col gap-1 rounded-md bg-warning-wash px-3 py-2 text-caption text-body">
+            <span className="font-medium text-ink">Still waits on</span>
+            <ul aria-label="Still waits on" className="list-disc pl-4">
+              {shown.waits.map(cardItem)}
+            </ul>
+            <span className="text-muted">They stay suggestions and block {seq} until they are done or cancelled.</span>
+          </div>
+        )}
+        {error && <p role="alert" className="text-caption text-error">{error}</p>}
+        <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" onClick={onClose}>
+            Keep
+          </Button>
+          <Button type="submit" variant="primary" loading={busy}>
+            Confirm and launch
           </Button>
         </div>
       </form>

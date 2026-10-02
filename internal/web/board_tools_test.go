@@ -93,7 +93,7 @@ func toolNames(tools []agentapi.HostTool) []string {
 	return out
 }
 
-var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_claim", "board_split", "board_request"}
+var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_unlink", "board_dismiss", "board_claim", "board_split", "board_request"}
 
 // plannerTaskTools are the tools of a Task that gets the planner's:
 // uam_create_task and uam_chart follow them.
@@ -384,8 +384,9 @@ func TestBoardToolsResolveRefsOnlyInTheTasksProject(t *testing.T) {
 	}
 }
 
-// The tools read the Board and write what agents may write: checklist,
-// comments and links on a confirmed card. Arguments are strict.
+// The tools read the Board and write what agents may write: ticks and
+// comments on the subtask the Task holds, which keeps its plan, and
+// checklist items and links on the rest of its scope. Arguments are strict.
 func TestBoardToolsReadAndAnnotate(t *testing.T) {
 	f := newPlanner(t)
 	story := f.create(board.KindStory, "", "Story", `,"win_condition":"story done"`)
@@ -407,19 +408,29 @@ func TestBoardToolsReadAndAnnotate(t *testing.T) {
 		t.Fatalf("container text = %q", r.Text)
 	}
 
-	if r := f.toolOK(task.ID, "board_checklist", `{"ref":"#2","tick":[0],"add":["document it"]}`); r.Text != "Updated the checklist of #2: 1 of 2 items done." {
+	if r := f.toolOK(task.ID, "board_checklist", `{"ref":"#2","tick":[0]}`); r.Text != "Updated the checklist of #2: 1 of 1 items done." {
 		t.Fatalf("checklist = %+v", r)
 	}
 	f.toolRefused(task.ID, "board_checklist", `{"ref":"#2","tick":[9]}`, string(board.CodeInvalid))
 	f.toolRefused(task.ID, "board_checklist", `{"ref":"#2"}`, string(board.CodeInvalid))
+	// The subtask it holds keeps its plan; the rest of its scope it plans.
+	if r := f.toolRefused(task.ID, "board_checklist", `{"ref":"#2","add":["document it"]}`, string(board.CodeInProgress)); r.Text != "Release #2 first: it is in progress, and a card in progress keeps its plan" {
+		t.Fatalf("add on a started subtask = %+v", r)
+	}
+	f.toolRefused(task.ID, "board_link", `{"ref":"#2","blocker":"#3"}`, string(board.CodeInProgress))
 	f.toolOK(task.ID, "board_comment", `{"ref":"#2","body":"on it"}`)
-	f.toolOK(task.ID, "board_link", `{"ref":"#2","blocker":"#3"}`)
+	f.create(board.KindSubtask, story.ID, "Three")
+	f.toolOK(task.ID, "board_checklist", `{"ref":"#3","add":["document it"]}`)
+	f.toolOK(task.ID, "board_link", `{"ref":"#4","blocker":"#3"}`)
 	d := f.card(one.ID)
-	if !slices.Contains(comments(d), "task:"+task.ID+": on it") || !slices.Equal(d.Card.BlockedBy, []string{f.card("#3").Card.ID}) {
+	if !slices.Contains(comments(d), "task:"+task.ID+": on it") || !slices.Equal(f.card("#4").Card.BlockedBy, []string{f.card("#3").Card.ID}) {
 		t.Fatalf("after annotate = %+v, %v", d.Card, comments(d))
 	}
+	if r := f.toolOK(task.ID, "board_get", `{"ref":"#4"}`); !strings.Contains(r.Text, "Blocked by:\n- #3 subtask \"Two\" (planned)") {
+		t.Fatalf("get text %q lacks the blocker", r.Text)
+	}
 	r = f.toolOK(task.ID, "board_get", `{"ref":"#2"}`)
-	for _, part := range []string{"1 [ ] document it", "Blocked by:\n- #3 subtask \"Two\" (planned)", "Comments, oldest first (1 of 1):\n- you: on it"} {
+	for _, part := range []string{"0 [x] write it", "Comments, oldest first (1 of 1):\n- you: on it"} {
 		if !strings.Contains(r.Text, part) {
 			t.Fatalf("get text %q lacks %q", r.Text, part)
 		}
@@ -459,11 +470,15 @@ func TestBoardToolsGetBoundsALargeCard(t *testing.T) {
 			}
 		}
 		for i := range 25 {
-			blocker, err := st.Create(ctx, board.Owner(""), board.NewCard{ProjectID: f.project, Kind: board.KindSubtask, Title: fmt.Sprintf("Blocker %d", i)})
+			// Links join siblings; cancelled, the blockers leave the pending list.
+			blocker, err := st.Create(ctx, board.Owner(""), board.NewCard{ProjectID: f.project, Kind: board.KindSubtask, ParentID: story.ID, Title: fmt.Sprintf("Blocker %d", i)})
 			if err != nil {
 				return err
 			}
 			if err := st.Link(ctx, board.Owner(""), blocker.ID, leaf.ID); err != nil {
+				return err
+			}
+			if _, err := st.SetStatus(ctx, board.Owner(""), blocker.ID, board.StatusCancelled, "x", false); err != nil {
 				return err
 			}
 		}
@@ -504,9 +519,9 @@ func TestBoardToolsGetBoundsALargeCard(t *testing.T) {
 	}
 }
 
-// A planning Task proposes under its container: its edits of proposals
-// apply, an edit of a confirmed card becomes a change request, and the caps
-// count per Task, its subagents' calls included.
+// A planning Task plans under its container: its edits of cards that have
+// not started apply, confirmed or not, and the caps count per Task, its
+// subagents' calls included.
 func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	f := newPlanner(t)
 	epic := f.create(board.KindEpic, "", "Epic")
@@ -524,16 +539,17 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 	if r := f.toolOK(plan, "board_edit", `{"ref":"#4","title":"Renamed"}`); r.Text != "Updated #4." || r.Card.Title != "Renamed" {
 		t.Fatalf("edit proposal = %+v", r)
 	}
+	// A confirmed card that has not started is planned directly too.
 	r = f.toolOK(plan, "board_edit", `{"ref":"#2","title":"Story 2","parent":"#1","rank":0}`)
-	if !strings.Contains(r.Text, "change request") {
+	if r.Text != "Updated #2." {
 		t.Fatalf("edit confirmed = %+v", r)
 	}
-	if d := f.card(story.ID); d.Card.Title != "Story" || len(d.Requests) != 1 || d.Requests[0].Kind != board.RequestChange || d.Requests[0].Status != board.RequestPending {
+	if d := f.card(story.ID); d.Card.Title != "Story 2" || !d.Card.Confirmed || len(d.Requests) != 0 {
 		t.Fatalf("confirmed card after edit = %+v", d)
 	}
 	f.toolRefused(plan, "board_create", `{"kind":"epic","parent":"#1","title":"E"}`, string(board.CodeInvalid))
 	f.toolRefused(plan, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"S"}`, outside.ID), string(board.CodeForbidden))
-	f.toolRefused(plan, "board_create", `{"kind":"story","parent":"#1","title":" story "}`, string(board.CodeDuplicate))
+	f.toolRefused(plan, "board_create", `{"kind":"story","parent":"#1","title":" story 2 "}`, string(board.CodeDuplicate))
 	if r := f.toolRefused(plan, "board_create", `{"kind":"subtask","title":"No parent"}`, string(board.CodeInvalid)); r.Text != "a subtask needs a parent: the epic or story to create it under" {
 		t.Fatalf("no parent = %+v", r)
 	}
@@ -583,16 +599,20 @@ func TestBoardToolsProposeRootEpics(t *testing.T) {
 	if r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid)); r.Text != "an epic cannot hold an epic" {
 		t.Fatalf("nested = %q", r.Text)
 	}
-	// It proposes and nothing more: its own epic is outside any scope it has.
+	// It proposes and links its epics, and nothing more: its own epic is
+	// outside any scope it has.
 	for name, args := range map[string]string{
 		"board_edit":      `{"ref":%q,"title":"Renamed"}`,
 		"board_comment":   `{"ref":%q,"body":"note"}`,
 		"board_checklist": `{"ref":%q,"add":["item"]}`,
-		"board_link":      `{"ref":%q,"blocker":"#1"}`,
 	} {
 		f.toolRefused(task, name, fmt.Sprintf(args, r.Card.ID), string(board.CodeForbidden))
 	}
-	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || len(d.Card.BlockedBy) != 0 || len(d.Requests) != 0 {
+	f.toolOK(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":"#1"}`, r.Card.ID))
+	f.toolOK(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, second.ID, r.Card.ID))
+	f.toolRefused(task, "board_link", fmt.Sprintf(`{"ref":"#1","blocker":%q}`, second.ID), string(board.CodeForbidden))
+	f.toolRefused(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, r.Card.ID, leaf.ID), string(board.CodeInvalid))
+	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || !slices.Equal(d.Card.BlockedBy, []string{epic.ID}) || len(d.Requests) != 0 {
 		t.Fatalf("a refused call wrote: %+v", d)
 	}
 	for i := range board.CapUnconfirmed - 2 {
@@ -652,8 +672,48 @@ func TestBoardToolsClaim(t *testing.T) {
 	f.toolRefused(plan, "board_claim", fmt.Sprintf(`{"ref":%q}`, three.ID), string(board.CodeForbidden))
 }
 
-// Split applies at once to a proposal nobody holds and is a request on a
-// confirmed or held subtask; blocked names its blocker. Neither is accepted
+// A working Task maps dependencies among its proposals and the confirmed
+// subtasks in its scope, cycles still refused, while the subtask it holds
+// keeps its plan; it claims only what the owner confirmed: a claim of a
+// proposal is refused, naming it.
+func TestBoardToolsLinkProposalsButClaimOnlyConfirmed(t *testing.T) {
+	f := newPlanner(t)
+	story := f.create(board.KindStory, "", "Story")
+	one := f.create(board.KindSubtask, story.ID, "One")
+	f.create(board.KindSubtask, story.ID, "Two")
+	_, task := f.launch(one.ID)
+	f.toolOK(task.ID, "board_create", `{"kind":"subtask","parent":"#1","title":"Proposed A"}`)
+	f.toolOK(task.ID, "board_create", `{"kind":"subtask","parent":"#1","title":"Proposed B"}`)
+	if r := f.toolOK(task.ID, "board_link", `{"ref":"#5","blocker":"#4"}`); r.Text != "#4 now blocks #5, which can't be finished until #4 is done or cancelled." {
+		t.Fatalf("link proposals = %+v", r)
+	}
+	f.toolOK(task.ID, "board_link", `{"ref":"#3","blocker":"#5"}`)
+	f.toolRefused(task.ID, "board_link", `{"ref":"#4","blocker":"#3"}`, string(board.CodeInvalid)) // a cycle
+	f.toolRefused(task.ID, "board_link", `{"ref":"#2","blocker":"#5"}`, string(board.CodeInProgress))
+	if c := f.card("#3").Card; !slices.Equal(c.BlockedBy, []string{f.card("#5").Card.ID}) {
+		t.Fatalf("confirmed subtask blocked by %v", c.BlockedBy)
+	}
+	f.toolOK(task.ID, "board_request", `{"ref":"#2","kind":"blocked","comment":"waits on the proposals"}`)
+	r := f.toolRefused(task.ID, "board_claim", `{"ref":"#4"}`, string(board.CodeUnconfirmed))
+	if !slices.Equal(r.Refs, []string{"#4"}) || !strings.Contains(r.Text, "owner confirms it") {
+		t.Fatalf("claim of a proposal = %+v", r)
+	}
+	if c := f.card("#4").Card; c.HeldBy != "" || c.Confirmed {
+		t.Fatalf("a refused claim wrote %+v", c)
+	}
+	// It unlinks and dismisses while planning, never a confirmed card.
+	if r := f.toolOK(task.ID, "board_unlink", `{"ref":"#3","blocker":"#5"}`); r.Text != "Removed the link between #5 and #3." {
+		t.Fatalf("unlink = %+v", r)
+	}
+	f.toolRefused(task.ID, "board_unlink", `{"ref":"#3","blocker":"#5"}`, string(board.CodeNotFound))
+	if r := f.toolOK(task.ID, "board_dismiss", `{"ref":"#5"}`); r.Card == nil || r.Card.Status != board.StatusCancelled {
+		t.Fatalf("dismiss = %+v", r)
+	}
+	f.toolRefused(task.ID, "board_dismiss", `{"ref":"#3"}`, string(board.CodeInvalid))
+}
+
+// Split applies at once to a subtask that has not started and is a request on a
+// held one; blocked names its blocker on one that has not started. Neither is accepted
 // by a passing acceptance command: only done is.
 func TestBoardToolsSplitAndBlocked(t *testing.T) {
 	f := newPlanner(t)
@@ -683,21 +743,26 @@ func TestBoardToolsSplitAndBlocked(t *testing.T) {
 	}
 	f.toolRefused(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"done","comment":"x","blocker":"#%d"}`, leaf.ID, blocker.Seq), string(board.CodeInvalid))
 	f.toolRefused(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"cancel","comment":" "}`, leaf.ID), string(board.CodeInvalid))
-	if r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"blocked","comment":"needs the blocker","blocker":"#%d"}`, leaf.ID, blocker.Seq)); r.Text != fmt.Sprintf("Filed a blocked request on #%d for the owner to decide.", r.Card.Seq) {
+	// The held subtask keeps its plan, so its blocked request names no
+	// blocker; one that has not started may.
+	f.toolRefused(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"blocked","comment":"needs the blocker","blocker":"#%d"}`, leaf.ID, blocker.Seq), string(board.CodeInProgress))
+	if r := f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"blocked","comment":"needs #%d"}`, leaf.ID, blocker.Seq)); r.Text != fmt.Sprintf("Filed a blocked request on #%d for the owner to decide.", r.Card.Seq) {
 		t.Fatalf("blocked = %+v", r)
 	}
+	waiting := f.create(board.KindSubtask, epic.ID, "Waiting")
+	f.toolOK(task.ID, "board_request", fmt.Sprintf(`{"ref":%q,"kind":"blocked","comment":"needs the blocker","blocker":"#%d"}`, waiting.ID, blocker.Seq))
 	var kinds []board.RequestKind
-	var payload struct {
-		Blocker string `json:"blocker"`
-	}
 	for _, req := range f.card(leaf.ID).Requests {
 		kinds = append(kinds, req.Kind)
-		if req.Kind == board.RequestBlocked {
-			_ = json.Unmarshal(req.Payload, &payload)
-		}
 		if req.Status != board.RequestPending {
 			t.Fatalf("%s request = %+v", req.Kind, req)
 		}
+	}
+	var payload struct {
+		Blocker string `json:"blocker"`
+	}
+	if reqs := f.card(waiting.ID).Requests; len(reqs) == 1 {
+		_ = json.Unmarshal(reqs[0].Payload, &payload)
 	}
 	if !slices.Equal(kinds, []board.RequestKind{board.RequestSplit, board.RequestBlocked}) || payload.Blocker != blocker.ID {
 		t.Fatalf("requests = %v, blocker %q", kinds, payload.Blocker)
@@ -1166,7 +1231,7 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	epic := f.create(board.KindEpic, "", "Epic")
 	story := f.create(board.KindStory, epic.ID, "Story")
 	inside := f.create(board.KindSubtask, story.ID, "Inside")
-	f.create(board.KindSubtask, epic.ID, "Outside")
+	f.create(board.KindStory, epic.ID, "Outside")
 	// The actor is a Utility job, which no Task session has: its calls are
 	// not tied to one.
 	f.store(func(ctx context.Context, st *board.Store) error {
@@ -1212,7 +1277,7 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	// and a blocker outside it is left out.
 	sibling := f.create(board.KindSubtask, story.ID, "Sibling")
 	f.store(func(ctx context.Context, st *board.Store) error {
-		if err := st.Link(ctx, board.Owner(""), "#4", inside.ID); err != nil {
+		if err := st.Link(ctx, board.Owner(""), "#4", story.ID); err != nil {
 			return err
 		}
 		return st.Link(ctx, board.Owner(""), sibling.ID, inside.ID)
@@ -1220,5 +1285,8 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	get, _ := run("board_get", fmt.Sprintf(`{"ref":%q}`, inside.ID))
 	if !strings.Contains(get.Text, "\nPath: #2 › #3\n") || !strings.Contains(get.Text, "Blocked by:\n- #6 subtask \"Sibling\"") || strings.Contains(get.Text, "#4") || strings.Contains(get.Text, "#1") {
 		t.Fatalf("get inside = %q", get.Text)
+	}
+	if get, _ := run("board_get", fmt.Sprintf(`{"ref":%q}`, story.ID)); strings.Contains(get.Text, "#4") || strings.Contains(get.Text, "Blocked by") {
+		t.Fatalf("get the container = %q", get.Text)
 	}
 }

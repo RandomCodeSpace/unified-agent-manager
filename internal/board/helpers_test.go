@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -154,11 +155,37 @@ func (f *fixture) tree() (epic, story, one, two Card) {
 
 func (f *fixture) launch(ref, task string) Card {
 	f.t.Helper()
-	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}, Blobs: map[string]string{"x.go": "b10b"}})
+	c, err := f.s.Launch(f.ctx, owner, ref, task, Baseline{Head: "base", Dirty: []string{"x.go"}, Blobs: map[string]string{"x.go": "b10b"}}, false)
 	if err != nil {
 		f.t.Fatalf("launch %s: %v", ref, err)
 	}
 	return c
+}
+
+// legacyClaim makes a's Task hold the subtask ref as a claim could before
+// holds needed confirmed cards: the subtask and its ancestors that were
+// unconfirmed stay unconfirmed, with their expiry.
+func (f *fixture) legacyClaim(a Actor, ref string) Card {
+	f.t.Helper()
+	var proposals []Card
+	for c := f.card(ref); ; c = f.card(c.ParentID) {
+		if !c.Confirmed() {
+			proposals = append(proposals, c)
+		}
+		if c.ParentID == "" {
+			break
+		}
+	}
+	for _, c := range proposals {
+		f.raw(`UPDATE cards SET expires_at = NULL WHERE id = ?`, c.ID)
+	}
+	if _, err := f.s.Claim(f.ctx, a, ref, Baseline{Head: "h"}); err != nil {
+		f.t.Fatalf("claim %s: %v", ref, err)
+	}
+	for _, c := range proposals {
+		f.raw(`UPDATE cards SET expires_at = ? WHERE id = ?`, stamp(*c.ExpiresAt), c.ID)
+	}
+	return f.card(ref)
 }
 
 func (f *fixture) done(ref string, a Actor) Request {
@@ -229,6 +256,17 @@ func wantCode(t *testing.T, err error, code Code) {
 	t.Helper()
 	if got := CodeOf(err); got != code {
 		t.Fatalf("error = %v (code %q), want code %q", err, got, code)
+	}
+}
+
+// wantUnconfirmed checks that err refuses starting work on the proposals
+// refs, in that order.
+func wantUnconfirmed(t *testing.T, err error, refs ...string) {
+	t.Helper()
+	wantCode(t, err, CodeUnconfirmed)
+	var e *Error
+	if !errors.As(err, &e) || !slices.Equal(e.Refs, refs) {
+		t.Fatalf("refusal %v refs = %v, want %v", err, e.Refs, refs)
 	}
 }
 

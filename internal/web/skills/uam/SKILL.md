@@ -113,9 +113,21 @@ Planner on and the Project is a git repository.
   passes and nothing holds it back: claim the next pending one. Otherwise
   it waits for the owner, and the reply says why.
 - **Proposals**: cards you create stay unconfirmed until the owner confirms
-  them or a done request of yours on them is accepted, and expire after 14
-  days. Caps per Task: 20 created cards, 10 unconfirmed children per card or
-  10 epics at the root, 20 comments per card.
+  them, and expire after 14 days. Work runs only on confirmed cards:
+  `board_claim` refuses a proposal or a card under one. Caps per Task: 20
+  created cards, 10 unconfirmed children per card or 10 epics at the root,
+  20 comments per card.
+- **Planning**: until a subtask starts (held, doing or done) you plan it
+  directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
+  `board_link`, `board_unlink`, `board_split` and `board_dismiss` for
+  proposals. A started subtask keeps its plan: you tick only the one you
+  hold and comment; a change to it becomes a request the owner accepts after
+  releasing it.
+- **Links** order cards at one level: epics with epics, stories with stories
+  in one epic, subtasks with subtasks in one story. Either side may be a
+  proposal. To order work across containers, link the containers; a card
+  waits on its container's blockers too. A linked card can't move to another
+  parent until its links are removed.
 
 ## Attachments
 

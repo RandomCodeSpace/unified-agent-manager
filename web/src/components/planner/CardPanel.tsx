@@ -1,7 +1,7 @@
 import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
-import { cardPath, openBlockerSeqs } from '../../lib/board';
+import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -82,6 +82,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   const run = <T,>(key: string, verb: string, op: () => Promise<T>) => cardActions.run(c.id, key, verb, op);
   const unassigned = !c.project_id;
   const leaf = c.kind === 'subtask';
+  // A started subtask keeps its plan (ADR 0005 decision 8); ticks and the owner's own fields go on.
+  const locked = lockedReason(c);
   const path = cardPath(c, byId).slice(0, -1);
   const job = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'suggest').at(-1);
   // Check at HEAD is a job, started here or from a row's menu: its run arrives in the job's last board_job frame.
@@ -134,7 +136,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
                 <p className="text-title text-ink [overflow-wrap:anywhere]">{c.title}</p>
                 <p className={cn('text-ui [overflow-wrap:anywhere]', c.win_condition ? 'text-body' : 'text-muted')}>{c.win_condition ? <><span className="text-muted">Done means: </span>{c.win_condition}</> : 'No win condition yet.'}</p>
               </div>
-              {!unassigned && (
+              {!unassigned && !locked && (
                 <Button size="icon" aria-label="Edit title and win condition" className="text-muted" onClick={() => setEditing(true)}>
                   <Pencil />
                 </Button>
@@ -152,6 +154,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             {c.due && <span>Due {c.due}</span>}
             {c.labels.map((l) => <Chip key={l} fill="well">{l}</Chip>)}
           </div>
+          {locked && !unassigned && <Note tone="muted">{locked}</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
           {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}
@@ -201,6 +204,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           card={c}
           // The service refuses edits to an Unassigned or a cancelled card ("restore it first").
           readOnly={unassigned || c.status === 'cancelled'}
+          locked={!!locked}
           busy={!!busy}
           save={async (checklist) => {
             const saved = await run('checklist', 'save the checklist', async () => {
@@ -211,7 +215,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           }}
         />
 
-        <Links card={c} byId={byId} onOpen={onOpen} readOnly={unassigned} />
+        <Links card={c} byId={byId} onOpen={onOpen} readOnly={unassigned} locked={locked} />
 
         <Group title="Evidence trail">
           {detailError && <Note tone="error" role="alert">Could not load the trail: {detailError}</Note>}
@@ -287,11 +291,13 @@ const taskAuthor = (author: string, sessions: { id: string; name: string; title:
  * Esc cancels), remove it, or add one at the end. Each save sends the whole list, built from the
  * card as it stands at that moment. A read-only card shows its items only, and nothing when empty.
  */
-function Checklist({ card: c, readOnly, busy, save }: Readonly<{ card: Card; readOnly: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
+/** The checklist. `locked`: a started subtask's items are its plan, so they are only ticked. */
+function Checklist({ card: c, readOnly, locked = false, busy, save }: Readonly<{ card: Card; readOnly: boolean; locked?: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
   const [editing, setEditing] = useState<number | null>(null);
   const [adding, setAdding] = useState('');
   const list = useRef<HTMLUListElement>(null);
-  if (readOnly && c.checklist.length === 0) return null;
+  if ((readOnly || locked) && c.checklist.length === 0) return null;
+  const fixed = readOnly || locked;
   const done = c.checklist.filter((i) => i.done).length;
   // Enter and Esc hand focus back to the item; a click elsewhere keeps it where it went.
   const close = (i: number, refocus: boolean) => {
@@ -324,7 +330,7 @@ function Checklist({ card: c, readOnly, busy, save }: Readonly<{ card: Card; rea
                     return ok;
                   }}
                 />
-              ) : readOnly ? (
+              ) : fixed ? (
                 <span className={cn('min-w-0 flex-1 py-1 [overflow-wrap:anywhere]', item.done && 'text-muted line-through')}>{item.text}</span>
               ) : (
                 <>
@@ -347,7 +353,7 @@ function Checklist({ card: c, readOnly, busy, save }: Readonly<{ card: Card; rea
           ))}
         </ul>
       )}
-      {!readOnly && (
+      {!fixed && (
         <form
           className="flex items-center gap-1.5"
           onSubmit={(e) => {
@@ -412,13 +418,24 @@ function ItemEditor({ text, onSave, onCancel }: Readonly<{ text: string; onSave:
   );
 }
 
-/** Blocked by and blocks, with a way to add a blocker (confirmed cards only) and to remove one. */
-function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; readOnly: boolean }>) {
+/**
+ * Blocked by and blocks, with a way to add a blocker and to remove one, then what the card waits
+ * on through its parents. Dependencies are planning, so either card may be a suggestion, marked as
+ * one; links map one level at a time (§3), so the picker offers only cards of this kind under this
+ * parent. A started subtask keeps its links (`locked`) until it is released.
+ */
+function Links({ card: c, byId, onOpen, readOnly, locked }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; readOnly: boolean; locked: string | null }>) {
   const { notify } = useShownBoard();
   const [adding, setAdding] = useState('');
   const blockers = c.blocked_by.map((id) => byId.get(id)).filter((x): x is Card => !!x);
   const blocks = c.blocks.map((id) => byId.get(id)).filter((x): x is Card => !!x);
-  const candidates = [...byId.values()].filter((x) => x.id !== c.id && x.confirmed && x.kind === 'subtask' && !c.blocked_by.includes(x.id) && x.status !== 'cancelled');
+  const candidates = linkTargets(c, [...byId.values()]);
+  // Each parent's open blockers hold this card back too, nearest parent first.
+  const inherited = cardPath(c, byId)
+    .slice(0, -1)
+    .reverse()
+    .map((p) => ({ via: p, open: p.blocked_by.map((id) => byId.get(id)).filter((x): x is Card => !!x && x.status !== 'done' && x.status !== 'cancelled') }))
+    .filter((w) => w.open.length > 0);
   if (readOnly && !blockers.length && !blocks.length) return null;
   const act = (verb: string, op: () => Promise<unknown>) => op().catch((e: unknown) => notify({ tone: 'error', text: `Could not ${verb}: ${plannerErrorText(e)}` }));
   const row = (x: Card, remove?: () => void) => (
@@ -427,7 +444,8 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
       <button type="button" className="min-w-0 truncate text-left text-ui text-body hover:text-ink hover:underline" onClick={() => onOpen(x.id)}>
         #{x.seq} {x.title}
       </button>
-      {remove && !readOnly && (
+      {!x.confirmed && <span className="shrink-0 text-caption text-muted">Suggested</span>}
+      {remove && !readOnly && !locked && !isStarted(x) && (
         <Button size="icon-sm" className="ml-auto text-muted" aria-label={`Remove the link to #${x.seq}`} onClick={remove}>
           <X />
         </Button>
@@ -440,8 +458,16 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
       {blockers.length > 0 && <ul className="flex flex-col gap-0.5">{blockers.map((b) => row(b, () => void act('remove the link', () => api.planner.unlink(b.id, c.id))))}</ul>}
       {blocks.length > 0 && <p className="text-caption text-muted">Blocks</p>}
       {blocks.length > 0 && <ul className="flex flex-col gap-0.5">{blocks.map((b) => row(b))}</ul>}
-      {!blockers.length && !blocks.length && <p className="text-caption text-muted">No links.</p>}
-      {!readOnly && candidates.length > 0 && (
+      {inherited.map((w) => (
+        <div key={w.via.id} className="flex flex-col gap-0.5">
+          <p className="text-caption text-muted">
+            Waiting on, via its {w.via.kind} #{w.via.seq}
+          </p>
+          <ul className="flex flex-col gap-0.5">{w.open.map((b) => row(b))}</ul>
+        </div>
+      ))}
+      {!blockers.length && !blocks.length && !inherited.length && <p className="text-caption text-muted">No links.</p>}
+      {!readOnly && !locked && candidates.length > 0 && (
         <div className="flex items-center gap-1.5">
           <Select
             aria-label="Add a blocker"
@@ -449,7 +475,7 @@ function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId:
             className={cn('h-8 min-w-0 flex-1', !adding && 'text-muted')}
             onValueChange={setAdding}
             // The placeholder is the trigger's text only; the list offers the candidates.
-            items={[{ value: '', label: 'Add a blocker…', hidden: true }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}` }))]}
+            items={[{ value: '', label: 'Add a blocker…', hidden: true }, ...candidates.map((x) => ({ value: x.id, label: `#${x.seq} ${x.title}${x.confirmed ? '' : ' (suggested)'}` }))]}
           />
           <Button size="md" variant="secondary" disabled={!adding} onClick={() => void act('add the link', () => api.planner.link(adding, c.id)).then(() => setAdding(''))}>
             <Link2 />

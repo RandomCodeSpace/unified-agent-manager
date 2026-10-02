@@ -311,6 +311,11 @@ func TestImportSettlesAStoryTheOwnerBuilt(t *testing.T) {
 	story := f.create(owner, "", KindStory, "Release")
 	post := f.byTitle(proj, "🚀 Write launch post")
 	_, err := f.s.Edit(f.ctx, owner, post.ID, Patch{ParentID: &story.ID})
+	wantCode(t, err, CodeInvalid) // its imported links join it to root cards
+	for _, id := range slices.Concat(post.BlockedBy, post.Blocks) {
+		f.must(f.s.Unlink(f.ctx, owner, post.ID, id))
+	}
+	_, err = f.s.Edit(f.ctx, owner, post.ID, Patch{ParentID: &story.ID})
 	f.must(err)
 	sourceExec(t, openSource(t, dir), `UPDATE tasks SET status = 'done' WHERE seq = 2`)
 	wantReport(t, f.importFrom(dir, websiteOnly), ImportReport{Updated: 1})
@@ -361,7 +366,12 @@ func TestImportReopensDoneCards(t *testing.T) {
 	// Set up analytics stays done under a story the owner then cancelled.
 	analytics, nav := f.byTitle(proj, "Set up analytics"), f.byTitle(proj, "Fix mobile nav")
 	story := f.create(owner, "", KindStory, "Metrics")
-	_, err := f.s.Edit(f.ctx, owner, analytics.ID, Patch{ParentID: &story.ID})
+	// A done card keeps its plan, so the owner moves it while it is To do.
+	_, err := f.s.SetStatus(f.ctx, owner, analytics.ID, StatusTodo, "", false)
+	f.must(err)
+	_, err = f.s.Edit(f.ctx, owner, analytics.ID, Patch{ParentID: &story.ID})
+	f.must(err)
+	_, err = f.s.SetStatus(f.ctx, owner, analytics.ID, StatusDone, "done", true)
 	f.must(err)
 	f.create(owner, story.ID, KindSubtask, "Dashboards")
 	_, err = f.s.SetStatus(f.ctx, owner, story.ID, StatusCancelled, "not now", false)

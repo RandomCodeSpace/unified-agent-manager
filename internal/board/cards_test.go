@@ -408,7 +408,7 @@ func TestAgentEdits(t *testing.T) {
 	if res.Request != nil || res.Card.Title != "Mine, renamed" || res.Card.Confirmed() || res.Card.Rank != 0 {
 		t.Fatalf("agent edit = %+v", res)
 	}
-	// On a confirmed card it becomes a change request; a newer one replaces it.
+	// On a started card it becomes a change request; a newer one replaces it.
 	first, err := f.s.Edit(f.ctx, agent, one.ID, Patch{Title: ptr("One v2")})
 	f.must(err)
 	second, err := f.s.Edit(f.ctx, agent, one.ID, Patch{Title: ptr("One v3"), Desc: ptr("why")})
@@ -424,13 +424,18 @@ func TestAgentEdits(t *testing.T) {
 	// A change that could never apply is refused at filing.
 	_, err = f.s.Edit(f.ctx, agent, one.ID, Patch{Title: ptr("Two")})
 	wantCode(t, err, CodeDuplicate)
+	// It applies once the subtask is released.
+	_, err = f.s.Accept(f.ctx, Owner("head-9"), second.Request.ID, "ok")
+	wantCode(t, err, CodeInProgress)
+	_, err = f.s.ReleaseHold(f.ctx, owner, one.ID, ReleaseOwner, "")
+	f.must(err)
 	req, err := f.s.Accept(f.ctx, Owner("head-9"), second.Request.ID, "ok")
 	f.must(err)
 	got := f.card(one.ID)
 	if req.Status != RequestAccepted || req.DecisionComment != "ok" || got.Title != "One v3" || got.Desc != "why" || got.PinnedSHA != "head-9" {
 		t.Fatalf("accepted change: %+v, card %+v", req, got)
 	}
-	// Agents reparent only unconfirmed cards, within scope, never to the root.
+	// Agents reparent within scope, never to the root.
 	root := ""
 	_, err = f.s.Edit(f.ctx, agent, mine.ID, Patch{ParentID: &root})
 	wantCode(t, err, CodeForbidden)
@@ -479,7 +484,7 @@ func TestMoveOutOfUnassigned(t *testing.T) {
 		errOf(f.s.AddComment(f.ctx, owner, id, "x")),
 		errOf(f.s.Checklist(f.ctx, owner, id, ChecklistEdit{Add: []string{"x"}})),
 		errOf(f.s.Confirm(f.ctx, owner, id)),
-		errOf(f.s.Launch(f.ctx, owner, id, "t", Baseline{})),
+		errOf(f.s.Launch(f.ctx, owner, id, "t", Baseline{}, false)),
 		errOf(f.s.Purge(f.ctx, owner, "")),
 		errOf(f.s.Edit(f.ctx, owner, id, Patch{ProjectID: ptr("")})),
 		f.s.Link(f.ctx, owner, id, id),
@@ -509,17 +514,25 @@ func TestMoveOutOfUnassigned(t *testing.T) {
 
 func TestChecklistAndConfirm(t *testing.T) {
 	f := newFixture(t)
-	epic, story, one, _ := f.tree()
+	epic, story, one, two := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, story.ID, "story-planner"))
+	_, err := f.s.Checklist(f.ctx, Agent("story-planner", ""), one.ID, ChecklistEdit{Add: []string{" a ", "b", "c"}})
+	f.must(err)
+	_, err = f.s.Checklist(f.ctx, Agent("story-planner", ""), two.ID, ChecklistEdit{Add: []string{" "}})
+	wantCode(t, err, CodeInvalid)
 	f.launch(one.ID, "task-1")
 	agent := Agent("task-1", "")
-	_, err := f.s.Checklist(f.ctx, agent, one.ID, ChecklistEdit{Add: []string{" a ", "b", "c"}})
-	f.must(err)
+	// Started, its items are its plan; only its Task and the owner tick them.
+	_, err = f.s.Checklist(f.ctx, agent, one.ID, ChecklistEdit{Add: []string{"d"}})
+	wantCode(t, err, CodeInProgress)
+	_, err = f.s.Checklist(f.ctx, Agent("story-planner", ""), one.ID, ChecklistEdit{Tick: []int{0}})
+	wantCode(t, err, CodeForbidden)
 	c, err := f.s.Checklist(f.ctx, agent, one.ID, ChecklistEdit{Tick: []int{0, 1}, Untick: []int{1}})
 	f.must(err)
 	if want := []Check{{Text: "a", Done: true}, {Text: "b"}, {Text: "c"}}; !slices.Equal(c.Checklist, want) {
 		t.Fatalf("checklist = %+v", c.Checklist)
 	}
-	for _, e := range []ChecklistEdit{{Tick: []int{3}}, {Untick: []int{-1}}, {Add: []string{" "}}} {
+	for _, e := range []ChecklistEdit{{Tick: []int{3}}, {Untick: []int{-1}}} {
 		_, err := f.s.Checklist(f.ctx, agent, one.ID, e)
 		wantCode(t, err, CodeInvalid)
 	}
@@ -649,7 +662,7 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 			return err
 		}},
 		{"launch", func(f *fixture, _, _, leaf Card) error {
-			_, err := f.s.Launch(f.ctx, head, leaf.ID, "task-9", Baseline{})
+			_, err := f.s.Launch(f.ctx, head, leaf.ID, "task-9", Baseline{}, true)
 			return err
 		}},
 		{"done", func(f *fixture, _, _, leaf Card) error {
@@ -683,9 +696,6 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 			first := f.create(owner, epic.ID, KindSubtask, "First")
 			f.launch(first.ID, "worker")
 			f.done(first.ID, worker)
-			if _, err := f.s.Claim(f.ctx, worker, leaf.ID, Baseline{}); err != nil {
-				return err
-			}
 			r, err := f.s.FileRequest(f.ctx, worker, leaf.ID, RequestInput{Kind: RequestBlocked, Comment: "stuck"})
 			if err != nil {
 				return err

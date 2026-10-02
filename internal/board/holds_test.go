@@ -24,9 +24,9 @@ func TestLaunch(t *testing.T) {
 	f.create(Agent("task-1", ""), story.ID, KindSubtask, "Sibling")
 	_, err := f.s.Create(f.ctx, Agent("task-1", ""), NewCard{ProjectID: proj, Kind: KindStory, ParentID: epic.ID, Title: "x"})
 	wantCode(t, err, CodeForbidden)
-	_, err = f.s.Launch(f.ctx, owner, one.ID, "task-9", Baseline{})
+	_, err = f.s.Launch(f.ctx, owner, one.ID, "task-9", Baseline{}, false)
 	wantCode(t, err, CodeInvalid)
-	_, err = f.s.Launch(f.ctx, owner, two.ID, " ", Baseline{})
+	_, err = f.s.Launch(f.ctx, owner, two.ID, " ", Baseline{}, false)
 	wantCode(t, err, CodeInvalid)
 	// "Do whole story" holds the first pending confirmed subtask, blocked ones last.
 	_, err = f.s.Edit(f.ctx, owner, two.ID, Patch{Blocked: ptr(true)})
@@ -39,25 +39,35 @@ func TestLaunch(t *testing.T) {
 	}
 	_, err = f.s.PendingLeaves(f.ctx, one.ID)
 	wantCode(t, err, CodeInvalid)
-	got, err := f.s.Launch(f.ctx, owner, epic.ID, "task-2", Baseline{Head: "h2"})
+	got, err := f.s.Launch(f.ctx, owner, epic.ID, "task-2", Baseline{Head: "h2"}, false)
 	f.must(err)
 	if got.ID != three.ID || got.HeldBy != "task-2" {
 		t.Fatalf("whole-epic launch held %+v", got)
 	}
 	f.create(Agent("task-2", ""), epic.ID, KindStory, "Scoped to the epic")
-	got, err = f.s.Launch(f.ctx, owner, story.ID, "task-3", Baseline{})
+	got, err = f.s.Launch(f.ctx, owner, story.ID, "task-3", Baseline{}, false)
 	f.must(err)
 	if got.ID != two.ID {
 		t.Fatalf("launch held %s, want the blocked two last", got.ID)
 	}
-	_, err = f.s.Launch(f.ctx, owner, story.ID, "task-4", Baseline{})
+	_, err = f.s.Launch(f.ctx, owner, story.ID, "task-4", Baseline{}, false)
 	wantCode(t, err, CodeInvalid)
-	// Launching a subtask under an agent-suggested story confirms and pins
-	// the story, so the sweep can no longer expire it.
+	// A launch that would confirm proposals is refused unless it says to
+	// confirm them, naming the subtask and then its unconfirmed parents; the
+	// check before the Task exists says the same. Confirmed, it confirms and
+	// pins them in the write that starts the hold, so the sweep can no
+	// longer expire the story.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	s2 := f.create(Agent("planner", ""), epic.ID, KindStory, "Proposed")
 	leaf := f.create(Agent("planner", ""), s2.ID, KindSubtask, "Proposed leaf")
-	got, err = f.s.Launch(f.ctx, Owner("head-5"), leaf.ID, "task-5", Baseline{})
+	_, err = f.s.Launch(f.ctx, Owner("head-5"), leaf.ID, "task-5", Baseline{}, false)
+	wantUnconfirmed(t, err, leaf.ref(), s2.ref())
+	wantUnconfirmed(t, f.s.CheckLaunch(f.ctx, owner, leaf.ID, false), leaf.ref(), s2.ref())
+	f.must(f.s.CheckLaunch(f.ctx, owner, leaf.ID, true))
+	if c := f.card(leaf.ID); c.Confirmed() || c.HeldBy != "" || f.card(s2.ID).Confirmed() {
+		t.Fatalf("a refused launch wrote %+v", c)
+	}
+	got, err = f.s.Launch(f.ctx, Owner("head-5"), leaf.ID, "task-5", Baseline{}, true)
 	f.must(err)
 	if story := f.card(s2.ID); !got.Confirmed() || got.PinnedSHA != "head-5" || !story.Confirmed() || story.PinnedSHA != "head-5" {
 		t.Fatalf("launched %+v under %+v", got, story)
@@ -141,12 +151,14 @@ func TestReleaseHold(t *testing.T) {
 	if _, err := f.s.ReleaseHold(f.ctx, owner, two.ID, ReleaseSettled, ""); err != nil {
 		t.Fatal(err)
 	}
-	// Releasing an unconfirmed subtask re-arms its expiry.
+	// Releasing an unconfirmed subtask, held from before claims needed
+	// confirmed cards, re-arms its expiry.
 	f.launch(one.ID, "task-1")
 	f.done(one.ID, agent)
 	mine := f.create(agent, story.ID, KindSubtask, "Mine")
 	_, err = f.s.Claim(f.ctx, agent, mine.ID, Baseline{})
-	f.must(err)
+	wantUnconfirmed(t, err, mine.ref())
+	f.legacyClaim(agent, mine.ID)
 	f.clock.advance(10 * 24 * time.Hour)
 	got, err = f.s.ReleaseHold(f.ctx, owner, mine.ID, ReleaseOwner, "")
 	f.must(err)

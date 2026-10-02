@@ -1,7 +1,7 @@
 import { Check, ChevronRight, ListPlus, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
 import { api, plannerErrorText, type Card, type CardKind } from '../../api';
-import { KIND_LABEL, STATUS_LABEL, buildOutline, openBlockerSeqs, type OutlineNode } from '../../lib/board';
+import { KIND_LABEL, STATUS_LABEL, buildOutline, lockedReason, openBlockerSeqs, type OutlineNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -138,7 +138,7 @@ export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly
         else openCard(row.node.card.id);
         break;
       case 'F2':
-        if (row.type === 'card' && !readOnly) setEditing(row.node.card.id);
+        if (row.type === 'card' && !readOnly && !lockedReason(row.node.card)) setEditing(row.node.card.id);
         break;
       default:
         return;
@@ -150,7 +150,8 @@ export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly
   function menu(c: Card): ActionItem[] {
     if (readOnly || !c.project_id) return cardActions.menuOf(c, [{ key: 'edit', label: 'Edit', icon: <Pencil />, disabled: true, reason: 'An Unassigned card is read-only until it moves into a Project.', onSelect: () => {} }]);
     const lead: ActionItem[] = addsOf(c, readOnly).map((kind) => ({ key: `add-${kind}`, label: kind === 'story' ? 'Add story' : 'Add subtask', icon: kind === 'story' ? <ListPlus /> : <Plus />, takesFocus: true, onSelect: () => setUi(adding(c.id, kind)) }));
-    lead.push({ key: 'edit', label: 'Edit', icon: <Pencil />, takesFocus: true, onSelect: () => setEditing(c.id) });
+    const locked = lockedReason(c);
+    lead.push(locked ? { key: 'edit', label: 'Edit', icon: <Pencil />, disabled: true, reason: locked, onSelect: () => {} } : { key: 'edit', label: 'Edit', icon: <Pencil />, takesFocus: true, onSelect: () => setEditing(c.id) });
     const trail: ActionItem[] = c.confirmed ? [] : [{ key: 'dismiss', label: 'Dismiss', icon: <X />, onSelect: () => void run(c.id, 'dismiss the card', () => api.planner.dismiss(c.id)) }];
     return cardActions.menuOf(c, lead, trail);
   }
@@ -331,7 +332,7 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
         c.status === 'cancelled' && 'opacity-60',
       )}
       onClick={() => actions.click(c.id)}
-      onDoubleClick={() => !readOnly && actions.edit(c.id)}
+      onDoubleClick={() => !readOnly && !lockedReason(c) && actions.edit(c.id)}
       onKeyDown={(e) => actions.keyDown(e, c.id)}
     >
       {container ? (

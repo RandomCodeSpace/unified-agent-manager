@@ -1,12 +1,12 @@
 import { Ban, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { cardPath } from '../../lib/board';
+import { cardPath, isStarted } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
 import { useShownBoard } from './context';
-import { BriefDialog, DoneDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type BriefAsk, type ReasonAsk } from './dialogs';
+import { BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
 
 export interface TriageResult {
   verdict: TriageVerdict;
@@ -40,6 +40,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   const [dialog, setDialog] = useState<'done' | 'move' | 'split' | null>(null);
   const [reason, setReason] = useState<ReasonAsk | null>(null);
   const [brief, setBrief] = useState<BriefAsk | null>(null);
+  const [launching, setLaunching] = useState<LaunchAsk | null>(null);
 
   async function run<T>(card: string, key: string, verb: string, op: () => Promise<T>): Promise<T | undefined> {
     setBusy({ card, key });
@@ -62,9 +63,22 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   function actionsOf(c: Card): CardAction[] {
     if (!c.project_id) return [];
     const leaf = c.kind === 'subtask';
+    const launched = (res: { card: Card; session: { id: string } }) => notify({ tone: 'muted', text: `Launched #${res.card.seq} ${res.card.title} in a new task.`, task: res.session.id });
     const launch = async (label: string) => {
+      // Work starts only on confirmed cards (§5): a suggestion, or a subtask under one, is launched
+      // through the confirm step, which names what launching confirms and the suggestions it waits on.
+      const confirms = leaf ? cardPath(c, byId).filter((x) => !x.confirmed).reverse() : [];
+      if (confirms.length) {
+        // Its own suggested blockers, then its parents', which hold it back too.
+        const waits = cardPath(c, byId)
+          .reverse()
+          .flatMap((at) => at.blocked_by.map((id) => byId.get(id)))
+          .filter((b): b is Card => !!b && !b.confirmed && b.status !== 'done' && b.status !== 'cancelled');
+        setLaunching({ card: c, confirms, waits, run: () => api.planner.launch(c.id, { confirm: true }).then(launched) });
+        return;
+      }
       const res = await run(c.id, 'launch', label === 'Launch' ? 'launch the subtask' : 'start the story', () => api.planner.launch(c.id));
-      if (res) notify({ tone: 'muted', text: `Launched #${res.card.seq} ${res.card.title} in a new task.`, task: res.session.id });
+      if (res) launched(res);
     };
     const actions: CardAction[] = [];
     if (!c.confirmed) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
@@ -84,8 +98,10 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
     }
     if (leaf && c.stale && onTriage) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run(c.id, 'triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && onTriage(c, r)) });
-    if (c.kind !== 'epic' && c.status !== 'cancelled' && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => open(c, 'move') });
-    if (leaf && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => open(c, 'split') });
+    // A started subtask keeps its plan until it is released: no move, no split.
+    const started = isStarted(c);
+    if (c.kind !== 'epic' && c.status !== 'cancelled' && !started && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, onClick: () => open(c, 'move') });
+    if (leaf && c.status !== 'cancelled' && !started) actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => open(c, 'split') });
     if (c.status !== 'cancelled' && c.status !== 'done') {
       actions.push({
         key: 'cancel',
@@ -123,6 +139,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     <>
       <ReasonDialog ask={reason} onClose={() => setReason(null)} />
       <BriefDialog ask={brief} onClose={() => setBrief(null)} />
+      <LaunchDialog ask={launching} onClose={() => setLaunching(null)} />
       {shown && (
         <>
           <DoneDialog card={shown} byId={byId} open={dialog === 'done'} onClose={() => setDialog(null)} />

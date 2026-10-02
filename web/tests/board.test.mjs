@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests } from '../src/lib/board.ts';
+import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -159,8 +159,9 @@ test('the map lays kinds out in columns, centres parents on their children and n
   const story = card({ kind: 'story', parent_id: epic.id });
   const a = card({ parent_id: story.id });
   const b = card({ parent_id: story.id, blocked_by: [] });
-  const c = card({ parent_id: story.id });
-  const loose = card({ blocked_by: [a.id, 'not-drawn'] });
+  const c = card({ parent_id: story.id, blocked_by: [a.id, 'not-drawn'] });
+  // A link across levels, made before links joined one level only, is no edge.
+  const loose = card({ blocked_by: [a.id] });
   const hidden = card({ parent_id: story.id, status: 'cancelled' });
   const { nodes, edges, width, height } = layoutMap([epic, story, a, b, c, loose, hidden], { epic: null, showCancelled: false });
   const at = (x) => nodes.find((n) => n.card.id === x.id);
@@ -174,7 +175,7 @@ test('the map lays kinds out in columns, centres parents on their children and n
   for (let i = 1; i < leaves.length; i += 1) assert.ok(leaves[i] - leaves[i - 1] >= MAP_ROW, 'leaves a row apart at least');
   assert.equal(at(loose).y - at(c).y, MAP_ROW * 1.5, 'sibling trees a half row further apart');
 
-  assert.deepEqual(edges.filter((e) => e.kind === 'blocker'), [{ from: a.id, to: loose.id, kind: 'blocker' }]);
+  assert.deepEqual(edges.filter((e) => e.kind === 'blocker'), [{ from: a.id, to: c.id, kind: 'blocker' }]);
   assert.equal(edges.filter((e) => e.kind === 'parent').length, 4);
   assert.ok(width > at(a).x && height > at(loose).y);
 });
@@ -261,6 +262,40 @@ test('open blockers are a plain string, empty when none is open', () => {
   const byId = new Map([done, open, blocked].map((c) => [c.id, c]));
   assert.equal(openBlockerSeqs(blocked, byId), `#${open.seq}`);
   assert.equal(openBlockerSeqs(open, byId), '');
+});
+
+test('a card waits on its parents’ open blockers too, named with the parent they come through', () => {
+  const epicB = card({ kind: 'epic' });
+  const epicA = card({ kind: 'epic', blocked_by: [epicB.id] });
+  const s2 = card({ kind: 'story', parent_id: epicA.id });
+  const s1 = card({ kind: 'story', parent_id: epicA.id, blocked_by: [s2.id] });
+  const two = card({ parent_id: s1.id });
+  const one = card({ parent_id: s1.id, blocked_by: [two.id] });
+  const byId = new Map([epicB, epicA, s2, s1, two, one].map((c) => [c.id, c]));
+  assert.equal(openBlockerSeqs(one, byId), `#${two.seq}, #${s2.seq} (via its story #${s1.seq}), #${epicB.seq} (via its epic #${epicA.seq})`);
+  assert.equal(openBlockerSeqs(s2, byId), `#${epicB.seq} (via its epic #${epicA.seq})`);
+});
+
+test('a card links only with cards of its kind under its parent that have not started', () => {
+  const epic = card({ kind: 'epic' });
+  const other = card({ kind: 'epic' });
+  const story = card({ kind: 'story', parent_id: epic.id });
+  const otherStory = card({ kind: 'story', parent_id: other.id });
+  const sibling = card({ kind: 'story', parent_id: epic.id, confirmed: false });
+  const one = card({ parent_id: story.id });
+  const held = card({ parent_id: story.id, status: 'doing', held_by: 't1' });
+  const done = card({ parent_id: story.id, status: 'done' });
+  const gone = card({ parent_id: story.id, status: 'cancelled' });
+  const peer = card({ parent_id: story.id });
+  const cards = [epic, other, story, otherStory, sibling, one, held, done, gone, peer];
+  assert.deepEqual(linkTargets(story, cards).map((c) => c.id), [sibling.id]);
+  assert.deepEqual(linkTargets(one, cards).map((c) => c.id), [peer.id]);
+  assert.deepEqual(linkTargets(epic, cards).map((c) => c.id), [other.id]);
+  assert.deepEqual(linkTargets({ ...one, blocks: [peer.id] }, cards), [], 'the other way round would close a cycle');
+  assert.equal(isStarted(held) && isStarted(done) && !isStarted(one) && !isStarted(story), true);
+  assert.equal(lockedReason(held), 'In progress: release it to change the plan.');
+  assert.equal(lockedReason(done), 'Done: move it back to To do to change the plan.');
+  assert.equal(lockedReason(one), null);
 });
 
 const snapshot = (boards) => ({ type: 'snapshot', data: { name: 'snapshot', seq: 3, sessions: [], projects: [], boards } });

@@ -14,10 +14,11 @@ import (
 func TestDoneRequest(t *testing.T) {
 	f := newFixture(t)
 	epic, story, one, two := f.tree()
-	f.launch(one.ID, "task-1")
-	agent := Agent("task-1", "sub")
 	_, err := f.s.Checklist(f.ctx, owner, one.ID, ChecklistEdit{Add: []string{"write tests"}})
 	f.must(err)
+	f.must(f.s.Link(f.ctx, owner, two.ID, one.ID))
+	f.launch(one.ID, "task-1")
+	agent := Agent("task-1", "sub")
 	for _, check := range []func() error{
 		func() error { return errOf(f.s.CheckFinishable(f.ctx, agent, one.ID)) },
 		func() error {
@@ -38,7 +39,6 @@ func TestDoneRequest(t *testing.T) {
 	wantCode(t, err, CodeGuardBlocked)
 	_, err = f.s.Edit(f.ctx, owner, one.ID, Patch{Blocked: ptr(false)})
 	f.must(err)
-	f.must(f.s.Link(f.ctx, owner, two.ID, one.ID))
 	_, err = f.s.CheckFinishable(f.ctx, agent, one.ID)
 	wantCode(t, err, CodeGuardBlockers)
 	if e := err.(*Error); !slices.Equal(e.Refs, []string{"#4"}) {
@@ -160,8 +160,9 @@ func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
 		t.Fatalf("story comments = %v", f.comments(story.ID))
 	}
 
-	// A proposal and its proposed story are confirmed with it, and the owner
-	// can still tell its acceptance from their own.
+	// A proposal held from before claims needed confirmed cards is
+	// confirmed with its proposed story, and the owner can still tell its
+	// acceptance from their own.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	planner := Agent("planner", "")
 	proposedStory := f.create(planner, epic.ID, KindStory, "Proposed story")
@@ -172,8 +173,7 @@ func TestDoneRequestAcceptedWhenItsCommandPassed(t *testing.T) {
 	f.launch(three.ID, "task-3")
 	worker := Agent("task-3", "")
 	pending := done(three.ID, worker, "")
-	_, err = f.s.Claim(f.ctx, worker, proposed.ID, Baseline{Head: "h"})
-	f.must(err)
+	f.legacyClaim(worker, proposed.ID)
 	done(proposed.ID, worker, "make check")
 	if c := f.card(proposed.ID); c.Status != StatusDone || !c.Confirmed() || c.PinnedSHA != "" || !f.card(proposedStory.ID).Confirmed() {
 		t.Fatalf("accepted proposal = %+v, story %+v", c, f.card(proposedStory.ID))
@@ -444,7 +444,7 @@ func TestAcceptCancelAndBlocked(t *testing.T) {
 	// Blocked with a blocker links it; without one it sets the flag.
 	proposed := f.create(planner, story.ID, KindSubtask, "Proposed")
 	_, err := f.s.FileRequest(f.ctx, planner, one.ID, RequestInput{Kind: RequestBlocked, Comment: "x", Blocker: proposed.ID})
-	wantCode(t, err, CodeInvalid) // an unconfirmed blocker
+	f.must(err) // a proposal may block; the next request replaces this one
 	_, err = f.s.FileRequest(f.ctx, planner, one.ID, RequestInput{Kind: RequestBlocked, Comment: "x", Blocker: one.ID})
 	wantCode(t, err, CodeInvalid)
 	byLink, err := f.s.FileRequest(f.ctx, planner, one.ID, RequestInput{Kind: RequestBlocked, Comment: "needs two", Blocker: "#4"})
@@ -534,7 +534,8 @@ func TestSplit(t *testing.T) {
 	wantCode(t, err, CodeInvalid)
 	_, err = f.s.Split(f.ctx, owner, loose.ID, []SplitChild{{Title: "bad\ntitle"}})
 	wantCode(t, err, CodeInvalid)
-	// A held, confirmed subtask: one request, then the hold moves on accept.
+	// A held subtask keeps its plan: the worker's split is one request, which
+	// the owner accepts once the subtask is released.
 	big := f.create(owner, epic.ID, KindSubtask, "Held big")
 	_, err = f.s.Checklist(f.ctx, owner, big.ID, ChecklistEdit{Add: []string{"x", "y"}, Tick: nil})
 	f.must(err)
@@ -552,15 +553,17 @@ func TestSplit(t *testing.T) {
 		len(after.Requests) != len(before.Requests)+1 || res.Card.Kind != KindSubtask || res.Card.HeldBy != "worker" {
 		t.Fatalf("held split = %+v", res)
 	}
+	_, err = f.s.Split(f.ctx, owner, big.ID, []SplitChild{{Title: "part two"}})
+	wantCode(t, err, CodeInProgress)
+	_, err = f.s.Accept(f.ctx, Owner("head-3"), res.Request.ID, "")
+	wantCode(t, err, CodeInProgress)
+	_, err = f.s.ReleaseHold(f.ctx, owner, big.ID, ReleaseOwner, "")
+	f.must(err)
 	_, err = f.s.Accept(f.ctx, Owner("head-3"), res.Request.ID, "")
 	f.must(err)
 	story2 := f.card(big.ID)
 	if story2.Kind != KindStory || story2.HeldBy != "" || story2.Status != StatusDoing {
 		t.Fatalf("after accept: %+v", story2)
-	}
-	d := f.detail(big.ID)
-	if d.Holds[0].EndReason != ReleaseSplit {
-		t.Fatalf("old hold = %+v", d.Holds)
 	}
 	snap, err = f.s.Board(f.ctx, proj)
 	f.must(err)
@@ -570,17 +573,13 @@ func TestSplit(t *testing.T) {
 			parts = append(parts, c)
 		}
 	}
-	if len(parts) != 3 || parts[0].HeldBy != "worker" || parts[1].Status != StatusDone || parts[2].Status != StatusPlanned {
+	if len(parts) != 3 || parts[0].HeldBy != "" || parts[0].Status != StatusPlanned || parts[1].Status != StatusDone || parts[2].Status != StatusPlanned {
 		t.Fatalf("parts = %+v", parts)
 	}
 	for _, p := range parts {
 		if !p.Confirmed() || p.PinnedSHA != "head-3" || p.CreatedBy != "task:worker" {
 			t.Fatalf("part %+v", p)
 		}
-	}
-	moved := f.detail(parts[0].ID).Holds
-	if len(moved) != 1 || moved[0].Baseline.Head != "base" || moved[0].TaskID != "worker" {
-		t.Fatalf("moved hold = %+v", moved)
 	}
 	// The owner's split applies at once, with confirmed children.
 	res, err = f.s.Split(f.ctx, owner, loose.ID, []SplitChild{{Title: "a"}, {Title: "b"}})
@@ -684,8 +683,9 @@ func TestSplitIntoSiblings(t *testing.T) {
 	}
 }
 
-// A held subtask under a story splits by request; accepting it makes the
-// siblings, accepts the ticked one, moves the hold and cancels the original.
+// A held subtask under a story splits by request; once it is released,
+// accepting it makes the siblings, accepts the ticked one and cancels the
+// original.
 func TestSplitIntoSiblingsByRequest(t *testing.T) {
 	f := newFixture(t)
 	_, story, one, _ := f.tree()
@@ -700,14 +700,13 @@ func TestSplitIntoSiblingsByRequest(t *testing.T) {
 	if res.Request == nil || res.Request.Kind != RequestSplit || len(f.children(story.ID)) != 2 {
 		t.Fatalf("held split = %+v", res)
 	}
+	_, err = f.s.ReleaseHold(f.ctx, owner, one.ID, ReleaseOwner, "")
+	f.must(err)
 	_, err = f.s.Accept(f.ctx, Owner("head-3"), res.Request.ID, "")
 	f.must(err)
 	orig := f.card(one.ID)
 	if orig.Kind != KindSubtask || orig.Status != StatusCancelled || orig.HeldBy != "" || orig.CascadeID == "" {
 		t.Fatalf("original after accept = %+v", orig)
-	}
-	if h := f.detail(one.ID).Holds; len(h) != 1 || h[0].EndReason != ReleaseSplit {
-		t.Fatalf("original hold = %+v", h)
 	}
 	kids := f.children(story.ID)
 	var titles []string
@@ -718,16 +717,13 @@ func TestSplitIntoSiblingsByRequest(t *testing.T) {
 		t.Fatalf("siblings = %v, want %v", titles, want)
 	}
 	part, x, y := kids[1], kids[2], kids[3]
-	if part.HeldBy != "worker" || part.Status != StatusDoing || x.Status != StatusDone || y.Status != StatusPlanned {
+	if part.HeldBy != "" || part.Status != StatusPlanned || x.Status != StatusDone || y.Status != StatusPlanned {
 		t.Fatalf("siblings = %+v", kids[1:4])
 	}
 	for _, k := range kids[1:4] {
 		if !k.Confirmed() || k.PinnedSHA != "head-3" || k.CreatedBy != "task:worker" {
 			t.Fatalf("sibling %+v", k)
 		}
-	}
-	if h := f.detail(part.ID).Holds; len(h) != 1 || h[0].Baseline.Head != "base" || h[0].TaskID != "worker" {
-		t.Fatalf("moved hold = %+v", h)
 	}
 	wantStatus(t, f.card(story.ID), StatusDoing)
 	note := "uam: split into " + part.ref() + ", " + x.ref() + ", " + y.ref()
@@ -737,7 +733,7 @@ func TestSplitIntoSiblingsByRequest(t *testing.T) {
 	// Restoring the original reopens it as todo and leaves the siblings.
 	restored, err := f.s.Restore(f.ctx, owner, one.ID, "keep it")
 	f.must(err)
-	if restored.Status != StatusTodo || f.card(part.ID).HeldBy != "worker" || f.card(x.ID).Status != StatusDone ||
+	if restored.Status != StatusTodo || f.card(part.ID).Status != StatusPlanned || f.card(x.ID).Status != StatusDone ||
 		len(f.children(story.ID)) != 5 {
 		t.Fatalf("restored = %+v", restored)
 	}
@@ -770,7 +766,7 @@ func TestCommandEditReportsPendingDoneRequests(t *testing.T) {
 	if got := last().Requests; !slices.Equal(got, []string{second.ID}) {
 		t.Fatalf("default command edit reported requests %v, want %v", got, []string{second.ID})
 	}
-	_, err = f.s.Edit(f.ctx, owner, two.ID, Patch{Title: ptr("Two, renamed")})
+	_, err = f.s.Edit(f.ctx, owner, story.ID, Patch{Title: ptr("Story, renamed")})
 	f.must(err)
 	if got := last().Requests; len(got) != 0 {
 		t.Fatalf("an edit without a command reported requests %v", got)

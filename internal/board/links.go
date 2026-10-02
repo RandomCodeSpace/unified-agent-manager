@@ -5,28 +5,64 @@ package board
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 // Link records "blocker blocks blocked". Both cards must be in the same
-// Project, and the blocker must be confirmed. Self links, duplicates and
-// links that would close a cycle are refused. Agents may link a blocked card
-// in their scope.
+// Project, of the same kind under the same parent (sameLevel); either may be
+// a proposal, since dependencies are part of planning and only starting work
+// needs the owner's confirmation. Self links, duplicates and links that
+// would close a cycle are refused. Agents may link a blocked card in their
+// scope, and a Task with no scope an epic it proposed (linkScope).
 func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string) error {
 	if err := permit(a, opLink, ""); err != nil {
 		return err
 	}
-	_, err := s.agentWrite(ctx, a, blockedRef, func(t *txn, o *outline, blocked *node) error {
-		blocker, err := t.blocker(o, blocked, blockerRef)
+	_, err := s.write(ctx, func(t *txn) error {
+		project, id, err := t.locate(blockedRef)
 		if err != nil {
 			return err
 		}
-		return t.link(o, blocker, blocked)
+		if project == "" {
+			return errReadOnly
+		}
+		return t.mutate(project, true, func() error {
+			o, blocked, err := t.cardIn(project, id)
+			if err != nil {
+				return err
+			}
+			if err := t.linkScope(o, a, blocked); err != nil {
+				return err
+			}
+			blocker, err := t.blocker(o, blocked, blockerRef)
+			if err != nil {
+				return err
+			}
+			return t.link(o, blocker, blocked)
+		})
 	})
 	return err
 }
 
-// blocker resolves ref as a blocker of n: a confirmed card in n's Project,
-// other than n.
+// linkScope is inScope for the card a link blocks, except that a Task with
+// no scope, which proposes epics at the root (ADR 0005 decision 4), may also
+// link an epic it proposed, so it can map how its epics depend on each other.
+func (t *txn) linkScope(o *outline, a Actor, n *node) error {
+	if !a.owner() && n.Kind == KindEpic && n.ParentID == "" && !n.Confirmed() && n.CreatedBy == a.author() {
+		sc, err := t.scope(a.TaskID)
+		if err != nil {
+			return err
+		}
+		if sc == nil {
+			return nil
+		}
+	}
+	return t.inScope(o, a, n)
+}
+
+// blocker resolves ref as a blocker of n: a card in n's Project other than
+// n, at n's level, so a blocked request is refused as it is filed.
 func (t *txn) blocker(o *outline, n *node, ref string) (*node, error) {
 	project, id, err := t.locate(ref)
 	if err != nil {
@@ -39,13 +75,81 @@ func (t *txn) blocker(o *outline, n *node, ref string) (*node, error) {
 	if b.ID == n.ID {
 		return nil, invalid("a card cannot block itself")
 	}
-	if !b.Confirmed() {
-		return nil, invalid("%s is unconfirmed; links may point only at confirmed cards", b.ref())
+	if err := o.sameLevel(b, n); err != nil {
+		return nil, err
 	}
 	return b, nil
 }
 
+// sameLevel refuses a link between cards that are not of one kind under one
+// parent: links map a DAG per level, epics among epics, stories among the
+// stories of one epic, subtasks among the subtasks of one story, and cards
+// at the root among root cards of their kind. The refusal names the pair of
+// containers to link instead, when there is one.
+func (o *outline) sameLevel(blocker, blocked *node) error {
+	if blocker.Kind == blocked.Kind && blocker.ParentID == blocked.ParentID {
+		return nil
+	}
+	kinds := blocked.Kind.plural()
+	rule := fmt.Sprintf("%s depend only on %s", kinds, kinds)
+	switch p := o.byID[blocked.ParentID]; {
+	case p != nil:
+		rule += " in the same " + string(p.Kind)
+	case blocked.Kind != KindEpic:
+		rule = fmt.Sprintf("%s at the top level depend only on %s at the top level", kinds, kinds)
+	}
+	msg := fmt.Sprintf("%s can't block %s: %s", blocker.ref(), blocked.ref(), rule)
+	// The nearest pair of ancestors, one on each side, that may be linked.
+	for x := blocker; x != nil; x = o.byID[x.ParentID] {
+		for y := blocked; y != nil; y = o.byID[y.ParentID] {
+			if x != y && x.Kind == y.Kind && x.ParentID == y.ParentID {
+				return invalid("%s; link %s %s and %s instead", msg, x.Kind.plural(), x.ref(), y.ref())
+			}
+		}
+	}
+	return invalid("%s", msg)
+}
+
+// plural is the kind's plural, for messages.
+func (k Kind) plural() string {
+	if k == KindStory {
+		return "stories"
+	}
+	return string(k) + "s"
+}
+
+// unlinkedFor refuses a change that takes n out of its level, a move to
+// another parent or a split into a story, while n has blocker links: a link
+// joins cards of one kind under one parent, so the links go first. why says
+// what the change does.
+func (o *outline) unlinkedFor(n *node, why string) error {
+	linked := slices.Concat(n.BlockedBy, n.Blocks)
+	if len(linked) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, len(linked))
+	for _, id := range linked {
+		if m := o.byID[id]; m != nil && !slices.Contains(refs, m.ref()) {
+			refs = append(refs, m.ref())
+		}
+	}
+	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(
+		"%s is linked to %s, and links join only cards of one kind under one parent; %s, so the owner removes those links first",
+		n.ref(), strings.Join(refs, ", "), why)}
+}
+
+// link records blocker blocks blocked, after the level, cycle and duplicate
+// checks. Links made before the level rule keep working; only new ones are
+// checked.
 func (t *txn) link(o *outline, blocker, blocked *node) error {
+	if err := o.sameLevel(blocker, blocked); err != nil {
+		return err
+	}
+	for _, n := range []*node{blocked, blocker} {
+		if err := inProgress(n); err != nil {
+			return err
+		}
+	}
 	cyclic, err := t.reaches(blocked.ID, blocker.ID)
 	if err != nil {
 		return err
@@ -66,7 +170,9 @@ func (t *txn) link(o *outline, blocker, blocked *node) error {
 	return nil
 }
 
-// Unlink removes the link between two cards, whichever way it points.
+// Unlink removes the link between two cards, whichever way it points. An
+// agent unlinks where it may link: the blocked card is in its scope. Neither
+// card may have started (lock.go).
 func (s *Store) Unlink(ctx context.Context, a Actor, aRef, bRef string) error {
 	if err := permit(a, opUnlink, ""); err != nil {
 		return err
@@ -82,6 +188,29 @@ func (s *Store) Unlink(ctx context.Context, a Actor, aRef, bRef string) error {
 		}
 		if ap == "" || bp == "" {
 			return errReadOnly
+		}
+		oa, x, err := t.cardIn(ap, aID)
+		if err != nil {
+			return err
+		}
+		ob, y, err := t.cardIn(bp, bID)
+		if err != nil {
+			return err
+		}
+		for _, n := range []*node{x, y} {
+			if err := inProgress(n); err != nil {
+				return err
+			}
+		}
+		if !a.owner() {
+			// The blocked end decides the scope, as for Link.
+			o, blocked := ob, y
+			if slices.Contains(x.BlockedBy, y.ID) {
+				o, blocked = oa, x
+			}
+			if err := t.linkScope(o, a, blocked); err != nil {
+				return err
+			}
 		}
 		res, err := t.tx.ExecContext(t.ctx, `DELETE FROM links WHERE (blocker_id = ?1 AND blocked_id = ?2) OR (blocker_id = ?2 AND blocked_id = ?1)`, aID, bID)
 		if err != nil {

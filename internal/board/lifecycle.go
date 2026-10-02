@@ -136,17 +136,27 @@ func (t *txn) cancelNode(n *node, cascade string) error {
 }
 
 // Dismiss cancels an unconfirmed card and everything under it, with the
-// automatic comment "dismissed".
+// automatic comment "dismissed": the owner's, or an agent's in its scope
+// while planning. It never ends a hold under the card, nor, for an agent, on
+// it (lock.go).
 func (s *Store) Dismiss(ctx context.Context, a Actor, ref string) (Card, error) {
 	if err := permit(a, opDismiss, ""); err != nil {
 		return Card{}, err
 	}
-	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+	return s.agentWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.Confirmed() {
 			return invalid("%s is confirmed; cancel it instead", n.ref())
 		}
 		if n.stored == StatusCancelled {
 			return invalid("%s is already cancelled", n.ref())
+		}
+		if !a.owner() {
+			if err := inProgress(n); err != nil {
+				return err
+			}
+		}
+		if err := o.startedUnder(n, true); err != nil {
+			return err
 		}
 		cascade := t.s.newID()
 		for _, m := range o.subtree(n) {

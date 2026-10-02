@@ -567,6 +567,76 @@ describe('owner authoring', () => {
     }
   });
 
+  test('the blocker picker offers only open siblings of one kind, suggestions included, and the link names a suggestion', async () => {
+    const { user, tree } = await openPlanner();
+    const link = vi.spyOn(api.planner, 'link');
+    try {
+      // #9 sits under story #7 with #8 (in progress, and already its blocker), #10 (cancelled) and the suggestion #11.
+      const panel = await openCard(user, tree, 9);
+      await user.click(panel.getByRole('combobox', { name: 'Add a blocker' }));
+      expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual(['#11 Benchmark snapshot size per Task count (suggested)']);
+      await user.click(screen.getByRole('option', { name: '#11 Benchmark snapshot size per Task count (suggested)' }));
+      await user.click(panel.getByRole('button', { name: 'Link' }));
+      expect(link).toHaveBeenCalledWith('cp1-11', 'cp1-9');
+      const row = await panel.findByRole('button', { name: '#11 Benchmark snapshot size per Task count' });
+      expect(row.closest('li')!.textContent).toContain('Suggested');
+      expect(panel.getByRole('button', { name: 'Remove the link to #11' })).toBeTruthy();
+      // A blocker in another story is refused by the service, which names the containers to link instead.
+      await expect(api.planner.link('cp1-31', 'cp1-9')).rejects.toThrow(/#31 can't block #9/);
+    } finally {
+      link.mockRestore();
+    }
+  });
+
+  test('a subtask in progress keeps its plan: no edit, links or checklist text, with the reason', async () => {
+    const { user, tree } = await openPlanner();
+    // #8 is held by a Task.
+    const panel = await openCard(user, tree, 8);
+    expect(panel.getByText('In progress: release it to change the plan.')).toBeTruthy();
+    expect(panel.queryByRole('combobox', { name: 'Add a blocker' })).toBeNull();
+    expect(panel.queryByRole('button', { name: /^Remove the link/ })).toBeNull();
+    expect(panel.queryByRole('button', { name: /^Edit/ })).toBeNull();
+    await closeCard(user);
+    const menu = await openMenu(user, 'Actions for #8');
+    expect(menu.queryByRole('menuitem', { name: 'Move to…' })).toBeNull();
+    expect(menu.queryByRole('menuitem', { name: 'Split' })).toBeNull();
+    expect(menu.getByRole('menuitem', { name: 'Edit' }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getByText('In progress: release it to change the plan.')).toBeTruthy();
+  });
+
+  test('launching a suggestion asks first, naming what it confirms and the suggestions it still waits on', async () => {
+    const { user, tree } = await openPlanner();
+    // The service refuses a launch that would confirm suggestions unless it says to.
+    await expect(api.planner.launch('cp1-17')).rejects.toThrow(/#17, #16 must be confirmed/);
+    // #16 is a suggested story under #1 and #17 its suggested subtask; a suggested sibling, #37, blocks #17.
+    await act(() => api.planner.suggest('cp1-16', { brief: '', document: '', max: 1 }));
+    await user.click(tree.getAllByRole('treeitem', { name: '+1 suggested' })[1]);
+    await tree.findByRole('treeitem', { name: /^#37 Write the failing test first/ }, { timeout: 4000 });
+    await act(() => api.planner.link('cp1-37', 'cp1-17'));
+    const launch = vi.spyOn(api.planner, 'launch');
+    try {
+      const panel = await openCard(user, tree, 17);
+      await user.click(panel.getByRole('button', { name: 'Launch' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Confirm and launch #17?' }));
+      expect(launch).not.toHaveBeenCalled();
+      expect(within(dialog.getByRole('list', { name: 'Launching confirms' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        '#17 Split the diagram renderer into its own chunk · Subtask',
+        '#16 Lazy-load the diagram renderer · Story',
+      ]);
+      expect(within(dialog.getByRole('list', { name: 'Still waits on' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#37 Write the failing test first · Subtask']);
+      await user.click(dialog.getByRole('button', { name: 'Confirm and launch' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Confirm and launch #17?' })).toBeNull());
+      expect(launch).toHaveBeenCalledWith('cp1-17', { confirm: true });
+      await closeCard(user);
+      expect(await tree.findByRole('treeitem', { name: /^#17 Split the diagram renderer into its own chunk, Doing/ })).toBeTruthy();
+      expect(tree.getByRole('treeitem', { name: /^#16 Lazy-load the diagram renderer, Doing/ })).toBeTruthy();
+      // The blocker stays a suggestion, folded under #16.
+      expect(tree.queryByRole('treeitem', { name: /^#37 / })).toBeNull();
+    } finally {
+      launch.mockRestore();
+    }
+  });
+
   test('a done subtask under a cancelled card offers no Back to To do, which the service refuses there', async () => {
     const { user, tree } = await openPlanner();
     // #12 holds done #13 and #14; cancelling it cancels only its open #15.
