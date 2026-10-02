@@ -976,6 +976,65 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     }),
   );
 
+  // t22: subagents at scale. Three replies spawned 12, 22 and 7 audits (one per package); the first
+  // reply's first audit runs again in the third, and four run while the turn has ended.
+  tasks.push(
+    (() => {
+      const items: Item[] = [];
+      const subagents: Subagent[] = [];
+      const agentItems: Record<string, Item[]> = {};
+      const audit = (n: number, min: number, pkg: string, status: Subagent['status'], extra: Partial<Subagent> = {}) => {
+        const id = `sa${n}`, call = `sc${n}`;
+        items.push(tool(call, min, { name: 'task', title: `Audit package ${pkg}`, status: status === 'running' ? 'running' : status === 'failed' ? 'failed' : 'completed', input: JSON.stringify({ description: `Audit package ${pkg}` }), output: status === 'failed' ? extra.error : status === 'running' ? undefined : `${pkg}: ${n % 4} exports without callers.` }));
+        subagents.push({ id, parent_tool_call_id: call, name: `Audit package ${pkg}`, description: `List the exported symbols of ${pkg} that nothing calls.`, status, started_at: ago(min), ...(status === 'running' ? {} : { ended_at: ago(min - 1 - (n % 3)) }), model: n % 2 ? 'gpt-5-mini' : 'claude-haiku-4.5', effort: 'low', ...(status === 'completed' || status === 'idle' ? { summary: `${pkg}: ${n % 4} exports without callers.` } : {}), ...extra });
+        agentItems[id] = [
+          tool(`${id}-g`, min - 0.5, { name: 'grep', title: `Search "export" in ${pkg}`, status: 'completed', output: `${(n % 5) + 2} matches` }, id),
+          { id: `${id}-m`, kind: 'assistant', time: ago(min - 1), agent_id: id, text: status === 'running' ? `Reading ${pkg} for callers…` : `${pkg}: ${n % 4} exports without callers.` },
+        ];
+      };
+      const say = (id: string, min: number, text: string, kind: Item['kind'] = 'assistant') => items.push({ id, kind, time: ago(min), text });
+      const internal = ['store', 'web', 'web/items', 'web/archive', 'adapter', 'adapter/copilot', 'vterm', 'config', 'ids', 'logging', 'routines', 'board'];
+      say('d1', 60, 'Audit every Go and TS package for exported symbols with no callers. One subagent per package.', 'user');
+      say('d2', 59.5, 'Pilot on internal/ first: 12 packages, one audit each.');
+      internal.forEach((pkg, i) => audit(i + 1, 59, `internal/${pkg}`, 'completed'));
+      say('d3', 50, 'Pilot on internal/: 12 packages, 19 dead exports. Want me to run the rest?');
+      say('d4', 40, 'Yes, run the rest.', 'user');
+      for (let i = 0; i < 22; i++) {
+        const n = 13 + i;
+        if (i === 4 || i === 15) audit(n, 39, `cmd/tool${i}`, 'failed', { error: i === 4 ? 'go vet: undefined: pageCursor' : 'context deadline exceeded' });
+        else audit(n, 39, `cmd/tool${i}`, i === 9 ? 'idle' : 'completed');
+      }
+      say('d5', 30, '20 packages audited, 2 failed on build errors. Listed them below.');
+      say('d6', 10, 'Retry the failed ones and do web/ too.', 'user');
+      say('d7', 9.5, 'Retrying the two failed audits and starting web/.');
+      audit(35, 9, 'cmd/tool4', 'running', { preview: 'go vet ./cmd/tool4 · step 3' });
+      audit(36, 9, 'cmd/tool15', 'failed', { error: 'context deadline exceeded again' });
+      audit(37, 9, 'web/src/lib', 'running', { preview: 'Reading transcript.ts · step 4' });
+      audit(38, 9, 'web/src/components', 'running', { preview: 'grep -rn "trimSubagents" · step 9' });
+      audit(39, 9, 'web/src/mock', 'completed');
+      audit(40, 9, 'web/src/planner', 'completed');
+      audit(41, 9, 'web/tests', 'cancelled');
+      // The first pilot audit, asked again: it keeps its first call and runs now.
+      subagents[0] = { ...subagents[0], status: 'running', started_at: ago(5), ended_at: undefined, summary: undefined, preview: 'Re-checking internal/store after the fix' };
+      return task({
+        id: 't22',
+        project_id: 'p1',
+        workdir: p('p1'),
+        model: 'claude-haiku-4.5',
+        last_model: 'claude-haiku-4.5',
+        name: 'Audit every package for dead exports',
+        title: '',
+        state: 'completed',
+        subagents_running: 4,
+        created_at: ago(60),
+        updated_at: ago(5),
+        items,
+        subagents,
+        agentItems,
+      });
+    })(),
+  );
+
   const changes: Record<string, MockChange[]> = {
     p1: [
       { path: 'internal/vterm/redraw.go', status: 'M', additions: 3, deletions: 0, patch: EDIT_DIFF, by: ['t1', 't20'], turn: ['t20'] },

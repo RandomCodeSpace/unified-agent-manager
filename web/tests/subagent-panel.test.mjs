@@ -11,6 +11,7 @@ import ts from 'typescript';
 import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
 import * as history from '../src/lib/historyState.ts';
+import * as subagentsLib from '../src/lib/subagents.ts';
 import { shownState } from '../src/lib/tasks.ts';
 
 // Render the real transcript component with local UI shells and no browser or data reads.
@@ -32,6 +33,15 @@ const modules = {
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
   '../lib/transcript': transcript,
   '../lib/historyState': history,
+  '../lib/subagents': subagentsLib,
+  // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.
+  './Subagents': {
+    SubagentChip: ({ subagents, tones, open }) => React.createElement('button', { 'aria-expanded': String(open), 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')}`),
+    SubagentList: ({ id, subagents }) => React.createElement('ul', { id }, subagents.map((s) => React.createElement('li', { key: s.id, id: `item-${s.parent_tool_call_id}` }, `LISTED ${s.name}`))),
+    SubagentRow: ({ subagent, anchor }) => React.createElement('div', { id: anchor ? `item-${subagent.parent_tool_call_id}` : undefined }, `ROW ${subagent.name}`),
+    LiveSubagents: ({ latest }) => React.createElement('section', null, `LIVE ${latest.map((item) => item.id).join(',')}`),
+    useSubagentDisclosure: (key) => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); },
+  },
   '../lib/verbs': { turnVerb: () => 'Working' },
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
   './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }) },
@@ -169,7 +179,7 @@ test('same-ID main and child turns keep disclosure state and DOM targets indepen
   }
 });
 
-test('a running subagent stands in the answer; a settled one folds into its turn and opens with it', () => {
+test('subagents leave the answer: a chip on the turn line (Compact), rows in the activity (Detailed), the live card at the foot', () => {
   const task = (id, description) => ({ id, kind: 'tool', time: `2026-09-26T12:00:0${id.slice(-1)}Z`, tool: { name: 'task', input: JSON.stringify({ description }), status: id === 'call2' ? 'running' : 'completed' } });
   const items = [
     { id: 'request1', kind: 'user', text: 'Request', time: '2026-09-26T12:00:01Z' },
@@ -181,38 +191,53 @@ test('a running subagent stands in the answer; a settled one folds into its turn
     { id: 'a2', name: 'RUNNING_AGENT', status: 'running', parent_tool_call_id: 'call2' },
     { id: 'a3', name: 'SETTLED_AGENT', status: 'completed', parent_tool_call_id: 'call3' },
   ];
-  const draw = density => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density, onOpenAgent: () => {} }));
-  for (const density of ['compact', 'detailed']) {
-    const closed = draw(density);
-    assert.match(closed, /RUNNING_AGENT/, density);
-    assert.doesNotMatch(closed, /SETTLED_AGENT/, density);
-    expanded = true;
-    try {
-      const open = draw(density);
-      assert.match(open, /SETTLED_AGENT/, density);
-      const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map(match => match[1]);
-      assert.equal(ids.filter(id => id === 'item-call3').length, 1, density);
-    } finally {
-      expanded = false;
-    }
+  const draw = (density, liveCard = true) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density, liveCard }));
+  const compact = draw('compact');
+  // One chip for the reply, in spawn order with identity tones; no row at the running call, no count on the turn line.
+  assert.match(compact, /data-tones="violet,pink"[^>]*>CHIP RUNNING_AGENT,SETTLED_AGENT</);
+  assert.doesNotMatch(compact, /ROW |LISTED |subagent/);
+  // The live card sits after the reply's answer, before the foot.
+  assert.match(compact, /Answer[\s\S]*LIVE request1,call2,call3,answer4/);
+  assert.doesNotMatch(draw('compact', false), /LIVE /);
+  // Its open state is remembered per reply, like the turn line's.
+  assert.ok(disclosureKeys.includes('subagents:call2'));
+  expanded = true;
+  try {
+    const open = draw('compact');
+    assert.match(open, /LISTED RUNNING_AGENT[\s\S]*LISTED SETTLED_AGENT/);
+    // The timeline leaves the calls to the list, so each row's target id is there once.
+    const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(ids.sort(), ['item-call2', 'item-call3']);
+  } finally {
+    expanded = false;
   }
+  const detailed = draw('detailed');
+  assert.doesNotMatch(detailed, /CHIP |ROW /);
+  assert.match(detailed, /LIVE /);
+  expanded = true;
+  try {
+    const open = draw('detailed');
+    assert.match(open, /ROW RUNNING_AGENT[\s\S]*ROW SETTLED_AGENT/);
+    const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(ids.sort(), ['item-call2', 'item-call3']);
+  } finally {
+    expanded = false;
+  }
+  // A subagent's own transcript draws none of it.
+  const child = renderToStaticMarkup(React.createElement(exports.AgentItems, { sessionId: 'task', provider: 'copilot', workdir: '/project', agentId: 'a2', items: items.map((item) => ({ ...item, agent_id: 'a2' })), interactions: [], live: true, density: 'compact' }));
+  assert.doesNotMatch(child, /CHIP |LIVE |ROW /);
 });
 
-test('a reused subagent reappears even though its original task call is completed', () => {
-  const items = [
-    { id: 'request', kind: 'user', text: 'Request', time: '2026-09-28T12:00:00Z' },
-    { id: 'call', kind: 'tool', time: '2026-09-28T12:00:01Z', tool: { name: 'task', status: 'completed' } },
-    { id: 'answer', kind: 'assistant', text: 'First result', time: '2026-09-28T12:00:02Z' },
-  ];
-  const agent = { id: 'reused', name: 'REUSED_AGENT', parent_tool_call_id: 'call' };
-  for (const density of ['compact', 'detailed']) {
-    const draw = status => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', items, interactions: [], subagents: [{ ...agent, status }], live: false, working: false, density, onOpenAgent: () => {} }));
-    assert.doesNotMatch(draw('completed'), /REUSED_AGENT/, density);
-    const reused = draw('running');
-    assert.match(reused, /REUSED_AGENT/, density);
-    assert.equal((reused.match(/id="item-call"/g) ?? []).length, 1, density);
-    assert.doesNotMatch(draw('completed'), /REUSED_AGENT/, density);
+test('a reply past five subagents draws them neutral; a turn of only subagent calls still gets its line', () => {
+  const items = [{ id: 'u1', kind: 'user', text: 'Fan out', time: '2026-09-26T12:00:00Z' }];
+  const subagents = [];
+  for (let n = 1; n <= 6; n++) {
+    items.push({ id: `c${n}`, kind: 'tool', time: `2026-09-26T12:00:0${n}Z`, tool: { name: 'task', status: 'completed' } });
+    subagents.push({ id: `a${n}`, name: `AGENT_${n}`, status: 'completed', parent_tool_call_id: `c${n}` });
   }
+  const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false, density: 'compact' }));
+  assert.match(html, /data-tones="-,-,-,-,-,-"[^>]*>CHIP AGENT_1/);
+  assert.doesNotMatch(html, /activity of this turn/);
 });
 
 test('the activity verb stays visible when a reused subagent is the only worker', () => {

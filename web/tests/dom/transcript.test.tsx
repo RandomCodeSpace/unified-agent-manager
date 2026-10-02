@@ -148,13 +148,23 @@ describe('activity', () => {
     expect(await log().findByRole('button', { name: /^bash.*go test \.\/cmd\/\.\.\..*done$/ })).toBeTruthy();
   });
 
-  test('subagent rows open their transcript from the conversation', async () => {
+  test('subagents in use sit in the live card at the foot; a row opens onto its transcript in place', async () => {
     const { user } = await openTask('t8');
-    // The two running subagents stand in the conversation with a way into their transcripts.
-    const open = await log().findAllByRole('button', { name: 'Open' });
-    expect(open).toHaveLength(2);
-    await user.click(open[0]);
-    expect(await screen.findByRole('dialog', { name: /^Subagent / })).toBeTruthy();
+    // The failed one first, then the two running; the completed one waits behind its count.
+    const live = within(await log().findByRole('region', { name: 'Subagents at work' }));
+    const rows = live.getAllByRole('button', { name: /, (failed|running|completed)/ });
+    expect(rows.map((row) => row.getAttribute('aria-label')?.split(',')[0])).toEqual(['Run the accessibility linter', 'Survey templates for missing alt text and labels', 'Check contrast of the theme tokens']);
+    expect(live.getByRole('button', { name: /^1 done/ })).toBeTruthy();
+    // Nothing of them stands at their calls, and the turn line does not count them.
+    expect(log().queryByRole('button', { name: 'Open' })).toBeNull();
+    expect(log().queryByRole('button', { name: /activity of this turn/ })).toBeNull();
+    await user.click(rows[1]);
+    const region = within(await screen.findByRole('region', { name: 'Subagent Survey templates for missing alt text and labels' }));
+    expect(await region.findByRole('log')).toBeTruthy();
+    // One row is open at a time: opening another folds the first, and its transcript goes with it.
+    await user.click(rows[2]);
+    expect(await screen.findByRole('region', { name: 'Subagent Check contrast of the theme tokens' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Subagent Survey templates for missing alt text and labels' })).toBeNull());
   });
 });
 
@@ -202,14 +212,13 @@ describe('history', () => {
     expect(await log().findByText('Turn 126: check pkg126 for unused exports.')).toBeTruthy();
   });
 
-  test('the parent call of an older subagent is found by paging back', async () => {
+  test('a subagent picked from the header index is found in its reply, its list opened', async () => {
     const { user } = await openTask('t15');
     await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Subagents' }));
-    await user.click(panel.getByRole('button', { name: /Completed/ }));
-    const menu = await openMenu(user, 'Actions for subagent Audit the remaining packages');
-    await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
+    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
     await waitFor(() => expect(document.getElementById('item-h-audit')?.classList.contains('animate-flash')).toBe(true));
+    expect(screen.getByRole('button', { name: /^1 subagent · 1 done/ }).getAttribute('aria-expanded')).toBe('true');
   });
 });
 

@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { openMenu, openTask } from './render';
+import { log, openMenu, openTask } from './render';
 
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
@@ -86,49 +86,53 @@ describe('files', () => {
 });
 
 describe('subagents', () => {
-  test('the header lists subagents by status; one opens to its transcript', async () => {
+  // The header's index: subagents by the message that started their reply, filters, and a pick that lands on the row.
+  test('the header index groups subagents by their message; a pick expands its row in the conversation', async () => {
     const { user } = await openTask('t8');
     await user.click(screen.getByRole('button', { name: /^Subagents, 4, \d running/ }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Subagents' }));
-    const running = within(panel.getByRole('region', { name: 'Running' }));
-    expect(running.getByText('Survey templates for missing alt text and labels')).toBeTruthy();
-    const failed = panel.getByRole('region', { name: 'Failed' });
-    const toggle = within(failed).getByRole('button', { name: /Failed/ });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    await user.click(toggle);
-    await user.click(await within(failed).findByText('Run the accessibility linter'));
-    const agent = within(await screen.findByRole('dialog', { name: 'Subagent Run the accessibility linter' }));
-    expect(await agent.findByText(/axe-core. is not installed|is not installed and I was told/)).toBeTruthy();
-    await user.click(agent.getByRole('button', { name: 'Back to the subagent list' }));
-    expect(await screen.findByRole('dialog', { name: 'Subagents' })).toBeTruthy();
+    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    const group = within(index.getByRole('region', { name: /^“Audit templates\/post\.html for accessibility problems/ }));
+    expect(group.getByRole('button', { name: /^Jump to the subagents of/ })).toBeTruthy();
+    expect(index.queryByText(/Turn \d/)).toBeNull();
+    await user.click(index.getByRole('button', { name: 'Failed 1' }));
+    expect(index.queryByRole('button', { name: /^Check the heading order/ })).toBeNull();
+    await user.click(index.getByRole('button', { name: /^Run the accessibility linter/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagents' })).toBeNull());
+    // Its reply's list opened on the way and the row expanded onto its transcript, with focus on the row.
+    const region = within(await screen.findByRole('region', { name: 'Subagent Run the accessibility linter' }));
+    expect(await region.findByText(/axe-core. is not installed|is not installed and I was told/)).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-expanded')).toBe('true'));
+    expect(document.activeElement?.closest('#item-i5')).toBeTruthy();
   });
 
-  test('a completed subagent shows its result and the row menu locates its call', async () => {
+  test('a reply\'s chip opens its list; a completed row shows its result, folds on Esc and locates its call', async () => {
     const { user } = await openTask('t8');
-    await user.click(screen.getByRole('button', { name: /^Subagents, 4/ }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Subagents' }));
-    await user.click(panel.getByRole('button', { name: /Completed/ }));
+    const chip = log().getByRole('button', { name: /^4 subagents · 1 done · 1 failed · 2 running/ });
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+    await user.click(chip);
+    const list = within(await log().findByRole('region', { name: '4 subagents' }));
+    const row = list.getByRole('button', { name: /^Check the heading order, completed: The byline skips a level/ });
+    await user.click(row);
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    const region = within(await screen.findByRole('region', { name: 'Subagent Check the heading order' }));
+    expect(await region.findByText('Result sent to the main agent')).toBeTruthy();
+    expect(region.queryByRole('form', { name: /^Follow up with subagent/ })).toBeNull();
+    fireEvent.keyDown(region.getByRole('log'), { key: 'Escape' });
+    await waitFor(() => expect(row.getAttribute('aria-expanded')).toBe('false'));
+    expect(document.activeElement).toBe(row);
     const menu = await openMenu(user, 'Actions for subagent Check the heading order');
-    await user.click(menu.getByRole('menuitem', { name: 'Open' }));
-    const agent = within(await screen.findByRole('dialog', { name: 'Subagent Check the heading order' }));
-    expect(await agent.findByText('Result sent to the main agent')).toBeTruthy();
-    expect(agent.getByText(/The byline skips a level/)).toBeTruthy();
-    await user.click(agent.getByRole('button', { name: 'Close subagents' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Subagent/ })).toBeNull());
-    await user.click(screen.getByRole('button', { name: /^Subagents, 4/ }));
-    await user.click(within(await screen.findByRole('dialog', { name: 'Subagents' })).getByRole('button', { name: /Completed/ }));
-    const again = await openMenu(user, 'Actions for subagent Check the heading order');
-    await user.click(again.getByRole('menuitem', { name: 'Show where it was spawned' }));
+    await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
     await waitFor(() => expect(document.getElementById('item-i6')?.classList.contains('animate-flash')).toBe(true));
   });
 
   test('stopping a running subagent is confirmed first', async () => {
     const { user } = await openTask('t8');
-    await user.click(screen.getByRole('button', { name: /^Subagents, 4/ }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Subagents' }));
-    await user.click(panel.getByText('Check contrast of the theme tokens'));
-    const agent = within(await screen.findByRole('dialog', { name: 'Subagent Check contrast of the theme tokens' }));
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    const agent = within(await screen.findByRole('region', { name: 'Subagent Check contrast of the theme tokens' }));
     expect(await agent.findByText(/is 2\.85:1, below AA/)).toBeTruthy();
+    // Running, it takes no follow-up.
+    expect(agent.queryByRole('form', { name: /^Follow up with subagent/ })).toBeNull();
     await user.click(agent.getByRole('button', { name: 'Stop subagent Check contrast of the theme tokens' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Stop subagent “Check contrast of the theme tokens”?' });
     await user.click(within(confirm).getByRole('button', { name: 'Stop subagent' }));
@@ -138,9 +142,45 @@ describe('subagents', () => {
   test('older subagents load from the record on request', async () => {
     const { user } = await openTask('t15');
     await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
-    const panel = within(await screen.findByRole('dialog', { name: 'Subagents' }));
-    await user.click(panel.getByRole('button', { name: 'Show older subagents' }));
-    await user.click(await panel.findByRole('button', { name: /Completed/ }));
-    expect(await panel.findByText('Audit package batch 2')).toBeTruthy();
+    const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+    await user.click(index.getByRole('button', { name: 'Show older subagents' }));
+    expect(await index.findByRole('button', { name: /^Audit package batch 2/ })).toBeTruthy();
+    // Their calls are not in the history held here: they wait under "Earlier in the conversation".
+    expect(index.getByRole('region', { name: 'Earlier in the conversation' })).toBeTruthy();
+  });
+
+  test('the live card lists failed then running subagents, five at most, and a resumed one leads to its first reply', async () => {
+    const { user } = await openTask('t22');
+    const card = screen.getByRole('region', { name: 'Subagents at work' });
+    const live = within(card);
+    expect(live.getByText('8 subagents')).toBeTruthy();
+    const rows = () => live.getAllByRole('button', { name: /^Audit package .*, (failed|running|completed|stopped)/ }).map((b) => b.getAttribute('aria-label') ?? '');
+    expect(rows()).toHaveLength(5);
+    expect(rows()[0]).toMatch(/^Audit package cmd\/tool15, failed/);
+    expect(rows().slice(1).every((name) => /, running/.test(name))).toBe(true);
+    await user.click(live.getByRole('button', { name: /2 done · 1 stopped/ }));
+    expect(rows()).toHaveLength(8);
+    // The first pilot audit runs again: its tag says so and finds its row in the first reply's list, opening it.
+    const firstChip = log().getByRole('button', { name: /^12 subagents/ });
+    expect(firstChip.getAttribute('aria-expanded')).toBe('false');
+    await user.click(live.getByRole('button', { name: /^resumed · first ran .* ↑$/ }));
+    await waitFor(() => expect(document.getElementById('item-sc1')?.classList.contains('animate-flash')).toBe(true));
+    expect(firstChip.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  test('a long reply groups its list by status with a filter; an idle subagent takes a follow-up', async () => {
+    const { user } = await openTask('t22');
+    await user.click(log().getByRole('button', { name: /^22 subagents · 20 done · 2 failed/ }));
+    const list = within(await log().findByRole('region', { name: '22 subagents' }));
+    expect(list.getByRole('button', { name: /^Failed/ }).getAttribute('aria-expanded')).toBe('true');
+    const done = list.getByRole('button', { name: /^Done/ });
+    expect(done.getAttribute('aria-expanded')).toBe('false');
+    expect(list.queryByRole('button', { name: /^Audit package cmd\/tool9,/ })).toBeNull();
+    await user.type(list.getByRole('searchbox', { name: 'Filter 22 subagents by name or result' }), 'TOOL9');
+    const idle = await list.findByRole('button', { name: /^Audit package cmd\/tool9, idle/ });
+    expect(list.getAllByRole('button', { name: /^Audit package / })).toHaveLength(1);
+    await user.click(idle);
+    const region = within(await screen.findByRole('region', { name: 'Subagent Audit package cmd/tool9' }));
+    expect(region.getByRole('form', { name: 'Follow up with subagent Audit package cmd/tool9' })).toBeTruthy();
   });
 });

@@ -1,9 +1,8 @@
-import { ArrowDown, Bot, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
-import { popupOpen } from '../App';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -12,7 +11,7 @@ import { showsFinish, shownState } from '../lib/tasks';
 import { ChangesSheet, defaultScope } from './Changes';
 import { CommitPanel, SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, WorkingMark, useApp, useMedia, useScrolled } from './common';
+import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
@@ -21,7 +20,7 @@ import { Collapse, usePresence } from './ui/collapse';
 import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
-import { SubagentPanel, type PanelView } from './Subagents';
+import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { away, FinishCard, SinceYouLeft } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
@@ -52,7 +51,7 @@ interface Props {
   historyItemSeq: Record<string, number>;
   onHistoryReset: () => void;
   sheetOpen: boolean;
-  /** Side panels (Changes, Subagents) sit beside the column (wide) rather than over it. */
+  /** Side panels (Changes, Files, Plan) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
   onSheet: (open: boolean, restoreFocus?: boolean) => void;
   /** The terminal docked under the app (App.tsx): whether it is open, and the toggle that opens it in a Project's folder or closes it. */
@@ -104,7 +103,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
-  const [panel, setPanel] = useState<PanelView | null>(null);
   /** The Plan panel while open, with the card it was asked to show (the Task's own when null). */
   const [planFocus, setPlanFocus] = useState<PlanFocus | null>(null);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
@@ -114,7 +112,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
-  const panelOpener = useRef<HTMLElement | null>(null);
   const live = LIVE.includes(session.state);
   const working = session.state === 'working' || session.state === 'starting';
   const compactWindow = session.representation === 'compact-v1';
@@ -136,10 +133,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [locateError, setLocateError] = useState('');
   const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setPanel(null); setFilesOpen(false); setChartsOpen(false); setPlanFocus(null); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setFilesOpen(false); setChartsOpen(false); setPlanFocus(null); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || panel || filesOpen || chartsOpen || planFocus || output) closePreview(false); }, [sheetOpen, panel, filesOpen, chartsOpen, planFocus, output, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || filesOpen || chartsOpen || planFocus || output) closePreview(false); }, [sheetOpen, filesOpen, chartsOpen, planFocus, output, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
   if (sheetOpen && chartsOpen) setChartsOpen(false);
@@ -325,10 +322,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     return () => observer.disconnect();
   }, []);
 
-  // One side panel at a time: the Changes sheet wins while it is open; opening the other closes it.
-  const shownPanel = sheetOpen ? null : panel;
-  // A closing panel stays mounted, showing its last view, until its exit has run.
-  const panelPresence = usePresence(!!shownPanel);
+  // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
   const chartsPresence = usePresence(chartsOpen);
@@ -347,21 +341,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
   const outputView = output ?? lastOutput;
-  const [lastPanel, setLastPanel] = useState<PanelView | null>(null);
-  if (shownPanel && shownPanel !== lastPanel) setLastPanel(shownPanel);
-  const panelView = shownPanel ?? lastPanel;
-
-  const closePanel = useCallback(() => {
-    setPanel(null);
-    const opener = panelOpener.current;
-    if (opener?.isConnected) opener.focus();
-    else scroller.current?.focus({ preventScroll: true });
-    panelOpener.current = null;
-  }, []);
-
   const openChanges = useCallback(() => {
     closePreview(false);
-    setPanel(null);
     setFilesOpen(false);
     setChartsOpen(false);
     setPlanFocus(null);
@@ -370,7 +351,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [onSheet, closePreview]);
   const toggleFiles = useCallback(() => {
     closePreview(false);
-    setPanel(null);
     setChartsOpen(false);
     setPlanFocus(null);
     setOutput(null);
@@ -380,7 +360,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const closeFiles = useCallback(() => setFilesOpen(false), []);
   const toggleCharts = useCallback(() => {
     closePreview(false);
-    setPanel(null);
     setFilesOpen(false);
     setPlanFocus(null);
     setOutput(null);
@@ -391,7 +370,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** Opens the Plan panel on card `id` (the Task's own when null), in the side-panel slot. */
   const openPlan = useCallback((id: string | null) => {
     closePreview(false);
-    setPanel(null);
     setFilesOpen(false);
     setChartsOpen(false);
     setOutput(null);
@@ -404,7 +382,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
-    setPanel(null);
     setFilesOpen(false);
     setChartsOpen(false);
     setPlanFocus(null);
@@ -420,26 +397,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const { startRename } = actions;
   const renameInHeader = useCallback(() => startRename(session.id, 'header'), [startRename, session.id]);
 
-  function openPanel(view: PanelView, opener: HTMLElement) {
-    closePreview(false);
-    panelOpener.current = opener;
-    if (sheetOpen) onSheet(false);
-    setFilesOpen(false);
-    setChartsOpen(false);
-    setPlanFocus(null);
-    setOutput(null);
-    setPanel(view);
-  }
-
   // Closes every right side panel without returning focus to its opener.
   const closeSidePanels = useCallback((keepOutput = false) => {
     closePreview(false);
-    setPanel(null);
     setFilesOpen(false);
     setChartsOpen(false);
     setPlanFocus(null);
     if (!keepOutput) setOutput(null);
-    panelOpener.current = null;
     onSheet(false, false);
   }, [closePreview, onSheet]);
   // A primary press in the conversation, outside any popup (a hover tooltip does not count), closes the
@@ -456,18 +420,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closeSidePanels(keepOutput);
   };
 
-  // Esc closes the panel when no popup owns the key.
-  useEffect(() => {
-    if (!shownPanel) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !popupOpen()) closePanel();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [shownPanel, closePanel]);
-
-  /** Scroll the transcript to the `task` row that spawned a subagent and flash it. */
-  async function locate(toolCallId: string) {
+  /** The last request to show a subagent's row; the reply's list, its group and the row itself follow it (`SubagentScope`). */
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  /** Scroll the transcript to the row of the subagent a `task` call spawned and flash it; `expand` opens the row and focuses it. */
+  async function locate(toolCallId: string, expand = false) {
     setLocateError('');
     let current = latestSession.current;
     let index = current.items.findIndex(item => item.id === toolCallId);
@@ -490,9 +446,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       atBottom.current = false;
       flushSync(() => setFirstVisible(current.items[transcriptWindowStart(current.items, index + 1)]?.id));
     }
+    // The reply's subagent list opens on its own (its group and page too); this commits it now.
+    flushSync(() => setReveal((r) => ({ toolCallId, expand, n: (r?.n ?? 0) + 1 })));
     if (!document.getElementById(`item-${toolCallId}`)) {
-      // A settled subagent's row folds into its turn's activity: open the fold that holds it.
-      const fold = [...(log.current?.querySelectorAll<HTMLElement>('[data-history-items]') ?? [])].find(node => (JSON.parse(node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
+      // Otherwise the call folds into its turn: open the subagent chip holding it, else the turn's activity.
+      const root = log.current;
+      const folds = root ? [...root.querySelectorAll<HTMLElement>('[data-subagent-items]'), ...root.querySelectorAll<HTMLElement>('[data-history-items]')] : [];
+      const fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
       const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
       if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
     }
@@ -501,6 +461,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     el.scrollIntoView({ block: 'center' });
     el.classList.add('animate-flash');
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
+    if (expand) el.querySelector<HTMLElement>('[data-subagent-toggle]')?.focus({ preventScroll: true });
   }
 
   /**
@@ -591,7 +552,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Without git there is nothing for Changes or Files to show: a warning stands in their place (DESIGN.md D3).
   const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
-  const agentsRunning = session.subagents.filter((s) => s.status === 'running').length;
   // A subagent still running after the turn, or compacting, keeps the Task Working (lib/tasks shownState).
   const state = shownState(session);
   const compacting = !!session.compacting && state === 'working';
@@ -635,14 +595,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   const changesLabel = fileCount === null ? 'Open changes' : `Open changes, ${fileCount} files`;
-  const runningSuffix = agentsRunning ? `, ${agentsRunning} running` : '';
-  const subagentsLabel = `Subagents, ${session.subagents.length}${session.subagents_before ? ' or more' : ''}${runningSuffix}`;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
     <TaskCardOpener.Provider value={plan ? openCardHere : null}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -735,23 +694,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Tip>
           )}
-          {session.subagents.length > 0 && (
-            <Tip label="Subagents">
-              <Button
-                id="subagents-link"
-                size="md"
-                aria-pressed={!!shownPanel}
-                aria-label={subagentsLabel}
-                className="px-2 text-muted"
-                onClick={(e) => (shownPanel ? closePanel() : openPanel({ view: 'list' }, e.currentTarget))}
-              >
-                <Bot />
-                {labels && <span>Subagents</span>}
-                <span className="tabular-nums text-ink">{session.subagents.length}{session.subagents_before && '+'}</span>
-                {agentsRunning > 0 && <WorkingMark />}
-              </Button>
-            </Tip>
-          )}
+          {session.subagents.length > 0 && <SubagentIndex labels={labels} />}
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
               <Ellipsis />
@@ -803,13 +746,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               turnTimings={session.turn_timings}
               interactions={visibleInteractions}
               subagents={session.subagents}
-              agents={agents}
-              agentSteps={agentSteps}
+              liveCard={!session.history_after}
               live={live && !session.history_after}
               working={working && !session.history_after}
               provider={session.provider}
               workdir={session.workdir}
-              onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
               footVerb={false}
               compacting={compacting}
               density={density}
@@ -866,9 +807,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       {planPresence.mounted && plan && <PlanPanel plan={plan} taskId={session.id} taskName={plan.mine ? '' : name} focus={planFocus ?? lastPlanFocus} inline={sidePanelInline} open={planOpen} onClose={closePlan} onClosed={onPlanClosed} />}
       {chartsPresence.mounted && project && <PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} />}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
-      {panelPresence.mounted && panelView && <SubagentPanel session={session} agents={agents} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} view={panelView} inline={sidePanelInline} open={!!shownPanel} onView={setPanel} onClose={closePanel} onClosed={panelPresence.onClosed} onLocate={locate} />}
-      {preview.selection && !sheetOpen && !shownPanel && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
+      {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>
+    </SubagentScope>
     </TaskCardOpener.Provider>
     </TempRootContext.Provider>
     </PreviewContext.Provider>
