@@ -1,6 +1,6 @@
-import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Sparkles, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, plannerErrorText, type Card, type CardDetail } from '../../api';
+import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { api, plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
 import { cardPath, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, useApp } from '../common';
@@ -197,26 +197,19 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           </Group>
         )}
 
-        {c.checklist.length > 0 && (
-          <Group title={`Checklist ${c.checklist.filter((i) => i.done).length}/${c.checklist.length}`}>
-            <ul className="flex flex-col gap-0.5">
-              {c.checklist.map((item, i) => (
-                <li key={i}>
-                  <label className="flex min-h-7 items-start gap-2 text-ui text-body pointer-coarse:min-h-11">
-                    <input
-                      type="checkbox"
-                      className="mt-1 size-3.5 accent-accent"
-                      checked={item.done}
-                      disabled={unassigned || !!busy}
-                      onChange={(e) => void run('checklist', 'save the checklist', () => api.planner.edit(c.id, { checklist: c.checklist.map((x, j) => (j === i ? { ...x, done: e.target.checked } : x)) }))}
-                    />
-                    <span className={cn('min-w-0', item.done && 'text-muted line-through')}>{item.text}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </Group>
-        )}
+        <Checklist
+          card={c}
+          // The service refuses edits to an Unassigned or a cancelled card ("restore it first").
+          readOnly={unassigned || c.status === 'cancelled'}
+          busy={!!busy}
+          save={async (checklist) => {
+            const saved = await run('checklist', 'save the checklist', async () => {
+              await api.planner.edit(c.id, { checklist });
+              return true;
+            });
+            return saved === true;
+          }}
+        />
 
         <Links card={c} byId={byId} onOpen={onOpen} readOnly={unassigned} />
 
@@ -288,6 +281,136 @@ const taskAuthor = (author: string, sessions: { id: string; name: string; title:
   const s = sessions.find((x) => `task:${x.id}` === author);
   return s ? s.name || s.title || 'A task' : 'A task';
 };
+
+/**
+ * The checklist: tick an item, click its text to rename it (Enter or leaving the field saves,
+ * Esc cancels), remove it, or add one at the end. Each save sends the whole list, built from the
+ * card as it stands at that moment. A read-only card shows its items only, and nothing when empty.
+ */
+function Checklist({ card: c, readOnly, busy, save }: Readonly<{ card: Card; readOnly: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
+  const [editing, setEditing] = useState<number | null>(null);
+  const [adding, setAdding] = useState('');
+  const list = useRef<HTMLUListElement>(null);
+  if (readOnly && c.checklist.length === 0) return null;
+  const done = c.checklist.filter((i) => i.done).length;
+  // Enter and Esc hand focus back to the item; a click elsewhere keeps it where it went.
+  const close = (i: number, refocus: boolean) => {
+    setEditing(null);
+    if (refocus) requestAnimationFrame(() => list.current?.querySelector<HTMLElement>(`[data-item="${i}"]`)?.focus());
+  };
+  return (
+    <Group title={c.checklist.length ? `Checklist ${done}/${c.checklist.length}` : 'Checklist'}>
+      {c.checklist.length > 0 && (
+        <ul ref={list} className="flex flex-col gap-0.5">
+          {c.checklist.map((item, i) => (
+            <li key={i} className="flex min-h-7 items-start gap-2 text-ui text-body pointer-coarse:min-h-11">
+              <label className="flex h-7 shrink-0 items-center pointer-coarse:-mx-[15px] pointer-coarse:h-11 pointer-coarse:w-11 pointer-coarse:justify-center">
+                <input
+                  type="checkbox"
+                  aria-label={item.text}
+                  className="size-3.5 accent-accent"
+                  checked={item.done}
+                  disabled={readOnly || busy}
+                  onChange={(e) => void save(c.checklist.map((x, j) => (j === i ? { ...x, done: e.target.checked } : x)))}
+                />
+              </label>
+              {editing === i ? (
+                <ItemEditor
+                  text={item.text}
+                  onCancel={(refocus) => close(i, refocus)}
+                  onSave={async (text, refocus) => {
+                    const ok = await save(c.checklist.map((x, j) => (j === i ? { ...x, text } : x)));
+                    if (ok) close(i, refocus);
+                    return ok;
+                  }}
+                />
+              ) : readOnly ? (
+                <span className={cn('min-w-0 flex-1 py-1 [overflow-wrap:anywhere]', item.done && 'text-muted line-through')}>{item.text}</span>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    data-item={i}
+                    aria-label={`Edit ${item.text}`}
+                    disabled={busy}
+                    className={cn('min-w-0 flex-1 cursor-text py-1 text-left [overflow-wrap:anywhere] hover:text-ink pointer-coarse:py-3', item.done && 'text-muted line-through')}
+                    onClick={() => setEditing(i)}
+                  >
+                    {item.text}
+                  </button>
+                  <Button size="icon-sm" className="mt-0.5 text-muted pointer-coarse:mt-2.5" aria-label={`Remove ${item.text}`} disabled={busy} onClick={() => void save(c.checklist.filter((_, j) => j !== i))}>
+                    <X />
+                  </Button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!readOnly && (
+        <form
+          className="flex items-center gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const text = adding.trim();
+            if (text) void save([...c.checklist, { text, done: false }]).then((ok) => ok && setAdding(''));
+          }}
+        >
+          <Input size="md" aria-label="Add an item" placeholder="Add an item" value={adding} onChange={(e) => setAdding(e.target.value)} />
+          <Button type="submit" size="md" variant="secondary" disabled={!adding.trim() || busy}>
+            <Plus />
+            Add item
+          </Button>
+        </form>
+      )}
+    </Group>
+  );
+}
+
+/** One checklist item's text being renamed; an empty text is refused here, and the field stays open. */
+function ItemEditor({ text, onSave, onCancel }: Readonly<{ text: string; onSave: (text: string, refocus: boolean) => Promise<boolean>; onCancel: (refocus: boolean) => void }>) {
+  const [value, setValue] = useState(text);
+  const [error, setError] = useState('');
+  // Enter, then the blur of the field going away, must not save twice.
+  const settled = useRef(false);
+  const commit = async (refocus: boolean) => {
+    if (settled.current) return;
+    const next = value.trim();
+    if (!next) return setError('An item needs text. Esc keeps the old one, or remove the item.');
+    settled.current = true;
+    if (next === text) return onCancel(refocus);
+    if (!(await onSave(next, refocus))) settled.current = false;
+  };
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <Input
+        size="md"
+        aria-label="Item text"
+        aria-invalid={!!error || undefined}
+        aria-describedby={error ? 'checklist-item-error' : undefined}
+        value={value}
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- Clicking the item's text opens this field to type into.
+        autoFocus
+        onChange={(e) => {
+          setValue(e.target.value);
+          setError('');
+        }}
+        onBlur={() => void commit(false)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void commit(true);
+          } else if (e.key === 'Escape') {
+            e.stopPropagation();
+            settled.current = true;
+            onCancel(true);
+          }
+        }}
+      />
+      {error && <Note tone="error" role="alert" id="checklist-item-error">{error}</Note>}
+    </div>
+  );
+}
 
 /** Blocked by and blocks, with a way to add a blocker (confirmed cards only) and to remove one. */
 function Links({ card: c, byId, onOpen, readOnly }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; readOnly: boolean }>) {

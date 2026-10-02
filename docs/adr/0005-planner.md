@@ -181,7 +181,7 @@ A static actor table (owner or agent) sits in one transition function in `intern
 
 **The rest of the surface:**
 - **Inbox:** pending requests (done, cancel, blocked, split and change), showing their flags and evidence. The count folds into Needs you.
-- **Card detail:** fields, win condition, checklist, the evidence trail, hold history (attempts), comments, and the owner-only command and paths.
+- **Card detail:** fields, win condition, checklist, the evidence trail, hold history (attempts), comments, and the owner-only command and paths. The owner ticks, renames (click the text; Enter or leaving the field saves, Esc cancels, empty text is refused), removes and adds checklist items there, also on a card with no checklist yet; each save sends the whole list. An Unassigned or cancelled card shows its checklist read-only.
 - **Actions:** Launch, Do whole story, Plan with agent, Suggest stories, Confirm, Release, Cancel (with a comment), Restore (with a comment), Check at HEAD, Triage, and Purge cancelled.
 - **The Settle dialog** for held leaves (§5).
 
