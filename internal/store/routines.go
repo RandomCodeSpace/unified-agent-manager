@@ -89,6 +89,8 @@ type WebRoutineRun struct {
 // WebRoutine is recurring work in a Project: on its schedule, the web service
 // starts a Task with Prompt on Model. NextRun is the next due firing, zero
 // while paused; Runs is the newest MaxRoutineRuns firings, oldest first.
+// Autopilot turns autopilot on in each run's Task: it keeps working until
+// the agent calls task_complete or the run's time limit stops it.
 type WebRoutine struct {
 	ID            string          `json:"id"`
 	ProjectID     string          `json:"project_id"`
@@ -99,6 +101,7 @@ type WebRoutine struct {
 	Schedule      RoutineSchedule `json:"schedule"`
 	Enabled       bool            `json:"enabled"`
 	Mode          Mode            `json:"mode"`
+	Autopilot     bool            `json:"autopilot,omitempty"`
 	MaxRunsPerDay int             `json:"max_runs_per_day"`
 	MaxMinutes    int             `json:"max_minutes"`
 	CreatedAt     time.Time       `json:"created_at"`
@@ -112,7 +115,7 @@ type webRoutineAlias WebRoutine
 
 var knownWebRoutineFields = map[string]struct{}{
 	"id": {}, "project_id": {}, "name": {}, "prompt": {}, "provider": {}, "model": {}, "schedule": {}, "enabled": {},
-	"mode": {}, "max_runs_per_day": {}, "max_minutes": {}, "created_at": {}, "next_run": {}, "runs": {},
+	"mode": {}, "autopilot": {}, "max_runs_per_day": {}, "max_minutes": {}, "created_at": {}, "next_run": {}, "runs": {},
 }
 
 func (r WebRoutine) MarshalJSON() ([]byte, error) {

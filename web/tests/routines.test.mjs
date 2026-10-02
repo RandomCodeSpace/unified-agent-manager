@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { describeSchedule, outcomeLabel, outcomeTone, scheduleOf, untilText } from '../src/lib/routines.ts';
+import { describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, scheduleOf, untilText } from '../src/lib/routines.ts';
 
 test('a schedule reads in plain words', () => {
   assert.equal(describeSchedule({ kind: 'weekdays', time: '09:00' }), 'Every weekday at 09:00');
@@ -14,6 +14,18 @@ test('the form sends only the fields its kind takes', () => {
   assert.deepEqual(scheduleOf('hours', '09:00', 3, 6), { kind: 'hours', hours: 6 });
   assert.deepEqual(scheduleOf('weekly', '09:00', 3, 6), { kind: 'weekly', time: '09:00', weekday: 3 });
   assert.deepEqual(scheduleOf('weekdays', '07:15', 3, 6), { kind: 'weekdays', time: '07:15' });
+});
+
+test('a routine’s mode reads as the form offers it, and the form sends both fields', () => {
+  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: true }), 'Yolo with autopilot');
+  assert.equal(routineModeLabel({ mode: 'yolo', autopilot: false }), 'Yolo');
+  assert.equal(routineModeLabel({ mode: 'safe', autopilot: false }), 'Safe');
+  assert.equal(routineModeLabel({ mode: 'safe', autopilot: true }), 'Safe with autopilot');
+  assert.equal(routineMode({ mode: 'safe', autopilot: true }), 'safe');
+  assert.equal(routineMode({ mode: 'yolo', autopilot: true }), 'autopilot');
+  assert.deepEqual(routineModeInput('autopilot'), { mode: 'yolo', autopilot: true });
+  assert.deepEqual(routineModeInput('yolo'), { mode: 'yolo', autopilot: false });
+  assert.deepEqual(routineModeInput('safe'), { mode: 'safe', autopilot: false });
 });
 
 test('a running run whose task waits for the owner needs you', () => {

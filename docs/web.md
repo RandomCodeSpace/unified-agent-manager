@@ -478,17 +478,28 @@ sign-outs are logged without the token.
   routine is and offers New routine, which asks for the Project when there
   are several. `GET /api/routines` lists every Project's routines, oldest
   first. Each routine has a name, the first message its runs send, a
-  model (New task's model unless you choose one), a schedule, a permission
-  mode, and two limits. A schedule is every day at a time, every weekday
+  model (New task's model unless you choose one), a schedule, a mode, and
+  two limits. A schedule is every day at a time, every weekday
   (Monday to Friday) at a time, every 1 to 24 hours, or once a week on a
-  day at a time, in the local time of the host the service runs on. A new
-  routine is Safe: each permission request waits for you and the Task
-  shows as Needs you. Yolo allows every request with nobody watching, and
-  the form says so. **Runs a day** (1 to 100, default 24) counts every run
+  day at a time, in the local time of the host the service runs on. Nobody
+  watches a run, so a new routine is **Yolo with autopilot**: every
+  permission request is allowed, and the run's Task turns autopilot on
+  (as `/autopilot on` does) before its first message, so it keeps working
+  until the agent calls `task_complete` or the time limit stops it.
+  **Yolo** allows every request for one turn: the run ends when the agent
+  first stops. **Safe** makes each permission request wait for you, and
+  the Task shows as Needs you. The form explains the chosen mode and, for
+  both Yolo modes, that the agent acts without asking while nobody is
+  watching. A routine saved before this choice existed keeps its mode
+  (Safe or Yolo, without autopilot), and each card shows its mode. The API
+  takes `mode` (`safe` or `yolo`) and `autopilot`; a create that leaves
+  them out is Yolo with autopilot, and one that sets only `mode: "safe"`
+  gets no autopilot. **Runs a day** (1 to 100, default 24) counts every run
   that started, or tried to start, a Task since local midnight, Run now
   included; a firing past it is skipped. **Stop a run after** (1 to 720
   minutes, default 30) cancels the turn still running then, a turn waiting
-  for your answer included. Each run starts a normal Task in the Project,
+  for your answer included; Stop also turns autopilot off, so an autopilot
+  run that never finishes ends there as Stopped at the time limit. Each run starts a normal Task in the Project,
   named "<routine name> · <date and time>", with the routine's prompt as
   its first message. It shows in the sidebar and Needs you like any Task,
   begins with "Started by a routine.", and the API lists the routine as
