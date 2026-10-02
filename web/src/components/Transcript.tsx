@@ -160,14 +160,15 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
   flush(true);
-  // Compact draws no live activity row, so the foot line names the current step itself.
+  // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
   const step = compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working />}
-        <WorkingTail working={working && (compact || (footVerb && !liveAtFoot(items, byParent)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} />
+        <WorkingTail working={working && (compact || (footVerb && !liveAtFoot(items, byParent)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -373,8 +374,12 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
  * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working, turnId, step, verb = true }: Readonly<{ working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean }>) {
+function WorkingTail({ working, turnId, step, verb = true, current }: Readonly<{ working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean; /** Compact: the step in progress, unfolded (`LiveStep`), in place of its one-line label. */ current?: ReactNode }>) {
   const { mounted, onClosed } = usePresence(working);
+  // Once a turn showed a step unfolded, the foot keeps that room until the turn ends: a step
+  // folding into the turn line never pulls the transcript up, and the next one lands in the same room.
+  const [roomFor, setRoomFor] = useState<string | null>(null);
+  if (current && roomFor !== turnId) setRoomFor(turnId);
   if (!mounted) return null;
   let text = '';
   if (step) text = step.label;
@@ -382,13 +387,54 @@ function WorkingTail({ working, turnId, step, verb = true }: Readonly<{ working:
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
       {working && verb && <output className="sr-only">Busy</output>}
-      <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-        {text && <WorkingMark />}
-        <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
-          {text}
-        </span>
+      <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
+        {current || (
+          <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
+            {text && <WorkingMark />}
+            <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
+              {text}
+            </span>
+          </div>
+        )}
       </div>
     </Collapse>
+  );
+}
+
+/** The most of a running call's output the live step renders: its tail box shows only the last lines anyway. */
+const LIVE_OUTPUT_TAIL = 4000;
+
+/**
+ * Compact (DESIGN.md live step): the step in progress at the turn's foot, unfolded. A thought
+ * streaming is "Thinking…" over its text as it arrives; a call running is its tool row (mark,
+ * name, argument) over the tail of its output. The text sits in a box at most 80px tall that
+ * shows its newest lines, the older ones clipped above, so it never grows into a block and
+ * nothing scrolls. It rises in; once the step ends it is gone from here and counted on the turn line.
+ */
+function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
+  const { item: full, attach } = useItemBody(item, true);
+  const thought = item.kind === 'reasoning';
+  const text = (thought ? full?.text : full?.tool?.output) ?? '';
+  return (
+    <div ref={attach} className="flex animate-rise flex-col gap-1">
+      {thought ? (
+        <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
+          <WorkingMark />
+          <span className="animate-shimmer motion-reduce:animate-none">Thinking…</span>
+        </div>
+      ) : (
+        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} />
+      )}
+      {text.trim() && (
+        <div className={cn('flex max-h-20 flex-col justify-end overflow-hidden', thought ? 'relative pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-[\'\']' : 'ml-6 rounded-sm bg-code-bg px-2 py-1')}>
+          {thought ? (
+            <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
+          ) : (
+            <pre translate="no" className="shrink-0 font-mono text-code-sm whitespace-pre-wrap break-words text-muted">{text.slice(-LIVE_OUTPUT_TAIL)}</pre>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

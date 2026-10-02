@@ -81,7 +81,8 @@ test('subagent compact density uses turn heads, follow-up boundaries and lazy ti
   assert.ok(items.every(entry => entry.agent_id === 'child'));
   const running = { ...items[5], tool: { ...items[5].tool, status: 'running' } };
   const live = renderToStaticMarkup(React.createElement(exports.AgentItems, { ...props, items: [...items.slice(0, 5), running], live: true, density: 'compact' }));
-  assert.match(live, /Running:/);
+  // The running call is the panel's live step: its tool row, unfolded at the foot.
+  assert.match(live, /animate-rise[\s\S]*>view<[\s\S]*, running/);
   assert.doesNotMatch(live, /Busy for|Took /);
   const main = renderToStaticMarkup(React.createElement(exports.Transcript, { ...props, agentId: undefined, items: [], subagents: [], working: false, density: 'compact' }));
   assert.match(main, /Parent question/);

@@ -292,7 +292,14 @@ are logged only at debug level (`UAM_DEBUG=1`).
   If you scroll up while text arrives, the view stays put
   and offers "Jump to bottom". While the agent works, a label above the
   composer shows that it is working and for how long, and stays in view as
-  you scroll; what it is doing shows at the end of the conversation.
+  you scroll; what it is doing shows at the end of the conversation. With
+  the Compact activity setting (the default), the step in progress stays
+  open there: the thought being streamed, its newest lines in a short box,
+  or the call that is running, as its line with the newest lines of its
+  output. When the step finishes it leaves that spot and joins the counts on
+  the turn's summary line, and the next step takes its place; once the turn
+  ends only the summary line remains. Questions, permission requests and
+  subagents appear as before.
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
   code in its header; clicking the diagram opens it larger. A block Mermaid
