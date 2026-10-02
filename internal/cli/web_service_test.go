@@ -121,6 +121,52 @@ func TestWebStartStatusAndStop(t *testing.T) {
 	}
 }
 
+// The service runs in the user's home, not the directory uam web was started
+// from, so it keeps working once that directory is deleted; relative path
+// settings still mean what they meant there.
+func TestWebServiceLeavesItsStartDirectory(t *testing.T) {
+	base := t.TempDir()
+	home, start := filepath.Join(base, "home"), filepath.Join(base, "worktree", "sub")
+	must(t, os.MkdirAll(home, 0o700))
+	must(t, os.MkdirAll(start, 0o700))
+	sessionDir, configDir := filepath.Join(base, "sess"), filepath.Join(base, "cfg")
+	t.Setenv("HOME", home)
+	t.Setenv("UAM_TEST_WEB_SERVICE", "")
+	t.Chdir(start)
+	t.Setenv("UAM_SESSION_DIR", filepath.Join("..", "..", "sess"))
+	t.Setenv("UAM_CONFIG_DIR", filepath.Join("..", "..", "cfg"))
+	t.Cleanup(func() { killWebService(sessionDir) })
+	ctx := context.Background()
+	out := captureCLIStdout(t, func() { must(t, Run(ctx, []string{"web", "--listen", "127.0.0.1:0"})) })
+	st, running := web.ReadRunning(sessionDir)
+	if !running {
+		t.Fatalf("no service in %s after start: %q", sessionDir, out)
+	}
+	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", st.PID)); err == nil && cwd != home {
+		t.Fatalf("service cwd = %q, want %q", cwd, home)
+	}
+	token, err := os.ReadFile(filepath.Join(configDir, "web-token"))
+	must(t, err)
+	if !strings.Contains(out, strings.TrimSpace(string(token))) {
+		t.Fatal("start output lacks the token from the start-relative config dir")
+	}
+	if _, err := os.Stat(filepath.Join(home, "cfg")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the service resolved its config dir against its new cwd: %v", err)
+	}
+
+	must(t, os.RemoveAll(filepath.Join(base, "worktree")))
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	resp, err := client.Get(st.URL() + "api/auth")
+	must(t, err)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/auth after the start directory went = %d", resp.StatusCode)
+	}
+	t.Setenv("UAM_SESSION_DIR", sessionDir)
+	t.Setenv("UAM_CONFIG_DIR", configDir)
+	captureCLIStdout(t, func() { must(t, Run(ctx, []string{"web", "stop"})) })
+}
+
 // uam web reports a service only once it verifiably runs with sign-in
 // required: a refused start, a ready report without web.json and a legacy
 // insecure service are errors, and no access details are printed.

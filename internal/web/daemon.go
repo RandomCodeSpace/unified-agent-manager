@@ -262,11 +262,17 @@ func spawn(ctx context.Context, argv []string, env ...string) error {
 		return fmt.Errorf("create readiness pipe: %w", err)
 	}
 	defer func() { _ = r.Close() }()
+	base, err := daemonruntime.WorkEnv()
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(argv[0], argv[1:]...) // #nosec G204 -- the running uam binary, or systemd-run from a fixed path running it; args are built without a shell.
-	// The service must outlive the launching terminal and SSH session.
+	// The service must outlive the launching terminal and SSH session, and
+	// the directory it was started from.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Dir = daemonruntime.WorkDir()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devIn, devOut, devOut
-	cmd.Env = append(append(os.Environ(), env...), readyEnv+"=3")
+	cmd.Env = append(append(base, env...), readyEnv+"=3")
 	cmd.ExtraFiles = []*os.File{w}
 	if err := cmd.Start(); err != nil {
 		_ = w.Close()
