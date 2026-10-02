@@ -650,6 +650,43 @@ describe('owner authoring', () => {
     expect(within(dialog.getByRole('list', { name: 'Still waits on' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#37 Harden the retry path · Story (via its story #16)']);
   });
 
+  test('Plan with agent asks for the planning task’s model and mode as Launch does, and sends them with the brief', async () => {
+    const { user } = await openPlanner();
+    const plan = vi.spyOn(api.planner, 'plan');
+    try {
+      const menu = await openMenu(user, 'Actions for #7');
+      await user.click(menu.getByRole('menuitem', { name: 'Plan with agent' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Plan #7 with an agent' }));
+      // Settings' New tasks: Claude Haiku 4.5, high effort, long context, Safe.
+      expect(dialog.getByRole('combobox', { name: 'Model' }).textContent).toContain('Claude Haiku 4.5');
+      await user.click(dialog.getByRole('combobox', { name: 'Model' }));
+      await user.click(await screen.findByRole('option', { name: /GPT-5 mini/ }));
+      await user.click(dialog.getByRole('combobox', { name: 'Mode', exact: true }));
+      await user.click(await screen.findByRole('option', { name: 'Yolo' }));
+      await user.type(dialog.getByRole('textbox', { name: 'Brief' }), 'Split it by payload.');
+      await user.click(dialog.getByRole('button', { name: 'Start planning' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Plan #7 with an agent' })).toBeNull());
+      expect(plan).toHaveBeenCalledWith('cp1-7', { provider: 'copilot', model: 'gpt-5-mini', effort: 'high', context_size: 'default', mode: 'yolo', brief: 'Split it by payload.' });
+    } finally {
+      plan.mockRestore();
+    }
+  });
+
+  test('Suggest asks for no model: the Utility model runs it', async () => {
+    const { user } = await openPlanner();
+    const menu = await openMenu(user, 'Actions for #7');
+    await user.click(menu.getByRole('menuitem', { name: 'Suggest subtasks' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Suggest subtasks for #7' }));
+    expect(dialog.queryByRole('combobox', { name: 'Model' })).toBeNull();
+    const suggest = vi.spyOn(api.planner, 'suggest');
+    try {
+      await user.click(dialog.getByRole('button', { name: 'Suggest' }));
+      await waitFor(() => expect(suggest).toHaveBeenCalledWith('cp1-7', { brief: '', document: '', max: 3 }));
+    } finally {
+      suggest.mockRestore();
+    }
+  });
+
   test('Launch asks for the new task’s model, mode and a brief, starting from the New task defaults', async () => {
     const { user, tree } = await openPlanner();
     const launch = vi.spyOn(api.planner, 'launch');

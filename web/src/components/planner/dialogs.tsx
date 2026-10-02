@@ -185,11 +185,19 @@ export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null;
 export interface BriefAsk {
   kind: 'plan' | 'suggest';
   title: string;
-  run: (body: { brief: string; document: string; max: number }) => Promise<unknown>;
+  /** `task` is the planning Task's selection (Plan with agent); Suggest runs on the Utility model and has none. */
+  run: (body: { brief: string; document: string; max: number; task: TaskDefaults | null }) => Promise<unknown>;
 }
 
-/** Plan with agent (a brief) and Suggest (a brief, an optional document to split, and how many). */
+/**
+ * Plan with agent (the new Task's model, effort, context size and mode from the New task
+ * defaults, as Launch asks, and a brief) and Suggest (a brief, an optional document to split,
+ * and how many; the Utility model runs it).
+ */
 export function BriefDialog({ ask, onClose }: Readonly<{ ask: BriefAsk | null; onClose: () => void }>) {
+  const { meta, settings } = useApp();
+  // Null until changed here: the New task defaults.
+  const [picked, setPicked] = useState<TaskDefaults | null>(null);
   const [brief, setBrief] = useState('');
   const [doc, setDoc] = useState('');
   const [max, setMax] = useState('3');
@@ -199,17 +207,20 @@ export function BriefDialog({ ask, onClose }: Readonly<{ ask: BriefAsk | null; o
   const field = useRef<HTMLTextAreaElement>(null);
   if (ask && ask !== shown) {
     setShown(ask);
+    setPicked(null);
     setBrief('');
     setDoc('');
     setError(null);
   }
+  const suggest = shown?.kind === 'suggest';
+  const selection = suggest ? null : (picked ?? resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models));
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
     if (!shown) return;
     setBusy(true);
     setError(null);
     try {
-      await shown.run({ brief: brief.trim(), document: doc.trim(), max: Math.max(1, Math.min(10, Number(max) || 3)) });
+      await shown.run({ brief: brief.trim(), document: doc.trim(), max: Math.max(1, Math.min(10, Number(max) || 3)), task: selection });
       onClose();
     } catch (err) {
       setError(plannerErrorText(err));
@@ -217,7 +228,6 @@ export function BriefDialog({ ask, onClose }: Readonly<{ ask: BriefAsk | null; o
       setBusy(false);
     }
   };
-  const suggest = shown?.kind === 'suggest';
   return (
     <Dialog
       open={!!ask}
@@ -228,6 +238,7 @@ export function BriefDialog({ ask, onClose }: Readonly<{ ask: BriefAsk | null; o
       description={suggest ? 'The Utility model proposes cards under this one. They arrive as suggestions to confirm or dismiss.' : 'A new task plans the work under this card. What it writes stays a suggestion until you confirm it.'}
     >
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
+        {selection && <TaskDefaultsFields prefix="planner-plan" value={selection} disabled={busy} onChange={setPicked} />}
         <Field id="planner-brief" label="Brief">
           <textarea id="planner-brief" ref={field} className={areaClass} placeholder="What the plan should aim at (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
         </Field>
