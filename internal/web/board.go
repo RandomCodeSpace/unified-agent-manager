@@ -940,6 +940,7 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 	if err != nil {
 		return c, SessionSummary{}, err
 	}
+	m.titleBoardTask(summary.ID, create.Name)
 	held := c
 	err = m.withBoard(func(st *board.Store) error {
 		if plan {
@@ -962,6 +963,32 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 	}
 	summary, err = m.Summary(summary.ID)
 	return held, summary, err
+}
+
+// titleBoardTask titles the new planner Task id by its card, as its name
+// does, before its first prompt: in uam, and in the provider's store so the
+// provider does not title it from the preamble. Its name already keeps a
+// title job away. A provider that cannot take the title leaves uam's.
+func (m *Manager) titleBoardTask(id, title string) {
+	m.mu.Lock()
+	s := m.sessions[id]
+	if s == nil {
+		m.mu.Unlock()
+		return
+	}
+	before := m.summaryLocked(s)
+	s.title = title
+	conv := s.conv
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	if conv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+	defer cancel()
+	if err := conv.SetTitle(ctx, title); err != nil {
+		log.Info("planner task titled; the provider kept its own title", "session", id, "error", err)
+	}
 }
 
 // launchSelection is a planner Task's selection: the request's, with the

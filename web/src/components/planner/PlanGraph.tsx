@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
 import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Card } from '../../api';
-import { GRAPH_NODE, cardPath, layoutLevel, waitsOf, wrapText, type GraphNode } from '../../lib/board';
+import { GRAPH_NODE, cardPath, layoutLevel, shownProgress, waitsOf, wrapText, type GraphNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { STATUS_WORD, WaitList, type TaskPlan } from './TaskPlan';
@@ -54,7 +54,7 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
   const shown = selected ? cards.find((c) => c.id === selected && c.kind === 'subtask') : undefined;
   const waits = container ? waitsOf(container, plan.byId) : [];
   const kinds = [...new Set(cards.map((c) => c.kind))].map((k) => KIND_WORDS[k]).join(' and ');
-  const progress = container?.progress;
+  const progress = container?.progress && shownProgress(container.progress);
 
   const open = (card: Card) => (card.kind === 'subtask' ? onSelect(card.id) : onLevel(card.id));
   const onKey = (e: KeyboardEvent, card: Card) => {
@@ -89,7 +89,7 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
       )}
       <p className="text-caption text-muted">
         {cards.length ? `${cards.length} ${kinds}` : 'Nothing at this level yet'}
-        {progress && ` · ${progress.done} of ${progress.total} subtasks done`}
+        {progress && ` · ${progress.text}`}
         {layout.edges.length > 0 && ' · arrows point from what finishes first'}
       </p>
       <div ref={box} className="min-w-0 overflow-x-auto overscroll-x-contain">
@@ -176,7 +176,8 @@ function Node({ node: { card: c, x, y }, mine, onPath, selected, onOpen, onKey }
   const { w, h } = GRAPH_NODE;
   const container = c.kind !== 'subtask';
   const lines = wrapText(`#${c.seq} ${c.title}`, LINE_CHARS, TITLE_LINES);
-  const state = container ? `${c.progress?.done ?? 0} of ${c.progress?.total ?? 0} done` : STATUS_WORD[c.status];
+  const progress = shownProgress(c.progress ?? { done: 0, total: 0, proposed: 0 });
+  const state = container ? progress.short : STATUS_WORD[c.status];
   const tag = mine ? 'This task' : c.confirmed ? '' : 'Proposed';
   return (
     // An SVG group as a button: SVG has no button element, and the drawing must stay plain SVG.
@@ -184,7 +185,7 @@ function Node({ node: { card: c, x, y }, mine, onPath, selected, onOpen, onKey }
       role="button"
       tabIndex={0}
       data-plan-card={c.id}
-      aria-label={`#${c.seq} ${c.title}, ${state}${tag ? `, ${tag.toLowerCase()}` : ''}. ${container ? `Show its ${c.kind === 'epic' ? 'stories' : 'subtasks'}` : 'Show its details'}`}
+      aria-label={`#${c.seq} ${c.title}, ${container ? progress.text : state}${tag ? `, ${tag.toLowerCase()}` : ''}. ${container ? `Show its ${c.kind === 'epic' ? 'stories' : 'subtasks'}` : 'Show its details'}`}
       aria-pressed={container ? undefined : selected}
       transform={`translate(${x + PAD} ${y + PAD})`}
       className="group/node cursor-pointer outline-none"

@@ -1111,7 +1111,7 @@ sign-outs are logged without the token.
   drop their labels first, then Files, Charts and Terminal move into the
   header's "…" menu, so the Task's title keeps its room.
 - **Plan**: with the planner on, a Task whose Project has a plan shows a
-  one-line story strip under its header: "Epic › Story · 1/3 done · This
+  one-line story strip under its header: "Epic › Story · 1/4 done · 1 proposed · This
   task #25 · next #26 · waits for …", where "waits for" includes what the
   card waits for through its story or epic. "next" is the first subtask in
   the story not started yet with nothing open in its way (its own blockers
@@ -1131,7 +1131,13 @@ sign-outs are logged without the token.
   the Planner, open a dialog with the new Task's model, effort, context size
   and mode (starting from Settings → New tasks) and an optional brief, which
   the Task's first message carries; when launching confirms proposals, the
-  dialog names them first. Editing, linking, moving or splitting a proposal
+  dialog names them first. The new Task is named and titled after its card,
+  "#12 Title" ("Plan #12 Title" for Plan with agent), in uam and in the
+  provider's own session list, rather than after its first message, and no
+  title is generated for it; clearing the name shows the same title. A container's progress counts all its
+  live subtasks, proposals included, and names the proposals ("0/3 done · 2
+  proposed") in the strip, the outline, the graph and the Planner's views.
+  Editing, linking, moving or splitting a proposal
   keeps it a proposal and restarts its 14 days before it expires; only
   Confirm, launching it, or adding a Task to it confirms it. A subtask in progress shows why its plan
   is locked.

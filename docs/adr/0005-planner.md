@@ -54,7 +54,7 @@ Epics and stories never store a status. Their status comes from the **confirmed*
 | otherwise | planned |
 
 - A container can't reach done while any leaf under it is held or has a pending request.
-- Progress is done ÷ non-cancelled confirmed leaves, counted rather than weighted. The UI adds "+N proposed" for unconfirmed leaves.
+- Progress is counted rather than weighted. The API's `progress` keeps the confirmed count the status rules read: `done` and `total` are the done and the non-cancelled confirmed leaves, and `proposed` the non-cancelled unconfirmed ones. Proposals are plan items (decision 6), so every view shows done ÷ all non-cancelled leaves, `total + proposed`, and still names the proposals: "0/3 done · 2 proposed".
 - When a container reaches done, uam does two things:
   - it cancels the container's remaining unconfirmed, unheld leaves with the comment "closed unconfirmed with #12";
   - it adds a roll-up comment made of the children's close comments.
@@ -406,7 +406,7 @@ Each item is a store, tool or UI test.
 | `POST /api/board/purge` | `{project_id}` |
 | `POST /api/board/import` | `{dir}` → `{imported, updated, unassigned, comments, links, skipped: [{id, reason}]}` |
 
-**Launch and plan** create the Task through the existing create path, set the hold (launch only) in the same request, and send the preamble as the Task's first prompt.
+**Launch and plan** create the Task through the existing create path, set the hold (launch only) in the same request, and send the preamble as the Task's first prompt. The Task is named and titled after its card, "#12 Title" ("Plan #12 Title" for a planning Task), in uam and in the provider before the preamble goes, so neither the provider nor a title job titles it from the preamble.
 
 The preamble is deterministic. It contains:
 - the card's path with `#seq` (epic › story › subtask);

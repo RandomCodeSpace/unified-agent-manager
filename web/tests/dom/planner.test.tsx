@@ -70,9 +70,9 @@ describe('planner', () => {
     await user.click(tree.getByRole('button', { name: 'Confirm Split the diagram renderer into its own chunk' }));
     await waitFor(() => expect(tree.queryByRole('button', { name: 'Confirm Lazy-load the diagram renderer' })).toBeNull());
     expect(tree.queryByRole('button', { name: 'Confirm Split the diagram renderer into its own chunk' })).toBeNull();
-    // Both are part of the plan now, and #1 counts #17.
+    // Both are part of the plan now: #1 counts #17 as before, no longer as a proposal, and only #11 stays proposed.
     expect(tree.getByRole('treeitem', { name: /^#16 Lazy-load the diagram renderer, Planned/ })).toBeTruthy();
-    expect(tree.getByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ }).textContent).toContain('4/10');
+    expect(tree.getByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ }).textContent).toContain('4/11 · 1 proposed');
   });
 
   test('an epic an agent proposed folds into +N suggested at the root, and the epic filter shows it to confirm or dismiss', async () => {
@@ -349,6 +349,23 @@ describe('the planner setting', () => {
     // Settle asks first: t15 holds a subtask.
     expect(await settleT15(user)).toBe('{}');
     expect(await screen.findByRole('dialog', { name: 'Settle “Remove unused exports across packages”?' })).toBeTruthy();
+  });
+});
+
+describe('progress', () => {
+  // #7 has #8 (in progress), #9, #10 (cancelled) and the proposal #11: proposals are plan items, so it reads 0/3, the proposal named.
+  test('every view counts proposals in a container’s progress and names them', async () => {
+    const { user, tree } = await openPlanner();
+    expect(tree.getByRole('treeitem', { name: /^#7 Trim the snapshot payload/ }).textContent).toContain('0/3 · 1 proposed');
+    const panel = await openCard(user, tree, 7);
+    expect(panel.getByText('0/3 done · 1 proposed')).toBeTruthy();
+    await closeCard(user);
+    await user.click(screen.getByRole('radio', { name: 'Board' }));
+    const board = within(await screen.findByRole('region', { name: 'Board' }));
+    expect(board.getByRole('region', { name: 'Trim the snapshot payload lane' }).textContent).toContain('0/3 · 1 proposed');
+    await user.click(screen.getByRole('radio', { name: 'Map' }));
+    const map = within(await screen.findByRole('group', { name: /Plan map/ }));
+    expect(map.getByRole('button', { name: /^#7 · Story · Doing · 0\/3 · 1 proposed:/ })).toBeTruthy();
   });
 });
 
