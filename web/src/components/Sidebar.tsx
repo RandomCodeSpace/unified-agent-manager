@@ -1,4 +1,4 @@
-import { ChevronRight, CircleCheck, FolderPlus, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
+import { ChevronRight, CircleCheck, Clock, FolderPlus, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -22,6 +22,9 @@ export interface WorkspaceActions {
   onEditProject: (p: Project) => void;
   /** A Project's routines, in the main pane. */
   onRoutines: (p: Project) => void;
+  /** Whether Routines is showing; the sidebar's Routines button opens every Project's, or closes the view. */
+  routinesOpen: boolean;
+  onAllRoutines: () => void;
   /** The Project the sidebar is filtered to; null shows every Project. Remembered per browser. */
   filter: string | null;
   onFilter: (id: string | null) => void;
@@ -98,6 +101,16 @@ function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[
   return <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} side={side === 'right' ? 'right' : undefined} />;
 }
 
+function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
+  return (
+    <Tip label="Routines" side={side}>
+      <Button size="icon" aria-label="Routines" aria-pressed={actions.routinesOpen} className="text-muted" onClick={actions.onAllRoutines}>
+        <Clock />
+      </Button>
+    </Tip>
+  );
+}
+
 function SettingsButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
   return (
     <Tip label="Settings" side={side}>
@@ -132,7 +145,7 @@ function ConnectionDot({ connection, side }: Readonly<{ connection: Connection; 
 
 /**
  * The collapsed sidebar (wide layout): a narrow rail (`--spacing-rail-collapsed`) on the sidebar's floor. At the top the UAM
- * mark (shows the sidebar, with the Needs you count), New task, the Project filter and Add
+ * mark (shows the sidebar, with the Needs you count), New task, the Project filter, Routines and Add
  * project; at the foot Settings, the planner and the connection. Each is the expanded
  * sidebar's own control, so it opens the same thing; tips open to the right.
  */
@@ -145,6 +158,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         {projects.length > 0 && <NewTaskButton actions={actions} side="right" />}
         {projects.length > 0 && <FilterButton projects={projects} actions={actions} side="right" />}
+        {projects.length > 0 && <RoutinesButton actions={actions} side="right" />}
         <AddProjectButton actions={actions} side="right" />
       </div>
       <span className="flex-1" />
@@ -534,6 +548,7 @@ export const Sidebar = memo(function Sidebar({
         </label>
         <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
         {projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
+        {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />
         {projects.length > 0 && <NewTaskButton actions={actions} id="new-task" />}
       </header>

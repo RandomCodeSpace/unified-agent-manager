@@ -55,6 +55,22 @@ function seedRoutines(): Routine[] {
       created_at: ago(60 * 24 * 2),
       runs: [],
     },
+    {
+      id: 'r3',
+      project_id: 'p3',
+      provider: 'copilot',
+      name: 'Broken link check',
+      prompt: 'Build the site and list every broken internal link with the page it is on.',
+      model: 'gpt-5-mini',
+      schedule: { kind: 'weekly', time: '07:30', weekday: 1 },
+      enabled: true,
+      mode: 'safe',
+      max_runs_per_day: 1,
+      max_minutes: 15,
+      created_at: ago(60 * 24),
+      next_run: ahead(60 * 24 * 3),
+      runs: [],
+    },
   ];
 }
 
@@ -66,6 +82,7 @@ export function routinesMock(projectExists: (id: string) => boolean) {
 
   function route(method: string, path: string, body: Json): Response | null {
     let r: RegExpMatchArray | null;
+    if (path === '/api/routines' && method === 'GET') return json(200, { routines: routines.filter((x) => projectExists(x.project_id)) });
     if ((r = path.match(/^\/api\/projects\/([^/]+)\/routines$/))) {
       const project = decodeURIComponent(r[1]);
       if (!projectExists(project)) return fail(404, 'project not found');

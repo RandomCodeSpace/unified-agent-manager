@@ -453,3 +453,36 @@ func TestRoutineFiresOnSchedule(t *testing.T) {
 	}
 	waitUntil(t, "the scheduled run's task", func() bool { return routine(t, m, project, r.ID).Runs[0].TaskID != "" })
 }
+
+// GET /api/routines lists every Project's routines, oldest first, behind
+// the sign-in like the per-Project list.
+func TestAllRoutinesListsEveryProject(t *testing.T) {
+	m, prov, _, a := newRoutineManager(t)
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m, prov: prov}
+	b := addProject(t, ts.m, t.TempDir())
+	first := mustRoutine(t, ts.m, a, hourly("First"))
+	second := mustRoutine(t, ts.m, b, hourly("Second"))
+	if w := ts.do(http.MethodGet, "/api/routines", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("signed out = %d", w.Code)
+	}
+	w := ts.do(http.MethodGet, "/api/routines", "", withCookie(ts))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	var got struct{ Routines []Routine }
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(got.Routines))
+	for _, r := range got.Routines {
+		ids = append(ids, r.ProjectID+"/"+r.ID)
+	}
+	if want := []string{a + "/" + first.ID, b + "/" + second.ID}; !slices.Equal(ids, want) {
+		t.Fatalf("listed = %v, want %v", ids, want)
+	}
+}

@@ -1,10 +1,11 @@
-import { ChevronRight, Pause, Pencil, Play, Plus, Trash2, X, Zap } from 'lucide-react';
+import { ChevronRight, Clock, Pause, Pencil, Play, Plus, Trash2, X, Zap } from 'lucide-react';
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, modelCatalog, resolveTaskDefaults, type Project, type Routine, type RoutineInput, type RoutineRun, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { modelChoices } from '../lib/models';
 import { SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, describeSchedule, outcomeLabel, outcomeTone, runTime, scheduleOf, untilText, type OutcomeTone, type ScheduleKind } from '../lib/routines';
 import { Note, ProjectBadge, ScrollSentinel, Skeleton, useApp, useMinuteTick, useScrolled } from './common';
+import { RoutinesProjectPicker } from './ProjectPicker';
 import { Field, choiceLabel } from './TaskDefaults';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -31,28 +32,30 @@ const areaClass =
   'min-h-28 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none';
 
 /**
- * A Project's routines (docs/web.md, Routines): a view in the main pane like Settings, `#routines=<project>`
- * in the URL. Each routine is a card with its schedule, next run and last outcome, Run now, Pause or Resume,
- * Edit and Delete, and its run history on demand. Each run is a normal Task in the Project.
+ * Routines (docs/web.md, Routines): a view in the main pane like Settings. `#routines` lists every
+ * Project's routines under the Project's name; the header's Project filter narrows it to one,
+ * `#routines=<project>`. Each routine is a card with its schedule, next run and last outcome, Run now,
+ * Pause or Resume, Edit and Delete, and its run history on demand. Each run is a normal Task in the Project.
  */
-export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }: Readonly<{ leading?: React.ReactNode; project: Project; sessions: SessionSummary[]; onOpenTask: (id: string) => void; onClose: () => void }>) {
+export function RoutinesView({ leading, projects, scope, onScope, sessions, onOpenTask, onClose }: Readonly<{ leading?: React.ReactNode; projects: Project[]; /** The Project the view is filtered to; null lists every Project. */ scope: string | null; onScope: (id: string | null) => void; sessions: SessionSummary[]; onOpenTask: (id: string) => void; onClose: () => void }>) {
   const [routines, setRoutines] = useState<Routine[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ routine?: Routine } | null>(null);
+  const [editing, setEditing] = useState<{ routine?: Routine; project?: Project } | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [scrolled, sentinel] = useScrolled();
   const removal = useConfirm<Routine>();
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  const project = scope ? projects.find((p) => p.id === scope) : undefined;
 
   const [tick, setTick] = useState(0);
   const load = () => setTick((n) => n + 1);
 
-  // The view is keyed by its Project; it reads the list again every few seconds while the page is visible.
+  // One list for every Project, filtered here; read again every few seconds while the page is visible.
   useEffect(() => {
     let current = true;
     api
-      .routines(project.id)
+      .allRoutines()
       .then((res) => {
         if (!current) return;
         setRoutines(res.routines);
@@ -62,15 +65,15 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
     return () => {
       current = false;
     };
-  }, [project.id, tick]);
+  }, [tick]);
   useEffect(() => {
     const timer = window.setInterval(() => document.visibilityState === 'visible' && setTick((n) => n + 1), POLL_MS);
     return () => window.clearInterval(timer);
   }, []);
 
   const put = (r: Routine) => setRoutines((list) => (list ?? []).some((x) => x.id === r.id) ? (list ?? []).map((x) => (x.id === r.id ? r : x)) : [...(list ?? []), r]);
-  const edit = (routine?: Routine) => {
-    setEditing({ routine });
+  const edit = (routine?: Routine, target?: Project) => {
+    setEditing({ routine, project: target ?? (routine ? projects.find((p) => p.id === routine.project_id) : project) });
     setEditOpen(true);
   };
 
@@ -90,6 +93,12 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
     }
   }
 
+  const card = (r: Routine, heading: 'h2' | 'h3') => (
+    <RoutineCard key={r.id} routine={r} heading={heading} sessions={sessions} onChange={put} onEdit={() => edit(r)} onDelete={() => { setRemoveError(null); removal.ask(r); }} onOpenTask={onOpenTask} />
+  );
+  // The filtered Project's routines, or every listed Project's in the sidebar's order.
+  const groups = projects.filter((p) => !project || p.id === project.id).map((p) => ({ project: p, routines: (routines ?? []).filter((r) => r.project_id === p.id) })).filter((g) => g.routines.length > 0);
+
   let body: React.ReactNode;
   if (routines === null && loadError) {
     body = (
@@ -104,12 +113,12 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
         <Skeleton label="Loading routines…" rows={3} />
       </section>
     );
-  } else if (routines.length === 0) {
+  } else if (groups.length === 0) {
     body = (
       <section className="flex flex-col items-start gap-3 rounded-lg bg-raised p-5 shadow-raised">
         <h2 className="text-title text-ink">No routines yet</h2>
         <p className="max-w-3xl text-ui text-body">
-          A routine starts a task in this project on a schedule, for example every weekday at 09:00 to check dependencies for updates, or every 6 hours to run the flaky tests and report failures. Each run shows in the task list like any task.
+          A routine starts a task in {project ? 'this project' : 'a project'} on a schedule, for example every weekday at 09:00 to check dependencies for updates, and each run shows in the task list like any task.
         </p>
         <Button variant="primary" onClick={() => edit()}>
           <Plus />
@@ -117,24 +126,42 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
         </Button>
       </section>
     );
+  } else if (project) {
+    body = groups[0].routines.map((r) => card(r, 'h2'));
   } else {
-    body = routines.map((r) => <RoutineCard key={r.id} routine={r} sessions={sessions} onChange={put} onEdit={() => edit(r)} onDelete={() => { setRemoveError(null); removal.ask(r); }} onOpenTask={onOpenTask} />);
+    body = groups.map((g) => (
+      <section key={g.project.id} aria-labelledby={`routines-${g.project.id}`} className="flex flex-col gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <ProjectBadge badge={g.project.badge} className="shrink-0" />
+          <h2 id={`routines-${g.project.id}`} className="min-w-0 truncate text-title text-ink">
+            {g.project.name}
+          </h2>
+          <span className="text-caption tabular-nums text-muted">{g.routines.length}</span>
+          <span className="flex-1" />
+          <Button variant="subtle" aria-label={`New routine in ${g.project.name}`} onClick={() => edit(undefined, g.project)}>
+            <Plus />
+            <span className="max-[480px]:hidden">New routine</span>
+          </Button>
+        </div>
+        {g.routines.map((r) => card(r, 'h3'))}
+      </section>
+    ));
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
-        <ProjectBadge badge={project.badge} className="shrink-0" />
-        <h1 className="min-w-0 flex-1 truncate text-display-sm text-ink">
-          Routines<span className="text-muted"> · {project.name}</span>
-        </h1>
+        <Clock aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
+        <h1 className="shrink-0 text-display-sm text-ink">Routines</h1>
+        <RoutinesProjectPicker projects={projects} value={project?.id ?? null} onPick={onScope} />
+        <span className="flex-1" />
         {loadError && routines !== null && (
           <Tip label={`Could not refresh: ${loadError}`}>
             <span className="text-caption text-warning">Not refreshed</span>
           </Tip>
         )}
-        {routines !== null && routines.length > 0 && (
+        {groups.length > 0 && (
           <Button variant="secondary" aria-label="New routine" onClick={() => edit()}>
             <Plus />
             <span className="max-[480px]:hidden">New routine</span>
@@ -156,7 +183,8 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
       {editing && (
         <RoutineDialog
           open={editOpen}
-          project={project}
+          projects={projects}
+          project={editing.project}
           routine={editing.routine}
           onClose={() => setEditOpen(false)}
           onClosed={() => setEditing(null)}
@@ -181,7 +209,7 @@ export function RoutinesView({ leading, project, sessions, onOpenTask, onClose }
   );
 }
 
-function RoutineCard({ routine: r, sessions, onChange, onEdit, onDelete, onOpenTask }: Readonly<{ routine: Routine; sessions: SessionSummary[]; onChange: (r: Routine) => void; onEdit: () => void; onDelete: () => void; onOpenTask: (id: string) => void }>) {
+function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit, onDelete, onOpenTask }: Readonly<{ routine: Routine; /** h3 under a Project's heading. */ heading: 'h2' | 'h3'; sessions: SessionSummary[]; onChange: (r: Routine) => void; onEdit: () => void; onDelete: () => void; onOpenTask: (id: string) => void }>) {
   const { meta } = useApp();
   useMinuteTick();
   const [busy, setBusy] = useState<'run' | 'pause' | null>(null);
@@ -208,9 +236,9 @@ function RoutineCard({ routine: r, sessions, onChange, onEdit, onDelete, onOpenT
   return (
     <section aria-labelledby={titleId} className="flex flex-col gap-3 rounded-lg bg-raised p-5 shadow-raised max-sm:p-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <h2 id={titleId} className="min-w-0 truncate text-title text-ink">
+        <Heading id={titleId} className="min-w-0 truncate text-title text-ink">
           {r.name}
-        </h2>
+        </Heading>
         {!r.enabled && <Chip fill="outline">Paused</Chip>}
         {r.mode === 'yolo' && <Chip tone="warning" fill="well"><Zap className="size-3" />Yolo</Chip>}
       </div>
@@ -302,9 +330,14 @@ function RunLine({ run, sessions, onOpenTask, time = true }: Readonly<{ run: Rou
   );
 }
 
-/** Create or edit a routine. A new one runs with the model New task starts with, in Safe mode, until changed here. */
-function RoutineDialog({ open, project, routine, onClose, onClosed, onSaved }: Readonly<{ open: boolean; project: Project; routine?: Routine; onClose: () => void; onClosed: () => void; onSaved: (r: Routine) => void }>) {
+/**
+ * Create or edit a routine. A new one runs with the model New task starts with, in Safe mode, until changed here.
+ * Without a `project` (New routine over every Project) the form asks which one, while there are several.
+ */
+function RoutineDialog({ open, projects, project, routine, onClose, onClosed, onSaved }: Readonly<{ open: boolean; projects: Project[]; project?: Project; routine?: Routine; onClose: () => void; onClosed: () => void; onSaved: (r: Routine) => void }>) {
   const { meta, settings } = useApp();
+  const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
+  const target = projects.find((p) => p.id === projectId);
   const first = useRef<HTMLInputElement>(null);
   const defaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
   const providerName = routine?.provider ?? defaults?.provider ?? '';
@@ -338,7 +371,7 @@ function RoutineDialog({ open, project, routine, onClose, onClosed, onSaved }: R
       max_minutes: Number(minutes),
     };
     try {
-      onSaved(routine ? await api.updateRoutine(routine.id, body) : await api.createRoutine(project.id, { ...body, enabled: true }));
+      onSaved(routine ? await api.updateRoutine(routine.id, body) : await api.createRoutine(projectId, { ...body, enabled: true }));
       onClose();
     } catch (err) {
       setError(describeError(err));
@@ -355,23 +388,30 @@ function RoutineDialog({ open, project, routine, onClose, onClosed, onSaved }: R
       initialFocus={first}
       title={routine ? 'Edit routine' : 'New routine'}
       description={
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ProjectBadge badge={project.badge} />
-          <span className="truncate">Each run starts a task in {project.name}.</span>
-        </span>
+        target && (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ProjectBadge badge={target.badge} />
+            <span className="truncate">Each run starts a task in {target.name}.</span>
+          </span>
+        )
       }
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="routine-form" variant="primary" loading={busy} disabled={!name.trim() || !prompt.trim() || !model}>
+          <Button type="submit" form="routine-form" variant="primary" loading={busy} disabled={!name.trim() || !prompt.trim() || !model || !target}>
             {routine ? 'Save' : 'Create routine'}
           </Button>
         </>
       }
     >
       <form id="routine-form" className="flex flex-col gap-4" onSubmit={submit}>
+        {!routine && !project && projects.length > 1 && (
+          <Field id="routine-project" label="Project">
+            <Select id="routine-project" value={projectId} items={projects.map((p) => ({ value: p.id, label: p.name }))} onValueChange={setProjectId} />
+          </Field>
+        )}
         <Field id="routine-name" label="Name" hint="Each run's task is named after it, with the date.">
           <Input id="routine-name" ref={first} required aria-describedby="routine-name-hint" placeholder="Dependency check" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>

@@ -486,17 +486,28 @@ func (m *Manager) Routines(projectID string) ([]Routine, error) {
 	if !known {
 		return nil, errProjectNotFound
 	}
+	return m.listRoutines(projectID), nil
+}
+
+// AllRoutines lists every Project's routines, oldest first.
+func (m *Manager) AllRoutines() []Routine {
+	return m.listRoutines("")
+}
+
+// listRoutines lists projectID's routines, or every routine when it is
+// empty, oldest first.
+func (m *Manager) listRoutines(projectID string) []Routine {
 	rs := &m.routines
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	out := []Routine{}
 	for _, r := range rs.list {
-		if r.ProjectID == projectID {
+		if projectID == "" || r.ProjectID == projectID {
 			out = append(out, routineView(r))
 		}
 	}
 	slices.SortFunc(out, func(a, b Routine) int { return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), strings.Compare(a.ID, b.ID)) })
-	return out, nil
+	return out
 }
 
 // applyRoutine sets the fields in on r, checked as a create or an edit checks
@@ -694,6 +705,7 @@ func (m *Manager) forgetRoutinesLocked(projectID string) {
 }
 
 func (s *Server) routineRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/routines", s.handleAllRoutines)
 	mux.HandleFunc("GET /api/projects/{id}/routines", s.handleRoutines)
 	mux.HandleFunc("POST /api/projects/{id}/routines", s.handleCreateRoutine)
 	mux.HandleFunc("PATCH /api/routines/{id}", s.handleUpdateRoutine)
@@ -708,6 +720,10 @@ func (s *Server) handleRoutines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"routines": list})
+}
+
+func (s *Server) handleAllRoutines(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"routines": s.m.AllRoutines()})
 }
 
 func (s *Server) handleCreateRoutine(w http.ResponseWriter, r *http.Request) {

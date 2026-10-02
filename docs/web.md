@@ -459,10 +459,18 @@ sign-outs are logged without the token.
   hour old. A failed refresh keeps the last rows and shows why.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
-  flaky tests and report failures". Open them from the clock beside a
-  Project in the sidebar's Project filter, or from Edit project →
-  Routines; the view replaces the Task pane like Settings, `#routines=` in
-  the URL. Each routine has a name, the first message its runs send, a
+  flaky tests and report failures". **Routines** (the clock) in the
+  sidebar header and on the collapsed rail opens every Project's routines,
+  each Project's under its name with its own **New routine**, `#routines`
+  in the URL (`#routines=all` works too); pressing it again closes the
+  view. The header's Project filter narrows the list to one Project,
+  `#routines=<project id>`; the clock beside a Project in the sidebar's
+  Project filter and Edit project → Routines open that filtered view. The
+  view replaces the Task pane like Settings, and a `#routines` link opened
+  while the page is open shows it. With no routines yet it says what a
+  routine is and offers New routine, which asks for the Project when there
+  are several. `GET /api/routines` lists every Project's routines, oldest
+  first. Each routine has a name, the first message its runs send, a
   model (New task's model unless you choose one), a schedule, a permission
   mode, and two limits. A schedule is every day at a time, every weekday
   (Monday to Friday) at a time, every 1 to 24 hours, or once a week on a
