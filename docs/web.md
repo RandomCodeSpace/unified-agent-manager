@@ -558,8 +558,8 @@ sign-outs are logged without the token.
   when the question appears; it is sent only when you press Enter or Answer.
   Nothing else goes with an answer: Attach is unavailable while a question
   waits, and a dropped or pasted file is refused with "Answer the question
-  first." **Decline**
-  sits between Stop and **Answer**. What you had typed before the question
+  first." **Decline** (an ×)
+  sits between Stop and **Answer** (an up arrow). What you had typed before the question
   arrived is kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
@@ -641,10 +641,12 @@ sign-outs are logged without the token.
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Task, like
   attachments.
-- **Messages while a turn runs**: Send carries the name of what it will do,
-  **Send now** (steer) or **After this turn** (queue), following the Settings
-  view; the menu beside it (the chevron, "More send options") offers the
-  other.
+- **Messages while a turn runs**: Send shows what it will do as an icon,
+  **Send now** (steer, an up arrow) or **After this turn** (queue, the
+  waiting list's icon), following the Settings view; its tooltip names the
+  action and its key. The menu beside it (the chevron, "More send options")
+  offers the other. The send buttons carry icons only; screen readers hear
+  their names.
   - **After this turn** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
@@ -669,7 +671,7 @@ sign-outs are logged without the token.
     into a queued message or restart the running response.
   - When no turn is running there is one button, **Send**, which sends the
     message at once.
-  - While a turn runs, Enter does what Send says (Send now by default) and
+  - While a turn runs, Enter does what Send shows (Send now by default) and
     Ctrl+Enter (⌘+Enter on a Mac) the other; the tooltip and the menu name
     the keys. Files and attachments go with a steer as with any other
     message.
@@ -699,13 +701,6 @@ sign-outs are logged without the token.
   Task works, waits for you, has queued messages, or once you start typing.
   Without a Utility model, or past today's Background AI limit, there are
   none. Settings → Composer → **Suggest replies** turns them off.
-- **Saved prompts**: the speech-bubble button in the composer's toolbar lists
-  the prompts you saved, for every Project or for this Task's Project. Type
-  to search them by name; choosing one inserts it at the cursor on its own
-  line. **Save as prompt** saves the composer's text under a name, for this
-  Project or all Projects. The service keeps them, so they are the same in
-  every browser. Settings → **Saved prompts** renames and deletes them.
-  Removing a Project removes the prompts saved for it.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
   Task's row in the sidebar shows it as its status line ("Ready for review:"
@@ -1213,7 +1208,11 @@ sign-outs are logged without the token.
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge and the sidebar button on a
     narrow window carry the Needs you count (the app badge and title add
-    pending planner requests).
+    pending planner requests). The tab title reads "UAM" on the home
+    screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
+    a new Task or one still waiting for a title), and "UAM - Settings",
+    "UAM - Planner" or "UAM - Routines" for those views; the count comes
+    first, as in "(9) UAM - Fix redraw".
 
   A shelf row shows the Project badge and title, faded until hovered or
   selected; its tooltip adds the Project name and directory and when the Task
@@ -1232,16 +1231,16 @@ sign-outs are logged without the token.
     is kept per browser. The gear at the right of each Project opens "Edit
     project", where its name and Task defaults live together with "Previous
     sessions" and "Remove project".
-  - **Collapse the sidebar**: the UAM icon beside Search in the sidebar
+  - **Collapse the sidebar**: the UAM mark and wordmark beside Search in the sidebar
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
-    the UAM icon (shows the sidebar again, with the Needs you count on it),
+    the UAM mark alone (shows the sidebar again, with the Needs you count on it),
     New task, the Project filter, Add project, and at the foot Settings, the
     planner and the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
-  - With no Task open, the main pane shows only the uam mark and one line;
+  - With no Task open, the main pane shows only the UAM mark with its wordmark and one line;
     New task and Add project are in the sidebar. There is one theme; it does
     not follow the system.
 

@@ -1,17 +1,8 @@
-// The assist features' pure parts (docs/web.md): which saved prompts a composer offers, when a
-// Task's last turn may get suggested replies, and saving a downloaded file. Pure, so the node
+// The assist features' pure parts (docs/web.md): inserting text at the caret, when a Task's last
+// turn may get suggested replies, and saving a downloaded file. Pure, so the node
 // tests run them.
 
-import type { Item, SavedPrompt, SessionSummary } from '../api';
-
-/** The saved prompts a Task in `projectId` offers, matching every word of `query` in the name, by name. */
-export function promptsFor(list: readonly SavedPrompt[] | undefined, projectId: string, query: string): SavedPrompt[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  return (list ?? [])
-    .filter((p) => !p.project_id || p.project_id === projectId)
-    .filter((p) => words.every((w) => p.name.toLowerCase().includes(w)))
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
+import type { Item, SessionSummary } from '../api';
 
 /** `text` with `insert` at `caret`, on its own line when the text around it is not empty; and the caret after it. */
 export function insertAt(text: string, caret: number, insert: string): { text: string; caret: number } {

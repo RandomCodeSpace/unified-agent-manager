@@ -168,9 +168,6 @@ type Settings struct {
 	// a Task's conversation starts compacting; omitted for the provider
 	// default, store.DefaultCompactionThreshold.
 	CompactionThreshold *int `json:"compact_threshold,omitempty"`
-	// SavedPrompts are the prompts the owner saved (prompts.go), oldest
-	// first; omitted when there are none.
-	SavedPrompts []SavedPrompt `json:"saved_prompts,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv only names the

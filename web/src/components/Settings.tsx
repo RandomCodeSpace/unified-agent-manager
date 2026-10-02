@@ -1,7 +1,6 @@
 import { X } from 'lucide-react';
 import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
-import { SavedPromptsSettings } from './Assist';
 import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
@@ -523,9 +522,6 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
             <Row id="suggest-replies" label="Suggest replies" help="After a turn, up to three short replies you might send next show above the composer. Choosing one fills the composer; nothing is sent. It takes one Utility model call per finished turn you open.">
               <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
             </Row>
-          </Section>}
-          {loaded && <Section id="saved-prompts" title="Saved prompts">
-            <SavedPromptsSettings prompts={settings.saved_prompts ?? []} projects={projects} />
           </Section>}
           {loaded && catalogPending && <PendingSection id="new-tasks" title="New tasks" label="Loading the model catalog…" />}
           {loaded && catalogPending && <PendingSection id="utility" title="Utility model" label="" />}

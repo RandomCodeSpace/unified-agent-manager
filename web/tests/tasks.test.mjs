@@ -81,9 +81,9 @@ test('the needs-you count follows the sidebar rows: attention states and pending
   assert.equal(needsYouCount([]), 0);
   assert.equal(pageTitle(0, null), 'UAM');
   assert.equal(pageTitle(3, null), '(3) UAM');
-  assert.equal(pageTitle(0, 'Fix redraw'), 'Fix redraw · UAM');
-  assert.equal(pageTitle(2, 'Fix redraw'), '(2) Fix redraw · UAM');
-  assert.equal(pageTitle(1, ''), '(1) New task · UAM');
+  assert.equal(pageTitle(0, 'Fix redraw'), 'UAM - Fix redraw');
+  assert.equal(pageTitle(2, 'Fix redraw'), '(2) UAM - Fix redraw');
+  assert.equal(pageTitle(1, ''), '(1) UAM - New task');
 });
 
 test('project search matches every word in the name or directory, names first', async () => {

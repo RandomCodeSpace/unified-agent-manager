@@ -283,8 +283,6 @@ export interface Settings {
   planner?: boolean;
   /** `false` when replies to send next are not offered after a turn; absent while they are (the default). */
   suggest_replies?: boolean;
-  /** The prompts the owner saved, oldest first; changed one at a time through `api.addPrompt` and friends, never PATCH. */
-  saved_prompts?: SavedPrompt[];
   /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
   utility_daily_limit?: number;
   /** The share of the context, in percent (50 to 90), at which a Task's conversation starts compacting; omitted for the default, 80. PATCH null puts it back. */
@@ -293,15 +291,6 @@ export interface Settings {
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
 export const DEFAULT_COMPACT_THRESHOLD = 80;
-
-/** A message the owner saved to insert again from a composer; `project_id` limits it to that Project's Tasks. */
-export interface SavedPrompt {
-  id: string;
-  name: string;
-  text: string;
-  project_id?: string;
-  created_at: string;
-}
 
 /** Replies suggested for the transcript ending with item `item_id`; both empty when none are offered. */
 export interface Suggestions {
@@ -1421,9 +1410,6 @@ export const api = {
   rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
   /** The whole conversation as a Markdown file. */
   exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
-  addPrompt: (body: { name: string; text: string; project_id?: string }) => call<SavedPrompt>('POST', '/api/prompts', body),
-  renamePrompt: (id: string, name: string) => call<SavedPrompt>('PATCH', `/api/prompts/${enc(id)}`, { name }),
-  deletePrompt: (id: string) => call<void>('DELETE', `/api/prompts/${enc(id)}`),
   prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
     call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }),
   /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */

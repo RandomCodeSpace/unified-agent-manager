@@ -34,8 +34,8 @@ export function Login({ onLoggedIn }: Readonly<{ onLoggedIn: () => void }>) {
     <main className="grid min-h-dvh place-items-center bg-canvas px-6 py-10">
       <form className="flex w-full max-w-[360px] flex-col gap-5 animate-rise" onSubmit={submit}>
         <div className="flex flex-col gap-3">
-          <Brand markOnly className="[&_svg]:size-8" />
-          <h1 className="text-display-md">Sign in to uam</h1>
+          <Brand className="[&_svg]:size-8 [&>span]:text-display-md" />
+          <h1 className="text-display-md">Sign in to UAM</h1>
           <p className="text-ui text-muted">
             Enter the access token for this server. To see it, run <code className="rounded-xs bg-sunken px-1 font-sans text-caption text-ink">uam web</code> on the server; it prints the token whether or not the service is already
             running.

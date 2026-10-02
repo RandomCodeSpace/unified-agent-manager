@@ -200,7 +200,7 @@ export function Brand({ className, markOnly = false }: Readonly<{ className?: st
         <rect x="11" y="5" width="4.5" height="6" rx="1.2" className="fill-raised" />
         <rect x="11" y="12.5" width="4.5" height="2.5" rx="1" className="fill-raised opacity-60" />
       </svg>
-      {!markOnly && <span className="text-title font-semibold text-ink">uam</span>}
+      {!markOnly && <span className="text-title font-semibold text-ink">UAM</span>}
     </span>
   );
 }
@@ -281,7 +281,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
   const status = taskStatus(s, unread);
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring.
+  // A Task card on the rail: `raised` with the soft ring, the open one `tint-selected`; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -292,7 +292,8 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
     );
   } else {
     rowClass = cn(
-      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption focus-visible:-outline-offset-2',
+      'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color] duration-100 focus-visible:-outline-offset-2',
+      selected ? 'bg-tint-selected' : 'bg-raised',
       readOnly(s) && !selected && 'text-muted',
       weight,
     );
@@ -301,7 +302,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
   const row = (
     <div
       data-task-row={s.id}
-      className={compact ? undefined : cn('group/row relative rounded-md transition-[background-color,box-shadow] duration-100', selected ? 'bg-raised shadow-raised' : 'hover:bg-tint-hover')}
+      className={compact ? undefined : 'lift group/row rounded-md'}
     >
       {renaming ? (
         // Not a button while the input is inside: interactive content cannot nest in one.
@@ -366,7 +367,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             aria-label={`Settle ${taskName(s) || 'New task'}`}
             className={cn(
               'absolute right-1.5 bottom-1.5 text-muted opacity-0 transition-[opacity,background-color,color] group-hover/row:opacity-100 group-has-focus-visible/row:opacity-100 pointer-coarse:opacity-100',
-              selected ? 'bg-raised' : 'bg-tint-hover pointer-coarse:bg-rail',
+              selected ? 'bg-tint-selected' : 'bg-raised',
             )}
             onClick={settle.onSelect}
           >
@@ -408,7 +409,7 @@ function Group({ group, projects, tasks, selectedId }: Readonly<{ group: GroupKe
           </span>
         )}
       </h2>
-      <ul className="flex flex-col gap-0.5">{tasks.map((t) => <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+      <ul className="flex flex-col gap-1">{tasks.map((t) => <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
     </section>
   );
 }
@@ -520,7 +521,7 @@ export const Sidebar = memo(function Sidebar({
     body = (
       <>
         <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length} matching tasks</p>
-        <ul className="flex flex-col gap-0.5 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
+        <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
       </>
     );
   } else {
@@ -546,7 +547,7 @@ export const Sidebar = memo(function Sidebar({
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
-        <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
+        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
         {projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
         {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />

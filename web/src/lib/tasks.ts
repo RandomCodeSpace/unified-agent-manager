@@ -152,10 +152,10 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
   }
 }
 
-/** The document title: the needs-you count first, then the open Task's name, then the app. */
-export function pageTitle(needsYou: number, taskName: string | null): string {
+/** The document title: the needs-you count first, then the app, then what the pane shows (a Task's name, '' for an untitled one, or a view). */
+export function pageTitle(needsYou: number, shown: string | null): string {
   const count = needsYou > 0 ? `(${needsYou}) ` : '';
-  return taskName === null ? `${count}UAM` : `${count}${taskName || 'New task'} · UAM`;
+  return shown === null ? `${count}UAM` : `${count}UAM - ${shown || 'New task'}`;
 }
 
 /** A project's Tasks, newest first. */

@@ -614,9 +614,6 @@ type WebSettings struct {
 	// MaxCompactionThreshold; nil means the provider default
 	// (DefaultCompactionThreshold).
 	CompactionThreshold *int `json:"compact_threshold,omitempty"`
-	// SavedPrompts are the prompts the owner saved, valid as
-	// ValidSavedPrompt checks, oldest first.
-	SavedPrompts []WebSavedPrompt `json:"saved_prompts,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -799,7 +796,6 @@ var knownWebSettingsFields = map[string]struct{}{
 	"task_defaults":       {},
 	"utility_daily_limit": {},
 	"suggest_replies":     {},
-	"saved_prompts":       {},
 	"compact_threshold":   {},
 }
 
@@ -1061,7 +1057,6 @@ func (s *Store) loadNoLock() (Config, error) {
 		log.Warn("clearing invalid stored compaction threshold")
 		cfg.WebSettings.CompactionThreshold = nil
 	}
-	cleanSavedPrompts(&cfg.WebSettings)
 	migrateProjectDefaults(&cfg)
 	// A file written by a newer binary carries fields this version does not
 	// model. Surface it read-only (preserving the unknown overflow) instead of
