@@ -490,7 +490,7 @@ sessions (the routes keep the `sessions` name) whose `web.project_id` names it.
 | `Item.AgentID`, `Delta.AgentID`, `Interaction.AgentID` | Empty for the main agent, otherwise the provider's subagent instance ID. |
 | `Turn.Model` | The model the provider reported for the turn. Not persisted. |
 | `EventTitle` (`Event.Title`) | The provider-generated conversation title. |
-| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Model, Effort, Status, Error, StartedAt, EndedAt}`. Model and effort are optional provider reports. Status is `running`, `idle`, `completed`, `failed` or `cancelled`. A completed agent can become idle or start another run after its previous end; failed and cancelled agents remain final. |
+| `EventSubagent` (`Event.Subagent`) | Upserts `Subagent{ID, ParentToolCallID, Name, Description, Model, Effort, Status, Error, StartedAt, EndedAt, Runs}`. Model and effort are optional provider reports. Status is `running`, `idle`, `completed`, `failed` or `cancelled`. A completed agent can become idle or start another run after its previous end; failed and cancelled agents remain final. `Runs` (optional) lists its runs, see "Chat with an idle subagent"; the service merges an update's runs with the known ones by start time, so one with fewer, such as a record rebuilt from recorded events, loses none; an update without runs ends the latest known run with its status. |
 | `EventContext` (`Event.Context`) | Reports main-agent `Context{Used, Limit}` in tokens. Kept in memory only. |
 | `History` → `{Items, Subagents}` | Subagent items carry `AgentID`; subagent records are rebuilt from recorded events. |
 
@@ -596,7 +596,8 @@ Shape changes:
   `subagents: [Subagent]`.
 - `Item` and `Interaction` gain `agent_id` (omitted for the main agent).
 - `Subagent`: `id`, `parent_tool_call_id`, `name`, `description`, `status`,
-  `model`, `effort`, `error`, `started_at`, `ended_at` (empty fields omitted).
+  `model`, `effort`, `error`, `started_at`, `ended_at`, `runs` (empty fields
+  omitted); each run is `{started_at, ended_at?, status, trigger}`.
 
 ### Event stream additions
 
@@ -962,6 +963,20 @@ follow-ups return to `idle`. Stale running reports and duplicate end events
 do not reopen a completed run.
 When a conversation closes or its runtime exits, `idle` falls back to
 `completed`.
+
+`Subagent.Runs` (2026-10-02) keeps each run, oldest first, so the transcript
+can be split per run: `{StartedAt, EndedAt, Status, Trigger}`. The latest run
+carries the record's `Status` and `EndedAt` (zero while running); an earlier
+run keeps the status it ended with. `Trigger` is `spawn` for the first run,
+`user` for an accepted or uncertain UAM follow-up, and `agent` for reuse seen
+in a new subagent turn or a task-list report. A new turn seen while
+`PromptSubagent` is sending to that agent counts as the follow-up's run; the
+main agent reusing the agent in that same moment cannot be told apart.
+Duplicate and stale reports add no run. At most 50 are kept: the first and
+the newest. Copilot tracks runs live only: a record rebuilt from recorded
+events (reopen, history and subagent pages) has only its spawn run. Existing
+fields keep their meaning; a UAM follow-up still leaves `StartedAt` at the
+previous start, so its run's `StartedAt` is the send time.
 
 `Conversation.PromptSubagent(ctx, agentID, text)` sends a follow-up to the
 exact agent instance. The main agent does not see it and no Task turn starts.

@@ -569,6 +569,12 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 		if in.StartedAt.IsZero() {
 			in.StartedAt = cur.StartedAt
 		}
+		if len(in.Runs) == 0 {
+			in.Runs = cur.Runs
+			in = in.Snapshot()
+		} else {
+			in.Runs = mergeRuns(cur.Runs, in.Runs)
+		}
 	}
 	*cur = in
 	if cur.Status == agentapi.SubagentCancelled {
@@ -580,6 +586,30 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	}
 }
 
+// mergeRuns joins the known runs and an update's by start time. The update
+// may know fewer, as a record rebuilt from recorded events does; its version
+// of a run both know is the newer one.
+func mergeRuns(known, in []agentapi.SubagentRun) []agentapi.SubagentRun {
+	if len(known) == 0 {
+		return in
+	}
+	out := make([]agentapi.SubagentRun, 0, len(known)+len(in))
+	for i, j := 0, 0; i < len(known) || j < len(in); {
+		switch {
+		case j == len(in) || i < len(known) && known[i].StartedAt.Before(in[j].StartedAt):
+			out = append(out, known[i])
+			i++
+		case i == len(known) || in[j].StartedAt.Before(known[i].StartedAt):
+			out = append(out, in[j])
+			j++
+		default:
+			out = append(out, in[j])
+			i, j = i+1, j+1
+		}
+	}
+	return agentapi.CapSubagentRuns(out)
+}
+
 // clampSubagent bounds and sanitizes a provider's subagent record.
 func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
 	in.Name = clampText(displaytext.Sanitize(in.Name), maxLabelText)
@@ -589,6 +619,7 @@ func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
 	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
 	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
 	in.Result = boundedResultSummary(in.Result)
+	in.Runs = agentapi.CapSubagentRuns(in.Runs)
 	return in
 }
 
@@ -622,6 +653,7 @@ func (m *Manager) endSubagentsLocked(s *webSession) {
 		default:
 			continue
 		}
+		*sa = sa.Snapshot()
 		m.publishSubagentLocked(s, sa)
 	}
 }

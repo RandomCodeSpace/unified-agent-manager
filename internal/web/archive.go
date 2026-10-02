@@ -584,7 +584,8 @@ func (m *Manager) readSubagents(r *subagentRead) (*archiveWindow, error) {
 		if _, dup := w.index[sa.ID]; !dup {
 			w.index[sa.ID] = i
 		}
-		w.bytes += len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result)
+		w.bytes += len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result) +
+			len(sa.Runs)*agentapi.SubagentRunBytes
 	}
 	m.archive.add(w)
 	return w, nil
@@ -621,7 +622,7 @@ func (m *Manager) recordedSubagentLocked(s *webSession, sa agentapi.Subagent) ag
 			sa.Status = agentapi.SubagentCompleted
 		}
 	}
-	return sa
+	return sa.Snapshot()
 }
 
 // compactSubagentPage is a page of recorded subagents, oldest first.

@@ -240,6 +240,7 @@ type fakeSession struct {
 	subMessages       []string
 	subMessageResult  *rpc.TasksSendMessageResult
 	subMessageErr     error
+	subMessageHook    func() // runs while the message is being sent
 	abortErr          error
 	aborts            int
 	respondHook       func(context.Context, string, rpc.PermissionDecision) (bool, error)
@@ -331,6 +332,9 @@ func (s *fakeSession) ListTasks(context.Context) ([]rpc.TaskInfo, error) {
 }
 
 func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {
+	if s.subMessageHook != nil {
+		s.subMessageHook()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subMessages = append(s.subMessages, agentID+": "+message)
