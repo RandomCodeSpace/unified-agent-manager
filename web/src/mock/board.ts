@@ -14,7 +14,7 @@ export interface BoardHost {
   projects: () => Project[];
   settings: () => Settings;
   task: (id: string) => SessionSummary | undefined;
-  /** A new Task through the create path, its first prompt sent (launch and plan). */
+  /** A new Task through the create path, titled like its name, its first prompt sent (launch and plan). */
   createTask: (projectId: string, name: string, prompt: string) => SessionSummary;
 }
 
