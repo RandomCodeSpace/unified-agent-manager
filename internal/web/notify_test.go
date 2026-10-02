@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -26,6 +27,8 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // notices drains sub until it has been quiet for a moment and returns the
@@ -60,6 +63,7 @@ func TestNoticeKind(t *testing.T) {
 		{SessionSummary{State: StateCompleted}, noticeFinished},
 		{SessionSummary{State: StateCompleted, SubagentsRunning: 1}, ""},
 		{SessionSummary{State: StateCompleted, BackgroundTasksRunning: 1}, ""},
+		{SessionSummary{State: StateCompleted, Queued: 1}, ""},
 		{SessionSummary{State: StateWorking}, ""},
 		{SessionSummary{State: StateIdle}, ""},
 		{SessionSummary{State: StateCancelled}, ""},
@@ -107,6 +111,29 @@ func TestNoticesFireOncePerTransition(t *testing.T) {
 	}
 }
 
+// A turn that ends with a prompt queued is not announced as finished: the
+// queue's next turn starts. The Task finishes once the queue drained.
+func TestNoFinishedNoticeWhileTheQueueDrains(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	sum, conv := createSession(t, m, prov)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	mustSubmit(t, m, sum.ID, "next", mustUUID(t), ModeQueue, SubmissionQueued)
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the queued prompt to be sent", func() bool { return len(conv.Sends()) == 1 })
+	if got := notices(t, sub); len(got) != 0 {
+		t.Fatalf("notices while the queue drains = %+v", got)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if got := notices(t, sub); len(got) != 1 || got[0].Kind != noticeFinished {
+		t.Fatalf("notices once the queue drained = %+v", got)
+	}
+}
+
 // The pushed badge is the Task list's Needs you count: Tasks waiting on a
 // request, and failed ones no page has opened since they failed.
 func TestNeedsYouCountMatchesTheNeedsYouGroup(t *testing.T) {
@@ -138,6 +165,53 @@ func TestNeedsYouCountMatchesTheNeedsYouGroup(t *testing.T) {
 		t.Fatalf("needs you after failing on screen = %d, want 1", n)
 	}
 	m.Unsubscribe(sub)
+}
+
+// Unread ends survive a restart: a Task a crash or a stop interrupted, or
+// one that failed unseen, still counts; one a page opened does not.
+func TestNeedsYouCountSurvivesARestart(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	st := openTestStore(t)
+	m := NewManager(st, []agentapi.Provider{prov})
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	crashed, crashConv := createSession(t, m, prov)
+	crashConv.EmitTurn(agentapi.TurnWorking, "")
+	_, stopConv := createSession(t, m, prov)
+	stopConv.EmitTurn(agentapi.TurnWorking, "")
+	_, failConv := createSession(t, m, prov)
+	failConv.EmitTurn(agentapi.TurnWorking, "")
+	failConv.EmitTurn(agentapi.TurnFailed, "boom")
+	read, readConv := createSession(t, m, prov)
+	readConv.EmitTurn(agentapi.TurnWorking, "")
+	readConv.EmitTurn(agentapi.TurnFailed, "boom")
+	sub, _, err := m.Subscribe(read.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Unsubscribe(sub)
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// One record is as a crash mid-turn leaves it: still working.
+	if err := st.Update(func(cfg *store.Config) error {
+		for key, rec := range cfg.Sessions {
+			if rec.ID == crashed.ID {
+				rec.Web.Turn, rec.Web.UnseenEnd = StateWorking, false
+				cfg.Sessions[key] = rec
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m2 := startManager(t, st, prov)
+	m2.mu.Lock()
+	defer m2.mu.Unlock()
+	if n := m2.needsYouLocked(); n != 3 {
+		t.Fatalf("needs you after a restart = %d, want 3 (crashed, stopped, failed)", n)
+	}
 }
 
 func TestClipNotice(t *testing.T) {

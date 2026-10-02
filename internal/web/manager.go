@@ -143,10 +143,12 @@ type Manager struct {
 	// loop checks for a due one (tests set it before Start).
 	quotaKick chan struct{}
 	quotaTick time.Duration
-	// titles counts title jobs and the planner's jobs, which Shutdown waits
-	// for before providers stop: a job deletes its throwaway conversation on
-	// the way out.
-	// titleSlots bounds provider calls shared by titles and subagent summaries.
+	// titles counts the Utility jobs (titles, the planner's jobs, suggested
+	// replies, turn outcomes and commit drafts), which Shutdown waits for
+	// before providers stop: a job deletes its throwaway conversation on the
+	// way out.
+	// titleSlots bounds provider calls shared by titles, subagent summaries,
+	// suggested replies and turn outcomes.
 	titles         sync.WaitGroup
 	titleSlots     chan struct{}
 	summaryJobs    chan subagentSummaryJob
@@ -334,7 +336,7 @@ type webSession struct {
 	// eventAt is the last provider event, to the minute.
 	eventAt time.Time
 	// unseenEnd is set when the Task failed or was interrupted while no page
-	// had it open, until one opens it (notify.go).
+	// had it open, until one opens it (notify.go). It survives a restart.
 	unseenEnd bool
 
 	subagents []*agentapi.Subagent
@@ -605,7 +607,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	}
 	for id, p := range cfg.WebProjects {
-		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: len(p.Charts)}
+		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
@@ -619,10 +621,10 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 		s := sessionFromRecord(rec)
 		// A turn cannot survive the service that drove it: report it as
-		// interrupted, never resume or replay it.
+		// interrupted, never resume or replay it. No page has seen that end.
 		if busy(s.base) {
 			s.setBase(StateInterrupted, interruptedDetail)
-			s.updatedAt = m.now()
+			s.updatedAt, s.unseenEnd = m.now(), true
 			m.dirty[s.id] = struct{}{}
 		}
 		s.persisted = s.key()
@@ -769,6 +771,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.spawnedBy = web.SpawnedBy
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
+		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
@@ -1274,10 +1277,14 @@ func (m *Manager) removeProject(id string) error {
 	case unarchived:
 		return newError(http.StatusConflict, "archive every task in this project first")
 	}
-	// The Project's routines go with it, in the same write.
+	// The Project's routines and saved prompts go with it, in the same
+	// write. settingsMu keeps a concurrent prompt change from writing them
+	// back.
+	m.settingsMu.Lock()
 	m.routines.mu.Lock()
 	err := m.store.Update(func(cfg *store.Config) error {
 		delete(cfg.WebProjects, id)
+		cfg.WebSettings.SavedPrompts = slices.DeleteFunc(cfg.WebSettings.SavedPrompts, func(p store.WebSavedPrompt) bool { return p.ProjectID == id })
 		for key, rec := range cfg.Sessions {
 			if rec.Surface == store.SurfaceWeb && rec.Web != nil && rec.Web.ProjectID == id {
 				delete(cfg.Sessions, key)
@@ -1295,6 +1302,7 @@ func (m *Manager) removeProject(id string) error {
 	}
 	m.routines.mu.Unlock()
 	if err != nil {
+		m.settingsMu.Unlock()
 		return fmt.Errorf("remove web project: %w", err)
 	}
 	m.mu.Lock()
@@ -1307,7 +1315,13 @@ func (m *Manager) removeProject(id string) error {
 	delete(m.projects, id)
 	delete(m.branchAt, id)
 	m.broadcastLocked("project_removed", "", func(seq uint64) any { return projectRemovedEvent{Seq: seq, ProjectID: id} })
+	if prompts := slices.DeleteFunc(slices.Clone(m.settings.SavedPrompts), func(p SavedPrompt) bool { return p.ProjectID == id }); len(prompts) != len(m.settings.SavedPrompts) {
+		m.settings.SavedPrompts = prompts
+		settings := m.settings
+		m.broadcastLocked("settings", "", func(seq uint64) any { return settingsEvent{Seq: seq, Settings: settings} })
+	}
 	m.mu.Unlock()
+	m.settingsMu.Unlock()
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}
@@ -1792,7 +1806,7 @@ func (m *Manager) flush() error {
 				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 			},
 		})
 	}

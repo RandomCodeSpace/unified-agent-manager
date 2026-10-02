@@ -14,6 +14,23 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
 
+// mcpStatuses maps the CLI's MCP server states to the contract's.
+var mcpStatuses = map[rpc.MCPServerStatus]string{
+	rpc.MCPServerStatusConnected:     agentapi.MCPConnected,
+	rpc.MCPServerStatusFailed:        agentapi.MCPFailed,
+	rpc.MCPServerStatusNeedsAuth:     agentapi.MCPNeedsAuth,
+	rpc.MCPServerStatusPending:       agentapi.MCPPending,
+	rpc.MCPServerStatusDisabled:      agentapi.MCPDisabled,
+	rpc.MCPServerStatusStopped:       agentapi.MCPStopped,
+	rpc.MCPServerStatusNotConfigured: agentapi.MCPNotConfigured,
+}
+
+// mcpStatus is the contract's state for the CLI's; a state the contract does
+// not know yet, from a newer CLI, passes through as the CLI spells it.
+func mcpStatus(s rpc.MCPServerStatus) string {
+	return cmp.Or(mcpStatuses[s], string(s))
+}
+
 // mcpSignInMessage is what the CLI's loopback page says once a sign-in
 // finished; the browser that sees it may be on another machine.
 const mcpSignInMessage = "Signed in. You can close this tab and return to uam."
@@ -145,11 +162,11 @@ func (p *webProvider) MCPServers(ctx context.Context) ([]agentapi.MCPServer, err
 	}
 	configs, err := mc.MCPConfigList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list MCP servers: %s", mcpErrText(err))
+		return nil, fmt.Errorf("list MCP servers: %s", rpcText(err))
 	}
 	discovered, err := mc.MCPDiscover(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("discover MCP servers: %s", mcpErrText(err))
+		return nil, fmt.Errorf("discover MCP servers: %s", rpcText(err))
 	}
 	enabled := map[string]bool{}
 	out := make([]agentapi.MCPServer, 0, len(configs))
@@ -242,7 +259,7 @@ func (p *webProvider) AddMCPServer(ctx context.Context, cfg agentapi.MCPServerCo
 		return err
 	}
 	if err := mc.MCPConfigAdd(ctx, cfg.Name, toRPCConfig(cfg, nil)); err != nil {
-		return fmt.Errorf("add MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("add MCP server: %s", rpcText(err))
 	}
 	return p.reloadMCPConfig(ctx, mc)
 }
@@ -254,14 +271,14 @@ func (p *webProvider) UpdateMCPServer(ctx context.Context, cfg agentapi.MCPServe
 	}
 	configs, err := mc.MCPConfigList(ctx)
 	if err != nil {
-		return fmt.Errorf("list MCP servers: %s", mcpErrText(err))
+		return fmt.Errorf("list MCP servers: %s", rpcText(err))
 	}
 	base, ok := configs[cfg.Name]
 	if !ok {
 		return fmt.Errorf("%w: MCP server %q", errMCPNotFound, cfg.Name)
 	}
 	if err := mc.MCPConfigUpdate(ctx, cfg.Name, toRPCConfig(cfg, base)); err != nil {
-		return fmt.Errorf("update MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("update MCP server: %s", rpcText(err))
 	}
 	return p.reloadMCPConfig(ctx, mc)
 }
@@ -274,7 +291,7 @@ func (p *webProvider) RemoveMCPServer(ctx context.Context, name string) error {
 		return err
 	}
 	if err := mc.MCPConfigRemove(ctx, name); err != nil {
-		return fmt.Errorf("remove MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("remove MCP server: %s", rpcText(err))
 	}
 	return p.reloadMCPConfig(ctx, mc)
 }
@@ -285,7 +302,7 @@ func (p *webProvider) SetMCPServerEnabled(ctx context.Context, name string, enab
 		return err
 	}
 	if err := mc.MCPConfigEnable(ctx, name, enabled); err != nil {
-		return fmt.Errorf("change MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("change MCP server: %s", rpcText(err))
 	}
 	return p.reloadMCPConfig(ctx, mc)
 }
@@ -294,7 +311,7 @@ func (p *webProvider) SetMCPServerEnabled(ctx context.Context, name string, enab
 // session it opens reads the file just written.
 func (p *webProvider) reloadMCPConfig(ctx context.Context, mc mcpConfigClient) error {
 	if err := mc.MCPConfigReload(ctx); err != nil {
-		return fmt.Errorf("reload MCP servers: %s", mcpErrText(err))
+		return fmt.Errorf("reload MCP servers: %s", rpcText(err))
 	}
 	return nil
 }
@@ -320,7 +337,7 @@ func (c *conversation) MCPStatus(ctx context.Context) ([]agentapi.MCPStatus, err
 	}
 	servers, err := ms.MCPList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list the task's MCP servers: %s", mcpErrText(err))
+		return nil, fmt.Errorf("list the task's MCP servers: %s", rpcText(err))
 	}
 	remote := map[string]bool{}
 	if mc, ok := c.client.(mcpConfigClient); ok {
@@ -332,14 +349,14 @@ func (c *conversation) MCPStatus(ctx context.Context) ([]agentapi.MCPStatus, err
 	}
 	out := make([]agentapi.MCPStatus, 0, len(servers))
 	for _, s := range servers {
-		st := agentapi.MCPStatus{Name: s.Name, Status: string(s.Status), Error: errDetail(s.Error), Remote: remote[s.Name] || s.Status == rpc.MCPServerStatusNeedsAuth}
+		st := agentapi.MCPStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: errDetail(s.Error), Remote: remote[s.Name] || s.Status == rpc.MCPServerStatusNeedsAuth}
 		if s.Source != nil {
 			st.Source = string(*s.Source)
 		}
 		if s.Status == rpc.MCPServerStatusConnected {
 			tools, err := ms.MCPTools(ctx, s.Name)
 			if err != nil {
-				st.Error = "could not list its tools: " + mcpErrText(err)
+				st.Error = "could not list its tools: " + rpcText(err)
 			}
 			for _, t := range tools {
 				st.Tools = append(st.Tools, agentapi.MCPTool{Name: t.Name, Description: clip(displaytext.Sanitize(deref(t.Description)), maxErrorText)})
@@ -364,7 +381,7 @@ func (c *conversation) SetMCPServerEnabled(ctx context.Context, name string, ena
 		return err
 	}
 	if err := ms.MCPEnable(ctx, name, enabled); err != nil {
-		return fmt.Errorf("change the MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("change the MCP server: %s", rpcText(err))
 	}
 	return nil
 }
@@ -375,7 +392,7 @@ func (c *conversation) RestartMCPServer(ctx context.Context, name string) error 
 		return err
 	}
 	if err := ms.MCPRestart(ctx, name); err != nil {
-		return fmt.Errorf("restart the MCP server: %s", mcpErrText(err))
+		return fmt.Errorf("restart the MCP server: %s", rpcText(err))
 	}
 	return nil
 }
@@ -392,18 +409,7 @@ func (c *conversation) MCPSignIn(ctx context.Context, name string, again bool) (
 	}
 	res, err := ms.MCPLogin(ctx, req)
 	if err != nil {
-		return "", fmt.Errorf("start the sign-in: %s", mcpErrText(err))
+		return "", fmt.Errorf("start the sign-in: %s", rpcText(err))
 	}
 	return deref(res.AuthorizationURL), nil
-}
-
-// mcpErrText is errText without the JSON-RPC wrapping the CLI puts around
-// its own message.
-func mcpErrText(err error) string {
-	t := errText(err)
-	const marker = "failed with message: "
-	if i := strings.Index(t, marker); i >= 0 {
-		t = t[i+len(marker):]
-	}
-	return t
 }

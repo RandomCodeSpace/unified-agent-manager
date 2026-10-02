@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -260,7 +263,17 @@ func checkMCPInput(in MCPServerInput) (agentapi.MCPServerConfig, error) {
 }
 
 func hasControl(s string) bool {
-	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+	return strings.ContainsFunc(s, unicode.IsControl)
+}
+
+// maxMCPName bounds the name of a listed server an action names.
+const maxMCPName = 256
+
+// listedMCPName reports whether name can name a server the provider lists.
+// The provider's own configuration allows names uam would not give a new
+// server (mcpNameExpr), so actions on a listed server take any such name.
+func listedMCPName(name string) bool {
+	return name != "" && len(name) <= maxMCPName && utf8.ValidString(name) && !hasControl(name)
 }
 
 // mergeSecrets builds the stored map from the request: a new value, or the
@@ -313,6 +326,9 @@ func (m *Manager) SetMCPServerEnabled(name string, enabled bool) error {
 }
 
 func (m *Manager) changeMCPServer(name string, change func(context.Context, agentapi.MCPConfigurer) error) error {
+	if !listedMCPName(name) {
+		return newError(http.StatusNotFound, "MCP server not found")
+	}
 	c, ok := m.mcpConfigurer()
 	if !ok {
 		return newError(http.StatusConflict, "no provider here manages MCP servers")
@@ -426,7 +442,7 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 // TaskMCPAction runs enable, disable or restart on a Task's conversation.
 // They last until the conversation closes.
 func (m *Manager) TaskMCPAction(id, name, action string) error {
-	if !mcpNameExpr.MatchString(name) {
+	if !listedMCPName(name) {
 		return newError(http.StatusNotFound, "MCP server not found")
 	}
 	c, err := m.taskMCP(id)
@@ -466,11 +482,17 @@ type signIn struct {
 
 func signInKey(id, name string) string { return id + "\x00" + name }
 
+// sweepLocked drops the expired sign-ins, so ones abandoned, or left by a
+// deleted Task, are not held until the service restarts. The caller holds mu.
+func (p *mcpSignIns) sweepLocked(now time.Time) {
+	maps.DeleteFunc(p.pending, func(_ string, s *signIn) bool { return now.After(s.expires) })
+}
+
 // StartMCPSignIn asks the Task's provider for a sign-in address. When its
 // redirect is a loopback address of this host, the browser, which may be on
 // another machine, can paste the address it ends on to FinishMCPSignIn.
 func (m *Manager) StartMCPSignIn(id, name string, again bool) (MCPSignIn, error) {
-	if !mcpNameExpr.MatchString(name) {
+	if !listedMCPName(name) {
 		return MCPSignIn{}, newError(http.StatusNotFound, "MCP server not found")
 	}
 	c, err := m.taskMCP(id)
@@ -486,6 +508,7 @@ func (m *Manager) StartMCPSignIn(id, name string, again bool) (MCPSignIn, error)
 	key := signInKey(id, name)
 	m.signIns.mu.Lock()
 	defer m.signIns.mu.Unlock()
+	m.signIns.sweepLocked(time.Now())
 	delete(m.signIns.pending, key)
 	if address == "" {
 		return MCPSignIn{}, nil
@@ -529,11 +552,8 @@ func loopbackHost(host string) bool {
 func (m *Manager) FinishMCPSignIn(id, name, pasted string) error {
 	key := signInKey(id, name)
 	m.signIns.mu.Lock()
+	m.signIns.sweepLocked(time.Now())
 	p := m.signIns.pending[key]
-	if p != nil && time.Now().After(p.expires) {
-		delete(m.signIns.pending, key)
-		p = nil
-	}
 	if p == nil {
 		m.signIns.mu.Unlock()
 		return newError(http.StatusConflict, "no sign-in is waiting for this server; start it again")

@@ -222,6 +222,12 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 			return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
 		}
 		m.viewHistoryLocked(s)
+		if s.unseenEnd && s.stage == StageActive {
+			// Read now, across a restart too; opening is not Task activity,
+			// so updated_at stays. Only an active Task counts, so viewing a
+			// settled or archived one writes nothing.
+			m.dirty[s.id] = struct{}{}
+		}
 		s.unseenEnd = false
 		d := m.detailLocked(s)
 		if recentHistory && !compact {

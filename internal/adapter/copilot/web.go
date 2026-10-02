@@ -2916,14 +2916,18 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}
 }
 
-// infiniteSessions sets where the CLI starts compacting (threshold, 0 to 1);
-// nil keeps its defaults. The point where a turn waits for compaction stays
-// the CLI default, 0.95: the web setting tops out at 0.90, below it.
+// maxBackgroundCompaction is the highest point where compaction may start:
+// below the CLI's default 0.95, where a turn waits for compaction, which
+// stays as it is.
+const maxBackgroundCompaction = 0.90
+
+// infiniteSessions sets where the CLI starts compacting (threshold, 0 to 1,
+// at most maxBackgroundCompaction); nil keeps its defaults.
 func infiniteSessions(threshold float64) *copilot.InfiniteSessionConfig {
 	if threshold <= 0 {
 		return nil
 	}
-	return &copilot.InfiniteSessionConfig{BackgroundCompactionThreshold: copilot.Float64(threshold)}
+	return &copilot.InfiniteSessionConfig{BackgroundCompactionThreshold: copilot.Float64(min(threshold, maxBackgroundCompaction))}
 }
 
 // nanoPerUnit converts the CLI's nano-AI units to AI units, the unit of the

@@ -1,35 +1,22 @@
 package web
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
-// maxAskRunes caps an Ask's title and detail: the Task list shows one line.
+// maxAskRunes caps an Ask's title: the Task list shows one line.
 const maxAskRunes = 200
 
-// Ask is the request a Task waits on, small enough for the Task list to show
-// and answer without opening the Task: a permission with its options and the
-// first line of what it asks for, or a question's first prompt with its
-// choices. The Task's detail still carries every interaction whole.
+// Ask is the request a Task waits on, as the Task list's status line and
+// the notices name it: its kind and one line. The Task's detail carries
+// every interaction whole.
 type Ask struct {
-	ID   string                   `json:"id"`
 	Kind agentapi.InteractionKind `json:"kind"`
 	// Title is a permission's title, or the first line of a question's text
 	// (its header, else the interaction title, when the text is empty).
 	Title string `json:"title"`
-	// Detail is the first line of a permission's detail: the command, path
-	// or URL it is for.
-	Detail   string            `json:"detail,omitempty"`
-	Options  []agentapi.Option `json:"options,omitempty"`
-	Choices  []string          `json:"choices,omitempty"`
-	Multiple bool              `json:"multiple,omitempty"`
-	Custom   bool              `json:"custom,omitempty"`
-	// Questions counts a question's prompts; the list answers only a single
-	// one in place.
-	Questions int `json:"questions,omitempty"`
 }
 
 // pendingAsk is the Ask for the request the state reports: the first pending
@@ -56,28 +43,18 @@ func (s *webSession) pendingAsk() *Ask {
 		return nil
 	}
 	next := askOf(first.Interaction)
-	if s.ask == nil || !sameAsk(*s.ask, next) {
+	if s.ask == nil || *s.ask != next {
 		s.ask = &next
 	}
 	return s.ask
 }
 
 func askOf(ix agentapi.Interaction) Ask {
-	a := Ask{ID: ix.ID, Kind: ix.Kind, Title: ix.Title}
-	if ix.Kind == agentapi.InteractionPermission {
-		a.Detail = clipRunes(firstLine(ix.Detail), maxAskRunes)
-		a.Options = ix.Options
-	} else if len(ix.Questions) > 0 {
+	a := Ask{Kind: ix.Kind, Title: ix.Title}
+	if ix.Kind != agentapi.InteractionPermission && len(ix.Questions) > 0 {
 		q := ix.Questions[0]
 		a.Title = firstNonEmpty(firstLine(q.Text), strings.TrimSpace(q.Header), ix.Title)
-		a.Choices, a.Multiple, a.Custom, a.Questions = q.Choices, q.Multiple, q.Custom, len(ix.Questions)
 	}
 	a.Title = clipRunes(a.Title, maxAskRunes)
 	return a
-}
-
-func sameAsk(a, b Ask) bool {
-	return a.ID == b.ID && a.Kind == b.Kind && a.Title == b.Title && a.Detail == b.Detail &&
-		a.Multiple == b.Multiple && a.Custom == b.Custom && a.Questions == b.Questions &&
-		slices.Equal(a.Options, b.Options) && slices.Equal(a.Choices, b.Choices)
 }

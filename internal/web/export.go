@@ -30,7 +30,7 @@ const exportWindowItems = 1000
 type exportTask struct {
 	id, name, project, dir, provider, model, mode, stage string
 	created                                              time.Time
-	spawnedBy, rerunOf                                   string
+	spawnedBy, rerunOf, routineID                        string
 	items                                                []agentapi.Item
 	truncated                                            bool
 	subagents                                            map[string]agentapi.Subagent // by parent tool call
@@ -50,7 +50,7 @@ func (m *Manager) ExportMarkdown(ctx context.Context, id string) ([]byte, string
 	}
 	t := exportTask{
 		id: s.id, name: cleanTitle(s.name), provider: s.provider, model: s.model, mode: string(s.mode), stage: s.stage,
-		created: s.createdAt, spawnedBy: s.spawnedBy, rerunOf: s.rerunOf,
+		created: s.createdAt, spawnedBy: s.spawnedBy, rerunOf: s.rerunOf, routineID: s.routineID,
 		items: s.agentItems(""), truncated: s.truncated,
 		subagents: map[string]agentapi.Subagent{}, summaries: map[string]string{},
 		pager: m.pagerLocked(s), read: agentapi.ReadRequest{ConversationID: s.convID, Workdir: s.workdir},
@@ -223,6 +223,9 @@ func renderExport(t exportTask, note string, now time.Time) []byte {
 	}
 	if t.rerunOf != "" {
 		fmt.Fprintf(&b, "- Runs again the last message of task %s\n", t.rerunOf)
+	}
+	if t.routineID != "" {
+		fmt.Fprintf(&b, "- Started by routine %s\n", t.routineID)
 	}
 	b.WriteString("\n")
 	if note != "" {

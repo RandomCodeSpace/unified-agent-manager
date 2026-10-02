@@ -25,17 +25,16 @@ const (
 	MaxRoutineRunsPerDay = 100
 	MaxRoutineMinutes    = 720
 	MaxRoutineRuns       = 100
-	MaxRoutinePrompt     = 16 << 10
 )
 
 // RoutineSchedule is when a routine runs. Time is "HH:MM" (24-hour) for every
 // kind but hours; Hours is set only for hours, and Weekday (0 Sunday to 6
-// Saturday) only for weekly.
+// Saturday) only for weekly. Weekday is always written: 0 is Sunday.
 type RoutineSchedule struct {
 	Kind    string `json:"kind"`
 	Time    string `json:"time,omitempty"`
 	Hours   int    `json:"hours,omitempty"`
-	Weekday int    `json:"weekday,omitempty"`
+	Weekday int    `json:"weekday"`
 }
 
 // Clock returns the schedule's hour and minute.

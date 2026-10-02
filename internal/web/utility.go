@@ -62,8 +62,10 @@ const codeUtilityPaused = "utility_paused"
 // UtilityCall is one Utility model call in the log. At is when it started;
 // Day is its server-local date, set when the log is read. Tokens are the
 // provider's figures unless Estimated, when they are worked out from the
-// characters. Reason is why a call was skipped (daily_limit or off) or
-// failed.
+// characters. PromptChars counts what the service sent the provider: a
+// Utility request's system message and prompt, or the text a title or a
+// subagent summary is made from. Reason is why a call was skipped
+// (daily_limit or off) or failed.
 type UtilityCall struct {
 	ID           int64     `json:"id"`
 	At           time.Time `json:"at"`
@@ -204,6 +206,15 @@ func (m *Manager) runUtility(ctx context.Context, call UtilityCall, prompt strin
 	return reply, err
 }
 
+// runUtilityRequest makes req through runUtility with runner. The prompt it
+// logs is what req sends the model: its system message and its prompt.
+func (m *Manager) runUtilityRequest(ctx context.Context, call UtilityCall, runner agentapi.UtilityRunner, req agentapi.UtilityRequest) (string, error) {
+	return m.runUtility(ctx, call, req.System+req.Prompt, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+		req.OnUsage = onUsage
+		return runner.RunUtility(ctx, req)
+	})
+}
+
 // reserve counts a call starting at now, or says why it may not start.
 func (l *utilityLog) reserve(now time.Time, limit int) string {
 	l.mu.Lock()
@@ -279,13 +290,7 @@ func (l *utilityLog) rewriteLocked() {
 			return
 		}
 	}
-	tmp := l.path + ".tmp"
-	err := os.WriteFile(tmp, buf.Bytes(), 0o600)
-	if err == nil {
-		err = os.Rename(tmp, l.path)
-	}
-	if err != nil {
-		_ = os.Remove(tmp)
+	if err := writeFileAtomic(l.path, utilityLogFile+".tmp.*", buf.Bytes()); err != nil {
 		log.Warn("rewrite the utility log failed", "error", err)
 	}
 }

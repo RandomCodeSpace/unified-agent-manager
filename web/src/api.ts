@@ -686,7 +686,7 @@ export interface SessionSummary {
   state_detail?: string;
   open: boolean;
   pending: number | boolean;
-  /** The request the Task waits on, for the Task list to answer in place; absent when nothing waits, and from older servers. */
+  /** The request the Task waits on, for the Task list's status line and notices; absent when nothing waits, and from older servers. */
   ask?: Ask;
   /** When the provider last reported anything for the open conversation, to the minute; absent until it does. */
   event_at?: string;
@@ -846,18 +846,10 @@ export interface Interaction {
   auto?: boolean;
 }
 
-/** A summary's `ask`: a permission's options and the first line of its detail, or a question's first prompt (`title`) with its choices. */
+/** A summary's `ask`: a permission's title, or the first line of a question's first prompt. The Task's detail holds the request whole. */
 export interface Ask {
-  id: string;
   kind: InteractionKind;
   title: string;
-  detail?: string;
-  options?: Option[];
-  choices?: string[];
-  multiple?: boolean;
-  custom?: boolean;
-  /** How many prompts the question has; the list answers only one in place. */
-  questions?: number;
 }
 
 export interface Answer {

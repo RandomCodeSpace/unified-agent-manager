@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/github/copilot-sdk/go/rpc"
@@ -62,8 +63,26 @@ func TestMCPConfigReadsBothTransports(t *testing.T) {
 }
 
 func TestMCPErrorTextDropsTheRPCWrapping(t *testing.T) {
-	err := errors.New("JSON-RPC Error -32603: Request session.mcp.restartServer failed with message: failed to spawn MCP server process")
-	if got := mcpErrText(err); got != "failed to spawn MCP server process" {
-		t.Fatalf("got %q", got)
+	for _, tc := range []struct{ in, want string }{
+		{"JSON-RPC Error -32603: Request session.mcp.restartServer failed with message: failed to spawn MCP server process", "failed to spawn MCP server process"},
+		// The wrapping goes before the text is clipped, and the rest is trimmed.
+		{"JSON-RPC Error -32603: Request " + strings.Repeat("x", maxErrorText) + " failed with message:  spawn failed \n", "spawn failed"},
+	} {
+		if got := rpcText(errors.New(tc.in)); got != tc.want {
+			t.Errorf("rpcText = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// Every server state the CLI reports maps to one the contract names.
+func TestMCPStatusesAreTheContracts(t *testing.T) {
+	for _, s := range []rpc.MCPServerStatus{rpc.MCPServerStatusConnected, rpc.MCPServerStatusFailed, rpc.MCPServerStatusNeedsAuth, rpc.MCPServerStatusPending,
+		rpc.MCPServerStatusDisabled, rpc.MCPServerStatusStopped, rpc.MCPServerStatusNotConfigured} {
+		if _, ok := mcpStatuses[s]; !ok {
+			t.Errorf("state %q has no contract state", s)
+		}
+	}
+	if got := mcpStatus(rpc.MCPServerStatusNotConfigured); got != agentapi.MCPNotConfigured {
+		t.Fatalf("not configured = %q", got)
 	}
 }

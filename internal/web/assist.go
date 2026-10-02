@@ -76,10 +76,7 @@ func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, 
 	}
 	req.Timeout = assistTimeout
 	call.Purpose, call.Model = req.Purpose, req.Model
-	return m.runUtility(ctx, call, req.Prompt, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
-		req.OnUsage = onUsage
-		return runner.RunUtility(ctx, req)
-	})
+	return m.runUtilityRequest(ctx, call, runner, req)
 }
 
 // persistLocked writes s's durable state soon without counting it as Task
@@ -448,8 +445,10 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		create.Model, create.Effort, create.ContextSize = req.Model, "", "default"
 	}
 	text := ""
-	if i := s.lastMain(agentapi.ItemUser, len(s.items)-1); i >= 0 {
-		text = s.items[i].Text
+	for i := len(s.items) - 1; i >= 0 && text == ""; i-- {
+		if ownerMessage(s.items[i]) {
+			text = s.items[i].Text
+		}
 	}
 	var read *archiveRead
 	if text == "" && m.pagerLocked(s) != nil {
@@ -462,7 +461,7 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 			return SessionSummary{}, err
 		}
 		for i := len(w.items) - 1; i >= 0 && text == ""; i-- {
-			if w.items[i].Kind == agentapi.ItemUser {
+			if ownerMessage(w.items[i]) {
 				text = w.items[i].Text
 			}
 		}
@@ -472,6 +471,12 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 	}
 	create.Prompt = text
 	return m.Create(create)
+}
+
+// ownerMessage reports whether it is a message the owner sent the main
+// agent, not one the CLI generated to continue an autopilot turn.
+func ownerMessage(it agentapi.Item) bool {
+	return it.AgentID == "" && it.Kind == agentapi.ItemUser && it.Delivery != agentapi.DeliveryAutopilot
 }
 
 func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {

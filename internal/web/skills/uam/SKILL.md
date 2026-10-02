@@ -24,8 +24,10 @@ a phone.
   `choices`, not in the question text; the owner often answers from a phone.
   List the one you recommend first, ending in "(Recommended)": the owner sees
   it pre-selected.
-- **Changes**: the owner's view of the whole working tree diffed against
-  `HEAD`, other Tasks' edits included.
+- **Changes**: the owner's diff view. It opens on **This task**: the files
+  you or your subagents edited with an edit tool, compared with `HEAD`.
+  Files written by shell commands, or changed by another Task, show only
+  under **All changes**, the whole working tree against `HEAD`.
 
 ## What the owner sees
 

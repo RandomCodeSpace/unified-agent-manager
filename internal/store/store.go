@@ -412,6 +412,9 @@ type WebState struct {
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
 	Suggestions *WebSuggestions `json:"suggestions,omitempty"`
+	// UnseenEnd marks a Task that failed or was interrupted while no page
+	// showed it, and that no page has opened since.
+	UnseenEnd bool `json:"unseen_end,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -451,6 +454,7 @@ var knownWebStateFields = map[string]struct{}{
 	"rerun_of":            {},
 	"outcome":             {},
 	"suggestions":         {},
+	"unseen_end":          {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
@@ -491,7 +495,8 @@ type WebProject struct {
 	// invalid one on load.
 	Badge WebBadge `json:"badge,omitzero"`
 	// Charts are the charts the owner pinned to the Project, oldest first.
-	// The web service checks them on load and keeps their rows elsewhere.
+	// The web service shows, and counts, only the ones it can check, and
+	// keeps their rows elsewhere.
 	Charts []WebChart `json:"charts,omitempty"`
 
 	unknown map[string]json.RawMessage

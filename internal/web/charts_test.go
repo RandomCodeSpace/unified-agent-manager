@@ -13,6 +13,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // chartTask creates a Task in mode in a new Project and returns it, its
@@ -49,6 +50,48 @@ func writeFile(t *testing.T, path, text string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Stored pins this version cannot show (a hand edit, a newer kind) are not
+// listed, so they neither count nor take a place under the cap.
+func TestUnshownPinsNeitherCountNorFill(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	task, conv, dir := chartTask(t, m, prov, "yolo")
+	writeFile(t, filepath.Join(dir, "rows.csv"), "day,commits\n09-01,3\n")
+	if res := chartCall(t, conv, "call-1", `{"title":"Commits","kind":"line","x":"day","y":["commits"],"command":"cat rows.csv","format":"csv"}`); res.Failed {
+		t.Fatalf("uam_chart = %+v", res)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		p := cfg.WebProjects[task.ProjectID]
+		for range maxPinnedCharts {
+			p.Charts = append(p.Charts, store.WebChart{ID: mustUUID(t), Title: "From a newer uam", Kind: "radar", X: "a", Y: []string{"b"}, Command: "true", Format: "csv"})
+		}
+		cfg.WebProjects[task.ProjectID] = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.PinChart(task.ID, "call-1"); err != nil {
+		t.Fatalf("pin = %v", err)
+	}
+	if n := pinCount(m, task.ProjectID); n != 1 {
+		t.Fatalf("project charts = %d, want 1", n)
+	}
+	// Reading leaves what is stored as it was, the unshown pins included.
+	for range 2 {
+		if list, err := m.PinnedCharts(task.ProjectID); err != nil || len(list) != 1 {
+			t.Fatalf("pinned = %+v, %v", list, err)
+		}
+	}
+	if cfg, err := st.Load(); err != nil || len(cfg.WebProjects[task.ProjectID].Charts) != maxPinnedCharts+1 || cfg.WebProjects[task.ProjectID].Charts[0].Kind != "radar" {
+		t.Fatalf("stored pins = %+v, %v", cfg.WebProjects[task.ProjectID].Charts, err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := pinCount(startManager(t, st, prov), task.ProjectID); n != 1 {
+		t.Fatalf("project charts after a restart = %d, want 1", n)
 	}
 }
 

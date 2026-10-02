@@ -751,11 +751,7 @@ func (m *Manager) DraftCommitMessage(ctx context.Context, id string, paths []str
 	defer cancel()
 	req := agentapi.UtilityRequest{Model: model.Model, Workdir: repo.top, Purpose: purposeCommitMessage,
 		System: commitDraftSystem, Prompt: prompt, Timeout: commitDraftTimeout}
-	reply, err := m.runUtility(ctx, UtilityCall{Purpose: purposeCommitMessage, Provider: model.Provider, Model: model.Model, TaskID: id, ProjectID: t.projectID}, req.System+req.Prompt,
-		func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
-			req.OnUsage = onUsage
-			return runner.RunUtility(ctx, req)
-		})
+	reply, err := m.runUtilityRequest(ctx, UtilityCall{Purpose: purposeCommitMessage, Provider: model.Provider, Model: model.Model, TaskID: id, ProjectID: t.projectID}, runner, req)
 	if err != nil {
 		return CommitDraft{}, utilityFailed("drafting the commit message", err)
 	}

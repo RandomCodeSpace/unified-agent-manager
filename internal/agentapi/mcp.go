@@ -46,14 +46,15 @@ type MCPConfigurer interface {
 	SetMCPServerEnabled(ctx context.Context, name string, enabled bool) error
 }
 
-// MCP server states in one conversation.
+// MCP server states in one conversation: MCPStatus.Status is one of them.
 const (
-	MCPConnected = "connected"
-	MCPFailed    = "failed"
-	MCPNeedsAuth = "needs-auth"
-	MCPPending   = "pending"
-	MCPDisabled  = "disabled"
-	MCPStopped   = "stopped"
+	MCPConnected     = "connected"
+	MCPFailed        = "failed"
+	MCPNeedsAuth     = "needs-auth"
+	MCPPending       = "pending"
+	MCPDisabled      = "disabled"
+	MCPStopped       = "stopped"
+	MCPNotConfigured = "not_configured"
 )
 
 // MCPStatus is one MCP server as a conversation sees it. Tools are listed

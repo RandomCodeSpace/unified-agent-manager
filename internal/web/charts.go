@@ -503,19 +503,7 @@ func writePrivateJSON(root, path string, v any) error {
 			return fmt.Errorf("%s is not a directory", dir)
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".chart-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
+	return writeFileAtomic(path, ".chart-*", data)
 }
 
 // chartCall runs a uam_chart call of the Task taskID.
