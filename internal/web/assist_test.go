@@ -316,42 +316,6 @@ func TestExportHoldsTheWholeRecord(t *testing.T) {
 	}
 }
 
-func TestSavedPrompts(t *testing.T) {
-	prov := newAssistProvider()
-	st := openTestStore(t)
-	m, project := assistManager(t, st, prov)
-	global, err := m.AddPrompt(AddPromptRequest{Name: " Review ", Text: "Review the diff\nfor bugs"})
-	if err != nil || global.Name != "Review" {
-		t.Fatalf("add = %+v, %v", global, err)
-	}
-	scoped, err := m.AddPrompt(AddPromptRequest{Name: "Ship", Text: "Commit and push", ProjectID: project})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, bad := range []AddPromptRequest{{Name: "", Text: "x"}, {Name: "x", Text: "  "}, {Name: "x", Text: "a\x1b"}, {Name: "x", Text: "y", ProjectID: "nope"}} {
-		if _, err := m.AddPrompt(bad); statusOf(err) != 400 {
-			t.Fatalf("add %+v = %v", bad, err)
-		}
-	}
-	if _, err := m.RenamePrompt(global.ID, "Careful review"); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.DeletePrompt(scoped.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.DeletePrompt(scoped.ID); statusOf(err) != 404 {
-		t.Fatalf("delete twice = %v", err)
-	}
-	if err := m.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	m2 := startManager(t, st, prov)
-	got := m2.Settings().SavedPrompts
-	if len(got) != 1 || got[0].ID != global.ID || got[0].Name != "Careful review" || got[0].Text != "Review the diff\nfor bugs" {
-		t.Fatalf("saved prompts after a restart = %+v", got)
-	}
-}
-
 func TestAssistPastTheUtilityLimit(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)

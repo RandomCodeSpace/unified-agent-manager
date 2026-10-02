@@ -699,13 +699,6 @@ sign-outs are logged without the token.
   Task works, waits for you, has queued messages, or once you start typing.
   Without a Utility model, or past today's Background AI limit, there are
   none. Settings → Composer → **Suggest replies** turns them off.
-- **Saved prompts**: the speech-bubble button in the composer's toolbar lists
-  the prompts you saved, for every Project or for this Task's Project. Type
-  to search them by name; choosing one inserts it at the cursor on its own
-  line. **Save as prompt** saves the composer's text under a name, for this
-  Project or all Projects. The service keeps them, so they are the same in
-  every browser. Settings → **Saved prompts** renames and deletes them.
-  Removing a Project removes the prompts saved for it.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
   Task's row in the sidebar shows it as its status line ("Ready for review:"

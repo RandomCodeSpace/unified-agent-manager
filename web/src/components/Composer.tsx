@@ -8,7 +8,7 @@ import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '.
 import { visibleModels } from '../lib/models';
 import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
-import { SavedPrompts, SuggestedReplies } from './Assist';
+import { SuggestedReplies } from './Assist';
 import { insertAt } from '../lib/assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
@@ -528,7 +528,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     textarea.current?.focus();
   }
 
-  /** A suggested reply or a saved prompt goes in at the caret; nothing is sent. */
+  /** A suggested reply goes in at the caret; nothing is sent. */
   function insertText(insert: string) {
     const next = insertAt(text, caret, insert);
     updateText(next.text, next.caret);
@@ -1407,7 +1407,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <Paperclip />
               </Button>
             </Tip>
-            <SavedPrompts projectId={session.project_id} text={text} onInsert={insertText} />
           </>
         )}
         {catalogPending ? (

@@ -41,9 +41,6 @@ func (s *Server) assistRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/suggestions", s.handleSuggestions)
 	mux.HandleFunc("POST /api/sessions/{id}/rerun", s.handleRerun)
 	mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExport)
-	mux.HandleFunc("POST /api/prompts", s.handleAddPrompt)
-	mux.HandleFunc("PATCH /api/prompts/{id}", s.handleRenamePrompt)
-	mux.HandleFunc("DELETE /api/prompts/{id}", s.handleDeletePrompt)
 }
 
 // assistRunnerLocked claims s's provider for one assist Utility call,
