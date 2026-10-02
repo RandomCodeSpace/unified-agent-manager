@@ -803,7 +803,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       recordSubagents: oldAudits,
       agentItems: { a5: longHistory('g', 300, 'a5'), ...Object.fromEntries(oldAudits.map((s) => [s.id, longHistory(`o${s.id}`, 20, s.id)])) },
     }),
-    // Questions with one question, answered from the composer: options with free text, options only, free text only.
+    // Questions with one question, answered from the composer: options, options with a recommended one, free text only.
     task({
       id: 't16',
       project_id: 'p1',
@@ -854,7 +854,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           title: 'Which package manager does this project use?',
           state: 'pending',
           time: ago(2),
-          questions: [{ text: 'Which package manager should the lockfile and CI use?', choices: ['pnpm (Recommended)', 'npm', 'yarn'], custom: false }],
+          questions: [{ text: 'Which package manager should the lockfile and CI use?', choices: ['pnpm (Recommended)', 'npm', 'yarn'], custom: true }],
         },
       ],
     }),

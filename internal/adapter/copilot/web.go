@@ -2689,15 +2689,16 @@ func takesFollowUps(t *rpc.TaskAgentInfo) bool {
 }
 
 // askUser is the SDK's ask_user callback. It runs on its own goroutine and
-// blocks until the user answers or the conversation ends.
+// blocks until the user answers or the conversation ends. The owner may always
+// type their own answer, even when the agent sent allowFreeform false: the CLI
+// hands a free-form answer to the model like any other.
 func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInputInvocation) (copilot.UserInputResponse, error) {
-	freeform := req.AllowFreeform == nil || *req.AllowFreeform
 	in := &interaction{
 		Interaction: agentapi.Interaction{
 			ID:        "question-" + rand.Text(),
 			Kind:      agentapi.InteractionQuestion,
 			Title:     "Question from Copilot",
-			Questions: []agentapi.Question{{Text: req.Question, Choices: req.Choices, Custom: freeform || len(req.Choices) == 0}},
+			Questions: []agentapi.Question{{Text: req.Question, Choices: req.Choices, Custom: true}},
 			State:     agentapi.InteractionPending,
 			Time:      time.Now(),
 		},

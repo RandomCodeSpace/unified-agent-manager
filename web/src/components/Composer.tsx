@@ -241,6 +241,8 @@ export interface Answering {
 
 /** No option chosen: one array, so nothing derived from it changes between renders. */
 const NO_CHOICES: string[] = [];
+/** Why files cannot be added while a question waits: an answer is an option or typed text, nothing else. */
+const ANSWER_FIRST = 'Answer the question first.';
 
 interface ComposerProps {
   session: SessionDetail;
@@ -372,8 +374,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const argument = useMemo(() => triggerAt(text, caret) ? null : argumentTrigger(text, caret, commands ?? []), [text, caret, commands]);
   const rawTrigger = useMemo(() => triggerAt(text, caret) ?? argument?.trigger ?? null, [text, caret, argument]);
   const triggerKey = rawTrigger ? `${rawTrigger.kind}${rawTrigger.start}` : null;
-  // An answer is never a command: while answering only the `@` picker opens and slash-shaped text is text.
-  const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy && !(answering && rawTrigger.kind !== '@') ? rawTrigger : null;
+  // An answer is plain text, never a command or a file: while answering no picker opens and `/`, `$` and `@` are text.
+  const trigger = rawTrigger && dismissed !== triggerKey && !locked && !busy && !answering ? rawTrigger : null;
   const shapedCommand = !answering && /^[/$]\S/.test(text.trim());
   const pendingCommand = !answering && commandPending(text, commands, commandsError);
   const wantCommands = !locked && (executionOpen || trigger?.kind === '/' || trigger?.kind === '$' || pendingCommand);
@@ -478,6 +480,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setHighlight(0);
     setFiles((f) => pruneFiles(next, f));
     if (!triggerAt(next, nextCaret)) setDismissed(null);
+    // Typing an answer replaces the staged option(s): the answer is one or the other.
+    if (answering?.question.custom && staged.length && next.trim()) setChosen({ id: answering.interaction.id, choices: NO_CHOICES });
   }
 
   function pick(item: PickerItem) {
@@ -536,6 +540,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   function addFiles(list: File[]) {
     if (locked || !list.length) return;
+    // An answer carries no files: a drop or paste while answering is refused with the Attach button's reason.
+    if (answering) {
+      setNotice(ANSWER_FIRST);
+      return;
+    }
     const kinds: Kind[] = [...activeKinds];
     const next: Pending[] = [];
     for (const file of list) {
@@ -579,7 +588,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }
 
   const uploadsFull = activeKinds.length >= LIMITS.count;
-  const attachReason = uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
+  const fullReason = uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
+  const attachReason = answering ? ANSWER_FIRST : fullReason;
   const uploading = uploads.some((u) => u.status === 'uploading');
   const refused = uploads.some((u) => u.status === 'error');
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
@@ -736,53 +746,24 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setDismissed(null);
   }
 
-  /** The `alongside` steer that already went for the current answer, so a retry after a failed answer never repeats it. */
-  const steered = useRef<string | null>(null);
-
-  /**
-   * Answer mode's send: what the answer cannot carry (a note beside a staged option, every file)
-   * is steered into the turn first, so it is waiting when the model resumes; then the answer goes.
-   * A failed steer answers nothing and keeps everything here.
-   */
+  /** Answer mode's send: the staged options or the typed text, and nothing else. */
   async function sendAnswer() {
     if (!answering || cannotSubmit) return;
-    const composed = answerFromComposer(answering.question, { text, staged, files, attachments: attachmentIds });
-    if (!composed) return;
-    // As `send`: the same steer repeats under the same request id.
-    const key = JSON.stringify([answering.interaction.id, text, files, attachmentIds, staged]);
-    if (pending.current?.key !== key) pending.current = { key, id: newRequestId() };
-    const id = pending.current.id;
+    const answers = answerFromComposer(answering.question, text, staged);
+    if (!answers) return;
     refocus.current = true;
     setBusy('answer');
     setError(null);
     setNotice(null);
     try {
-      if (composed.alongside && steered.current !== key) {
-        const { text: note, files: refs, attachments } = composed.alongside;
-        const sub = await api.prompt(session.id, note, id, 'steer', { ...(refs.length ? { files: refs } : {}), ...(attachments.length ? { attachments } : {}) });
-        setOutcome(sub);
-        // A refused steer delivered nothing: answer nothing and keep what the composer holds; a retry is a new request.
-        if (sub.status === 'rejected' || sub.status === 'cancelled') {
-          pending.current = null;
-          return;
-        }
-        steered.current = key;
-      }
-      try {
-        const answered = await api.respond(session.id, answering.interaction.id, { answers: composed.answers });
-        clearBuffer();
-        answering.onAnswered(answered);
-      } catch (e) {
-        // Answered from another tab or withdrawn: what the steer carried stands in the transcript, so it goes from here.
-        if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
-        else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
-        else throw e;
-        if (composed.alongside) clearBuffer();
-      }
-      pending.current = null;
-      steered.current = null;
+      const answered = await api.respond(session.id, answering.interaction.id, { answers });
+      clearBuffer();
+      answering.onAnswered(answered);
     } catch (e) {
-      setError(describeError(e));
+      // Answered from another tab or withdrawn: the card's wording, as a note.
+      if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
+      else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
+      else setError(describeError(e));
     } finally {
       setBusy(null);
     }
@@ -1171,7 +1152,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         addFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {dragging > 0 && <DropOverlay note={gateNote || LIMITS_TEXT} />}
+      {dragging > 0 && !answering && <DropOverlay note={gateNote || LIMITS_TEXT} />}
       {trigger && (
         <InlinePicker
           id={LIST_ID}
@@ -1188,7 +1169,17 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       )}
       {answering && (
         // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
-        <ComposerQuestion interactionId={answering.interaction.id} question={answering.question} chosen={staged} disabled={!!busy || locked} onChoose={(choices) => setChosen({ id: answering.interaction.id, choices })} />
+        // Choosing an option replaces a typed answer, as typing replaces the option.
+        <ComposerQuestion
+          interactionId={answering.interaction.id}
+          question={answering.question}
+          chosen={staged}
+          disabled={!!busy || locked}
+          onChoose={(choices) => {
+            setChosen({ id: answering.interaction.id, choices });
+            if (choices.length && answering.question.custom && text) updateText('', 0);
+          }}
+        />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">

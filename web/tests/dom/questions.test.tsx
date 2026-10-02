@@ -1,6 +1,6 @@
 // A question with one question is the composer's extension: its options are chosen there, the
-// composer holds the text and the files, Decline and Answer sit in its action row, and what the
-// answer cannot carry is steered first.
+// composer holds the typed answer, Decline and Answer sit in its action row, and the answer is
+// exactly one of the chosen options or the typed text, with nothing sent beside it.
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { composer, log, openTask } from './render';
@@ -32,7 +32,7 @@ describe('answering from the composer', () => {
     const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
     await user.click(once);
     expect(once).toHaveProperty('checked', true);
-    expect(composer().placeholder).toBe('Add a note (sent with your answer)…');
+    expect(composer().placeholder).toBe('Or type your own answer…');
     expect(answerButton()).toHaveProperty('disabled', false);
     await user.click(thrice);
     expect(once).toHaveProperty('checked', false);
@@ -62,42 +62,62 @@ describe('answering from the composer', () => {
     expect(box().queryByText('Needs answer')).toBeNull();
   });
 
-  test('an option with a note and a file steers the note and the file first, then answers', async () => {
+  test('a question with options takes a typed answer with nothing chosen and sends it as the answer', async () => {
     const { user, mock } = await openTask('t16');
-    await user.upload(document.querySelector<HTMLInputElement>('form input[type="file"]')!, textFile());
-    expect(await screen.findByRole('button', { name: 'Remove build.log' })).toBeTruthy();
-    await user.click(box().getByRole('radio', { name: 'Retry once' }));
-    await user.type(composer(), 'The race is in the focus replay');
-    await waitFor(() => expect(answerButton()).toHaveProperty('disabled', false), { timeout: 3000 });
-    await user.click(answerButton());
+    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
+    await user.type(composer(), 'Retry twice, then fail loudly');
+    expect(answerButton()).toHaveProperty('disabled', false);
+    await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Pick a bound for the retry, or describe one')).toBeNull());
-    expect(mock.received.map((r) => r.route)).toEqual(['prompt', 'answer']);
-    const [steer, answer] = mock.received;
-    expect(steer.body.mode).toBe('steer');
-    expect(steer.body.text).toBe('The race is in the focus replay');
-    expect(steer.body.attachments).toHaveLength(1);
-    expect(answer.body.answers).toEqual([['Retry once']]);
-    expect(await log().findByText('The race is in the focus replay')).toBeTruthy();
-    await waitFor(() => expect(composer().value).toBe(''));
-    expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull();
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['Retry twice, then fail loudly']]);
   });
 
-  test('an options-only question takes typed text as a note, never as the answer', async () => {
-    const { user, mock } = await openTask('t17');
-    expect(composer().placeholder).toBe('Add a note (sent with your answer)…');
-    // The recommended option arrives staged; cleared, nothing is.
-    await user.click(box().getByRole('radio', { name: 'pnpm (Recommended)' }));
-    await user.type(composer(), 'CI pins it');
-    expect(answerButton()).toHaveProperty('disabled', true);
-    await user.click(box().getByRole('radio', { name: 'npm' }));
-    expect(answerButton()).toHaveProperty('disabled', false);
-    // Choosing leaves the focus on the option (arrow keys move between radios); Enter sends from the text.
-    await user.click(composer());
+  test('typing clears a chosen option and the typed text is the answer', async () => {
+    const { user, mock } = await openTask('t16');
+    const once = box().getByRole('radio', { name: 'Retry once' });
+    await user.click(once);
+    expect(once).toHaveProperty('checked', true);
+    await user.type(composer(), 'Only on CI');
+    expect(once).toHaveProperty('checked', false);
+    expect(composer().placeholder).toBe('Type your answer…');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
-    expect(mock.received.map((r) => r.route)).toEqual(['prompt', 'answer']);
-    expect(mock.received[0].body.text).toBe('CI pins it');
-    expect(mock.received[1].body.answers).toEqual([['npm']]);
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['Only on CI']]);
+  });
+
+  test('choosing an option after typing clears the text and sends only the option', async () => {
+    const { user, mock } = await openTask('t16');
+    await user.type(composer(), 'Only on CI');
+    await user.click(box().getByRole('radio', { name: 'Retry up to 3 times' }));
+    expect(composer().value).toBe('');
+    await user.click(answerButton());
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['Retry up to 3 times']]);
+  });
+
+  test('typing clears every chosen option of a question that takes several', async () => {
+    const { user, mock } = await openTask('t19');
+    await user.click(box().getByRole('checkbox', { name: 'linux/arm64' }));
+    await user.click(box().getByRole('checkbox', { name: 'darwin/arm64' }));
+    await user.type(composer(), 'linux only');
+    expect(box().getAllByRole('checkbox').some((c) => (c as HTMLInputElement).checked)).toBe(false);
+    await user.click(answerButton());
+    await waitFor(() => expect(box().queryByRole('checkbox')).toBeNull());
+    expect(mock.received[0].body.answers).toEqual([['linux only']]);
+  });
+
+  test('files cannot go with an answer: Attach says why and a file is refused', async () => {
+    const { user, mock } = await openTask('t16');
+    const attach = screen.getByRole('button', { name: /^Attach files/ });
+    expect(attach.getAttribute('aria-disabled')).toBe('true');
+    expect(attach.getAttribute('aria-label')).toBe('Attach files. Answer the question first.');
+    await user.upload(document.querySelector<HTMLInputElement>('form input[type="file"]')!, textFile());
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Answer the question first.');
+    expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull();
+    expect(mock.received).toEqual([]);
   });
 
   test('several options may be chosen where the question allows it', async () => {
@@ -136,9 +156,8 @@ describe('answering from the composer', () => {
     expect(box().queryByText('Needs answer')).toBeNull();
   });
 
-  test('answered elsewhere after the note went: the note stands, the composer says so and clears', async () => {
+  test('answered elsewhere: the composer says so and keeps the typed answer', async () => {
     const { user, mock } = await openTask('t16');
-    await user.click(box().getByRole('radio', { name: 'Retry once' }));
     await user.type(composer(), 'see the CI log');
     const real = window.fetch;
     window.fetch = async (input, init) => {
@@ -147,30 +166,8 @@ describe('answering from the composer', () => {
     };
     await user.click(answerButton());
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'This request was already answered elsewhere.');
-    expect(mock.received.map((r) => r.route)).toEqual(['prompt']);
-    expect(mock.received[0].body.text).toBe('see the CI log');
-    expect(composer().value).toBe('');
-    expect(await log().findByText('see the CI log')).toBeTruthy();
-  });
-
-  test('a refused note answers nothing and keeps the composer as it was', async () => {
-    const { user, mock } = await openTask('t16');
-    await user.click(box().getByRole('radio', { name: 'Retry once' }));
-    await user.type(composer(), 'see the CI log');
-    const real = window.fetch;
-    window.fetch = async (input, init) => {
-      if (String(input).endsWith('/prompt') && init?.method === 'POST') return new Response(JSON.stringify({ request_id: 'r', status: 'rejected', error: 'The turn ended.', time: new Date().toISOString() }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      return real(input, init);
-    };
-    await user.click(answerButton());
-    expect(await screen.findByText('Last submission rejected: The turn ended.')).toBeTruthy();
-    // The send is over once the Answer button is usable again; only then can "nothing answered" be read.
-    await waitFor(() => expect(answerButton()).toHaveProperty('disabled', false));
-    await new Promise((r) => setTimeout(r, 200));
-    expect(mock.received.map((r) => r.route)).toEqual([]);
+    expect(mock.received).toEqual([]);
     expect(composer().value).toBe('see the CI log');
-    expect(box().getByRole('radio', { name: 'Retry once' })).toHaveProperty('checked', true);
-    expect(box().getByText('Pick a bound for the retry, or describe one')).toBeTruthy();
   });
 
   test('a request with several questions keeps its form on the card', async () => {
@@ -213,7 +210,6 @@ describe('a recommended option', () => {
     const { user } = await openTask('t17');
     await user.click(recommended());
     expect(recommended()).toHaveProperty('checked', false);
-    await user.type(composer(), 'still thinking');
     await new Promise((r) => setTimeout(r, 400));
     expect(recommended()).toHaveProperty('checked', false);
     expect(answerButton()).toHaveProperty('disabled', true);
@@ -247,21 +243,20 @@ describe('a recommended option', () => {
     expect(answerButton()).toHaveProperty('disabled', true);
   });
 
-  test('the task draft stays parked and a typed note goes beside it', async () => {
+  test('typing replaces it, the typed text alone is sent, and the task draft comes back', async () => {
     localStorage.setItem('uam.draft.t17', JSON.stringify({ text: 'half a thought', files: [], attachments: [] }));
     const { user, mock } = await openTask('t17');
     expect(composer().value).toBe('');
     expect(recommended()).toHaveProperty('checked', true);
-    await user.type(composer(), 'CI pins it');
+    await user.type(composer(), 'bun');
     await new Promise((r) => setTimeout(r, 400));
-    expect(composer().value).toBe('CI pins it');
-    expect(recommended()).toHaveProperty('checked', true);
+    expect(composer().value).toBe('bun');
+    expect(recommended()).toHaveProperty('checked', false);
     expect(localStorage.getItem('uam.draft.t17')).toContain('half a thought');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
-    expect(mock.received.map((r) => r.route)).toEqual(['prompt', 'answer']);
-    expect(mock.received[0].body.text).toBe('CI pins it');
-    expect(mock.received[1].body.answers).toEqual([['pnpm (Recommended)']]);
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['bun']]);
     await waitFor(() => expect(composer().value).toBe('half a thought'));
   });
 });

@@ -543,12 +543,15 @@ sign-outs are logged without the token.
   request UAM could not tie to a call shows as one grey line where it
   happened. A question with one question is not a card: it appears at the
   top of the message box, with its options. Pick an option there (pick the
-  same one again to clear it) or type the answer where the question allows
-  free text, then press Enter or Answer. An option the agent marks
-  "(Recommended)" is already picked when the question appears; it is sent
-  only when you press Enter or Answer. Anything the answer cannot carry (a
-  note typed beside a chosen option, images and files) is sent into the same
-  turn first, as a steer, so the agent has it when it resumes. **Decline**
+  same one again to clear it) or type your own answer, then press Enter or
+  Answer. You can always type your own answer, even when the agent offered
+  options. The answer is either the picked option(s) or the typed text,
+  never both: typing clears the picked option, and picking an option clears
+  the typed text. An option the agent marks "(Recommended)" is already picked
+  when the question appears; it is sent only when you press Enter or Answer.
+  Nothing else goes with an answer: Attach is unavailable while a question
+  waits, and a dropped or pasted file is refused with "Answer the question
+  first." **Decline**
   sits between Stop and **Answer**. What you had typed before the question
   arrived is kept and comes back once the question is settled.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
