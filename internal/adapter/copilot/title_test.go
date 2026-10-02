@@ -68,6 +68,43 @@ func TestTitleRunsInAToollessThrowawaySessionItDeletes(t *testing.T) {
 	}
 }
 
+// A first message's images go as blobs with a note in the prompt, and the
+// agent's reply, when the title waited for it, follows the message.
+func TestTitleSendsImagesAndTheReply(t *testing.T) {
+	var msgs []copilot.MessageOptions
+	p, _ := titleProvider(func(_ context.Context, msg copilot.MessageOptions) (string, error) {
+		msgs = append(msgs, msg)
+		return "t", nil
+	})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	img := agentapi.Blob{Name: "shot.png", MIME: "image/png", Data: []byte{1, 2, 3}}
+	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Images: []agentapi.Blob{img}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "see", Images: []agentapi.Blob{img, img}, Reply: "Fixed the 500."}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Reply: "Fixed the 500."}); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{
+		"<user_message>\n[1 attached image]\n</user_message>",
+		"<user_message>\n[2 attached images]\nsee\n</user_message>\n<agent_reply>\nFixed the 500.\n</agent_reply>",
+		"<user_message>\n\n</user_message>\n<agent_reply>\nFixed the 500.\n</agent_reply>",
+	} {
+		if msgs[i].Prompt != want {
+			t.Fatalf("prompt %d = %q, want %q", i, msgs[i].Prompt, want)
+		}
+	}
+	if len(msgs[0].Attachments) != 1 || len(msgs[1].Attachments) != 2 || len(msgs[2].Attachments) != 0 {
+		t.Fatalf("attachments = %d, %d, %d", len(msgs[0].Attachments), len(msgs[1].Attachments), len(msgs[2].Attachments))
+	}
+	b, ok := msgs[0].Attachments[0].(*rpc.AttachmentBlob)
+	if !ok || b.MIMEType != "image/png" || b.Data == nil || *b.Data != "AQID" || b.DisplayName == nil || *b.DisplayName != "shot.png" {
+		t.Fatalf("image attachment = %#v", msgs[0].Attachments[0])
+	}
+}
+
 func TestTitleEffortIsTheLowestTheModelOffers(t *testing.T) {
 	p, fc := titleProvider(func(context.Context, copilot.MessageOptions) (string, error) { return "t", nil })
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })

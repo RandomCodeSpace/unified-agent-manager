@@ -30,9 +30,12 @@ export function modelChoices(catalog: readonly Model[], hidden: readonly string[
 /** The Utility model's opt-out (`title_model` value `none`): the provider keeps its own title and UAM makes no AI call. */
 export const UTILITY_NONE = 'none';
 
-/** The label of the unset Utility model, which the service resolves to the provider's cheapest priced model. */
+/**
+ * The label of the unset Utility model, which the service resolves to the provider's cheapest priced model for its
+ * jobs other than titles (a Task is titled by its own model then).
+ */
 export function cheapestLabel(provider: Pick<ProviderInfo, 'display_name' | 'models' | 'cheapest_model'>): string {
   const id = provider.cheapest_model;
-  if (!id) return `Cheapest (none priced, so ${provider.display_name}'s own title)`;
+  if (!id) return 'Cheapest (none priced)';
   return `Cheapest (currently ${provider.models.find((m) => m.id === id)?.name || id})`;
 }

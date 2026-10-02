@@ -159,6 +159,9 @@ type UtilityRequest struct {
 	// "title".
 	Purpose        string
 	System, Prompt string
+	// Attachments go with Prompt as uploads, such as the images a title
+	// is made from.
+	Attachments []Blob
 	// Tools and CallTool are as in OpenRequest. Their calls have no TaskID.
 	Tools    []HostTool
 	CallTool func(context.Context, HostToolCall) HostToolResult
@@ -210,8 +213,15 @@ type TitleRequest struct {
 	Model string
 	// Workdir is the Task's project directory.
 	Workdir string
-	// Text is the Task's first message, already sanitized and clipped.
+	// Text is the Task's first message, already sanitized and clipped; it
+	// may be empty when the message carried only uploads or files.
 	Text string
+	// Images are the first message's images, set only when Model accepts
+	// them.
+	Images []Blob
+	// Reply is the agent's reply to the first message, sanitized and
+	// clipped, set when the title waited for the first turn.
+	Reply string
 	// OnUsage is as in UtilityRequest.
 	OnUsage func(UtilityUsage)
 }

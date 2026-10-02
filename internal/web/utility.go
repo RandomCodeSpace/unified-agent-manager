@@ -65,7 +65,8 @@ const codeUtilityPaused = "utility_paused"
 // characters. PromptChars counts what the service sent the provider: a
 // Utility request's system message and prompt, or the text a title or a
 // subagent summary is made from. Reason is why a call was skipped
-// (daily_limit or off) or failed.
+// (daily_limit or off) or failed. SessionModel marks a title call made on
+// the Task's own model because no Utility model is set.
 type UtilityCall struct {
 	ID           int64     `json:"id"`
 	At           time.Time `json:"at"`
@@ -73,6 +74,7 @@ type UtilityCall struct {
 	Purpose      string    `json:"purpose"`
 	Provider     string    `json:"provider,omitempty"`
 	Model        string    `json:"model,omitempty"`
+	SessionModel bool      `json:"session_model,omitempty"`
 	TaskID       string    `json:"task_id,omitempty"`
 	ProjectID    string    `json:"project_id,omitempty"`
 	PromptChars  int       `json:"prompt_chars"`

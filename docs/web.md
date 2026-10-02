@@ -241,8 +241,10 @@ sign-outs are logged without the token.
   directory.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
-  or "New task" until there is one. With a title model set on the Settings
-  page, a model titles the Task from its first message a few seconds later.
+  or "New task" until there is one. A model then titles the Task from its
+  first message a few seconds later (see **Utility model** below); a first
+  message of only images or files is titled from its images, or once the
+  agent replied.
   Clearing a name shows the title again.
   Rename from the Task's row menu (hover "…" or right-click), the header
   menu, F2 on a row, or a double-click on the name; the name is edited in
@@ -779,8 +781,12 @@ sign-outs are logged without the token.
   lists with input and output prices, leaving out `auto` and models hidden
   in Settings, the lowest input plus output price per token wins, then the
   lower input price, then the lower ID. `/api/meta` gives it per provider
-  as `cheapest_model`, omitted when no model is priced; then the provider
-  keeps its own title, which for Copilot is the first prompt. A `PATCH`
+  as `cheapest_model`, omitted when no model is priced; then those jobs
+  are not run. Titles are the exception: with no entry, a Task is titled by
+  its own model at the lowest reasoning effort that model offers, which
+  spends that model's credits, and by the cheapest model when that call
+  fails or the Task is on `auto`; with neither, the provider keeps its own
+  title, which for Copilot is the first prompt. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so it keeps its own
   title and subagent report, and UAM makes no utility AI call; an empty ID removes the entry, back to
@@ -792,14 +798,17 @@ sign-outs are logged without the token.
   with no tools and no session store, and deletes that session afterwards.
   It then shows the title, 60 characters at most, and writes it into the
   Copilot session, so `copilot --resume` shows it too. Only the first
-  message counts: later messages, commands, reopened Tasks and a changed
-  setting never retitle a Task, and a first message with no text is not
-  titled. A name you type wins, even while the title is on its way. If the
+  message counts: later messages, attachment-only ones included, commands,
+  reopened Tasks and a changed setting never retitle a Task. A first
+  message with no text goes with its images (at most 3) to a title model
+  that accepts images; otherwise, or when it carried only files, the title
+  waits for the end of the first turn that has a reply and is made from that
+  reply, over the provider's placeholder. A name you type wins, even while the title is on its way. If the
   model fails or takes more than 20 s, the provider's title stays, and the
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Background AI**: every call UAM makes on the Utility model (Task
-  titles, subagent result lines, suggested replies, outcome lines, planner
+  titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines, planner
   triage and suggestions) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
@@ -807,7 +816,8 @@ sign-outs are logged without the token.
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Subagent summary", "Suggested replies",
-  "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model,
+  "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model
+  (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
   reports none, the tokens are estimated at 4 characters each and marked

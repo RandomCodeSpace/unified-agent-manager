@@ -19,5 +19,5 @@ test('the unset utility model names the cheapest model the service picked, or sa
   assert.equal(cheapestLabel({ ...provider, cheapest_model: 'gpt-6-luna' }), 'Cheapest (currently GPT-6 Luna)');
   assert.equal(cheapestLabel({ ...provider, cheapest_model: 'raw' }), 'Cheapest (currently raw)');
   assert.equal(cheapestLabel({ ...provider, cheapest_model: 'unlisted' }), 'Cheapest (currently unlisted)');
-  assert.equal(cheapestLabel(provider), "Cheapest (none priced, so GitHub Copilot's own title)");
+  assert.equal(cheapestLabel(provider), 'Cheapest (none priced)');
 });

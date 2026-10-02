@@ -121,8 +121,8 @@ func TestTitleTriggerRules(t *testing.T) {
 	conv.SetSendHook(nil)
 	mustSubmit(t, m, uncertain.ID, "again", mustUUID(t), ModeSend, SubmissionAccepted)
 
-	// A first message of only a file has no text to title from; the Task
-	// keeps the provider's title.
+	// A first message of only a file has no text to title from: its title
+	// waits for the agent's reply, which never comes here.
 	fileOnly, _ := create("")
 	if err := os.WriteFile(filepath.Join(fileOnly.Workdir, "notes.txt"), []byte("notes\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -545,5 +545,184 @@ func TestUtilityModelDefaultsToCheapest(t *testing.T) {
 	}
 	if want := []string{"unset=cheap", "chosen=dear", "unset again=cheap"}; !slices.Equal(got, want) {
 		t.Fatalf("title requests = %q, want %q", got, want)
+	}
+}
+
+// mediaTitleManager starts a manager whose provider "fake" titles Tasks and
+// offers models, with no Utility model set, and a project.
+func mediaTitleManager(t *testing.T, models []agentapi.Model) (*Manager, *agenttest.Provider, string) {
+	t.Helper()
+	prov := agenttest.NewProvider("fake", titleCaps)
+	prov.SetModels(models, nil)
+	m := startManager(t, openTestStore(t), prov)
+	return m, prov, addProject(t, m, t.TempDir())
+}
+
+// submitUploads sends a prompt of only uploads.
+func submitUploads(t *testing.T, m *Manager, id string, ids ...string) {
+	t.Helper()
+	if sub, err := m.Submit(id, PromptRequest{RequestID: mustUUID(t), Attachments: ids}); err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("uploads-only prompt = %+v, %v", sub, err)
+	}
+}
+
+// A first message of only an image goes, image included, to a title model
+// that sees images: here the Task's own model, as no Utility model is set.
+// An image-only follow-up never titles again.
+func TestImageOnlyFirstMessageIsTitledFromTheImage(t *testing.T) {
+	m, prov, project := mediaTitleManager(t, mediaModels)
+	placeholder := make(chan struct{})
+	prov.SetTitleHook(func(context.Context, agentapi.TitleRequest) (string, error) {
+		<-placeholder
+		return "Login error screenshot", nil
+	})
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "vision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	img := mustUpload(t, m, sum.ID, "shot.png", pngBytes(t))
+	submitUploads(t, m, sum.ID, img.ID)
+	// The provider's own title of an image comes first.
+	conv.EmitTitle("New text")
+	close(placeholder)
+	waitUntil(t, "the image title", func() bool { return summaryOf(t, m, sum.ID).Title == "Login error screenshot" })
+	reqs := prov.TitleRequests()
+	if len(reqs) != 1 || reqs[0].Model != "vision" || reqs[0].Text != "" || reqs[0].Reply != "" || len(reqs[0].Images) != 1 ||
+		reqs[0].Images[0].MIME != "image/png" || len(reqs[0].Images[0].Data) == 0 || reqs[0].Images[0].Path != "" {
+		t.Fatalf("title requests = %+v", reqs)
+	}
+	waitUntil(t, "the logged call", func() bool { return len(m.UtilityLog(0, utilityPage).Calls) == 1 })
+	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Model != "vision" || !c.SessionModel || c.Outcome != utilityOK {
+		t.Fatalf("logged call = %+v", c)
+	}
+
+	conv.EmitItem(agentapi.Item{ID: "r1", Kind: agentapi.ItemAssistant, Text: "Fixed."})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	more := mustUpload(t, m, sum.ID, "more.png", append(pngBytes(t), 0))
+	submitUploads(t, m, sum.ID, more.ID)
+	conv.EmitItem(agentapi.Item{ID: "r2", Kind: agentapi.ItemAssistant, Text: "Also fixed."})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(prov.TitleRequests()); n != 1 {
+		t.Fatalf("an image-only follow-up titled again: %d requests", n)
+	}
+}
+
+// When the title model does not see images, an image-only first message is
+// titled once its turn ends, from the agent's reply, over the provider's
+// placeholder title. A turn end without a reply keeps waiting.
+func TestImageOnlyFirstMessageIsTitledFromTheReply(t *testing.T) {
+	m, prov, project := mediaTitleManager(t, mediaModels)
+	if _, err := m.UpdateSettings(SettingsPatch{TitleModel: map[string]string{"fake": "blind"}}); err != nil {
+		t.Fatal(err)
+	}
+	prov.SetTitleHook(func(context.Context, agentapi.TitleRequest) (string, error) { return "Fix the login 500 error", nil })
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "vision"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	img := mustUpload(t, m, sum.ID, "shot.png", pngBytes(t))
+	submitUploads(t, m, sum.ID, img.ID)
+	conv.EmitTitle("New text")
+	conv.EmitTurn(agentapi.TurnCompleted, "") // no reply yet
+	conv.EmitItem(agentapi.Item{ID: "r1", Kind: agentapi.ItemAssistant, Text: "The screenshot shows a 500 error on login.\x1b[31m I fixed the handler."})
+	if n := len(prov.TitleRequests()); n != 0 {
+		t.Fatalf("titled before a turn ended with a reply: %d requests", n)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the reply title", func() bool { return summaryOf(t, m, sum.ID).Title == "Fix the login 500 error" })
+	reqs := prov.TitleRequests()
+	if len(reqs) != 1 || reqs[0].Model != "blind" || reqs[0].Text != "" || len(reqs[0].Images) != 0 ||
+		reqs[0].Reply != "The screenshot shows a 500 error on login. I fixed the handler." {
+		t.Fatalf("title requests = %+v", reqs)
+	}
+	waitUntil(t, "the provider rename", func() bool { return slices.Equal(conv.Titles(), []string{"Fix the login 500 error"}) })
+	if c := m.UtilityLog(0, utilityPage).Calls[0]; c.Model != "blind" || c.SessionModel {
+		t.Fatalf("logged call = %+v", c)
+	}
+
+	more := mustUpload(t, m, sum.ID, "more.png", append(pngBytes(t), 0))
+	submitUploads(t, m, sum.ID, more.ID)
+	conv.EmitItem(agentapi.Item{ID: "r2", Kind: agentapi.ItemAssistant, Text: "Done."})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(prov.TitleRequests()); n != 1 {
+		t.Fatalf("an image-only follow-up titled again: %d requests", n)
+	}
+}
+
+// Without a Utility model, the Task's own model titles it and the log marks
+// the call; when that model fails the cheapest priced model is asked; a
+// Task on auto uses the cheapest at once; past the daily limit nothing more
+// is asked.
+func TestSessionModelTitlesWithoutAUtilityModel(t *testing.T) {
+	m, prov, project := mediaTitleManager(t, []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6), {ID: "auto"}})
+	var mu sync.Mutex
+	failing := ""
+	prov.SetTitleHook(func(_ context.Context, req agentapi.TitleRequest) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Model == failing {
+			return "", errors.New("model unavailable")
+		}
+		return "Title by " + req.Model, nil
+	})
+	titled := func(model, text string) SessionSummary {
+		t.Helper()
+		sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: model})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustSubmit(t, m, sum.ID, text, mustUUID(t), ModeSend, SubmissionAccepted)
+		return sum
+	}
+	calls := func(n int) []UtilityCall {
+		t.Helper()
+		waitUntil(t, "the logged calls", func() bool { return len(m.UtilityLog(0, utilityPage).Calls) == n })
+		return m.UtilityLog(0, utilityPage).Calls
+	}
+
+	own := titled("dear", "Fix the login form")
+	waitUntil(t, "the session-model title", func() bool { return summaryOf(t, m, own.ID).Title == "Title by dear" })
+	if c := calls(1)[0]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityOK || c.TaskID != own.ID {
+		t.Fatalf("logged call = %+v", c)
+	}
+
+	mu.Lock()
+	failing = "dear"
+	mu.Unlock()
+	fallback := titled("dear", "Write the release notes")
+	waitUntil(t, "the fallback title", func() bool { return summaryOf(t, m, fallback.ID).Title == "Title by cheap" })
+	got := calls(3)
+	if c := got[1]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityError {
+		t.Fatalf("failed session-model call = %+v", c)
+	}
+	if c := got[0]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityOK {
+		t.Fatalf("fallback call = %+v", c)
+	}
+
+	auto := titled("auto", "Tidy the README")
+	waitUntil(t, "the auto Task's title", func() bool { return summaryOf(t, m, auto.ID).Title == "Title by cheap" })
+	if c := calls(4)[0]; c.Model != "cheap" || c.SessionModel {
+		t.Fatalf("auto Task's call = %+v", c)
+	}
+
+	setUtilityLimit(t, m, new(4))
+	before := len(prov.TitleRequests())
+	capped := titled("dear", "Add a dark mode toggle")
+	if c := calls(5)[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.Model != "dear" || !c.SessionModel {
+		t.Fatalf("capped call = %+v", c)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(prov.TitleRequests()); n != before || len(m.UtilityLog(0, utilityPage).Calls) != 5 || summaryOf(t, m, capped.ID).Title != "" {
+		t.Fatalf("past the limit: %d new requests, %d calls", n-before, len(m.UtilityLog(0, utilityPage).Calls))
 	}
 }

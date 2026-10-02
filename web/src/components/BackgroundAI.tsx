@@ -1,7 +1,7 @@
 import { ChevronRight } from 'lucide-react';
 import { useCallback, useContext, useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, taskName, type UtilityCall, type UtilityLog } from '../api';
-import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, outcomeLabel, purposeLabel, sizeText, tokenText } from '../lib/utility';
+import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, modelText, outcomeLabel, purposeLabel, sizeText, tokenText } from '../lib/utility';
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
 import { Note, Skeleton } from './common';
@@ -23,7 +23,7 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
   const project = call.project_id ? projects?.find((p) => p.id === call.project_id) : undefined;
   const outcome = outcomeLabel(call);
   const ran = call.outcome !== 'skipped';
-  const meta = [call.model, ran && sizeText(call), ran && tokenText(call), ran && durationText(call.duration_ms), call.credits ? `${formatCredits(call.credits)} credits` : ''].filter(Boolean).join(' · ');
+  const meta = [modelText(call), ran && sizeText(call), ran && tokenText(call), ran && durationText(call.duration_ms), call.credits ? `${formatCredits(call.credits)} credits` : ''].filter(Boolean).join(' · ');
   return (
     <li className="flex min-w-0 flex-col gap-0.5 py-2">
       <div className="flex min-w-0 items-baseline gap-2">
