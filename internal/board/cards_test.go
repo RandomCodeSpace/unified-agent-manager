@@ -136,8 +136,6 @@ func TestAgentRootEpics(t *testing.T) {
 		{NewCard{Kind: KindStory, Title: "Loose story"}, CodeForbidden},
 		{NewCard{Kind: KindSubtask, Title: "Loose subtask"}, CodeForbidden},
 		{NewCard{Kind: KindEpic, ParentID: first.ID, Title: "Nested"}, CodeInvalid},
-		// The Task writes nothing else, not even under its own epic.
-		{NewCard{Kind: KindStory, ParentID: first.ID, Title: "Story"}, CodeForbidden},
 		{NewCard{Kind: KindEpic, Title: " proposed EPIC "}, CodeDuplicate},
 		{NewCard{Kind: KindEpic, Title: "Owner's epic"}, CodeDuplicate},
 	} {
@@ -204,6 +202,87 @@ func TestAgentRootEpics(t *testing.T) {
 	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards", CapCreated)) {
 		t.Fatalf("past the created cap: %v", err)
 	}
+}
+
+// A Task's scope includes every card it created that has not started, and
+// everything under one, so a Task with no scope builds out the epics it
+// proposes from one request: stories, subtasks and links at each level,
+// within the caps. Cards it did not create stay out of reach: another
+// Task's proposals and the owner's cards, confirmed or not, unless under its
+// own card. A started card keeps its plan, and the Task still starts no work.
+func TestAgentBuildsOutItsEpics(t *testing.T) {
+	f := newFixture(t)
+	free := Agent("free", "sub")
+	e1 := f.create(free, "", KindEpic, "Epic one")
+	e2 := f.create(free, "", KindEpic, "Epic two")
+	f.must(f.s.Link(f.ctx, free, e1.ID, e2.ID))
+	s1 := f.create(free, e1.ID, KindStory, "Story one")
+	s2 := f.create(free, e1.ID, KindStory, "Story two")
+	f.must(f.s.Link(f.ctx, free, s1.ID, s2.ID))
+	l1 := f.create(free, s1.ID, KindSubtask, "Leaf one")
+	l2 := f.create(free, s1.ID, KindSubtask, "Leaf two")
+	f.must(f.s.Link(f.ctx, free, l1.ID, l2.ID))
+	f.must(f.s.Unlink(f.ctx, free, l1.ID, l2.ID))
+	f.must(f.s.Link(f.ctx, free, l1.ID, l2.ID))
+	if c := f.card(l2.ID); c.Confirmed() || c.ExpiresAt == nil || !slices.Equal(c.BlockedBy, []string{l1.ID}) {
+		t.Fatalf("proposed leaf %+v", c)
+	}
+	res, err := f.s.Edit(f.ctx, free, s2.ID, Patch{Title: ptr("Story two, renamed")})
+	f.must(err)
+	if res.Request != nil || res.Card.Title != "Story two, renamed" {
+		t.Fatalf("edit of its own story = %+v", res)
+	}
+	// Levels still hold, and owner-only fields stay the owner's.
+	wantCode(t, f.s.Link(f.ctx, free, s1.ID, l1.ID), CodeInvalid)
+	_, err = f.s.Edit(f.ctx, free, l1.ID, Patch{AcceptCmd: &sql.NullString{String: "make test", Valid: true}})
+	wantCode(t, err, CodeForbidden)
+
+	// Cards it did not create stay out of reach: another Task's proposal and
+	// the owner's confirmed cards.
+	theirs := f.create(Agent("other", ""), "", KindEpic, "Their epic")
+	ownerEpic, ownerStory, ownerLeaf, _ := f.tree()
+	for _, c := range []Card{theirs, ownerEpic, ownerStory} {
+		_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: c.ID, Title: "Mine"})
+		wantCode(t, err, CodeForbidden)
+	}
+	for _, c := range []Card{theirs, ownerEpic, ownerStory, ownerLeaf} {
+		_, err = f.s.Edit(f.ctx, free, c.ID, Patch{Title: ptr("Taken")})
+		wantCode(t, err, CodeForbidden)
+	}
+	wantCode(t, f.s.Link(f.ctx, free, e1.ID, theirs.ID), CodeForbidden)
+	wantCode(t, f.s.Link(f.ctx, free, theirs.ID, ownerEpic.ID), CodeForbidden)
+	_, err = f.s.Create(f.ctx, Agent("other", ""), NewCard{ProjectID: proj, Kind: KindStory, ParentID: e1.ID, Title: "Theirs in mine"})
+	wantCode(t, err, CodeForbidden)
+	_, err = f.s.Edit(f.ctx, free, ownerStory.ID, Patch{ParentID: &e1.ID})
+	wantCode(t, err, CodeForbidden)
+	_, err = f.s.Edit(f.ctx, free, f.create(free, e1.ID, KindStory, "Story three").ID, Patch{ParentID: &ownerEpic.ID})
+	wantCode(t, err, CodeForbidden)
+	// The owner's card added under the Task's own story is part of its plan.
+	added := f.create(owner, s1.ID, KindSubtask, "Owner's addition")
+	f.must(f.s.Link(f.ctx, free, added.ID, l1.ID))
+
+	// The unconfirmed cap counts per container under its own cards too.
+	for i := range CapUnconfirmed {
+		f.create(free, e2.ID, KindStory, fmt.Sprintf("More %d", i))
+	}
+	_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindStory, ParentID: e2.ID, Title: "One too many"})
+	wantCode(t, err, CodeLimit)
+
+	// It starts no work, and a started card keeps its plan.
+	_, err = f.s.Claim(f.ctx, free, l2.ID, Baseline{Head: "base"})
+	wantCode(t, err, CodeForbidden)
+	_, err = f.s.Launch(f.ctx, owner, l2.ID, "worker", Baseline{Head: "base"}, true)
+	f.must(err)
+	if res, err = f.s.Edit(f.ctx, free, l2.ID, Patch{Title: ptr("Changed")}); err != nil || res.Request == nil || f.card(l2.ID).Title != "Leaf two" {
+		t.Fatalf("edit of its started subtask = %+v, %v; want a change request", res, err)
+	}
+	wantCode(t, f.s.Unlink(f.ctx, free, l1.ID, l2.ID), CodeInProgress)
+	f.must(f.s.Unlink(f.ctx, free, s1.ID, s2.ID))
+	_, err = f.s.Edit(f.ctx, free, s1.ID, Patch{ParentID: &e2.ID})
+	wantCode(t, err, CodeInProgress)
+	// Its other cards stay plannable, though the launch confirmed them.
+	f.create(free, s2.ID, KindSubtask, "Still planning")
+	f.invariants()
 }
 
 // Test plan 18: the duplicate-title refusal ignores cancelled siblings.

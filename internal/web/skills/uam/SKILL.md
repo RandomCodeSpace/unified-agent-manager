@@ -104,7 +104,10 @@ Planner on and the Project is a git repository.
   nothing. The owner may also add a running Task to a story without a
   message: it then holds a subtask and works in that story's scope like a
   launched Task, and `board_list` shows the card as "held by you". Any other
-  Task reads the board and may propose epics.
+  Task reads the board and may propose epics. Every Task's scope also covers
+  the cards it created until they start, so you can build out the epics you
+  propose: stories, subtasks and links under them, from one request. Cards
+  the owner or another Task created stay out of reach.
 - **Requests**: `board_request` files done, cancel or blocked. You never
   mark a card done yourself. The owner accepts or rejects every request
   that is not accepted automatically (see Done). A rejection reaches you as

@@ -570,10 +570,10 @@ func TestBoardToolsPlanUnderTheContainer(t *testing.T) {
 }
 
 // A Task not started from a card proposes epics at the root (ADR 0005
-// decision 4): each stays a proposal with its expiry until the owner
-// confirms or dismisses it, within the caps and the duplicate rule. Stories
-// and subtasks still need a parent, and a Task started from a card proposes
-// no epic.
+// decision 4) and builds them out (decision 9): each stays a proposal with
+// its expiry until the owner confirms or dismisses it, within the caps and
+// the duplicate rule. Stories and subtasks still need a parent, and a Task
+// started from a card proposes no epic.
 func TestBoardToolsProposeRootEpics(t *testing.T) {
 	f := newPlanner(t)
 	epic := f.create(board.KindEpic, "", "Owner's epic")
@@ -599,21 +599,29 @@ func TestBoardToolsProposeRootEpics(t *testing.T) {
 	if r := f.toolRefused(task, "board_create", fmt.Sprintf(`{"kind":"epic","parent":%q,"title":"Nested"}`, second.ID), string(board.CodeInvalid)); r.Text != "an epic cannot hold an epic" {
 		t.Fatalf("nested = %q", r.Text)
 	}
-	// It proposes and links its epics, and nothing more: its own epic is
-	// outside any scope it has.
+	// It plans its epics (decision 9): edits them, links them, and builds
+	// them out with stories and subtasks; the owner's epic stays out of reach.
 	for name, args := range map[string]string{
-		"board_edit":      `{"ref":%q,"title":"Renamed"}`,
+		"board_edit":      `{"ref":%q,"title":"Offline first"}`,
 		"board_comment":   `{"ref":%q,"body":"note"}`,
 		"board_checklist": `{"ref":%q,"add":["item"]}`,
 	} {
-		f.toolRefused(task, name, fmt.Sprintf(args, r.Card.ID), string(board.CodeForbidden))
+		f.toolOK(task, name, fmt.Sprintf(args, r.Card.ID))
 	}
+	story := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Cache"}`, r.Card.ID)).Card
+	sub := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Store"}`, story.ID)).Card
+	next := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Read"}`, story.ID)).Card
+	f.toolOK(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, next.ID, sub.ID))
 	f.toolOK(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":"#1"}`, r.Card.ID))
 	f.toolOK(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, second.ID, r.Card.ID))
 	f.toolRefused(task, "board_link", fmt.Sprintf(`{"ref":"#1","blocker":%q}`, second.ID), string(board.CodeForbidden))
+	f.toolRefused(task, "board_create", `{"kind":"story","parent":"#1","title":"In theirs"}`, string(board.CodeForbidden))
 	f.toolRefused(task, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, r.Card.ID, leaf.ID), string(board.CodeInvalid))
-	if d := f.card(r.Card.ID); d.Card.Title != "Offline mode" || len(d.Comments) != 0 || len(d.Card.Checklist) != 0 || !slices.Equal(d.Card.BlockedBy, []string{epic.ID}) || len(d.Requests) != 0 {
-		t.Fatalf("a refused call wrote: %+v", d)
+	if d := f.card(r.Card.ID); d.Card.Title != "Offline first" || len(d.Comments) != 1 || len(d.Card.Checklist) != 1 || !slices.Equal(d.Card.BlockedBy, []string{epic.ID}) || len(d.Requests) != 0 {
+		t.Fatalf("its epic = %+v", d)
+	}
+	if d := f.card(next.ID); d.Card.Confirmed || !slices.Equal(d.Card.BlockedBy, []string{sub.ID}) {
+		t.Fatalf("its subtask = %+v", d)
 	}
 	for i := range board.CapUnconfirmed - 2 {
 		f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"epic","title":"Epic %d"}`, i))
