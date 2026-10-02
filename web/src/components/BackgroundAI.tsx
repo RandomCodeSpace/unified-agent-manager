@@ -1,12 +1,15 @@
+import { ChevronRight } from 'lucide-react';
 import { useCallback, useContext, useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, taskName, type UtilityCall, type UtilityLog } from '../api';
 import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, outcomeLabel, purposeLabel, sizeText, tokenText } from '../lib/utility';
+import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
 import { Note, Skeleton } from './common';
 import { PlannerContext, usePlannerTasks } from './planner/context';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { Collapse } from './ui/collapse';
 import { Input } from './ui/input';
 
 /** How often the open section reads today's count and the newest calls again. */
@@ -49,8 +52,9 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
 
 /**
  * Settings → Background AI: UAM's own calls on the Utility model (titles, subagent summaries, planner jobs), today's
- * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. Older
- * calls load page by page, so every call kept stays reachable.
+ * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. The log
+ * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
+ * load page by page, so every call kept stays reachable.
  */
 export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ limitSetting?: number; saving: boolean; onSaveLimit: (limit: number) => Promise<void> }>) {
   const [log, setLog] = useState<UtilityLog | null>(null);
@@ -59,29 +63,34 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
   const [error, setError] = useState<string | null>(null);
   const [older, setOlder] = useState(false);
   const [draft, setDraft] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [logRead, setLogRead] = useState(false);
   const shown = useRef<{ calls: UtilityCall[]; next: number | undefined }>({ calls: [], next: undefined });
 
   // Bumped to read again at once: Retry, a saved limit.
   const [reads, setReads] = useState(0);
   const refresh = () => setReads((n) => n + 1);
-  const apply = useCallback((page: UtilityLog) => {
-    shown.current = mergeCalls(shown.current.calls, shown.current.next, page.calls, page.next);
+  const apply = useCallback((page: UtilityLog, withCalls: boolean) => {
+    if (withCalls) {
+      shown.current = mergeCalls(shown.current.calls, shown.current.next, page.calls, page.next);
+      setCalls(shown.current.calls);
+      setNext(shown.current.next);
+      setLogRead(true);
+    }
     setLog(page);
-    setCalls(shown.current.calls);
-    setNext(shown.current.next);
     setError(null);
   }, []);
 
   useEffect(() => {
     let current = true;
-    const read = () => api.utility().then((page) => { if (current) apply(page); }).catch((e: unknown) => { if (current) setError(describeError(e)); });
+    const read = () => (open ? api.utility() : api.utility(undefined, 1)).then((page) => { if (current) apply(page, open); }).catch((e: unknown) => { if (current) setError(describeError(e)); });
     void read();
     const timer = window.setInterval(() => void read(), REFRESH_MS);
     return () => {
       current = false;
       window.clearInterval(timer);
     };
-  }, [apply, limitSetting, reads]);
+  }, [apply, limitSetting, reads, open]);
 
   async function loadOlder() {
     if (next === undefined) return;
@@ -183,36 +192,44 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
         </Note>
       </form>
       <div className="flex flex-col gap-1">
-        <h3 className="text-ui font-medium text-ink">Log</h3>
-        <Note>Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</Note>
         {error && (
           <Note tone="error" role="alert">
-            Could not refresh the log: {error}
+            Could not refresh Background AI: {error}
           </Note>
         )}
-        {calls.length === 0 && <Note>No Background AI calls in the last 30 days.</Note>}
-        {byDay(calls).map((group) => {
-          const totals = days.get(group.day);
-          const label = dayLabel(group.day, today.day);
-          return (
-            <section key={group.day} aria-label={label} className="flex flex-col pt-2">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                <h4 className="text-ui font-medium text-ink">{label}</h4>
-                {totals && <span className="text-caption text-muted tabular-nums">{dayText(totals)}</span>}
-              </div>
-              <ul className="flex flex-col pl-3">
-                {group.calls.map((c) => (
-                  <CallRow key={c.id} call={c} />
-                ))}
-              </ul>
-            </section>
-          );
-        })}
-        {next !== undefined && (
-          <Button size="lg" variant="secondary" className="self-start" loading={older} onClick={() => void loadOlder()}>
-            Show older calls
-          </Button>
-        )}
+        <Button variant="subtle" className="-ml-3 self-start text-muted" aria-expanded={open} aria-controls="utility-log" onClick={() => setOpen((o) => !o)}>
+          <ChevronRight className={cn('transition-transform duration-160', open && 'rotate-90')} />
+          {open ? 'Hide log' : `Show log · ${today.calls.toLocaleString('en-US')} ${today.calls === 1 ? 'call' : 'calls'} today`}
+        </Button>
+        <Collapse open={open}>
+          <div id="utility-log" className="flex flex-col gap-1">
+            <Note>Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</Note>
+            {!logRead && <Skeleton label="Loading the log…" rows={3} className="pt-2" />}
+            {logRead && calls.length === 0 && <Note>No Background AI calls in the last 30 days.</Note>}
+            {byDay(calls).map((group) => {
+              const totals = days.get(group.day);
+              const label = dayLabel(group.day, today.day);
+              return (
+                <section key={group.day} aria-label={label} className="flex flex-col pt-2">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                    <h3 className="text-ui font-medium text-ink">{label}</h3>
+                    {totals && <span className="text-caption text-muted tabular-nums">{dayText(totals)}</span>}
+                  </div>
+                  <ul className="flex flex-col pl-3">
+                    {group.calls.map((c) => (
+                      <CallRow key={c.id} call={c} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+            {next !== undefined && (
+              <Button size="lg" variant="secondary" className="self-start" loading={older} onClick={() => void loadOlder()}>
+                Show older calls
+              </Button>
+            )}
+          </div>
+        </Collapse>
       </div>
     </>
   );
