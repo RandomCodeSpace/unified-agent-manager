@@ -77,8 +77,8 @@ export interface LaunchAsk {
   card: Card;
   /** The suggestions launching confirms: the subtask, then its suggested parents. */
   confirms: Card[];
-  /** Suggested blockers still open: they stay suggestions and keep blocking. */
-  waits: Card[];
+  /** Suggested blockers still open, its own then its parents' (`via`): they stay suggestions and keep blocking. */
+  waits: { card: Card; via?: Card }[];
   run: () => Promise<unknown>;
 }
 
@@ -132,7 +132,11 @@ export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null;
           <div className="mt-1 flex flex-col gap-1 rounded-md bg-warning-wash px-3 py-2 text-caption text-body">
             <span className="font-medium text-ink">Still waits on</span>
             <ul aria-label="Still waits on" className="list-disc pl-4">
-              {shown.waits.map(cardItem)}
+              {shown.waits.map(({ card: b, via }) => (
+                <li key={`${b.id}:${via?.id ?? ''}`}>
+                  #{b.seq} {b.title} <span className="text-muted">· {KIND_LABEL[b.kind]}{via && ` (via its ${via.kind} #${via.seq})`}</span>
+                </li>
+              ))}
             </ul>
             <span className="text-muted">They stay suggestions and block {seq} until they are done or cancelled.</span>
           </div>

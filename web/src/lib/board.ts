@@ -284,6 +284,19 @@ export function lockedReason(c: Card): string | null {
 }
 
 /**
+ * Why the container `c` can't move, or null when it can: a move takes every card under it along,
+ * so the service refuses it while a subtask under it has started (held, doing or done).
+ */
+export function startedUnderReason(c: Card, byId: ReadonlyMap<string, Card>): string | null {
+  if (c.kind === 'subtask') return null;
+  for (const x of byId.values()) {
+    if (x === c || !isStarted(x) || !cardPath(x, byId).includes(c)) continue;
+    return x.status === 'done' ? `Can't move while #${x.seq} under it is done: move it back to To do first.` : `Can't move while #${x.seq} under it is in progress: release it first.`;
+  }
+  return null;
+}
+
+/**
  * The cards `card` may be blocked by (§3): links map one level at a time, so only cards of its
  * kind under its parent (epics with epics), not cancelled, not started, and not linked already.
  */

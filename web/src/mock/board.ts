@@ -4,7 +4,7 @@
 // staleness markers (§9) and the import (§11). Not part of the production bundle.
 
 import { LIVE, type BoardRequest, type Card, type CardComment, type CardKind, type CardStatus, type ChecklistItem, type Evidence, type Hold, type Project, type SessionSummary, type Settings } from '../api';
-import { cardPath, childIndex, deriveBoard, leavesUnder, lockedReason } from '../lib/board';
+import { cardPath, childIndex, deriveBoard, leavesUnder, lockedReason, startedUnderReason } from '../lib/board';
 
 type Json = Record<string, unknown>;
 
@@ -654,6 +654,9 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           }
         }), ok);
       case 'POST move': {
+        // A move takes the cards under it along: refused while one of them has started.
+        const under = startedUnderReason(c, new Map(cards.map((k) => [k.id, k])));
+        if (under) return refuse('in_progress', under);
         const wrong = misplaced(c.kind, body.parent_id, c.project_id);
         if (wrong) return wrong;
         return done(commit(() => {

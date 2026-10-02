@@ -604,6 +604,35 @@ describe('owner authoring', () => {
     expect(menu.getByText('In progress: release it to change the plan.')).toBeTruthy();
   });
 
+  test('a story with a started subtask under it offers Move to… switched off, naming the subtask, as the service refuses the move', async () => {
+    const { user, tree } = await openPlanner();
+    const busy = "Can't move while #8 under it is in progress: release it first.";
+    // Story #7 holds #8, which a Task holds.
+    await expect(api.planner.move('cp1-7', null)).rejects.toThrow(busy);
+    const panel = await openCard(user, tree, 7);
+    const move = panel.getByRole('button', { name: 'Move to…' });
+    expect(move.hasAttribute('disabled') || move.getAttribute('aria-disabled') === 'true').toBe(true);
+    expect(move.getAttribute('aria-describedby')).toBe('planner-action-move-reason');
+    expect(panel.getByText(busy)).toBeTruthy();
+    // Other actions stay as they are; Cancel with a running subtask is the owner's to take.
+    expect(panel.getByRole('button', { name: 'Cancel' }).hasAttribute('disabled')).toBe(false);
+    await closeCard(user);
+    let menu = await openMenu(user, 'Actions for #7');
+    expect(menu.getByRole('menuitem', { name: 'Move to…' }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getByText(busy)).toBeTruthy();
+    await user.keyboard('{Escape}');
+    // A done subtask holds its story in place too: story #12 has done #13 and #14 beside open #15.
+    menu = await openMenu(user, 'Actions for #12');
+    expect(menu.getByRole('menuitem', { name: 'Move to…' }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getByText("Can't move while #13 under it is done: move it back to To do first.")).toBeTruthy();
+    await user.keyboard('{Escape}');
+    // Released, #8 holds #7 in place no longer.
+    await act(() => api.planner.release('cp1-8', ''));
+    menu = await openMenu(user, 'Actions for #7');
+    await waitFor(() => expect(menu.getByRole('menuitem', { name: 'Move to…' }).getAttribute('aria-disabled')).not.toBe('true'));
+    expect(menu.queryByText(busy)).toBeNull();
+  });
+
   test('launching a suggestion asks first, naming what it confirms and the suggestions it still waits on', async () => {
     const { user, tree } = await openPlanner();
     // The service refuses a launch that would confirm suggestions unless it says to.
@@ -635,6 +664,19 @@ describe('owner authoring', () => {
     } finally {
       launch.mockRestore();
     }
+  });
+
+  test('the launch step marks a suggested blocker it waits on through a parent, as the finishing guard names it', async () => {
+    const { user, tree } = await openPlanner();
+    // A suggested story #37 beside #16 under #1 blocks #16, so #17 under #16 waits on it too.
+    await act(() => api.planner.suggest('cp1-1', { brief: '', document: '', max: 1 }));
+    await user.click(await tree.findByRole('treeitem', { name: '+2 suggested' }, { timeout: 4000 }));
+    await tree.findByRole('treeitem', { name: /^#37 Harden the retry path/ });
+    await act(() => api.planner.link('cp1-37', 'cp1-16'));
+    const panel = await openCard(user, tree, 17);
+    await user.click(panel.getByRole('button', { name: 'Launch' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Confirm and launch #17?' }));
+    expect(within(dialog.getByRole('list', { name: 'Still waits on' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#37 Harden the retry path · Story (via its story #16)']);
   });
 
   test('a done subtask under a cancelled card offers no Back to To do, which the service refuses there', async () => {
