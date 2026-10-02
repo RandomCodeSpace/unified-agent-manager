@@ -70,10 +70,15 @@ test('the turn line keeps what needs attention explicit: failures, calls without
 });
 
 test('the foot line names thinking that streams or the last open call, waiting for the user when its request does', () => {
-  assert.deepEqual(currentStep([user('u1', at(0)), thought('r1', at(1))], { live: true, streamingId: 'r1' }), { label: 'Thinking…', tone: 'muted', shimmer: true });
+  const streaming = thought('r1', at(1));
+  // A streaming thought and a running call carry their item: the foot shows them unfolded.
+  assert.deepEqual(currentStep([user('u1', at(0)), streaming], { live: true, streamingId: 'r1' }), { label: 'Thinking…', tone: 'muted', shimmer: true, item: streaming });
   assert.equal(currentStep([user('u1', at(0)), thought('r1', at(1))], { live: true, streamingId: 'm9' }), null);
   const running = bash('c1', 'npm test', at(2), { status: 'running' });
-  assert.deepEqual(currentStep([running], { live: true }), { label: 'Running: bash npm test', tone: 'muted', shimmer: false });
+  assert.deepEqual(currentStep([running], { live: true }), { label: 'Running: bash npm test', tone: 'muted', shimmer: false, item: running });
+  // A question or a subagent's call keeps its own place: the foot names it but does not unfold it.
+  assert.equal(currentStep([asked('a1', 'Which?', at(2), { status: 'running', output: undefined })], { live: true }).item, undefined);
+  assert.equal(currentStep([call('t1', tool('task', '{"description":"d"}', { status: 'running' }))], { live: true }).item, undefined);
   const approvals = new Map([['c1', [perm('p1', { tool_call_id: 'c1', state: 'pending', resolution: undefined })]]]);
   assert.deepEqual(currentStep([running], { live: true, approvals }), { label: 'Waiting for your approval: bash npm test', tone: 'attention', shimmer: false });
   const question = new Map([['c1', [q('q1', 'Which?', { tool_call_id: 'c1', state: 'pending' })]]]);

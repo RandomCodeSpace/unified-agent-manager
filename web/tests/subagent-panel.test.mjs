@@ -81,11 +81,28 @@ test('subagent compact density uses turn heads, follow-up boundaries and lazy ti
   assert.ok(items.every(entry => entry.agent_id === 'child'));
   const running = { ...items[5], tool: { ...items[5].tool, status: 'running' } };
   const live = renderToStaticMarkup(React.createElement(exports.AgentItems, { ...props, items: [...items.slice(0, 5), running], live: true, density: 'compact' }));
-  assert.match(live, /Running:/);
+  // The running call is the panel's live step: its tool row, unfolded at the foot.
+  assert.match(live, /animate-rise[\s\S]*>view<[\s\S]*, running/);
   assert.doesNotMatch(live, /Busy for|Took /);
   const main = renderToStaticMarkup(React.createElement(exports.Transcript, { ...props, agentId: undefined, items: [], subagents: [], working: false, density: 'compact' }));
   assert.match(main, /Parent question/);
   assert.doesNotMatch(main, /Child question|Other child question/);
+});
+
+test('a compact turn line with nothing counted yet draws no bare chevron; the foot names a call waiting for permission', () => {
+  const items = [
+    { id: 'u1', kind: 'user', time: '2026-09-26T12:00:01Z', text: 'Clean up' },
+    { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'bash', input: '{"command":"rm -rf build"}', status: 'running' } },
+  ];
+  const waiting = { id: 'p1', kind: 'permission', state: 'pending', tool_call_id: 'c2', title: 'Run shell command', time: '2026-09-26T12:00:03Z' };
+  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true, density: 'compact', footVerb: false }));
+  const pending = draw([waiting]);
+  assert.doesNotMatch(pending, /activity of this turn/);
+  assert.match(pending, /Waiting for your approval: bash rm -rf build/);
+  // Running, the call is the live step at the foot, and the line still waits for its first count.
+  const running = draw([]);
+  assert.doesNotMatch(running, /activity of this turn/);
+  assert.match(running, /animate-rise[\s\S]*>bash<[\s\S]*, running/);
 });
 
 // Exercise the actual table override through react-markdown without importing the app shell.
