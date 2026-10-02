@@ -299,8 +299,11 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
     return answered(q, answer);
   }
   switch (state) {
-    case 'answered':
-      return answered(q, (interaction!.resolution ?? '').replace(RESOLVED, '').trim());
+    case 'answered': {
+      // A bare "answered" is the service's state word, not the answer: the text is not recorded here.
+      const text = (interaction!.resolution ?? '').replace(RESOLVED, '').trim();
+      return answered(q, /^answered$/i.test(text) ? '' : text);
+    }
     case 'rejected':
       q.outcome = 'declined';
       return q;

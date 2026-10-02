@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
 import { Bot, Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { modelName, type Interaction, type Item, type Subagent, type SubagentStatus, type ToolBoardCard, type ToolStatus, type TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
@@ -1016,10 +1016,11 @@ const CallProduct = memo(function CallProduct({ item, sessionId, card, className
 
 /**
  * A question the agent asked, from its interaction (any provider) or Copilot's `ask_user`
- * call (input and output, so it reads the same after a reload and a restart): the text and
- * choices with the chosen ones marked, then the answer under "You answered". While it
- * waits, the action card below the transcript takes the answer; a call left open by a
- * restart or a stopped turn reads "No answer".
+ * call (input and output, so it reads the same after a reload and a restart). While it
+ * waits (the action card below the transcript takes the answer) it shows the text and
+ * choices in full. Once settled it is one compact card of at most two lines, the question
+ * and what it got ("You chose", "You wrote", "Declined", "Not answered"), that opens onto
+ * the full question, every choice with the chosen ones marked and the whole answer.
  */
 // `asked` is rebuilt on every transcript render; equal content means nothing to redraw.
 export const QuestionBlock = memo(function QuestionBlock({ id, asked, className }: { id: string; asked: AskedQuestion; className?: string }) {
@@ -1029,55 +1030,23 @@ export const QuestionBlock = memo(function QuestionBlock({ id, asked, className 
     { key: 'q', label: 'Copy question', icon: <Copy />, onSelect: () => copy(text) },
     { key: 'a', label: 'Copy answer', icon: <Copy />, disabled: !asked.answer, onSelect: () => copy(asked.answer ?? '') },
   ];
+  const pending = asked.outcome === 'pending';
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('flex flex-col gap-1.5 rounded-md bg-raised px-3.5 py-3 text-ui shadow-raised', className)} />}>
-        <div className="flex items-center gap-1.5 text-caption text-muted">
-          <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
-          <span>Question</span>
-          {asked.outcome === 'pending' && (
-            <>
+      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('rounded-md bg-raised text-ui shadow-raised', pending && 'flex flex-col gap-1.5 px-3.5 py-3', className)} />}>
+        {pending ? (
+          <>
+            <div className="flex items-center gap-1.5 text-caption text-muted">
+              <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-faint" />
+              <span>Question</span>
               <span aria-hidden="true">·</span>
               <span className="text-attention">Waiting for your answer</span>
-            </>
-          )}
-        </div>
-        {asked.questions.length === 0 && <p className="text-body">The agent asked a question.</p>}
-        {asked.questions.map((q, k) => (
-          <div key={k} className="flex flex-col gap-1">
-            {q.header && <span className="text-caption text-muted">{q.header}</span>}
-            <Markdown text={q.text} className="text-body" />
-            {q.choices.length > 0 && (
-              <ul className="flex flex-col gap-0.5">
-                {q.choices.map((c) => {
-                  const chosen = asked.chosen.includes(c);
-                  return (
-                    <li key={c} className={cn('flex items-start gap-2', chosen ? 'text-ink' : 'text-muted')}>
-                      <span className="mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
-                        {chosen ? <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} /> : <span aria-hidden="true" className="size-2 rounded-full border-[1.5px] border-current opacity-60" />}
-                      </span>
-                      <span className={cn(chosen && 'font-medium')}>{c}</span>
-                      {chosen && <span className="sr-only">(chosen)</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        ))}
-        {asked.outcome === 'answered' && (
-          <>
-            <div className="fade-rule mt-0.5" aria-hidden="true" />
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-caption text-muted">You answered</span>
-              <span className="min-w-0 text-ink">{asked.answer}</span>
             </div>
+            <QuestionDetail asked={asked} />
           </>
+        ) : (
+          <SettledQuestion id={id} asked={asked} />
         )}
-        {asked.outcome !== 'answered' && asked.outcome !== 'pending' && <div className="fade-rule mt-0.5" aria-hidden="true" />}
-        {asked.outcome === 'declined' && <p className="text-caption text-muted">You declined to answer.</p>}
-        {asked.outcome === 'none' && <p className="text-caption text-muted">No answer.</p>}
-        {asked.outcome === 'failed' && <p className="text-caption text-error">Failed{asked.error ? `: ${asked.error}` : '.'}</p>}
       </ContextMenu.Trigger>
       <ContextMenu.Content>
         <ContextMenu.Actions items={items} />
@@ -1085,6 +1054,126 @@ export const QuestionBlock = memo(function QuestionBlock({ id, asked, className 
     </ContextMenu.Root>
   );
 }, (a, b) => a.id === b.id && a.className === b.className && JSON.stringify(a.asked) === JSON.stringify(b.asked));
+
+/** What a settled question got, in plain words: a marker ("You chose", "You wrote") and the answer, or the outcome alone. */
+function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string; tone: string } {
+  const answer = asked.answer ?? '';
+  switch (asked.outcome) {
+    case 'declined':
+      return { answer: 'Declined', tone: 'text-muted' };
+    case 'failed':
+      return { answer: asked.error ? `Failed: ${asked.error}` : 'Failed', tone: 'text-error' };
+    case 'answered':
+      break;
+    default:
+      return { answer: 'Not answered', tone: 'text-muted' };
+  }
+  if (!answer) return { answer: 'Answered', tone: 'text-muted' };
+  if (asked.questions.length > 1) return { marker: 'You answered', answer, tone: 'text-ink' };
+  // Picked: the answer is chosen labels and nothing else; anything more was typed.
+  const choices = asked.questions[0]?.choices ?? [];
+  const picked = asked.chosen.length > 0 && (asked.chosen.includes(answer) || answer.split(/;\s*|,\s*/).every((p) => choices.includes(p.trim())));
+  return picked ? { marker: 'You chose', answer: asked.chosen.join(', '), tone: 'text-ink' } : { marker: 'You wrote', answer, tone: 'text-ink' };
+}
+
+/**
+ * A settled question as one compact card (DESIGN.md question block): the question on the
+ * first line and the answer on the second, side by side where the card is wide, each
+ * truncated with the whole text in its tooltip and in the button's accessible name. The
+ * button opens the full question below; the disclosure outlives re-renders and history pages.
+ */
+function SettledQuestion({ id, asked }: Readonly<{ id: string; asked: AskedQuestion }>) {
+  const [open, setOpen] = useDisclosure(`question:${id}`);
+  const [opened, setOpened] = useState(open);
+  const bodyId = useId();
+  const many = asked.questions.length > 1;
+  const flat = (s: string) => s.replaceAll(/\s+/g, ' ').trim();
+  const question = (many ? asked.questions.map((q) => flat(q.text)).join(' · ') : flat(asked.questions[0]?.text ?? '')) || 'The agent asked a question.';
+  const { marker, answer, tone } = settledAnswer(asked);
+  const lead = many ? `${asked.questions.length} questions` : '';
+  const name = `${lead || 'Question'}: ${question} ${marker ? `${marker}: ` : ''}${answer}`;
+  return (
+    <div className="@container">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={opened ? bodyId : undefined}
+        aria-label={name}
+        className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11"
+        onClick={() => {
+          setOpened(true);
+          setOpen((o) => !o);
+        }}
+      >
+        <MessageCircleQuestion aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
+        {open ? (
+          <span className="min-w-0 flex-1 text-caption text-muted">{lead || 'Question'}</span>
+        ) : (
+          <span className="flex min-w-0 flex-1 flex-col @2xl:flex-row @2xl:items-baseline @2xl:gap-3">
+            <span className="min-w-0 truncate text-ink" title={question}>
+              {lead && <span className="mr-1.5 text-muted">{lead}</span>}
+              {question}
+            </span>
+            <span className="flex min-w-0 items-baseline gap-1.5 @2xl:max-w-1/2 @2xl:shrink-0">
+              {marker && <span className="shrink-0 text-caption text-muted">{marker}</span>}
+              <span className={cn('min-w-0 truncate', tone)} title={answer}>
+                {answer}
+              </span>
+            </span>
+          </span>
+        )}
+        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
+      </button>
+      {opened && (
+        <Collapse open={open} appear>
+          <div id={bodyId} className="flex flex-col gap-1.5 pt-0.5 pr-3.5 pb-3 pl-[2.125rem]">
+            <QuestionDetail asked={asked} />
+          </div>
+        </Collapse>
+      )}
+    </div>
+  );
+}
+
+/** Every question in full with its choices (a check on the chosen ones), then what it got once settled. */
+function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
+  const settled = asked.outcome === 'pending' ? null : settledAnswer(asked);
+  return (
+    <>
+      {asked.questions.length === 0 && <p className="text-body">The agent asked a question.</p>}
+      {asked.questions.map((q, k) => (
+        <div key={k} className="flex flex-col gap-1">
+          {q.header && <span className="text-caption text-muted">{q.header}</span>}
+          <Markdown text={q.text} className="text-body" />
+          {q.choices.length > 0 && (
+            <ul className="flex flex-col gap-0.5">
+              {q.choices.map((c) => {
+                const chosen = asked.chosen.includes(c);
+                return (
+                  <li key={c} className={cn('flex items-start gap-2', chosen ? 'text-ink' : 'text-muted')}>
+                    <span className="mt-[3px] flex size-3.5 shrink-0 items-center justify-center">
+                      {chosen ? <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} /> : <span aria-hidden="true" className="size-2 rounded-full border-[1.5px] border-current opacity-60" />}
+                    </span>
+                    <span className={cn(chosen && 'font-medium')}>{c}</span>
+                    {chosen && <span className="sr-only">(chosen)</span>}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      ))}
+      {settled && <div className="fade-rule mt-0.5" aria-hidden="true" />}
+      {settled?.marker && (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-caption text-muted">{settled.marker}</span>
+          <span className="min-w-0 whitespace-pre-wrap break-words text-ink">{settled.answer}</span>
+        </div>
+      )}
+      {settled && !settled.marker && <p className={cn('text-caption', settled.tone)}>{settled.answer}</p>}
+    </>
+  );
+}
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
 export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; className?: string }) {
