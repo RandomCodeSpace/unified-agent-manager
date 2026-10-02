@@ -37,6 +37,28 @@ describe('assist', () => {
     expect(screen.queryByRole('group', { name: 'Suggested replies' })).toBeNull();
   });
 
+  test('suggested replies float above the composer, out of its flow, so it keeps its size', async () => {
+    await openTask('t3');
+    const group = await screen.findByRole('group', { name: 'Suggested replies' });
+    const form = composer().closest('form')!;
+    // Anchored to the composer's top edge (the form is its positioning box) and out of the flow, so the
+    // composer's height is the same with and without them; it never wraps, it scrolls sideways.
+    expect(form.classList.contains('relative')).toBe(true);
+    expect(group.parentElement).toBe(form);
+    for (const c of ['absolute', 'bottom-full', 'inset-x-0', 'overflow-x-auto']) expect(group.classList.contains(c)).toBe(true);
+    expect(group.classList.contains('flex-wrap')).toBe(false);
+    // Only the chips take pointer events: the conversation beneath still scrolls and clicks.
+    expect(group.classList.contains('pointer-events-none')).toBe(true);
+    const chips = within(group).getAllByRole('button');
+    expect(chips.length).toBeGreaterThan(0);
+    for (const chip of chips) {
+      expect(chip.classList.contains('pointer-events-auto')).toBe(true);
+      expect(chip.classList.contains('shrink-0')).toBe(true);
+    }
+    // Focus order is unchanged: the chips come before the composer's text.
+    expect(chips[0].compareDocumentPosition(composer()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   test('a saved prompt is found by name and inserted; the composer text can be saved as one', async () => {
     const { user, mock } = await openTask('t3');
     await user.click(screen.getByRole('button', { name: 'Saved prompts' }));

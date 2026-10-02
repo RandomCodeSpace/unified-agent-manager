@@ -2,7 +2,7 @@ import { BarChart3, Check, ChevronDown, Copy, LineChart, Pin, RefreshCw, Table2,
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { api, describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
 import { popupOpen } from '../App';
-import { chartCsv, chartSource, formatNumber, headline, type ChartLook } from '../lib/chart';
+import { chartCsv, chartSource, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
@@ -18,7 +18,7 @@ const AUTO_EVERY = 60 * 60_000;
 type ChartRows = Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'x' | 'labels' | 'series'>;
 
 /** Swatches in the order of SERIES_TOKENS (lib/chart), spelled out so the classes are generated. */
-const SWATCHES = ['bg-accent', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-violet'];
+const SWATCHES = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-pink', 'bg-badge-violet', 'bg-badge-cyan', 'bg-badge-green'];
 
 /** A script's first line and an ellipsis; the whole command is in the title and the pin prompt. */
 
@@ -50,11 +50,12 @@ export function ChartImage({ chart, look, className }: Readonly<{ chart: ChartRo
 /** Each series' colour and name, when there is more than one; a bar chart's first series is its bars. */
 function Legend({ chart }: Readonly<{ chart: ChartRows }>) {
   if (chart.series.length < 2) return null;
+  const colors = seriesColorIndexes(chart.series);
   return (
     <ul className="flex flex-wrap gap-x-3 gap-y-1 px-5 text-caption text-body" aria-label="Series">
       {chart.series.map((s, i) => (
         <li key={s.name} className="flex items-center gap-1.5">
-          <span aria-hidden="true" className={cn('inline-block rounded-full', chart.kind === 'bar' && i === 0 ? 'h-2.5 w-2.5 rounded-xs' : 'h-0.5 w-3', SWATCHES[i % SWATCHES.length])} />
+          <span aria-hidden="true" className={cn('inline-block rounded-full', chart.kind === 'bar' && i === 0 ? 'h-2.5 w-2.5 rounded-xs' : 'h-0.5 w-3', SWATCHES[colors[i]])} />
           {s.name}
         </li>
       ))}
@@ -144,7 +145,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
 function useDrawWidth(fallback: number) {
   const [width, setWidth] = useState(0);
   const observer = useRef<ResizeObserver | null>(null);
-  const ref = useCallback((el: HTMLDivElement | null) => {
+  const ref = useCallback((el: HTMLElement | null) => {
     observer.current?.disconnect();
     if (!el) return;
     observer.current = new ResizeObserver(([entry]) => setWidth(Math.max(280, Math.floor(entry.contentRect.width / 40) * 40)));
@@ -205,6 +206,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
 function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ chart: PinnedChart; busy: boolean; notice?: string; onRefresh: () => void; onUnpin: () => void }>) {
   const [expanded, setExpanded] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  const [box, width] = useDrawWidth(560);
   const head = headline(chart);
   const refreshed = chart.labels.length ? ago(chart.at) : 'not read yet';
   return (
@@ -240,8 +242,8 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
         </p>
       )}
       {chart.labels.length > 0 && (
-        <button type="button" aria-expanded={expanded} aria-label={expanded ? `Show ${chart.title} small` : `Show ${chart.title} large`} className="group/spark relative -mx-1 rounded-sm px-1 pt-1 outline-hidden focus-visible:outline-2 focus-visible:outline-focus" onClick={() => setExpanded((e) => !e)}>
-          {expanded ? <ChartImage chart={chart} look={{ width: 560, height: 320 }} /> : <ChartImage chart={chart} look={{ width: 300, height: 64, spark: true }} />}
+        <button ref={box} type="button" aria-expanded={expanded} aria-label={expanded ? `Show ${chart.title} small` : `Show ${chart.title} large`} className="group/spark relative -mx-1 rounded-sm px-1 pt-1 outline-hidden focus-visible:outline-2 focus-visible:outline-focus" onClick={() => setExpanded((e) => !e)}>
+          {expanded ? <ChartImage chart={chart} look={{ width, height: 320 }} /> : <ChartImage chart={chart} look={{ width: 300, height: 64, spark: true }} />}
           <ChevronDown aria-hidden="true" className={cn('absolute right-0 bottom-0 size-3.5 text-faint opacity-0 transition-[opacity,transform] group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100', expanded && 'rotate-180')} />
         </button>
       )}

@@ -1,4 +1,4 @@
-import { BookmarkPlus, MessageSquareText, Pencil, Sparkles, Trash2 } from 'lucide-react';
+import { BookmarkPlus, MessageSquareText, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { api, describeError, provider, type Project, type SavedPrompt, type SessionDetail, type SessionSummary } from '../api';
 import { promptsFor, suggestionKey } from '../lib/assist';
@@ -22,7 +22,7 @@ const focusOnMount = (el: HTMLElement | null) => el?.focus();
 const suggested = new Map<string, { key: string; replies: string[] }>();
 
 /**
- * Up to three replies the owner would likely send next, as buttons above the composer's text once a
+ * Up to three replies the owner would likely send next, as buttons floating above the composer once a
  * turn has completed. One fills the composer and sends nothing. The service asks the Utility model
  * once per finished turn, only when a composer shows it; Settings → Composer turns them off.
  */
@@ -47,11 +47,14 @@ export function SuggestedReplies({ session, hidden, onPick }: Readonly<{ session
   const cached = suggested.get(session.id);
   const replies = key && cached?.key === key ? cached.replies : [];
   if (hidden || replies.length === 0) return null;
+  // Floats just above the composer's top edge, over the transcript's fading foot: out of the composer's flow, so
+  // showing or hiding it never resizes the composer or moves the conversation. One row; many replies scroll
+  // sideways in it. Only the chips take pointer events, so the conversation beneath still scrolls and clicks.
+  // The padding holds each chip's shadow and enlarged touch target (sm), which the scroller would otherwise clip.
   return (
-    <div role="group" aria-label="Suggested replies" className="flex min-w-0 flex-wrap items-center gap-1.5 px-3.5 pt-3 animate-fade-in">
-      <Sparkles aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
+    <div role="group" aria-label="Suggested replies" data-suggestions="" className="pointer-events-none absolute inset-x-0 bottom-full flex gap-1.5 overflow-x-auto overscroll-x-contain px-1.5 py-2 animate-fade-in">
       {replies.map((r) => (
-        <Button key={r} size="sm" variant="secondary" className="min-w-0 max-w-full font-normal" title={r} onClick={() => onPick(r)}>
+        <Button key={r} size="sm" variant="secondary" className="pointer-events-auto max-w-[min(20rem,75vw)] shrink-0 font-normal shadow-raised" title={r} onClick={() => onPick(r)}>
           <span className="truncate">{r}</span>
         </Button>
       ))}

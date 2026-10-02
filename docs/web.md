@@ -441,7 +441,11 @@ sign-outs are logged without the token.
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
   project**, and a footer saying where the rows came from and when. The rows are
   kept with the Task, so the card survives a reload and a restart, and goes
-  when the Task is deleted.
+  when the Task is deleted. A chart fills the width of the conversation and
+  keeps its text at the same size at any width. Each series has a fixed
+  colour: several series take blue, orange, green and purple in order, and a
+  chart of one series takes the colour its name picks, so the same measure
+  keeps its colour across charts and refreshes.
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.
@@ -627,8 +631,10 @@ sign-outs are logged without the token.
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Task, like
   attachments.
-- **Messages while a turn runs**: the composer shows two buttons, **After
-  this turn** (queue) and **Send now** (steer), in place of Send.
+- **Messages while a turn runs**: Send carries the name of what it will do,
+  **Send now** (steer) or **After this turn** (queue), following the Settings
+  view; the menu beside it (the chevron, "More send options") offers the
+  other.
   - **After this turn** holds the message until the turn completes, then sends it as
     the next prompt. A Task queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
@@ -647,17 +653,16 @@ sign-outs are logged without the token.
     why. With Copilot, a steer also moves a
     shell command that is running to the background.
     A steer uses the current turn's model settings. If your draft selects
-    different settings, Send now is dimmed and says why; use **After this
-    turn**. UAM does not silently change a requested steer into a queued
-    message or restart the running response. When the provider cannot steer
-    a running turn, Send now stays dimmed with that reason and Enter queues.
+    different settings, or the provider cannot steer a running turn, Send
+    becomes **After this turn**, Enter queues, and Send now stays in the menu,
+    dimmed, with the reason. UAM does not silently change a requested steer
+    into a queued message or restart the running response.
   - When no turn is running there is one button, **Send**, which sends the
     message at once.
-  - While a turn runs, Enter does what the Settings view says (Send now by
-    default) and Ctrl+Enter (⌘+Enter on a Mac) the other. The button Enter
-    presses is the dark one; the tooltips name the keys. On a phone both
-    buttons sit on their own row under the toolbar. Files and attachments go
-    with a steer as with any other message.
+  - While a turn runs, Enter does what Send says (Send now by default) and
+    Ctrl+Enter (⌘+Enter on a Mac) the other; the tooltip and the menu name
+    the keys. Files and attachments go with a steer as with any other
+    message.
   - **History**: with the caret on the first line (or an empty message), Up
     recalls the previous prompt from this Task, newest first, as in a shell;
     Up again goes further back. Down from the last line comes forward, and
@@ -673,8 +678,10 @@ sign-outs are logged without the token.
   `model` query parameter for the draft's offered model; submission and dispatch
   recheck its media support without changing the running turn.
 - **Suggested replies**: when a turn completes with an answer, up to three
-  short replies you would likely send next show as buttons above the
-  composer's text. Choosing one puts it in the composer; nothing is sent until
+  short replies you would likely send next float in one row just above the
+  composer, over the end of the conversation, so the composer keeps its size
+  as they come and go (on a narrow screen the row scrolls sideways; "Jump to
+  bottom" rises above it). Choosing one puts it in the composer; nothing is sent until
   you send it. They come from one Utility model call, made the first time a
   composer shows that turn, with your last message and the agent's final
   answer; the replies are kept with the Task, so opening it again, in any
@@ -877,7 +884,12 @@ sign-outs are logged without the token.
 - **Finish card**: under a turn that completed, a card titled "Finished —
   check the evidence" puts what the agent did before what it says it did.
   It never uses a model; fixed rules in the service read the whole turn,
-  however long, and the outcome line reads the same result:
+  however long, and the outcome line reads the same result. The card
+  appears once that reading arrives and shows only the parts below that
+  have something; a turn that ran no check, made no claim and edited no
+  file, in a Task with no change to review or commit (a question answered
+  in chat), has no card at all. Once shown for a turn it stays, so a
+  commit's outcome stays in view:
   - **Checks**: each shell command of the main agent in the turn that runs
     tests, a build, a linter, `go vet` or a type check (`go test`,
     `npm test`, `pytest`, `cargo test`, `go build`, `npm run build`,
@@ -904,6 +916,8 @@ sign-outs are logged without the token.
     failure word is not read as a claim ("I did not run the linter, but the
     build passes" claims the build only); "no errors", "no failures" and
     the like are not negations. The header counts the claims not verified.
+    When the turn made claims but ran no check, one line says no tests,
+    builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the
     main agent's and its subagents'; edits that failed left out), the same
     files Changes lists for "Last turn", named from the repository's top

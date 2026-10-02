@@ -23,7 +23,7 @@ import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
-import { Menu } from './ui/menu';
+import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
 /** How freely the agent acts, from permissions and execution together (DESIGN.md Permissions and execution): safest to riskiest. */
@@ -64,6 +64,10 @@ const LIMITS_TEXT = 'Images up to 3 MiB, PDF up to 10 MiB, text up to 256 KiB ·
 const DRAFT_DELAY = 250;
 /** A touch screen: focusing the composer would raise the keyboard over the conversation (as App's select). */
 const COARSE = '(pointer: coarse)';
+/** What the turn-time actions are called, on the Send button and in its menu. */
+const CHOICE_LABEL = { steer: 'Send now', queue: 'After this turn' } as const;
+/** The key that does the action Enter does not while a turn runs. */
+const MODIFIED_KEY = navigator.platform.startsWith('Mac') ? '⌘+Enter' : 'Ctrl+Enter';
 
 // Storage may be unavailable (private mode, quota): the composer works without a draft then.
 function readDraft(key: string): Draft | null {
@@ -693,12 +697,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
   const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
-  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183). The one send button is Enter's.
-  const steerDefault = appSettings.send_default === 'steer';
-  const { enter, modified } = enterActions(live, appSettings.send_default, !!steerUnavailable);
-  // While a turn runs a message has two buttons: After this turn (queue) and Send now (steer).
+  // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183); when a steer is impossible both queue.
+  const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
+  // While a turn runs a message has one labelled Send for Enter's action, and a menu beside it with the other.
   const twoChoices = live && !cmd && !answering && !locked && !newTask;
-  const labelledActions = twoChoices || (!!answering && !locked);
+  const primary = enter === 'steer' ? 'steer' : 'queue';
+  const other = primary === 'steer' ? 'queue' : 'steer';
+  const labelledActions = !!answering && !locked;
 
   /** A new Task's first Send: the text stays here, with the reason, unless the Task was created. */
   async function sendFirst(t: string) {
@@ -1048,7 +1053,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (locked) return '';
     if (answering) return answerPlaceholder(answering.question, staged.length > 0);
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
-    return steerDefault ? 'Send now to guide this turn, or after it…' : 'Send after this turn, or now to guide it…';
+    return enter === 'steer' ? 'Send now to guide this turn, or after it…' : 'Send after this turn, or now to guide it…';
   }
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
@@ -1068,11 +1073,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       </>
     );
   }
-  /** A turn-time button's tip: what it does and its key, or why Send now cannot. */
+  /** A turn-time action's tip: what it does and its key, or why Send now cannot. */
   function describeChoiceTip(mode: 'queue' | 'steer'): ReactNode {
     if (blocked) return blocked;
     if (mode === 'steer' && steerBlocked) return steerBlocked;
-    const shortcut = mode === enter ? 'Enter' : modified === mode ? 'Ctrl+Enter' : '';
+    const shortcut = mode === enter ? 'Enter' : modified === mode ? MODIFIED_KEY : '';
     return (
       <>
         {mode === 'steer' ? 'Send now: the agent reads it before its next step' : 'After this turn: sent when the current turn ends'}
@@ -1080,6 +1085,17 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       </>
     );
   }
+  // The menu's one item: the action Enter does not, dimmed with its reason when a steer is impossible.
+  const otherBlocked = other === 'steer' ? steerBlocked : '';
+  const otherAction: ActionItem = {
+    key: other,
+    label: CHOICE_LABEL[other],
+    hint: otherBlocked ? undefined : MODIFIED_KEY,
+    disabled: !!otherBlocked,
+    reason: otherBlocked,
+    takesFocus: true,
+    onSelect: () => void send(other),
+  };
   /** The confirmation for a discard: the one prompt, or the whole queue. */
   function describeDiscard(): string {
     if (discard.target?.kind !== 'all') return 'Cancel this waiting message?';
@@ -1325,9 +1341,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       />
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
-          context, permissions and execution pickers fold into a More menu. The row wraps only on a phone, when the actions
-          carry labels (Send now and After this turn, or Decline and Answer): they take a row of their own there. */}
-      <div className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2', labelledActions && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+          context, permissions and execution pickers fold into a More menu. On a phone in answer mode Decline and Answer
+          carry labels and take a row of their own; while a turn runs the actions stay on the row and wrap under it only
+          when the pickers cannot keep their touch targets beside them. */}
+      <div className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2', (labelledActions || twoChoices) && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {!locked && (
           <>
             <input
@@ -1384,6 +1401,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}
           disabled={settingsLocked}
+          // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.
+          className="pointer-coarse:min-w-11 max-sm:max-w-max max-sm:grow max-sm:basis-11"
           reason={locked ? 'This task is read-only.' : undefined}
           hint={routed ? `Latest turn ran on ${routed}` : undefined}
           onChange={(v) => void settings({ model: v })}
@@ -1485,21 +1504,26 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Button>
           </Tip>
         </Appear>
-        {/* While a turn runs, two choices with fixed meanings; Enter's is the primary. */}
+        {/* While a turn runs, one Send labelled with Enter's action, and a menu beside it holding the other. */}
         {twoChoices ? (
-          <>
-            <Tip label={describeChoiceTip('queue')}>
-              <Button size="md" variant={enter === 'queue' ? 'primary' : 'secondary'} className="ml-1" loading={busy === 'queue'} disabled={cannotSubmit} onClick={() => void send('queue')}>
-                After this turn
+          <span className="ml-1 flex items-center max-sm:ml-0.5">
+            <Tip label={describeChoiceTip(primary)}>
+              <Button size="md" variant="primary" className="rounded-r-none max-sm:px-2" loading={busy === primary} disabled={cannotSubmit} onClick={() => void send(primary)}>
+                {CHOICE_LABEL[primary]}
+                <ArrowUp aria-hidden="true" strokeWidth={2.25} className="max-sm:hidden" />
               </Button>
             </Tip>
-            <Tip label={describeChoiceTip('steer')}>
-              <Button size="md" variant={enter === 'steer' ? 'primary' : 'secondary'} className="ml-1" aria-disabled={steerBlocked ? 'true' : undefined} aria-label={steerBlocked ? `Send now. ${steerBlocked}` : undefined} loading={busy === 'steer'} disabled={cannotSubmit} onClick={() => void send('steer')}>
-                Send now
-                <ArrowUp aria-hidden="true" strokeWidth={2.25} />
-              </Button>
-            </Tip>
-          </>
+            <Menu.Root modal={false}>
+              <Tip label="More send options">
+                <Menu.Trigger render={<Button size="icon-md" variant="primary" aria-label="More send options" className="rounded-l-none border-l border-on-primary/25" loading={busy === other} disabled={cannotSubmit} />}>
+                  <ChevronDown aria-hidden="true" strokeWidth={2.25} />
+                </Menu.Trigger>
+              </Tip>
+              <Menu.Content side="top" align="end">
+                <Menu.Actions items={[otherAction]} />
+              </Menu.Content>
+            </Menu.Root>
+          </span>
         ) : answering && !locked ? (
           <Tip label={describeSendTip()}>
             <Button type="submit" size="md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : undefined} className="ml-1" loading={busy === 'answer'} disabled={cannotSubmit}>
