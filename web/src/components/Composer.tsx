@@ -67,6 +67,8 @@ const DRAFT_DELAY = 250;
 const COARSE = '(pointer: coarse)';
 /** What the turn-time actions are called, on the Send button and in its menu. */
 const CHOICE_LABEL = { steer: 'Send now', queue: 'After this turn' } as const;
+/** The Send button's glyph while a turn runs: up and away now, or onto the end of the waiting list (its strip's glyph). */
+const CHOICE_ICON = { steer: ArrowUp, queue: ListEnd } as const;
 /** The key that does the action Enter does not while a turn runs. */
 const MODIFIED_KEY = navigator.platform.startsWith('Mac') ? '⌘+Enter' : 'Ctrl+Enter';
 
@@ -732,11 +734,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183); when a steer is impossible both queue.
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
-  // While a turn runs a message has one labelled Send for Enter's action, and a menu beside it with the other.
+  // While a turn runs a message has one Send for Enter's action, named and drawn for it, and a menu beside it with the other.
   const twoChoices = live && !cmd && !answering && !locked && !newTask;
   const primary = enter === 'steer' ? 'steer' : 'queue';
   const other = primary === 'steer' ? 'queue' : 'steer';
-  const labelledActions = !!answering && !locked;
+  const PrimaryIcon = CHOICE_ICON[primary];
 
   /** A new Task's first Send: the text stays here, with the reason, unless the Task was created. */
   async function sendFirst(t: string) {
@@ -1365,10 +1367,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
           context, permissions and execution pickers fold into a More menu; a narrow row folds its labels in priority order
-          (lib/toolbarFold), the model's last. On a phone in answer mode Decline and Answer
-          carry labels and take a row of their own; while a turn runs the actions stay on the row and wrap under it only
-          when the pickers cannot keep their touch targets beside them. */}
-      <div ref={toolbar} className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', (labelledActions || twoChoices) && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+          (lib/toolbarFold), the model's last. The actions are glyphs, named for screen readers and in their tooltips;
+          while a turn runs they stay on the row and wrap under it only when the pickers cannot keep their touch targets
+          beside them. */}
+      <div ref={toolbar} className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {!locked && (
           <>
             <input
@@ -1511,7 +1513,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
-        <span className={cn('ml-auto flex shrink-0 items-center gap-0.5', labelledActions && 'max-sm:w-full max-sm:justify-end')}>
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
         {busy === 'settings' && <Spinner className="mr-1" />}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
@@ -1522,24 +1524,22 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </Appear>
         <Appear show={!!answering}>
           <Tip label="Decline to answer this question">
-            <Button size="md" variant="danger" className="ml-1" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
+            <Button size="icon-md" variant="danger" aria-label="Decline" className="ml-1 rounded-full" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
               <X aria-hidden="true" strokeWidth={2.25} />
-              Decline
             </Button>
           </Tip>
         </Appear>
-        {/* While a turn runs, one Send labelled with Enter's action, and a menu beside it holding the other. */}
+        {/* While a turn runs, one Send named and drawn for Enter's action, and a menu beside it holding the other. */}
         {twoChoices ? (
           <span className="ml-1 flex items-center max-sm:ml-0.5">
             <Tip label={describeChoiceTip(primary)}>
-              <Button size="md" variant="primary" className="rounded-r-none max-sm:px-2" loading={busy === primary} disabled={cannotSubmit} onClick={() => void send(primary)}>
-                {CHOICE_LABEL[primary]}
-                <ArrowUp aria-hidden="true" strokeWidth={2.25} className="max-sm:hidden" />
+              <Button size="icon-md" variant="primary" aria-label={blocked ? `${CHOICE_LABEL[primary]}. ${blocked}` : CHOICE_LABEL[primary]} className="rounded-l-full rounded-r-none" loading={busy === primary} disabled={cannotSubmit} onClick={() => void send(primary)}>
+                <PrimaryIcon aria-hidden="true" strokeWidth={2.25} />
               </Button>
             </Tip>
             <Menu.Root modal={false}>
               <Tip label="More send options">
-                <Menu.Trigger render={<Button size="icon-md" variant="primary" aria-label="More send options" className="rounded-l-none border-l border-on-primary/25" loading={busy === other} disabled={cannotSubmit} />}>
+                <Menu.Trigger render={<Button size="icon-md" variant="primary" aria-label="More send options" className="rounded-l-none rounded-r-full border-l border-on-primary/25" loading={busy === other} disabled={cannotSubmit} />}>
                   <ChevronDown aria-hidden="true" strokeWidth={2.25} />
                 </Menu.Trigger>
               </Tip>
@@ -1548,13 +1548,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               </Menu.Content>
             </Menu.Root>
           </span>
-        ) : answering && !locked ? (
-          <Tip label={describeSendTip()}>
-            <Button type="submit" size="md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : undefined} className="ml-1" loading={busy === 'answer'} disabled={cannotSubmit}>
-              Answer
-              <ArrowUp aria-hidden="true" strokeWidth={2.25} />
-            </Button>
-          </Tip>
         ) : !locked && (
           <Tip label={describeSendTip()}>
             <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} disabled={cannotSubmit || (!answering && !cmd && enter === 'steer' && !!settingsSteerReason)}>

@@ -47,6 +47,9 @@ describe('answering from the composer', () => {
     await openTask('t16');
     const order = within(screen.getByRole('main')).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim() ?? '').filter((name) => ['Stop turn', 'Decline', 'Answer'].includes(name));
     expect(order).toEqual(['Stop turn', 'Decline', 'Answer']);
+    // Glyphs only: the names are for screen readers and the tooltips.
+    expect(declineButton().textContent).toBe('');
+    expect(answerButton().textContent).toBe('');
   });
 
   test('typed text answers a free-text question on Enter; nothing is steered', async () => {
