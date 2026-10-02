@@ -39,16 +39,35 @@ function configure(theme: Record<string, string>) {
   });
 }
 
+/**
+ * The box a diagram is drawn in. Mermaid sizes an xychart `width="100%"` (up to its own width)
+ * and measures its labels on screen, so in this 800px frame a wider chart is measured scaled
+ * down: the axes get room for shrunken labels, which overlap and clip at full size. A box as
+ * wide as the chart measures them 1:1. Other diagrams keep the body's width (a gantt takes it).
+ */
+async function drawBox(source: string): Promise<HTMLElement | undefined> {
+  const { diagramType, config } = await mermaid.parse(source);
+  const width = config.xyChart?.width;
+  if (diagramType !== 'xychart' || !width) return undefined;
+  const box = document.createElement('div');
+  box.style.width = `${width}px`;
+  return document.body.appendChild(box);
+}
+
 async function handle(id: string, source: string, theme: Record<string, string>): Promise<DiagramReply> {
+  let box: HTMLElement | undefined;
   try {
     configure(theme);
     await fontReady;
-    const { svg } = await mermaid.render(id, source);
+    box = await drawBox(source);
+    const { svg } = await mermaid.render(id, source, box);
     const sized = intrinsicSize(svg);
     if (!sized) return { id, error: 'The diagram has no size' };
     return { id, ...sized, svg: sized.svg.replace(/^<svg\b[^>]*>/, (tag) => `${tag}<style>${fontFace}</style>`) };
   } catch (err) {
     return { id, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    box?.remove();
   }
 }
 

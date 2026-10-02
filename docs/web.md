@@ -441,7 +441,11 @@ sign-outs are logged without the token.
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
   project**, and a footer saying where the rows came from and when. The rows are
   kept with the Task, so the card survives a reload and a restart, and goes
-  when the Task is deleted.
+  when the Task is deleted. A chart fills the width of the conversation and
+  keeps its text at the same size at any width. Each series has a fixed
+  colour: several series take blue, orange, green and purple in order, and a
+  chart of one series takes the colour its name picks, so the same measure
+  keeps its colour across charts and refreshes.
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.

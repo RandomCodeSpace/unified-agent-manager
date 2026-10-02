@@ -1,5 +1,5 @@
 // Development-only: the chart routes of the in-browser mock service (see install.ts). One Task,
-// t-chart, drew two charts with uam_chart; the first Project has two of them pinned.
+// t-chart, drew four charts with uam_chart; the first Project has two of them pinned.
 
 import type { Chart, PinnedChart, Project } from '../api';
 
@@ -34,6 +34,39 @@ export const MOCK_CHARTS: Record<string, Chart> = {
     labels: ['go', 'tsx', 'ts', 'md', 'css', 'yml'],
     series: [{ name: 'lines', values: [41280, 18950, 9120, 4310, 1180, 640] }],
     at: ago(11),
+  },
+  'call-chart-3': {
+    title: 'Changes per week, by area',
+    kind: 'line',
+    x_label: 'Week',
+    y_label: 'Lines changed',
+    format: 'csv',
+    x: 'week',
+    y: ['web', 'go', 'docs', 'tests'],
+    labels: ['W31', 'W32', 'W33', 'W34', 'W35', 'W36', 'W37', 'W38', 'W39', 'W40'],
+    series: [
+      { name: 'web', values: [1820, 2410, 1960, 3120, 2780, 3540, 2990, 4210, 3870, 4460] },
+      { name: 'go', values: [2650, 2210, 2980, 2540, 3310, 2870, 3620, 3150, 2760, 3380] },
+      { name: 'docs', values: [420, 610, 380, 920, 540, 1180, 760, 640, 1320, 890] },
+      { name: 'tests', values: [1240, 1580, 1310, 1960, 1720, 2140, 1880, 2510, 2290, 2730] },
+    ],
+    at: ago(10),
+  },
+  'call-chart-4': {
+    title: 'CI runs per week, with failures and retries',
+    kind: 'bar',
+    x_label: 'Week',
+    y_label: 'Runs',
+    format: 'csv',
+    x: 'week',
+    y: ['runs', 'failed', 'retried'],
+    labels: ['W33', 'W34', 'W35', 'W36', 'W37', 'W38', 'W39', 'W40'],
+    series: [
+      { name: 'runs', values: [184, 212, 197, 248, 231, 266, 289, 254] },
+      { name: 'failed', values: [22, 31, 18, 40, 27, 35, 24, 19] },
+      { name: 'retried', values: [41, 52, 37, 66, 49, 58, 45, 38] },
+    ],
+    at: ago(10),
   },
 };
 
