@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason, taskCard, waitsOf, nextSubtask, layoutLevel, wrapText, GRAPH_NODE } from '../src/lib/board.ts';
+import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason, taskCard, waitsOf, nextSubtask, layoutLevel, wrapText, GRAPH_NODE, shownProgress } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -30,6 +30,12 @@ test('a hold makes a container doing, and a hold or a pending request keeps it f
 test('progress counts done over live confirmed leaves, and proposed ones apart', () => {
   const { progress } = deriveContainer([leaf('done'), leaf('todo'), leaf('cancelled'), leaf('todo', { confirmed: false }), leaf('cancelled', { confirmed: false })]);
   assert.deepEqual(progress, { done: 1, total: 2, proposed: 1 });
+});
+
+test('progress as shown counts every live subtask, proposals included, and names the proposals', () => {
+  assert.deepEqual(shownProgress({ done: 0, total: 1, proposed: 2 }), { done: 0, total: 3, proposed: 2, fraction: 0, short: '0/3 · 2 proposed', text: '0/3 done · 2 proposed' });
+  assert.deepEqual(shownProgress({ done: 1, total: 2, proposed: 0 }), { done: 1, total: 2, proposed: 0, fraction: 0.5, short: '1/2', text: '1/2 done' });
+  assert.equal(shownProgress({ done: 0, total: 0, proposed: 0 }).fraction, 0);
 });
 
 test('deriveBoard rolls leaves up through stories into epics and keeps unchanged cards', () => {

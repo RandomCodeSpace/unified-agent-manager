@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, ListTree, Lock, Pencil, Plus, X } from 'luci
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { popupOpen } from '../../App';
 import { api, plannerErrorText, taskName, type Card, type CardStatus, type Project } from '../../api';
-import { cardPath, childIndex, lockedReason, nextSubtask, taskCard, waitsOf, type Wait } from '../../lib/board';
+import { cardPath, childIndex, lockedReason, nextSubtask, shownProgress, taskCard, waitsOf, type Wait } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Markdown, Note } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -94,7 +94,7 @@ export const StoryStrip = memo(function StoryStrip({ plan, open, onOpen }: Reado
   if (mine) {
     const next = container ? nextSubtask(container, plan.index, plan.byId, mine.id) : undefined;
     const waits = waitsOf(mine, plan.byId);
-    const progress = container?.progress;
+    const progress = container?.progress && shownProgress(container.progress);
     label = `This task works on #${mine.seq} ${mine.title}${path.length ? ` in ${path.map((c) => c.title).join(' › ')}` : ''}. Show the plan`;
     line = (
       <>
@@ -104,6 +104,7 @@ export const StoryStrip = memo(function StoryStrip({ plan, open, onOpen }: Reado
           <span className="shrink-0 tabular-nums text-muted">
             · {progress.done}/{progress.total}
             <span className="@max-lg:hidden"> done</span>
+            {progress.proposed > 0 && ` · ${progress.proposed} proposed`}
           </span>
         )}
         <span className={cn('shrink-0 text-accent', container && '@max-md:hidden')}>· This task #{mine.seq}</span>
