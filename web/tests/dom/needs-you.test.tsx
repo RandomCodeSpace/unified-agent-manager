@@ -53,6 +53,26 @@ describe('the Task list', () => {
     expect(row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }).title).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
   });
 
+  test('every Task row in every group is a card; the open one is tinted instead', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    await user.click(row('t17').getByRole('button', { name: /Set up the dependency lockfile/ }));
+    await waitFor(() => expect(header().textContent).toBe('Set up the dependency lockfile'));
+    for (const name of [/Needs you/, /Working/, /Idle/]) {
+      const rows = side.getByRole('region', { name }).querySelectorAll<HTMLElement>('[data-task-row]');
+      expect(rows.length).toBeGreaterThan(0);
+      for (const el of rows) {
+        const card = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
+        expect(el.classList.contains('lift')).toBe(true);
+        expect(card.classList.contains('shadow-raised')).toBe(true);
+        const selected = card.getAttribute('aria-current') === 'true';
+        expect(card.classList.contains(selected ? 'bg-tint-selected' : 'bg-raised')).toBe(true);
+        expect(card.classList.contains(selected ? 'bg-raised' : 'bg-tint-selected')).toBe(false);
+      }
+    }
+    expect(document.querySelector('[data-task-row="t17"] button[data-nav]')!.getAttribute('aria-current')).toBe('true');
+  });
+
   test('Alt+J and Alt+K walk the Needs you group and wrap; a key that types in a field is left alone', async () => {
     renderApp();
     const side = await sidebar();
