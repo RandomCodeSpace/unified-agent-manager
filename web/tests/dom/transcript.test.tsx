@@ -160,7 +160,7 @@ describe('activity', () => {
     expect(log().queryByRole('button', { name: /activity of this turn/ })).toBeNull();
     await user.click(rows[1]);
     const region = within(await screen.findByRole('region', { name: 'Subagent Survey templates for missing alt text and labels' }));
-    expect(await region.findByRole('log')).toBeTruthy();
+    expect(await region.findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' })).toBeTruthy();
     // One row is open at a time: opening another folds the first, and its transcript goes with it.
     await user.click(rows[2]);
     expect(await screen.findByRole('region', { name: 'Subagent Check contrast of the theme tokens' })).toBeTruthy();

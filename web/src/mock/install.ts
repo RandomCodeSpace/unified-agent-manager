@@ -1264,6 +1264,15 @@ export function install(): { received: Received[] } {
       void followUp(t, s.id);
       return json(202, sub);
     }
+    // Stopping one subagent: accepted at once, reported as cancelled.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/subagents\/([^/]+)\/cancel$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      const s = t?.subagents.find((x) => x.id === decodeURIComponent(r![2]));
+      if (!t || !s) return fail(404, 'subagent not found');
+      if (s.status !== 'running') return fail(409, `the subagent is ${s.status}`);
+      setSubagent(t, s.id, 'cancelled');
+      return json(200, t.subagents.find((x) => x.id === s.id));
+    }
     return fail(404, `mock: no route for ${method} ${path}`);
   }
 

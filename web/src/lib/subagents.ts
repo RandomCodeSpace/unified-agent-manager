@@ -1,4 +1,5 @@
 import type { Item, Subagent, SubagentStatus } from '../api';
+import { duration, toolKind } from './transcript.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
 // tones, the live card's set and rows, the status groups of a long list and the header index.
@@ -59,64 +60,106 @@ export function countParts(c: SubagentCounts): CountPart[] {
 
 export const subagentNoun = (n: number) => `${n} ${n === 1 ? 'subagent' : 'subagents'}`;
 
+const parents = new WeakMap<readonly Subagent[], ReadonlyMap<string, Subagent>>();
+
+/** Each subagent by the `task` call that spawned it, built once per list; with two for one call, the later record wins. */
+export function parentMap(subagents: readonly Subagent[]): ReadonlyMap<string, Subagent> {
+  let map = parents.get(subagents);
+  if (!map) {
+    const built = new Map<string, Subagent>();
+    for (const s of subagents) if (s.parent_tool_call_id) built.set(s.parent_tool_call_id, s);
+    parents.set(subagents, built);
+    map = built;
+  }
+  return map;
+}
+
 /** The subagents one of `items` spawned (a reused one keeps its first `task` call), in spawn order. */
 export function spawnedBy(items: readonly Item[], subagents: readonly Subagent[]): Subagent[] {
-  if (!subagents.length) return [];
-  const byParent = new Map<string, Subagent>();
-  for (const s of subagents) if (s.parent_tool_call_id && !byParent.has(s.parent_tool_call_id)) byParent.set(s.parent_tool_call_id, s);
-  const out: Subagent[] = [];
-  for (const item of items) {
+  const byParent = parentMap(subagents);
+  return items.flatMap((item) => {
     const s = item.kind === 'tool' ? byParent.get(item.id) : undefined;
-    if (s) out.push(s);
-  }
-  return out;
+    return s ? [s] : [];
+  });
 }
 
-/** The replies in `items`: each runs from a user message (steers stay in their reply) to the next. */
-export function replies(items: readonly Item[]): Item[][] {
-  const out: Item[][] = [];
-  let reply: Item[] = [];
-  for (const item of items) {
-    if (item.kind === 'user' && !item.delivery) {
-      if (reply.length) out.push(reply);
-      reply = [];
-    }
-    reply.push(item);
-  }
-  if (reply.length) out.push(reply);
-  return out;
+/** One reply: from a user message (steers stay in it) to the next. */
+export interface Reply {
+  /** The user message's id; "start" before the first one. */
+  key: string;
+  /** When that message was sent. */
+  time?: string;
+  /** Its `task` calls, in order, whether or not their subagents are loaded. */
+  calls: string[];
+  /** The subagents those calls spawned that are loaded here, in spawn order. */
+  subagents: Subagent[];
 }
 
-/** Each subagent's identity tone: its place among its reply's subagents, while that reply has at most five. */
-export function identities(items: readonly Item[], subagents: readonly Subagent[]): Map<string, IdentityTone> {
+export interface Replies {
+  /** Every reply of the identity index, in order. */
+  list: Reply[];
+  byKey: ReadonlyMap<string, Reply>;
+  /** The reply that holds each `task` call. */
+  ofCall: ReadonlyMap<string, Reply>;
+  /** Each subagent's identity tone: its call's place in its reply, while that reply has at most five calls. */
+  tones: ReadonlyMap<string, IdentityTone>;
+}
+
+/**
+ * The replies of the identity index (`history_index`, which outlives history pages; the items when
+ * there is none), with the `task` calls and loaded subagents of each. Membership comes from here,
+ * never from the window on screen or the live tail, so a long reply is counted whole.
+ */
+export function replyIndex(index: readonly Item[], subagents: readonly Subagent[]): Replies {
+  const byParent = parentMap(subagents);
+  const list: Reply[] = [];
+  const byKey = new Map<string, Reply>();
+  const ofCall = new Map<string, Reply>();
   const tones = new Map<string, IdentityTone>();
-  if (!subagents.length) return tones;
-  for (const reply of replies(items)) {
-    const spawned = spawnedBy(reply, subagents);
-    if (spawned.length > IDENTITY_LIMIT) continue;
-    spawned.forEach((s, i) => tones.set(s.id, IDENTITY_TONES[i % IDENTITY_TONES.length]));
+  let reply: Reply | undefined;
+  const open = (key: string, time?: string) => {
+    reply = { key, time, calls: [], subagents: [] };
+    list.push(reply);
+    byKey.set(key, reply);
+  };
+  for (const item of index) {
+    if (item.kind === 'user' && !item.delivery) {
+      open(item.id, item.time);
+      continue;
+    }
+    const s = item.kind === 'tool' ? byParent.get(item.id) : undefined;
+    if (!s && !(item.kind === 'tool' && toolKind(item.tool?.name ?? '') === 'subagent')) continue;
+    if (!reply) open('start');
+    reply!.calls.push(item.id);
+    ofCall.set(item.id, reply!);
+    if (s) reply!.subagents.push(s);
   }
-  return tones;
+  for (const r of list) {
+    if (r.calls.length > IDENTITY_LIMIT) continue;
+    for (const s of r.subagents) tones.set(s.id, IDENTITY_TONES[r.calls.indexOf(s.parent_tool_call_id!) % IDENTITY_TONES.length]);
+  }
+  return { list, byKey, ofCall, tones };
 }
 
 export interface LiveSubagent {
   subagent: Subagent;
-  /** Spawned by an earlier reply and running again now. */
-  resumed: boolean;
+  /** Spawned by an earlier reply: still running from it, or running again. */
+  earlier: boolean;
 }
 
 /**
- * The live card's set: the subagents the latest reply (`latest`) spawned and every running one an
- * earlier reply spawned (resumed). Empty once none of them runs, and the card goes.
+ * The live card's set: the subagents the latest reply spawned and every running one an earlier
+ * reply spawned. Empty once none of them runs and no row of the card is open (`keep`, which
+ * stays in the set while it is open even after it has stopped).
  */
-export function liveSet(latest: readonly Item[], subagents: readonly Subagent[]): LiveSubagent[] {
-  const mine = spawnedBy(latest, subagents);
+export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[], keep?: string): LiveSubagent[] {
+  const mine = latest?.subagents ?? [];
   const own = new Set(mine.map((s) => s.id));
   const set: LiveSubagent[] = [
-    ...mine.map((subagent) => ({ subagent, resumed: false })),
-    ...subagents.filter((s) => s.status === 'running' && !own.has(s.id)).map((subagent) => ({ subagent, resumed: true })),
+    ...mine.map((subagent) => ({ subagent, earlier: false })),
+    ...subagents.filter((s) => !own.has(s.id) && (s.status === 'running' || s.id === keep)).map((subagent) => ({ subagent, earlier: true })),
   ];
-  return set.some((x) => x.subagent.status === 'running') ? set : [];
+  return set.some((x) => x.subagent.status === 'running' || x.subagent.id === keep) ? set : [];
 }
 
 const ORDER: Record<SubagentStatus, number> = { failed: 0, running: 1, idle: 2, completed: 3, cancelled: 4 };
@@ -133,18 +176,76 @@ export interface LiveRows {
 }
 
 /**
- * The live card's rows: its failed and running subagents, failed first, at most `LIVE_ROWS`;
- * with `all`, every one of the set (failed, running, idle, completed, stopped). `rest` names the
- * ones left out, empty when none is.
+ * The live card's rows: its failed and running subagents, failed first, at most `LIVE_ROWS`, and
+ * the open one (`keep`) whatever its state, so an open row never leaves under the reader; with
+ * `all`, every one of the set (failed, running, idle, completed, stopped). `rest` names the ones
+ * left out, empty when none is.
  */
-export function liveRows(set: readonly LiveSubagent[], all: boolean): LiveRows {
+export function liveRows(set: readonly LiveSubagent[], all: boolean, keep?: string): LiveRows {
   const sorted = byStatus(set, (x) => x.subagent.status);
-  const rows = all ? sorted : sorted.filter((x) => x.subagent.status === 'failed' || x.subagent.status === 'running').slice(0, LIVE_ROWS);
-  if (all) return { rows, rest: '' };
-  const shown = new Set(rows);
-  const c = countSubagents(sorted.filter((x) => !shown.has(x)).map((x) => x.subagent));
+  if (all) return { rows: sorted, rest: '' };
+  const picked = new Set(sorted.filter((x) => x.subagent.status === 'failed' || x.subagent.status === 'running').slice(0, LIVE_ROWS));
+  const kept = sorted.find((x) => x.subagent.id === keep);
+  if (kept) picked.add(kept);
+  const rows = sorted.filter((x) => picked.has(x));
+  const c = countSubagents(sorted.filter((x) => !picked.has(x)).map((x) => x.subagent));
   const rest = [c.running && `${c.running} more running`, c.failed && `${c.failed} more failed`, c.done && `${c.done} done`, c.stopped && `${c.stopped} stopped`].filter(Boolean).join(' · ');
   return { rows, rest };
+}
+
+export type Run = NonNullable<Subagent['runs']>[number];
+const TRIGGER: Record<Run['trigger'], string> = { spawn: 'started by the agent', user: 'your follow-up', agent: 'resumed by the agent' };
+
+/**
+ * What the live card says of a subagent an earlier reply spawned. Only its runs can tell a
+ * subagent started again from one still running from that reply: with more than one, the
+ * latest run's trigger (`agent`, `user`) and when it first ran; else just that it is from earlier.
+ */
+export function earlierTag(s: Subagent, parentTime?: string): { text: 'resumed by the agent' | 'your follow-up' | 'from an earlier reply'; first?: string } {
+  const runs = s.runs ?? [];
+  const last = runs.at(-1);
+  if (runs.length > 1 && last && last.trigger !== 'spawn') return { text: last.trigger === 'agent' ? 'resumed by the agent' : 'your follow-up', first: runs[0].started_at || parentTime };
+  return { text: 'from an earlier reply' };
+}
+
+/**
+ * A run of `s` that started after its reply (from the next user message on): the latest such run's
+ * start and the reply it started in (the last user message before it). Null when it never ran
+ * again after its reply, or when its reply is the latest.
+ */
+export function ranAgain(s: Subagent, replies: Replies): { at: string; reply: string } | null {
+  const own = replies.ofCall.get(s.parent_tool_call_id ?? '');
+  if (!own || !s.runs?.length) return null;
+  const next = replies.list[replies.list.indexOf(own) + 1];
+  if (!next?.time) return null;
+  const later = s.runs.filter((r) => r.started_at >= next.time!).at(-1);
+  if (!later) return null;
+  const reply = replies.list.filter((r) => r.time && r.time <= later.started_at).at(-1) ?? next;
+  return { at: later.started_at, reply: reply.key };
+}
+
+export interface RunLine {
+  n: number;
+  started_at: string;
+  /** "started by the agent", "your follow-up", "resumed by the agent". */
+  trigger: string;
+  /** "✓ 2m 40s", "✗ failed · 1m 0s", "stopped", "running". */
+  outcome: string;
+  tone: 'muted' | 'success' | 'error' | 'accent';
+}
+
+/** A subagent's runs as lines for its expanded row; empty with fewer than two. */
+export function runLines(s: Subagent): RunLine[] {
+  const runs = s.runs ?? [];
+  if (runs.length < 2) return [];
+  return runs.map((r, i) => {
+    const took = r.ended_at ? duration(r.started_at, r.ended_at) : null;
+    let outcome = 'running', tone: RunLine['tone'] = 'accent';
+    if (r.status === 'failed') [outcome, tone] = [took ? `✗ failed · ${took}` : '✗ failed', 'error'];
+    else if (r.status === 'cancelled') [outcome, tone] = ['stopped', 'muted'];
+    else if (r.status !== 'running') [outcome, tone] = [took ? `✓ ${took}` : '✓', 'success'];
+    return { n: i + 1, started_at: r.started_at, trigger: TRIGGER[r.trigger] ?? r.trigger, outcome, tone };
+  });
 }
 
 export interface StatusGroup {

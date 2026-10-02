@@ -1,22 +1,22 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, Subagent, ToolBoardCard, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
-import { identities, spawnedBy, type IdentityTone } from '../lib/subagents';
+import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
 import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
-import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useSubagentDisclosure } from './Subagents';
+import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { Button } from './ui/button';
 import { Chip, chipVariants } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -80,15 +80,26 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  */
 export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, workdir, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
-  const byParent = useMemo(() => {
-    const map = new Map<string, Subagent>();
-    for (const s of subagents) if (s.parent_tool_call_id) map.set(s.parent_tool_call_id, s);
-    return map;
-  }, [subagents]);
+  const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
   const inline = !agentId && subagents.length > 0;
-  const tones = useMemo(() => identities(identityItems, subagents), [identityItems, subagents]);
-  const latest = useMemo(() => foregroundItems(liveItems), [liveItems]);
+  // Which reply spawned which subagent comes from the identity index (the Task's `SubagentScope`), never from the window.
+  const scoped = useSubagentReplies();
+  const unscoped = useMemo(() => (scoped || !inline ? undefined : replyIndex(identityItems, subagents)), [scoped, inline, identityItems, subagents]);
+  const replies = scoped ?? unscoped;
+  const tones = replies?.tones ?? NO_TONES;
+  const liveIds = useLiveSubagentIds();
+  // Detailed: a reply past eight shows its subagents as one list at its first call in the window.
+  const hosts = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!replies || density === 'compact') return map;
+    const shown = new Set(items.map((item) => item.id));
+    for (const r of replies.list) {
+      const first = r.subagents.length > GROUP_OVER ? r.calls.find((call) => shown.has(call)) : undefined;
+      if (first) map.set(first, r.key);
+    }
+    return map;
+  }, [replies, items, density]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const declarations = useMemo(() => newestFileDeclarations(items), [items]);
   const groupItems = useIdentityEntries(identityItems, loose, questions);
@@ -97,6 +108,11 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
   // Detailed: a subagent's row, in any state, takes its `task` call's place in the turn's activity.
   const subagentRow = (item: Item) => {
+    const reply = inline ? replies?.ofCall.get(item.id) : undefined;
+    if (reply && reply.subagents.length > GROUP_OVER) {
+      const key = hosts.get(item.id);
+      return key ? <HostedList key={item.id} replyKey={key} unscoped={unscoped} /> : <Fragment key={item.id} />;
+    }
     const agent = inline ? byParent.get(item.id) : undefined;
     return agent ? (
       <div key={item.id} className="overflow-hidden rounded-md bg-raised shadow-raised">
@@ -104,7 +120,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow };
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a declared file's card in both densities, the images its result returned in Compact.
@@ -141,10 +157,13 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const changed = changedFiles(group);
       const first = (group[0].item ?? group[0].interaction).id;
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
-      const spawned = inline ? spawnedBy(group.flatMap((entry) => (entry.item ? [entry.item] : [])), subagents) : NO_SUBAGENTS;
+      const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
+      const spawned = reply?.subagents ?? NO_SUBAGENTS;
+      // The live card shows every one of them: its chip waits until the card leaves.
+      const covered = !!(liveCard && liveIds && reply && reply.calls.length === spawned.length && spawned.every((s) => liveIds.has(s.id)));
       out.push(
-        <div key={`turn-${id}`} className="flex flex-col gap-3">
-          {(last && working) || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} tones={tones} /> : null}
+        <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
+          {(last && working) || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
           {renderCompact(group, gctx, product, own)}
           {changedLine && changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
         </div>,
@@ -152,7 +171,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     } else {
       const nodes = renderEntries(group, gctx, product);
       out.push(
-        <div key={`turn-${after}`} className="flex flex-col gap-3">
+        <div key={`turn-${after}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
           {last && working ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
           {nodes}
         </div>,
@@ -179,7 +198,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working />}
-        {inline && liveCard && <LiveSubagents latest={latest} tones={tones} />}
+        {inline && liveCard && <LiveSubagents />}
         <WorkingTail working={working && (compacting || compact || (footVerb && !liveAtFoot(items)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
@@ -237,7 +256,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
 
-function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagents = NO_SUBAGENTS, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; tones?: ReadonlyMap<string, IdentityTone> }>) {
+function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
@@ -293,11 +312,11 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagen
         ) : (
           head && <span className="animate-fade-in">{head}</span>
         )}
-        {subagents.length > 0 && <SubagentChip subagents={subagents} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
+        {subagents.length > 0 && (chip || listOpen) && <SubagentChip subagents={subagents} calls={calls} tones={tones} open={listOpen} controls={listOpened ? listId : undefined} onToggle={() => setListOpen((o) => !o)} />}
       </div>
       {listOpened && subagents.length > 0 && (
         <Collapse open={listOpen} appear inner="pb-2">
-          <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} tones={tones} /></DetailVisibility>
+          <DetailVisibility open={listOpen}><SubagentList id={listId} subagents={subagents} calls={calls} tones={tones} /></DetailVisibility>
         </Collapse>
       )}
       {opened && (
@@ -518,6 +537,8 @@ interface RenderContext {
   /** The subagent a `task` call spawned (main transcript only), and its row, which takes the call's place in its turn's activity (Detailed). */
   subagentOf?: (item: Item) => Subagent | undefined;
   foldedSubagentRow?: (item: Item) => ReactNode | null;
+  /** The `task` calls of the reply whose list a call hosts (Detailed, past eight), so `locate` finds the run that holds it. */
+  hostedBy?: (item: Item) => string[] | undefined;
 }
 
 
@@ -615,11 +636,16 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
   const [open, setOpen] = useDisclosure(`activity:${entries[0]?.item?.agent_id ?? ''}:${identity}`);
   // The rows are mounted on the first open only: a closed run costs one button.
   const [opened, setOpened] = useState(open);
-  const { label, tone, active } = summarizeActivity(entries, { live: ctx.live, streamingId: ctx.streamingId, approvals: ctx.approvals, endedAt });
+  const summary = summarizeActivity(entries, { live: ctx.live, streamingId: ctx.streamingId, approvals: ctx.approvals, endedAt });
+  const { tone, active } = summary;
+  // Subagents are not counted in the label; a run of nothing else is named by them.
+  const only = entries.length > 0 && entries.every((e) => isSubagentCall(e.item));
+  const label = only ? [subagentNoun(entries.length), summary.label].filter(Boolean).join(' · ') : summary.label;
+  const hosted = entries.flatMap((e) => (e.item && ctx.hostedBy?.(e.item)) || []);
   if (!label) return null;
   return (
     <div data-activity="" className={cn('flex flex-col', className)}>
-      <button data-history-anchor={`activity-${identity}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
+      <button data-history-anchor={`activity-${identity}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} data-subagent-items={hosted.length ? JSON.stringify(hosted) : undefined} type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
         <span className="flex size-3.5 shrink-0 items-center justify-center">
           {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
         </span>
@@ -637,8 +663,17 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
   // `thoughtEnd` is rebuilt every render; what it says about these entries changes only with them or with `endedAt`.
   return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
-    && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item));
+    && a.entries.every((e) => !e.item || (a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item) && a.ctx.hostedBy?.(e.item) === b.ctx.hostedBy?.(e.item)));
 });
+
+/** A long reply's subagents as one list in its activity (Detailed): the reply comes from the scope, so the list follows all of them. */
+function HostedList({ replyKey, unscoped }: Readonly<{ replyKey: string; /** The replies, outside a Task scope. */ unscoped?: Replies }>) {
+  const id = useId();
+  const replies = useSubagentReplies() ?? unscoped;
+  const reply = replies?.byKey.get(replyKey);
+  if (!replies || !reply) return null;
+  return <SubagentList id={id} subagents={reply.subagents} calls={reply.calls.length} tones={replies.tones} />;
+}
 
 /** The subagents' rows among `entries`, which take their `task` calls over. */
 function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNode> {

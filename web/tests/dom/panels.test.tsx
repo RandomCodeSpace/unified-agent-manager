@@ -1,5 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
+import { saveDensity } from '../../src/lib/density';
 import { log, openMenu, openTask } from './render';
 
 describe('changes', () => {
@@ -105,24 +107,93 @@ describe('subagents', () => {
     expect(document.activeElement?.closest('#item-i5')).toBeTruthy();
   });
 
-  test('a reply\'s chip opens its list; a completed row shows its result, folds on Esc and locates its call', async () => {
-    const { user } = await openTask('t8');
-    const chip = log().getByRole('button', { name: /^4 subagents · 1 done · 1 failed · 2 running/ });
+  test('a reply\'s chip waits while the live card shows all its subagents', async () => {
+    await openTask('t8');
+    expect(screen.getByRole('region', { name: 'Subagents at work' })).toBeTruthy();
+    expect(log().queryByRole('button', { name: /^4 subagents/ })).toBeNull();
+  });
+
+  test('an earlier reply\'s chip opens its list; a row folds on Esc and locates its call', async () => {
+    const { user } = await openTask('t22');
+    const chip = log().getByRole('button', { name: /^12 subagents · 11 done · 1 running/ });
     expect(chip.getAttribute('aria-expanded')).toBe('false');
     await user.click(chip);
-    const list = within(await log().findByRole('region', { name: '4 subagents' }));
-    const row = list.getByRole('button', { name: /^Check the heading order, completed: The byline skips a level/ });
+    const list = within(await log().findByRole('region', { name: '12 subagents' }));
+    await user.click(list.getByRole('button', { name: /^Done/ }));
+    const row = list.getByRole('button', { name: /^Audit package internal\/web, completed: internal\/web: 2 exports without callers/ });
     await user.click(row);
     expect(row.getAttribute('aria-expanded')).toBe('true');
-    const region = within(await screen.findByRole('region', { name: 'Subagent Check the heading order' }));
+    const region = within(await screen.findByRole('region', { name: 'Subagent Audit package internal/web' }));
     expect(await region.findByText('Result sent to the main agent')).toBeTruthy();
     expect(region.queryByRole('form', { name: /^Follow up with subagent/ })).toBeNull();
-    fireEvent.keyDown(region.getByRole('log'), { key: 'Escape' });
+    fireEvent.keyDown(region.getByRole('region', { name: 'Transcript of Audit package internal/web' }), { key: 'Escape' });
     await waitFor(() => expect(row.getAttribute('aria-expanded')).toBe('false'));
     expect(document.activeElement).toBe(row);
-    const menu = await openMenu(user, 'Actions for subagent Check the heading order');
+    const menu = await openMenu(user, 'Actions for subagent Audit package internal/web');
     await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
-    await waitFor(() => expect(document.getElementById('item-i6')?.classList.contains('animate-flash')).toBe(true));
+    await waitFor(() => expect(document.getElementById('item-sc2')?.classList.contains('animate-flash')).toBe(true));
+  });
+
+  test('a subagent that ran again after its reply says when, and leads to the reply that run started in', async () => {
+    const { user } = await openTask('t22');
+    await user.click(log().getByRole('button', { name: /^12 subagents/ }));
+    const list = within(await log().findByRole('region', { name: '12 subagents' }));
+    expect(list.getByText(/3 runs/)).toBeTruthy();
+    await user.click(list.getByRole('button', { name: /^ran again [^·]+ ↓$/ }));
+    // The third reply ("Retry the failed ones and do web/ too.") started that run: its turn line flashes.
+    await waitFor(() => expect(document.querySelector('[data-reply="d6"] .animate-flash')).toBeTruthy());
+    expect(document.body.textContent).not.toMatch(/turn \d/i);
+  });
+
+  test('a row open in the live card stays while its subagent stops; Stop is in its menu, and a failed stop says so on the row', async () => {
+    const { user } = await openTask('t8');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
+    expect(await screen.findByRole('region', { name: 'Subagent Check contrast of the theme tokens' })).toBeTruthy();
+    const refused = vi.spyOn(api, 'cancelSubagent').mockRejectedValueOnce(new Error('the provider did not answer'));
+    let menu = await openMenu(user, 'Actions for subagent Check contrast of the theme tokens');
+    await user.click(menu.getByRole('menuitem', { name: 'Stop subagent' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop subagent' }));
+    expect((await live.findByRole('alert')).textContent).toBe('Could not stop it: the provider did not answer');
+    refused.mockRestore();
+    menu = await openMenu(user, 'Actions for subagent Check contrast of the theme tokens');
+    await user.click(menu.getByRole('menuitem', { name: 'Stop subagent' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Stop subagent' }));
+    // Stopped, it is no longer one the card lists, yet the open row stays where it is read.
+    expect(await live.findByRole('button', { name: /^Check contrast of the theme tokens, stopped/ })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Subagent Check contrast of the theme tokens' })).toBeTruthy();
+    // Folded, it goes back behind the card's counts.
+    await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, stopped/ }));
+    await waitFor(() => expect(live.queryByRole('button', { name: /^Check contrast of the theme tokens/ })).toBeNull());
+  });
+
+  test('Detailed: a long reply\'s activity holds its grouped list instead of a row per subagent', async () => {
+    saveDensity('detailed');
+    try {
+      const { user } = await openTask('t22');
+      const run = log().getByRole('button', { name: /^22 subagents/ });
+      await user.click(run);
+      const list = within(await log().findByRole('region', { name: '22 subagents' }));
+      expect(list.getByRole('button', { name: /^Done/ }).getAttribute('aria-expanded')).toBe('false');
+      // Only the failed two are drawn until Done opens.
+      expect(list.getAllByRole('button', { name: /^Audit package cmd\/tool\d+, / })).toHaveLength(2);
+    } finally {
+      saveDensity('compact');
+    }
+  });
+
+  test('a subagent with several runs lists them in its row', async () => {
+    const { user } = await openTask('t22');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    await user.click(live.getByRole('button', { name: /^Audit package internal\/store, running/ }));
+    const region = within(await screen.findByRole('region', { name: 'Subagent Audit package internal/store' }));
+    const runs = within(region.getByRole('list', { name: 'Runs' })).getAllByRole('button').map((b) => b.textContent);
+    expect(runs).toHaveLength(3);
+    expect(runs[0]).toMatch(/^Run 1 · [^·]+ · started by the agent · ✓ 2m 0s$/);
+    expect(runs[1]).toMatch(/^Run 2 · [^·]+ · your follow-up · ✓ 2m 0s$/);
+    expect(runs[2]).toMatch(/^Run 3 · [^·]+ · resumed by the agent · running$/);
+    await user.click(region.getByRole('button', { name: /^Run 2/ }));
+    expect(region.queryByText('That run is not in the retained transcript.')).toBeNull();
   });
 
   test('stopping a running subagent is confirmed first', async () => {
@@ -145,8 +216,16 @@ describe('subagents', () => {
     const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
     await user.click(index.getByRole('button', { name: 'Show older subagents' }));
     expect(await index.findByRole('button', { name: /^Audit package batch 2/ })).toBeTruthy();
-    // Their calls are not in the history held here: they wait under "Earlier in the conversation".
-    expect(index.getByRole('region', { name: 'Earlier in the conversation' })).toBeTruthy();
+    // Their calls are not in the history held here: they wait under "Earlier in the conversation", and open right there.
+    const earlier = within(index.getByRole('region', { name: 'Earlier in the conversation' }));
+    await user.click(earlier.getByRole('button', { name: /^Audit package batch 2, completed/ }));
+    expect(await earlier.findByRole('region', { name: 'Subagent Audit package batch 2' })).toBeTruthy();
+    // Where it was spawned is gone: said above the composer, and focused.
+    const menu = await openMenu(user, 'Actions for subagent Audit package batch 2');
+    await user.click(menu.getByRole('menuitem', { name: 'Show where it was spawned' }));
+    const said = await screen.findAllByText(/^Where this subagent was spawned is not in the retained history/);
+    const alert = said.map((node) => node.closest<HTMLElement>('div[role="alert"]')).find(Boolean);
+    await waitFor(() => expect(document.activeElement).toBe(alert));
   });
 
   test('the live card lists failed then running subagents, five at most, and a resumed one leads to its first reply', async () => {
@@ -163,7 +242,7 @@ describe('subagents', () => {
     // The first pilot audit runs again: its tag says so and finds its row in the first reply's list, opening it.
     const firstChip = log().getByRole('button', { name: /^12 subagents/ });
     expect(firstChip.getAttribute('aria-expanded')).toBe('false');
-    await user.click(live.getByRole('button', { name: /^resumed · first ran .* ↑$/ }));
+    await user.click(live.getByRole('button', { name: /^resumed by the agent · first ran [^·]+ ↑$/ }));
     await waitFor(() => expect(document.getElementById('item-sc1')?.classList.contains('animate-flash')).toBe(true));
     expect(firstChip.getAttribute('aria-expanded')).toBe('true');
   });

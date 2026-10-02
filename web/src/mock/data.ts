@@ -252,6 +252,11 @@ export function seed(): MockState {
     ended_at: ago(9),
     model: 'claude-haiku-4.5',
     effort: 'low',
+    // Asked once more after its first pass (a follow-up).
+    runs: [
+      { started_at: ago(11), ended_at: ago(10), status: 'completed', trigger: 'spawn' },
+      { started_at: ago(9.5), ended_at: ago(9), status: 'completed', trigger: 'user' },
+    ],
   };
   const oldAudits: Subagent[] = [1, 2, 3].map((n) => ({
     id: `a-old-${n}`,
@@ -1014,8 +1019,26 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       audit(39, 9, 'web/src/mock', 'completed');
       audit(40, 9, 'web/src/planner', 'completed');
       audit(41, 9, 'web/tests', 'cancelled');
-      // The first pilot audit, asked again: it keeps its first call and runs now.
-      subagents[0] = { ...subagents[0], status: 'running', started_at: ago(5), ended_at: undefined, summary: undefined, preview: 'Re-checking internal/store after the fix' };
+      // The first pilot audit, asked again: it keeps its first call and runs now, its third run
+      // (a follow-up from the person during the second reply, then the agent resuming it).
+      subagents[0] = {
+        ...subagents[0],
+        status: 'running',
+        started_at: ago(5),
+        ended_at: undefined,
+        summary: undefined,
+        preview: 'Re-checking internal/store after the fix',
+        runs: [
+          { started_at: ago(59), ended_at: ago(57), status: 'completed', trigger: 'spawn' },
+          { started_at: ago(35), ended_at: ago(33), status: 'completed', trigger: 'user' },
+          { started_at: ago(5), status: 'running', trigger: 'agent' },
+        ],
+      };
+      agentItems.sa1.push(
+        { id: 'sa1-u2', kind: 'user', time: ago(35), agent_id: 'sa1', text: 'Also check the test helpers in internal/store.' },
+        { id: 'sa1-m2', kind: 'assistant', time: ago(33), agent_id: 'sa1', text: 'internal/store test helpers: 1 export without callers.' },
+        tool('sa1-g3', 4.5, { name: 'grep', title: 'Search "export" in internal/store', status: 'completed', output: '3 matches' }, 'sa1'),
+      );
       return task({
         id: 't22',
         project_id: 'p1',

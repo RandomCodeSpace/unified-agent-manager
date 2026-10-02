@@ -19,6 +19,9 @@ const require = createRequire(import.meta.url);
 const source = await readFile(new URL('../src/components/Transcript.tsx', import.meta.url), 'utf8');
 const exports = {};
 let expanded = false;
+// What the Task's subagent scope would hand the transcript; unset, the transcript works the replies out itself.
+let scopeReplies;
+let liveIds;
 const disclosureValues = new Map();
 const disclosureKeys = [];
 const shell = ({ children, render }) => render ? React.cloneElement(render, {}, children) : children;
@@ -36,11 +39,13 @@ const modules = {
   '../lib/subagents': subagentsLib,
   // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.
   './Subagents': {
-    SubagentChip: ({ subagents, tones, open }) => React.createElement('button', { 'aria-expanded': String(open), 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')}`),
-    SubagentList: ({ id, subagents }) => React.createElement('ul', { id }, subagents.map((s) => React.createElement('li', { key: s.id, id: `item-${s.parent_tool_call_id}` }, `LISTED ${s.name}`))),
+    SubagentChip: ({ subagents, calls, tones, open }) => React.createElement('button', { 'aria-expanded': String(open), 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')} OF ${calls}`),
+    SubagentList: ({ id, subagents, calls = subagents.length }) => React.createElement('ul', { id }, `LIST OF ${calls}`, subagents.map((s) => React.createElement('li', { key: s.id, id: `item-${s.parent_tool_call_id}` }, `LISTED ${s.name}`))),
     SubagentRow: ({ subagent, anchor }) => React.createElement('div', { id: anchor ? `item-${subagent.parent_tool_call_id}` : undefined }, `ROW ${subagent.name}`),
-    LiveSubagents: ({ latest }) => React.createElement('section', null, `LIVE ${latest.map((item) => item.id).join(',')}`),
+    LiveSubagents: () => React.createElement('section', null, 'LIVE'),
     useSubagentDisclosure: (key) => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); },
+    useSubagentReplies: () => scopeReplies,
+    useLiveSubagentIds: () => liveIds,
   },
   '../lib/verbs': { turnVerb: () => 'Working' },
   './Attachments': { ImageThumbs: () => null, ItemAttachments: () => null },
@@ -194,11 +199,11 @@ test('subagents leave the answer: a chip on the turn line (Compact), rows in the
   const draw = (density, liveCard = true) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density, liveCard }));
   const compact = draw('compact');
   // One chip for the reply, in spawn order with identity tones; no row at the running call, no count on the turn line.
-  assert.match(compact, /data-tones="violet,pink"[^>]*>CHIP RUNNING_AGENT,SETTLED_AGENT</);
+  assert.match(compact, /data-tones="violet,pink"[^>]*>CHIP RUNNING_AGENT,SETTLED_AGENT OF 2</);
   assert.doesNotMatch(compact, /ROW |LISTED |subagent/);
   // The live card sits after the reply's answer, before the foot.
-  assert.match(compact, /Answer[\s\S]*LIVE request1,call2,call3,answer4/);
-  assert.doesNotMatch(draw('compact', false), /LIVE /);
+  assert.match(compact, /Answer[\s\S]*LIVE/);
+  assert.doesNotMatch(draw('compact', false), /LIVE</);
   // Its open state is remembered per reply, like the turn line's.
   assert.ok(disclosureKeys.includes('subagents:call2'));
   expanded = true;
@@ -213,7 +218,9 @@ test('subagents leave the answer: a chip on the turn line (Compact), rows in the
   }
   const detailed = draw('detailed');
   assert.doesNotMatch(detailed, /CHIP |ROW /);
-  assert.match(detailed, /LIVE /);
+  assert.match(detailed, /LIVE</);
+  // Its run is named by its subagents, never counted among the calls.
+  assert.match(detailed, />2 subagents · 2s</);
   expanded = true;
   try {
     const open = draw('detailed');
@@ -225,7 +232,7 @@ test('subagents leave the answer: a chip on the turn line (Compact), rows in the
   }
   // A subagent's own transcript draws none of it.
   const child = renderToStaticMarkup(React.createElement(exports.AgentItems, { sessionId: 'task', provider: 'copilot', workdir: '/project', agentId: 'a2', items: items.map((item) => ({ ...item, agent_id: 'a2' })), interactions: [], live: true, density: 'compact' }));
-  assert.doesNotMatch(child, /CHIP |LIVE |ROW /);
+  assert.doesNotMatch(child, /CHIP |LIVE<|ROW /);
 });
 
 test('a reply past five subagents draws them neutral; a turn of only subagent calls still gets its line', () => {
@@ -238,6 +245,63 @@ test('a reply past five subagents draws them neutral; a turn of only subagent ca
   const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false, density: 'compact' }));
   assert.match(html, /data-tones="-,-,-,-,-,-"[^>]*>CHIP AGENT_1/);
   assert.doesNotMatch(html, /activity of this turn/);
+});
+
+test('reply membership comes from the scope\'s identity index: a partly loaded reply says how many calls it has', () => {
+  const items = [{ id: 'u1', kind: 'user', text: 'Fan out', time: '2026-09-26T12:00:00Z' }, { id: 'c3', kind: 'tool', time: '2026-09-26T12:00:03Z', tool: { name: 'task', status: 'completed' } }];
+  const index = [items[0], ...[1, 2, 3].map((n) => ({ id: `c${n}`, kind: 'tool', time: `2026-09-26T12:00:0${n}Z`, tool: { name: 'task' } }))];
+  const subagents = [{ id: 'a1', name: 'AGENT_1', status: 'running', parent_tool_call_id: 'c1' }, { id: 'a3', name: 'AGENT_3', status: 'completed', parent_tool_call_id: 'c3' }];
+  scopeReplies = subagentsLib.replyIndex(index, subagents);
+  try {
+    const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, identityItems: index, interactions: [], subagents, live: false, working: false, density: 'compact' }));
+    // AGENT_1's call is outside the window, yet it belongs to this reply; the chip counts all three calls.
+    assert.match(html, /CHIP AGENT_1,AGENT_3 OF 3/);
+  } finally {
+    scopeReplies = undefined;
+  }
+});
+
+test('while the live card shows every subagent of a reply, that reply\'s chip waits; an open list keeps it', () => {
+  const items = [{ id: 'u1', kind: 'user', text: 'Go', time: '2026-09-26T12:00:00Z' }, { id: 'c1', kind: 'tool', time: '2026-09-26T12:00:01Z', tool: { name: 'task', status: 'running' } }, { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'task', status: 'running' } }];
+  const subagents = [{ id: 'a1', name: 'AGENT_1', status: 'running', parent_tool_call_id: 'c1' }, { id: 'a2', name: 'AGENT_2', status: 'running', parent_tool_call_id: 'c2' }];
+  const draw = (liveCard) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density: 'compact', liveCard }));
+  liveIds = new Set(['a1', 'a2']);
+  try {
+    assert.doesNotMatch(draw(true), /CHIP /);
+    // No card (a window away from the foot): the chip is the only place.
+    assert.match(draw(false), /CHIP AGENT_1,AGENT_2/);
+    liveIds = new Set(['a1']);
+    assert.match(draw(true), /CHIP AGENT_1,AGENT_2/);
+    liveIds = new Set(['a1', 'a2']);
+    expanded = true;
+    assert.match(draw(true), /CHIP AGENT_1,AGENT_2/);
+  } finally {
+    expanded = false;
+    liveIds = undefined;
+  }
+});
+
+test('Detailed: a reply past eight shows one grouped list at its first call, and its activity is named by its subagents', () => {
+  const items = [{ id: 'u1', kind: 'user', text: 'Fan out', time: '2026-09-26T12:00:00Z' }];
+  const subagents = [];
+  for (let n = 1; n <= 9; n++) {
+    items.push({ id: `c${n}`, kind: 'tool', time: `2026-09-26T12:00:0${n}Z`, tool: { name: 'task', status: 'completed' } });
+    subagents.push({ id: `a${n}`, name: `AGENT_${n}`, status: 'completed', parent_tool_call_id: `c${n}` });
+  }
+  const draw = () => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false, density: 'detailed' }));
+  const closed = draw();
+  assert.match(closed, />9 subagents</);
+  // The run holds the whole reply's list, so locate opens it for any of the nine.
+  assert.match(closed, /data-subagent-items="\[&quot;c1&quot;,(&quot;c\d&quot;,?){8}\]"/);
+  expanded = true;
+  try {
+    const open = draw();
+    assert.equal((open.match(/LIST OF 9/g) ?? []).length, 1);
+    assert.doesNotMatch(open, /ROW /);
+    assert.equal((open.match(/LISTED /g) ?? []).length, 9);
+  } finally {
+    expanded = false;
+  }
 });
 
 test('the activity verb stays visible when a reused subagent is the only worker', () => {

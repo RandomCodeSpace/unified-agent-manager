@@ -1,4 +1,4 @@
-import { ArrowDown, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -16,7 +16,7 @@ import { byCodeUnit } from '../lib/order';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
-import { Collapse, usePresence } from './ui/collapse';
+import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
 import { Composer, type Answering, type FirstMessage } from './Composer';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
@@ -73,6 +73,8 @@ interface Props {
 const BOTTOM_SLACK = 32;
 /** iOS WebKit: a scroll-position write under a finger or during momentum fights the scroller and jumps. */
 const TOUCH_WEBKIT = typeof CSS !== 'undefined' && CSS.supports('-webkit-touch-callout', 'none');
+/** The gap left above a row the view lands on. */
+const LAND_MARGIN = 16;
 /** Tailwind's `max-sm`: a phone-width column. */
 const PHONE = '(width < 40rem)';
 
@@ -131,6 +133,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useLayoutEffect(() => { latestSession.current = session; }, [session]);
   const [windowReset, setWindowReset] = useState(0);
   const [locateError, setLocateError] = useState('');
+  // Said where the reader is (above the composer) and focused, so it is heard too.
+  const locateNote = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (locateError) locateNote.current?.focus({ preventScroll: true });
+  }, [locateError]);
   const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
   const previewOpened = useCallback(() => { setFilesOpen(false); setChartsOpen(false); setPlanFocus(null); setOutput(null); onSheet(false); }, [onSheet]);
@@ -422,13 +429,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
   /** The last request to show a subagent's row; the reply's list, its group and the row itself follow it (`SubagentScope`). */
   const [reveal, setReveal] = useState<Reveal | null>(null);
-  /** Scroll the transcript to the row of the subagent a `task` call spawned and flash it; `expand` opens the row and focuses it. */
-  async function locate(toolCallId: string, expand = false) {
-    setLocateError('');
+  /** Page the transcript until item `id` is in the window, synchronously so it is in the DOM at once; false when the history held does not reach it. */
+  async function bring(id: string): Promise<boolean> {
     let current = latestSession.current;
-    let index = current.items.findIndex(item => item.id === toolCallId);
+    let index = current.items.findIndex(item => item.id === id);
     const known = current.history_index ?? current.items;
-    const target = known.findIndex(item => item.id === toolCallId);
+    const target = known.findIndex(item => item.id === id);
     const end = known.findIndex(item => item.id === current.items.at(-1)?.id);
     const direction = target > end && end >= 0 ? 'newer' : 'older';
     const visited = new Set<string>();
@@ -439,29 +445,89 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       const page = await loadEarlier(cursor, true, direction);
       if (!page) break;
       current = latestSession.current;
-      index = current.items.findIndex(item => item.id === toolCallId);
+      index = current.items.findIndex(item => item.id === id);
     }
-    if (index < 0) { setLocateError('The parent call is not in the retained history.'); return; }
+    if (index < 0) return false;
     if (!compactWindow && index < visibleStart) {
       atBottom.current = false;
       flushSync(() => setFirstVisible(current.items[transcriptWindowStart(current.items, index + 1)]?.id));
     }
+    return true;
+  }
+
+  /** Resolves after `wait` ms (a fold opening) and, on iOS WebKit, once no finger is down and the view has stopped moving: a scroll write then cannot make it jump. */
+  async function settle(wait: number) {
+    if (wait) await new Promise((resolve) => window.setTimeout(resolve, wait));
+    if (TOUCH_WEBKIT) await new Promise<void>((resolve) => {
+      const check = () => (!touching.current && performance.now() - lastScrollAt.current > 150 ? resolve() : window.setTimeout(check, 50));
+      check();
+    });
+  }
+
+  /** Scroll the conversation only (scrollIntoView also scrolls clipped ancestors, sliding the app) so `el` starts just under its top, and flash it. */
+  function land(el: HTMLElement) {
+    atBottom.current = false;
+    const view = scroller.current;
+    if (view) view.scrollTo({ top: view.scrollTop + el.getBoundingClientRect().top - view.getBoundingClientRect().top - LAND_MARGIN });
+    el.classList.add('animate-flash');
+    window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
+  }
+
+  /** Scroll the transcript to the row of the subagent a `task` call spawned and flash it; `expand` opens the row and focuses it. */
+  async function locate(toolCallId: string, expand = false) {
+    setLocateError('');
+    if (!(await bring(toolCallId))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the header’s Subagents list.'); return; }
+    atBottom.current = false;
     // The reply's subagent list opens on its own (its group and page too); this commits it now.
-    flushSync(() => setReveal((r) => ({ toolCallId, expand, n: (r?.n ?? 0) + 1 })));
+    const ask = () => flushSync(() => setReveal((r) => ({ toolCallId, expand, n: (r?.n ?? 0) + 1 })));
+    ask();
     if (!document.getElementById(`item-${toolCallId}`)) {
-      // Otherwise the call folds into its turn: open the subagent chip holding it, else the turn's activity.
+      // Otherwise the call folds into its turn: open the subagent chip holding it, else the turn's activity; the list mounted there is asked again.
       const root = log.current;
       const folds = root ? [...root.querySelectorAll<HTMLElement>('[data-subagent-items]'), ...root.querySelectorAll<HTMLElement>('[data-history-items]')] : [];
       const fold = folds.find(node => (JSON.parse(node.dataset.subagentItems ?? node.dataset.historyItems ?? '[]') as string[]).includes(toolCallId));
       const toggle = fold?.matches('button') ? fold : fold?.querySelector('button');
       if (toggle?.getAttribute('aria-expanded') === 'false') flushSync(() => toggle.click());
+      ask();
     }
+    if (!document.getElementById(`item-${toolCallId}`)) return;
+    // The folds open over EXIT_MS; the row lands where it ends up.
+    await settle(EXIT_MS);
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
-    el.scrollIntoView({ block: 'center' });
-    el.classList.add('animate-flash');
-    window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
+    land(el);
     if (expand) el.querySelector<HTMLElement>('[data-subagent-toggle]')?.focus({ preventScroll: true });
+  }
+
+  /** Scroll to the reply a user message started ("start": the one before any) and flash its turn line. */
+  async function jumpToReply(key: string) {
+    setLocateError('');
+    const first = (latestSession.current.history_index ?? latestSession.current.items)[0]?.id;
+    const id = key === 'start' ? first : key;
+    if (!id || !(await bring(id))) { setLocateError('That reply is not in the retained history.'); return; }
+    const root = log.current;
+    const turn = root?.querySelector<HTMLElement>(`[data-reply="${CSS.escape(key)}"]`) ?? root?.querySelector<HTMLElement>(`[data-history-anchor="${CSS.escape(id)}"]`);
+    if (!turn) return;
+    atBottom.current = false;
+    await settle(0);
+    land(turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
+  }
+
+  /**
+   * A subagent row opened in the conversation: the view stops following the foot at once (so a
+   * row near it is not pushed up out of sight), and once the row has opened it shows as much of
+   * it as fits with its head still in view. Not while the reader scrolls, nor after they did.
+   */
+  async function keepInView(row: HTMLElement) {
+    atBottom.current = false;
+    const asked = performance.now();
+    await settle(EXIT_MS);
+    const view = scroller.current;
+    if (!view || !row.isConnected || lastScrollAt.current > asked) return;
+    const box = row.getBoundingClientRect(), frame = view.getBoundingClientRect();
+    const down = Math.min(Math.max(0, box.bottom - frame.bottom + LAND_MARGIN), box.top - frame.top - LAND_MARGIN);
+    const shift = box.top < frame.top ? box.top - frame.top - LAND_MARGIN : down;
+    if (Math.abs(shift) > 1) view.scrollTo({ top: view.scrollTop + shift });
   }
 
   /**
@@ -601,7 +667,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
     <TaskCardOpener.Provider value={plan ? openCardHere : null}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onExpand={(row) => void keepInView(row)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -694,7 +760,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Tip>
           )}
-          {session.subagents.length > 0 && <SubagentIndex labels={labels} />}
+          {session.subagents.length > 0 && <SubagentIndex labels={labels} error={locateError} />}
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
               <Ellipsis />
@@ -760,7 +826,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </HistoryAnchor>
             {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} commit={!noGit && <CommitPanel session={session} defaultOpen quiet onChanged={() => setChangesTick((t) => t + 1)} />} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
-            {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
                 <InteractionCard session={session} interaction={i} onUpdate={(next) => onInteractionUpdate(session.id, next)} />
@@ -797,6 +862,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </Appear>
           </div>
+          {locateError && (
+            <div ref={locateNote} tabIndex={-1} role="alert" className="mb-2 flex items-start gap-2 rounded-md bg-raised py-1.5 pr-1.5 pl-3 text-caption text-warning shadow-raised outline-hidden">
+              <span className="min-w-0 flex-1 py-0.5">{locateError}</span>
+              <Button size="icon-sm" aria-label="Dismiss" className="text-muted" onClick={() => setLocateError('')}>
+                <X />
+              </Button>
+            </div>
+          )}
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} />
         </div>
       </div>

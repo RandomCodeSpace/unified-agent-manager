@@ -486,7 +486,8 @@ export interface ActivitySummary {
  */
 export function summarizeActivity(entries: Entry[], { live, streamingId, approvals, endedAt }: { live: boolean; streamingId?: string; approvals?: Map<string, Interaction[]>; endedAt?: string }): ActivitySummary {
   const items = entries.flatMap((e) => (e.item ? [e.item] : []));
-  const tools = items.filter((it) => it.kind === 'tool');
+  // A subagent's call is its row (and the live card), never a count or the running step here.
+  const tools = items.filter((it) => it.kind === 'tool' && !isSubagentCall(it));
   const thinking = items.some((it) => it.kind === 'reasoning' && it.id === streamingId);
   const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && (it.text?.trim() || it.compact?.has_reasoning)).length;
   // A question that no longer waits counts as a question, never as a tool call; one still waiting stays a call.
