@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason } from '../src/lib/board.ts';
+import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason, taskCard, waitsOf, nextSubtask, layoutLevel, wrapText, GRAPH_NODE } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -325,4 +325,64 @@ test('a card opened from outside the planner is found on its own Board', () => {
   const boards = { p1: { data: { cards: [card({})], requests: [], revision: 1 } }, p3: { data: { cards: [here], requests: [], revision: 2 } }, unassigned: { data: null } };
   assert.equal(boardOf(boards, here.id), 'p3');
   assert.equal(boardOf(boards, 'gone'), undefined);
+});
+
+test('a Task works on the subtask it holds, else one it finished; a released one is not its card', () => {
+  const held = card({ status: 'doing', held_by: 't1', worked_by: 't1' });
+  const finished = card({ status: 'done', worked_by: 't2' });
+  const released = card({ status: 'todo', worked_by: 't3' });
+  const cards = [held, finished, released];
+  assert.equal(taskCard(cards, 't1'), held);
+  assert.equal(taskCard(cards, 't2'), finished);
+  assert.equal(taskCard(cards, 't3'), undefined);
+  assert.equal(taskCard(cards, 'none'), undefined);
+});
+
+test('a card waits for its own open blockers, then its story’s and its epic’s, nearest first', () => {
+  const epicA = card({ kind: 'epic' });
+  const epicB = card({ kind: 'epic', blocked_by: [epicA.id] });
+  const s1 = card({ kind: 'story', parent_id: epicB.id });
+  const s2 = card({ kind: 'story', parent_id: epicB.id, blocked_by: [s1.id] });
+  const a = card({ parent_id: s2.id, status: 'done' });
+  const b = card({ parent_id: s2.id, blocked_by: [a.id] });
+  const c = card({ parent_id: s2.id, blocked_by: [b.id] });
+  const byId = new Map([epicA, epicB, s1, s2, a, b, c].map((x) => [x.id, x]));
+  assert.deepEqual(waitsOf(c, byId).map((w) => [w.card.id, w.via?.id]), [[b.id, undefined], [s1.id, s2.id], [epicA.id, epicB.id]]);
+  assert.deepEqual(waitsOf(b, byId).map((w) => w.card.id), [s1.id, epicA.id], 'a done blocker no longer holds it back');
+  const index = new Map([[s2.id, [a, b, c]]]);
+  assert.equal(nextSubtask(s2, index, b.id), c);
+  assert.equal(nextSubtask(s2, index), b);
+});
+
+test('one level lays out in layers by its longest chain of blockers, left to right or top to bottom', () => {
+  const a = card({});
+  const b = card({ blocked_by: [a.id] });
+  const c = card({ blocked_by: [a.id] });
+  const d = card({ blocked_by: [b.id, c.id] });
+  const outside = 'not-in-this-level';
+  const e = card({ blocked_by: [outside] });
+  const lr = layoutLevel([a, b, c, d, e], 'lr');
+  const at = (l, x) => l.nodes.find((n) => n.card === x);
+  const { w, h, main, cross } = GRAPH_NODE;
+  // Layers: a and e first, b and c second, d last.
+  assert.deepEqual([a, b, c, d, e].map((x) => at(lr, x).x), [0, w + main, w + main, 2 * (w + main), 0]);
+  assert.equal(lr.width, 3 * w + 2 * main);
+  assert.equal(lr.height, 2 * h + cross);
+  assert.deepEqual(lr.edges.map((ed) => `${ed.from.card.id}>${ed.to.card.id}`).sort(), [`${a.id}>${b.id}`, `${a.id}>${c.id}`, `${b.id}>${d.id}`, `${c.id}>${d.id}`].sort(), 'a blocker outside the level draws no edge');
+  const tb = layoutLevel([a, b, c, d, e], 'tb');
+  assert.equal(at(tb, d).y, 2 * (h + main));
+  assert.equal(tb.width, 2 * w + cross);
+  // A cycle (refused by the service) is drawn, not followed forever.
+  const x = card({});
+  const y = card({ blocked_by: [x.id] });
+  x.blocked_by = [y.id];
+  assert.equal(layoutLevel([x, y], 'lr').nodes.length, 2);
+  assert.deepEqual(layoutLevel([], 'lr'), { nodes: [], edges: [], width: 0, height: 0, dir: 'lr' });
+});
+
+test('graph titles wrap between words and end in an ellipsis when cut', () => {
+  assert.deepEqual(wrapText('#40 Write the formula from the release archives', 24, 2), ['#40 Write the formula', 'from the release…']);
+  assert.deepEqual(wrapText('#3 Short', 24, 2), ['#3 Short']);
+  assert.deepEqual(wrapText('#9 Supercalifragilisticexpialidocious', 12, 2), ['#9', 'Supercalifr…']);
+  assert.deepEqual(wrapText('', 24, 2), []);
 });

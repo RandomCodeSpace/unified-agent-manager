@@ -3,14 +3,11 @@ import type { BoardJob, Card, CardKind, Project, SessionSummary } from '../../ap
 import type { BoardState } from '../../state';
 
 export type PlannerViewKind = 'tree' | 'board' | 'map';
-/** What can pop out into a floating window: a view, or the Inbox. */
-export type PopKind = PlannerViewKind | 'inbox';
 
 /**
- * The planner's view state, one for the whole app: the main pane and a popped-out window
- * render from it, so a selection or a filter made in one shows in the other, and closing
- * either loses neither (ADR 0005 §10, test plan 21). The panel a Task shows on its own keeps
- * a second one, so following Tasks never moves this one.
+ * The Planner view's state, one for the whole app (ADR 0005 §10): leaving the Planner and coming
+ * back keeps the Board, view, selection and filters. A Task's Plan panel keeps its own, so
+ * following Tasks never moves this one.
  */
 export interface PlannerUi {
   /** The Board shown: a Project id, or `unassigned`. */
@@ -50,15 +47,12 @@ export interface PlannerContextValue {
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
   projects: Project[];
-  /** Select a card and show it in the main pane's card panel, on its own Board (opening the Planner view when it is elsewhere). */
+  /** Select a card and show it in the main pane's card panel, on its own Board (opening the Planner view when it is elsewhere); in a Task's Plan panel, open it there. */
   openCard: (id: string) => void;
   /** Show a Task (a held subtask's chip, a transcript link). */
   openTask: (id: string) => void;
   /** Fetch the shown Board again (a failed load, Retry). */
   reload: (key: string) => void;
-  popout: PopKind | null;
-  popOut: (kind: PopKind) => void;
-  closePopout: () => void;
   notice: PlannerNotice | null;
   notify: (n: PlannerNotice | null) => void;
   /** Settings → Planner is on. */
@@ -86,13 +80,19 @@ export function usePlanner(): PlannerContextValue {
   return ctx;
 }
 
+/** Inside a Task: opens a card in that Task's Plan panel, so a card link never leaves the Task. */
+export const TaskCardOpener = createContext<((id: string) => void) | null>(null);
+
 /**
- * Opens a card from outside the planner (a transcript's card chip): the context's openCard, or
- * null while the planner is off or outside its provider, so the caller shows plain text instead.
+ * Opens a card from outside the planner (a transcript's card chip): in the Task's Plan panel
+ * inside a Task, else the context's openCard; null while the planner is off or outside its
+ * provider, so the caller shows plain text instead.
  */
 export function usePlannerOpenCard(): ((id: string) => void) | null {
   const ctx = useContext(PlannerContext);
-  return ctx?.enabled ? ctx.openCard : null;
+  const inTask = useContext(TaskCardOpener);
+  if (!ctx?.enabled) return null;
+  return inTask ?? ctx.openCard;
 }
 
 /** The shown Board's cards (empty until it loads) and an id index. */

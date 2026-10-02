@@ -1,8 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { copyStyles, popMode } from '../../src/components/planner/PopOut';
-import { openMenu, openTask, renderApp, sidebar, type User } from './render';
+import { openMenu, renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
 
@@ -18,10 +17,6 @@ async function openPlanner() {
 }
 
 describe('planner', () => {
-  afterEach(() => {
-    delete window.documentPictureInPicture;
-  });
-
   test('a project row in the filter opens that project’s plan, kept in the URL', async () => {
     const { user } = renderApp();
     const side = await sidebar();
@@ -179,7 +174,7 @@ describe('planner', () => {
     await user.click(tree.getByRole('treeitem', { name: /^#6 Measure first paint/ }));
     // An overlay below 1280px, inline beside the view above it.
     const panel = within(await screen.findByLabelText('Card #6'));
-    expect(await panel.findByRole('region', { name: 'Blocker links' })).toBeTruthy();
+    expect(await panel.findByRole('region', { name: 'Dependencies' })).toBeTruthy();
     await user.click(panel.getByRole('button', { name: 'Close card' }));
     await waitFor(() => expect(screen.queryByLabelText('Card #6')).toBeNull());
     await user.click(screen.getByRole('radio', { name: 'Board' }));
@@ -240,76 +235,6 @@ describe('planner', () => {
     await closeCard(user);
     expect(screen.getByRole('switch', { name: 'Show cancelled' }).getAttribute('aria-checked')).toBe('true');
     expect(tree.getByRole('treeitem', { name: /^#20 / }).getAttribute('aria-selected')).toBe('true');
-  });
-
-  test('the pop-out is a floating panel on the page, with no separate window where the API is missing', async () => {
-    const { user } = await openPlanner();
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    const pop = within(await screen.findByRole('region', { name: 'Planner pop-out' }));
-    expect(pop.getByRole('radio', { name: 'Tree' }).getAttribute('aria-checked')).toBe('true');
-    expect(pop.queryByRole('button', { name: 'Open in a separate window' })).toBeNull();
-    await user.click(pop.getByRole('radio', { name: /Inbox/ }));
-    expect(await pop.findByRole('list', { name: 'Pending requests' })).toBeTruthy();
-    await user.click(pop.getByRole('button', { name: 'Close the pop-out' }));
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull());
-  });
-
-  test('with Picture-in-Picture the view renders into the window, styled by links', async () => {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    // A data: URL, so the test environment fetches nothing.
-    link.href = 'data:text/css,';
-    document.head.append(link);
-    // A frame stands in for the window: a second document of the page's origin.
-    const frame = document.createElement('iframe');
-    document.body.append(frame);
-    const pipDoc = frame.contentDocument!;
-    const listeners = new Set<() => void>();
-    const pip = {
-      document: pipDoc,
-      closed: false,
-      close() {
-        this.closed = true;
-        for (const l of listeners) l();
-      },
-      addEventListener: (_: string, l: () => void) => listeners.add(l),
-      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
-    };
-    const requestWindow = vi.fn(async () => pip as unknown as Window);
-    window.documentPictureInPicture = { requestWindow };
-    try {
-      const { user } = await openPlanner();
-      // The floating panel first, never a window on its own; the window is the panel's own button.
-      await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-      const float = within(await screen.findByRole('region', { name: 'Planner pop-out' }));
-      expect(requestWindow).not.toHaveBeenCalled();
-      await user.click(float.getByRole('button', { name: 'Open in a separate window' }));
-      await waitFor(() => expect(requestWindow).toHaveBeenCalledWith({ width: 520, height: 680 }));
-      const inWindow = within(pipDoc.body);
-      expect(await inWindow.findByRole('treeitem', { name: /^#1 Faster first load/ })).toBeTruthy();
-      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-      // Menus would open in the page, not the window: the window's rows offer none.
-      expect(inWindow.queryByRole('button', { name: /^Actions for / })).toBeNull();
-      expect([...pipDoc.head.querySelectorAll('link[rel="stylesheet"]')].map((l) => (l as HTMLLinkElement).href)).toContain(link.href);
-      expect(pipDoc.querySelector('style')).toBeNull();
-      // The window's own close ends the pop-out.
-      await user.click(inWindow.getByRole('button', { name: 'Close the pop-out' }));
-      await waitFor(() => expect(pipDoc.body.textContent).toBe(''));
-    } finally {
-      link.remove();
-      frame.remove();
-    }
-  });
-
-  test('a phone, or a browser without the API, has no separate window', () => {
-    const api = { requestWindow: async () => window };
-    const media = (matches: boolean) => (() => ({ matches })) as unknown as Window['matchMedia'];
-    expect(popMode({ documentPictureInPicture: api, matchMedia: media(false) } as unknown as Window)).toBe('pip');
-    expect(popMode({ documentPictureInPicture: api, matchMedia: media(true) } as unknown as Window)).toBe('float');
-    expect(popMode({ matchMedia: media(false) } as unknown as Window)).toBe('float');
-    const to = document.implementation.createHTMLDocument('');
-    copyStyles(document, to);
-    expect(to.title).toBe('UAM planner');
   });
 
   test('settling a Task that holds a subtask asks what happens to it', async () => {
@@ -925,38 +850,6 @@ describe('owner authoring', () => {
 });
 
 describe('the planner’s frames and streams', () => {
-  test('in Picture-in-Picture the Tree moves focus on the window’s own frames', async () => {
-    const frame = document.createElement('iframe');
-    document.body.append(frame);
-    const pipDoc = frame.contentDocument!;
-    const listeners = new Set<() => void>();
-    const pip = {
-      document: pipDoc,
-      closed: false,
-      close() {
-        this.closed = true;
-        for (const l of listeners) l();
-      },
-      addEventListener: (_: string, l: () => void) => listeners.add(l),
-      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
-    };
-    window.documentPictureInPicture = { requestWindow: async () => pip as unknown as Window };
-    const own = vi.spyOn(frame.contentWindow!, 'requestAnimationFrame');
-    try {
-      const { user } = await openPlanner();
-      await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-      await user.click(within(await screen.findByRole('region', { name: 'Planner pop-out' })).getByRole('button', { name: 'Open in a separate window' }));
-      const row = await within(pipDoc.body).findByRole('treeitem', { name: /^#1 Faster first load/ });
-      fireEvent.keyDown(row, { key: 'ArrowDown' });
-      expect(own).toHaveBeenCalled();
-      await user.click(within(pipDoc.body).getByRole('button', { name: 'Close the pop-out' }));
-      await waitFor(() => expect(pipDoc.body.textContent).toBe(''));
-    } finally {
-      own.mockRestore();
-      frame.remove();
-    }
-  });
-
   test('a new stream fetches no Board whose revision it reports unchanged', async () => {
     const { user } = await openPlanner();
     const side = await sidebar();
@@ -1181,232 +1074,5 @@ describe('card menus', () => {
     await user.clear(title);
     await user.type(title, 'Sign the macOS build{Enter}');
     expect(await board.findByRole('button', { name: '#22 Sign the macOS build' })).toBeTruthy();
-  });
-});
-
-describe('the floating pop-out', () => {
-  const panel = () => screen.findByRole('region', { name: 'Planner pop-out' });
-  const tab = () => screen.findByRole('button', { name: /^Show the planner/ });
-  /** The Task's panel is the tab alone. */
-  const folded = async () => {
-    expect(await tab()).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-  };
-  const box = (el: HTMLElement) => ['--fp-x', '--fp-y', '--fp-w', '--fp-h'].map((k) => el.style.getPropertyValue(k));
-
-  test('Maximise fills the viewport and Restore returns the box; a double-click on the header does the same', async () => {
-    const { user } = await openPlanner();
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    const el = await panel();
-    const pop = within(el);
-    const restored = box(el);
-    expect(restored[2]).toBe('520px');
-    await user.click(pop.getByRole('button', { name: 'Maximise the pop-out' }));
-    expect(box(el)).toEqual(['8px', '8px', `${window.innerWidth - 16}px`, `${window.innerHeight - 16}px`]);
-    await user.click(pop.getByRole('button', { name: 'Restore the pop-out' }));
-    expect(box(el)).toEqual(restored);
-    await user.dblClick(pop.getByText('unified-agent-manager'));
-    expect(pop.getByRole('button', { name: 'Restore the pop-out' })).toBeTruthy();
-    await user.dblClick(pop.getByText('unified-agent-manager'));
-    expect(box(el)).toEqual(restored);
-  });
-
-  test('Hide folds it into a tab with the pending count; the tab, by click or Enter, brings it back; focus follows', async () => {
-    const { user, tree } = await openPlanner();
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    within(await panel()).getByRole('button', { name: 'Hide the pop-out' }).focus();
-    await user.keyboard('{Enter}');
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull());
-    // Focus on the control that went moves to what took its place: the tab, then the panel's grip.
-    const tab = screen.getByRole('button', { name: 'Show the planner, 6 pending' });
-    await waitFor(() => expect(document.activeElement).toBe(tab));
-    await user.keyboard('{Enter}');
-    const pop = within(await panel());
-    await waitFor(() => expect(document.activeElement).toBe(pop.getByRole('button', { name: 'Move the pop-out (arrow keys)' })));
-    await user.click(pop.getByRole('button', { name: 'Hide the pop-out' }));
-    await user.click(await screen.findByRole('button', { name: 'Show the planner, 6 pending' }));
-    expect(await panel()).toBeTruthy();
-    // Focus elsewhere stays put.
-    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
-    const row = tree.getByRole('treeitem', { name: /^#1 / });
-    row.focus();
-    fireEvent.click(await screen.findByRole('button', { name: 'Show the planner, 6 pending' }));
-    await panel();
-    expect(document.activeElement).toBe(row);
-  });
-
-  test('closing a pop-out over another Project’s Task keeps the Planner’s Board, selection and filter', async () => {
-    const { user, tree } = await openPlanner();
-    await pick(user, within(document.body), 'Epic', /^#1 /);
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    await panel();
-    await openCard(user, tree, 2);
-    await closeCard(user);
-    // The row, not its hover actions (Settle).
-    await user.click((await sidebar()).getAllByRole('button', { name: /Accessibility pass on the post template/ })[0]);
-    await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
-    expect(within(await panel()).getByText('unified-agent-manager')).toBeTruthy();
-    await user.click(within(await panel()).getByRole('button', { name: 'Close the pop-out' }));
-    // This Task's panel takes its place, as the tab for this visit.
-    expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
-    await waitFor(() => expect(header().textContent).toBe('Planner'));
-    expect(screen.getByRole('button', { name: 'Project: unified-agent-manager' })).toBeTruthy();
-    expect(screen.getByRole('combobox', { name: 'Epic' }).textContent).toContain('#1 Faster first load');
-    const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
-    expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
-  });
-
-  test('a card opened from a Task’s panel shows in the Planner, clearing an epic filter that would hide it', async () => {
-    const { user } = await openPlanner();
-    await pick(user, within(document.body), 'Epic', /^#18 /);
-    await user.click((await sidebar()).getAllByRole('button', { name: /Fix re-attach redraw regression/ })[0]);
-    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
-    await user.click(await tab());
-    await user.click(await within(await panel()).findByRole('treeitem', { name: /^#2 / }));
-    expect(await screen.findByLabelText('Card #2')).toBeTruthy();
-    await closeCard(user);
-    expect(screen.getByRole('combobox', { name: 'Epic' }).textContent).toContain('All epics');
-    const plan = within(screen.getByRole('tree', { name: 'Plan outline' }));
-    expect(plan.getByRole('treeitem', { name: /^#2 / }).getAttribute('aria-selected')).toBe('true');
-  });
-
-  test('a Task’s panel moved into a separate window shows its Board, and the Planner switches to that Board', async () => {
-    const frame = document.createElement('iframe');
-    document.body.append(frame);
-    const pipDoc = frame.contentDocument!;
-    const listeners = new Set<() => void>();
-    const pip = {
-      document: pipDoc,
-      closed: false,
-      close() {
-        this.closed = true;
-        for (const l of listeners) l();
-      },
-      addEventListener: (_: string, l: () => void) => listeners.add(l),
-      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
-    };
-    window.documentPictureInPicture = { requestWindow: async () => pip as unknown as Window };
-    try {
-      const { user } = await openPlanner();
-      await user.click((await sidebar()).getAllByRole('button', { name: /Accessibility pass on the post template/ })[0]);
-      await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
-      await user.click(await tab());
-      await user.click(within(await panel()).getByRole('button', { name: 'Open in a separate window' }));
-      expect(await within(pipDoc.body).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
-      expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-      await user.click(within(pipDoc.body).getByRole('button', { name: 'Close the pop-out' }));
-      await waitFor(() => expect(pipDoc.body.textContent).toBe(''));
-      // Closed over the Task: its panel stays the tab for the rest of the visit.
-      expect(await screen.findByRole('button', { name: /^Show the planner/ })).toBeTruthy();
-      await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
-      await waitFor(() => expect(header().textContent).toBe('Planner'));
-      expect(screen.getByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
-    } finally {
-      delete window.documentPictureInPicture;
-      frame.remove();
-    }
-  });
-
-  test('a pop-out from the Planner opens expanded and follows the Planner’s Board, whatever an earlier version stored', async () => {
-    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: true, p3: true }));
-    const { user } = await openPlanner();
-    // The earlier version's key is removed once the planner mounts.
-    expect(localStorage.getItem('uam.plannerHidden')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    await panel();
-    await pickProject(user, /^notes-site/);
-    expect(await within(await panel()).findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
-  });
-
-  test('a git Project’s Task starts as the tab alone, over live cards and a Show an earlier version stored', async () => {
-    localStorage.setItem('uam.plannerHidden', JSON.stringify({ p1: false }));
-    await openTask('t1');
-    await folded();
-    // Decided once for the visit: nothing opens it later.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-  });
-
-  test('opened, then left for another Task and come back to, it starts as the tab again; Hide folds it for the visit', async () => {
-    const { user } = await openTask('t1');
-    await user.click(await tab());
-    await user.click(within(await panel()).getByRole('button', { name: 'Hide the pop-out' }));
-    await folded();
-    await user.click(await tab());
-    expect(within(await panel()).getByText('unified-agent-manager')).toBeTruthy();
-    window.location.hash = '#task=t8';
-    await waitFor(() => expect(header().textContent).toMatch(/^Accessibility pass on the post template/));
-    await folded();
-    window.location.hash = '#task=t1';
-    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
-    await folded();
-  });
-
-  test('over a git Project’s Task its tab opens that Task’s Board, and it never shows over the Planner', async () => {
-    const { user } = await openTask('t8');
-    await user.click(await tab());
-    const pop = within(await panel());
-    expect(pop.getByText('notes-site')).toBeTruthy();
-    expect(await pop.findByRole('treeitem', { name: '#32 Accessible post template, Doing' })).toBeTruthy();
-    // Only folds: no close for a panel nobody opened.
-    expect(pop.queryByRole('button', { name: 'Close the pop-out' })).toBeNull();
-    await user.click((await sidebar()).getByRole('button', { name: 'Planner' }));
-    await waitFor(() => expect(header().textContent).toBe('Planner'));
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
-    // The one popped out here stays across the way back to a Task.
-    await user.click(screen.getByRole('button', { name: 'Pop out the tree' }));
-    await panel();
-    await user.click((await sidebar()).getByRole('button', { name: /Fix re-attach redraw regression/ }));
-    await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
-    expect(within(await panel()).getByText('notes-site')).toBeTruthy();
-  });
-
-  test('a Task without git shows none, and one whose Board is empty starts as the tab and stays one as cards land', async () => {
-    const { user } = await openTask('t6');
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Show the planner/ })).toBeNull();
-    const project = await api.createProject({ dir: '/home/user/projects/empty-plan' });
-    const task = await api.createSession({ project_id: project.id, provider: 'copilot', request_id: 'empty-plan-task' });
-    window.location.hash = `#task=${task.id}`;
-    const tab = await screen.findByRole('button', { name: 'Show the planner' });
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    // Decided once for the visit: a first card (a planning Task's) does not open it over the conversation.
-    await act(() => api.planner.create({ project_id: project.id, kind: 'epic', parent_id: null, title: 'Plan the empty project', win_condition: 'It has a plan' }));
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(screen.queryByRole('region', { name: 'Planner pop-out' })).toBeNull();
-    await user.click(tab);
-    const pop = within(await panel());
-    expect(pop.getByText('empty-plan')).toBeTruthy();
-    expect(await pop.findByRole('treeitem', { name: /Plan the empty project/ })).toBeTruthy();
-  });
-
-  test('junk stored under an earlier version’s key or the box’s leaves the tab and the panel working', async () => {
-    for (const junk of ['null', '[true]', '{"p1":"yes"}', '{']) {
-      localStorage.setItem('uam.plannerHidden', junk);
-      localStorage.setItem('uam.plannerBox', junk);
-      const { user, unmount } = await openTask('t1');
-      await user.click(await tab());
-      expect(box(await panel())[2]).toBe('520px');
-      unmount();
-    }
-  });
-
-  test('the box lasts across a reload, and a Show does not: the next visit starts as the tab', async () => {
-    const first = await openTask('t1');
-    await first.user.click(await tab());
-    const grip = within(await panel()).getByRole('button', { name: 'Move the pop-out (arrow keys)' });
-    grip.focus();
-    await first.user.keyboard('{ArrowLeft}{ArrowDown}');
-    const moved = box(await panel());
-    expect(JSON.parse(localStorage.getItem('uam.plannerBox')!)).toMatchObject({ x: parseInt(moved[0]), y: parseInt(moved[1]) });
-    first.unmount();
-
-    const second = await openTask('t1');
-    await folded();
-    await second.user.click(await tab());
-    expect(box(await panel())).toEqual(moved);
   });
 });

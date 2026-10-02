@@ -1092,8 +1092,34 @@ sign-outs are logged without the token.
   refreshes on its own: use Refresh. Choosing a file shows it below the tree:
   text highlighted and wrapped (at most its first 64 KiB), images inline, and
   anything else with Open in new tab and Download. Only one of Changes, Files,
-  Subagents and a file preview is open at a time. On a wide window, a click in
-  the conversation or the composer closes whichever of them is open.
+  Plan, Subagents and a file preview is open at a time. On a wide window, a click in
+  the conversation or the composer closes whichever of them is open. When the
+  header runs short of room (side panels open beside the sidebar), its buttons
+  drop their labels first, then Files, Charts and Terminal move into the
+  header's "…" menu, so the Task's title keeps its room.
+- **Plan**: with the planner on, a Task whose Project has a plan shows a
+  one-line story strip under its header: "Epic › Story · 1/3 done · This
+  task #25 · next #26 · waits for …", where "waits for" includes what the
+  card waits for through its story or epic. The Task's card is the subtask it
+  works on, or one it finished. A Task with no card shows "Not part of a
+  story · Add to a story", and a Project with no plan shows no strip. The
+  strip, or the **Plan** button beside Files, opens the Plan panel in the
+  same place as Changes and Files: what this Task works on, then the plan as
+  an **Outline** (epics › stories › subtasks with their progress, the Task's
+  card marked and its story open) or a **Graph** of one level's dependencies
+  at a time (the Project's epics, an epic's stories, a story's subtasks), with
+  a breadcrumb to move between levels. Clicking a card opens its details in
+  place: done when, description, checklist, dependencies (its own level, and
+  what it waits for through its story or epic), the agents' requests on it,
+  Edit, Discard for a proposal, and Launch, which asks first when launching
+  confirms proposals. A subtask in progress shows why its plan is locked.
+  Card links in the conversation open the card here and never leave the
+  Task; the Planner itself is in the sidebar, for planning the whole
+  Project. "Add to a story" picks a story and either a new subtask, named
+  after the Task, or one of its subtasks not started yet; the Task then works
+  on it as a launched Task would (no message is sent to it), after a confirm
+  step when the story is a proposal. On a phone the panel opens full screen
+  and the graph scrolls inside itself.
 - **Terminal**: off by default. Turn on Settings → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project

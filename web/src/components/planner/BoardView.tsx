@@ -50,12 +50,12 @@ function lanesOf(cards: readonly Card[], epic: string | null, showCancelled: boo
 /**
  * The Board (ADR 0005 §10): kanban over subtasks, a column per status and a swimlane per
  * story. Held subtasks carry their Task's chip, which opens the Task. Suggestions stay in the Tree.
- * In a narrow container (a phone, the pop-out) the columns stack: each lane lists its statuses
+ * In a narrow container (a phone) the columns stack: each lane lists its statuses
  * with cards, under their names, one after another. Each card's "…" button and context menu hold
- * its actions (`menus`; off in a Picture-in-Picture window, where menus cannot open).
+ * its actions.
  * Cards are memoised on their card object, so a `board` frame re-renders only the ones it changed.
  */
-export function BoardView({ menus = true }: Readonly<{ menus?: boolean }>) {
+export function BoardView() {
   const { ui, cards, openCard } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const lanes = useMemo(() => lanesOf(cards, ui.epic, ui.showCancelled), [cards, ui.epic, ui.showCancelled]);
@@ -126,7 +126,7 @@ export function BoardView({ menus = true }: Readonly<{ menus?: boolean }>) {
                           }}
                         />
                       ) : (
-                        <BoardCard card={c} blockers={openBlockerSeqs(c, byId)} selected={ui.selected === c.id} onOpen={openCard} menu={menus ? menuHandle : undefined} />
+                        <BoardCard card={c} blockers={openBlockerSeqs(c, byId)} selected={ui.selected === c.id} onOpen={openCard} menu={menuHandle} />
                       )}
                     </li>
                   ))}
@@ -140,13 +140,9 @@ export function BoardView({ menus = true }: Readonly<{ menus?: boolean }>) {
   );
   return (
     <>
-      {menus ? (
-        <CardMenus handle={menuHandle} items={(id) => (byId.has(id) ? menu(byId.get(id)!) : [])} render={<div />} {...region}>
-          {lanesGrid}
-        </CardMenus>
-      ) : (
-        <div {...region}>{lanesGrid}</div>
-      )}
+      <CardMenus handle={menuHandle} items={(id) => (byId.has(id) ? menu(byId.get(id)!) : [])} render={<div />} {...region}>
+        {lanesGrid}
+      </CardMenus>
       {cardActions.dialogs}
     </>
   );

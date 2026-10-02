@@ -822,6 +822,60 @@ func (m *Manager) Plan(ref string, req LaunchRequest) (SessionSummary, error) {
 	return summary, err
 }
 
+// AttachRequest makes an existing Task work on a card (AttachTask).
+type AttachRequest struct {
+	TaskID string `json:"task_id"`
+	// Title names the new subtask when the card is a story or an epic; ""
+	// takes the Task's name.
+	Title   string `json:"title"`
+	Confirm bool   `json:"confirm"`
+}
+
+// AttachTask makes the existing Task req.TaskID work on the card ref, as a
+// launch does for a new Task: on a subtask it holds that subtask, and on a
+// story or an epic it holds a new subtask created there. The Task must be in
+// the card's Project and not archived. No prompt is sent: the Task carries
+// on, and its agent sees the hold through the planner tools.
+func (m *Manager) AttachTask(ref string, req AttachRequest) (BoardCard, error) {
+	task, err := m.Summary(strings.TrimSpace(req.TaskID))
+	if err != nil {
+		return BoardCard{}, err
+	}
+	if task.Stage == StageArchived {
+		return BoardCard{}, invalidBoard("the task is archived; restore it first")
+	}
+	ctx := m.ctx
+	var c board.Card
+	if err := m.withBoard(func(st *board.Store) error {
+		c, err = st.Card(ctx, ref)
+		return err
+	}); err != nil {
+		return BoardCard{}, err
+	}
+	switch {
+	case c.ProjectID == "":
+		return BoardCard{}, errUnassigned
+	case c.ProjectID != task.ProjectID:
+		return BoardCard{}, invalidBoard("#%d is in another project than the task", c.Seq)
+	}
+	dir, err := m.boardDir(ctx, c.ProjectID)
+	if err != nil {
+		return BoardCard{}, err
+	}
+	base, err := baseline(ctx, dir)
+	if err != nil {
+		return BoardCard{}, err
+	}
+	title := clipRunes(strings.TrimSpace(cmp.Or(strings.TrimSpace(req.Title), task.Name, task.Title)), maxNameRunes)
+	var held board.Card
+	err = m.withBoard(func(st *board.Store) error {
+		var err error
+		held, err = st.Attach(ctx, board.Owner(gitHead(ctx, dir)), c.ID, task.ID, title, base, req.Confirm)
+		return err
+	})
+	return boardCard(held), err
+}
+
 // startBoardTask creates a launch's or plan's Task through Create, records
 // the hold or the planning scope, and sends the preamble as the Task's first
 // prompt. When a step fails after the Task exists, the Task is archived and
@@ -1231,6 +1285,7 @@ type BoardCard struct {
 	Confirmed       bool           `json:"confirmed"`
 	ExpiresAt       *time.Time     `json:"expires_at,omitempty"`
 	HeldBy          string         `json:"held_by,omitempty"`
+	WorkedBy        string         `json:"worked_by,omitempty"`
 	PinnedSHA       string         `json:"pinned_sha"`
 	AcceptCmd       *string        `json:"accept_cmd"`
 	Paths           []string       `json:"paths"`
@@ -1320,7 +1375,7 @@ func boardCard(c board.Card) BoardCard {
 		ID: c.ID, Seq: c.Seq, ProjectID: c.ProjectID, Kind: c.Kind, Rank: c.Rank, Title: c.Title, Desc: c.Desc,
 		WinCondition: c.WinCondition, Status: c.Status, Prio: c.Prio, Due: c.Due, Effort: c.Effort,
 		Labels: nonNil(c.Labels), Checklist: nonNil(c.Checklist), Blocked: c.Blocked, BlockedBy: nonNil(c.BlockedBy),
-		Blocks: nonNil(c.Blocks), Confirmed: c.Confirmed(), ExpiresAt: c.ExpiresAt, HeldBy: c.HeldBy, PinnedSHA: c.PinnedSHA,
+		Blocks: nonNil(c.Blocks), Confirmed: c.Confirmed(), ExpiresAt: c.ExpiresAt, HeldBy: c.HeldBy, WorkedBy: c.WorkedBy, PinnedSHA: c.PinnedSHA,
 		AcceptCmd: c.AcceptCmd, Paths: nonNil(c.Paths), PendingRequests: c.PendingRequests, Revision: c.Revision,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MovedAt: c.MovedAt,
 	}

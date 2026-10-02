@@ -91,9 +91,9 @@ function followUpBlocked(session: SessionDetail): string | null {
  * out. Inline, the column commits its width at once and the panel slides over the space it
  * left; closing slides it out, then `onClosed` lets the owner unmount it.
  */
-export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440 }: Readonly<{ id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number }>) {
+export function SidePanel({ id, inline, open, onClose, onClosed, label, children, className, defaultWidth = 440, preferWidth = 0 }: Readonly<{ id: string; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; label: string; children: ReactNode; className?: string; defaultWidth?: number; /** Widens the inline panel to at least this much while set, as far as the row allows (a wide view inside it). */ preferWidth?: number }>) {
   const { narrow } = useApp();
-  const { panelRef, handleProps } = useResizable(id, defaultWidth);
+  const { panelRef, handleProps } = useResizable(id, defaultWidth, undefined, undefined, preferWidth);
   // The slide starts one frame after mount, so the first paint is off-screen.
   const [shown, setShown] = useState(false);
   useEffect(() => {

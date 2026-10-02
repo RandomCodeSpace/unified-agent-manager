@@ -102,16 +102,17 @@ function seedBoard(big: boolean): Seeded {
     card(15, P, 'subtask', 12, 'Cover anchoring with a DOM test', { win_condition: 'A test fails when a landed page shifts the visible row.', checklist: items(['Scroll to the middle', false], ['Land an older page', false]) }),
     card(16, P, 'story', 1, 'Lazy-load the diagram renderer', { ...suggestion, win_condition: 'The first load fetches no diagram code.' }),
     card(17, P, 'subtask', 16, 'Split the diagram renderer into its own chunk', { ...suggestion }),
-    card(18, P, 'epic', null, 'Release automation', { win_condition: 'A tag produces signed binaries for every platform and the release notes, with no manual step.', prio: 2 }),
+    card(18, P, 'epic', null, 'Release automation', { win_condition: 'A tag produces signed binaries for every platform and the release notes, with no manual step.', prio: 2, blocked_by: ['cp1-1'] }),
     card(19, P, 'story', 18, 'Cross-compile the release matrix', { win_condition: 'Every supported platform has an archive on the release.' }),
     card(20, P, 'subtask', 19, 'Add darwin and windows targets', { status: 'doing', held_by: 't19', win_condition: 'The release workflow builds six targets.', effort: 'M' }),
     card(21, P, 'subtask', 19, 'Upload archives to the GitHub release', { blocked_by: ['cp1-20'] }),
     card(22, P, 'subtask', 19, 'Set up the macOS signing step', { status: 'todo', win_condition: 'darwin archives are signed and notarized in CI.' }),
-    card(23, P, 'story', 18, 'Sign release binaries', { win_condition: 'Every archive has a signature a user can verify.' }),
+    card(23, P, 'story', 18, 'Sign release binaries', { win_condition: 'Every archive has a signature a user can verify.', blocked_by: ['cp1-19'] }),
     card(24, P, 'subtask', 23, 'Generate the signing key in CI secrets', { status: 'done' }),
-    card(25, P, 'subtask', 23, 'Sign archives and publish signatures', { checklist: items(['Sign in the release job', true], ['Upload .sig files', false], ['Document the key', false]) }),
+    // Task t21 works on #25: its story strip and Plan panel (mock/data.ts).
+    card(25, P, 'subtask', 23, 'Sign archives and publish signatures', { status: 'doing', held_by: 't21', win_condition: 'Every release archive has a .sig file a user can verify with the published key.', desc: 'Sign in the release job, so no archive ships unsigned.', effort: 'M', checklist: items(['Sign in the release job', true], ['Upload .sig files', false], ['Document the key', false]) }),
     card(26, P, 'subtask', 23, 'Verify signatures in the install script', { win_condition: 'install.sh refuses an archive whose signature does not match.', blocked_by: ['cp1-31'] }),
-    card(27, P, 'story', 18, 'Changelog from merged pull requests', { win_condition: 'Release notes draft themselves from conventional commits.' }),
+    card(27, P, 'story', 18, 'Changelog from merged pull requests', { win_condition: 'Release notes draft themselves from conventional commits.', blocked_by: ['cp1-19'] }),
     card(28, P, 'subtask', 27, 'Group merged pull requests by conventional type', { status: 'doing', held_by: 't18', checklist: items(['Parse the commit type', true], ['Group feat and fix', false], ['Fold chores into one line', false]) }),
     card(29, P, 'subtask', 27, 'Write the upgrade notes section', {}),
     card(30, P, 'subtask', 27, 'Link each entry to its pull request', {}),
@@ -205,7 +206,13 @@ function seedBoard(big: boolean): Seeded {
     'cp1-28': [hold(5, 't18', 9, 'c41d2e8')],
     'cp1-3': [hold(6, 't3', 60 * 31, '7a2b3c4', [60 * 29, 'accepted'])],
     'cp1-4': [hold(7, 't4', 60 * 28, '7a2b3c4', [60 * 26, 'accepted'])],
+    'cp1-25': [hold(8, 't21', 25, 'c41d2e8')],
   };
+  // Each card names the Task of its latest attempt.
+  for (const [cid, list] of Object.entries(holds)) {
+    const c = cards.find((x) => x.id === cid);
+    if (c) c.worked_by = list.at(-1)!.task_id;
+  }
   return { cards, requests, comments, holds };
 }
 
@@ -435,9 +442,41 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       touch(leaf);
       leaf.status = 'doing';
       leaf.held_by = session.id;
+      leaf.worked_by = session.id;
       (holds[leaf.id] ??= []).push({ id: id('ho'), task_id: session.id, started_at: now(), baseline_head: head(leaf), baseline_dirty: [] });
     });
     return json(201, { card: leaf, session });
+  }
+
+  /** An existing Task works on the subtask `c`, or on a new one under the story or epic `c` (the service's attach). */
+  function attach(c: Card, body: Json): Response {
+    const taskId = String(body.task_id ?? '');
+    const task = host.task(taskId);
+    if (!task) return json(404, { error: 'session not found' });
+    if (task.project_id !== c.project_id) return refuse('invalid', `#${c.seq} is in another project than the task`);
+    const busy = cards.find((x) => x.held_by === taskId);
+    if (busy) return refuse('limit', `the Task already works on #${busy.seq}`);
+    const title = String(body.title ?? '').trim() || task.name || task.title;
+    if (c.kind === 'subtask') {
+      const locked = lockedReason(c);
+      if (locked) return refuse('in_progress', locked);
+      if (c.status !== 'planned' && c.status !== 'todo') return refuse('invalid', `#${c.seq} is ${c.status}; only a planned or todo subtask can be attached`);
+    } else if (!title) return refuse('invalid', 'title must not be empty');
+    const proposals = cardPath(c, new Map(cards.map((x) => [x.id, x]))).filter((x) => !x.confirmed).reverse();
+    if (proposals.length && body.confirm !== true) return refuse('unconfirmed', `${proposals.map((x) => `#${x.seq}`).join(', ')} must be confirmed first`, { refs: proposals.map((x) => `#${x.seq}`) });
+    let leaf = c;
+    commit(() => {
+      if (c.kind !== 'subtask') {
+        leaf = card(nextSeq++, c.project_id, 'subtask', null, title, { parent_id: c.id, created_at: now(), min: 0 });
+        cards.push(leaf);
+      }
+      touch(leaf);
+      leaf.status = 'doing';
+      leaf.held_by = taskId;
+      leaf.worked_by = taskId;
+      (holds[leaf.id] ??= []).push({ id: id('ho'), task_id: taskId, started_at: now(), baseline_head: head(leaf), baseline_dirty: [] });
+    });
+    return json(200, leaf);
   }
 
   function accept(r: BoardRequest, comment: string): Response | null {
@@ -735,6 +774,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       }
       case 'POST launch':
         return launch(c, body.confirm === true);
+      case 'POST attach':
+        return attach(c, body);
       case 'POST plan': {
         if (c.kind === 'subtask') return refuse('invalid', 'plan with an agent on an epic or a story');
         const brief = String(body.brief ?? '').trim();

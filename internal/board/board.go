@@ -148,6 +148,9 @@ type Card struct {
 	// ExpiresAt is nil once the card is confirmed.
 	ExpiresAt *time.Time
 	HeldBy    string
+	// WorkedBy is the Task of the subtask's latest attempt, which stays
+	// after the attempt ends; "" when none started.
+	WorkedBy  string
 	PinnedSHA string
 	// AcceptCmd is nil to inherit the Project default, "" for none.
 	AcceptCmd       *string

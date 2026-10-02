@@ -148,7 +148,7 @@ export function expiresIn(iso: string | undefined, now = Date.now()): string {
   return `expires in ${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
-/** The planner's last notice (a failed action, a launch with its Task), over the view it came from: the Planner's or the pop-out's. */
+/** The planner's last notice (a failed action, a launch with its Task), over the view it came from: the Planner's or a Task's Plan panel. */
 export function NoticeBar({ className }: Readonly<{ className?: string }>) {
   const { notice, notify, openTask } = usePlanner();
   if (!notice) return null;

@@ -1,5 +1,6 @@
 // The planner's pure logic (ADR 0005): derived container status and progress (§2), applying
-// `board` frames by revision (§15), the outline the Tree draws, and the Map's tree layout.
+// `board` frames by revision (§15), the outline the Tree draws, the Map's tree layout, and a
+// Task's place in the plan with the per-level graph its Plan panel draws.
 // No runtime imports, so the node test suite loads it as it is.
 
 import type { BoardData, BoardFrame, BoardRequest, Card, CardKind, CardProgress, CardStatus } from '../api';
@@ -336,4 +337,134 @@ export function pendingRequests(boards: Readonly<Record<string, { data: BoardDat
   let n = 0;
   for (const b of Object.values(boards)) n += b.data?.requests.length ?? 0;
   return n;
+}
+
+/* ---------- A Task's place in the plan (the story strip and the Plan panel) ---------- */
+
+/** The subtask a Task works on: the one it holds, else one it finished. */
+export function taskCard(cards: readonly Card[], taskId: string): Card | undefined {
+  return cards.find((c) => c.held_by === taskId) ?? cards.find((c) => c.kind === 'subtask' && c.status === 'done' && c.worked_by === taskId);
+}
+
+/** An open card another waits for; `via` is the story or epic it waits through, absent for its own. */
+export interface Wait {
+  card: Card;
+  via?: Card;
+}
+
+/** What a card waits for that is still open: its own blockers, then each parent's, nearest first (§3). */
+export function waitsOf(card: Card, byId: ReadonlyMap<string, Card>): Wait[] {
+  const out: Wait[] = [];
+  for (let at: Card | undefined = card, depth = 0; at && depth < 8; at = at.parent_id ? byId.get(at.parent_id) : undefined, depth++) {
+    for (const b of at.blocked_by.map((id) => byId.get(id)).filter(isOpen)) out.push(at === card ? { card: b } : { card: b, via: at });
+  }
+  return out;
+}
+
+/** The subtask to start next under a container: its first planned or to-do subtask in order, other than `except`. */
+export function nextSubtask(container: Card, index: ReadonlyMap<string, Card[]>, except?: string): Card | undefined {
+  return (index.get(container.id) ?? []).find((c) => c.kind === 'subtask' && c.id !== except && (c.status === 'planned' || c.status === 'todo'));
+}
+
+export type GraphDir = 'lr' | 'tb';
+
+/** A graph node's box, and the gaps between layers (`main`) and within one (`cross`). */
+export const GRAPH_NODE = { w: 172, h: 64, main: 40, cross: 12 } as const;
+
+export interface GraphNode {
+  card: Card;
+  x: number;
+  y: number;
+}
+
+export interface GraphLayout {
+  nodes: GraphNode[];
+  edges: { from: GraphNode; to: GraphNode }[];
+  width: number;
+  height: number;
+  dir: GraphDir;
+}
+
+/**
+ * One level of the plan as a layered graph (the cards of one container, §3): a card's layer is
+ * its longest chain of blockers within the level, and a layer's cards sort by the average place
+ * of what they wait for (fewer crossings), then by rank. Layers run left to right (`lr`) or top
+ * to bottom (`tb`); an edge runs from the blocker to the card that waits for it.
+ */
+export function layoutLevel(cards: readonly Card[], dir: GraphDir): GraphLayout {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const inLevel = (c: Card) => c.blocked_by.filter((b) => byId.has(b));
+  const layerOf = new Map<string, number>();
+  const layer = (c: Card, seen: ReadonlySet<string>): number => {
+    const known = layerOf.get(c.id);
+    if (known !== undefined) return known;
+    // A cycle (the service refuses them) is drawn flat rather than followed.
+    const next = new Set(seen).add(c.id);
+    const l = Math.max(-1, ...inLevel(c).filter((b) => !seen.has(b)).map((b) => layer(byId.get(b)!, next))) + 1;
+    layerOf.set(c.id, l);
+    return l;
+  };
+  const layers: Card[][] = [];
+  for (const c of cards) (layers[layer(c, new Set())] ??= []).push(c);
+  const place = new Map<string, number>();
+  layers.forEach((row, i) => {
+    const bary = (c: Card) => {
+      const ps = inLevel(c).map((b) => place.get(b)).filter((n): n is number => n !== undefined);
+      return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Number.MAX_SAFE_INTEGER;
+    };
+    if (i > 0) row.sort((a, b) => bary(a) - bary(b) || a.rank - b.rank || a.seq - b.seq);
+    row.forEach((c, j) => place.set(c.id, j));
+  });
+  const { w, h, main, cross } = GRAPH_NODE;
+  const lr = dir === 'lr';
+  const most = Math.max(0, ...layers.map((r) => r.length));
+  const crossStep = (lr ? h : w) + cross;
+  const mainStep = (lr ? w : h) + main;
+  const nodes: GraphNode[] = [];
+  const placed = new Map<string, GraphNode>();
+  layers.forEach((row, i) => {
+    const offset = ((most - row.length) * crossStep) / 2;
+    row.forEach((card, j) => {
+      const a = i * mainStep;
+      const b = offset + j * crossStep;
+      const node = lr ? { card, x: a, y: b } : { card, x: b, y: a };
+      nodes.push(node);
+      placed.set(card.id, node);
+    });
+  });
+  const mainLen = layers.length ? layers.length * mainStep - main : 0;
+  const crossLen = most ? most * crossStep - cross : 0;
+  const edges = nodes.flatMap((to) => inLevel(to.card).map((b) => ({ from: placed.get(b)!, to })));
+  return { nodes, edges, width: lr ? mainLen : crossLen, height: lr ? crossLen : mainLen, dir };
+}
+
+/**
+ * `text` in at most `lines` lines of at most `max` characters, broken between words (a word
+ * longer than a line is cut); the last line ends in an ellipsis when text is left over. SVG
+ * text does not wrap, so the graph wraps its titles here.
+ */
+export function wrapText(text: string, max: number, lines: number): string[] {
+  const out: string[] = [];
+  let line = '';
+  let rest = false;
+  for (const raw of text.trim().split(/\s+/).filter(Boolean)) {
+    const word = raw.length > max ? `${raw.slice(0, max - 1)}…` : raw;
+    if (!line) line = word;
+    else if (line.length + 1 + word.length <= max) line += ` ${word}`;
+    else {
+      out.push(line);
+      line = word;
+      if (out.length === lines) {
+        rest = true;
+        line = '';
+        break;
+      }
+    }
+  }
+  if (line) out.push(line);
+  if (rest) {
+    const last = out[out.length - 1];
+    out[out.length - 1] = `${last.length >= max ? last.slice(0, max - 1) : last}…`;
+  }
+  return out;
 }
