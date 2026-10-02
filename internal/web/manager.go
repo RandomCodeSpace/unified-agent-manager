@@ -277,6 +277,9 @@ type webSession struct {
 	// renames counts Rename calls, so a title job knows when a rename came
 	// while it ran.
 	renames uint64
+	// titleWait is the title the first message waits for while its turn
+	// runs, to be made from the agent's reply; not persisted.
+	titleWait *titlePlan
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
 	// compactAt is the compaction threshold, in percent, the conversation
@@ -2069,6 +2072,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
 		m.kickQuotaLocked(s.provider)
+		if s.titleWait != nil {
+			m.titleAfterReplyLocked(s)
+		}
 	}
 }
 
@@ -2919,7 +2925,11 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 	before := m.summaryLocked(s)
 	prevBase, prevDetail := s.base, s.detail
-	titleModel := m.titleModelLocked(s, in)
+	plan := m.titlePlanLocked(s, in, uploads)
+	if plan != nil && plan.afterReply {
+		// Set before the send, so a turn that ends at once still finds it.
+		s.titleWait = plan
+	}
 	s.setBase(StateWorking, "")
 	mark := s.turnSeq
 	m.changedLocked(s, before)
@@ -2937,12 +2947,17 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		m.markUsed(s, uploads)
 	}
 	if err == nil {
-		if titleModel != "" {
-			m.startTitle(s, titleModel, in.text)
+		if plan != nil && !plan.afterReply {
+			m.mu.Lock()
+			m.startTitleLocked(s, plan, blobs, "")
+			m.mu.Unlock()
 		}
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	}
 	m.mu.Lock()
+	if plan != nil && s.titleWait == plan {
+		s.titleWait = nil
+	}
 	before = m.summaryLocked(s)
 	if s.turnSeq == mark {
 		s.base, s.detail = prevBase, prevDetail

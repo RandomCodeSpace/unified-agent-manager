@@ -543,7 +543,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
               const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
               const cheapest = p.models.find((m) => m.id === p.cheapest_model);
-              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies and phrase turn outcomes. None keeps provider titles and result excerpts without utility AI calls.">
+              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies and phrase turn outcomes. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.">
                 <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
                   { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
                   { value: UTILITY_NONE, label: 'None (no utility AI)' },

@@ -24,6 +24,12 @@ export function outcomeLabel(call: Pick<UtilityCall, 'outcome' | 'reason'>): str
   return call.outcome === 'error' ? 'Failed' : '';
 }
 
+/** The model a call used: "gpt-6-luna", or "gpt-6-luna (the task's model)" when no Utility model is set. */
+export function modelText(call: Pick<UtilityCall, 'model' | 'session_model'>): string {
+  if (!call.model) return '';
+  return call.session_model ? `${call.model} (the task's model)` : call.model;
+}
+
 const count = (n: number) => n.toLocaleString('en-US');
 
 /** "1,240 → 38 characters". */

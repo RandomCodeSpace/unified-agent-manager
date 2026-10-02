@@ -571,6 +571,7 @@ const titleDeleteTimeout = 5 * time.Second
 
 // titleSystem replaces Copilot's system prompt in a title session.
 const titleSystem = `You write a title for a coding task from the user's first message.
+The message may be or include attached images. When the agent's first reply follows it, use the reply to understand the task.
 Rules:
 - 3 to 6 words, sentence case, at most 60 characters.
 - Name the task, not the conversation. No quotes, no trailing punctuation, no emoji.
@@ -582,7 +583,25 @@ Rules:
 // deadline, so neither its directory nor a session-store row outlives it.
 func (p *webProvider) Title(ctx context.Context, req agentapi.TitleRequest) (string, error) {
 	return p.RunUtility(ctx, agentapi.UtilityRequest{Model: req.Model, Workdir: req.Workdir, Purpose: "title", System: titleSystem,
-		Prompt: "<user_message>\n" + req.Text + "\n</user_message>", OnUsage: req.OnUsage})
+		Prompt: titlePrompt(req), Attachments: req.Images, OnUsage: req.OnUsage})
+}
+
+// titlePrompt is the first message, with a note of its attached images and
+// the agent's reply when the request has them.
+func titlePrompt(req agentapi.TitleRequest) string {
+	text := req.Text
+	if n := len(req.Images); n > 0 {
+		note := fmt.Sprintf("[%d attached images]", n)
+		if n == 1 {
+			note = "[1 attached image]"
+		}
+		text = strings.TrimSpace(note + "\n" + text)
+	}
+	prompt := "<user_message>\n" + text + "\n</user_message>"
+	if req.Reply != "" {
+		prompt += "\n<agent_reply>\n" + req.Reply + "\n</agent_reply>"
+	}
+	return prompt
 }
 
 const subagentSummarySystem = `Summarize a completed coding subagent's result in one factual sentence, at most 160 characters.
@@ -679,7 +698,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 			return "", fmt.Errorf("copilot %s: %w", purpose, err)
 		}
 	}
-	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt})
+	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments})})
 	if err != nil {
 		return "", fmt.Errorf("copilot %s: %s", purpose, errText(err))
 	}

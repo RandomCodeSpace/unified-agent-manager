@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { byDay, dayLabel, dayText, durationText, mergeCalls, outcomeLabel, purposeLabel, tokenText } from '../src/lib/utility.ts';
+import { byDay, dayLabel, dayText, durationText, mergeCalls, modelText, outcomeLabel, purposeLabel, tokenText } from '../src/lib/utility.ts';
 
 const call = (id, day = '2026-10-01') => ({ id, day, at: `${day}T10:00:00+02:00`, purpose: 'title', prompt_chars: 10, reply_chars: 3, input_tokens: 1, output_tokens: 1, duration_ms: 5, outcome: 'ok' });
 
@@ -13,6 +13,12 @@ test('purposes and outcomes read as words', () => {
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'off' }), 'Skipped: Background AI off');
   assert.equal(outcomeLabel({ outcome: 'error', reason: 'boom' }), 'Failed');
   assert.equal(outcomeLabel({ outcome: 'ok' }), '');
+});
+
+test("a title made with the Task's own model says so", () => {
+  assert.equal(modelText({ model: 'gpt-6-luna' }), 'gpt-6-luna');
+  assert.equal(modelText({ model: 'gpt-6-luna', session_model: true }), "gpt-6-luna (the task's model)");
+  assert.equal(modelText({}), '');
 });
 
 test('estimated tokens are marked, durations and day totals are short', () => {

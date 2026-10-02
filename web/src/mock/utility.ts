@@ -46,6 +46,8 @@ export function seedUtility(limit: number): UtilityCall[] {
     if (i % 6 === 5) Object.assign(c, { estimated: true, input_tokens: Math.ceil(c.prompt_chars / 4), credits: undefined });
   });
   day(0, limit + 2, (c, i) => {
+    // A title made with the Task's own model, no Utility model being set.
+    if (c.purpose === 'title' && i === limit - 2) c.session_model = true;
     if (i >= limit) Object.assign(c, { outcome: 'skipped', reason: 'daily_limit', prompt_chars: 0, reply_chars: 0, input_tokens: 0, output_tokens: 0, credits: undefined, duration_ms: 0, model: 'gpt-6-luna' });
   });
   out.forEach((c, i) => (c.id = i + 1));
