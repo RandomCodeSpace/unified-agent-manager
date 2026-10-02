@@ -732,6 +732,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               workdir={session.workdir}
               onOpenAgent={(id, opener) => openPanel({ view: 'agent', id }, opener)}
               footVerb={false}
+              compacting={compacting}
               density={density}
               onOpenChanges={openChanges}
               changedLine={!noGit}

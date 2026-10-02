@@ -302,7 +302,8 @@ sign-outs are logged without the token.
   updates the meter.
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Task says
-  so: the label above the message box reads "Compacting the conversation…",
+  so: the label above the message box (and, during a turn, the line at the
+  foot of the conversation) reads "Compacting the conversation…",
   the header chip and the Task's row read "Compacting…", and the Task sits
   under Working in the list (a request waiting for you still wins). When it
   ends a quiet notice stays in the conversation, "Compacted the conversation

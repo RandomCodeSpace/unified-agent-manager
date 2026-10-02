@@ -58,6 +58,8 @@ interface Props {
   changedLine?: boolean;
   /** Name the turn's verb on the foot line between steps; the main pane's floating `WorkingLabel` carries it instead, and its foot line names only the current step (Compact). */
   footVerb?: boolean;
+  /** The conversation is being compacted: the foot says so in place of the current step. */
+  compacting?: boolean;
 }
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
@@ -73,7 +75,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * each `task` call that spawned a subagent (its output lives in the panel, never here), and
  * the prose. A decided request without a tool row joins the turn at its time.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true }: Readonly<Props>) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, agents = {}, agentSteps = {}, live, working, provider, workdir, onOpenAgent, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = useMemo(() => {
     const map = new Map<string, Subagent>();
@@ -161,14 +163,14 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
-  const step = compact && working ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const step = compact && working && !compacting ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
   const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
       <WorkdirContext.Provider value={workdir}>
         {out}
         {working && !showedWorking && <TurnStatus working />}
-        <WorkingTail working={working && (compact || (footVerb && !liveAtFoot(items, byParent)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} />
+        <WorkingTail working={working && (compacting || compact || (footVerb && !liveAtFoot(items, byParent)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -376,7 +378,7 @@ function liveAtFoot(items: Item[], byParent: Map<string, Subagent>): boolean {
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
  * status row already announces the state, so this one is not read out again.
  */
-function WorkingTail({ working, turnId, step, verb = true, current }: Readonly<{ working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean; /** Compact: the step in progress, unfolded (`LiveStep`), in place of its one-line label. */ current?: ReactNode }>) {
+function WorkingTail({ working, turnId, step, verb = true, current, compacting = false }: Readonly<{ /** The conversation is being compacted: say so in place of the step or verb. */ compacting?: boolean; working: boolean; turnId: string; /** Compact: the current step ("Running: …", "Thinking…") in place of the verb. */ step?: Step | null; /** Between steps, the verb; without it the line stays blank, so it does not fold and grow back at every step. */ verb?: boolean; /** Compact: the step in progress, unfolded (`LiveStep`), in place of its one-line label. */ current?: ReactNode }>) {
   const { mounted, onClosed } = usePresence(working);
   // Once a turn showed a step unfolded, the foot keeps that room until the turn ends: a step
   // folding into the turn line never pulls the transcript up, and the next one lands in the same room.
@@ -384,7 +386,8 @@ function WorkingTail({ working, turnId, step, verb = true, current }: Readonly<{
   if (current && roomFor !== turnId) setRoomFor(turnId);
   if (!mounted) return null;
   let text = '';
-  if (step) text = step.label;
+  if (compacting) text = 'Compacting the conversation…';
+  else if (step) text = step.label;
   else if (verb) text = `${turnVerb(turnId)}…`;
   return (
     <Collapse open={working} appear onClosed={onClosed} className="-mt-6" inner="pt-3">
