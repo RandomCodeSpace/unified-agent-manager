@@ -633,6 +633,52 @@ describe('owner authoring', () => {
     expect(menu.queryByText(busy)).toBeNull();
   });
 
+  test('a linked card offers Move to… switched off, and Split too where the split makes it a story', async () => {
+    const { user, tree } = await openPlanner();
+    const linked = 'Linked to #8: remove those blocker links first.';
+    // #9 under story #7 is blocked by #8: a move takes it out of its level; a split under a story makes siblings.
+    await expect(api.planner.move('cp1-9', 'cp1-12')).rejects.toThrow(linked);
+    const panel = await openCard(user, tree, 9);
+    const move = panel.getByRole('button', { name: 'Move to…' });
+    expect(move.hasAttribute('disabled') || move.getAttribute('aria-disabled') === 'true').toBe(true);
+    expect(move.getAttribute('aria-describedby')).toBe('planner-action-move-reason');
+    expect(panel.getByText(linked)).toBeTruthy();
+    expect(panel.getByRole('button', { name: 'Split' }).hasAttribute('disabled')).toBe(false);
+    await closeCard(user);
+    // Two linked subtasks straight under epic #18: a split would make the second a story.
+    const a = await act(() => api.planner.create({ project_id: 'p1', kind: 'subtask', parent_id: 'cp1-18', title: 'Draft the release checklist' }));
+    const b = await act(() => api.planner.create({ project_id: 'p1', kind: 'subtask', parent_id: 'cp1-18', title: 'Walk the release checklist' }));
+    await act(() => api.planner.link(a.id, b.id));
+    await expect(api.planner.split(b.id, [{ title: 'Walk it on Linux', win_condition: '' }])).rejects.toThrow(`Linked to #${a.seq}`);
+    const menu = await openMenu(user, `Actions for #${b.seq}`);
+    for (const name of ['Move to…', 'Split']) expect(menu.getByRole('menuitem', { name }).getAttribute('aria-disabled')).toBe('true');
+    expect(menu.getAllByText(`Linked to #${a.seq}: remove those blocker links first.`)).toHaveLength(2);
+    await user.keyboard('{Escape}');
+    // With the link gone, both are on again.
+    await act(() => api.planner.unlink(a.id, b.id));
+    const after = await openMenu(user, `Actions for #${b.seq}`);
+    await waitFor(() => expect(after.getByRole('menuitem', { name: 'Split' }).getAttribute('aria-disabled')).not.toBe('true'));
+    expect(after.getByRole('menuitem', { name: 'Move to…' }).getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  test('a story with no confirmed subtask waiting to start offers Do whole story switched off, as the service refuses it', async () => {
+    const { user, tree } = await openPlanner();
+    const none = 'No confirmed subtask is waiting to start: confirm or add one first.';
+    // #16 holds only the suggestion #17.
+    await expect(api.planner.launch('cp1-16')).rejects.toThrow('#16 has no pending confirmed subtasks');
+    await user.click(tree.getAllByRole('treeitem', { name: '+1 suggested' })[1]);
+    const panel = await openCard(user, tree, 16);
+    const whole = panel.getByRole('button', { name: 'Do whole story' });
+    expect(whole.hasAttribute('disabled') || whole.getAttribute('aria-disabled') === 'true').toBe(true);
+    expect(whole.getAttribute('aria-describedby')).toBe('planner-action-launch-reason');
+    expect(panel.getByText(none)).toBeTruthy();
+    await closeCard(user);
+    // Story #7 has #9 waiting, blocked by #8: the service launches it, so Do whole story stays on.
+    const menu = await openMenu(user, 'Actions for #7');
+    expect(menu.getByRole('menuitem', { name: 'Do whole story' }).getAttribute('aria-disabled')).not.toBe('true');
+    expect(menu.queryByText(none)).toBeNull();
+  });
+
   test('launching a suggestion asks first, naming what it confirms and the suggestions it still waits on', async () => {
     const { user, tree } = await openPlanner();
     // The service refuses a launch that would confirm suggestions unless it says to.
