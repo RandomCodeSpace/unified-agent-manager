@@ -62,10 +62,10 @@ interface RowActions {
  * Dismiss. Arrow keys move and fold, Enter opens the card, F2 edits its title and win condition
  * in place (an owner save confirms the card). Containers add stories and subtasks under them;
  * the root takes a subtask too (§3). Each row's "…" button and context menu hold its card's
- * actions (`menus`; off in a Picture-in-Picture window, where menus cannot open). Rows are
+ * actions. Rows are
  * memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
  */
-export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly?: boolean; menus?: boolean }>) {
+export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>) {
   const { ui, setUi, cards, openCard, notify } = useShownBoard();
   // Check at HEAD shows its run in the card panel, so a row's check opens the card there.
   const cardActions = useCardActions({ onCheck: (c) => openCard(c.id) });
@@ -173,8 +173,8 @@ export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly
     add: (parent, kind) => setUi(adding(parent, kind)),
     confirm: (id) => void latest.current.run(id, 'confirm the card', () => api.planner.confirm(id)),
     dismiss: (id) => void latest.current.run(id, 'dismiss the card', () => api.planner.dismiss(id)),
-    menu: menus ? menuHandle : undefined,
-  }), [setUi, menus, menuHandle]);
+    menu: menuHandle,
+  }), [setUi, menuHandle]);
 
   const project = ui.project && ui.project !== 'unassigned' ? ui.project : '';
   const addRoot = !readOnly && !!project && !creating;
@@ -242,13 +242,9 @@ export function TreeView({ readOnly = false, menus = true }: Readonly<{ readOnly
   });
   return (
     <div className="flex flex-col px-2 py-2">
-      {menus ? (
-        <CardMenus handle={menuHandle} items={(id) => (byId.has(id) ? menu(byId.get(id)!) : [])} render={<div />} {...treeProps}>
-          {items}
-        </CardMenus>
-      ) : (
-        <div {...treeProps}>{items}</div>
-      )}
+      <CardMenus handle={menuHandle} items={(id) => (byId.has(id) ? menu(byId.get(id)!) : [])} render={<div />} {...treeProps}>
+        {items}
+      </CardMenus>
       {cardActions.dialogs}
       {addRoot && (
         <div className="flex pt-1 pl-2">

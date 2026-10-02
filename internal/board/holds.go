@@ -3,6 +3,7 @@ package board
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,6 +86,83 @@ func (s *Store) CheckLaunch(ctx context.Context, a Actor, ref string, confirm bo
 		_, _, err = t.launchLeaf(o, a, n, confirm)
 		return err
 	})
+}
+
+// Attach makes the existing Task taskID work on a subtask, as Launch does for
+// a new Task: its hold starts and its scope becomes the subtask's parent. ref
+// is the subtask, which must not have started, or a story or an epic, under
+// which a new subtask titled title is created for the Task. It is work, so
+// it refuses with CodeUnconfirmed while the subtask or a parent is
+// unconfirmed, unless confirm is set, in which case they are confirmed in
+// the same write. A Task works on one subtask at a time.
+func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, base Baseline, confirm bool) (Card, error) {
+	if err := permit(a, opLaunch, ""); err != nil {
+		return Card{}, err
+	}
+	if strings.TrimSpace(taskID) == "" {
+		return Card{}, invalid("attaching needs a Task")
+	}
+	var out Card
+	changes, err := s.write(ctx, func(t *txn) error {
+		project, id, err := t.locate(ref)
+		if err != nil {
+			return err
+		}
+		if project == "" {
+			return errReadOnly
+		}
+		var held string
+		err = t.mutate(project, true, func() error {
+			var seq int64
+			switch err := t.tx.QueryRowContext(t.ctx, `SELECT seq FROM cards WHERE held_by = ? AND held_by <> ''`, taskID).Scan(&seq); {
+			case err == nil:
+				return refuse(CodeLimit, "the Task already works on #%d", seq)
+			case !errors.Is(err, sql.ErrNoRows):
+				return fmt.Errorf("board: read the Task's hold: %w", err)
+			}
+			o, n, err := t.cardIn(project, id)
+			if err != nil {
+				return err
+			}
+			if n.container() {
+				if un := o.unconfirmed(n); len(un) > 0 && !confirm {
+					return unconfirmedRefusal(un, "work on %[1]s starts only once %[1]s is confirmed, so confirm the attach")
+				}
+				created, err := t.create(a, project, n.ID, NewCard{Kind: KindSubtask, Title: title})
+				if err != nil {
+					return err
+				}
+				if o, n, err = t.cardIn(project, created.ID); err != nil {
+					return err
+				}
+			} else if err := inProgress(n); err != nil {
+				return err
+			} else if n.stored != StatusPlanned && n.stored != StatusTodo {
+				return invalid("%s is %s; only a planned or todo subtask can be attached", n.ref(), n.stored)
+			}
+			leaf, scopeID, err := t.launchLeaf(o, a, n, confirm)
+			if err != nil {
+				return err
+			}
+			held = leaf.ID
+			if err := t.confirm(o, a, leaf); err != nil {
+				return err
+			}
+			if err := t.updateCard(leaf); err != nil {
+				return err
+			}
+			if err := t.setScope(taskID, project, scopeID, true); err != nil {
+				return err
+			}
+			return t.startHold(o, leaf, taskID, base)
+		})
+		if err != nil {
+			return err
+		}
+		out, err = t.view(project, held)
+		return err
+	})
+	return withRevision(out, changes), err
 }
 
 // launchLeaf resolves the subtask a launch of n holds and the scope its Task

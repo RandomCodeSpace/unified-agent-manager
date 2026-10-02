@@ -405,6 +405,8 @@ export interface Card {
   expires_at?: string;
   /** The Task holding a doing subtask. */
   held_by?: string;
+  /** The Task of the subtask's latest attempt, kept after it ends. */
+  worked_by?: string;
   pinned_sha: string;
   /** Owner only: null inherits the Project default, `''` means none, otherwise the command. */
   accept_cmd: string | null;
@@ -1570,6 +1572,8 @@ function plannerApi() {
      * confirm the suggestions it holds or sits under; without it such a launch is refused (`unconfirmed`).
      */
     launch: (ref: string, body: TaskSettings & { confirm?: boolean } = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
+    /** Makes an existing Task work on the subtask `ref`, or on a new subtask under the story or epic `ref` (titled `title`, else after the Task). */
+    attach: (ref: string, body: { task_id: string; title?: string; confirm?: boolean }) => call<Card>('POST', card(ref, 'attach'), body),
     plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
     release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
     /** Starts Check at HEAD; its `board_job` frames carry the run. */

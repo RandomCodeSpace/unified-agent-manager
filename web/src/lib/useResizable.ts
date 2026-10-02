@@ -35,9 +35,10 @@ export interface Resizable {
  * panel whose height the user drags on its top edge. The size is written straight to a CSS
  * custom property during the drag (no React re-render per move, no layout thrash) and saved
  * to localStorage per panel when the drag ends. Double-click resets; arrow keys step 16px
- * (64 with Shift); Home/End go to the limits.
+ * (64 with Shift); Home/End go to the limits. `prefer` widens the panel to at least that much
+ * while it is set, as far as the row allows, without changing the stored size.
  */
-export function useResizable(key: string, fallback: number, minWidth = 320, axis: 'x' | 'y' = 'x'): Resizable {
+export function useResizable(key: string, fallback: number, minWidth = 320, axis: 'x' | 'y' = 'x', prefer = 0): Resizable {
   const y = axis === 'y';
   const storageKey = `uam.panel.${key}`;
   const panelRef = useRef<HTMLElement | null>(null);
@@ -45,7 +46,7 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
   const [max, setMax] = useState(() => (y ? maxHeight(minWidth) : maxWidth(minWidth, null)));
   const [stored, setStored] = useState(() => read(storageKey) ?? fallback);
   // The effective width is derived, so a viewport change re-clamps without touching state.
-  const width = clamp(stored, minWidth, max);
+  const width = clamp(Math.max(stored, prefer), minWidth, max);
   const drag = useRef<{ at: number; w: number } | null>(null);
   const at = (e: PointerEvent<HTMLElement>) => (y ? e.clientY : e.clientX);
   const cursor = y ? 'cursor-row-resize' : 'cursor-col-resize';

@@ -293,7 +293,7 @@ const taskAuthor = (author: string, sessions: { id: string; name: string; title:
  * card as it stands at that moment. A read-only card shows its items only, and nothing when empty.
  */
 /** The checklist. `locked`: a started subtask's items are its plan, so they are only ticked. */
-function Checklist({ card: c, readOnly, locked = false, busy, save }: Readonly<{ card: Card; readOnly: boolean; locked?: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
+export function Checklist({ card: c, readOnly, locked = false, busy, save }: Readonly<{ card: Card; readOnly: boolean; locked?: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
   const [editing, setEditing] = useState<number | null>(null);
   const [adding, setAdding] = useState('');
   const list = useRef<HTMLUListElement>(null);
@@ -420,12 +420,12 @@ function ItemEditor({ text, onSave, onCancel }: Readonly<{ text: string; onSave:
 }
 
 /**
- * Blocked by and blocks, with a way to add a blocker and to remove one, then what the card waits
- * on through its parents. Dependencies are planning, so either card may be a suggestion, marked as
+ * What the card waits for and what needs it, with a way to add a blocker and to remove one, then
+ * what it waits for through its parents. Dependencies are planning, so either card may be a suggestion, marked as
  * one; links map one level at a time (§3), so the picker offers only cards of this kind under this
  * parent. A started subtask keeps its links (`locked`) until it is released.
  */
-function Links({ card: c, byId, onOpen, readOnly, locked }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; readOnly: boolean; locked: string | null }>) {
+export function Links({ card: c, byId, onOpen, readOnly, locked }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; readOnly: boolean; locked: string | null }>) {
   const { notify } = useShownBoard();
   const [adding, setAdding] = useState('');
   const blockers = c.blocked_by.map((id) => byId.get(id)).filter((x): x is Card => !!x);
@@ -454,20 +454,20 @@ function Links({ card: c, byId, onOpen, readOnly, locked }: Readonly<{ card: Car
     </li>
   );
   return (
-    <Group title="Blocker links">
-      {blockers.length > 0 && <p className="text-caption text-muted">Blocked by</p>}
+    <Group title="Dependencies">
+      {blockers.length > 0 && <p className="text-caption text-muted">Waits for</p>}
       {blockers.length > 0 && <ul className="flex flex-col gap-0.5">{blockers.map((b) => row(b, () => void act('remove the link', () => api.planner.unlink(b.id, c.id))))}</ul>}
-      {blocks.length > 0 && <p className="text-caption text-muted">Blocks</p>}
+      {blocks.length > 0 && <p className="text-caption text-muted">Needed by</p>}
       {blocks.length > 0 && <ul className="flex flex-col gap-0.5">{blocks.map((b) => row(b))}</ul>}
       {inherited.map((w) => (
         <div key={w.via.id} className="flex flex-col gap-0.5">
           <p className="text-caption text-muted">
-            Waiting on, via its {w.via.kind} #{w.via.seq}
+            Waits for, through its {w.via.kind} #{w.via.seq}
           </p>
           <ul className="flex flex-col gap-0.5">{w.open.map((b) => row(b))}</ul>
         </div>
       ))}
-      {!blockers.length && !blocks.length && !inherited.length && <p className="text-caption text-muted">No links.</p>}
+      {!blockers.length && !blocks.length && !inherited.length && <p className="text-caption text-muted">No dependencies.</p>}
       {!readOnly && !locked && candidates.length > 0 && (
         <div className="flex items-center gap-1.5">
           <Select

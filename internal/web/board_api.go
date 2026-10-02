@@ -54,6 +54,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	}))
 	mux.HandleFunc("POST /api/board/cards/{ref}/comments", s.handleCommentCard)
 	mux.HandleFunc("POST /api/board/cards/{ref}/launch", s.handleLaunch)
+	mux.HandleFunc("POST /api/board/cards/{ref}/attach", s.handleAttach)
 	mux.HandleFunc("POST /api/board/cards/{ref}/plan", s.handlePlan)
 	mux.HandleFunc("POST /api/board/cards/{ref}/check", s.handleCheckCard)
 	mux.HandleFunc("POST /api/board/cards/{ref}/triage", s.handleTriageCard)
@@ -310,6 +311,20 @@ func (s *Server) handleLaunch(w http.ResponseWriter, r *http.Request) {
 		Card    BoardCard      `json:"card"`
 		Session SessionSummary `json:"session"`
 	}{c, summary})
+}
+
+// handleAttach makes an existing Task work on the card: 200 with the held subtask.
+func (s *Server) handleAttach(w http.ResponseWriter, r *http.Request) {
+	var req AttachRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	c, err := s.m.AttachTask(r.PathValue("ref"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {

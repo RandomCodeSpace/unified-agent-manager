@@ -161,6 +161,32 @@ func (t *txn) loadCounts(o *outline) error {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return fmt.Errorf("board: load links: %w", err)
 	}
+	return t.loadWorkedBy(o)
+}
+
+// workedByQuery lists the attempts on a Project's cards, each card's latest last.
+const workedByQuery = `SELECT h.card_id, h.task_id FROM holds h JOIN cards c ON c.id = h.card_id
+	WHERE c.project_id = ? ORDER BY h.card_id, h.attempt`
+
+// loadWorkedBy fills each card's WorkedBy from its latest attempt.
+func (t *txn) loadWorkedBy(o *outline) error {
+	rows, err := t.tx.QueryContext(t.ctx, workedByQuery, o.project)
+	if err != nil {
+		return fmt.Errorf("board: load attempts: %w", err)
+	}
+	for rows.Next() {
+		var id, task string
+		if err := rows.Scan(&id, &task); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("board: load attempts: %w", err)
+		}
+		if n := o.byID[id]; n != nil {
+			n.WorkedBy = task
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("board: load attempts: %w", err)
+	}
 	return nil
 }
 

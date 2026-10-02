@@ -185,17 +185,14 @@ A static actor table (owner or agent) sits in one transition function in `intern
 - **Actions:** Launch, Do whole story, Plan with agent, Suggest stories, Confirm, Release, Cancel (with a comment), Restore (with a comment), Check at HEAD, Triage, and Purge cancelled.
 - **The Settle dialog** for held leaves (§5).
 
-**Floating picture-in-picture.** Any of the three views, or the Inbox, can pop out into a floating panel above the page while you work in a Task.
-- On every browser the pop-out is an in-page panel. You can drag it by its header (touch too), resize it, maximise it, and hide it into a small tab. Its box persists.
-- A pop-out from the Planner renders the Planner's own view state and stays up across navigation until it is closed. Its Hide lasts only while it is up. Closing it while a Task is open leaves that Task's panel as the tab for the rest of the visit.
-- While a Task of a git Project is open and nothing is popped out, the panel shows the Task's Project's Board on its own, in a view state of its own. Following Tasks never changes the Planner's Board, selection or filters (21). Two explicit actions from the panel do change them:
-  - opening a card, which selects it in the Planner and clears any filter there that would hide it;
-  - moving the panel into a separate window.
-
-  The panel never shows over the Planner view.
-- That panel starts as the tab on the right edge each time a Task opens, at every width. It never expands by itself, not even when the Board fills later. The tab expands it and Hide folds it back, for that visit only: nothing is stored, and the next visit starts as the tab again.
-- Where the Document Picture-in-Picture API exists (Chromium, not on a phone), a header button moves the panel into a separate window, which needs the user's gesture. The window renders the Planner's view state. From a Task's panel, the Planner first switches to that Board, as picking it would. The window is rendered through a React portal from the main app, so it needs no new route and no second SSE stream.
-- The prototype must confirm that the window works under uam's strict CSP: stylesheets copied as same-origin links, and no inline styles. It must also work behind the owner's sign-in proxy.
+**The plan inside a Task** (2026-10-02; it replaces the floating pop-out, its edge tab on every Task, its separate view state and the picture-in-picture window, which kept the plan beside the conversation only by covering it, and threw the owner out of the Task on a card click).
+- **Story strip:** one line under a Task's header while its Project has a plan: "Epic › Story · 1/3 done · This task #25 · next #26 · waits for …", with what the card waits for through its story or epic. The Task's card is the subtask it holds, else one it finished (`worked_by`). A Task with no card gets a quiet "Not part of a story · Add to a story". A Project with no plan, or no git, shows no strip. A click opens the Plan panel on the Task's card.
+- **Plan panel:** a side panel in the slot Files and Changes use, with a Plan button beside them. It shows "This task works on" (path, card, what it waits for), or for a Task with no card the form that adds it to a story, then an **Outline | Graph** switch.
+  - **Outline:** epics › stories › subtasks with progress; the Task's card marked and its story open; a click opens a card's details in place: done when, description, checklist, dependencies at its own level and those inherited through its story or epic, the agents' requests, Edit, Discard for a proposal, and Launch with the confirm step for a subtask. A started subtask shows why its plan is locked.
+  - **Graph:** one level of the layered DAG at a time (the Project's epics, an epic's stories, a story's subtasks), with a breadcrumb, a container opening its level, and a banner when the whole level waits through its container. It opens on the Task's story and draws its card outlined; a subtask's details open under it. Plain SVG (shapes and text, no HTML inside), left to right when the layers fit, else top to bottom, scrolling inside itself; the panel widens while it shows, as far as the side-panel width rule allows.
+  - The panel has its own view state, so following Tasks never changes the Planner's.
+- **Card links stay in the Task:** a transcript's card chip, and every card link inside the Task, open the card in the Plan panel. A card of another Project opens in the Planner.
+- **Adding a Task to a story:** the owner picks a story and a new subtask (named after the Task) or one of its subtasks not started yet; the Task then holds it as a launched Task would (§5). Under a proposal it asks first, naming what it confirms.
 
 **Performance and style:**
 - One theme.
@@ -256,7 +253,7 @@ Each item is a store, tool or UI test.
 
 **UI**
 
-21. The picture-in-picture window and the floating panel popped out from the Planner render the Planner's view state, and closing either loses no selection. The panel a Task shows on its own starts as the tab on every visit and has its own view state, and following Tasks never changes the Planner's. Only two explicit actions from that panel change it: opening a card, and moving the panel into a separate window.
+21. A Task's Plan panel has its own view state: following Tasks, and opening cards in the panel, never change the Planner's Board, selection or filters. A card link inside a Task never leaves the Task.
 
 ## Rejected (non-goals)
 
@@ -336,7 +333,7 @@ Each item is a store, tool or UI test.
   "checklist": [{"text": "", "done": false}], "blocked": false,
   "blocked_by": ["uuid"], "blocks": ["uuid"],
   "confirmed": true, "expires_at": "RFC3339",
-  "held_by": "task uuid", "pinned_sha": "",
+  "held_by": "task uuid", "worked_by": "task uuid", "pinned_sha": "",
   "accept_cmd": null, "paths": [],
   "stale": {"behind": 3, "diverged": false, "files": ["a.go"]},
   "pending_requests": 1, "revision": 7,
@@ -347,6 +344,7 @@ Each item is a store, tool or UI test.
 - `status` is derived for containers.
 - `progress` is sent for containers only.
 - `expires_at` is sent only while the card is unconfirmed.
+- `worked_by` is the Task of the subtask's latest attempt; it stays after the attempt ends.
 - `accept_cmd` is `null` (inherit), `""` (none) or a command.
 - `stale` is sent only when it has been computed (§9).
 
@@ -396,6 +394,7 @@ Each item is a store, tool or UI test.
 | `POST /api/board/links` | `{blocker, blocked}` |
 | `DELETE /api/board/links?blocker=&blocked=` | Removes a blocker link |
 | `POST /api/board/cards/{ref}/launch` | `{model, effort, mode, context_size}` (optional; Project defaults otherwise) → 201 `{card, session}`. On a subtask it launches that subtask; on a container it is "Do whole story" |
+| `POST /api/board/cards/{ref}/attach` | `{task_id, title, confirm}` → 200 card. Owner only: the existing Task holds the subtask `ref` (not started), or a new subtask titled `title` (else the Task's name) under the story or epic `ref`, as a launch's would: same scope, baseline and confirm step (`unconfirmed` without `confirm`). The Task must be the card's Project's and not archived, and may hold one subtask; no prompt is sent |
 | `POST /api/board/cards/{ref}/plan` | `{brief, model, …}` → 201 `{session}`. A planning Task scoped to the container |
 | `POST /api/board/cards/{ref}/release` | `{comment}` |
 | `POST /api/board/cards/{ref}/check` | Check at HEAD → `{accept}` |

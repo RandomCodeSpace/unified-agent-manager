@@ -101,7 +101,10 @@ Planner on and the Project is a git repository.
   first message names. "Launch" and "Do whole story" start it holding a
   subtask: finish that with a done request, then `board_claim` the next
   pending one. "Plan with agent" creates and edits under its card and holds
-  nothing. Any other Task reads the board and may propose epics.
+  nothing. The owner may also add a running Task to a story without a
+  message: it then holds a subtask and works in that story's scope like a
+  launched Task, and `board_list` shows the card as "held by you". Any other
+  Task reads the board and may propose epics.
 - **Requests**: `board_request` files done, cancel or blocked. You never
   mark a card done yourself. The owner accepts or rejects every request
   that is not accepted automatically (see Done). A rejection reaches you as

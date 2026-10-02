@@ -1,4 +1,4 @@
-import { Ellipsis, Inbox, KanbanSquare, PictureInPicture2, Plus, Trash2, X } from 'lucide-react';
+import { Ellipsis, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
 import { boardOf, childIndex, epicOf } from '../../lib/board';
@@ -17,10 +17,9 @@ import { PlannerProjectPicker } from '../ProjectPicker';
 import { PanelHeader, SidePanel } from '../Subagents';
 import { BoardView } from './BoardView';
 import { CardPanel } from './CardPanel';
-import { INITIAL_UI, PlannerContext, usePlanner, type PlannerContextValue, type PlannerNotice, type PlannerUi, type PlannerViewKind, type PopKind } from './context';
+import { INITIAL_UI, PlannerContext, usePlanner, type PlannerContextValue, type PlannerNotice, type PlannerUi, type PlannerViewKind } from './context';
 import { MapView } from './MapView';
 import { NoticeBar } from './parts';
-import { PopOutHost, openPipWindow, popMode } from './PopOut';
 import { InboxList } from './Requests';
 import { TreeView } from './TreeView';
 
@@ -32,11 +31,12 @@ export function plannerKeys(enabled: boolean, projects: readonly Project[]): str
 }
 
 /**
- * The planner's app-level state (ADR 0005 §10, §15): the shared view state, the pop-out, and the
- * Boards it follows. Each followed Board is fetched once, then kept by `board` frames; one that
- * went stale (a revision gap, a new stream) is fetched again. The Needs-you count reads them all.
+ * The planner's app-level state (ADR 0005 §10, §15): the Planner view's state and the Boards it
+ * follows. Each followed Board is fetched once, then kept by `board` frames; one that went stale
+ * (a revision gap, a new stream) is fetched again. The Needs-you count reads them all, and a
+ * Task's story strip and Plan panel read its Project's.
  */
-export function usePlannerController({ enabled, boards, jobs, projects, dispatch, onShowPlanner, onOpenTask, initialProject, taskId, taskProject }: Readonly<{
+export function usePlannerController({ enabled, boards, jobs, projects, dispatch, onShowPlanner, onOpenTask, initialProject }: Readonly<{
   enabled: boolean;
   boards: Record<string, BoardState>;
   jobs: Record<string, BoardJob>;
@@ -45,31 +45,11 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   onShowPlanner: () => void;
   onOpenTask: (id: string) => void;
   initialProject: string | null;
-  /** The Task on screen and its Project, when it is a git Project's (not over Settings, the Planner or a new Task). */
-  taskId: string | null;
-  taskProject: string | null;
 }>) {
   const [ui, setUiState] = useState<PlannerUi>(() => ({ ...INITIAL_UI, project: initialProject }));
   const [notice, notify] = useState<PlannerNotice | null>(null);
-  /*
-   * The pop-out, in two ideas (ADR 0005 §10, as the owner reworked it):
-   * - `pop`, the explicit pop-out: the owner popped a view out (the Planner's buttons). It renders
-   *   the Planner's own view state (`ui`), so selection and filters carry between them, and stays
-   *   up across navigation until closed. `folded` is its Hide, for as long as it is up; `win` is
-   *   its separate window when the owner moved it into one.
-   * - otherwise the Task's panel, while a git Project's Task is open: that Project's Board, in a
-   *   view state of its own (`taskUi`), so following Tasks never moves the Planner's Board,
-   *   selection or filters (invariant 21). Never over the Planner view. `visit` is its fold for
-   *   the Task opened: each visit starts as the tab, at every width, and the tab and Hide change
-   *   it for that visit only. So it never covers the conversation unasked.
-   */
-  const [kind, setKind] = useState<PopKind>('tree');
-  const [pop, setPop] = useState<{ win: Window | null; folded: boolean } | null>(null);
-  const [taskUi, setTaskUiState] = useState<PlannerUi>(INITIAL_UI);
-  const [visit, setVisit] = useState<{ task: string; folded: boolean } | null>(null);
   const inflight = useRef(new Set<string>());
   const setUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
-  const setTaskUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setTaskUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
 
   const load = useCallback((key: string) => {
     if (inflight.current.has(key)) return;
@@ -101,77 +81,15 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     for (const key of Object.keys(boards)) if (!wanted.includes(key)) dispatch({ type: 'board_dropped', key });
   }, [keys, boards, load, dispatch]);
 
-  // The Task's panel: the tab once its Board has loaded (or failed), until the owner opens it this visit.
-  const popped = pop !== null;
-  const auto = enabled && !popped && taskId !== null && taskProject !== null;
-  const taskBoard = taskProject ? boards[taskProject] : undefined;
-  if (!auto && visit) setVisit(null);
-  if (auto && visit?.task !== taskId && (taskBoard?.data || taskBoard?.error)) setVisit({ task: taskId, folded: true });
-  if (auto && taskUi.project !== taskProject) setTaskUiState((u) => ({ ...u, project: taskProject, selected: null, epic: null, panel: null, creating: null }));
-  // As of the last render, for the stable callbacks below.
-  const now = useRef({ taskId, taskProject, popped });
-  useLayoutEffect(() => {
-    now.current = { taskId, taskProject, popped };
-  });
-
-  const foldPop = useCallback((folded: boolean) => setPop((p) => p && { ...p, folded }), []);
-  /** The owner's Hide (true) or Show (false) of the Task's panel: for this visit only. */
-  const foldTask = useCallback((folded: boolean) => setVisit((v) => v && { ...v, folded }), []);
-
-  // The open Picture-in-Picture window, so closing the pop-out can close it too.
-  const pipWin = useRef<Window | null>(null);
-  const closePopout = useCallback(() => {
-    const win = pipWin.current;
-    pipWin.current = null;
-    if (win && !win.closed) win.close();
-    setPop(null);
-    // Over a Task, its panel takes the pop-out's place as the tab for this visit, so Close opens no other panel.
-    const { taskId: task, taskProject: project } = now.current;
-    setVisit(task && project ? { task, folded: true } : null);
-  }, []);
-  // The planner turned off: nothing to pop out.
-  const [wasEnabled, setWasEnabled] = useState(enabled);
-  if (enabled !== wasEnabled) {
-    setWasEnabled(enabled);
-    if (!enabled) setPop(null);
-  }
-  useEffect(() => {
-    if (enabled || !pipWin.current) return;
-    pipWin.current.close();
-    pipWin.current = null;
-  }, [enabled]);
-
-  /** The explicit pop-out: the floating panel, expanded (or the separate window, while one is open). */
-  const popOut = useCallback((k: PopKind) => {
-    setKind(k);
-    const open = pipWin.current;
-    setPop({ win: open && !open.closed ? open : null, folded: false });
-  }, []);
-  /**
-   * Moves the pop-out into a separate window; called from the click that asked, for the window's
-   * user gesture. The window is the explicit pop-out, on the Planner's view state: from the Task's
-   * panel, the Planner switches to that Board first, as a pick of it in the Planner would.
-   */
-  const toWindow = useCallback(() => {
-    const board = now.current.popped ? null : now.current.taskProject;
-    openPipWindow()
-      .then((win) => {
-        pipWin.current = win;
-        if (board) setUi((u) => (u.project === board ? {} : { project: board, selected: null, epic: null, panel: null, creating: null }));
-        setPop({ win, folded: false });
-      })
-      .catch(() => {});
-  }, [setUi]);
-
   // The Boards as of the last render, for openCard: it stays stable, so the memoised rows that take it keep their props.
   const boardsNow = useRef(boards);
   useLayoutEffect(() => {
     boardsNow.current = boards;
   });
   /**
-   * Shows a card, switching to its Board when another is shown: callers outside the planner (a
-   * transcript's card chip, the Task's panel) name only the card. The Planner's own filters never
-   * hide the card it selects: an epic filter it is not under clears, and a cancelled card shows cancelled ones.
+   * Shows a card in the Planner view, switching to its Board when another is shown. The Planner's
+   * own filters never hide the card it selects: an epic filter it is not under clears, and a
+   * cancelled card shows cancelled ones.
    */
   const openCard = useCallback((id: string) => {
     const home = boardOf(boardsNow.current, id);
@@ -200,28 +118,12 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     openCard,
     openTask: onOpenTask,
     reload: load,
-    popout: popped ? kind : null,
-    popOut,
-    closePopout,
     notice,
     notify,
     enabled,
-  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, popped, kind, popOut, closePopout, notice, enabled]);
+  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, notice, enabled]);
 
-  const taskValue: PlannerContextValue = useMemo(() => ({ ...value, ui: taskUi, setUi: setTaskUi }), [value, taskUi, setTaskUi]);
-
-  // Every prop is stable across renders that change nothing here (a streamed reply's deltas), so the memoised host skips them.
-  const onWindow = popMode() === 'pip' ? toWindow : undefined;
-  let host: ReactNode = null;
-  if (enabled && pop) host = <PopOutHost win={pop.win} kind={kind} onKind={setKind} folded={pop.folded} onFold={foldPop} onClose={closePopout} onWindow={onWindow} />;
-  else if (auto && visit?.task === taskId) {
-    host = (
-      <PlannerContext.Provider value={taskValue}>
-        <PopOutHost win={null} kind={kind} onKind={setKind} folded={visit.folded} onFold={foldTask} onWindow={onWindow} />
-      </PlannerContext.Provider>
-    );
-  }
-  return { value, host };
+  return { value };
 }
 
 const VIEW_ITEMS = [
@@ -335,11 +237,6 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
               {pending > 0 && <span className="rounded-xs bg-attention-wash px-1 text-caption tabular-nums text-attention">{pending}</span>}
             </Button>
           </Tip>
-          <Tip label={`Pop out the ${ui.view}`}>
-            <Button size="icon-md" aria-label={`Pop out the ${ui.view}`} className="text-muted" disabled={!board?.data} onClick={() => p.popOut(ui.view)}>
-              <PictureInPicture2 />
-            </Button>
-          </Tip>
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-md" aria-label="Planner actions" className="text-muted" />}>
               <Ellipsis />
@@ -420,9 +317,6 @@ function InboxPanel({ inline, open, onClose, onClosed }: Readonly<{ inline: bool
         <span className="text-title text-ink">Inbox</span>
         <span className="text-caption tabular-nums text-muted">{pending} pending</span>
         <span className="flex-1" />
-        <Button size="icon-md" aria-label="Pop out the inbox" className="text-muted" onClick={() => p.popOut('inbox')}>
-          <PictureInPicture2 />
-        </Button>
         <Button size="icon-md" aria-label="Close inbox" className="text-muted" onClick={onClose}>
           <X />
         </Button>
