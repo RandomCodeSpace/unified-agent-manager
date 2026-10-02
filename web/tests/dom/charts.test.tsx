@@ -10,7 +10,9 @@ describe('charts', () => {
     const { user } = await openTask('t-chart');
     const card = within(await screen.findByRole('figure', { name: 'Chart: Lines of code per file type' }));
     expect(card.getByText(/Drawn from 6 rows/)).toBeTruthy();
-    expect(card.getByText(/git ls-files/)).toBeTruthy();
+    // No code under the chart: the command shows when pinning.
+    expect(card.queryByText(/git ls-files/)).toBeNull();
+    expect(card.getByText(/From a command/)).toBeTruthy();
 
     await user.click(card.getByRole('button', { name: 'Table' }));
     const rows = within(card.getByRole('region', { name: 'Rows of Lines of code per file type' }));

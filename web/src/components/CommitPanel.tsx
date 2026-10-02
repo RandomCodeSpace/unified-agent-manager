@@ -235,8 +235,9 @@ export function CommitPanel({
             <span className={cn('tabular-nums', subject > SUBJECT_LIMIT && 'text-warning')}>{generated && draft.conventional && '· '}{subject}/{SUBJECT_LIMIT} characters in the subject</span>
             <span>· No co-author or AI credit</span>
           </p>
-          <fieldset className="flex max-h-44 flex-col overflow-y-auto">
+          <fieldset>
             <legend className="sr-only">Files to commit</legend>
+            <div className="flex max-h-60 flex-col overflow-y-auto overscroll-contain">
             {files.map((f) => (
               <label key={f.path} className="flex min-h-7 items-center gap-2 text-ui text-ink pointer-coarse:min-h-11">
                 <input
@@ -250,6 +251,7 @@ export function CommitPanel({
                 {f.status === 'deleted' && <span className="shrink-0 text-meta text-error">deleted</span>}
               </label>
             ))}
+            </div>
           </fieldset>
           {leftOut && (
             <p className="flex items-center gap-1 text-caption text-muted">
