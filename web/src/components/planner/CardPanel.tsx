@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
 import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs } from '../../lib/board';
 import { cn } from '../../lib/cn';
-import { Loading, Markdown, Note, relTime, useApp } from '../common';
+import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -240,8 +240,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
                 <li key={h.id} className="flex min-w-0 flex-wrap items-center gap-1.5 text-caption text-muted">
                   <span className="tabular-nums">#{i + 1}</span>
                   <TaskChip taskId={h.task_id} />
-                  <span>from {h.baseline_head.slice(0, 7)}, {relTime(h.started_at)} ago</span>
-                  <span>{h.ended_at ? `ended ${relTime(h.ended_at)} ago${h.end_reason ? `: ${h.end_reason}` : ''}` : 'holding'}</span>
+                  <span>from {h.baseline_head.slice(0, 7)}, {timeAgo(h.started_at)}</span>
+                  <span>{h.ended_at ? `ended ${timeAgo(h.ended_at)}${h.end_reason ? `: ${h.end_reason}` : ''}` : 'holding'}</span>
                 </li>
               ))}
             </ol>

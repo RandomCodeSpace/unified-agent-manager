@@ -247,6 +247,12 @@ export function relTime(iso: string, now = Date.now()): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/** A past time in words: "just now", else "5m ago". */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const t = relTime(iso, now);
+  return t === 'now' ? 'just now' : `${t} ago`;
+}
+
 /**
  * Whether a scroll container has been scrolled away from its top, for the pane header's fade
  * (`data-scrolled`). Watches a sentinel placed first inside the container through an

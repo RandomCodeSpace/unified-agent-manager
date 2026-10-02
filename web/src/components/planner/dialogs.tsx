@@ -1,8 +1,9 @@
 import { Plus, X } from 'lucide-react';
 import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, plannerErrorText, doneGuard, type Card, type CardKind, type DoneGuard } from '../../api';
+import { api, plannerErrorText, doneGuard, resolveTaskDefaults, type Card, type CardKind, type DoneGuard, type TaskDefaults } from '../../api';
 import { KIND_LABEL } from '../../lib/board';
-import { Field } from '../TaskDefaults';
+import { useApp } from '../common';
+import { Field, TaskDefaultsFields } from '../TaskDefaults';
 import { Button } from '../ui/button';
 import { Dialog } from '../ui/dialog';
 import { Input } from '../ui/input';
@@ -75,11 +76,13 @@ export function ReasonDialog({ ask, onClose }: Readonly<{ ask: ReasonAsk | null;
 
 export interface LaunchAsk {
   card: Card;
-  /** The suggestions launching confirms: the subtask, then its suggested parents. */
+  /** Do whole story on a story; the subtask's own launch otherwise. */
+  whole: boolean;
+  /** The suggestions launching confirms: the subtask, then its suggested parents; none for a confirmed one. */
   confirms: Card[];
   /** Suggested blockers still open, its own then its parents' (`via`): they stay suggestions and keep blocking. */
   waits: { card: Card; via?: Card }[];
-  run: () => Promise<unknown>;
+  run: (body: TaskDefaults & { brief: string }) => Promise<unknown>;
 }
 
 const cardItem = (c: Card) => (
@@ -89,25 +92,34 @@ const cardItem = (c: Card) => (
 );
 
 /**
- * The step before launching a suggestion (§5): work starts only on confirmed cards, so the
- * launch confirms the subtask and its suggested parents in the same action. Suggested blockers
- * are listed, and stay as they are. It stays open, with the refusal, when the service says no.
+ * Launch and Do whole story (§5): the new Task's model, effort, context size and mode, starting
+ * from the New task defaults in Settings, and an optional brief its first prompt carries. Work
+ * starts only on confirmed cards, so launching a suggestion confirms it and its suggested parents
+ * in the same action, and the dialog names them. Suggested blockers are listed, and stay as they
+ * are. It stays open, with the refusal, when the service says no.
  */
 export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null; onClose: () => void }>) {
+  const { meta, settings } = useApp();
   const [shown, setShown] = useState(ask);
+  // Null until changed here: the New task defaults.
+  const [picked, setPicked] = useState<TaskDefaults | null>(null);
+  const [brief, setBrief] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (ask && ask !== shown) {
     setShown(ask);
+    setPicked(null);
+    setBrief('');
     setError(null);
   }
+  const selection = picked ?? resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
-    if (!shown) return;
+    if (!shown || !selection) return;
     setBusy(true);
     setError(null);
     try {
-      await shown.run();
+      await shown.run({ ...selection, brief: brief.trim() });
       onClose();
     } catch (err) {
       setError(plannerErrorText(err));
@@ -116,18 +128,27 @@ export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null;
     }
   };
   const seq = shown ? `#${shown.card.seq}` : '';
+  const confirms = !!shown?.confirms.length;
+  let title = `Launch ${seq}?`;
+  let description = 'A new task starts work on this subtask.';
+  let label = 'Launch';
+  if (confirms) {
+    title = `Confirm and launch ${seq}?`;
+    description = 'A task starts work only on confirmed cards. Launching confirms these suggestions:';
+    label = 'Confirm and launch';
+  } else if (shown?.whole) {
+    title = `Do whole story ${seq}?`;
+    description = 'A new task starts on the first confirmed subtask waiting in it, then takes the next ones in order.';
+    label = 'Do whole story';
+  }
   return (
-    <Dialog
-      open={!!ask}
-      onOpenChange={(o) => !o && onClose()}
-      onClosed={() => setShown(null)}
-      title={`Confirm and launch ${seq}?`}
-      description="A task starts work only on confirmed cards. Launching confirms these suggestions:"
-    >
+    <Dialog open={!!ask} onOpenChange={(o) => !o && onClose()} onClosed={() => setShown(null)} title={title} description={description}>
       <form className="flex flex-col gap-2" onSubmit={(e) => void submit(e)}>
-        <ul aria-label="Launching confirms" className="list-disc pl-4 text-ui text-body">
-          {shown?.confirms.map(cardItem)}
-        </ul>
+        {confirms && (
+          <ul aria-label="Launching confirms" className="list-disc pl-4 text-ui text-body">
+            {shown?.confirms.map(cardItem)}
+          </ul>
+        )}
         {!!shown?.waits.length && (
           <div className="mt-1 flex flex-col gap-1 rounded-md bg-warning-wash px-3 py-2 text-caption text-body">
             <span className="font-medium text-ink">Still waits on</span>
@@ -141,13 +162,19 @@ export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null;
             <span className="text-muted">They stay suggestions and block {seq} until they are done or cancelled.</span>
           </div>
         )}
+        <div className="mt-2 flex flex-col gap-3">
+          {selection && <TaskDefaultsFields prefix="planner-launch" value={selection} disabled={busy} onChange={setPicked} />}
+          <Field id="planner-launch-brief" label="Brief">
+            <textarea id="planner-launch-brief" className={areaClass} placeholder="Anything the task should know first (optional)" value={brief} onChange={(e) => setBrief(e.target.value)} />
+          </Field>
+        </div>
         {error && <p role="alert" className="text-caption text-error">{error}</p>}
         <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
           <Button variant="secondary" onClick={onClose}>
-            Keep
+            {confirms ? 'Keep' : 'Cancel'}
           </Button>
-          <Button type="submit" variant="primary" loading={busy}>
-            Confirm and launch
+          <Button type="submit" variant="primary" loading={busy} disabled={!selection}>
+            {label}
           </Button>
         </div>
       </form>
@@ -361,7 +388,7 @@ export function MoveDialog({ card, cards, open, onClose }: Readonly<{ card: Card
     }
   };
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={() => setError(null)} title={`Move #${card.seq}`} description="It goes last under its new parent. Moving counts as a touch: it confirms the card and any unconfirmed parent.">
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} onClosed={() => setError(null)} title={`Move #${card.seq}`} description={card.confirmed ? 'It goes last under its new parent. Under a suggestion, moving it confirms that suggestion.' : 'It goes last under its new parent, and stays a suggestion.'}>
       <div className="flex flex-col gap-2">
         <Field id="planner-move-target" label="Move to">
           <Select id="planner-move-target" aria-label="Move to" value={target} onValueChange={setTarget} items={items} />

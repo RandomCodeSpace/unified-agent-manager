@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 )
 
-// NewCard is a card to create. A card created by the owner is confirmed; one
-// created by an agent expires ExpiryWindow after creation unless confirmed.
+// NewCard is a card to create. A card created by the owner is confirmed,
+// except under a proposal, where it is a proposal too; one created by an
+// agent expires ExpiryWindow after creation unless confirmed.
 type NewCard struct {
 	ProjectID    string
 	Kind         Kind
@@ -189,14 +191,17 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 	if err := validateFields(n.Card); err != nil {
 		return nil, err
 	}
-	if a.owner() {
-		if err := t.confirmAncestors(o, a, parentID); err != nil {
+	switch {
+	case a.owner() && (parentID == "" || o.byID[parentID].Confirmed()):
+		n.PinnedSHA = a.Head
+	case a.owner():
+		// Planning under a proposal confirms nothing (decision 10).
+		rearm(t.now, n)
+		if err := t.rearmAncestors(o, parentID); err != nil {
 			return nil, err
 		}
-		n.PinnedSHA = a.Head
-	} else {
-		expires := t.now.Add(ExpiryWindow)
-		n.ExpiresAt = &expires
+	default:
+		rearm(t.now, n)
 	}
 	if err := o.duplicate(parentID, n.Title, ""); err != nil {
 		return nil, err
@@ -453,7 +458,7 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 		}
 	}
 	if a.owner() {
-		if err := t.confirm(o, a, n); err != nil {
+		if err := t.planned(o, a, n); err != nil {
 			return err
 		}
 	}
@@ -607,7 +612,7 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 			}
 			n.Checklist = list
 			if a.owner() {
-				if err := t.confirm(o, a, n); err != nil {
+				if err := t.planned(o, a, n); err != nil {
 					return err
 				}
 			}
@@ -696,6 +701,41 @@ func touch(a Actor, n *node) {
 	if a.Head != "" {
 		n.PinnedSHA = a.Head
 	}
+}
+
+// planned records the owner's planning write on n (an edit, a move, a
+// checklist change, a split), which confirms no proposal (decision 10). A
+// confirmed n is re-pinned to the owner's HEAD, and moving it under a
+// proposal confirms that proposal, since a confirmed card never sits under
+// one. A proposal and its proposed parents get a fresh expiry instead, so
+// one the owner is working on doesn't lapse. The caller writes n.
+func (t *txn) planned(o *outline, a Actor, n *node) error {
+	if n.Confirmed() {
+		return t.confirm(o, a, n)
+	}
+	rearm(t.now, n)
+	return t.rearmAncestors(o, n.ParentID)
+}
+
+// rearmAncestors gives every unconfirmed card from parentID up to the root
+// a fresh expiry and writes it.
+func (t *txn) rearmAncestors(o *outline, parentID string) error {
+	for p := o.byID[parentID]; p != nil; p = o.byID[p.ParentID] {
+		if p.Confirmed() {
+			continue
+		}
+		rearm(t.now, p)
+		if err := t.updateCard(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// rearm makes the unconfirmed n expire ExpiryWindow from now.
+func rearm(now time.Time, n *node) {
+	expires := now.Add(ExpiryWindow)
+	n.ExpiresAt = &expires
 }
 
 // view returns the card id as the Project's outline now derives it.

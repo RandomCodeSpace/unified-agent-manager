@@ -555,20 +555,22 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		return err
 	}
 	checklist := n.Checklist
+	// The owner's parts take n's confirmation: a split plans, so it confirms
+	// no proposal (decision 10), and a confirmed n has confirmed ancestors.
+	confirmed := a.owner() && n.Confirmed()
 	switch {
 	case !siblings:
 		n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
 		if a.owner() {
-			if err := t.confirm(o, a, n); err != nil {
+			if err := t.planned(o, a, n); err != nil {
 				return err
 			}
 		}
 		if err := t.updateCard(n); err != nil {
 			return err
 		}
-	case a.owner():
-		// The owner's new subtasks are confirmed, so their ancestors are too.
-		if err := t.confirmAncestors(o, a, parent); err != nil {
+	case a.owner() && !confirmed:
+		if err := t.rearmAncestors(o, parent); err != nil {
 			return err
 		}
 	}
@@ -595,11 +597,10 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			WinCondition: p.child.WinCondition, Status: StatusPlanned, Prio: PrioDefault, Effort: DefaultEffort,
 			CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
 		}}
-		if a.owner() {
+		if confirmed {
 			kid.PinnedSHA = a.Head
 		} else {
-			expires := t.now.Add(ExpiryWindow)
-			kid.ExpiresAt = &expires
+			rearm(t.now, kid)
 		}
 		if err := t.insertCard(o, kid); err != nil {
 			return err

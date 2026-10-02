@@ -18,7 +18,7 @@ async function openPlan(user: User) {
 }
 
 describe('the story strip', () => {
-  test('a Task working on a subtask shows its story, progress, card, next subtask and what it waits for', async () => {
+  test('a Task working on a subtask shows its story, progress, card and what it waits for, and no next subtask while each waits', async () => {
     await openTask('t21');
     await waitFor(() => expect(strip()).toBeTruthy());
     const line = strip()!;
@@ -27,7 +27,8 @@ describe('the story strip', () => {
     expect(line.textContent).toContain('Sign release binaries');
     expect(line.textContent).toContain('1/3 done');
     expect(line.textContent).toContain('This task #25');
-    expect(line.textContent).toContain('next #26');
+    // No next: #26 waits on #31, and every subtask here on the story's blocker #19.
+    expect(line.textContent).not.toContain('next #');
     // The story waits for #19 (its own blocker); the epic for #1.
     expect(line.textContent).toContain('waits for Cross-compile the release matrix (through its story) +1');
   });
@@ -97,7 +98,7 @@ describe('the Plan panel', () => {
     const outline = within(panel.getByRole('list', { name: 'Plan outline' }));
     await user.click(outline.getByRole('button', { name: /^#31 Publish SHA-256 checksums beside the archives, Planned, proposed/ }));
     const details = within(panel.getByRole('region', { name: '#31 details' }));
-    expect(details.getByText(/Proposed by an agent/)).toBeTruthy();
+    expect(details.getByText('A proposal: editing and linking keep it one; launching it confirms it.')).toBeTruthy();
     const dismiss = vi.spyOn(api.planner, 'dismiss');
     try {
       await user.click(details.getByRole('button', { name: 'Launch' }));

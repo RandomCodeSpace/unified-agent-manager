@@ -2,7 +2,7 @@ import { Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, 
 import { useMemo, useState, type ReactNode, type SubmitEvent } from 'react';
 import { api, plannerErrorText, type BoardRequest, type Card, type Evidence, type Rejection, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
 import { cn } from '../../lib/cn';
-import { relTime } from '../common';
+import { relTime, timeAgo } from '../common';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Collapse } from '../ui/collapse';
@@ -91,7 +91,7 @@ export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>)
     rows.push(
       <Row key="accept" icon={<SquareTerminal />} label={<span>Acceptance <span className="font-mono text-code-sm">{a.cmd}</span> · <span className={a.exit === 0 ? 'text-success' : 'text-error'}>exit {a.exit}</span>{a.stale && <span className="text-warning"> · command changed since</span>}</span>}>
         <p className="mb-1 text-caption text-muted">
-          At {a.head}{a.dirty ? ', with uncommitted changes' : ', clean'}, {relTime(a.ran_at)} ago · {a.cmd_hash}
+          At {a.head}{a.dirty ? ', with uncommitted changes' : ', clean'}, {timeAgo(a.ran_at)} · {a.cmd_hash}
         </p>
         {a.tail && <pre className="max-h-48 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{a.tail}</pre>}
       </Row>,

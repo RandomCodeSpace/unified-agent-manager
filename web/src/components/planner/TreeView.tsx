@@ -60,7 +60,7 @@ interface RowActions {
  * The Tree (ADR 0005 §10): the plan as an outline, where most planning happens. Containers
  * show their progress; a parent's suggestions fold into one "+N suggested" row with Confirm and
  * Dismiss. Arrow keys move and fold, Enter opens the card, F2 edits its title and win condition
- * in place (an owner save confirms the card). Containers add stories and subtasks under them;
+ * in place (a save confirms nothing). Containers add stories and subtasks under them;
  * the root takes a subtask too (§3). Each row's "…" button and context menu hold its card's
  * actions. Rows are
  * memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
@@ -417,7 +417,7 @@ function SuggestionActions({ busy, title, onConfirm, onDismiss }: Readonly<{ bus
   );
 }
 
-/** A new card in place: its title and win condition; Enter adds it, Esc leaves. Owner-created, so it is confirmed (and so are its parents). */
+/** A new card in place: its title and win condition; Enter adds it, Esc leaves. The owner's card is confirmed, except under a suggestion, where it is one too. */
 function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardKind; parent: Card | undefined; onCreate: (fields: { title: string; win_condition: string }) => Promise<void>; onCancel: () => void }>) {
   const [title, setTitle] = useState('');
   const [win, setWin] = useState('');
@@ -448,7 +448,7 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
   );
 }
 
-/** Title and win condition in place; Enter saves both, Esc leaves them. Saving is an owner edit, so it confirms the card. */
+/** Title and win condition in place; Enter saves both, Esc leaves them. Saving confirms nothing: a suggestion stays one. */
 export function CardEditor({ card, onSave, onCancel, extra }: Readonly<{ card: Card; onSave: (patch: { title: string; win_condition: string }) => void | Promise<void>; onCancel: () => void; extra?: ReactNode }>) {
   const [title, setTitle] = useState(card.title);
   const [win, setWin] = useState(card.win_condition);
@@ -471,7 +471,6 @@ export function CardEditor({ card, onSave, onCancel, extra }: Readonly<{ card: C
         <Button size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <span className="text-caption text-muted">Saving confirms the card.</span>
       </span>
     </form>
   );
