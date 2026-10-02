@@ -141,12 +141,9 @@ func validPageID(page string) bool {
 	if page == "" || len(page) > maxPageID {
 		return false
 	}
-	for _, r := range page {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
-			return false
-		}
-	}
-	return true
+	return strings.IndexFunc(page, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_'
+	}) < 0
 }
 
 // notePage names the browser tab sub's stream belongs to.
