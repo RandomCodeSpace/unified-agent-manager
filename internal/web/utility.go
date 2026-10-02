@@ -152,6 +152,14 @@ func (m *Manager) utilityLimitLocked() int {
 	return store.DefaultUtilityDailyLimit
 }
 
+// compactionThreshold is the compaction threshold in percent.
+func (s Settings) compactionThreshold() int {
+	if s.CompactionThreshold != nil {
+		return *s.CompactionThreshold
+	}
+	return store.DefaultCompactionThreshold
+}
+
 // pausedError says why a call was skipped.
 func pausedError(reason string, limit int) *Error {
 	msg := "Background AI is off: its daily limit is 0. Raise it in Settings → Background AI"

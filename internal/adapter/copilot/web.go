@@ -816,6 +816,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	deferPermission := func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 		return &rpc.PermissionDecisionNoResult{}, nil
 	}
+	compaction := infiniteSessions(req.CompactionThreshold)
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
@@ -839,6 +840,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			// hooks. The owner turned it on for web Tasks (#176).
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
+			InfiniteSessions:      compaction,
 		})
 	} else {
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
@@ -859,6 +861,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
+			InfiniteSessions:      compaction,
 		})
 	}
 	if err != nil {
@@ -2911,6 +2914,16 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	for _, it := range c.tr.items(ev) {
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 	}
+}
+
+// infiniteSessions sets where the CLI starts compacting (threshold, 0 to 1);
+// nil keeps its defaults. The point where a turn waits for compaction stays
+// the CLI default, 0.95: the web setting tops out at 0.90, below it.
+func infiniteSessions(threshold float64) *copilot.InfiniteSessionConfig {
+	if threshold <= 0 {
+		return nil
+	}
+	return &copilot.InfiniteSessionConfig{BackgroundCompactionThreshold: copilot.Float64(threshold)}
 }
 
 // nanoPerUnit converts the CLI's nano-AI units to AI units, the unit of the

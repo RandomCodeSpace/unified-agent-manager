@@ -442,6 +442,10 @@ type OpenRequest struct {
 	// SkillDirectories are directories of the web service's own skills, each
 	// holding <name>/SKILL.md, loaded beside the ones the provider discovers.
 	SkillDirectories []string
+	// CompactionThreshold is the share of the context window (0 to 1) at
+	// which the conversation starts compacting; 0 keeps the provider default.
+	// It applies on create and on every reopen.
+	CompactionThreshold float64
 }
 
 // MaxHostToolArguments bounds the JSON arguments of one host tool call;

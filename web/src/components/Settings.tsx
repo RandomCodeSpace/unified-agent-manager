@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
 import { SavedPromptsSettings } from './Assist';
-import { api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
+import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
@@ -48,6 +48,9 @@ function PendingSection({ id, title, label }: Readonly<{ id: string; title: stri
     </section>
   );
 }
+
+/** The compaction thresholds Settings offers, in percent. */
+const COMPACT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90];
 
 /** A label and its help on the left, the control on the right; stacked on a phone. */
 function Row({ id, label, help, children }: Readonly<{ id: string; label: string; help: ReactNode; children: ReactNode }>) {
@@ -532,6 +535,9 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               <div className="max-w-xl">
                 <TaskDefaultsFields prefix="new-tasks" value={taskDefaults} disabled={saving} onChange={(next) => void save({ task_defaults: next })} />
               </div>
+              <Row id="compact-threshold" label="Compact the conversation when its context reaches" help="Compacting earlier keeps answers faster and cheaper but drops older detail sooner. A task already open picks up a change the next time it reopens.">
+                <Select aria-label="Compact the conversation when its context reaches" aria-describedby="compact-threshold-help" value={String(settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD)} disabled={saving} className="sm:w-44" items={COMPACT_THRESHOLDS.map((n) => ({ value: String(n), label: n === DEFAULT_COMPACT_THRESHOLD ? `${n}% (default)` : `${n}%` }))} onValueChange={(v) => void save({ compact_threshold: Number(v) === DEFAULT_COMPACT_THRESHOLD ? null : Number(v) })} />
+              </Row>
             </Section>
           )}
           {loaded && titled.length > 0 && <Section id="utility" title="Utility model">

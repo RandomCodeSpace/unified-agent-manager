@@ -587,7 +587,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
-		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), SavedPrompts: cfg.WebSettings.SavedPrompts}
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), SavedPrompts: cfg.WebSettings.SavedPrompts, CompactionThreshold: cfg.WebSettings.CompactionThreshold}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1317,6 +1317,8 @@ func (m *Manager) Settings() Settings {
 // and turning it off closes it; it cannot turn on without Git.
 // UtilityLimit sets the daily limit of Utility calls, 0 to
 // store.MaxUtilityDailyLimit; pointing at nil puts the default back.
+// CompactionThreshold works the same way, store.MinCompactionThreshold to
+// store.MaxCompactionThreshold; the default itself is stored as nil.
 type SettingsPatch struct {
 	SendDefault  *string
 	Terminal     *bool
@@ -1327,7 +1329,8 @@ type SettingsPatch struct {
 	TaskDefaults *TaskDefaults
 	UtilityLimit **int
 	// SuggestReplies turns suggested replies on or off.
-	SuggestReplies *bool
+	SuggestReplies      *bool
+	CompactionThreshold **int
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1366,6 +1369,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	if l := p.UtilityLimit; l != nil && *l != nil && (**l < 0 || **l > store.MaxUtilityDailyLimit) {
 		return Settings{}, newError(http.StatusBadRequest, "utility_daily_limit must be 0 to %d", store.MaxUtilityDailyLimit)
+	}
+	if t := p.CompactionThreshold; t != nil && *t != nil && (**t < store.MinCompactionThreshold || **t > store.MaxCompactionThreshold) {
+		return Settings{}, newError(http.StatusBadRequest, "compact_threshold must be %d to %d", store.MinCompactionThreshold, store.MaxCompactionThreshold)
 	}
 	var defaults TaskDefaults
 	if p.TaskDefaults != nil {
@@ -1430,9 +1436,16 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.UtilityLimit != nil {
 		next.UtilityDailyLimit = *p.UtilityLimit
 	}
+	if t := p.CompactionThreshold; t != nil {
+		next.CompactionThreshold = *t
+		if *t != nil && **t == store.DefaultCompactionThreshold {
+			next.CompactionThreshold = nil
+		}
+	}
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
-	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() {
+	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
+	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	opening := next.Planner && !current.Planner
@@ -1451,6 +1464,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.SuggestReplies = next.SuggestReplies
+		cfg.WebSettings.CompactionThreshold = next.CompactionThreshold
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {
@@ -2369,9 +2383,13 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 }
 
 // withHostToolsLocked adds the host tools of s, req's Task, when there are
-// any, and the built-in skills to req. The caller holds mu.
+// any, the built-in skills and the compaction threshold to req. The caller
+// holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
 	req.SkillDirectories = m.skillDirs
+	if t := m.settings.CompactionThreshold; t != nil {
+		req.CompactionThreshold = float64(*t) / 100
+	}
 	if m.hostTools != nil {
 		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "")
 	}

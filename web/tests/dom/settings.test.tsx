@@ -41,6 +41,21 @@ describe('settings', () => {
     await waitFor(() => expect(tasks.getByRole('combobox', { name: 'Model' }).textContent).toContain('GPT-5.6 Luna'));
   });
 
+  test('the compaction threshold is saved, and the default is stored as unset', async () => {
+    const { user } = await openSettings();
+    const stored = async () => (await (await fetch('/api/settings')).json()).compact_threshold;
+    const tasks = await section('New tasks');
+    const threshold = tasks.getByRole('combobox', { name: 'Compact the conversation when its context reaches' });
+    expect(threshold.textContent).toContain('80% (default)');
+    await user.click(threshold);
+    await user.click(await screen.findByRole('option', { name: '60%' }));
+    await waitFor(async () => expect(await stored()).toBe(60));
+    expect(tasks.getByRole('combobox', { name: 'Compact the conversation when its context reaches' }).textContent).toContain('60%');
+    await user.click(tasks.getByRole('combobox', { name: 'Compact the conversation when its context reaches' }));
+    await user.click(await screen.findByRole('option', { name: '80% (default)' }));
+    await waitFor(async () => expect(await stored()).toBeUndefined());
+  });
+
   test('a setting the service refuses goes back to its old value and says why', async () => {
     const { user } = await openSettings();
     const models = await section('Models');

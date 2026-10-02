@@ -164,6 +164,10 @@ type Settings struct {
 	// SuggestReplies is false when replies to send next are not offered
 	// after a turn (assist.go); omitted while they are, the default.
 	SuggestReplies *bool `json:"suggest_replies,omitempty"`
+	// CompactionThreshold is the share of the context, in percent, at which
+	// a Task's conversation starts compacting; omitted for the provider
+	// default, store.DefaultCompactionThreshold.
+	CompactionThreshold *int `json:"compact_threshold,omitempty"`
 	// SavedPrompts are the prompts the owner saved (prompts.go), oldest
 	// first; omitted when there are none.
 	SavedPrompts []SavedPrompt `json:"saved_prompts,omitempty"`

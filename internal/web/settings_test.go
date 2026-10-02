@@ -290,3 +290,41 @@ func TestHiddenModelsConcurrentRefresh(t *testing.T) {
 	}
 	<-done
 }
+
+// The compaction threshold is checked, stored only away from the default,
+// and handed to every conversation UAM creates or reopens.
+func TestCompactionThresholdReachesNewAndReopenedTasks(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	for _, body := range []string{`{"compact_threshold":49}`, `{"compact_threshold":91}`, `{"compact_threshold":"60"}`} {
+		if w := ts.do(http.MethodPatch, "/api/settings", body, withCookie(ts)); w.Code != http.StatusBadRequest {
+			t.Fatalf("%s = %d", body, w.Code)
+		}
+	}
+	sum, _ := createSession(t, ts.m, ts.prov)
+	if got := ts.prov.Last().Request().CompactionThreshold; got != 0 {
+		t.Fatalf("default threshold = %v", got)
+	}
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"compact_threshold":60}`, withCookie(ts)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"compact_threshold":60`) {
+		t.Fatalf("set = %d %s", w.Code, w.Body)
+	}
+	if _, err := ts.m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	if got := ts.prov.Last().Request().CompactionThreshold; got != 0.6 {
+		t.Fatalf("reopened threshold = %v", got)
+	}
+	createSession(t, ts.m, ts.prov)
+	if got := ts.prov.Last().Request().CompactionThreshold; got != 0.6 {
+		t.Fatalf("new task threshold = %v", got)
+	}
+	// The default itself is not stored.
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"compact_threshold":80}`, withCookie(ts)); w.Code != http.StatusOK || strings.Contains(w.Body.String(), "compact_threshold") {
+		t.Fatalf("default = %d %s", w.Code, w.Body)
+	}
+	if got := ts.m.Settings().CompactionThreshold; got != nil {
+		t.Fatalf("stored default = %v", *got)
+	}
+}
