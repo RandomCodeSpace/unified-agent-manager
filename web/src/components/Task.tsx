@@ -8,7 +8,7 @@ import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
-import { shownState } from '../lib/tasks';
+import { showsFinish, shownState } from '../lib/tasks';
 import { ChangesSheet, defaultScope } from './Changes';
 import { CommitPanel, SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
@@ -23,8 +23,7 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentPanel, type PanelView } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
-import { FinishCard, SinceYouLeft } from './Finish';
-import { away, sinceYouLeft } from '../lib/evidence';
+import { away, FinishCard, SinceYouLeft } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript, WorkingLabel } from './Transcript';
@@ -63,7 +62,7 @@ interface Props {
   leading?: ReactNode;
   /** The name of the Task that started this one (`spawned_by`); empty when that Task is gone or unnamed. */
   spawnedBy?: string;
-  /** The Task's `updated_at` when the owner last had it open, before this visit; "Since you left" counts from it. */
+  /** When the owner last had the Task on screen, before this visit; "Since you left" counts from it. */
   since?: string;
   /** The name of the Task whose last message this one runs again (`rerun_of`); empty when that Task is gone or unnamed. */
   rerunOf?: string;
@@ -108,7 +107,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // "Since you left": from the owner's last look to this opening; what happens while they watch is seen. Dismissed for this visit.
   const [opened] = useState(() => new Date().toISOString());
   const [sinceMark, setSinceMark] = useState(since);
-  const sinceSummary = useMemo(() => (sinceMark ? sinceYouLeft(liveItems, session.turn_timings ?? [], session.interactions, sinceMark, opened, session.workdir, working) : null), [sinceMark, liveItems, session.turn_timings, session.interactions, opened, session.workdir, working]);
+  // The service counts every item since the mark, not only the page on screen; read again once the record is.
+  const [sinceSummary, setSinceSummary] = useState<{ text: string; ids: string[] } | null>(null);
+  useEffect(() => {
+    if (!sinceMark || session.history === 'loading') return;
+    const controller = new AbortController();
+    api.evidence(session.id, { since: sinceMark, until: opened }, controller.signal).then((ev) => setSinceSummary(ev.since ?? null), () => {});
+    return () => controller.abort();
+  }, [session.id, sinceMark, opened, session.history]);
   const latestSession = useRef(session);
   useLayoutEffect(() => { latestSession.current = session; }, [session]);
   const [windowReset, setWindowReset] = useState(0);
@@ -544,10 +550,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // A subagent still running after the turn, or compacting, keeps the Task Working (lib/tasks shownState).
   const state = shownState(session);
   const compacting = !!session.compacting && state === 'working';
-  // The finish card follows a turn that completed, at the live end of the history.
-  const lastTiming = session.turn_timings?.at(-1);
-  const finished = !live && state !== 'working' && !session.history_after && !historyLoading && liveItems.some((item) => item.kind === 'assistant' && !item.agent_id)
-    && (lastTiming ? lastTiming.state === 'completed' : session.state === 'completed');
+  const finished = !historyLoading && showsFinish(session, liveItems, live);
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];

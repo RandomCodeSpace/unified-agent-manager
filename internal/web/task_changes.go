@@ -17,12 +17,12 @@ import (
 // (SessionSummary.Diff).
 //
 // A Task's edits are the files its edit tools touched (editedPaths: create,
-// edit and apply_patch, main agent and subagents, failed calls left out),
-// collected as items arrive live or from the provider's record and kept when
-// the transcript is trimmed or evicted. Its latest turn starts at the latest
-// ordinary prompt to the main agent: a main-agent user item that is neither a
-// steer nor an automatic continuation, so steers join the running turn. The
-// turn's edits are those touched at or after that prompt's time. Each scope
+// write, edit and apply_patch, main agent and subagents, calls that did not
+// complete left out), collected as items arrive live or from the provider's
+// record and kept when the transcript is trimmed or evicted. Its latest turn
+// starts at the latest ordinary prompt to the main agent (startsTurn), so
+// steers join the running turn. The turn's edits are those touched at or
+// after that prompt's time. Each scope
 // lists the files of the working-tree listing (compared with HEAD) among
 // those edits: a file someone else also changed shows those changes too, and
 // one changed back or committed drops out. Files written by commands (a
@@ -39,27 +39,34 @@ var errScope = newError(http.StatusBadRequest, "scope must be %q, %q, %q or %q",
 // diffDelay batches a burst of edits into one recount of the Task's total.
 var diffDelay = time.Second
 
-// noteEdits records it in s's edits and turn start and reports whether the
-// edits changed or an edit completed, so the total needs a recount.
+// noteEdits records it in s's evidence, edits and turn start and reports
+// whether an edit completed, so the total needs a recount. An edit counts
+// once it completed, at when it ended: one still running may yet fail.
 func (s *webSession) noteEdits(it agentapi.Item) bool {
-	if it.AgentID == "" && it.Kind == agentapi.ItemUser && it.Delivery == "" {
+	s.noteActivity(it)
+	if startsTurn(it) {
 		if it.Time.After(s.turnStart) {
 			s.turnStart = it.Time
 		}
 		return false
 	}
+	if it.Tool == nil || it.Tool.Status != agentapi.ToolCompleted {
+		return false
+	}
 	paths := editedPaths(it.Tool)
-	changed := len(paths) > 0 && it.Tool.Status == agentapi.ToolCompleted
+	at := it.Time
+	if it.EndedAt.After(at) {
+		at = it.EndedAt
+	}
 	for _, p := range paths {
-		if at, ok := s.edits[p]; !ok || it.Time.After(at) {
+		if last, ok := s.edits[p]; !ok || at.After(last) {
 			if s.edits == nil {
 				s.edits = map[string]time.Time{}
 			}
-			s.edits[p] = it.Time
-			changed = true
+			s.edits[p] = at
 		}
 	}
-	return changed
+	return len(paths) > 0
 }
 
 // noteHistoryLocked records a provider record's edits; whole says the

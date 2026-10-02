@@ -406,8 +406,12 @@ type webSession struct {
 	// Both outlive trimmed and evicted transcripts. editsKnown is set once
 	// the whole record passed through them. diff is the cached task-scope
 	// total; diffRunning and diffDirty schedule its recount.
-	edits                  map[string]time.Time
-	turnStart              time.Time
+	edits     map[string]time.Time
+	turnStart time.Time
+	// activity is what the turn evidence keeps of the main agent's items,
+	// by ID (turn_evidence.go); dropped with an evicted transcript, which
+	// notes them again when it is read.
+	activity               map[string]activity
 	editsKnown             bool
 	diff                   *DiffStat
 	diffRunning, diffDirty bool
@@ -1701,8 +1705,11 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	// turn state (including waiting for input), detail, name, title, model
 	// and the last submission. Queue changes are activity too. A viewer
 	// opening the conversation (open, starting) and provider capability or
-	// catalog changes are not.
-	if durable || queue {
+	// catalog changes are not, nor is the outcome line's phrase, which lands
+	// after the turn it words.
+	worded := key
+	worded.outcome = s.persisted.outcome
+	if durable && worded != s.persisted || queue {
 		s.updatedAt = m.now()
 	}
 	if m.sessions[s.id] != s {

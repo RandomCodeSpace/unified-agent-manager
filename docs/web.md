@@ -684,12 +684,14 @@ sign-outs are logged without the token.
   Task's row in the sidebar shows it as its status line ("Ready for review:"
   first while you have not opened the Task since), and the Task header
   beside its state (not on a phone). Everything after the opening phrase
-  comes from the main agent's own tool calls in that turn, read as the
-  finish card reads them: files its edit, write and create tools changed,
-  whether its last test run (a "Ran the tests" row on the card) exited 0
-  ("tests pass") or not ("tests fail"), saying nothing when that run's
-  status is unclear (piped without `pipefail`, or not recorded), and how
-  many commands failed or exited non-zero. The opening phrase comes from one
+  is the finish card's own reading of the turn (the service reads it once,
+  for both): the files the Task's edit tools changed in the turn (the main
+  agent's and its subagents', the files Changes shows for "Last turn"),
+  whether the main agent's last test run (a "Ran the tests" row on the
+  card) passed ("tests pass") or failed ("tests fail"), saying nothing when
+  that run's result is unclear, and how many of its commands failed or
+  exited non-zero. The phrase arriving after the turn does not mark the
+  Task unread again. The opening phrase comes from one
   Utility model call, told to describe only what the agent's final answer
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
@@ -848,41 +850,54 @@ sign-outs are logged without the token.
   report no prices and cost no AI credits; the endpoint bills you directly.
   This uses the Copilot SDK's experimental multi-provider support.
 - **Since you left**: when you open a Task that changed since you last had it
-  open in this browser, a line under the header says how long ago that was
-  and what happened since, from the Task's own record: whether the agent
-  finished (or the turn failed or was stopped), whether it ran the tests and
-  how many other commands, how many files it changed, and whether it asked
-  you something, for example "Since you left (42 min): the agent finished,
-  ran the tests, and changed 3 files." What happens while you watch is not
-  counted. **Jump to where you stopped** scrolls to the first thing you have
-  not seen (once the page has stopped moving, so a scroll on a phone is never
-  fought) and closes the line; × closes it too. It does not come back until
-  the Task changes again while you are away. The last look is kept per
-  browser, the same mark that makes a Task read in the sidebar.
+  on screen in this browser, a line under the header says how long ago that
+  was and what happened since, counted by the service over everything the
+  Task did in between (not only the part of the conversation on screen):
+  whether the agent finished (or the turn failed or was stopped), whether it
+  ran the tests and how many other commands, how many files it changed, and
+  whether it asked you something, for example "Since you left (42 min): the
+  agent finished, ran the tests, and changed 3 files." What happens while
+  you watch is not counted. **Jump to where you stopped** scrolls to the
+  first thing you have not seen (once the page has stopped moving, so a
+  scroll on a phone is never fought) and closes the line; × closes it too.
+  It does not come back until the Task changes again while you are away.
+  The last look is kept per browser: the moment you last had the Task on
+  screen, marked while it is open and again as you leave it, hide the page
+  or close it.
 - **Finish card**: under a turn that completed, a card titled "Finished —
   check the evidence" puts what the agent did before what it says it did.
-  It never uses a model; fixed rules read the turn's record:
-  - **Checks**: each shell command of the turn that runs tests, a build, a
-    linter, `go vet` or a type check (`go test`, `npm test`, `pytest`,
-    `cargo test`, `go build`, `npm run build`, `eslint`, `golangci-lint`,
-    `tsc`, `mypy` and similar, recognised by how the command starts, also
-    after `cd …&&` or `VAR=value`), with the command, its exit status, the
-    counts its output reports (Go packages, Jest, Vitest, pytest, cargo and
-    TAP summaries) and how long it took. A command piped into another
-    (`go test ./... | tail`) reports the last command's exit status, so it
-    counts as passed or failed only when its output's counts say so;
-    otherwise its result is unclear. **Show output** opens the command's
-    whole output beside the conversation.
+  It never uses a model; fixed rules in the service read the whole turn,
+  however long, and the outcome line reads the same result:
+  - **Checks**: each shell command of the main agent in the turn that runs
+    tests, a build, a linter, `go vet` or a type check (`go test`,
+    `npm test`, `pytest`, `cargo test`, `go build`, `npm run build`,
+    `eslint`, `golangci-lint`, `tsc`, `mypy` and similar, recognised by how
+    each command of the line starts, also after `cd …&&`, `VAR=value` or a
+    line break), labelled with every check the line runs ("Ran the build
+    and the tests"), with the command, its exit status, the counts its
+    output reports (Go packages, Jest, Vitest, pytest, cargo and TAP
+    summaries) and how long it took. The exit status counts for a check
+    only when it is that check's: a check followed by `;`, `||`, `&` or
+    another line (`go test ./... || true`) passes or fails by its output's
+    counts alone, and one piped into another without `pipefail`
+    (`go test ./... | tail`, whose output may be cut) only fails by them;
+    otherwise its result is unclear. A check followed by `&&` passed when
+    the line exited 0. A quoted `|` is no pipe. **Show output** opens the
+    command's whole output beside the conversation.
   - **Claims**: each sentence of the turn's final message that says tests,
     the build, linting, vet or type checks pass, or that docs (a README,
     CHANGELOG, `.md` or `docs/` file) were updated, is listed with what
     backs it, or **Not verified** and why: no such check ran in the turn,
-    the last one failed or is unclear, code changed after it, or no doc file
-    (the one the sentence names, if it names one) was edited. Sentences with
-    a negation or a failure word are not read as claims. The header counts
-    the claims not verified.
-  - **Changed in this turn**: the files the turn's edit tools changed, with
-    their line counts from Changes; each opens Changes.
+    the last one failed or is unclear, code changed after it began (by the
+    main agent or a subagent), or no doc file (the one the sentence names,
+    if it names one) was edited. A part of a sentence with a negation or a
+    failure word is not read as a claim ("I did not run the linter, but the
+    build passes" claims the build only); "no errors", "no failures" and
+    the like are not negations. The header counts the claims not verified.
+  - **Changed in this turn**: the files the turn's edit tools changed (the
+    main agent's and its subagents'; edits that failed left out), the same
+    files Changes lists for "Last turn", named from the repository's top
+    as Changes names them, with their line counts; each opens Changes.
   - **Review changes** opens Changes. Long file lists scroll inside the card,
     as they do in the commit panel.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
@@ -975,10 +990,10 @@ sign-outs are logged without the token.
   this Task changed and opens them beside the conversation with the diff (a
   full-screen sheet on a narrow window). Three scopes sit at the top, each
   with its file count: **This task** (the default) lists the files this
-  Task's agent or its subagents edited with an edit tool (create, edit or a
-  patch), compared with `HEAD`; **Last turn** narrows that to the files
-  edited since the latest prompt you sent (a steer joins the running turn
-  and does not start a new one); **All changes** is every uncommitted change in the working tree,
+  Task's agent or its subagents edited with an edit tool (create, write,
+  edit or a patch; one that failed is left out), compared with `HEAD`;
+  **Last turn** narrows that to the files edited since the latest prompt
+  you sent (a steer joins the running turn and does not start a new one); **All changes** is every uncommitted change in the working tree,
   from any Task or source. A file this Task edited shows everything that
   differs from `HEAD`, including changes something else made to it; a file
   changed back or committed drops out. Files written by shell commands are

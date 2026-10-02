@@ -140,7 +140,8 @@ func TestNoteHistoryRecordsEdits(t *testing.T) {
 		toolEdit("e3", "create", "a.go", agentapi.ToolRunning, at.Add(-time.Second)),
 		sub,
 	}, Truncated: true}, true)
-	if s.editsKnown || len(s.edits) != 2 || !s.turnStart.Equal(at) {
+	// The running create may yet fail: it is not an edit until it completes.
+	if s.editsKnown || len(s.edits) != 1 || !s.turnStart.Equal(at) {
 		t.Fatalf("edits = %v known %v turn %v", s.edits, s.editsKnown, s.turnStart)
 	}
 	m.noteHistoryLocked(s, agentapi.History{}, true)

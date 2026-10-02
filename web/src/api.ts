@@ -992,6 +992,44 @@ export interface Changes {
   counts?: { task: number; turn: number; workspace: number };
 }
 
+/** One command of a turn that ran checks, as the service read it (GET /api/sessions/{id}/evidence). */
+export interface EvidenceCheck {
+  item_id: string;
+  kinds: CheckKind[];
+  command: string;
+  /** The worst of its checks: a failing run is never shown as passed. */
+  outcome: 'pass' | 'fail' | 'unclear' | 'running';
+  exit?: number;
+  /** What its output counted ("2 packages ok"). */
+  counts?: string;
+  took_ms?: number;
+  /** Why the outcome is unclear, or how it passed. */
+  note?: string;
+  has_output: boolean;
+}
+
+export type CheckKind = 'test' | 'build' | 'lint' | 'vet' | 'typecheck';
+
+/** A sentence of the final message that claims what evidence should back. */
+export interface EvidenceClaim {
+  text: string;
+  verified: boolean;
+  /** What backs it, or "Not verified · why". */
+  detail: string;
+}
+
+/**
+ * The evidence of a Task's latest turn, read by the service from the whole turn (the finish
+ * card), and what changed since a look ("Since you left"); the outcome line reads the same.
+ */
+export interface TurnEvidence {
+  checks: EvidenceCheck[];
+  claims: EvidenceClaim[];
+  /** The files the turn's edit tools changed, relative to the repository as Changes lists them; counts when Changes lists them. */
+  files: { path: string; additions?: number; deletions?: number }[];
+  since?: { text: string; ids: string[] };
+}
+
 /** A changed file of the Task's repository, with whose edit tools touched it. */
 export interface GitFile extends ChangeFile {
   /** This Task's edit tools touched it. */
@@ -1411,6 +1449,9 @@ export const api = {
   close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
   respond: (id: string, iid: string, answer: Answer) =>
     call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
+  /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
+  evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
+    call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),
   changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),
   changeFile: (id: string, scope: Scope, path: string, signal?: AbortSignal) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),

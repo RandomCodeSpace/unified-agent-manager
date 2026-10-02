@@ -289,6 +289,7 @@ func (m *Manager) dropHistoryLocked(s *webSession) {
 	s.stopPreviews()
 	s.itemSeq = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
+	s.activity = nil
 	s.archiveGone, s.subagentsArchived, s.subagentTails = false, false, nil
 	m.archive.forget(s.id)
 	s.subagents, s.subIdx, s.subagentsOlder, s.subagentHead = nil, map[string]*agentapi.Subagent{}, false, 0

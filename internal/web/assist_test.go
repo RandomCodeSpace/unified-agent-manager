@@ -196,38 +196,44 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	}
 }
 
-// The outcome line reads a turn as the finish card does (web/src/lib/
-// evidence.ts), so the two never disagree.
-func TestOutcomeEvidenceMatchesTheFinishCard(t *testing.T) {
-	tool := func(name, input string, status agentapi.ToolStatus, code *int, agent string) agentapi.Item {
-		return agentapi.Item{Kind: agentapi.ItemTool, AgentID: agent, Tool: &agentapi.ToolCall{Name: name, Input: input, Status: status, ExitCode: code}}
+// The outcome line reads the turn evidence the finish card shows
+// (turn_evidence.go), so the two never disagree.
+func TestOutcomeLineReadsTheTurnEvidence(t *testing.T) {
+	type step func(e *evidenceTurn)
+	cmd := func(command string, exit int) step {
+		return func(e *evidenceTurn) { e.bash(fmt.Sprintf("c%d", len(e.s.items)), command, exit, "") }
 	}
-	cmd := func(command string, code int) agentapi.Item {
-		return tool("bash", fmt.Sprintf(`{"command":%q}`, command), agentapi.ToolCompleted, codeOf(code), "")
+	edit := func(tool, path, agent string) step {
+		return func(e *evidenceTurn) {
+			e.note(agentapi.Item{ID: fmt.Sprintf("e%d", len(e.s.items)), Kind: agentapi.ItemTool, AgentID: agent, Tool: &agentapi.ToolCall{Name: tool, Status: agentapi.ToolCompleted, Input: fmt.Sprintf(`{"path":%q}`, path)}})
+		}
 	}
 	for _, tc := range []struct {
 		name  string
-		items []agentapi.Item
+		steps []step
 		want  string
 	}{
-		{"a piped test run is unclear", []agentapi.Item{cmd("go test ./... | tail -5", 0)}, ""},
-		{"pipefail keeps its status", []agentapi.Item{cmd("set -o pipefail; go test ./... | tail -5", 0)}, "tests pass"},
-		{"the first check names the command", []agentapi.Item{cmd("go vet ./... && go test ./...", 0)}, ""},
-		{"wrappers are skipped", []agentapi.Item{cmd("CI=1 timeout 60 npm test", 1)}, "tests fail; 1 command failed"},
-		{"the last test run decides", []agentapi.Item{cmd("pytest", 1), cmd("python -m pytest -q", 0)}, "tests pass; 1 command failed"},
-		{"subagents are not the turn's evidence", []agentapi.Item{
-			tool("bash", `{"command":"go test ./..."}`, agentapi.ToolCompleted, codeOf(0), "agent-1"),
-			tool("edit", `{"path":"/repo/x.go"}`, agentapi.ToolCompleted, nil, "agent-1"),
-		}, ""},
-		{"paths count once, relative to the folder", []agentapi.Item{
-			tool("edit", `{"path":"/repo/a.go"}`, agentapi.ToolCompleted, nil, ""),
-			tool("write", `{"path":"a.go"}`, agentapi.ToolCompleted, nil, ""),
-			tool("write", `{"path":"/repo/b.go"}`, agentapi.ToolCompleted, nil, ""),
+		{"a piped test run is unclear", []step{cmd("go test ./... | tail -5", 0)}, ""},
+		{"pipefail keeps its status", []step{cmd("set -o pipefail; go test ./... | tail -5", 0)}, "tests pass"},
+		{"a compound line counts its test", []step{cmd("go vet ./... && go test ./...", 0)}, "tests pass"},
+		{"a later command's status is not the test's", []step{cmd("go test ./... || true", 0)}, ""},
+		{"wrappers are skipped", []step{cmd("CI=1 timeout 60 npm test", 1)}, "tests fail; 1 command failed"},
+		{"the last test run decides", []step{cmd("pytest", 1), cmd("python -m pytest -q", 0)}, "tests pass; 1 command failed"},
+		{"a subagent's commands are not the turn's, its edits are", []step{
+			func(e *evidenceTurn) {
+				e.note(agentapi.Item{ID: "s1", Kind: agentapi.ItemTool, AgentID: "agent-1", Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./..."}`, ExitCode: codeOf(0)}})
+			},
+			edit("edit", "/repo/x.go", "agent-1"),
+		}, "1 file changed"},
+		{"paths count once, relative to the folder", []step{
+			edit("edit", "/repo/a.go", ""), edit("write", "a.go", ""), edit("write", "/repo/b.go", ""),
 		}, "2 files changed"},
 	} {
-		s := &webSession{workdir: "/repo", items: append([]agentapi.Item{{Kind: agentapi.ItemUser, Text: "go"}}, tc.items...)}
-		ev, ok := s.turnEvidence()
-		if got := outcomeLine("", ev); !ok || !strings.EqualFold(got, tc.want) {
+		e := newEvidenceTurn()
+		for _, st := range tc.steps {
+			st(e)
+		}
+		if got := outcomeLine("", e.facts(t).outcome("/repo")); !strings.EqualFold(got, tc.want) {
 			t.Errorf("%s: outcome = %q, want %q", tc.name, got, tc.want)
 		}
 	}

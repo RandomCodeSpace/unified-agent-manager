@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -408,18 +409,54 @@ func touchedFiles(items []agentapi.Item) []string {
 	return out
 }
 
-// editedPaths lists the files one edit tool call touched; none for a call
-// that only reads or failed. A patch's files come from its headers alone, so
-// an input clipped at its size limit, or framed loosely, still names the
-// files before the cut; the paths are only matched against git's listing.
+// editedPaths lists the files one edit tool call (edit, create, write or
+// apply_patch, in any case) touched; none for a call that only reads or
+// failed. The paths come from the input's headers or path field alone, so an
+// input clipped at its size limit, or framed loosely, still names the files
+// before the cut; the paths are only matched against git's listing. This is
+// the one reading of which files a call changed: Changes, the Task's total,
+// the finish card and the outcome line all use it.
 func editedPaths(tool *agentapi.ToolCall) []string {
-	if tool == nil || tool.Name == "view" || tool.Status == agentapi.ToolFailed {
+	if tool == nil || tool.Status == agentapi.ToolFailed {
 		return nil
 	}
-	if tool.Name == "apply_patch" {
+	switch strings.ToLower(tool.Name) {
+	case "apply_patch":
 		return patchHeaderPaths(tool.Input)
+	case "edit", "create", "write":
+		if p := inputPath(tool.Input); p != "" {
+			return []string{p}
+		}
 	}
-	return localToolFilePaths(tool)
+	return nil
+}
+
+// inputPathRE finds a path field in JSON clipped before it closes.
+var inputPathRE = regexp.MustCompile(`"(?:path|file_path|filePath)"\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// inputPath is the file an edit tool's JSON input names in its path,
+// file_path or filePath field; "" when none, or when they disagree.
+func inputPath(input string) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(input), &obj) != nil {
+		// Clipped: the first path field before the cut.
+		var p string
+		if m := inputPathRE.FindStringSubmatch(input); m == nil || json.Unmarshal([]byte(m[1]), &p) != nil || !validResolvePath(p) {
+			return ""
+		}
+		return p
+	}
+	path := ""
+	for _, key := range []string{"path", "file_path", "filePath"} {
+		if raw, ok := obj[key]; ok {
+			var value string
+			if json.Unmarshal(raw, &value) != nil || !validResolvePath(value) || (path != "" && path != value) {
+				return ""
+			}
+			path = value
+		}
+	}
+	return path
 }
 
 // patchHeaderPaths lists the files a patch's Add, Update, Delete and Move to
