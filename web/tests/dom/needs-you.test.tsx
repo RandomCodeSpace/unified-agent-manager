@@ -1,5 +1,5 @@
 // The Task list groups by what each Task needs (Needs you, Ready for review, Working, Idle) and
-// answers a waiting request in place; Alt+J / Alt+K walk the Needs you group.
+// Alt+J / Alt+K walk the Needs you group; answering happens in the Task, not the list.
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { renderApp, sidebar } from './render';
@@ -24,28 +24,14 @@ describe('the Task list', () => {
     expect(document.title).toBe('(9) UAM');
   });
 
-  test('answers a question from its chips: the recommended choice is staged, Answer sends it', async () => {
-    const { user, mock } = renderApp();
+  test('a Needs you row only says what it waits on; answering happens in the Task', async () => {
+    const { user } = renderApp();
     await sidebar();
-    const r = row('t17');
-    expect(r.getByRole('button', { name: 'pnpm (Recommended)' }).getAttribute('aria-pressed')).toBe('true');
-    await user.click(r.getByRole('button', { name: 'npm' }));
-    expect(r.getByRole('button', { name: 'pnpm (Recommended)' }).getAttribute('aria-pressed')).toBe('false');
-    await user.click(r.getByRole('button', { name: 'Answer' }));
-    await waitFor(() => expect(mock.received.find((x) => x.route === 'answer')).toEqual({ route: 'answer', session: 't17', body: { answers: [['npm']] } }));
-    // The Task leaves Needs you; nothing opened.
-    await waitFor(() => expect(document.querySelector('[data-task-row="t17"] [role="group"]')).toBeNull());
-    expect(window.location.hash).toBe('');
-  });
-
-  test('allows a permission in place, and Reply… opens the Task', async () => {
-    const { user, mock } = renderApp();
-    await sidebar();
-    const r = row('t6');
-    expect(r.getByText('chmod 0644 ~/.config/zsh/aliases.zsh && rm -f ~/.zcompdump*')).toBeTruthy();
-    await user.click(r.getByRole('button', { name: 'Allow' }));
-    await waitFor(() => expect(mock.received.find((x) => x.route === 'answer')).toEqual({ route: 'answer', session: 't6', body: { decision: 'once' } }));
-    await user.click(row('t17').getByRole('button', { name: 'Reply…' }));
+    for (const id of ['t17', 't6']) {
+      expect(row(id).queryByRole('button', { name: /^(Answer|Reply…|Allow|Don’t allow|Don't allow)$/ })).toBeNull();
+      expect(row(id).queryByRole('group')).toBeNull();
+    }
+    await user.click(row('t17').getByRole('button', { name: /Set up the dependency lockfile/ }));
     await waitFor(() => expect(header().textContent).toBe('Set up the dependency lockfile'));
   });
 

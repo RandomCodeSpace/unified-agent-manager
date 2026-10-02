@@ -1004,13 +1004,6 @@ are logged only at debug level (`UAM_DEBUG=1`).
   error", or "Working · quiet 12m" once Copilot has reported nothing for a
   few minutes (the status never shows what the agent is doing). Hovering an
   active row that can settle shows Settle.
-  - **Answer in place**: a question's choices show as chips under its row,
-    the recommended one already picked, as in the message box; pick others
-    (several where the question allows it) and press Answer. A question
-    without choices, with several parts, or that you want to say more about
-    takes "Reply…", which opens the Task. A permission request shows Allow
-    (allow once) and Don't allow beside the first line of what it asks to
-    run. The first answer from any tab wins, as on the Task's own card.
   - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).

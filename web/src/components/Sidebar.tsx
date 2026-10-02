@@ -7,7 +7,6 @@ import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { Key } from './InlinePicker';
 import { ProjectFilterPicker } from './ProjectPicker';
-import { TaskAsk } from './TaskAsk';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
@@ -155,7 +154,7 @@ type DiffStat = { files: number; additions: number; deletions: number };
 
 /**
  * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line; a Needs you row answers its request below them.
+ * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line.
  */
 function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
@@ -171,9 +170,8 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const status = taskStatus(s, unread);
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
-  const ask = attention && !readOnly(s) ? s.ask : undefined;
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring, its answer controls included.
+  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -249,11 +247,6 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             )}
           </button>
         </Tip>
-      )}
-      {ask && !renaming && (
-        <div className="px-2.5 pb-2">
-          <TaskAsk key={ask.id} session={s} ask={ask} onReply={() => a.select(s.id)} />
-        </div>
       )}
       {settle && !renaming && (
         // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits at the end of the status line.
