@@ -107,7 +107,7 @@ function seedBoard(big: boolean): Seeded {
     card(20, P, 'subtask', 19, 'Add darwin and windows targets', { status: 'doing', held_by: 't19', win_condition: 'The release workflow builds six targets.', effort: 'M' }),
     card(21, P, 'subtask', 19, 'Upload archives to the GitHub release', { blocked_by: ['cp1-20'] }),
     card(22, P, 'subtask', 19, 'Set up the macOS signing step', { status: 'todo', win_condition: 'darwin archives are signed and notarized in CI.' }),
-    card(23, P, 'story', 18, 'Sign release binaries', { win_condition: 'Every archive has a signature a user can verify.' }),
+    card(23, P, 'story', 18, 'Sign release binaries', { win_condition: 'Every archive has a signature a user can verify.', blocked_by: ['cp1-19'] }),
     card(24, P, 'subtask', 23, 'Generate the signing key in CI secrets', { status: 'done' }),
     card(25, P, 'subtask', 23, 'Sign archives and publish signatures', { checklist: items(['Sign in the release job', true], ['Upload .sig files', false], ['Document the key', false]) }),
     card(26, P, 'subtask', 23, 'Verify signatures in the install script', { win_condition: 'install.sh refuses an archive whose signature does not match.' }),
@@ -116,6 +116,21 @@ function seedBoard(big: boolean): Seeded {
     card(29, P, 'subtask', 27, 'Write the upgrade notes section', {}),
     card(30, P, 'subtask', 27, 'Link each entry to its pull request', {}),
     card(31, P, 'subtask', 23, 'Publish SHA-256 checksums beside the archives', { ...suggestion }),
+    // Prototype (planner-in-task): a third and a fourth (proposed) epic, and dependencies at every level of the layered DAG:
+    // epic waits for epic, story for a story in the same epic, subtask for a subtask in the same story.
+    card(37, P, 'epic', null, 'Install through package managers', { win_condition: 'brew, scoop and apt install the latest release with one command.', desc: 'Users install by hand from the release page today. Package managers need the signed archives and checksums from Release automation.', blocked_by: ['cp1-18'], prio: 2 }),
+    card(38, P, 'story', 37, 'Publish a Homebrew tap', { win_condition: '`brew install uam` installs the latest release on macOS and Linux.' }),
+    card(39, P, 'subtask', 38, 'Reserve the tap repository', { status: 'done' }),
+    card(40, P, 'subtask', 38, 'Write the formula from the release archives', { status: 'doing', held_by: 't21', win_condition: '`brew install --build-from-source ./Formula/uam.rb` passes on a clean runner.', desc: 'Template the archive URLs and checksums so a release can fill them in.', effort: 'M', checklist: items(['Template the archive URLs', true], ['Read checksums from the release', false], ['Add a `brew test` block', false]) }),
+    card(41, P, 'subtask', 38, 'Test the formula on macOS runners', { win_condition: 'CI installs the formula on macOS 14 and 15.', blocked_by: ['cp1-40'] }),
+    card(42, P, 'subtask', 38, 'Bump the formula on every release', { ...suggestion, win_condition: 'A tag opens a pull request on the tap with the new version.', blocked_by: ['cp1-41'] }),
+    card(43, P, 'story', 37, 'Publish a Scoop manifest', { win_condition: '`scoop install uam` works on Windows.' }),
+    card(44, P, 'subtask', 43, 'Write the Scoop manifest', { status: 'todo' }),
+    card(45, P, 'story', 37, 'Publish an apt repository', { ...suggestion, win_condition: '`apt install uam` works after adding the repository.', blocked_by: ['cp1-38'] }),
+    card(46, P, 'subtask', 45, 'Sign the apt repository metadata', { ...suggestion }),
+    card(47, P, 'epic', null, 'Update the installed binary in place', { ...suggestion, win_condition: 'uam tells you about a newer release and can update itself.', blocked_by: ['cp1-37'] }),
+    card(48, P, 'story', 47, 'Check for a newer release on start', { ...suggestion }),
+    card(49, P, 'subtask', 19, 'Smoke-test each archive on its platform', { ...suggestion, win_condition: 'Each archive runs `uam --version` on its own platform in CI.', blocked_by: ['cp1-21'] }),
     // notes-site: a small plan.
     card(32, 'p3', 'epic', null, 'Accessible post template', { win_condition: 'The post page passes axe with no serious findings.' }),
     card(33, 'p3', 'story', 32, 'Alt text for every image', {}),
@@ -174,6 +189,7 @@ function seedBoard(big: boolean): Seeded {
       payload: { children: [{ title: 'Read merged pull requests since the last tag', win_condition: 'The list matches git log between the two tags.' }] },
     }),
     req(6, 29, 'cancel', 't18', 'The pull request template already produces upgrade notes; this section would repeat them.'),
+    req(8, 41, 'change', 't21', 'Only macOS 14 runners are available on this plan; test there now and add 15 later.', { payload: { patch: { win_condition: 'CI installs the formula on macOS 14.' } } }),
     // Decided: accepted as it was filed, because the Project's acceptance command passed (ADR 0005 decision 5).
     req(7, 4, 'done', 't4', 'Archived pages are cached per cursor in IndexedDB; a revisit reads no network.', {
       status: 'accepted',
@@ -203,6 +219,7 @@ function seedBoard(big: boolean): Seeded {
     'cp1-8': [hold(3, 't1', 50, 'c41d2e8')],
     'cp1-20': [hold(4, 't19', 40, 'c41d2e8')],
     'cp1-28': [hold(5, 't18', 9, 'c41d2e8')],
+    'cp1-40': [hold(8, 't21', 25, 'c41d2e8')],
     'cp1-3': [hold(6, 't3', 60 * 31, '7a2b3c4', [60 * 29, 'accepted'])],
     'cp1-4': [hold(7, 't4', 60 * 28, '7a2b3c4', [60 * 26, 'accepted'])],
   };
@@ -546,8 +563,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const blocked = byId(String(body.blocked ?? url.searchParams.get('blocked') ?? ''));
       if (!blocker || !blocked) return refuse('not_found', 'card not found');
       if (method === 'POST') {
-        // Links point only at confirmed cards (§3); the refusal is a plain invalid.
-        if (!blocker.confirmed) return refuse('invalid', 'a blocker link may point only at a confirmed card');
+        // Prototype (planner-in-task): proposals are fully plannable, links included.
         return done(commit(() => {
           if (!blocked.blocked_by.includes(blocker.id)) blocked.blocked_by.push(blocker.id);
           if (!blocker.blocks.includes(blocked.id)) blocker.blocks.push(blocked.id);
@@ -624,7 +640,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         return done(commit(() => {
           for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];
           if ('project_id' in body) c.moved_at = now();
-          touch(c);
+          // Prototype (planner-in-task): editing a proposal keeps it a proposal; it is confirmed when it starts.
+          if (c.confirmed) touch(c);
         }), ok);
       }
       case 'POST confirm':

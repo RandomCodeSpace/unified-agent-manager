@@ -20,6 +20,7 @@ import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
 import { SettleDialog, type SettleAsk } from './components/planner/SettleDialog';
+import { proto } from './prototype/PlanInTask';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
 import { useResizable } from './lib/useResizable';
@@ -1176,7 +1177,8 @@ export default function App() {
             />
             <SettleDialog ask={settleAsk} onClose={() => setSettleAsk(null)} />
             <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />
-            {planner.host}
+            {/* THROWAWAY PROTOTYPE: the plan lives inside the Task there, so no pop-out. */}
+            {!proto.get().variant && planner.host}
           </div>
         </TooltipProvider>
       </TaskActionsContext.Provider>

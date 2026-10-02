@@ -175,6 +175,8 @@ export function seed(): MockState {
       badge: { text: 'NS', color: 'pink' },
       branch: 'main',
     },
+    // Prototype (planner-in-task): a git Project with no plan.
+    { id: 'p4', name: 'billing-api', dir: '/home/user/projects/billing-api', created_at: ago(60 * 24), badge: { text: 'BA', color: 'violet' }, branch: 'main' },
   ];
 
   const p = (id: string) => projects.find((x) => x.id === id)!.dir;
@@ -945,6 +947,47 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         },
         { ...tool('f6', 46, { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go vet ./internal/vterm/... 2>&1 | tail -5' }), output: '\n<shellId: 1 completed with exit code 0>' }), ended_at: ago(46) },
         { id: 'f7', kind: 'assistant', time: ago(42), text: 'Fixed: `Redraw` now replays focus events after the private-mode replay, so a re-attached client gets them again.\n\n- `TestRedrawReplaysFocusEvents` covers it, and the vterm tests pass.\n- go vet is clean.\n- docs/terminal.md describes the new replay order.' },
+      ],
+    }),
+    // Prototype (planner-in-task): a Task working on a planner subtask (#40), with card chips in its transcript.
+    task({
+      id: 't21',
+      project_id: 'p1',
+      workdir: p('p1'),
+      model: 'claude-haiku-4.5',
+      last_model: 'claude-haiku-4.5',
+      name: 'Write the Homebrew formula',
+      title: '',
+      state: 'working',
+      created_at: ago(25),
+      updated_at: ago(1),
+      items: [
+        { id: 'w1', kind: 'user', time: ago(25), text: 'Work on #40: write the Homebrew formula from the release archives. Keep the archive URLs templated.' },
+        tool('w2', 24, { name: 'board_get', title: 'Read card #40', status: 'completed', input: '{"card":"#40"}', output: '#40 Write the formula from the release archives (doing)', board_card: { id: 'cp1-40', seq: 40, kind: 'subtask', title: 'Write the formula from the release archives', status: 'doing' } }),
+        { id: 'w3', kind: 'assistant', time: ago(23), text: 'The formula belongs to the Homebrew tap story. Its epic waits for **Release automation**, so the signed archives do not exist yet; I will template the URLs and checksums and read them from the release later.' },
+        tool('w4', 22, { name: 'board_get', title: 'Read card #18', status: 'completed', input: '{"card":"#18"}', output: '#18 Release automation (doing)', board_card: { id: 'cp1-18', seq: 18, kind: 'epic', title: 'Release automation', status: 'doing' } }),
+        tool('w5', 18, { name: 'edit', title: 'Create Formula/uam.rb', status: 'completed', input: '{"path":"Formula/uam.rb"}', output: '+class Uam < Formula' }),
+        tool('w6', 12, { name: 'board_checklist', title: 'Tick "Template the archive URLs"', status: 'completed', input: '{"card":"#40","item":0,"done":true}', output: 'ticked', board_card: { id: 'cp1-40', seq: 40, kind: 'subtask', title: 'Write the formula from the release archives', status: 'doing' } }),
+        { id: 'w7', kind: 'assistant', time: ago(10), text: 'The formula installs from a templated archive. Next: read the checksums from the release, then add a `brew test` block. #41 (testing on macOS runners) waits for this one.' },
+        tool('w8', 9, { name: 'board_get', title: 'Read card #41', status: 'completed', input: '{"card":"#41"}', output: '#41 Test the formula on macOS runners (planned)', board_card: { id: 'cp1-41', seq: 41, kind: 'subtask', title: 'Test the formula on macOS runners', status: 'planned' } }),
+        tool('w9', 1, { name: 'bash', title: 'brew audit --strict Formula/uam.rb', status: 'running', input: 'brew audit --strict Formula/uam.rb' }),
+      ],
+    }),
+    // Prototype (planner-in-task): a Task in a Project with no plan.
+    task({
+      id: 't22',
+      project_id: 'p4',
+      workdir: '/home/user/projects/billing-api',
+      model: 'gpt-5-mini',
+      last_model: 'gpt-5-mini',
+      name: 'Rotate the webhook signing secret',
+      title: '',
+      state: 'completed',
+      created_at: ago(90),
+      updated_at: ago(80),
+      items: [
+        { id: 'b1', kind: 'user', time: ago(90), text: 'Rotate the webhook signing secret and accept both secrets for an hour.' },
+        { id: 'b2', kind: 'assistant', time: ago(80), text: 'Done: the handler accepts the old and the new secret until the overlap ends, and a test covers both.' },
       ],
     }),
   ];

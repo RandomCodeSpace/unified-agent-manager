@@ -16,6 +16,7 @@ import { ChartCard } from './Chart';
 import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, SubagentIdleIcon, WorkdirContext, WorkingMark, useApp } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
+import { usePlanProtoOpen } from '../prototype/PlanInTask';
 import { Button } from './ui/button';
 import { Chip, chipVariants } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -973,7 +974,10 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
  * card in the planner, and is plain text while the planner is off.
  */
 function BoardCardChip({ card }: Readonly<{ card: ToolBoardCard }>) {
-  const openCard = usePlannerOpenCard();
+  // THROWAWAY PROTOTYPE: in `?mock&plan=...` the chip opens the card in this Task's plan, never the Planner.
+  const protoOpen = usePlanProtoOpen();
+  const plannerOpen = usePlannerOpenCard();
+  const openCard = protoOpen ?? plannerOpen;
   const name = `#${card.seq} ${card.title}`;
   const label = (
     <>
@@ -985,7 +989,7 @@ function BoardCardChip({ card }: Readonly<{ card: ToolBoardCard }>) {
     return <Chip fill="well" className="max-w-48 font-sans" title={name}>{label}</Chip>;
   }
   return (
-    <button type="button" className={cn(chipVariants({ fill: 'well' }), 'max-w-48 font-sans hover:text-body')} title={`Open ${name} in the planner`} onClick={() => openCard(card.id)}>
+    <button type="button" className={cn(chipVariants({ fill: 'well' }), 'max-w-48 font-sans hover:text-body')} data-plan-chip="" title={protoOpen ? `Show ${name} in this task's plan` : `Open ${name} in the planner`} onClick={() => openCard(card.id)}>
       {label}
     </button>
   );

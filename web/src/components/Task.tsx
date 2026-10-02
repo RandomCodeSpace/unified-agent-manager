@@ -33,6 +33,8 @@ import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
+// THROWAWAY PROTOTYPE (prototype/planner-in-task): the plan inside the Task, `?mock&plan=1|2|3`.
+import { PlanPanel, PlanToggle, ProtoSwitcher, StoryRail, StoryStrip, proto, usePlanSlot, useProto } from '../prototype/PlanInTask';
 
 /** The Files sheet loads with its first opening, never with the Task. */
 const FilesSheet = lazy(() => import('./Files'));
@@ -358,6 +360,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setChartsOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeCharts = useCallback(() => setChartsOpen(false), []);
+  const planProto = useProto();
+  const planOpen = planProto.variant === 1 && planProto.open;
+  const planPresence = usePresence(planOpen);
+  const closeForPlan = useCallback(() => {
+    closePreview(false);
+    setPanel(null);
+    setFilesOpen(false);
+    setChartsOpen(false);
+    setOutput(null);
+    onSheet(false);
+  }, [onSheet, closePreview]);
+  usePlanSlot(sheetOpen || filesOpen || chartsOpen || !!panel || !!output, closeForPlan);
   const showOutput = useCallback((next: CommandOutput) => {
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
@@ -647,6 +661,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               )}
             </>
           )}
+          {planProto.variant === 1 && !noGit && <PlanToggle open={planOpen} onToggle={() => proto.set({ open: !planOpen, focus: null })} />}
           {pinned > 0 && !phone && (
             <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
               <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={toggleCharts}>
@@ -690,6 +705,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </Menu.Content>
           </Menu.Root>
         </header>
+        {planProto.variant === 2 && <StoryStrip session={session} project={project} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -764,7 +780,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
-        <div className="group/dock transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
+        <div className={`group/dock transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 sm:px-4 md:px-6 ${planProto.variant ? 'pb-12' : 'pb-4'}`} onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves.
               Suggested replies float in the same band (Assist.tsx): while they show, both rise above them. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 transition-transform *:pointer-events-auto group-has-data-suggestions/dock:-translate-y-9">
@@ -789,6 +805,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
+      {planProto.variant === 3 && <StoryRail session={session} project={project} />}
+      {planPresence.mounted && <PlanPanel session={session} project={project} inline={sidePanelInline} open={planOpen} onClose={() => proto.set({ open: false })} onClosed={planPresence.onClosed} />}
+      <ProtoSwitcher />
       {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} />}
