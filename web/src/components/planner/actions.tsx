@@ -66,33 +66,29 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     if (!c.project_id) return [];
     const leaf = c.kind === 'subtask';
     const launched = (res: { card: Card; session: { id: string } }) => notify({ tone: 'muted', text: `Launched #${res.card.seq} ${res.card.title} in a new task.`, task: res.session.id });
-    const launch = async (label: string) => {
-      // Work starts only on confirmed cards (§5): a suggestion, or a subtask under one, is launched
-      // through the confirm step, which names what launching confirms and the suggestions it waits on.
+    // The launch dialog picks the new Task's model and mode and takes a brief. Work starts only on
+    // confirmed cards (§5): a suggestion, or a subtask under one, is launched through the confirm
+    // step, which names what launching confirms and the suggestions it waits on.
+    const launch = (whole: boolean) => {
       const confirms = leaf ? cardPath(c, byId).filter((x) => !x.confirmed).reverse() : [];
-      if (confirms.length) {
-        // Its own suggested blockers, then its parents', which hold it back too.
-        const waits = cardPath(c, byId)
-          .reverse()
-          .flatMap((at) =>
-            at.blocked_by.flatMap((id) => {
-              const b = byId.get(id);
-              return b && !b.confirmed && b.status !== 'done' && b.status !== 'cancelled' ? [{ card: b, via: at === c ? undefined : at }] : [];
-            }),
-          );
-        setLaunching({ card: c, confirms, waits, run: () => api.planner.launch(c.id, { confirm: true }).then(launched) });
-        return;
-      }
-      const res = await run(c.id, 'launch', label === 'Launch' ? 'launch the subtask' : 'start the story', () => api.planner.launch(c.id));
-      if (res) launched(res);
+      // Its own suggested blockers, then its parents', which hold it back too.
+      const waits = cardPath(c, byId)
+        .reverse()
+        .flatMap((at) =>
+          at.blocked_by.flatMap((id) => {
+            const b = byId.get(id);
+            return b && !b.confirmed && b.status !== 'done' && b.status !== 'cancelled' ? [{ card: b, via: at === c ? undefined : at }] : [];
+          }),
+        );
+      setLaunching({ card: c, whole, confirms, waits, run: (body) => api.planner.launch(c.id, confirms.length ? { ...body, confirm: true } : body).then(launched) });
     };
     const actions: CardAction[] = [];
     if (!c.confirmed) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
-    if (leaf && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => void launch('Launch') });
+    if (leaf && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => launch(false) });
     // A story's launch starts one of its confirmed subtasks waiting to start; with none, the service refuses it.
     if (c.kind === 'story' && c.status !== 'done' && c.status !== 'cancelled') {
       const reason = pendingUnder(c, byId).length ? undefined : 'No confirmed subtask is waiting to start: confirm or add one first.';
-      actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, reason, onClick: () => void launch('Do whole story') });
+      actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, reason, onClick: () => launch(true) });
     }
     if (!leaf && c.status !== 'cancelled') {
       actions.push({ key: 'plan', label: 'Plan with agent', icon: <Workflow />, onClick: () => setBrief({ kind: 'plan', title: `Plan #${c.seq} with an agent`, run: async ({ brief: b }) => { const r = await api.planner.plan(c.id, { brief: b }); notify({ tone: 'muted', text: `A planning task started for #${c.seq}.`, task: r.session.id }); } }) });

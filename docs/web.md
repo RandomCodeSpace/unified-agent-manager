@@ -1100,7 +1100,10 @@ sign-outs are logged without the token.
 - **Plan**: with the planner on, a Task whose Project has a plan shows a
   one-line story strip under its header: "Epic › Story · 1/3 done · This
   task #25 · next #26 · waits for …", where "waits for" includes what the
-  card waits for through its story or epic. The Task's card is the subtask it
+  card waits for through its story or epic. "next" is the first subtask in
+  the story not started yet with nothing open in its way (its own blockers
+  or its story's and epic's), a confirmed one before a proposal; with none,
+  the strip leaves it out. The Task's card is the subtask it
   works on, or one it finished. A Task with no card shows "Not part of a
   story · Add to a story", and a Project with no plan shows no strip. The
   strip, or the **Plan** button beside Files, opens the Plan panel in the
@@ -1111,8 +1114,14 @@ sign-outs are logged without the token.
   a breadcrumb to move between levels. Clicking a card opens its details in
   place: done when, description, checklist, dependencies (its own level, and
   what it waits for through its story or epic), the agents' requests on it,
-  Edit, Discard for a proposal, and Launch, which asks first when launching
-  confirms proposals. A subtask in progress shows why its plan is locked.
+  Edit, Discard for a proposal, and Launch. Launch, and Do whole story in
+  the Planner, open a dialog with the new Task's model, effort, context size
+  and mode (starting from Settings → New tasks) and an optional brief, which
+  the Task's first message carries; when launching confirms proposals, the
+  dialog names them first. Editing, linking, moving or splitting a proposal
+  keeps it a proposal and restarts its 14 days before it expires; only
+  Confirm, launching it, or adding a Task to it confirms it. A subtask in progress shows why its plan
+  is locked.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCreateValidation(t *testing.T) {
@@ -81,7 +82,8 @@ func TestCreateRules(t *testing.T) {
 	epic, _, one, _ := f.tree()
 	_, err := f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: one.ID, Title: "x"})
 	wantCode(t, err, CodeInvalid) // a subtask holds nothing
-	// The owner's card under an unconfirmed one confirms it.
+	// The owner's card under an unconfirmed one is a proposal too, and
+	// re-arms its parent's expiry rather than confirming it.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	agent := Agent("planner", "")
 	proposed := f.create(agent, epic.ID, KindStory, "Proposed story")
@@ -89,9 +91,12 @@ func TestCreateRules(t *testing.T) {
 		proposed.CreatedBy != "task:planner" || proposed.PinnedSHA != "" {
 		t.Fatalf("agent-created card %+v", proposed)
 	}
+	f.clock.advance(time.Hour)
 	under, err := f.s.Create(f.ctx, Owner("head-2"), NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: proposed.ID, Title: "x"})
 	f.must(err)
-	if got := f.card(proposed.ID); !under.Confirmed() || !got.Confirmed() || got.PinnedSHA != "head-2" {
+	rearmed := f.clock.Now().Add(ExpiryWindow)
+	if got := f.card(proposed.ID); under.Confirmed() || !under.ExpiresAt.Equal(rearmed) || under.CreatedBy != AuthorOwner ||
+		got.Confirmed() || !got.ExpiresAt.Equal(rearmed) || got.PinnedSHA != "" {
 		t.Fatalf("owner card %+v under %+v", under, got)
 	}
 	// Agents create no epic under a card, by the kind rule the owner's cards
@@ -362,7 +367,8 @@ func TestEditOwner(t *testing.T) {
 		Effort: &effort, Prio: &prio, Labels: &labels, Checklist: &checklist, Paths: &paths, Blocked: &blocked, AcceptCmd: &cmd})
 	f.must(err)
 	c := res.Card
-	if res.Request != nil || !c.Confirmed() || c.PinnedSHA != "head-2" || c.Title != title || c.Desc != desc ||
+	// Editing plans, so the proposal stays one, with a fresh expiry.
+	if res.Request != nil || c.Confirmed() || !c.ExpiresAt.Equal(f.clock.Now().Add(ExpiryWindow)) || c.PinnedSHA != "" || c.Title != title || c.Desc != desc ||
 		c.WinCondition != win || c.Due != due || c.Effort != effort || c.Prio != prio || !c.Blocked ||
 		c.AcceptCmd == nil || *c.AcceptCmd != cmd.String || !slices.Equal(c.Paths, paths) || !slices.Equal(c.Labels, labels) {
 		t.Fatalf("owner edit = %+v", c)
@@ -720,22 +726,16 @@ func TestSimilarityAndQueries(t *testing.T) {
 	}
 }
 
-// Every owner touch on a card confirms and pins its unconfirmed ancestors,
-// leaves confirmed ones alone, and so keeps them from the sweep.
+// Every owner touch on a card (Confirm, launch, a status change, an
+// acceptance, a restore, or moving a confirmed card under a proposal)
+// confirms and pins its unconfirmed ancestors, leaves confirmed ones alone,
+// and so keeps them from the sweep. Planning writes don't (decision 10).
 func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 	head := Owner("head-9")
 	for _, tc := range []struct {
 		name string
 		op   func(f *fixture, epic, story, leaf Card) error
 	}{
-		{"save", func(f *fixture, _, _, leaf Card) error {
-			_, err := f.s.Edit(f.ctx, head, leaf.ID, Patch{Desc: ptr("x")})
-			return err
-		}},
-		{"checklist", func(f *fixture, _, _, leaf Card) error {
-			_, err := f.s.Checklist(f.ctx, head, leaf.ID, ChecklistEdit{Add: []string{"x"}})
-			return err
-		}},
 		{"confirm", func(f *fixture, _, _, leaf Card) error {
 			_, err := f.s.Confirm(f.ctx, head, leaf.ID)
 			return err
@@ -750,10 +750,6 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 		}},
 		{"ready", func(f *fixture, _, _, leaf Card) error {
 			_, err := f.s.SetStatus(f.ctx, head, leaf.ID, StatusTodo, "", false)
-			return err
-		}},
-		{"create", func(f *fixture, _, story, _ Card) error {
-			_, err := f.s.Create(f.ctx, head, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "new"})
 			return err
 		}},
 		{"move", func(f *fixture, epic, story, _ Card) error {
@@ -789,10 +785,6 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 			_, err := f.s.Restore(f.ctx, head, leaf.ID, "back")
 			return err
 		}},
-		{"split", func(f *fixture, _, _, leaf Card) error {
-			_, err := f.s.Split(f.ctx, head, leaf.ID, []SplitChild{{Title: "a"}, {Title: "b"}})
-			return err
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -813,6 +805,87 @@ func TestOwnerTouchConfirmsAncestors(t *testing.T) {
 			f.must(err)
 			if got := f.card(story.ID); got.Status == StatusCancelled {
 				t.Fatalf("the sweep expired the story after %s", tc.name)
+			}
+		})
+	}
+}
+
+// The owner's planning writes on a proposal (edit, rank, move, checklist,
+// link, split, and a new card under it) never confirm it or its proposed
+// parents: only Confirm and launching do (decision 10). Each write but a
+// link re-arms the expiry of the card and its proposed parents, so a
+// proposal the owner is working on outlives its first 14 days.
+func TestOwnerPlanningKeepsProposals(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rearm bool
+		op    func(f *fixture, story, leaf, other Card) error
+	}{
+		{"save", true, func(f *fixture, _, leaf, _ Card) error {
+			_, err := f.s.Edit(f.ctx, owner, leaf.ID, Patch{Desc: ptr("x")})
+			return err
+		}},
+		{"rank", true, func(f *fixture, _, leaf, _ Card) error {
+			_, err := f.s.Edit(f.ctx, owner, leaf.ID, Patch{Rank: ptr(1)})
+			return err
+		}},
+		{"move", true, func(f *fixture, story, leaf, _ Card) error {
+			_, err := f.s.Edit(f.ctx, owner, leaf.ID, Patch{ParentID: &story.ID, Rank: ptr(1)})
+			return err
+		}},
+		{"checklist", true, func(f *fixture, _, leaf, _ Card) error {
+			_, err := f.s.Checklist(f.ctx, owner, leaf.ID, ChecklistEdit{Add: []string{"x"}})
+			return err
+		}},
+		{"create", true, func(f *fixture, story, _, _ Card) error {
+			c, err := f.s.Create(f.ctx, owner, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "new"})
+			if err == nil && c.Confirmed() {
+				return fmt.Errorf("the owner's card under a proposal is confirmed: %+v", c)
+			}
+			return err
+		}},
+		{"split", true, func(f *fixture, story, leaf, _ Card) error {
+			if _, err := f.s.Split(f.ctx, owner, leaf.ID, []SplitChild{{Title: "a"}, {Title: "b"}}); err != nil {
+				return err
+			}
+			for _, k := range f.children(story.ID) {
+				if k.Confirmed() {
+					return fmt.Errorf("a split part under a proposal is confirmed: %+v", k)
+				}
+			}
+			return nil
+		}},
+		{"link", false, func(f *fixture, _, leaf, other Card) error {
+			return f.s.Link(f.ctx, owner, other.ID, leaf.ID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			epic := f.create(owner, "", KindEpic, "Epic")
+			f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+			planner := Agent("planner", "")
+			story := f.create(planner, epic.ID, KindStory, "Suggested")
+			leaf := f.create(planner, story.ID, KindSubtask, "Suggested leaf")
+			other := f.create(planner, story.ID, KindSubtask, "Other leaf")
+			f.clock.advance(ExpiryWindow / 2)
+			f.must(tc.op(f, story, leaf, other))
+			for _, c := range []Card{f.card(story.ID), f.card(leaf.ID)} {
+				if c.Status == StatusCancelled {
+					continue // the split card
+				}
+				if c.Confirmed() || c.PinnedSHA != "" {
+					t.Fatalf("%s after %s = %+v, want it a proposal", c.Title, tc.name, c)
+				}
+			}
+			if e := f.card(epic.ID); e.PinnedSHA != "head-1" {
+				t.Fatalf("a confirmed ancestor was re-pinned: %+v", e)
+			}
+			// Past the first expiry, a re-armed proposal is still there.
+			f.clock.advance(ExpiryWindow/2 + time.Hour)
+			_, err := f.s.Sweep(f.ctx)
+			f.must(err)
+			if got := f.card(story.ID); (got.Status == StatusCancelled) == tc.rearm {
+				t.Fatalf("story after %s and the first expiry = %s, re-armed %v", tc.name, got.Status, tc.rearm)
 			}
 		})
 	}

@@ -98,10 +98,10 @@ Subtask cards. The `board_*` tools are present while the owner has the
 Planner on and the Project is a git repository.
 
 - **Scope**: a Task started from the Planner works only under the card its
-  first message names. "Launch" and "Do whole story" start it holding a
-  subtask: finish that with a done request, then `board_claim` the next
-  pending one. "Plan with agent" creates and edits under its card and holds
-  nothing. The owner may also add a running Task to a story without a
+  first message names; that message may carry a brief from the owner.
+  "Launch" and "Do whole story" start it holding a subtask: finish that
+  with a done request, then `board_claim` the next pending one. "Plan with
+  agent" creates and edits under its card and holds nothing. The owner may also add a running Task to a story without a
   message: it then holds a subtask and works in that story's scope like a
   launched Task, and `board_list` shows the card as "held by you". Any other
   Task reads the board and may propose epics. Every Task's scope also covers
@@ -119,7 +119,8 @@ Planner on and the Project is a git repository.
   passes and nothing holds it back: claim the next pending one. Otherwise
   it waits for the owner, and the reply says why.
 - **Proposals**: cards you create stay unconfirmed until the owner confirms
-  them, and expire after 14 days. Work runs only on confirmed cards:
+  or launches them; the owner's edits keep them proposals and restart their
+  14 days, after which they expire. Work runs only on confirmed cards:
   `board_claim` refuses a proposal or a card under one. Caps per Task: 20
   created cards, 10 unconfirmed children per card or 10 epics at the root,
   20 comments per card.

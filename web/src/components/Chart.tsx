@@ -6,7 +6,7 @@ import { chartCsv, chartSource, formatNumber, headline, seriesColorIndexes, type
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
-import { Note, relTime, Skeleton, Spinner, useMedia } from './common';
+import { Note, Skeleton, Spinner, timeAgo, useMedia } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
@@ -21,11 +21,6 @@ type ChartRows = Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'x' | 'l
 const SWATCHES = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-pink', 'bg-badge-violet', 'bg-badge-cyan', 'bg-badge-green'];
 
 /** A script's first line and an ellipsis; the whole command is in the title and the pin prompt. */
-
-const ago = (iso: string) => {
-  const t = relTime(iso);
-  return t === 'now' ? 'just now' : `${t} ago`;
-};
 
 /** The chart drawn by the diagram frame, shown as an image like a diagram. */
 export function ChartImage({ chart, look, className }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string }>) {
@@ -196,7 +191,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
       {table ? <RowsTable chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height: phone ? 260 : 320 }} /></div>}
       <Legend chart={chart} />
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
-        <span>{chart.command ? 'From a command' : 'From rows the agent gave'}, {ago(chart.at)}</span>
+        <span>{chart.command ? 'From a command' : 'From rows the agent gave'}, {timeAgo(chart.at)}</span>
         <span>· Drawn from {rows} {rows === 1 ? 'row' : 'rows'}</span>
       </p>
     </figure>
@@ -208,7 +203,7 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
   const [confirm, setConfirm] = useState(false);
   const [box, width] = useDrawWidth(560);
   const head = headline(chart);
-  const refreshed = chart.labels.length ? ago(chart.at) : 'not read yet';
+  const refreshed = chart.labels.length ? timeAgo(chart.at) : 'not read yet';
   return (
     <section aria-label={chart.title} className="flex flex-col gap-1 rounded-lg bg-raised p-3.5 shadow-raised">
       <div className="flex items-center gap-1">
@@ -247,7 +242,7 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
           <ChevronDown aria-hidden="true" className={cn('absolute right-0 bottom-0 size-3.5 text-faint opacity-0 transition-[opacity,transform] group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100', expanded && 'rotate-180')} />
         </button>
       )}
-      {chart.error && <Note tone="warn" className="[overflow-wrap:anywhere]">Last refresh failed{chart.error_at ? `, ${ago(chart.error_at)}` : ''}: {chart.error}</Note>}
+      {chart.error && <Note tone="warn" className="[overflow-wrap:anywhere]">Last refresh failed{chart.error_at ? `, ${timeAgo(chart.error_at)}` : ''}: {chart.error}</Note>}
       {notice && <Note tone="warn" role="status">{notice}</Note>}
     </section>
   );

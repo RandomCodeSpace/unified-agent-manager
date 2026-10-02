@@ -626,7 +626,7 @@ describe('owner authoring', () => {
       expect(within(dialog.getByRole('list', { name: 'Still waits on' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#37 Write the failing test first · Subtask']);
       await user.click(dialog.getByRole('button', { name: 'Confirm and launch' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Confirm and launch #17?' })).toBeNull());
-      expect(launch).toHaveBeenCalledWith('cp1-17', { confirm: true });
+      expect(launch).toHaveBeenCalledWith('cp1-17', { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe', brief: '', confirm: true });
       await closeCard(user);
       expect(await tree.findByRole('treeitem', { name: /^#17 Split the diagram renderer into its own chunk, Doing/ })).toBeTruthy();
       expect(tree.getByRole('treeitem', { name: /^#16 Lazy-load the diagram renderer, Doing/ })).toBeTruthy();
@@ -648,6 +648,38 @@ describe('owner authoring', () => {
     await user.click(panel.getByRole('button', { name: 'Launch' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Confirm and launch #17?' }));
     expect(within(dialog.getByRole('list', { name: 'Still waits on' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['#37 Harden the retry path · Story (via its story #16)']);
+  });
+
+  test('Launch asks for the new task’s model, mode and a brief, starting from the New task defaults', async () => {
+    const { user, tree } = await openPlanner();
+    const launch = vi.spyOn(api.planner, 'launch');
+    try {
+      const panel = await openCard(user, tree, 15);
+      await user.click(panel.getByRole('button', { name: 'Launch' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Launch #15?' }));
+      expect(launch).not.toHaveBeenCalled();
+      // Settings' New tasks: Claude Haiku 4.5, high effort, long context, Safe.
+      expect(dialog.getByRole('combobox', { name: 'Model' }).textContent).toContain('Claude Haiku 4.5');
+      expect(dialog.getByRole('combobox', { name: 'Mode' }).textContent).toContain('Safe');
+      await user.click(dialog.getByRole('combobox', { name: 'Model' }));
+      await user.click(await screen.findByRole('option', { name: /GPT-5 mini/ }));
+      await user.click(dialog.getByRole('combobox', { name: 'Mode' }));
+      await user.click(await screen.findByRole('option', { name: 'Yolo' }));
+      await user.type(dialog.getByRole('textbox', { name: 'Brief' }), 'Keep the old API.');
+      await user.click(dialog.getByRole('button', { name: 'Launch' }));
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Launch #15?' })).toBeNull());
+      expect(launch).toHaveBeenCalledWith('cp1-15', { provider: 'copilot', model: 'gpt-5-mini', effort: 'high', context_size: 'default', mode: 'yolo', brief: 'Keep the old API.' });
+    } finally {
+      launch.mockRestore();
+    }
+  });
+
+  test('an attempt that just ended says “just now”, as other times do', async () => {
+    const { user, tree } = await openPlanner();
+    await act(() => api.planner.release('cp1-5', ''));
+    const panel = await openCard(user, tree, 5);
+    expect(await panel.findByText(/^ended just now/)).toBeTruthy();
+    expect(panel.queryByText(/now ago/)).toBeNull();
   });
 
   test('a done subtask under a cancelled card offers no Back to To do, which the service refuses there', async () => {

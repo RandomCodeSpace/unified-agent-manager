@@ -520,7 +520,7 @@ export interface ImportReport {
   skipped: { id: string; reason: string }[];
 }
 
-/** The fields an owner edit may carry (`PATCH /api/board/cards/{ref}`); the edit confirms the card. */
+/** The fields an owner edit may carry (`PATCH /api/board/cards/{ref}`); it confirms no suggestion. */
 export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 'prio' | 'effort' | 'due' | 'labels' | 'checklist' | 'accept_cmd' | 'paths' | 'project_id'>>;
 
 /** What Settle decides for each subtask the Task holds (§5). */
@@ -1549,7 +1549,7 @@ export interface Routine extends RoutineInput {
  */
 function plannerApi() {
   const card = (ref: string, action = '') => `/api/board/cards/${enc(ref)}${action ? `/${action}` : ''}`;
-  type TaskSettings = Partial<Pick<TaskDefaults, 'model' | 'effort' | 'mode' | 'context_size'>>;
+  type TaskSettings = Partial<TaskDefaults>;
   return {
     board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
     project: (id: string) => call<{ accept_cmd: string; git: string }>('GET', `/api/board/projects/${enc(id)}`),
@@ -1570,8 +1570,9 @@ function plannerApi() {
     /**
      * On a subtask it launches that subtask; on a story it is Do whole story. `confirm` lets it
      * confirm the suggestions it holds or sits under; without it such a launch is refused (`unconfirmed`).
+     * The new Task starts on the given selection (else the Task defaults), with `brief` in its first prompt.
      */
-    launch: (ref: string, body: TaskSettings & { confirm?: boolean } = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
+    launch: (ref: string, body: TaskSettings & { brief?: string; confirm?: boolean } = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
     /** Makes an existing Task work on the subtask `ref`, or on a new subtask under the story or epic `ref` (titled `title`, else after the Task). */
     attach: (ref: string, body: { task_id: string; title?: string; confirm?: boolean }) => call<Card>('POST', card(ref, 'attach'), body),
     plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
