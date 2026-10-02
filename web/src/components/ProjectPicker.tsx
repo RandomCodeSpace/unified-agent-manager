@@ -51,7 +51,7 @@ const inputClass = 'h-8 min-w-0 flex-1 bg-transparent text-ui text-ink outline-n
  * for all of them. It opens a searchable list with All projects first; each Project row
  * carries a gear that opens Edit project once the list has closed, so focus returns to the badge.
  */
-export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRoutines, onPlan }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onRoutines?: (p: Project) => void; onPlan?: (p: Project) => void }>) {
+export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRoutines, onPlan, side = 'bottom' }: Readonly<{ projects: Project[]; filter: string | null; onFilter: (id: string | null) => void; onEdit: (p: Project) => void; onRoutines?: (p: Project) => void; onPlan?: (p: Project) => void; /** Where the list opens: below the sidebar header's button, or right of the collapsed rail's. */ side?: 'bottom' | 'right' }>) {
   const chosen = filteredProject(projects, filter);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -76,12 +76,12 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRout
         onEdit(p);
       }}
     >
-      <Tip label={chosen ? <>Project filter<span className="block text-on-primary/70">{chosen.name}</span></> : 'All projects'}>
+      <Tip side={side === 'right' ? 'right' : undefined} label={chosen ? <>Project filter<span className="block text-on-primary/70">{chosen.name}</span></> : 'All projects'}>
         <Popover.Trigger render={<Button size="icon" aria-label={chosen ? `Project filter: ${chosen.name}` : 'Project filter: all projects'} className="text-muted" />}>
           {chosen ? <ProjectBadge badge={chosen.badge} /> : <Layers />}
         </Popover.Trigger>
       </Tip>
-      <Popover.Content side="bottom" align="start" sideOffset={4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
+      <Popover.Content side={side} align="start" sideOffset={side === 'right' ? 8 : 4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
         <FilterList
           projects={projects}
           filter={chosen?.id ?? null}
