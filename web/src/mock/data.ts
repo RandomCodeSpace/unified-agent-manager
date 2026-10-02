@@ -720,7 +720,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           bash('c1', 'ls ~/projects/sky-dodge'),
           ask('q-port', 'Which port should the local server use?', ['8000', '8080'], 'User selected: 8000'),
           bash('c2', 'python3 -m http.server 8000 --directory ~/projects/sky-dodge &', {}, 0.01),
-          ask('q-shot', 'Capture the whole page or only the viewport?', ['Whole page', 'Viewport only'], 'User selected: Viewport only'),
+          ask('q-shot', 'Capture the whole page or only the viewport?', ['Whole page', 'Viewport only'], 'User responded: Only the viewport, at 1280 by 800, so the game fills the frame'),
           tool('c3', step(0.1), { name: 'web_fetch', title: 'Fetch http://localhost:8000', status: 'completed', input: '{"url":"http://localhost:8000"}', output: '<!doctype html>…' }),
           think('r2', 'The page came back; try a headless capture.'),
           say('m1', 'The browser needs `--no-sandbox` in this environment, and the earlier local server is no longer accepting connections. I will restart the server and capture the page.'),

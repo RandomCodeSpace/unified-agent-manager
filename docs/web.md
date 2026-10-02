@@ -361,9 +361,13 @@ sign-outs are logged without the token.
   line. Click a line for the full input and output. A run of more than eight
   calls keeps the first two and the last three and folds the rest behind
   "Show N more". When the agent asks you a question, the conversation shows
-  the question, its choices and your answer under "You answered", also after
-  a reload or restart. An interrupted question without a recorded answer
-  shows "No answer." Copilot's recorded thinking also returns after a restart.
+  it in full while it waits. Once answered it shrinks to one small card: the
+  question, then "You chose" and the option you picked or "You wrote" and
+  your text ("Declined" if you declined, "Not answered" if the turn ended
+  first), also after a reload or restart. Click the card to see the whole
+  question, every option with yours marked, and your full answer. Several
+  questions asked together show as one card ("3 questions") that opens the
+  same way. Copilot's recorded thinking also returns after a restart.
   If you scroll up while text arrives, the view stays put
   and offers "Jump to bottom". While the agent works, a label above the
   composer shows that it is working and for how long, and stays in view as
