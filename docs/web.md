@@ -701,8 +701,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   titles, subagent result lines, suggested replies, outcome lines, planner
   triage and suggestions) counts
   against a daily limit and is logged. Settings → **Background AI** shows
-  today's calls against the limit, the limit itself, and the log, newest
-  first and grouped by day with each day's totals: calls, failures,
+  today's calls against the limit, the limit itself, and the log behind
+  **Show log · N calls today** (collapsed until opened, and read only while
+  open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Subagent summary", "Suggested replies",
   "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model,
@@ -980,7 +981,18 @@ are logged only at debug level (`UAM_DEBUG=1`).
   open beside the conversation above it. While the terminal has focus, keys
   go to the shell, not to uam's shortcuts. The browser keeps a few keys for
   itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
-  Ctrl+Tab on Windows and Linux; those cannot reach the shell. At
+  Ctrl+Tab on Windows and Linux; those cannot reach the shell. The mouse
+  works the clipboard as in Windows Terminal or PuTTY: releasing a mouse
+  selection copies it ("Copied" shows briefly in the panel's header), and
+  right-click or middle-click pastes the clipboard at the prompt instead of
+  opening the browser's menu. Ctrl+Shift+C (Cmd+C on a Mac) also copies the
+  selection and Ctrl+Shift+V (Cmd+V) pastes. When a program in the terminal
+  uses the mouse, its clicks go to it; hold Shift to select, copy and paste.
+  Click-to-paste needs the browser to let the page read the clipboard: the
+  first time, it asks. Where it refuses (permission denied, a plain-HTTP
+  address, or a managed browser's policy) the header says "Clipboard
+  blocked. Use Ctrl+Shift+V to paste." (Cmd+V on a Mac), and keyboard paste
+  still works. On a phone, touch is unchanged: a long-press never pastes. At
   most eight terminals run at once. When the service refuses one (too many,
   the folder is gone, or the setting is off) the panel says "Could not open a
   terminal." with Retry. The terminal draws with WebGL; in a browser with
@@ -1011,13 +1023,6 @@ are logged only at debug level (`UAM_DEBUG=1`).
   error", or "Working · quiet 12m" once Copilot has reported nothing for a
   few minutes (the status never shows what the agent is doing). Hovering an
   active row that can settle shows Settle.
-  - **Answer in place**: a question's choices show as chips under its row,
-    the recommended one already picked, as in the message box; pick others
-    (several where the question allows it) and press Answer. A question
-    without choices, with several parts, or that you want to say more about
-    takes "Reply…", which opens the Task. A permission request shows Allow
-    (allow once) and Don't allow beside the first line of what it asks to
-    run. The first answer from any tab wins, as on the Task's own card.
   - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
@@ -1042,12 +1047,15 @@ are logged only at debug level (`UAM_DEBUG=1`).
     is kept per browser. The gear at the right of each Project opens "Edit
     project", where its name and Task defaults live together with "Previous
     sessions" and "Remove project".
-  - **Hide the sidebar**: the UAM icon beside Search in the sidebar header, or
-    Ctrl+B (⌘+B on a Mac), hides the sidebar and the conversation takes the
-    width; the same icon then sits at the start of the main pane's header.
-    Toggling it keeps the selected Task and its URL.
+  - **Collapse the sidebar**: the UAM icon beside Search in the sidebar
+    header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
+    rail and the conversation takes the width. The rail keeps, top to bottom,
+    the UAM icon (shows the sidebar again, with the Needs you count on it),
+    New task, the Project filter, Add project, and at the foot Settings, the
+    planner and the connection dot; each opens exactly what the sidebar's
+    own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
-    drawer that the button and the shortcut open and close.
+    drawer that the button and the shortcut open and close; there is no rail.
   - With no Task open, the main pane shows only the uam mark and one line;
     New task and Add project are in the sidebar. There is one theme; it does
     not follow the system.

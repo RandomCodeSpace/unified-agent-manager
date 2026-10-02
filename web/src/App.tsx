@@ -10,7 +10,7 @@ import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
 import { SettingsView } from './components/Settings';
 import { RoutinesView } from './components/Routines';
-import { Brand, CONNECTION_TEXT, Sidebar, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
+import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
@@ -230,17 +230,15 @@ export default function App() {
   }, [meta]);
 
   /**
-   * Hides or shows the sidebar (wide layout), remembered per browser. Focus follows the
-   * toggle the user was on, so a keyboard user is never left on an inert element; focus
-   * anywhere else (the composer) is left alone.
+   * Collapses the sidebar to its icon rail or expands it (wide layout), remembered per browser.
+   * Focus on the sidebar or the rail moves to the other's toggle, so a keyboard user is never
+   * left on an inert or removed element; focus anywhere else (the composer) is left alone.
    */
   const toggleSidebar = useCallback(() => {
     const next = !sidebarOpen;
     setSidebarOpen(next);
     localStorage.setItem(SIDEBAR_KEY, JSON.stringify(next));
-    const active = document.activeElement;
-    const onToggle = next ? active?.id === 'sidebar-show' : !!aside.current?.contains(active);
-    if (onToggle) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
+    if (aside.current?.contains(document.activeElement)) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
   }, [sidebarOpen]);
 
   // Ctrl/Cmd+B toggles the sidebar, or the drawer on a narrow screen.
@@ -874,12 +872,10 @@ export default function App() {
     />
   );
 
-  // The main pane's header starts with the sidebar toggle when the sidebar is hidden, or the drawer toggle on a narrow screen.
-  let leading: React.ReactNode = null;
-  if (narrow) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" />;
-  else if (!sidebarOpen) leading = <SidebarToggle id="sidebar-show" size="icon-md" open={false} count={needsYouTasks} onToggle={toggleSidebar} className="-ml-1" />;
-  // The sidebar's column, animated between its width and nothing.
-  const columns = sidebarOpen ? 'grid-cols-[320px_minmax(0,1fr)]' : 'grid-cols-[0px_minmax(0,1fr)]';
+  // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
+  const leading = narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" /> : null;
+  // The sidebar's column, animated between its width and the rail's.
+  const columns = sidebarOpen ? 'grid-cols-[320px_minmax(0,1fr)]' : 'grid-cols-[48px_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
   // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
@@ -957,10 +953,15 @@ export default function App() {
               narrow ? 'grid-cols-1' : cn('transition-[grid-template-columns] duration-240 ease-app', columns),
             )}
           >
-            {/* The column animates to 0; the sidebar keeps its width inside so nothing reflows on the way, and is inert once hidden. */}
+            {/* The column animates to the rail's 48px; the sidebar keeps its width inside so nothing reflows on the way, and is inert once collapsed, under the rail. */}
             {!narrow && (
-              <aside ref={aside} className="rail-edge relative min-h-0 overflow-hidden" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>
-                <div className="h-full w-rail">{sidebar}</div>
+              <aside ref={aside} className="rail-edge relative min-h-0 overflow-clip">
+                <div className="h-full w-rail" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>{sidebar}</div>
+                {!sidebarOpen && (
+                  <div className="absolute inset-y-0 left-0 animate-fade-in">
+                    <SidebarRail projects={state.projects} actions={actions} connection={connection} count={needsYouTasks} />
+                  </div>
+                )}
               </aside>
             )}
             {narrow && (
@@ -1082,7 +1083,7 @@ export default function App() {
   );
 }
 
-/** The header of the non-Task views while the sidebar is away (narrow, or hidden): its toggle, the brand, the connection. */
+/** The header of the non-Task views while the sidebar is a drawer (narrow): its toggle, the brand, the connection. */
 function PaneHeader({ leading, connection }: Readonly<{ leading: React.ReactNode; connection?: keyof typeof CONNECTION_TEXT }>) {
   return (
     <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">

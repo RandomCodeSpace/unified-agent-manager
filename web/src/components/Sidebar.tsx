@@ -7,7 +7,6 @@ import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
 import { Key } from './InlinePicker';
 import { ProjectFilterPicker } from './ProjectPicker';
-import { TaskAsk } from './TaskAsk';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
@@ -40,10 +39,11 @@ export interface WorkspaceActions {
  * of the main pane's header, once hidden, it brings it back. On a narrow screen it opens
  * and closes the drawer instead.
  */
-export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, count = 0, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; /** Tasks that need you, shown on the button while the list is out of sight. */ count?: number; className?: string }>) {
+export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, count = 0, side, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; /** Tasks that need you, shown on the button while the list is out of sight. */ count?: number; side?: TipSide; className?: string }>) {
   const label = (open ? 'Hide sidebar' : 'Show sidebar') + (count > 0 ? `, ${count} need you` : '');
   return (
     <Tip
+      side={side}
       label={
         <>
           {label}
@@ -60,6 +60,100 @@ export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = fa
         )}
       </Button>
     </Tip>
+  );
+}
+
+type TipSide = 'top' | 'right';
+
+/* ---------- Header and footer controls (the sidebar's, and the collapsed rail's) ---------- */
+
+function NewTaskButton({ actions, id, side }: Readonly<{ actions: WorkspaceActions; id?: string; side?: TipSide }>) {
+  return (
+    <Tip
+      side={side}
+      label={
+        <>
+          New task<span className="block text-on-primary/70">Alt+N</span>
+        </>
+      }
+    >
+      <Button id={id} size="icon" aria-label="New task" aria-keyshortcuts="Alt+N" className="text-muted" onClick={actions.onNewTask}>
+        <SquarePen />
+      </Button>
+    </Tip>
+  );
+}
+
+function AddProjectButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
+  return (
+    <Tip label="Add project" side={side}>
+      <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
+        <FolderPlus />
+      </Button>
+    </Tip>
+  );
+}
+
+function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[]; actions: WorkspaceActions; side?: TipSide }>) {
+  return <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} side={side === 'right' ? 'right' : undefined} />;
+}
+
+function SettingsButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
+  return (
+    <Tip label="Settings" side={side}>
+      <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className={cn('text-muted', className)} onClick={actions.onSettings}>
+        <SettingsIcon />
+      </Button>
+    </Tip>
+  );
+}
+
+function PlannerButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
+  if (!actions.planner) return null;
+  return (
+    <Tip label="Planner" side={side}>
+      <Button size="icon" aria-label="Planner" aria-pressed={actions.planner.open} className={cn('text-muted', className)} onClick={() => actions.planner!.onOpen()}>
+        <KanbanSquare />
+      </Button>
+    </Tip>
+  );
+}
+
+function ConnectionDot({ connection, side }: Readonly<{ connection: Connection; side?: TipSide }>) {
+  return (
+    <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]} side={side}>
+      <output className="flex size-7 items-center justify-center">
+        <Dot tone={CONNECTION_TONE[connection]} pulse={connection !== 'connected'} />
+        <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
+      </output>
+    </Tip>
+  );
+}
+
+/**
+ * The collapsed sidebar (wide layout): a 48px rail on the sidebar's floor. At the top the UAM
+ * mark (shows the sidebar, with the Needs you count), New task, the Project filter and Add
+ * project; at the foot Settings, the planner and the connection. Each is the expanded
+ * sidebar's own control, so it opens the same thing; tips open to the right.
+ */
+export function SidebarRail({ projects, actions, connection, count }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number }>) {
+  return (
+    <nav aria-label="Sidebar" className="flex h-full w-12 flex-col items-center bg-rail pb-2 text-body">
+      <div className="flex h-header shrink-0 items-center">
+        <SidebarToggle id="sidebar-show" open={false} count={count} onToggle={actions.onToggleSidebar} side="right" />
+      </div>
+      <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
+        {projects.length > 0 && <NewTaskButton actions={actions} side="right" />}
+        {projects.length > 0 && <FilterButton projects={projects} actions={actions} side="right" />}
+        <AddProjectButton actions={actions} side="right" />
+      </div>
+      <span className="flex-1" />
+      <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
+        <SettingsButton actions={actions} side="right" />
+        <PlannerButton actions={actions} side="right" />
+        <ConnectionDot connection={connection} side="right" />
+      </div>
+    </nav>
   );
 }
 
@@ -155,7 +249,7 @@ type DiffStat = { files: number; additions: number; deletions: number };
 
 /**
  * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line; a Needs you row answers its request below them.
+ * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line.
  */
 function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
@@ -171,9 +265,8 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const status = taskStatus(s, unread);
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
-  const ask = attention && !readOnly(s) ? s.ask : undefined;
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
-  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring, its answer controls included.
+  // A row on the rail: flat until hovered; the open one is `raised` with the soft ring.
   const weight = strong ? 'font-medium text-ink' : 'text-body';
   let rowClass: string;
   if (compact) {
@@ -249,11 +342,6 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             )}
           </button>
         </Tip>
-      )}
-      {ask && !renaming && (
-        <div className="px-2.5 pb-2">
-          <TaskAsk key={ask.id} session={s} ask={ask} onReply={() => a.select(s.id)} />
-        </div>
       )}
       {settle && !renaming && (
         // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits at the end of the status line.
@@ -444,25 +532,9 @@ export const Sidebar = memo(function Sidebar({
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
         <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
-        {projects.length > 0 && <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} />}
-        <Tip label="Add project">
-          <Button size="icon" aria-label="Add project" className="text-muted" onClick={actions.onAddProject}>
-            <FolderPlus />
-          </Button>
-        </Tip>
-        {projects.length > 0 && (
-          <Tip
-            label={
-              <>
-                New task<span className="block text-on-primary/70">Alt+N</span>
-              </>
-            }
-          >
-            <Button id="new-task" size="icon" aria-label="New task" aria-keyshortcuts="Alt+N" className="text-muted" onClick={actions.onNewTask}>
-              <SquarePen />
-            </Button>
-          </Tip>
-        )}
+        {projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
+        <AddProjectButton actions={actions} />
+        {projects.length > 0 && <NewTaskButton actions={actions} id="new-task" />}
       </header>
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
@@ -477,24 +549,9 @@ export const Sidebar = memo(function Sidebar({
         </output>
       )}
       <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
-        <Tip label="Settings">
-          <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className="-ml-1.5 text-muted" onClick={actions.onSettings}>
-            <SettingsIcon />
-          </Button>
-        </Tip>
-        {actions.planner && (
-          <Tip label="Planner">
-            <Button size="icon" aria-label="Planner" aria-pressed={actions.planner.open} className="-ml-1 text-muted" onClick={() => actions.planner!.onOpen()}>
-              <KanbanSquare />
-            </Button>
-          </Tip>
-        )}
-        <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]}>
-          <output className="flex size-7 items-center justify-center">
-            <Dot tone={conn} pulse={connection !== 'connected'} />
-            <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
-          </output>
-        </Tip>
+        <SettingsButton actions={actions} className="-ml-1.5" />
+        <PlannerButton actions={actions} className="-ml-1" />
+        <ConnectionDot connection={connection} />
         {version && <span className="truncate text-meta" title={version}>{version}</span>}
         <span className="flex-1" />
         {authRequired && (

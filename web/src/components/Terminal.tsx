@@ -3,15 +3,21 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { RotateCcw, SquareTerminal, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '../api';
-import { exitCode, terminalUrl } from '../lib/terminal';
+import { exitCode, mouseClipboard, terminalUrl, type ClipboardNotice } from '../lib/terminal';
 import { Button } from './ui/button';
 
 /** Where the shell's socket stands, or the shell's exit code once it has exited. */
 type Status = 'connecting' | 'connected' | 'disconnected' | 'failed' | 'webgl' | number;
 
 const LABELS: Record<string, string> = { connecting: 'Connecting…', connected: 'Connected', disconnected: 'Disconnected' };
+
+const MAC = navigator.platform.startsWith('Mac');
+const NOTICES: Record<ClipboardNotice, string> = {
+  copied: 'Copied',
+  'paste-blocked': `Clipboard blocked. Use ${MAC ? 'Cmd+V' : 'Ctrl+Shift+V'} to paste.`,
+};
 
 /**
  * The terminal dock's content (App.tsx TerminalDock, under the Task view): a shell in the Project
@@ -27,6 +33,14 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
     setStatus('connecting');
     setShell((n) => n + 1);
   };
+  const [notice, setNotice] = useState<ClipboardNotice | null>(null);
+  const timer = useRef<number>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const notify = useCallback((next: ClipboardNotice) => {
+    setNotice(next);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setNotice(null), next === 'copied' ? 1400 : 6000);
+  }, []);
 
   return (
     <>
@@ -34,6 +48,7 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="text-title text-ink">Terminal</span>
         <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
+        <span role="status" className="min-w-0 truncate text-meta text-muted">{notice && NOTICES[notice]}</span>
         <output className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</output>
         <Button size="sm" className="text-muted" onClick={restart}>
           <RotateCcw />
@@ -51,18 +66,18 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
       )}
       {status === 'webgl'
         ? <p role="alert" className="mx-3 animate-fade-in text-caption text-error">The terminal needs WebGL, which this browser has turned off.</p>
-        : <Screen key={shell} projectId={project.id} onStatus={setStatus} />}
+        : <Screen key={shell} projectId={project.id} onStatus={setStatus} onNotice={notify} />}
     </>
   );
 }
 
 /** One shell: the terminal canvas and its socket, from mount to unmount. */
-function Screen({ projectId, onStatus }: Readonly<{ projectId: string; onStatus: (status: Status) => void }>) {
+function Screen({ projectId, onStatus, onNotice }: Readonly<{ projectId: string; onStatus: (status: Status) => void; onNotice: (notice: ClipboardNotice) => void }>) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const controller = new AbortController();
     let stop: (() => void) | undefined;
-    void openTerminal(host.current!, projectId, onStatus, controller.signal).then((close) => {
+    void openTerminal(host.current!, projectId, onStatus, onNotice, controller.signal).then((close) => {
       if (controller.signal.aborted) close();
       else stop = close;
     });
@@ -70,7 +85,7 @@ function Screen({ projectId, onStatus }: Readonly<{ projectId: string; onStatus:
       controller.abort();
       stop?.();
     };
-  }, [projectId, onStatus]);
+  }, [projectId, onStatus, onNotice]);
   return <div ref={host} className="mx-2 mb-2 min-h-0 flex-1 overflow-hidden" />;
 }
 
@@ -110,13 +125,13 @@ const LINE_HEIGHT = 1.25;
  * Opens a terminal in `host` with a shell in the Project folder, unless `signal` aborts first; the
  * returned function closes the socket, which ends the shell, and disposes the terminal.
  */
-async function openTerminal(host: HTMLElement, projectId: string, onStatus: (status: Status) => void, signal: AbortSignal): Promise<() => void> {
+async function openTerminal(host: HTMLElement, projectId: string, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void, signal: AbortSignal): Promise<() => void> {
   // Cells are measured once, when the terminal opens, so the font has to be there first.
   await document.fonts.load(`${FONT_SIZE}px ${FONT}`).catch(() => undefined);
-  return signal.aborted ? () => {} : connect(host, projectId, onStatus);
+  return signal.aborted ? () => {} : connect(host, projectId, onStatus, onNotice);
 }
 
-function connect(host: HTMLElement, projectId: string, onStatus: (status: Status) => void): () => void {
+function connect(host: HTMLElement, projectId: string, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void): () => void {
   // WebGL only, never the DOM renderer: its <style> elements are blocked by the CSP (DESIGN.md CSP
   // constraints). The addon loads before `open`, so the DOM renderer is never created; but a WebGL
   // failure inside `open` would silently fall back to it, hence the probe first.
@@ -126,7 +141,8 @@ function connect(host: HTMLElement, projectId: string, onStatus: (status: Status
     return () => {};
   }
   probe.getExtension('WEBGL_lose_context')?.loseContext();
-  const term = new Terminal({ theme: THEME, fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT });
+  // Right-click pastes (mouseClipboard), so it does not select a word first as on macOS by default.
+  const term = new Terminal({ theme: THEME, fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, rightClickSelectsWord: false });
   const fit = new FitAddon();
   term.loadAddon(fit);
   try {
@@ -188,6 +204,7 @@ function connect(host: HTMLElement, projectId: string, onStatus: (status: Status
     });
   });
   observer.observe(host);
+  const unclip = mouseClipboard(term, host, MAC, onNotice);
   term.focus();
 
   let stopped = false;
@@ -196,6 +213,7 @@ function connect(host: HTMLElement, projectId: string, onStatus: (status: Status
     stopped = true;
     cancelAnimationFrame(frame);
     observer.disconnect();
+    unclip();
     ws.onclose = null;
     ws.close();
     term.dispose();
