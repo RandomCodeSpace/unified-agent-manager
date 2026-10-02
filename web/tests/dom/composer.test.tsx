@@ -43,6 +43,8 @@ describe('sending', () => {
     expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'After this turn' })).toBeNull();
     await user.type(composer(), 'Steer by button');
+    // A glyph only: its name is for screen readers and the tooltip.
+    expect(sendButton('Send now').textContent).toBe('');
     await user.click(sendButton('Send now'));
     expect(await log().findByText('Steer by button')).toBeTruthy();
     await user.type(composer(), 'Queue from the menu');
@@ -56,7 +58,7 @@ describe('sending', () => {
   test('with After this turn as the default, Send and Enter queue, and Ctrl+Enter and the menu steer', async () => {
     const { user, mock } = await openTask('t1');
     await api.updateWebSettings({ send_default: 'queue' });
-    expect(await screen.findByRole('button', { name: 'After this turn' })).toBeTruthy();
+    expect((await screen.findByRole('button', { name: 'After this turn' })).textContent).toBe('');
     expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
     expect(composer().placeholder).toBe('Send after this turn, or now to guide it…');
     await user.type(composer(), 'Queue by Enter');

@@ -1132,10 +1132,6 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       // The setting names a model with effort and a long context, so the Settings section and a draft show them resolved.
       task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
-      saved_prompts: [
-        { id: 'prompt-review', name: 'Review the diff', text: 'Review the diff for bugs, missing tests and unclear names. List findings by severity; change nothing.', created_at: ago(60 * 24) },
-        { id: 'prompt-ship', name: 'Commit and push', text: 'Commit the change with a conventional commit message and push the branch.', project_id: 'p1', created_at: ago(60 * 20) },
-      ],
     },
     tasks, changes, commands, files, wholeTexts };
 }

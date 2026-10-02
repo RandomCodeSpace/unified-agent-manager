@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -409,29 +411,62 @@ func TestRemoveProjectRemovesItsRoutines(t *testing.T) {
 	}
 }
 
-// Removing a Project removes the prompts saved for it, on disk too; those
-// for every Project stay.
-func TestRemoveProjectRemovesItsSavedPrompts(t *testing.T) {
+// Saved prompts were removed as a feature, but the ones already on disk stay
+// there untouched: a settings change and removing the Project they named
+// both keep them as written.
+func TestStoredSavedPromptsSurvive(t *testing.T) {
 	m, _, st, project := newRoutineManager(t)
-	if _, err := m.AddPrompt(AddPromptRequest{Name: "Review", Text: "review the diff", ProjectID: project}); err != nil {
+	want := `[{"id":"p1","name":"Review","text":"review the diff","project_id":"` + project + `","created_at":"2026-09-30T10:00:00Z"},{"id":"p2","name":"Tests","text":"run the tests","created_at":"2026-09-30T10:01:00Z"}]`
+	raw := func() map[string]json.RawMessage {
+		t.Helper()
+		data, err := os.ReadFile(st.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var file map[string]json.RawMessage
+		if err := json.Unmarshal(data, &file); err != nil {
+			t.Fatal(err)
+		}
+		var web map[string]json.RawMessage
+		if err := json.Unmarshal(file["web_settings"], &web); err != nil {
+			t.Fatal(err)
+		}
+		return web
+	}
+	data, err := os.ReadFile(st.Path())
+	if err != nil {
 		t.Fatal(err)
 	}
-	everywhere, err := m.AddPrompt(AddPromptRequest{Name: "Tests", Text: "run the tests"})
-	if err != nil {
+	var file map[string]any
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	web, _ := file["web_settings"].(map[string]any)
+	if web == nil {
+		web = map[string]any{}
+	}
+	web["saved_prompts"] = json.RawMessage(want)
+	file["web_settings"] = web
+	if data, err = json.Marshal(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(st.Path(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{SendDefault: ptr(store.WebSendQueue)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.RemoveProject(project); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Settings().SavedPrompts; len(got) != 1 || got[0].ID != everywhere.ID {
-		t.Fatalf("saved prompts = %+v", got)
+	got := raw()
+	var gotList, wantList any
+	if err := json.Unmarshal(got["saved_prompts"], &gotList); err != nil {
+		t.Fatalf("saved_prompts = %s: %v", got["saved_prompts"], err)
 	}
-	cfg, err := st.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg.WebSettings.SavedPrompts; len(got) != 1 || got[0].ID != everywhere.ID {
-		t.Fatalf("stored prompts = %+v", got)
+	_ = json.Unmarshal([]byte(want), &wantList)
+	if !reflect.DeepEqual(gotList, wantList) || string(got["send_default"]) != `"queue"` {
+		t.Fatalf("web_settings after a save = %v", got)
 	}
 }
 
