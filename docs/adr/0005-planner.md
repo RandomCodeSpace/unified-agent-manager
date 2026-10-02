@@ -396,7 +396,7 @@ Each item is a store, tool or UI test.
 | `DELETE /api/board/links?blocker=&blocked=` | Removes a blocker link |
 | `POST /api/board/cards/{ref}/launch` | `{provider, model, effort, mode, context_size, brief, confirm}` (all optional; the Task defaults in Settings otherwise) → 201 `{card, session}`. The UI's Launch and Do whole story ask for the model, effort, context size and mode, starting from the New task defaults, and an optional brief. On a subtask it launches that subtask; on a container it is "Do whole story" |
 | `POST /api/board/cards/{ref}/attach` | `{task_id, title, confirm}` → 200 card. Owner only: the existing Task holds the subtask `ref` (not started), or a new subtask titled `title` (else the Task's name) under the story or epic `ref`, as a launch's would: same scope, baseline and confirm step (`unconfirmed` without `confirm`). The Task must be the card's Project's and not archived, and may hold one subtask; no prompt is sent |
-| `POST /api/board/cards/{ref}/plan` | `{brief, model, …}` → 201 `{session}`. A planning Task scoped to the container |
+| `POST /api/board/cards/{ref}/plan` | `{provider, model, effort, mode, context_size, brief}` (all optional, as for launch) → 201 `{session}`. A planning Task scoped to the container. The UI's Plan with agent asks for the same fields as Launch and a brief; Suggest runs on the Utility model and asks for no model |
 | `POST /api/board/cards/{ref}/release` | `{comment}` |
 | `POST /api/board/cards/{ref}/check` | Check at HEAD → `{accept}` |
 | `POST /api/board/cards/{ref}/triage` | `{verdict: valid|moot|conflicts, sentence, head}` |

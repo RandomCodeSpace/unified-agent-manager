@@ -1114,7 +1114,7 @@ sign-outs are logged without the token.
   a breadcrumb to move between levels. Clicking a card opens its details in
   place: done when, description, checklist, dependencies (its own level, and
   what it waits for through its story or epic), the agents' requests on it,
-  Edit, Discard for a proposal, and Launch. Launch, and Do whole story in
+  Edit, Discard for a proposal, and Launch. Launch, Do whole story and Plan with agent in
   the Planner, open a dialog with the new Task's model, effort, context size
   and mode (starting from Settings → New tasks) and an optional brief, which
   the Task's first message carries; when launching confirms proposals, the
