@@ -490,7 +490,7 @@ func TestWorkStartsOnlyOnConfirmedCards(t *testing.T) {
 	// it, is refused too.
 	pc := f.create(planner, epic.ID, KindStory, "Proposed C")
 	leaf := f.create(owner, pc.ID, KindSubtask, "Owner leaf")
-	f.raw(`UPDATE cards SET expires_at = ? WHERE id = ?`, stamp(f.clock.Now().Add(ExpiryWindow)), pc.ID)
+	f.raw(`UPDATE cards SET expires_at = NULL WHERE id = ?`, leaf.ID)
 	_, err = f.s.Claim(f.ctx, epicWorker, leaf.ID, Baseline{})
 	wantUnconfirmed(t, err, pc.ref())
 	wantUnconfirmed(t, f.s.CheckLaunch(f.ctx, owner, leaf.ID, false), pc.ref())

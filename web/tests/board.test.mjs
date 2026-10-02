@@ -350,8 +350,29 @@ test('a card waits for its own open blockers, then its story’s and its epic’
   assert.deepEqual(waitsOf(c, byId).map((w) => [w.card.id, w.via?.id]), [[b.id, undefined], [s1.id, s2.id], [epicA.id, epicB.id]]);
   assert.deepEqual(waitsOf(b, byId).map((w) => w.card.id), [s1.id, epicA.id], 'a done blocker no longer holds it back');
   const index = new Map([[s2.id, [a, b, c]]]);
-  assert.equal(nextSubtask(s2, index, b.id), c);
-  assert.equal(nextSubtask(s2, index), b);
+  assert.equal(nextSubtask(s2, index, byId), undefined, 'every subtask waits on its story’s blocker');
+});
+
+test('next is the first subtask not started with nothing open in its way, a confirmed one before a proposal', () => {
+  const s = card({ kind: 'story' });
+  const done = card({ parent_id: s.id, status: 'done' });
+  const waiting = card({ parent_id: s.id, status: 'planned' });
+  const free = card({ parent_id: s.id, status: 'todo' });
+  const proposal = card({ parent_id: s.id, status: 'planned', confirmed: false });
+  const held = card({ parent_id: s.id, status: 'doing', held_by: 't1' });
+  waiting.blocked_by = [free.id];
+  const kids = [done, waiting, proposal, free, held];
+  const byId = new Map([s, ...kids].map((x) => [x.id, x]));
+  const index = new Map([[s.id, kids]]);
+  assert.equal(nextSubtask(s, index, byId), free, 'not the blocked one before it, nor the proposal');
+  assert.equal(nextSubtask(s, index, byId, free.id), proposal, 'a proposal only when no confirmed one is free');
+  free.status = 'done';
+  assert.equal(nextSubtask(s, index, byId, free.id), waiting, 'its blocker is done');
+  waiting.blocked = true;
+  assert.equal(nextSubtask(s, index, byId, free.id), proposal, 'flagged blocked');
+  proposal.blocked_by = [held.id];
+  waiting.blocked_by = [held.id];
+  assert.equal(nextSubtask(s, index, byId, free.id), undefined, 'none is free');
 });
 
 test('one level lays out in layers by its longest chain of blockers, left to right or top to bottom', () => {

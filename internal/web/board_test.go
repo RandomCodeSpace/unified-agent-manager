@@ -546,6 +546,14 @@ func TestPlannerLaunchHoldsAndSendsThePreamble(t *testing.T) {
 	if len(f.m.List()) != 2 {
 		t.Fatalf("a refused selection left a task: %d", len(f.m.List()))
 	}
+	// The owner's brief rides along in a launch's first prompt.
+	var briefed struct {
+		Session SessionSummary `json:"session"`
+	}
+	f.call(http.MethodPost, "/api/board/cards/"+three.ID+"/launch", `{"brief":"Use the new parser."}`, http.StatusCreated, &briefed)
+	if got := f.conversation(briefed.Session.ID).Sends()[0]; !strings.Contains(got, "Win condition: three passes\n\nBrief:\nUse the new parser.\n\nRules:\n") {
+		t.Fatalf("briefed preamble %q lacks the brief", got)
+	}
 	empty := f.create(board.KindEpic, "", "Empty")
 	f.refused(http.MethodPost, "/api/board/cards/"+empty.ID+"/launch", `{}`, http.StatusBadRequest, string(board.CodeInvalid))
 }

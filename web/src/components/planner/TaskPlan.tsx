@@ -92,7 +92,7 @@ export const StoryStrip = memo(function StoryStrip({ plan, open, onOpen }: Reado
   let line: ReactNode;
   let label: string;
   if (mine) {
-    const next = container ? nextSubtask(container, plan.index, mine.id) : undefined;
+    const next = container ? nextSubtask(container, plan.index, plan.byId, mine.id) : undefined;
     const waits = waitsOf(mine, plan.byId);
     const progress = container?.progress;
     label = `This task works on #${mine.seq} ${mine.title}${path.length ? ` in ${path.map((c) => c.title).join(' › ')}` : ''}. Show the plan`;
@@ -486,7 +486,7 @@ export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ car
         {mine && <span className="text-accent">· This task works on it</span>}
         {!mine && c.held_by && <TaskChip taskId={c.held_by} />}
       </p>
-      {!c.confirmed && <Note>Proposed by an agent. You can edit it and link it now; launching it confirms it.</Note>}
+      {!c.confirmed && <Note>A proposal: editing and linking keep it one; launching it confirms it.</Note>}
       {locked && <Note>{locked}</Note>}
       {editing ? (
         <CardEditor

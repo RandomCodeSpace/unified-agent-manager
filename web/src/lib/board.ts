@@ -361,9 +361,15 @@ export function waitsOf(card: Card, byId: ReadonlyMap<string, Card>): Wait[] {
   return out;
 }
 
-/** The subtask to start next under a container: its first planned or to-do subtask in order, other than `except`. */
-export function nextSubtask(container: Card, index: ReadonlyMap<string, Card[]>, except?: string): Card | undefined {
-  return (index.get(container.id) ?? []).find((c) => c.kind === 'subtask' && c.id !== except && (c.status === 'planned' || c.status === 'todo'));
+/**
+ * The subtask to start next under a container, other than `except`: the first in order that is
+ * not started (planned or to do, not held), not flagged blocked, and waiting for nothing open,
+ * its own blockers or its parents' (`waitsOf`, as the finishing guard counts them); a confirmed
+ * one before a proposal. None when every one waits.
+ */
+export function nextSubtask(container: Card, index: ReadonlyMap<string, Card[]>, byId: ReadonlyMap<string, Card>, except?: string): Card | undefined {
+  const free = (index.get(container.id) ?? []).filter((c) => c.kind === 'subtask' && c.id !== except && !c.held_by && !c.blocked && (c.status === 'planned' || c.status === 'todo') && waitsOf(c, byId).length === 0);
+  return free.find((c) => c.confirmed) ?? free[0];
 }
 
 export type GraphDir = 'lr' | 'tb';

@@ -271,12 +271,20 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     delete c.stale;
   };
   /**
-   * An owner touch (save, create, move, checklist, confirm, launch, accept, restore, status done
-   * or todo): the card is confirmed and re-pinned (§1), and so is every unconfirmed ancestor.
+   * An owner touch (confirm, launch, accept, restore, status done or todo): the card is confirmed
+   * and re-pinned (§1), and so is every unconfirmed ancestor.
    */
   const touch = (c: Card) => {
     confirmAndPin(c);
     for (let at = c.parent_id ? byId(c.parent_id) : undefined; at; at = at.parent_id ? byId(at.parent_id) : undefined) if (!at.confirmed) confirmAndPin(at);
+  };
+  /**
+   * The owner's planning (save, create, move, checklist, split) confirms no suggestion (decision
+   * 10): a confirmed card is touched, a suggestion and its suggested parents expire 14 days on.
+   */
+  const planned = (c: Card) => {
+    if (c.confirmed) return touch(c);
+    for (let at: Card | undefined = c; at; at = at.parent_id ? byId(at.parent_id) : undefined) if (!at.confirmed) at.expires_at = inDays(14);
   };
   const withdraw = (c: Card) => {
     for (const r of requests) if (r.card_id === c.id && r.status === 'pending') Object.assign(r, { status: 'withdrawn', decided_at: now() });
@@ -319,7 +327,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     withdraw(c);
     const made: Card[] = [];
     for (const it of items) {
-      const leaf = card(nextSeq++, c.project_id, 'subtask', null, it.title, { parent_id: under ? under.id : c.id, win_condition: it.win_condition ?? '', status: it.done && accepted ? 'done' : 'planned', created_at: now(), min: 0 });
+      const leaf = card(nextSeq++, c.project_id, 'subtask', null, it.title, { parent_id: under ? under.id : c.id, win_condition: it.win_condition ?? '', status: it.done && accepted ? 'done' : 'planned', created_at: now(), min: 0, ...(c.confirmed ? {} : { confirmed: false, expires_at: inDays(14) }) });
       cards.push(leaf);
       made.push(leaf);
       if (!it.done) continue;
@@ -578,10 +586,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const wrong = misplaced(kind, body.parent_id, pid);
       if (wrong) return wrong;
       const parent = body.parent_id ? byId(String(body.parent_id)) : undefined;
-      const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0 });
+      // Under a suggestion the owner's card is a suggestion too.
+      const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0, ...(parent && !parent.confirmed ? { confirmed: false } : {}) });
       return done(commit(() => {
         cards.push(c);
-        touch(c);
+        planned(c);
       }), () => json(201, c));
     }
     if (path === '/api/board/links') {
@@ -678,7 +687,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         return done(commit(() => {
           for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];
           if ('project_id' in body) c.moved_at = now();
-          touch(c);
+          planned(c);
         }), ok);
       }
       case 'POST confirm':
@@ -708,7 +717,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           const siblings = cards.filter((x) => x.project_id === c.project_id && x.parent_id === c.parent_id && x.id !== c.id).sort((a, b) => a.rank - b.rank);
           const at = body.rank === undefined || body.rank === null ? siblings.length : Math.min(Number(body.rank), siblings.length);
           [...siblings.slice(0, at), c, ...siblings.slice(at)].forEach((x, i) => (x.rank = i));
-          touch(c);
+          planned(c);
         }), ok);
       }
       case 'POST status': {
