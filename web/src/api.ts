@@ -1492,6 +1492,8 @@ export const api = {
   startMcpSignIn: (id: string, name: string, again: boolean) => call<McpSignIn>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in`, { again }),
   finishMcpSignIn: (id: string, name: string, url: string) => call<void>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in/finish`, { url }),
   routines: (projectId: string) => call<{ routines: Routine[] }>('GET', `/api/projects/${enc(projectId)}/routines`),
+  /** Every Project's routines, oldest first. */
+  allRoutines: () => call<{ routines: Routine[] }>('GET', '/api/routines'),
   createRoutine: (projectId: string, body: RoutineInput) => call<Routine>('POST', `/api/projects/${enc(projectId)}/routines`, body),
   updateRoutine: (id: string, body: Partial<RoutineInput>) => call<Routine>('PATCH', `/api/routines/${enc(id)}`, body),
   deleteRoutine: (id: string) => call<void>('DELETE', `/api/routines/${enc(id)}`),

@@ -152,6 +152,34 @@ export function PlannerProjectPicker({ projects, value, unassigned, onPick }: Re
   );
 }
 
+/** The Routines header's Project filter: the Planner's picker with All projects first (`value` null). */
+export function RoutinesProjectPicker({ projects, value, onPick }: Readonly<{ projects: Project[]; value: string | null; onPick: (id: string | null) => void }>) {
+  const [open, setOpen] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const project = projects.find((p) => p.id === value);
+  const name = project?.name ?? 'All projects';
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger render={<Button size="md" aria-label={`Project: ${name}`} className="min-w-0 max-w-64 shrink px-2 sm:ml-1" />}>
+        {project ? <ProjectBadge badge={project.badge} /> : <Layers className="text-muted" />}
+        <span className="min-w-0 truncate max-[480px]:hidden">{name}</span>
+        <ChevronDown className="text-muted" />
+      </Popover.Trigger>
+      <Popover.Content side="bottom" align="start" sideOffset={4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
+        <FilterList
+          projects={projects}
+          filter={project?.id ?? null}
+          input={input}
+          onPick={(id) => {
+            onPick(id);
+            setOpen(false);
+          }}
+        />
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
 /** A row of the list: a Project, All projects (`id` null), or an extra entry after the Projects. */
 interface FilterRow {
   id: string | null;

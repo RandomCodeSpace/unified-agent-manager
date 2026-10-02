@@ -142,7 +142,7 @@ describe('notifications', () => {
     const side = await sidebar();
     await user.click(side.getByRole('button', { name: 'Project filter: all projects' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Routines of unified-agent-manager' }));
-    await screen.findByRole('heading', { level: 1, name: /Routines · unified-agent-manager/ });
+    await screen.findByRole('heading', { level: 1, name: 'Routines' });
     await handleNotice(notice({ session_id: 't3', seq: 8 }));
     expect(shown.map((n) => n.title)).toEqual(['Fix it needs you: Which colour?']);
   });
