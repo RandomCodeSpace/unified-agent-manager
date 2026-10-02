@@ -181,6 +181,9 @@ func toolSummary(tc *agentapi.ToolCall, sa *agentapi.Subagent, summary string) s
 	case sa != nil:
 		label := cmpOr(sa.Description, sa.Name, "subagent")
 		line := "Subagent: " + html.EscapeString(oneLine(label, 200)) + " · " + string(sa.Status)
+		if n := len(sa.Runs); n > 1 {
+			line += fmt.Sprintf(" · %d runs", n)
+		}
 		if summary != "" {
 			line += " · " + html.EscapeString(oneLine(summary, 300))
 		}

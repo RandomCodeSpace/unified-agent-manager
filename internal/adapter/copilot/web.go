@@ -1235,7 +1235,8 @@ func (f *subagentFold) window() (agentapi.SubagentWindow, error) {
 }
 
 func subagentBytes(sa agentapi.Subagent) int {
-	return len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result)
+	return len(sa.ID) + len(sa.Name) + len(sa.Description) + len(sa.Model) + len(sa.Effort) + len(sa.Error) + len(sa.ParentToolCallID) + len(sa.Result) +
+		len(sa.Runs)*agentapi.SubagentRunBytes
 }
 
 // windowFold keeps one agent's items around a requested item while a
@@ -1571,6 +1572,7 @@ type conversation struct {
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
 	stoppedSubagents map[string]bool
+	prompting        string // the agent PromptSubagent is sending a follow-up to
 	tr               *transcript
 	subs             *subagentLog
 	turnErr          string
@@ -1889,6 +1891,7 @@ func (c *conversation) restoreIdle(ctx context.Context, subs []agentapi.Subagent
 		if sa := c.subs.byID[subs[i].ID]; sa != nil && sa.Status == agentapi.SubagentCompleted &&
 			subs[i].Status == agentapi.SubagentCompleted && takesFollowUps(agentTask(tasks, sa.ID)) {
 			sa.Status, subs[i].Status = agentapi.SubagentIdle, agentapi.SubagentIdle
+			subs[i] = subs[i].Snapshot()
 		}
 	}
 }
@@ -2246,6 +2249,12 @@ func (c *conversation) CancelSubagent(ctx context.Context, agentID string) error
 	return nil
 }
 
+func (c *conversation) setPrompting(agentID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.prompting = agentID
+}
+
 // PromptSubagent sends text to exactly agentID, only while this record says
 // idle: the CLI accepts a message for a running agent and never delivers it.
 // An accepted follow-up runs until the task list reports it idle or ended.
@@ -2270,6 +2279,8 @@ func (c *conversation) PromptSubagent(ctx context.Context, agentID, text string)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	c.setPrompting(agentID)
+	defer c.setPrompting("")
 	sent := time.Now()
 	res, err := c.sess.MessageSubagent(ctx, agentID, text)
 	var uncertain error
@@ -2294,11 +2305,12 @@ func (c *conversation) PromptSubagent(ctx context.Context, agentID, text string)
 		// A follow-up that may have arrived blocks another until the task list
 		// settles it. An accepted one ends only with an idle entry newer than
 		// the send: the list can still report the idle from before it.
+		sa.StartRun(sent, agentapi.SubagentTriggerUser)
 		if uncertain != nil {
 			sent = time.Time{}
 		}
 		sa.Status, sa.EndedAt = agentapi.SubagentRunning, time.Time{}
-		v := *sa
+		v := sa.Snapshot()
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
 		c.watchLocked(agentID, sent)
 	}
@@ -2491,7 +2503,7 @@ func (c *conversation) endIdleLocked() {
 	for _, id := range c.subs.order {
 		if sa := c.subs.byID[id]; sa.Status == agentapi.SubagentIdle {
 			sa.Status = agentapi.SubagentCompleted
-			v := *sa
+			v := sa.Snapshot()
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
 		}
 	}
@@ -2507,15 +2519,21 @@ func (c *conversation) watchLocked(agentID string, sent time.Time) {
 
 // resumeSubagentLocked records a follow-up started by the main agent rather
 // than UAM's composer. A later start distinguishes reuse from stale events.
+// One seen while PromptSubagent sends to the agent is that follow-up's run.
 func (c *conversation) resumeSubagentLocked(agentID string, started time.Time) bool {
 	sa := c.subs.byID[agentID]
 	if sa == nil || c.stoppedSubagents[agentID] ||
 		(sa.Status != agentapi.SubagentCompleted && sa.Status != agentapi.SubagentIdle) || !started.After(sa.EndedAt) {
 		return false
 	}
+	trigger := agentapi.SubagentTriggerAgent
+	if c.prompting == agentID {
+		trigger = agentapi.SubagentTriggerUser
+	}
+	sa.StartRun(started, trigger)
 	sa.Status, sa.StartedAt, sa.EndedAt = agentapi.SubagentRunning, started, time.Time{}
 	c.watch[agentID] = started
-	v := *sa
+	v := sa.Snapshot()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
 	return true
 }
@@ -2674,7 +2692,7 @@ func (c *conversation) applyTasksLocked(tasks []rpc.TaskInfo) {
 				sa.EndedAt = *t.CompletedAt
 			}
 		}
-		v := *sa
+		v := sa.Snapshot()
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &v})
 	}
 }
@@ -3567,13 +3585,16 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		if sa.Status.Terminal() || sa.Status == agentapi.SubagentIdle {
 			return agentapi.Subagent{}, false
 		}
+		if len(sa.Runs) == 0 {
+			sa.StartRun(ev.Timestamp, agentapi.SubagentTriggerSpawn)
+		}
 		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), d.AgentDescription
 		sa.Status, sa.StartedAt = agentapi.SubagentRunning, ev.Timestamp
 		if d.Model != nil && sa.Model == "" {
 			sa.Model = *d.Model
 		}
 		l.byCall[d.ToolCallID] = agentID
-		return *sa, true
+		return sa.Snapshot(), true
 	case *rpc.SubagentConfiguredData:
 		if agentID == "" {
 			return agentapi.Subagent{}, false
@@ -3587,7 +3608,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		if d.ReasoningEffort != nil {
 			sa.Effort = *d.ReasoningEffort
 		}
-		return *sa, true
+		return sa.Snapshot(), true
 	case *rpc.SubagentCompletedData:
 		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentCompleted
 		if d.Cancelled != nil && *d.Cancelled {
@@ -3616,7 +3637,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		sa.Name = name
 	}
 	sa.Status, sa.Error, sa.EndedAt = status, errMsg, ev.Timestamp
-	return *sa, true
+	return sa.Snapshot(), true
 }
 
 func (l *subagentLog) get(agentID string) *agentapi.Subagent {
@@ -3632,7 +3653,7 @@ func (l *subagentLog) get(agentID string) *agentapi.Subagent {
 func (l *subagentLog) list() []agentapi.Subagent {
 	out := make([]agentapi.Subagent, 0, len(l.order))
 	for _, id := range l.order {
-		out = append(out, *l.byID[id])
+		out = append(out, l.byID[id].Snapshot())
 	}
 	return out
 }

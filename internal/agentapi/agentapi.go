@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -1022,9 +1023,66 @@ type Subagent struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+	// Runs lists its periods of work, oldest first, when the provider tracks
+	// them: a reused subagent keeps its ID and gains a run per reuse. The
+	// latest run carries Status and EndedAt. At most MaxSubagentRuns are
+	// kept: the first and the newest.
+	Runs []SubagentRun `json:"runs,omitempty"`
 	// Result is the start of the output its parent tool call recorded, when
 	// a read record has it but not that tool call's item.
 	Result string `json:"-"`
+}
+
+// SubagentRun is one period of work of a subagent. Status is the status
+// the run ended with, or SubagentRunning; EndedAt is zero while it runs.
+type SubagentRun struct {
+	StartedAt time.Time      `json:"started_at,omitzero"`
+	EndedAt   time.Time      `json:"ended_at,omitzero"`
+	Status    SubagentStatus `json:"status"`
+	// Trigger says who started the run: SubagentTriggerSpawn, -Agent or -User.
+	Trigger string `json:"trigger"`
+}
+
+const (
+	// SubagentTriggerSpawn is the first run, started by the spawning tool call.
+	SubagentTriggerSpawn = "spawn"
+	// SubagentTriggerAgent is a reuse the main agent started.
+	SubagentTriggerAgent = "agent"
+	// SubagentTriggerUser is a follow-up sent from UAM.
+	SubagentTriggerUser = "user"
+
+	MaxSubagentRuns = 50
+	// SubagentRunBytes bounds one run's JSON size, for byte budgets.
+	SubagentRunBytes = 144
+)
+
+// Snapshot returns a copy of sa that owns its Runs, the latest carrying sa's
+// Status and EndedAt. Status changes reach the latest run through it.
+func (sa Subagent) Snapshot() Subagent {
+	if n := len(sa.Runs); n > 0 {
+		sa.Runs = slices.Clone(sa.Runs)
+		sa.Runs[n-1].Status, sa.Runs[n-1].EndedAt = sa.Status, sa.EndedAt
+	}
+	return sa
+}
+
+// StartRun ends the latest run as sa says and opens a running one at at.
+// A record that ran without runs gets its first, spawn run back first. The
+// caller sets the record's own fields.
+func (sa *Subagent) StartRun(at time.Time, trigger string) {
+	if len(sa.Runs) == 0 && sa.Status != "" {
+		sa.Runs = []SubagentRun{{StartedAt: sa.StartedAt, Trigger: SubagentTriggerSpawn}}
+	}
+	runs := append(sa.Snapshot().Runs, SubagentRun{StartedAt: at, Status: SubagentRunning, Trigger: trigger})
+	sa.Runs = CapSubagentRuns(runs)
+}
+
+// CapSubagentRuns keeps the first run and the newest, MaxSubagentRuns in all.
+func CapSubagentRuns(runs []SubagentRun) []SubagentRun {
+	if len(runs) <= MaxSubagentRuns {
+		return runs
+	}
+	return append(runs[:1:1], runs[len(runs)-MaxSubagentRuns+1:]...)
 }
 
 // BackgroundTasks describes provider-owned shell processes independently of

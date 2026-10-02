@@ -134,6 +134,7 @@ func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
 		case agentapi.SubagentIdle:
 			h.Subagents[i].Status = agentapi.SubagentCompleted
 		}
+		h.Subagents[i] = h.Subagents[i].Snapshot()
 	}
 	// A subagent's transcript is read from the record when it is opened.
 	var tails map[string]subagentTail
