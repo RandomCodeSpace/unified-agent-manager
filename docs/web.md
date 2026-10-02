@@ -694,8 +694,9 @@ are logged only at debug level (`UAM_DEBUG=1`).
   titles, subagent result lines, suggested replies, outcome lines, planner
   triage and suggestions) counts
   against a daily limit and is logged. Settings → **Background AI** shows
-  today's calls against the limit, the limit itself, and the log, newest
-  first and grouped by day with each day's totals: calls, failures,
+  today's calls against the limit, the limit itself, and the log behind
+  **Show log · N calls today** (collapsed until opened, and read only while
+  open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Subagent summary", "Suggested replies",
   "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model,
