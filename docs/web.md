@@ -503,7 +503,10 @@ sign-outs are logged without the token.
   included; a firing past it is skipped. **Stop a run after** (1 to 720
   minutes, default 30) cancels the turn still running then, a turn waiting
   for your answer included; Stop also turns autopilot off, so an autopilot
-  run that never finishes ends there as Stopped at the time limit. Each run starts a normal Task in the Project,
+  run that never finishes ends there as Stopped at the time limit. Its Task
+  then reads "Stopped at the routine's time limit (N min)" in the sidebar
+  and as its state's detail (`state_detail`), not "You stopped it", which
+  only a Stop of yours shows. Each run starts a normal Task in the Project,
   named "<routine name> · <date and time>", with the routine's prompt as
   its first message. It shows in the sidebar and Needs you like any Task,
   begins with "Started by a routine.", and the API lists the routine as
