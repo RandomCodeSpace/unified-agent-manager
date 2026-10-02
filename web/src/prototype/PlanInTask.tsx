@@ -14,7 +14,7 @@
  * epic, a subtask for subtasks in the same story; a card also waits for what its story and epic wait for.
  */
 import { Check, ChevronDown, ChevronRight, CircleAlert, Link2, ListTree, Lock, Pencil, Plus, X } from 'lucide-react';
-import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, describeError, taskName, type BoardRequest, type Card, type Project, type SessionSummary } from '../api';
 import { cardPath, childIndex, deriveBoard } from '../lib/board';
 import { cn } from '../lib/cn';
@@ -26,6 +26,7 @@ import { Button } from '../components/ui/button';
 import { Chip } from '../components/ui/chip';
 import { Input } from '../components/ui/input';
 import { Popover } from '../components/ui/popover';
+import { Segmented } from '../components/ui/segmented';
 import { Tip } from '../components/ui/tooltip';
 
 /* ---------- The prototype's state: one tiny store, read by the Task and the transcript chips ---------- */
@@ -39,6 +40,10 @@ interface ProtoState {
   focus: string | null;
   /** The story or epic the drawer / rail popover shows, when the owner picked one. */
   story: string | null;
+  /** Outline or Graph (variations 1 and 2). */
+  view: 'outline' | 'graph';
+  /** The graph's level from the URL: `project`, or a container's #seq. */
+  level: string | null;
   /** Task id → card id: Tasks attached to a card in this prototype (the service has no such call yet). */
   attach: Record<string, string>;
 }
@@ -50,6 +55,8 @@ let state: ProtoState = {
   open: params.get('open') === '1' || params.has('focus'),
   focus: params.get('focus') ? `#${params.get('focus')}` : null,
   story: params.get('story') ? `#${params.get('story')}` : null,
+  view: params.get('view') === 'graph' ? 'graph' : 'outline',
+  level: params.get('level'),
   attach: {},
 };
 const listeners = new Set<() => void>();
@@ -489,6 +496,227 @@ function ThisTask({ plan }: Readonly<{ plan: Plan }>) {
   );
 }
 
+
+/* ---------- The DAG, one level at a time (epics, or one epic's stories, or one story's subtasks) ---------- */
+
+type Dir = 'lr' | 'tb';
+interface Placed { card: Card; x: number; y: number }
+interface Layout { nodes: Placed[]; edges: { from: Placed; to: Placed }[]; width: number; height: number; w: number; h: number }
+
+const NODE = { lr: { w: 156, h: 64, main: 36, cross: 12 }, tb: { w: 150, h: 64, main: 32, cross: 12 } };
+
+/**
+ * A hand layered layout: a node's layer is its longest "waits for" path from a start; within a
+ * layer nodes sort by the average place of what they wait for (fewer crossings), then by rank.
+ * Layers run left to right, or top to bottom where the row is too narrow for them.
+ */
+function layoutLevel(cards: Card[], dir: Dir): Layout {
+  const ids = new Set(cards.map((c) => c.id));
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const inLevel = (c: Card) => c.blocked_by.filter((b) => ids.has(b));
+  const layerOf = new Map<string, number>();
+  const layer = (c: Card, depth = 0): number => {
+    const known = layerOf.get(c.id);
+    if (known !== undefined) return known;
+    if (depth > cards.length) return 0; // a cycle: the service refuses those; draw it flat
+    const l = Math.max(-1, ...inLevel(c).map((b) => layer(byId.get(b)!, depth + 1))) + 1;
+    layerOf.set(c.id, l);
+    return l;
+  };
+  const layers: Card[][] = [];
+  for (const c of cards) (layers[layer(c)] ??= []).push(c);
+  const place = new Map<string, number>();
+  layers.forEach((row, i) => {
+    const bary = (c: Card) => {
+      const ps = inLevel(c).map((b) => place.get(b)).filter((n): n is number => n !== undefined);
+      return ps.length ? ps.reduce((a, b) => a + b, 0) / ps.length : Number.MAX_SAFE_INTEGER;
+    };
+    if (i > 0) row.sort((a, b) => bary(a) - bary(b) || a.rank - b.rank);
+    row.forEach((c, j) => place.set(c.id, j));
+  });
+  const s = NODE[dir];
+  const most = Math.max(1, ...layers.map((r) => r.length));
+  const crossStep = (dir === 'lr' ? s.h : s.w) + s.cross;
+  const mainStep = (dir === 'lr' ? s.w : s.h) + s.main;
+  const placed = new Map<string, Placed>();
+  layers.forEach((row, i) => {
+    const offset = ((most - row.length) * crossStep) / 2;
+    row.forEach((card, j) => {
+      const main = i * mainStep;
+      const cross = offset + j * crossStep;
+      placed.set(card.id, dir === 'lr' ? { card, x: main, y: cross } : { card, x: cross, y: main });
+    });
+  });
+  const mainLen = layers.length * mainStep - s.main;
+  const crossLen = most * crossStep - s.cross;
+  const nodes = [...placed.values()];
+  const edges = nodes.flatMap((to) => inLevel(to.card).map((b) => ({ from: placed.get(b)!, to })));
+  return { nodes, edges, width: dir === 'lr' ? mainLen : crossLen, height: dir === 'lr' ? crossLen : mainLen, w: s.w, h: s.h };
+}
+
+const LEVEL_WORD = { '': 'epics', epic: 'stories', story: 'subtasks' } as const;
+
+/** The level's container waits as a whole: "This whole story waits for #18 Release automation (through its epic)". */
+function LevelBanner({ plan, container }: Readonly<{ plan: Plan; container: Card }>) {
+  const waits = plan.waiting(container);
+  if (!waits.length) return null;
+  return (
+    <p className="flex items-start gap-1.5 rounded-sm bg-warning-wash px-2 py-1.5 text-caption text-warning">
+      <Lock aria-hidden="true" className="mt-0.5 size-3 shrink-0" />
+      <span>
+        This whole {container.kind} waits for{' '}
+        {waits.map((w, i) => (
+          <span key={`${w.card.id}:${w.via ?? ''}`}>
+            {i > 0 && (i === waits.length - 1 ? ' and ' : ', ')}
+            <FocusLink card={w.card} />
+            <span className="text-body">{viaText(w)}</span>
+          </span>
+        ))}
+      </span>
+    </p>
+  );
+}
+
+/** The level a card is drawn at: the container its siblings share ('' for the Project). */
+const levelOf = (card: Card) => card.parent_id ?? '';
+
+export function GraphView({ plan, start, focus }: Readonly<{ plan: Plan; /** The container to open on ('' = the Project's epics). */ start: string; focus?: Card }>) {
+  const [level, setLevel] = useState(focus ? levelOf(focus) : start);
+  const [selected, setSelected] = useState<string | null>(focus?.kind === 'subtask' ? focus.id : null);
+  const [headOpen, setHeadOpen] = useState(false);
+  const [seen, setSeen] = useState({ start, focus: focus?.id });
+  if (seen.start !== start || seen.focus !== focus?.id) {
+    setSeen({ start, focus: focus?.id });
+    setLevel(focus ? levelOf(focus) : start);
+    setSelected(focus?.id ?? null);
+    setHeadOpen(false);
+  }
+  const container = level ? plan.byId.get(level) : undefined;
+  const cards = plan.children(level).filter((c) => (container ? c.kind !== container.kind : c.kind === 'epic' || c.kind === 'story'));
+  const box = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => setRoom(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const lr = layoutLevel(cards, 'lr');
+  const layout = lr.width + 16 <= room ? lr : layoutLevel(cards, 'tb');
+  const dir: Dir = layout === lr ? 'lr' : 'tb';
+  const uid = useId().replaceAll(':', '');
+  const path = container ? cardPath(container, plan.byId) : [];
+  const drill = (id: string) => { setLevel(id); setSelected(null); setHeadOpen(false); };
+  const sel = selected ? plan.byId.get(selected) : undefined;
+  const PAD = 8;
+  const edgePath = (a: Placed, b: Placed) => {
+    if (dir === 'lr') {
+      const sx = a.x + layout.w, sy = a.y + layout.h / 2, ex = b.x - 3, ey = b.y + layout.h / 2, d = (ex - sx) / 2;
+      return `M${sx + PAD} ${sy + PAD} C${sx + d + PAD} ${sy + PAD} ${ex - d + PAD} ${ey + PAD} ${ex + PAD} ${ey + PAD}`;
+    }
+    const sx = a.x + layout.w / 2, sy = a.y + layout.h, ex = b.x + layout.w / 2, ey = b.y - 3, d = (ey - sy) / 2;
+    return `M${sx + PAD} ${sy + PAD} C${sx + PAD} ${sy + d + PAD} ${ex + PAD} ${ey - d + PAD} ${ex + PAD} ${ey + PAD}`;
+  };
+  const tone = (e: { from: Placed; to: Placed }) => {
+    if (e.from.card.id === plan.mine?.id || e.to.card.id === plan.mine?.id) return 'm';
+    return e.from.card.status === 'done' ? 'd' : 'a';
+  };
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <nav aria-label="Plan level" className="flex min-w-0 flex-wrap items-center gap-x-1 text-caption text-muted">
+        {[{ id: '', title: plan.project?.name ?? 'Project' }, ...path.map((c) => ({ id: c.id, title: c.title }))].map((crumb, i, all) => (
+          <span key={crumb.id || 'project'} className="flex min-w-0 items-center gap-1">
+            {i > 0 && <ChevronRight aria-hidden="true" className="size-3 shrink-0 text-faint" />}
+            {i === all.length - 1 ? (
+              <span aria-current="location" className="truncate font-medium text-ink">{crumb.title}</span>
+            ) : (
+              <button type="button" className="min-h-6 truncate underline decoration-hairline-strong underline-offset-2 hover:text-ink pointer-coarse:min-h-11" onClick={() => drill(crumb.id)}>{crumb.title}</button>
+            )}
+          </span>
+        ))}
+      </nav>
+      {container && <LevelBanner plan={plan} container={container} />}
+      <p className="text-caption text-muted">
+        {cards.length} {LEVEL_WORD[container?.kind === 'epic' ? 'epic' : container ? 'story' : '']}
+        {container && ` · ${container.progress?.done ?? 0} of ${container.progress?.total ?? 0} subtasks done`} · arrows run from what has to finish first
+      </p>
+      <div ref={box} className="min-w-0 overflow-x-auto overscroll-x-contain">
+        {room > 0 && cards.length > 0 && (
+          <svg width={layout.width + PAD * 2} height={layout.height + PAD * 2} viewBox={`0 0 ${layout.width + PAD * 2} ${layout.height + PAD * 2}`} role="group" aria-label={`Dependencies between the ${LEVEL_WORD[container?.kind === 'epic' ? 'epic' : container ? 'story' : '']}`} className="block">
+            <defs>
+              {(['a', 'd', 'm'] as const).map((k) => (
+                <marker key={k} id={`${uid}-${k}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  <path d="M0 0 L8 4 L0 8 z" className={k === 'm' ? 'fill-accent' : k === 'd' ? 'fill-hairline-strong' : 'fill-faint'} />
+                </marker>
+              ))}
+            </defs>
+            {layout.edges.map((e) => {
+              const k = tone(e);
+              return <path key={`${e.from.card.id}>${e.to.card.id}`} d={edgePath(e.from, e.to)} markerEnd={`url(#${uid}-${k})`} className={cn('fill-none stroke-[1.5]', k === 'm' ? 'stroke-accent' : k === 'd' ? 'stroke-hairline-strong' : 'stroke-faint', (!e.from.card.confirmed || !e.to.card.confirmed) && '[stroke-dasharray:4_3]')} />;
+            })}
+            {layout.nodes.map(({ card, x, y }) => {
+              const mine = card.id === plan.mine?.id || card.id === plan.story?.id || card.id === plan.epic?.id;
+              const isMine = card.id === plan.mine?.id;
+              const isContainer = card.kind !== 'subtask';
+              return (
+                <foreignObject key={card.id} x={x + PAD} y={y + PAD} width={layout.w} height={layout.h}>
+                  <button
+                    type="button"
+                    aria-expanded={isContainer ? undefined : selected === card.id}
+                    title={isContainer ? `Open ${card.title}: its ${card.kind === 'epic' ? 'stories' : 'subtasks'}` : card.title}
+                    onClick={() => (isContainer ? drill(card.id) : setSelected(selected === card.id ? null : card.id))}
+                    className={cn(
+                      'flex size-full flex-col justify-between gap-0.5 rounded-md bg-raised px-2 py-1.5 text-left text-caption text-body shadow-raised transition-colors hover:bg-tint-hover',
+                      !card.confirmed && 'border border-dashed border-hairline-strong bg-canvas shadow-none',
+                      mine && 'bg-tint-selected hover:bg-tint-selected',
+                      isMine && 'shadow-[inset_0_0_0_2px_var(--color-accent)]',
+                      selected === card.id && 'outline-2 -outline-offset-2 outline-focus',
+                    )}
+                  >
+                    <span className="line-clamp-2 min-w-0">
+                      <span className="text-muted tabular-nums">#{card.seq}</span> {card.title}
+                    </span>
+                    <span className="flex min-w-0 items-center gap-1 text-meta text-muted">
+                      {isContainer ? <Progress card={card} className="w-full" /> : <><StatusGlyph status={card.status} className="size-3" /><span className="truncate">{STATUS_WORD[card.status]}</span></>}
+                      {isMine && <span className="ml-auto shrink-0 font-medium text-accent">This task</span>}
+                      {!isMine && !card.confirmed && !isContainer && <span className="ml-auto shrink-0">Proposed</span>}
+                    </span>
+                  </button>
+                </foreignObject>
+              );
+            })}
+          </svg>
+        )}
+        {cards.length === 0 && <p className="px-1 py-4 text-caption text-muted">Nothing at this level yet.</p>}
+      </div>
+      {container && (
+        <>
+          <Button size="sm" className="self-start text-muted" aria-expanded={headOpen} onClick={() => setHeadOpen(!headOpen)}>
+            {headOpen ? <ChevronDown /> : <ChevronRight />}
+            {KIND_WORD[container.kind]} details and dependencies
+          </Button>
+          {headOpen && <CardDetails plan={plan} card={container} />}
+        </>
+      )}
+      {sel && <CardDetails key={sel.id} plan={plan} card={sel} />}
+    </div>
+  );
+}
+
+function ViewToggle({ value, onChange }: Readonly<{ value: 'outline' | 'graph'; onChange: (v: 'outline' | 'graph') => void }>) {
+  return <Segmented size="sm" aria-label="Plan view" value={value} onValueChange={(v) => onChange(v as 'outline' | 'graph')} items={[{ value: 'outline', label: 'Outline' }, { value: 'graph', label: 'Graph' }]} className="w-44" />;
+}
+
+/** Where the panel's graph opens: the URL's level, else this Task's story, else the Project's epics. */
+function graphStart(plan: Plan, level: string | null): string {
+  if (level === 'project') return '';
+  if (level) return plan.find(`#${level}`)?.id ?? '';
+  return plan.story?.id ?? '';
+}
+
 /* ---------- Variation 1: the Plan side panel ---------- */
 
 /** The header toggle, beside Changes and Files. */
@@ -505,6 +733,7 @@ export function PlanToggle({ open, onToggle }: Readonly<{ open: boolean; onToggl
 
 export function PlanPanel({ session, project, inline, open, onClose, onClosed }: Readonly<{ session: SessionSummary; project: Project | undefined; inline: boolean; open: boolean; onClose: () => void; onClosed: () => void }>) {
   const plan = usePlan(session, project);
+  const { view, level } = useProto();
   return (
     <SidePanel id="plan" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Plan" defaultWidth={460}>
       <PanelHeader>
@@ -518,8 +747,9 @@ export function PlanPanel({ session, project, inline, open, onClose, onClosed }:
         {plan.status === 'none' && <NoPlan plan={plan} />}
         {plan.status === 'ready' && (
           <>
+            <ViewToggle value={view} onChange={(v) => proto.set({ view: v })} />
             <ThisTask plan={plan} />
-            <Outline plan={plan} />
+            {view === 'graph' ? <GraphView plan={plan} start={graphStart(plan, level)} focus={plan.focus} /> : <Outline plan={plan} />}
           </>
         )}
       </div>
@@ -650,7 +880,7 @@ function StoryList({ plan, current, onPick }: Readonly<{ plan: Plan; current?: s
 
 export function StoryStrip({ session, project }: Readonly<{ session: SessionSummary; project: Project | undefined }>) {
   const plan = usePlan(session, project);
-  const { open, story } = useProto();
+  const { open, story, view } = useProto();
   const phone = useMedia('(width < 30.0625rem)');
   const [listOnPhone, setListOnPhone] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -709,8 +939,10 @@ export function StoryStrip({ session, project }: Readonly<{ session: SessionSumm
           {(!phone || !listOnPhone) && (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3">
               {phone && <Button size="sm" className="self-start text-muted" onClick={() => setListOnPhone(true)}><ChevronRight className="rotate-180" />All stories</Button>}
+              <ViewToggle value={view} onChange={(v) => proto.set({ view: v })} />
               {!mine && <AttachBox plan={plan} compact />}
-              {shown && <FocusDetail plan={plan} target={shown} onPick={pick} />}
+              {shown && view === 'graph' && <GraphView plan={plan} start={shown.kind === 'subtask' ? levelOf(shown) : shown.id} focus={plan.focus} />}
+              {shown && view === 'outline' && <FocusDetail plan={plan} target={shown} onPick={pick} />}
             </div>
           )}
         </div>
