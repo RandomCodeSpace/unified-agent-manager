@@ -50,9 +50,9 @@ contain it. `#task=<id>` in the URL opens a task directly.
 - `src/components/` — Sidebar (search and brand header, flat task list, project filter, task rows with
   hover "…" and context menus, inline rename, Settled/Archived shelves,
   keyboard navigation), Task (the conversation pane: 44px header with
-  inline rename, state chip, Subagents and Changes toggles and the actions
+  inline rename, state chip, the Subagents index, the Changes toggle and the actions
   menu; branch/model/context meter line; scrolling transcript with a "New
-  output" button; pinned composer; a resizable Changes or Subagents panel
+  output" button; pinned composer; a resizable Changes panel
   beside it), Transcript (user bubbles, flat assistant turns, markdown
   everywhere, Thinking disclosures, compact expandable tool summaries with copy
   menus, one compact row per subagent), Subagents (the side panel and the
