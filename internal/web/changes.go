@@ -144,9 +144,13 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 	return files, out, nil
 }
 
+// statusEntry is a changed path: its index (x) and work tree (y) status
+// letters and, for a rename staged in the index, the path it came from.
 type statusEntry struct {
 	path      string
+	orig      string
 	status    string
+	x, y      byte
 	untracked bool
 }
 
@@ -184,49 +188,53 @@ func openRepo(ctx context.Context, workdir string) (*gitRepo, string, error) {
 	return &gitRepo{git: git, top: top, hasHead: code == 0}, "", nil
 }
 
-func workspaceChanges(ctx context.Context, workdir string) (Changes, error) {
-	out, _, err := workspaceListing(ctx, workdir)
-	return out, err
-}
-
-// workspaceListing is workspaceChanges with the repository it read, nil
-// when the workspace view is unsupported.
+// workspaceListing is the working tree's changes compared with HEAD, with
+// the repository it read, nil when the workspace view is unsupported.
 func workspaceListing(ctx context.Context, workdir string) (Changes, *gitRepo, error) {
-	out := Changes{Scope: ScopeWorkspace, Label: workspaceLabel, Files: []ChangedFile{}}
 	repo, reason, err := openRepo(ctx, workdir)
 	if err != nil {
-		return out, nil, err
+		return Changes{Scope: ScopeWorkspace, Label: workspaceLabel, Files: []ChangedFile{}}, nil, err
 	}
 	if repo == nil {
-		out.Reason = reason
-		return out, nil, nil
+		return Changes{Scope: ScopeWorkspace, Label: workspaceLabel, Files: []ChangedFile{}, Reason: reason}, nil, nil
 	}
-	entries, truncated, err := repo.status(ctx)
+	out, err := repo.listing(ctx)
 	if err != nil {
 		return out, nil, err
+	}
+	return out, repo, nil
+}
+
+// listing is the repository's changed files compared with HEAD, with their
+// line counts.
+func (r *gitRepo) listing(ctx context.Context) (Changes, error) {
+	out := Changes{Scope: ScopeWorkspace, Label: workspaceLabel, Files: []ChangedFile{}}
+	entries, truncated, err := r.status(ctx)
+	if err != nil {
+		return out, err
 	}
 	out.Supported = true
 	if truncated || len(entries) > maxChangedFiles {
 		out.Reason = fmt.Sprintf("showing the first %d changed files", min(len(entries), maxChangedFiles))
 		entries = entries[:min(len(entries), maxChangedFiles)]
 	}
-	root, err := os.OpenRoot(repo.top)
+	root, err := os.OpenRoot(r.top)
 	if err != nil {
-		return out, nil, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
+		return out, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
 	}
 	defer func() { _ = root.Close() }()
-	stats := repo.numstat(ctx)
+	stats := r.numstat(ctx)
 	budget := untrackedBudget
 	for _, e := range entries {
 		file := ChangedFile{Path: e.path, Status: e.status}
-		if e.untracked || !repo.hasHead {
+		if e.untracked || !r.hasHead {
 			file.Additions, budget = countLines(root, e.path, budget)
 		} else if st, ok := stats[e.path]; ok {
 			file.Additions, file.Deletions = st[0], st[1]
 		}
 		out.Files = append(out.Files, file)
 	}
-	return out, repo, nil
+	return out, nil
 }
 
 func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.FileDiff, error) {
@@ -281,6 +289,10 @@ func (r *gitRepo) status(ctx context.Context) ([]statusEntry, bool, error) {
 		return nil, false, newError(http.StatusBadGateway, "git status failed: %s", gitMessage(stderr))
 	}
 	truncated := len(out) > maxStatusBytes
+	if truncated {
+		// The last record may be cut short: keep only whole ones.
+		out = out[:bytes.LastIndexByte(out[:maxStatusBytes], 0)+1]
+	}
 	return parseStatus(out), truncated, nil
 }
 
@@ -295,10 +307,14 @@ func parseStatus(out []byte) []statusEntry {
 			continue
 		}
 		x, y := f[0], f[1]
-		entries = append(entries, statusEntry{path: f[3:], status: statusName(x, y), untracked: x == '?' && y == '?'})
+		e := statusEntry{path: f[3:], status: statusName(x, y), x: x, y: y, untracked: x == '?' && y == '?'}
 		if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
-			i++ // skip the original path
+			i++ // the original path
+			if x == 'R' && i < len(fields) {
+				e.orig = fields[i]
+			}
 		}
+		entries = append(entries, e)
 	}
 	return entries
 }

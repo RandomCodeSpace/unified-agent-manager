@@ -742,7 +742,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
             />
             </HistoryAnchor>
-            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} commit={!noGit && !!changes?.files.length && <CommitPanel session={session} defaultOpen onChanged={() => setChangesTick((t) => t + 1)} />} />}
+            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} commit={!noGit && <CommitPanel session={session} defaultOpen quiet onChanged={() => setChangesTick((t) => t + 1)} />} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {locateError && <Note>{locateError}</Note>}
             {cards.map((i) => (

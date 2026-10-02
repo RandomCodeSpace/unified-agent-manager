@@ -1016,9 +1016,9 @@ export interface GitState {
   remote: boolean;
   has_commits: boolean;
   files: GitFile[];
-  /** False when the Task's retained transcript may miss edits, so `mine` may be incomplete. */
+  /** False when edits from before the Task's history was read may be unknown (after a restart), so `mine` may be incomplete. */
   task_files_known: boolean;
-  /** Why commit, push, pull and set-up are refused now (a Task mid-turn in the repository); absent when they may run. */
+  /** Why commit, push, pull and set-up are refused now (a Task in the repository could still be writing); absent when they may run. */
   busy?: string;
 }
 
@@ -1414,7 +1414,7 @@ export const api = {
   changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),
   changeFile: (id: string, scope: Scope, path: string, signal?: AbortSignal) =>
     call<FileDiff>('GET', `/api/sessions/${enc(id)}/changes/file?scope=${scope}&path=${enc(path)}`, undefined, false, signal),
-  /** Git actions refuse with 409 `git_busy` while a Task in the repository is mid-turn. */
+  /** Git actions refuse with 409 `git_busy` while a Task in the repository could still be writing (GitState.busy). */
   git: (id: string, signal?: AbortSignal) => call<GitState>('GET', `/api/sessions/${enc(id)}/git`, undefined, false, signal),
   gitInit: (id: string) => call<GitState>('POST', `/api/sessions/${enc(id)}/git/init`),
   gitCommit: (id: string, paths: string[], message: string) => call<GitResult>('POST', `/api/sessions/${enc(id)}/git/commit`, { paths, message }),

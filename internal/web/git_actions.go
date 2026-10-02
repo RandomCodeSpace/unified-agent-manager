@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,7 +14,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -26,8 +26,10 @@ import (
 // Git actions: the owner commits, pushes, pulls and sets up a repository
 // from a Task's Changes panel. Every call is the git CLI with structured
 // arguments, literal pathspecs after --, no terminal prompts and a time
-// limit. Write actions are refused while a Task working in the same
-// repository is mid-turn, so an agent's edits are never committed half done.
+// limit. Write actions are refused while a Task in the same repository is
+// mid-turn, starting, or has subagents or background jobs running, and no
+// turn starts there while one runs, so an agent's edits are never committed
+// half done.
 const (
 	// gitWriteTimeout bounds a commit (hooks run), a push and a pull.
 	gitWriteTimeout = 2 * time.Minute
@@ -48,7 +50,7 @@ const (
 
 // GitFile is a changed file of the repository. Mine is set when this Task's
 // edit tools touched it; OtherTask when another Task's did and this one's
-// did not.
+// did not. Both come from the Tasks' edit records (task_changes.go).
 type GitFile struct {
 	ChangedFile
 	Mine      bool `json:"mine,omitempty"`
@@ -73,8 +75,8 @@ type GitState struct {
 	// HasCommits is false before the first commit.
 	HasCommits bool      `json:"has_commits"`
 	Files      []GitFile `json:"files"`
-	// TaskFilesKnown is false when this Task's retained transcript may miss
-	// edits, so Mine may be incomplete.
+	// TaskFilesKnown is false when this Task's edits from before its history
+	// was read may be missing (after a restart), so Mine may be incomplete.
 	TaskFilesKnown bool `json:"task_files_known"`
 	// Busy says why write actions are refused now; empty when they may run.
 	Busy string `json:"busy,omitempty"`
@@ -141,7 +143,7 @@ func (m *Manager) GitState(ctx context.Context, id string) (GitState, error) {
 	if err := repo.branchState(ctx, &out); err != nil {
 		return out, err
 	}
-	changes, err := workspaceChanges(ctx, t.workdir)
+	changes, err := repo.listing(ctx)
 	if err != nil {
 		return out, err
 	}
@@ -198,25 +200,27 @@ func (r *gitRepo) branchState(ctx context.Context, out *GitState) error {
 }
 
 // taskFiles returns the repository paths the Task s's edit tools touched,
-// those other Tasks' touched, and whether s's retained transcript covers all
-// its edits. Other Tasks count only when their transcript is in memory and
-// they are not archived.
+// those other Tasks' touched, and whether s's edits are known in full. They
+// come from the Tasks' edit records, which outlive trimmed and evicted
+// transcripts; archived Tasks do not count.
 func (m *Manager) taskFiles(s *webSession, top string) (mine, others map[string]bool, known bool) {
-	touched, span := m.taskWork(s.id, time.Time{})
-	known = span == nil || !span.Partial
-	m.mu.Lock()
-	workdir := s.workdir
 	type work struct {
 		dir   string
 		paths []string
 	}
+	var own work
 	var rest []work
+	m.mu.Lock()
+	known = s.editsKnown
 	for _, o := range m.sessions {
-		if o == s || o.removed || o.stage == StageArchived {
+		if o.removed || len(o.edits) == 0 || o != s && o.stage == StageArchived {
 			continue
 		}
-		if paths := touchedFiles(o.items); len(paths) > 0 {
-			rest = append(rest, work{o.workdir, paths})
+		w := work{o.workdir, slices.Collect(maps.Keys(o.edits))}
+		if o == s {
+			own = w
+		} else {
+			rest = append(rest, w)
 		}
 	}
 	m.mu.Unlock()
@@ -229,68 +233,134 @@ func (m *Manager) taskFiles(s *webSession, top string) (mine, others map[string]
 		}
 	}
 	mine, others = map[string]bool{}, map[string]bool{}
-	resolve(workdir, touched, mine)
+	resolve(own.dir, own.paths, mine)
 	for _, w := range rest {
 		resolve(w.dir, w.paths, others)
 	}
 	return mine, others, known
 }
 
-// repoBusy says why write actions in the repository or folder top must
-// wait: a Task whose directory is in it is mid-turn or has subagents
-// running. It returns "" when none is.
-func (m *Manager) repoBusy(top string) string {
-	type task struct{ name, dir string }
-	var running []task
+// tasksIn returns the Tasks, not removed, for which pick holds and whose
+// directory is in the repository or folder top. pick runs under mu; paths are
+// resolved outside it.
+func (m *Manager) tasksIn(top string, pick func(*webSession) bool) []*webSession {
+	type task struct {
+		s   *webSession
+		dir string
+	}
+	var picked []task
 	m.mu.Lock()
 	for _, s := range m.sessions {
-		if !s.removed && (turnRunning(s.state()) || s.runningSubagents() > 0) {
-			running = append(running, task{firstNonEmpty(s.name, s.title, "A task"), s.workdir})
+		if !s.removed && pick(s) {
+			picked = append(picked, task{s, s.workdir})
 		}
 	}
 	m.mu.Unlock()
-	if real, err := filepath.EvalSymlinks(top); err == nil {
-		top = real
-	}
-	var names []string
-	for _, t := range running {
-		dir := t.dir
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			dir = real
-		}
-		if rel, err := filepath.Rel(top, dir); err == nil && filepath.IsLocal(rel) {
-			names = append(names, clipRunes(displaytext.Sanitize(t.name), maxNameRunes))
+	top = realPath(top)
+	var in []*webSession
+	for _, t := range picked {
+		if inDir(top, realPath(t.dir)) {
+			in = append(in, t.s)
 		}
 	}
+	return in
+}
+
+// repoBusy says why write actions in the repository or folder top must
+// wait: a Task whose directory is in it could still be writing there, by the
+// rules that keep a Task from being settled (settleableLocked): mid-turn,
+// starting, prompts queued, subagents or background jobs running. It returns
+// "" when none is.
+func (m *Manager) repoBusy(top string) string {
+	busy := m.tasksIn(top, func(s *webSession) bool { return s.settleableLocked() != nil })
+	names := make([]string, 0, len(busy))
+	m.mu.Lock()
+	for _, s := range busy {
+		names = append(names, clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title, "A task")), maxNameRunes))
+	}
+	m.mu.Unlock()
 	slices.Sort(names)
 	switch len(names) {
 	case 0:
 		return ""
 	case 1:
-		return fmt.Sprintf("“%s” is still working in this repository. Wait for its turn to finish.", names[0])
+		return fmt.Sprintf("“%s” is still working in this repository. Wait for it to finish.", names[0])
 	case 2:
-		return fmt.Sprintf("“%s” and 1 other task are still working in this repository. Wait for their turns to finish.", names[0])
+		return fmt.Sprintf("“%s” and 1 other task are still working in this repository. Wait for them to finish.", names[0])
 	default:
-		return fmt.Sprintf("“%s” and %d other tasks are still working in this repository. Wait for their turns to finish.", names[0], len(names)-1)
+		return fmt.Sprintf("“%s” and %d other tasks are still working in this repository. Wait for them to finish.", names[0], len(names)-1)
 	}
 }
 
-// gitWriteLocks holds one lock per repository, so two write actions never
-// run in one repository at once.
-var gitWriteLocks sync.Map
+// realPath is path with its symbolic links resolved, or path itself when
+// they cannot be.
+func realPath(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return path
+}
 
-// beginWrite refuses a write action in top while a Task there is mid-turn
-// or another write action runs there; otherwise it returns the unlock.
+// inDir reports whether dir is top or inside it.
+func inDir(top, dir string) bool {
+	rel, err := filepath.Rel(top, dir)
+	return err == nil && filepath.IsLocal(rel)
+}
+
+// gitWriteLocked is the end of the git write action running in the
+// repository that holds the real path dir, nil when none runs there.
+func (m *Manager) gitWriteLocked(dir string) chan struct{} {
+	for top, done := range m.gitWrites {
+		if inDir(top, dir) {
+			return done
+		}
+	}
+	return nil
+}
+
+// beginWrite refuses a write action in top while a Task there could still
+// be writing (repoBusy) or another write action runs there; otherwise it
+// returns the function that ends the action. From the start until then, a
+// turn starting in top waits (Manager.send), so none starts mid-write.
 func (m *Manager) beginWrite(top string) (func(), error) {
+	top = realPath(top)
+	m.mu.Lock()
+	for other := range m.gitWrites {
+		if inDir(other, top) || inDir(top, other) {
+			m.mu.Unlock()
+			return nil, &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: "Another git action is running in this repository. Try again when it finishes."}
+		}
+	}
+	if m.gitWrites == nil {
+		m.gitWrites = map[string]chan struct{}{}
+	}
+	done := make(chan struct{})
+	m.gitWrites[top] = done
+	m.mu.Unlock()
+	end := func() {
+		m.mu.Lock()
+		delete(m.gitWrites, top)
+		m.mu.Unlock()
+		close(done)
+	}
+	// Checked once the action holds the repository: a turn that started
+	// before shows here, and one starting from now on waits for end.
 	if busy := m.repoBusy(top); busy != "" {
+		end()
 		return nil, &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: busy}
 	}
-	v, _ := gitWriteLocks.LoadOrStore(top, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	if !mu.TryLock() {
-		return nil, &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: "Another git action is running in this repository. Try again when it finishes."}
+	return end, nil
+}
+
+// kickDiffsIn recounts the cached totals of the Tasks in top, whose changes
+// compared with HEAD a commit or a pull just moved.
+func (m *Manager) kickDiffsIn(top string) {
+	tasks := m.tasksIn(top, func(s *webSession) bool { return len(s.edits) > 0 || s.diff != nil })
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range tasks {
+		m.kickDiffLocked(s)
 	}
-	return mu.Unlock, nil
 }
 
 // openWriteRepo opens the Task's repository for a write action.
@@ -361,15 +431,25 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 		return GitResult{}, err
 	}
 	var add, commit []string
+	n := 0
 	for _, e := range entries {
-		commit = append(commit, e.path)
+		// A file added to the index and then deleted is in neither HEAD nor
+		// the work tree: staging drops it from the index, and it has nothing
+		// to commit (a staged rename's source still does).
+		if e.y != 'D' || e.x != 'A' && e.x != 'R' && e.x != 'C' {
+			commit = append(commit, e.path)
+			n++
+		}
 		if e.orig != "" {
 			commit = append(commit, e.orig)
 		}
 		// A deletion already staged has nothing left to add.
-		if e.index != 'D' {
+		if e.x != 'D' {
 			add = append(add, e.path)
 		}
+	}
+	if len(commit) == 0 {
+		return GitResult{}, errNothingToCommit
 	}
 	if len(add) > 0 {
 		if out, err := runGitWrite(ctx, repo.top, nil, append([]string{"add", "-A", "--"}, add...)...); err != nil {
@@ -384,18 +464,20 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 			case containsAny(gerr.output, "Please tell me who you are", "unable to auto-detect email address", "auto-detection is disabled", "empty ident name"):
 				return GitResult{}, newError(http.StatusConflict, "Git doesn't know who you are on the server. Set your name and email there with git config --global user.name \"Your Name\" and git config --global user.email you@example.com, then commit again.")
 			case containsAny(gerr.output, "nothing to commit", "nothing added to commit", "no changes added to commit"):
-				return GitResult{}, newError(http.StatusConflict, "Nothing to commit: the chosen files have no changes.")
+				return GitResult{}, errNothingToCommit
 			}
 		}
 		return GitResult{}, gitFailed("Git refused the commit", err)
 	}
 	head, _, _, _ := runGit(ctx, repo.git, repo.top, 4096, "rev-parse", "--short", "HEAD")
 	short := strings.TrimSpace(string(head))
-	log.Info("git commit made from the web", "session", id, "commit", short, "files", len(entries))
+	log.Info("git commit made from the web", "session", id, "commit", short, "files", n)
 	m.refreshBranches(ctx, true, t.projectID)
-	n := len(entries)
+	m.kickDiffsIn(repo.top)
 	return GitResult{Summary: fmt.Sprintf("Committed %d %s as %s.", n, plural(n, "file", "files"), short), Commit: short, Output: out}, nil
 }
+
+var errNothingToCommit = newError(http.StatusConflict, "Nothing to commit: the chosen files have no changes.")
 
 func plural(n int, one, many string) string {
 	if n == 1 {
@@ -419,41 +501,18 @@ func commitMessage(message string) (string, error) {
 	return message + "\n", nil
 }
 
-// chosenEntry is a changed path to commit: its index status and, for a
-// staged rename, the path it was renamed from.
-type chosenEntry struct {
-	path, orig string
-	index      byte
-	untracked  bool
-}
-
 // chosen returns the changed files named by paths. Every path must be one
 // git status reports, so a request cannot reach other files.
-func (r *gitRepo) chosen(ctx context.Context, paths []string) ([]chosenEntry, error) {
-	out, code, stderr, err := runGit(ctx, r.git, r.top, maxStatusBytes+1, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+func (r *gitRepo) chosen(ctx context.Context, paths []string) ([]statusEntry, error) {
+	all, _, err := r.status(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if code != 0 {
-		return nil, newError(http.StatusBadGateway, "git status failed: %s", gitMessage(stderr))
-	}
-	changed := map[string]chosenEntry{}
-	fields := strings.Split(string(out), "\x00")
-	for i := 0; i < len(fields); i++ {
-		f := fields[i]
-		if len(f) < 4 || f[2] != ' ' {
-			continue
-		}
-		e := chosenEntry{path: f[3:], index: f[0], untracked: f[0] == '?'}
-		if f[0] == 'R' || f[0] == 'C' || f[1] == 'R' || f[1] == 'C' {
-			i++
-			if f[0] == 'R' && i < len(fields) {
-				e.orig = fields[i]
-			}
-		}
+	changed := map[string]statusEntry{}
+	for _, e := range all {
 		changed[e.path] = e
 	}
-	var entries []chosenEntry
+	var entries []statusEntry
 	seen := map[string]bool{}
 	for _, p := range paths {
 		e, ok := changed[p]
@@ -484,6 +543,10 @@ func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
 		return GitResult{}, err
 	}
 	remote, merge := repo.config(ctx, "branch."+branch+".remote"), repo.config(ctx, "branch."+branch+".merge")
+	if remote == "." {
+		return GitResult{}, newError(http.StatusConflict, "This branch tracks the local branch %s, not a remote, so Push has nowhere to go. Push it from a terminal with git push -u origin %s.",
+			clipRunes(displaytext.Sanitize(strings.TrimPrefix(merge, "refs/heads/")), maxNameRunes), clipRunes(displaytext.Sanitize(branch), maxNameRunes))
+	}
 	// An explicit refspec without "+" is never forced, whatever the
 	// configuration says.
 	args := []string{"push", "--", remote, "HEAD:" + merge}
@@ -543,6 +606,7 @@ func (m *Manager) GitPull(ctx context.Context, id string) (GitResult, error) {
 		return GitResult{}, gitFailed("git pull failed", err)
 	}
 	m.refreshBranches(ctx, true, t.projectID)
+	m.kickDiffsIn(repo.top)
 	// A pull into a repository without commits makes its first one.
 	repo.hasHead = true
 	after, _ := repo.head(ctx)
@@ -765,18 +829,18 @@ func conventionalRepo(subjects []string) bool {
 
 // draftDiff is the chosen changes for the prompt: every file with its
 // status, then their patch, cut to maxDraftDiffBytes.
-func (r *gitRepo) draftDiff(ctx context.Context, entries []chosenEntry) string {
+func (r *gitRepo) draftDiff(ctx context.Context, entries []statusEntry) string {
 	var b strings.Builder
 	b.WriteString("<files>\n")
 	var tracked []string
-	var created []chosenEntry
+	var created []statusEntry
 	for _, e := range entries {
 		status := "changed"
 		switch {
 		case e.untracked || !r.hasHead:
 			status = "new"
 			created = append(created, e)
-		case e.index == 'D':
+		case e.x == 'D':
 			status = "deleted"
 			tracked = append(tracked, e.path)
 		default:

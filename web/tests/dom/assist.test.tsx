@@ -15,9 +15,11 @@ describe('assist', () => {
   test('a saved prompt is found by name and inserted; the composer text can be saved as one', async () => {
     const { user, mock } = await openTask('t3');
     await user.click(screen.getByRole('button', { name: 'Saved prompts' }));
-    await user.type(await screen.findByRole('textbox', { name: 'Search saved prompts by name' }), 'commit');
+    const search = await screen.findByRole('textbox', { name: 'Search saved prompts by name' });
+    await user.type(search, 'commit');
     expect(screen.queryByText('Review the diff')).toBeNull();
-    await user.click(screen.getByRole('button', { name: /Commit and push/ }));
+    // The finish card's commit panel has a "Commit and push" of its own.
+    await user.click(within(search.closest<HTMLElement>('[role="dialog"]')!).getByRole('button', { name: /Commit and push/ }));
     expect(composer().value).toBe('Commit the change with a conventional commit message and push the branch.');
 
     await user.click(screen.getByRole('button', { name: 'Saved prompts' }));

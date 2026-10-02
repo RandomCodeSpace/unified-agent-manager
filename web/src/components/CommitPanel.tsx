@@ -1,5 +1,5 @@
 import { ArrowDownToLine, Check, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, RefreshCw, Sparkles, TriangleAlert, Upload } from 'lucide-react';
-import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { Note } from './common';
@@ -9,23 +9,39 @@ import { Collapse } from './ui/collapse';
 /** The subject length git tooling and most hosts show whole. */
 export const SUBJECT_LIMIT = 72;
 
-/** A drafted or typed message per Task, kept while the panel is closed. */
+/**
+ * A Task's commit draft, one per Task and shared by every panel showing it (the finish card and
+ * Changes), kept while they are closed: the message, the checked files, and a count that moves
+ * after each action so every panel re-reads the repository.
+ */
 interface Draft {
   message: string;
   /** The message the Utility model returned, while the text still is it. */
   generated?: string;
   conventional?: boolean;
+  /** Null until the owner changes the checks: until then they follow the defaults as files change. */
+  picked: string[] | null;
+  acted: number;
 }
+const EMPTY: Draft = { message: '', picked: null, acted: 0 };
 const drafts = new Map<string, Draft>();
+const listeners = new Set<() => void>();
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+function saveDraft(id: string, next: Draft) {
+  drafts.set(id, next);
+  for (const listener of listeners) listener();
+}
 
 /**
- * The files checked at first: `defaults` when the host names them, else this Task's files (none
- * once they are committed), else, when the Task's own edits are unknown, every changed file no
- * other Task touched.
+ * The files checked at first: this Task's own (none once they are committed). A file whose
+ * author is unknown is never checked for the owner: after a restart neither this Task's earlier
+ * edits nor other Tasks' may be known yet.
  */
-export function defaultSelection(files: GitFile[], known: boolean, defaults?: string[]): string[] {
-  if (defaults) return files.filter((f) => defaults.includes(f.path)).map((f) => f.path);
-  return files.filter((f) => (known ? f.mine : !f.other_task)).map((f) => f.path);
+export function defaultSelection(files: GitFile[]): string[] {
+  return files.filter((f) => f.mine).map((f) => f.path);
 }
 
 /** What the note under the files says about the changed files left out, or null. */
@@ -48,20 +64,21 @@ type Action = 'draft' | 'commit' | 'push' | 'pull' | 'init';
  * Commit, push and pull a Task's repository with buttons (contract C3). The message is drafted
  * on the Utility model from the chosen files and edited freely; it is committed as written,
  * with no co-author or AI credit. The files default to this Task's own. While any Task in the
- * repository is mid-turn the service refuses every write and the panel says why. Hosts: the
- * Changes panel (collapsed until asked), and the task pane's finish card (`defaultOpen`).
+ * repository could still be writing the service refuses every write and the panel says why.
+ * Hosts: the Changes panel (collapsed until asked), and the task pane's finish card
+ * (`defaultOpen`, `quiet`). Both edit the Task's one draft.
  */
 export function CommitPanel({
   session,
-  defaultFiles,
   defaultOpen = false,
+  quiet = false,
   onChanged,
   className,
 }: Readonly<{
   session: SessionSummary;
-  /** Paths to check at first; this Task's changed files when absent. */
-  defaultFiles?: string[];
   defaultOpen?: boolean;
+  /** Shows nothing while none of the changed files is this Task's and there is no outcome to show; polls only while shown. */
+  quiet?: boolean;
   /** After a commit, push, pull or set-up, so the host can refresh what it shows. */
   onChanged?: () => void;
   className?: string;
@@ -69,18 +86,15 @@ export function CommitPanel({
   const [git, setGit] = useState<GitState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(defaultOpen);
-  const [draft, setDraftState] = useState<Draft>(() => drafts.get(session.id) ?? { message: '' });
-  // Null until the owner changes the checks: until then they follow the defaults as files change.
-  const [picked, setPicked] = useState<string[] | null>(null);
+  const draft = useSyncExternalStore(subscribe, () => drafts.get(session.id) ?? EMPTY);
   const [running, setRunning] = useState<Action | null>(null);
   const [result, setResult] = useState<{ tone: 'info' | 'warn' | 'error'; text: string } | null>(null);
   const request = useRef<AbortController | null>(null);
   const formId = useId();
 
-  const setDraft = (next: Draft) => {
-    drafts.set(session.id, next);
-    setDraftState(next);
-  };
+  // Read at call time: an action's continuation must not overwrite edits made while it ran.
+  const setDraft = (change: Partial<Draft>) => saveDraft(session.id, { ...(drafts.get(session.id) ?? EMPTY), ...change });
+  const setPicked = (picked: string[] | null) => setDraft({ picked });
 
   const load = useEffectEvent(() => {
     if (document.visibilityState !== 'visible' || request.current) return;
@@ -96,9 +110,13 @@ export function CommitPanel({
       if (request.current === controller) request.current = null;
     });
   });
+  const files = git?.files ?? [];
+  const hidden = quiet && running === null && !result && !files.some((f) => f.mine);
+  // A quiet panel showing nothing re-reads only when a turn starts or ends or an action ran.
+  const poll = useEffectEvent(() => { if (!hidden) load(); });
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 5000);
+    const timer = window.setInterval(poll, 5000);
     const visible = () => { if (document.visibilityState === 'visible') load(); };
     document.addEventListener('visibilitychange', visible);
     return () => {
@@ -108,13 +126,11 @@ export function CommitPanel({
       request.current = null;
     };
   }, [session.id]);
-  // A turn starting or ending changes whether writes may run; an action changes the rest.
-  const [reload, setReload] = useState(0);
-  useEffect(() => { load(); }, [session.state, reload]);
+  // A turn starting or ending changes whether writes may run; an action, from either panel, changes the rest.
+  useEffect(() => { load(); }, [session.state, draft.acted]);
 
-  const files = git?.files ?? [];
   const paths = files.map((f) => f.path);
-  const selected = (picked ?? defaultSelection(files, !!git?.task_files_known, defaultFiles)).filter((p) => paths.includes(p));
+  const selected = (draft.picked ?? defaultSelection(files)).filter((p) => paths.includes(p));
   const leftOut = leftOutNote(files, selected);
   const subject = subjectLength(draft.message);
   const generated = !!draft.generated && draft.generated === draft.message;
@@ -137,7 +153,7 @@ export function CommitPanel({
       setRunning(null);
       request.current?.abort();
       request.current = null;
-      setReload((n) => n + 1);
+      setDraft({ acted: (drafts.get(session.id) ?? EMPTY).acted + 1 });
       if (action !== 'draft') onChanged?.();
     }
   };
@@ -149,8 +165,7 @@ export function CommitPanel({
   });
   const commit = (push: boolean) => void run('commit', async () => {
     const done = await api.gitCommit(session.id, selected, draft.message);
-    setDraft({ message: '' });
-    setPicked(null);
+    setDraft({ message: '', generated: undefined, conventional: undefined, picked: null });
     if (!push) return done.summary;
     try {
       const pushed = await api.gitPush(session.id);
@@ -162,14 +177,14 @@ export function CommitPanel({
   const push = () => void run('push', async () => (await api.gitPush(session.id)).summary);
   const pull = () => void run('pull', async () => (await api.gitPull(session.id)).summary);
 
-  if (!git) {
-    return loadError ? <Note tone="error" role="alert" className={cn('px-3 py-2', className)}>Could not read the repository: {loadError}</Note> : null;
+  if (!git || hidden) {
+    return !git && !quiet && loadError ? <Note tone="error" role="alert" className={cn('px-3 py-2', className)}>Could not read the repository: {loadError}</Note> : null;
   }
   if (!git.repo) {
     return (
       <section aria-label="Git" className={cn('flex flex-col gap-2 px-3 py-2', className)}>
         <Note>{git.reason ? `${git.reason[0].toUpperCase()}${git.reason.slice(1)}.` : 'This folder is not in a Git repository.'}</Note>
-        {git.can_init && <SetUpGitButton session={session} busy={busy} onDone={() => { setReload((n) => n + 1); onChanged?.(); }} />}
+        {git.can_init && <SetUpGitButton session={session} busy={busy} onDone={() => { setDraft({ acted: draft.acted + 1 }); onChanged?.(); }} />}
       </section>
     );
   }
@@ -228,7 +243,7 @@ export function CommitPanel({
             placeholder="Summarize the change in one line, then add details after a blank line"
             className="min-h-24 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well transition-[background-color] placeholder:font-sans placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none"
             value={draft.message}
-            onChange={(e) => setDraft({ ...draft, message: e.target.value })}
+            onChange={(e) => setDraft({ message: e.target.value })}
           />
           <p className="flex flex-wrap gap-x-2 gap-y-0.5 text-meta text-muted">
             {generated && draft.conventional && <span>Matches this repo’s style: Conventional Commits, from its last 20 commits</span>}
@@ -253,6 +268,7 @@ export function CommitPanel({
             ))}
             </div>
           </fieldset>
+          {!git.task_files_known && <p className="text-caption text-muted">This task’s earlier edits are not all known, so check the files to include yourself.</p>}
           {leftOut && (
             <p className="flex items-center gap-1 text-caption text-muted">
               <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -91,10 +92,6 @@ func setSession(m *Manager, id string, f func(*webSession)) {
 	f(m.sessions[id])
 }
 
-func editItem(path string) agentapi.Item {
-	return agentapi.Item{Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolCompleted, Input: `{"path":"` + path + `"}`}}
-}
-
 func TestGitCommitStagesExactlyTheChosenFiles(t *testing.T) {
 	gitIdentity(t)
 	repo := branchRepo(t)
@@ -118,8 +115,8 @@ func TestGitCommitStagesExactlyTheChosenFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	setSession(g.m, g.id, func(s *webSession) { s.items, s.history = []agentapi.Item{editItem("keep.txt")}, HistoryLoaded })
-	setSession(g.m, other.ID, func(s *webSession) { s.items = []agentapi.Item{editItem(filepath.Join(repo, "left.txt"))} })
+	setEdits(g.m, g.id, true, "keep.txt")
+	setEdits(g.m, other.ID, true, filepath.Join(repo, "left.txt"))
 	st := g.state()
 	files := map[string]GitFile{}
 	for _, f := range st.Files {
@@ -205,7 +202,7 @@ func TestGitWritesWaitForTasksMidTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	setSession(g.m, other.ID, func(s *webSession) { s.base = StateWorking })
-	if st := g.state(); st.Busy != "“Write docs” is still working in this repository. Wait for its turn to finish." {
+	if st := g.state(); st.Busy != "“Write docs” is still working in this repository. Wait for it to finish." {
 		t.Fatalf("busy = %q", st.Busy)
 	}
 	for _, route := range []string{"/commit", "/push", "/pull"} {
@@ -368,5 +365,201 @@ func TestCleanCommitMessage(t *testing.T) {
 	}
 	if !conventionalRepo([]string{"feat(x): a", "fix!: b", "Merge things"}) || conventionalRepo([]string{"Add a", "Fix b", "feat: c"}) || conventionalRepo(nil) {
 		t.Fatal("conventionalRepo misjudged")
+	}
+}
+
+// setEdits records paths as the Task's edits, as its edit tools would.
+func setEdits(m *Manager, id string, known bool, paths ...string) {
+	setSession(m, id, func(s *webSession) {
+		s.edits, s.editsKnown = map[string]time.Time{}, known
+		for _, p := range paths {
+			s.edits[p] = time.Now()
+		}
+	})
+}
+
+// Whose files are whose comes from the Tasks' edit records, which outlive
+// their transcripts: an evicted transcript neither hides another Task's files
+// nor this Task's own.
+func TestGitStateOwnershipFromEditRecords(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	writeRepoFile(t, repo, "theirs.txt", "b\n")
+	g := newGitTask(t, repo)
+	other, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: g.m.Projects()[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setEdits(g.m, g.id, true, filepath.Join(repo, "tracked.txt"))
+	setEdits(g.m, other.ID, true, "theirs.txt")
+	setSession(g.m, other.ID, func(s *webSession) { s.items = nil })
+	st := g.state()
+	files := map[string]GitFile{}
+	for _, f := range st.Files {
+		files[f.Path] = f
+	}
+	if !st.TaskFilesKnown || !files["tracked.txt"].Mine || !files["theirs.txt"].OtherTask || files["sub/new file.txt"].Mine || files["sub/new file.txt"].OtherTask {
+		t.Fatalf("state = %+v", st)
+	}
+	// After a restart nothing of this Task's is known yet.
+	setEdits(g.m, g.id, false)
+	if st := g.state(); st.TaskFilesKnown {
+		t.Fatalf("state with unknown edits = %+v", st)
+	}
+}
+
+// Background shell jobs still running, and a Task whose conversation is
+// opening for a prompt, keep write actions waiting like a turn does.
+func TestGitWritesWaitForBackgroundJobsAndStartingTasks(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	other, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: g.m.Projects()[0].ID, Name: "Build it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := g.prov.Last()
+	conv.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "sleep", Status: "running"}}}})
+	if st := g.state(); !strings.Contains(st.Busy, "“Build it” is still working") {
+		t.Fatalf("busy with a background job = %q", st.Busy)
+	}
+	g.call(http.MethodPost, "/commit", `{"paths":["tracked.txt"],"message":"fix: x"}`, http.StatusConflict, nil)
+	conv.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true, Tasks: []agentapi.BackgroundTask{{ID: "sleep", Status: "completed"}}}})
+	if st := g.state(); st.Busy != "" {
+		t.Fatalf("busy after the job = %q", st.Busy)
+	}
+	setSession(g.m, other.ID, func(s *webSession) { s.opening = make(chan struct{}) })
+	if st := g.state(); st.Busy == "" {
+		t.Fatal("not busy while a task is starting")
+	}
+	setSession(g.m, other.ID, func(s *webSession) { s.opening = nil })
+}
+
+// No turn starts in the repository while a commit runs there: a prompt sent
+// meanwhile waits for the commit to end.
+func TestGitCommitHoldsTurnStarts(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	other, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: g.m.Projects()[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := g.prov.Last()
+	started := filepath.Join(t.TempDir(), "started")
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ntouch '"+started+"'\nsleep 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	committed := make(chan int, 1)
+	go func() {
+		committed <- g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/git/commit", `{"paths":["tracked.txt"],"message":"fix: x"}`, withCookie(g.ts)).Code
+	}()
+	t.Cleanup(func() { <-committed })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the hook never ran")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	sent := make(chan error, 1)
+	go func() {
+		_, err := g.m.Submit(other.ID, PromptRequest{Text: "edit things", RequestID: mustUUID(t), Mode: ModeSend})
+		sent <- err
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if len(committed) != 0 {
+		t.Fatal("the commit ended too soon to tell")
+	}
+	if n := len(conv.Sends()); n != 0 {
+		t.Fatalf("a turn started mid-commit: %d sends", n)
+	}
+	if code := <-committed; code != http.StatusOK {
+		t.Fatalf("commit = %d", code)
+	}
+	committed <- 0
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if n := len(conv.Sends()); n != 1 {
+		t.Fatalf("sends after the commit = %d", n)
+	}
+}
+
+// A commit or a pull changes what differs from HEAD for every Task in the
+// repository, so their cached totals are recounted.
+func TestGitCommitRecountsOtherTasksDiffs(t *testing.T) {
+	old := diffDelay
+	diffDelay = time.Millisecond
+	t.Cleanup(func() { diffDelay = old })
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	other, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: g.m.Projects()[0].ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setEdits(g.m, g.id, true, "tracked.txt")
+	setEdits(g.m, other.ID, true, "tracked.txt")
+	if _, err := g.m.Changes(t.Context(), other.ID, ScopeTask); err != nil {
+		t.Fatal(err)
+	}
+	if cachedDiff(g.m, other.ID) == nil {
+		t.Fatal("no cached diff before the commit")
+	}
+	g.call(http.MethodPost, "/commit", `{"paths":["tracked.txt"],"message":"fix: x"}`, http.StatusOK, nil)
+	deadline := time.Now().Add(3 * time.Second)
+	for cachedDiff(g.m, other.ID) != nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("other task's diff after the commit = %+v", cachedDiff(g.m, other.ID))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A file added to the index and then deleted has nothing to commit; choosing
+// it with others commits the others and leaves it out of the index.
+func TestGitCommitAddedThenDeletedFile(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	writeRepoFile(t, repo, "brief.txt", "x\n")
+	gitIn(t, repo, "add", "brief.txt")
+	if err := os.Remove(filepath.Join(repo, "brief.txt")); err != nil {
+		t.Fatal(err)
+	}
+	g := newGitTask(t, repo)
+	if reply := g.call(http.MethodPost, "/commit", `{"paths":["brief.txt"],"message":"fix: x"}`, http.StatusConflict, nil); !strings.Contains(reply["error"].(string), "Nothing to commit") {
+		t.Fatalf("commit of only the vanished file = %v", reply)
+	}
+	var res GitResult
+	g.call(http.MethodPost, "/commit", `{"paths":["brief.txt","tracked.txt"],"message":"fix: x"}`, http.StatusOK, &res)
+	if got := gitOutput(t, repo, "show", "--name-status", "--format=", "HEAD"); got != "M\ttracked.txt" {
+		t.Fatalf("commit files = %q", got)
+	}
+	if got := gitOutput(t, repo, "status", "--porcelain"); got != "?? sub/" {
+		t.Fatalf("status after = %q", got)
+	}
+}
+
+// A branch whose upstream is another local branch has no remote to push to:
+// Push says so and moves nothing.
+func TestGitPushRefusesALocalUpstream(t *testing.T) {
+	gitIdentity(t)
+	repo := branchRepo(t)
+	gitIn(t, repo, "switch", "-q", "-c", "feat", "--track", "main")
+	writeRepoFile(t, repo, "f.txt", "f\n")
+	gitIn(t, repo, "add", "f.txt")
+	gitIn(t, repo, "commit", "-q", "-m", "feat: f")
+	before := gitOutput(t, repo, "rev-parse", "main")
+	g := newGitTask(t, repo)
+	if reply := g.call(http.MethodPost, "/push", "", http.StatusConflict, nil); !strings.Contains(reply["error"].(string), "local branch") {
+		t.Fatalf("push to a local upstream = %v", reply)
+	}
+	if after := gitOutput(t, repo, "rev-parse", "main"); after != before {
+		t.Fatalf("main moved from %s to %s", before, after)
 	}
 }

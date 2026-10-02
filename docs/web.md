@@ -1005,10 +1005,16 @@ sign-outs are logged without the token.
 - **Commit, Push and Pull**: under the file list, the Changes panel shows the
   branch, how many commits it is ahead of or behind its upstream (as last
   fetched), and Push and Pull. "Commit" opens a message box and a checkbox for
-  every changed file. The boxes start on this Task's files (those its edit
-  tools touched; a shell command's edits are not counted); when its kept
-  transcript may miss edits, on every changed file no other Task touched. A
-  note says how many changed files are left out.
+  every changed file. The boxes start on this Task's files only (those its
+  edit tools touched, as the Task records them; a shell command's edits are
+  not counted), never on another Task's or on a file nobody is known to have
+  edited. After a restart, edits made before the Task's history was read
+  again may be unknown: the panel says so and you check the files yourself.
+  A note says how many changed files are left out. The finish card and the
+  Changes panel edit one shared draft per Task: the message and the checked
+  files are the same in both. The finish card's panel shows while the Task
+  has changed files and keeps the outcome of a commit (and of a failed push
+  after it, with git's message) in view after the files are committed.
   Generate (then Regenerate) asks the Utility model for a message from the
   chosen files' diff and the repository's last 20 commit subjects, so it
   follows their style, Conventional Commits included. It never commits, and
@@ -1019,15 +1025,23 @@ sign-outs are logged without the token.
   shows the subject's length against 72 characters. "Commit n files" stages
   exactly those files, deletions included, and commits them; files you
   staged yourself stay staged and out of the commit. The repository's hooks
-  run, and a hook's refusal shows its output. "Commit and push" also pushes.
+  run, and a hook's refusal shows its output. A file that was staged as new
+  and then deleted has nothing to commit and is left out of the commit, and
+  out of the index. "Commit and push" also pushes.
   Push never forces: it pushes to the branch's upstream, or, without one, to
-  `origin` under the branch's name and sets that as its upstream. Pull only
+  `origin` under the branch's name and sets that as its upstream. A branch
+  whose upstream is another local branch is not pushed: Push says there is
+  no remote to go to and moves nothing. Pull only
   fast-forwards; when both sides have new commits it says so and changes
   nothing. The service runs git without a terminal, so a remote that needs a
   password, or an SSH key the service's environment cannot use, fails with
-  git's message. While any Task working in the same repository is mid-turn,
-  the panel names it and Commit, Push and Pull wait, so an agent's edits are
-  never committed half done.
+  git's message. While any Task in the same repository could still be
+  writing there (mid-turn, starting, with prompts queued, or with subagents
+  or background jobs still running), the panel names it and Commit, Push and
+  Pull wait; while a commit, push or pull runs, a turn starting in that
+  repository waits for it. So an agent's edits are never committed half
+  done. After a commit or a pull, every Task's change count in that
+  repository is recounted.
 - **Files**: the "Files" button beside Changes opens the project directory as
   a read-only tree in the same place (a full-screen sheet on a narrow
   window). Git decides what is listed, so `.gitignore` applies; symbolic
