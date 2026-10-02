@@ -19,4 +19,8 @@ test('a Task compacting mid-turn says so at the transcript foot as well as above
   await waitFor(() => expect(log.textContent).toContain('Compacting the conversation…'));
   expect(log.textContent).not.toContain('Thinking…');
   expect(screen.getAllByText('Compacting the conversation…').length).toBe(2);
+  // The header's state chip says it too, in place of Working.
+  const header = screen.getByRole('heading', { level: 1 }).parentElement!;
+  expect(header.textContent).toContain('Compacting…');
+  expect(header.textContent).not.toContain('Working');
 });

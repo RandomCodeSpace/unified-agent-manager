@@ -8,7 +8,7 @@ const hooks = registerHooks({
     return nextResolve(['../api', './lib/models', './lib/reads', './lib/preview'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
-const { NOTIFY_KEY, claimNotice, needsHomeScreen, noticeKey, parseNotifyMode } = await import('../src/lib/notify.ts');
+const { NOTIFY_KEY, claimNotice, needsHomeScreen, parseNotifyMode } = await import('../src/lib/notify.ts');
 hooks.deregister();
 
 test('the stored notification mode is push, page or off', () => {
@@ -20,8 +20,8 @@ test('the stored notification mode is push, page or off', () => {
 });
 
 test('a notice is claimed by one tab only, and old claims are dropped', () => {
-  const key = noticeKey({ session_id: 't1', kind: 'question', seq: 7 });
-  assert.equal(key, 't1:question:7');
+  // The service names each notice (notify.go noticeKey); pages and the service worker only pass it on.
+  const key = 't1:question:7';
   const first = claimNotice({ old: 0 }, key, 1_000_000);
   assert.deepEqual(first, { [key]: 1_000_000 });
   assert.equal(claimNotice(first, key, 1_000_500), null);

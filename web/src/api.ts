@@ -679,6 +679,8 @@ export interface SessionSummary {
   outcome?: string;
   /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
   compacting?: boolean;
+  /** The open conversation's compaction threshold in percent: Settings' value when it opened; absent while none is open. */
+  compact_threshold?: number;
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -1390,6 +1392,8 @@ export const api = {
   pushKey: () => call<{ public_key: string }>('GET', '/api/push'),
   pushSubscribe: (subscription: PushSubscriptionJSON) => call<void>('POST', '/api/push/subscribe', subscription),
   pushUnsubscribe: (endpoint: string) => call<void>('POST', '/api/push/unsubscribe', { endpoint }),
+  /** The Task this tab shows while it is visible ("" for none): the service pushes no notice for it. */
+  viewing: (task: string) => call<void>('POST', '/api/viewing', { page: PAGE_ID, task }),
 
   createSession: (body: {
     project_id: string;
@@ -1469,7 +1473,7 @@ export const api = {
   subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
   itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
   detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => `/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`,
-  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1` : '/api/events'),
+  eventsUrl: (id: string | null) => (id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1&page=${PAGE_ID}` : `/api/events?page=${PAGE_ID}`),
 
   /**
    * Settle, deciding the subtasks the Task holds (§5): without a decision for each, the service
@@ -1632,6 +1636,9 @@ export function newRequestId(): string {
   const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
+
+/** This tab's name for its event streams, so what it reports showing (`api.viewing`) applies to them. */
+export const PAGE_ID = newRequestId();
 
 export function basename(path: string): string {
   const parts = path.replace(/(?<!\/)\/+$/, '').split('/');

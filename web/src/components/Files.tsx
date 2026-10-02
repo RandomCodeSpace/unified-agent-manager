@@ -6,6 +6,7 @@ import { formatSize } from '../lib/attachments';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { downloadUrl, type PreviewMetadata, type TextPreview } from '../lib/preview';
+import { statusLetter } from '../lib/review';
 import { PreviewContext, type OpenPreview } from '../lib/previewContext';
 import { CodeBlock, Highlighted, Note, Skeleton } from './common';
 import { isMarkdown, MarkdownFile } from './MarkdownFile';
@@ -19,15 +20,15 @@ interface Shown { path: string; file?: PreviewMetadata & Partial<TextPreview>; e
 /** Beyond this depth rows stop indenting, so a deep path cannot push names out of the panel. */
 const MAX_INDENT = 8;
 
-/** A changed file's mark, by its git status as Changes names it. */
-const STATUS_MARK: Record<string, { mark: string; label: string; tone: string }> = {
-  modified: { mark: 'M', label: 'Modified', tone: 'text-warning' },
-  added: { mark: 'A', label: 'Added', tone: 'text-success' },
-  untracked: { mark: 'U', label: 'New, not tracked by Git', tone: 'text-success' },
-  deleted: { mark: 'D', label: 'Deleted', tone: 'text-error' },
-  renamed: { mark: 'R', label: 'Renamed', tone: 'text-info' },
-  copied: { mark: 'C', label: 'Copied', tone: 'text-info' },
-  conflicted: { mark: '!', label: 'Merge conflict', tone: 'text-error' },
+/** A changed file's label and tone, by its git status as Changes names it; its letter is Changes' (`statusLetter`). */
+const STATUS_MARK: Record<string, { label: string; tone: string }> = {
+  modified: { label: 'Modified', tone: 'text-warning' },
+  added: { label: 'Added', tone: 'text-success' },
+  untracked: { label: 'New, not tracked by Git', tone: 'text-success' },
+  deleted: { label: 'Deleted', tone: 'text-error' },
+  renamed: { label: 'Renamed', tone: 'text-info' },
+  copied: { label: 'Copied', tone: 'text-info' },
+  conflicted: { label: 'Merge conflict', tone: 'text-error' },
 };
 
 /** The highlight.js name for a path: its extension, or the whole name for `Makefile` and the like. */
@@ -165,7 +166,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
               ? <ChevronRight aria-hidden="true" className={cn('mt-px size-3.5 shrink-0 text-muted transition-transform duration-160 ease-app', isOpen && 'rotate-90')} />
               : <span aria-hidden="true" className="size-3.5 shrink-0" />}
             <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', folder && 'font-medium', mark && !deleted && 'text-ink', deleted && 'text-muted line-through')}>{name}</span>
-            {mark && <span className={cn('w-3 shrink-0 text-center font-mono text-code-sm font-semibold', mark.tone)} aria-label={mark.label}>{mark.mark}</span>}
+            {mark && <span className={cn('w-3 shrink-0 text-center font-mono text-code-sm font-semibold', mark.tone)} aria-label={mark.label}>{statusLetter(entry.status ?? '')}</span>}
             {folder && entry.status === 'changed' && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning pointer-coarse:mt-0" role="img" aria-label="Holds changed files" />}
           </button>
         </li>,

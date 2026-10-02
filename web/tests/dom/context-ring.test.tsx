@@ -8,9 +8,9 @@ import type { SessionDetail } from '../../src/api';
 
 const session = { provider: 'copilot', context: { used: 50_000, limit: 200_000 }, capabilities: {} } as unknown as SessionDetail;
 
-function draw(compact_threshold?: number) {
+function draw(compact_threshold?: number, open?: number) {
   const app = { settings: { send_default: 'steer', terminal: false, compact_threshold }, usage: null } as unknown as AppContextValue;
-  return render(<AppContext.Provider value={app}><ComposerUsage session={session} /></AppContext.Provider>);
+  return render(<AppContext.Provider value={app}><ComposerUsage session={{ ...session, compact_threshold: open }} /></AppContext.Provider>);
 }
 
 test('the context ring marks where compaction starts', async () => {
@@ -22,6 +22,13 @@ test('the context ring marks where compaction starts', async () => {
   expect((await screen.findByText(/Compacts at/)).textContent).toBe('Compacts at 60% (120K tokens)');
   view.unmount();
   draw();
+  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  expect((await screen.findByText(/Compacts at/)).textContent).toBe('Compacts at 80% (160K tokens)');
+});
+
+test('an open conversation shows the threshold it opened with, not a later setting', async () => {
+  // Settings now say 50%; the conversation opened at 80% and keeps it until it reopens.
+  draw(50, 80);
   await userEvent.click(screen.getByRole('button', { name: /25%/ }));
   expect((await screen.findByText(/Compacts at/)).textContent).toBe('Compacts at 80% (160K tokens)');
 });

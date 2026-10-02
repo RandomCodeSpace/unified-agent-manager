@@ -56,6 +56,14 @@ type noticeEvent struct {
 	SessionID string `json:"session_id"`
 	Kind      string `json:"kind"`
 	Title     string `json:"title"`
+	// Key names the notice in every page and in its push (noticeKey).
+	Key string `json:"key"`
+}
+
+// noticeKey is the one name of a notice: pages claim it so it shows once,
+// and the service worker reports the pushes it showed by it.
+func noticeKey(id, kind string, seq uint64) string {
+	return fmt.Sprintf("%s:%s:%d", id, kind, seq)
 }
 
 // pushPayload is what the service worker receives: the Task's name and
@@ -64,8 +72,8 @@ type pushPayload struct {
 	Title string `json:"title"`
 	Task  string `json:"task"`
 	Kind  string `json:"kind"`
-	// Key names this notice as pages know it (session:kind:seq), so a page
-	// that saw it shown skips its own.
+	// Key names this notice as pages know it (noticeKey), so a page that
+	// saw it shown skips its own.
 	Key string `json:"key"`
 	// Badge is how many Tasks need the owner, for the app icon.
 	Badge int `json:"badge"`
@@ -108,16 +116,85 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	}
 	title := noticeTitle(s, kind, after.Ask)
 	m.broadcastLocked("notify", "", func(seq uint64) any {
-		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title}
+		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title, Key: noticeKey(s.id, kind, seq)}
 	})
+	// The owner is looking at the Task: no push. A service worker shows
+	// every push it gets (browsers penalise or replace silent ones), so the
+	// decision is made here.
+	if m.onScreenLocked(s.id) {
+		return
+	}
 	// broadcastLocked took the next seq whether or not a page listens.
-	key := fmt.Sprintf("%s:%s:%d", s.id, kind, m.seq)
-	payload := pushPayload{Title: title, Task: s.id, Kind: kind, Key: key, Badge: m.needsYouLocked()}
+	payload := pushPayload{Title: title, Task: s.id, Kind: kind, Key: noticeKey(s.id, kind, m.seq), Badge: m.needsYouLocked()}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		m.push.send(m.ctx, payload)
 	}()
+}
+
+// maxPageID bounds the id a page names its streams with.
+const maxPageID = 64
+
+// validPageID accepts the ids pages make: letters, digits, '-' and '_'.
+func validPageID(page string) bool {
+	if page == "" || len(page) > maxPageID {
+		return false
+	}
+	for _, r := range page {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// notePage names the browser tab sub's stream belongs to.
+func (m *Manager) notePage(sub *Subscriber, page string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sub.page = page
+}
+
+// SetViewing records the Task page shows while it is visible, "" when it
+// shows none or is hidden. It holds for the page's open streams; a stream
+// that ends takes it along.
+func (m *Manager) SetViewing(page, task string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for sub := range m.subs {
+		if sub.page == page {
+			sub.viewing = task
+		}
+	}
+}
+
+// onScreenLocked reports whether a visible page shows Task id.
+func (m *Manager) onScreenLocked(id string) bool {
+	for sub := range m.subs {
+		if sub.page != "" && sub.viewing == id {
+			return true
+		}
+	}
+	return false
+}
+
+// handleViewing is POST /api/viewing with {"page","task"}: the Task a
+// visible page shows ("" for none), so its notices are not pushed.
+func (s *Server) handleViewing(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Page string `json:"page"`
+		Task string `json:"task"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if !validPageID(body.Page) || len(body.Task) > maxPageID*2 {
+		writeError(w, http.StatusBadRequest, "invalid page or task")
+		return
+	}
+	s.m.SetViewing(body.Page, body.Task)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func failedOrInterrupted(state string) bool { return state == StateFailed || state == StateInterrupted }

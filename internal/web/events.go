@@ -31,6 +31,11 @@ type Subscriber struct {
 	queued        atomic.Int64
 	gone          chan struct{}
 	dropped       bool // guarded by Manager.mu
+	// page names the browser tab the stream belongs to, and viewing the
+	// Task that tab shows while it is visible ("" otherwise); both guarded
+	// by Manager.mu (notePage, SetViewing).
+	page    string
+	viewing string
 }
 
 // Frames returns the queue of encoded events for this subscriber.

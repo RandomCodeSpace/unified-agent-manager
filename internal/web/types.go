@@ -294,6 +294,11 @@ type SessionSummary struct {
 	// Compacting is set while the open conversation is being compacted
 	// (the /compact command or the provider's automatic compaction).
 	Compacting bool `json:"compacting,omitempty"`
+	// CompactThreshold is the share of the context, in percent, at which
+	// the open conversation starts compacting: Settings' value when it
+	// opened, which a later change reaches only when it reopens. Omitted
+	// while no conversation is open.
+	CompactThreshold int `json:"compact_threshold,omitempty"`
 }
 
 // DiffStat totals a list of changed files.

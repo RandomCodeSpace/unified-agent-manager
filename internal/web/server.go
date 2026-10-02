@@ -178,6 +178,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/push", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
 	mux.HandleFunc("POST /api/push/unsubscribe", s.handlePushUnsubscribe)
+	mux.HandleFunc("POST /api/viewing", s.handleViewing)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
@@ -1157,6 +1158,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.m.Unsubscribe(sub)
+	if page := r.URL.Query().Get("page"); validPageID(page) {
+		s.m.notePage(sub, page)
+	}
 	rc := http.NewResponseController(w)
 	h := w.Header()
 	h.Set(headerContentType, "text/event-stream")

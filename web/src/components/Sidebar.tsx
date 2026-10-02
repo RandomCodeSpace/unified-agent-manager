@@ -131,14 +131,14 @@ function ConnectionDot({ connection, side }: Readonly<{ connection: Connection; 
 }
 
 /**
- * The collapsed sidebar (wide layout): a 48px rail on the sidebar's floor. At the top the UAM
+ * The collapsed sidebar (wide layout): a narrow rail (`--spacing-rail-collapsed`) on the sidebar's floor. At the top the UAM
  * mark (shows the sidebar, with the Needs you count), New task, the Project filter and Add
  * project; at the foot Settings, the planner and the connection. Each is the expanded
  * sidebar's own control, so it opens the same thing; tips open to the right.
  */
 export function SidebarRail({ projects, actions, connection, count }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number }>) {
   return (
-    <nav aria-label="Sidebar" className="flex h-full w-12 flex-col items-center bg-rail pb-2 text-body">
+    <nav aria-label="Sidebar" className="flex h-full w-rail-collapsed flex-col items-center bg-rail pb-2 text-body">
       <div className="flex h-header shrink-0 items-center">
         <SidebarToggle id="sidebar-show" open={false} count={count} onToggle={actions.onToggleSidebar} side="right" />
       </div>

@@ -35,6 +35,8 @@ export function SuggestedReplies({ session, hidden, onPick }: Readonly<{ session
     const controller = new AbortController();
     api.suggestions(session.id, controller.signal).then(
       (r) => {
+        // Replies the service did not keep (Background AI paused or off) are asked for again on the next look.
+        if (!r.item_id) return;
         suggested.set(session.id, { key, replies: r.replies });
         setFetched((n) => n + 1);
       },

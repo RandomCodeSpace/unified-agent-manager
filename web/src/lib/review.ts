@@ -81,14 +81,17 @@ export interface Risk {
 const LOCKFILES = new Set(['package-lock.json', 'npm-shrinkwrap.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb', 'go.sum', 'Cargo.lock', 'Gemfile.lock', 'poetry.lock', 'uv.lock', 'Pipfile.lock', 'composer.lock', 'flake.lock']);
 const DEPLOY_DIRS = /^(deploy|deploys|deployment|deployments|k8s|kubernetes|helm|charts|terraform|ansible|infra)$/i;
 const DEPLOY_FILES = /^(deploy\b.*|\.goreleaser\.ya?ml|procfile|fly\.toml|vercel\.json|netlify\.toml|app\.ya?ml|serverless\.ya?ml|.*\.tf|.*\.tfvars)$/i;
-const AUTH = /(auth(?!or)|login|secur|secret|crypt|permission|credential|password|csrf|oauth|jwt|saml|\bsso\b|\bacl\b)/i;
+// `auth` but not "author(s)"; authorization, authorize and authority count.
+const AUTH = /(auth(?!ors?(?![a-z]))|login|secur|secret|crypt|permission|credential|password|csrf|oauth|jwt|saml|\bsso\b|\bacl\b)/i;
+/** Files that usually hold secrets or registry tokens. */
+const SECRET_FILES = /^(\.env.*|\.npmrc)$/i;
 
 /** Why a path deserves a closer look, or null. CI and deploy files run with credentials; lockfiles hide supply-chain changes. */
 export function riskOf(path: string): Risk | null {
   const parts = path.split('/');
   const base = parts.at(-1) ?? path;
   const dirs = parts.slice(0, -1);
-  if (path.startsWith('.github/workflows/') || path.startsWith('.circleci/') || path.startsWith('.buildkite/') || /^(\.gitlab-ci\.ya?ml|jenkinsfile|azure-pipelines\.ya?ml|\.travis\.ya?ml|bitbucket-pipelines\.ya?ml)$/i.test(base)) {
+  if (path.startsWith('.github/workflows/') || path.startsWith('.github/actions/') || path.startsWith('.circleci/') || path.startsWith('.buildkite/') || /^(\.gitlab-ci\.ya?ml|jenkinsfile|azure-pipelines\.ya?ml|\.travis\.ya?ml|bitbucket-pipelines\.ya?ml)$/i.test(base)) {
     return { label: 'CI workflow', detail: 'Runs in CI, often with repository secrets: check what it executes.' };
   }
   if (LOCKFILES.has(base)) return { label: 'Lockfile', detail: 'Pins dependency versions: check which packages changed and where they come from.' };
@@ -97,7 +100,7 @@ export function riskOf(path: string): Risk | null {
   }
   if (dirs.some((d) => /^migrat/i.test(d)) || /^\d+.*\.sql$/i.test(base)) return { label: 'Migration', detail: 'Changes the database schema or data; it may be hard to undo.' };
   if (dirs.some((d) => DEPLOY_DIRS.test(d)) || DEPLOY_FILES.test(base)) return { label: 'Deploy', detail: 'Changes how or where the project is deployed.' };
-  if (parts.some((p) => AUTH.test(p))) return { label: 'Auth/security', detail: 'Touches sign-in, permissions, secrets or cryptography.' };
+  if (SECRET_FILES.test(base) || parts.some((p) => AUTH.test(p))) return { label: 'Auth/security', detail: 'Touches sign-in, permissions, secrets or cryptography.' };
   return null;
 }
 
@@ -106,10 +109,12 @@ export function byRisk<T extends { path: string }>(files: readonly T[]): T[] {
   return [...files.filter((f) => riskOf(f.path)), ...files.filter((f) => !riskOf(f.path))];
 }
 
+/** The letter for each status word, as git shows it; the Files tree and Changes both use it. */
+const STATUS_LETTERS: Record<string, string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflicted: '!' };
+
 /** One letter for a status word ("modified" → M), as git shows it; letters pass through. */
 export function statusLetter(status: string): string {
-  const letters: Record<string, string> = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'U', conflicted: '!' };
-  return letters[status] ?? (status.slice(0, 1).toUpperCase() || '?');
+  return STATUS_LETTERS[status] ?? (status.slice(0, 1).toUpperCase() || '?');
 }
 
 /** All comments as one message to the Task, in file then line order. */

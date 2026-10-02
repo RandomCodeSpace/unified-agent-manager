@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
 
 /** The chat column keeps at least this much room beside an inline panel. */
 const COLUMN_MIN = 480;
 /** The Task view keeps at least this much height above a bottom panel (its header, a few rows and the composer). */
 const PANE_MIN = 280;
-const RAIL = 320;
 const STEP = 16;
 
 export interface Resizable {
@@ -40,10 +39,10 @@ export interface Resizable {
  */
 export function useResizable(key: string, fallback: number, minWidth = 320, axis: 'x' | 'y' = 'x'): Resizable {
   const y = axis === 'y';
-  const maxFor = y ? maxHeight : maxWidth;
   const storageKey = `uam.panel.${key}`;
   const panelRef = useRef<HTMLElement | null>(null);
-  const [max, setMax] = useState(() => maxFor(minWidth));
+  // Before the panel mounts its row is unknown: the viewport less the sidebar stands in.
+  const [max, setMax] = useState(() => (y ? maxHeight(minWidth) : maxWidth(minWidth, null)));
   const [stored, setStored] = useState(() => read(storageKey) ?? fallback);
   // The effective width is derived, so a viewport change re-clamps without touching state.
   const width = clamp(stored, minWidth, max);
@@ -51,11 +50,19 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
   const at = (e: PointerEvent<HTMLElement>) => (y ? e.clientY : e.clientX);
   const cursor = y ? 'cursor-row-resize' : 'cursor-col-resize';
 
-  useEffect(() => {
-    const onResize = () => setMax(maxFor(minWidth));
+  // A side panel's room is its row's width, which also changes when the sidebar collapses or expands.
+  useLayoutEffect(() => {
+    const row = y ? null : panelRef.current?.parentElement;
+    const onResize = () => setMax(y ? maxHeight(minWidth) : maxWidth(minWidth, row));
+    onResize();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [minWidth, maxFor]);
+    const observer = row && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    if (row) observer?.observe(row);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      observer?.disconnect();
+    };
+  }, [minWidth, y]);
 
   const apply = useCallback((w: number) => {
     panelRef.current?.style.setProperty(y ? '--panel-h' : '--panel-w', `${w}px`);
@@ -125,8 +132,10 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
   return { panelRef, width, min: minWidth, max, handleProps };
 }
 
-function maxWidth(min: number): number {
-  return Math.max(min, Math.min(880, window.innerWidth - RAIL - COLUMN_MIN));
+/** The widest a side panel may be: its row (the main pane beside the sidebar, open or collapsed) less the chat column's minimum. */
+function maxWidth(min: number, row: HTMLElement | null | undefined): number {
+  const room = row?.clientWidth || window.innerWidth - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--spacing-rail')) || 0);
+  return Math.max(min, Math.min(880, room - COLUMN_MIN));
 }
 
 function maxHeight(min: number): number {

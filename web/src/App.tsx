@@ -1,7 +1,7 @@
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { SIGNED_OUT, UPDATE_EVENTS, api, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
@@ -15,7 +15,7 @@ import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
-import { handleNotice, setViewing, startNotifications, type Notice } from './lib/notify';
+import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
@@ -79,6 +79,8 @@ const increment = (n: number) => n + 1;
 
 /** True while a Base UI popup (menu, dialog, tooltip) is open; app-level Esc handlers stand back. */
 export const popupOpen = () => !!document.querySelector('[data-popup]');
+/** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
+const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
 
 function readJSON<T>(key: string, fallback: T): T {
   try {
@@ -266,7 +268,7 @@ export default function App() {
       if (e.key !== 'Dead' && ([...e.key].length !== 1 || !e.key.trim())) return;
       const target = e.target;
       if (!(target instanceof HTMLElement) || target.isContentEditable || target.closest('input, textarea, select, [role="textbox"], [role="combobox"], [role="listbox"], [role="menu"], [role="tree"], [role="grid"], [role="tablist"], [role="slider"], [role="spinbutton"]')) return;
-      if (document.querySelector('[data-popup]:not([data-popup="tooltip"])') || window.getSelection()?.isCollapsed === false) return;
+      if (keysTaken() || window.getSelection()?.isCollapsed === false) return;
       const composer = document.getElementById('composer-text');
       if (!(composer instanceof HTMLTextAreaElement) || composer.disabled || composer.readOnly || composer.closest('[inert]') || !composer.getClientRects().length) return;
       composer.focus({ preventScroll: true });
@@ -297,9 +299,11 @@ export default function App() {
   }, []);
 
   // The selected task counts as viewed as long as it is on screen: every frame that carries
-  // its updated_at marks it, so nothing it does while open shows as unread later.
+  // its updated_at marks it, so nothing it does while open shows as unread later. A hidden
+  // page shows nothing: what the Task does meanwhile stays unread until the page is back.
   const markViewed = useCallback((id: string, at: string) => {
-    if (!document.hidden) markLooked(id);
+    if (document.visibilityState !== 'visible') return;
+    markLooked(id);
     setViewed((v) => {
       if (v[id] === at) return v;
       const next = { ...v, [id]: at };
@@ -318,9 +322,18 @@ export default function App() {
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onHide);
-      markLooked(id);
+      // A hidden page recorded the leave when it hid; it shows nothing since.
+      if (!document.hidden) markLooked(id);
     };
   }, [state.selectedId, markLooked]);
+  const markShown = useEffectEvent(() => {
+    const shown = state.sessions.find((s) => s.id === state.selectedId);
+    if (shown) markViewed(shown.id, shown.updated_at);
+  });
+  useEffect(() => {
+    document.addEventListener('visibilitychange', markShown);
+    return () => document.removeEventListener('visibilitychange', markShown);
+  }, []);
 
   // One EventSource at a time, scoped to the selected session.
   useEffect(() => {
@@ -397,6 +410,8 @@ export default function App() {
         return null;
       });
       if (data.session?.id === selected) markViewed(selected, data.session.updated_at);
+      // This stream is new to the service: it learns again which Task this tab shows.
+      streamOpened();
       // Composer drafts of Tasks that no longer exist go with them.
       try {
         for (const key of staleDraftKeys(Object.keys(localStorage), data.sessions.map((s) => s.id), data.projects.map((p) => p.id))) localStorage.removeItem(key);
@@ -404,6 +419,24 @@ export default function App() {
       } catch {
         // Storage unavailable: nothing to sweep.
       }
+      // So are their read and last-looked marks.
+      const live = new Set(data.sessions.map((s) => s.id));
+      try {
+        const looked = readJSON<Record<string, string>>(LOOKED_KEY, {});
+        if (!Object.keys(looked).every((id) => live.has(id))) localStorage.setItem(LOOKED_KEY, JSON.stringify(Object.fromEntries(Object.entries(looked).filter(([id]) => live.has(id)))));
+      } catch {
+        // Storage unavailable: nothing to prune.
+      }
+      setViewed((v) => {
+        if (Object.keys(v).every((id) => live.has(id))) return v;
+        const next = Object.fromEntries(Object.entries(v).filter(([id]) => live.has(id)));
+        try {
+          localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
+        } catch {
+          // Storage unavailable: the marks shrink for this page only.
+        }
+        return next;
+      });
       retainArchive(data.sessions.map((s) => s.id));
     });
     // A Task needs you or finished: a notification, when this browser asked for them (lib/notify.ts).
@@ -583,8 +616,10 @@ export default function App() {
   useEffect(() => {
     if (auth === 'in') return startNotifications();
   }, [auth]);
-  // The Task on screen is not announced while this page is visible.
-  useEffect(() => setViewing(settingsOpen || plannerOpen ? null : state.selectedId), [state.selectedId, settingsOpen, plannerOpen]);
+  // The Task on screen is not announced while this page is visible; Settings, the planner and Routines cover it.
+  useEffect(() => {
+    if (auth === 'in') setViewing(settingsOpen || plannerOpen || routinesFor ? null : state.selectedId);
+  }, [auth, state.selectedId, settingsOpen, plannerOpen, routinesFor]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, else the selected task.
   useEffect(() => {
@@ -638,7 +673,7 @@ export default function App() {
   useEffect(() => {
     if (auth !== 'in') return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyN' || e.defaultPrevented || document.querySelector('[data-popup]:not([role="tooltip"])')) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyN' || e.defaultPrevented || keysTaken()) return;
       if (e.target instanceof Element && e.target.closest('.xterm')) return;
       e.preventDefault();
       openNewTask();
@@ -654,23 +689,26 @@ export default function App() {
     [state.projects, state.sessions, filter, hasNews],
   );
   const selectedId = state.selectedId;
+  // Read at the key press, so a press right after the rows commit (before passive effects run) sees them.
+  const cycleNeedsYou = useEffectEvent((e: KeyboardEvent) => {
+    const next = cycleTask(needsYouIds, selectedId, e.code === 'KeyJ' ? 1 : -1);
+    if (!next) return;
+    e.preventDefault();
+    if (next !== selectedId) select(next);
+  });
   useEffect(() => {
     if (auth !== 'in') return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.code !== 'KeyJ' && e.code !== 'KeyK') || e.defaultPrevented) return;
-      if (document.querySelector('[data-popup]:not([role="tooltip"])')) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || (e.code !== 'KeyJ' && e.code !== 'KeyK') || e.defaultPrevented || keysTaken()) return;
       const target = e.target instanceof Element ? e.target : null;
       if (target?.closest('.xterm')) return;
       const field = target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input, textarea, select'));
       if (field && e.key.toLowerCase() !== (e.code === 'KeyJ' ? 'j' : 'k')) return;
-      const next = cycleTask(needsYouIds, selectedId, e.code === 'KeyJ' ? 1 : -1);
-      if (!next) return;
-      e.preventDefault();
-      if (next !== selectedId) select(next);
+      cycleNeedsYou(e);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [auth, needsYouIds, selectedId, select]);
+  }, [auth]);
 
   /**
    * A new Task's first Send: create the Task with the chosen settings, upload the held
@@ -839,8 +877,15 @@ export default function App() {
   else if (newTask) openName = '';
   useEffect(() => {
     document.title = pageTitle(attention, openName);
-    if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
-    else navigator.clearAppBadge?.().catch(() => {});
+    // The badge is this page's count while it is visible; otherwise the service worker sets the service's count with each push (public/sw.js).
+    const badge = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (attention > 0) navigator.setAppBadge?.(attention).catch(() => {});
+      else navigator.clearAppBadge?.().catch(() => {});
+    };
+    badge();
+    document.addEventListener('visibilitychange', badge);
+    return () => document.removeEventListener('visibilitychange', badge);
   }, [attention, openName]);
 
   if (auth === 'checking') {
@@ -913,7 +958,7 @@ export default function App() {
   // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
   const leading = narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" /> : null;
   // The sidebar's column, animated between its width and the rail's.
-  const columns = sidebarOpen ? 'grid-cols-[320px_minmax(0,1fr)]' : 'grid-cols-[48px_minmax(0,1fr)]';
+  const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
   // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
@@ -991,7 +1036,7 @@ export default function App() {
               narrow ? 'grid-cols-1' : cn('transition-[grid-template-columns] duration-240 ease-app', columns),
             )}
           >
-            {/* The column animates to the rail's 48px; the sidebar keeps its width inside so nothing reflows on the way, and is inert once collapsed, under the rail. */}
+            {/* The column animates to the collapsed rail's width; the sidebar keeps its width inside so nothing reflows on the way, and is inert once collapsed, under the rail. */}
             {!narrow && (
               <aside ref={aside} className="rail-edge relative min-h-0 overflow-clip">
                 <div className="h-full w-rail" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>{sidebar}</div>

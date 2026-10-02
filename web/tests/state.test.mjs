@@ -386,3 +386,18 @@ test('a summary without compacting clears it on the open Task and its row', () =
   assert.equal(state.detail.compacting, undefined);
   assert.equal(state.sessions.find((s) => s.id === 'task').compacting, undefined);
 });
+
+test('every summary field a frame omits is cleared on the open Task, not only the ones listed by name', () => {
+  // The service omits these when empty (omitempty / omitzero), so an absent key means "none now".
+  const optional = {
+    outcome: 'Changed 2 files', diff: { files: 2, additions: 3, deletions: 1 }, ask: { kind: 'question', title: 'Which?' }, event_at: '2026-10-01T10:00:00Z',
+    state_detail: 'boom', context: { used: 1, limit: 2 }, usage: { ai_units: 1 }, stage: 'settled', settled_at: '2026-10-01T10:00:00Z',
+    archived_at: '2026-10-01T10:00:00Z', spawned_by: 'p', routine_id: 'r', rerun_of: 'o', compacting: true,
+  };
+  let state = update(loading(), { name: 'session', seq: 11, session: { id: 'task', state: 'completed', ...optional } });
+  assert.equal(state.detail.outcome, 'Changed 2 files');
+  state = update(state, { name: 'session', seq: 12, session: { id: 'task', state: 'completed' } });
+  for (const key of Object.keys(optional)) assert.equal(state.detail[key], undefined, key);
+  // What only the detail carries stays.
+  assert.deepEqual(state.detail.subagents.map((s) => s.id), ['helper']);
+});

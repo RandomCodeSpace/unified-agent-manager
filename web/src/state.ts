@@ -536,11 +536,26 @@ function upsert<T extends { id: string }>(list: T[], v: T): T[] {
   return out;
 }
 
+/**
+ * Every SessionSummary field, checked by the compiler both ways: a field added to the type must be
+ * listed here. The service omits empty ones (omitempty), so the open Task takes each from the
+ * frame, and an absent key clears the old value.
+ */
+const SUMMARY_KEYS = Object.keys({
+  id: 1, project_id: 1, provider: 1, name: 1, title: 1, workdir: 1, conversation_id: 1, model: 1, last_model: 1, subagents_running: 1,
+  background_tasks_running: 1, effort: 1, context_size: 1, context: 1, usage: 1, mode: 1, execution: 1, stage: 1, settled_at: 1,
+  archived_at: 1, spawned_by: 1, routine_id: 1, diff: 1, rerun_of: 1, outcome: 1, compacting: 1, compact_threshold: 1, queued: 1, state: 1, state_detail: 1,
+  open: 1, pending: 1, ask: 1, event_at: 1, created_at: 1, updated_at: 1, capabilities: 1,
+} satisfies Record<keyof SessionSummary, 1>) as (keyof SessionSummary)[];
+
 function withSession(state: State, s: SessionSummary): State {
   const detail = state.detail;
-  // state_detail, last_model, context, usage and compacting are omitempty on the wire: an absent key must clear the old value.
-  const merged =
-    detail?.id === s.id ? { ...detail, ...s, state_detail: s.state_detail, last_model: s.last_model, stage: s.stage, context: s.context, usage: s.usage, execution: s.execution, compacting: s.compacting } : detail;
+  let merged = detail;
+  if (detail?.id === s.id) {
+    const next: Record<string, unknown> = { ...detail };
+    for (const key of SUMMARY_KEYS) next[key] = s[key];
+    merged = next as unknown as SessionDetail;
+  }
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };
 }
 

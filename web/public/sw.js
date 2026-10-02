@@ -2,24 +2,11 @@
 // no fetch handler and caches nothing, so the app, its assets and the API always come
 // from the service (src/lib/notify.ts registers it; docs/web.md, Notifications).
 
-// Safari revokes a push subscription whose pushes show no notification, so there every
-// push is shown, even for the Task on screen.
-const mustShow = /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent);
+// Every push is shown: a push without a notification makes Safari revoke the subscription
+// and Chrome show its own "updated in the background" notice. The service sends none for a
+// Task a visible page shows (POST /api/viewing), so nothing here asks the pages first.
 
 self.addEventListener('install', () => self.skipWaiting());
-
-/** Whether a visible page shows this Task: the page answers over a message channel. */
-function viewing(client, task) {
-  return new Promise((resolve) => {
-    const channel = new MessageChannel();
-    const timer = setTimeout(() => resolve(false), 500);
-    channel.port1.onmessage = (event) => {
-      clearTimeout(timer);
-      resolve(!!event.data && event.data.visible === true && event.data.task === task);
-    };
-    client.postMessage({ type: 'uam-viewing' }, [channel.port2]);
-  });
-}
 
 async function setBadge(count) {
   if (typeof count !== 'number' || !self.navigator.setAppBadge) return;
@@ -41,13 +28,9 @@ self.addEventListener('push', (event) => {
   if (!notice || typeof notice.title !== 'string' || typeof notice.task !== 'string') return;
   event.waitUntil(
     (async () => {
-      await setBadge(notice.badge);
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      if (!mustShow) {
-        const shown = await Promise.all(windows.filter((c) => c.visibilityState === 'visible').map((c) => viewing(c, notice.task)));
-        // The page showing the Task took the notice itself.
-        if (shown.includes(true)) return;
-      }
+      // A visible page keeps the badge at its own count (it knows this browser's unread marks); otherwise the service's applies.
+      if (!windows.some((c) => c.visibilityState === 'visible')) await setBadge(notice.badge);
       await self.registration.showNotification(notice.title, {
         tag: `uam-task-${notice.task}`,
         renotify: true,

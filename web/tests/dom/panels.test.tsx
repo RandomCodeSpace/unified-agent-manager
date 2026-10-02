@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
 import { openMenu, openTask } from './render';
 
@@ -35,6 +35,23 @@ describe('changes', () => {
     const { user } = await openTask('t1');
     await user.click(screen.getAllByRole('button', { name: 'View changes' })[0]);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
+  });
+
+  test('a Viewed mark made while comments send survives the send', async () => {
+    localStorage.setItem('uam.review.t1', JSON.stringify({ viewed: {}, comments: [{ id: 'c1', path: '.github/workflows/ci.yml', line: 1, side: 'new', code: 'x', body: 'Please fix' }] }));
+    const { user } = await openTask('t1');
+    await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    const send = await sheet.findByRole('button', { name: 'Send 1 comment to the task' });
+    const box = (await sheet.findAllByRole('checkbox', { name: /^Viewed / }))[0] as HTMLInputElement;
+    fireEvent.click(send);
+    fireEvent.click(box); // while the send is in flight
+    expect(box.checked).toBe(true);
+    await sheet.findByText(/Comments (sent|queued)/);
+    expect(box.checked).toBe(true);
+    const stored = JSON.parse(localStorage.getItem('uam.review.t1') ?? 'null') as { viewed: Record<string, string>; comments: unknown[] } | null;
+    expect(Object.keys(stored?.viewed ?? {})).toHaveLength(1);
+    expect(stored?.comments).toEqual([]);
   });
 
   test('a project without Git offers no changes, and says why', async () => {
