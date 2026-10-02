@@ -937,6 +937,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       items: [
         { id: 'f1', kind: 'user', time: ago(70), text: 'Focus events stop after a re-attach. Fix it, add a regression test, and document the replay order in docs/terminal.md.' },
         { id: 'f2', kind: 'reasoning', time: ago(69), ended_at: ago(68), text: '`Redraw` replays the private modes but not `?1004`. Add the replay after them and a test that re-attaches.' },
+        tool('fq', 65, { name: 'ask_user', title: 'Ask user', status: 'completed', input: JSON.stringify({ question: 'Where should the replay order be documented?', choices: ['docs/terminal.md', 'A comment in redraw.go'] }), output: 'User selected: docs/terminal.md' }),
         { ...tool('f3', 60, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw.go`, output: '+\tif err := v.replayFocusEvents(w); err != nil {' }), ended_at: ago(60) },
         { ...tool('f4', 55, { name: 'edit', title: 'Edit internal/vterm/redraw_test.go', status: 'completed', path: `${p('p1')}/internal/vterm/redraw_test.go`, output: '+func TestRedrawReplaysFocusEvents(t *testing.T) {' }), ended_at: ago(55) },
         {

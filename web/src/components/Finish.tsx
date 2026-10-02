@@ -115,7 +115,7 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
 
   if (!content && kept !== turnKey) return null;
   return (
-    <section aria-labelledby="finish-title" className="flex flex-col gap-3 rounded-lg bg-raised p-4 shadow-raised animate-rise sm:p-5">
+    <section aria-labelledby="finish-title" className="flex flex-col gap-3 rounded-lg bg-tint-well p-4 shadow-raised animate-rise sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="finish-title" className="text-title text-ink">Finished — check the evidence</h2>
         {unverified > 0 && <Chip className="bg-warning-wash text-warning">{unverified} {unverified === 1 ? 'claim' : 'claims'} not verified</Chip>}
