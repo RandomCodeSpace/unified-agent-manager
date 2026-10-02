@@ -19,6 +19,8 @@ describe('a settled question', () => {
     expect(card().getByText('8000')).toBeTruthy();
     expect(card().getByText('8080')).toBeTruthy();
     expect(card().queryByRole('button')).toBeNull();
+    // Only a settled question takes the darker tint-well surface; waiting, it stays raised.
+    expect(screen.getByRole('region', { name: 'Question' }).classList).toContain('bg-raised');
   });
 
   test('a chosen option reads "You chose" with its label; the button names the whole question and answer', () => {

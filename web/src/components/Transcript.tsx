@@ -1033,7 +1033,7 @@ export const QuestionBlock = memo(function QuestionBlock({ id, asked, className 
   const pending = asked.outcome === 'pending';
   return (
     <ContextMenu.Root>
-      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('rounded-md bg-raised text-ui shadow-raised', pending && 'flex flex-col gap-1.5 px-3.5 py-3', className)} />}>
+      <ContextMenu.Trigger render={<section id={`item-${id}`} aria-label="Question" className={cn('rounded-md text-ui shadow-raised', pending ? 'flex flex-col gap-1.5 bg-raised px-3.5 py-3' : 'bg-tint-well', className)} />}>
         {pending ? (
           <>
             <div className="flex items-center gap-1.5 text-caption text-muted">

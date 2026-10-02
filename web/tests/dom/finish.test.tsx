@@ -76,6 +76,16 @@ describe('finish card', () => {
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });
 
+  test('the finish card and the answered question sit one step below the canvas, on tint-well', async () => {
+    await openTask('t20');
+    const finish = (await screen.findByRole('heading', { name: 'Finished — check the evidence' })).closest('section')!;
+    const question = screen.getByRole('region', { name: 'Question' });
+    for (const card of [finish, question]) {
+      expect(card.classList).toContain('bg-tint-well');
+      expect(card.classList).not.toContain('bg-raised');
+    }
+  });
+
   test('Show output opens the check’s whole output', async () => {
     const { user } = await openTask('t20');
     const tests = (await screen.findByText('Ran the tests')).closest('li')!;

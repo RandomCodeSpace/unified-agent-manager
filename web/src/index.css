@@ -55,7 +55,7 @@
   --color-backdrop: rgba(28, 27, 24, 0.35);
   --color-scrim: rgba(16, 17, 20, 0.8);
   /* The three tint steps between the surfaces: a hover on raised/canvas (1.16:1 on raised, muted text stays 4.57:1),
-     the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips, question blocks and uploads. */
+     the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
   --color-tint-hover: #eceef2;
   --color-tint-selected: #e9edf8;
   --color-tint-well: #f4f5f8;
