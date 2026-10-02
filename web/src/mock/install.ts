@@ -700,7 +700,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
         broadcast('settings', { settings: st.settings });
@@ -709,6 +709,13 @@ export function install(): { received: Received[] } {
         const limit = body.utility_daily_limit;
         if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 1000) return fail(400, 'utility_daily_limit must be 0 to 1000');
         st.settings = { ...st.settings, utility_daily_limit: limit };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.compact_threshold !== undefined) {
+        const t = body.compact_threshold;
+        if (t !== null && (typeof t !== 'number' || !Number.isInteger(t) || t < 50 || t > 90)) return fail(400, 'compact_threshold must be 50 to 90');
+        const { compact_threshold: _, ...rest } = st.settings;
+        st.settings = t === null || t === 80 ? rest : { ...rest, compact_threshold: t };
         broadcast('settings', { settings: st.settings });
       }
       if (body.planner !== undefined) {

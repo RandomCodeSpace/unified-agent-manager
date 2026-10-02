@@ -501,6 +501,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       project_id: 'p2',
       workdir: p('p2'),
       model: 'auto',
+      // Near the point where the conversation compacts (the ring's mark).
+      context: { used: 141_000, limit: 200_000 },
       name: '',
       title: '',
       state: 'working',

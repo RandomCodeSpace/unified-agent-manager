@@ -604,6 +604,11 @@ type WebSettings struct {
 	// SuggestReplies, when false, stops suggesting replies after a turn;
 	// absent means on.
 	SuggestReplies *bool `json:"suggest_replies,omitempty"`
+	// CompactionThreshold is the share of the context, in percent, at which
+	// a Task's conversation starts compacting, MinCompactionThreshold to
+	// MaxCompactionThreshold; nil means the provider default
+	// (DefaultCompactionThreshold).
+	CompactionThreshold *int `json:"compact_threshold,omitempty"`
 	// SavedPrompts are the prompts the owner saved, valid as
 	// ValidSavedPrompt checks, oldest first.
 	SavedPrompts []WebSavedPrompt `json:"saved_prompts,omitempty"`
@@ -615,6 +620,13 @@ type WebSettings struct {
 const (
 	DefaultUtilityDailyLimit = 200
 	MaxUtilityDailyLimit     = 1000
+)
+
+// The bounds of WebSettings.CompactionThreshold, in percent.
+const (
+	MinCompactionThreshold     = 50
+	MaxCompactionThreshold     = 90
+	DefaultCompactionThreshold = 80
 )
 
 // WebCustomModel is one OpenAI-compatible model. Name names its provider
@@ -783,6 +795,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"utility_daily_limit": {},
 	"suggest_replies":     {},
 	"saved_prompts":       {},
+	"compact_threshold":   {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
@@ -1038,6 +1051,10 @@ func (s *Store) loadNoLock() (Config, error) {
 	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && (*l < 0 || *l > MaxUtilityDailyLimit) {
 		log.Warn("clearing invalid stored utility daily limit")
 		cfg.WebSettings.UtilityDailyLimit = nil
+	}
+	if t := cfg.WebSettings.CompactionThreshold; t != nil && (*t < MinCompactionThreshold || *t > MaxCompactionThreshold) {
+		log.Warn("clearing invalid stored compaction threshold")
+		cfg.WebSettings.CompactionThreshold = nil
 	}
 	cleanSavedPrompts(&cfg.WebSettings)
 	migrateProjectDefaults(&cfg)

@@ -349,3 +349,23 @@ func TestWebSendCarriesUploadsAsBlobsAndShowsThem(t *testing.T) {
 		t.Fatalf("history = %+v, %v", history.Items, err)
 	}
 }
+
+// A compaction threshold reaches the CLI on create and on resume; without
+// one the CLI keeps its defaults.
+func TestWebCompactionThresholdOnCreateAndResume(t *testing.T) {
+	h := openWeb(t)
+	if h.fc.create[0].InfiniteSessions != nil {
+		t.Fatalf("default create = %+v", h.fc.create[0].InfiniteSessions)
+	}
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", Workdir: "/work", Events: &recSink{}, CompactionThreshold: 0.6}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-3", ConversationID: "s-1", Workdir: "/work", Events: &recSink{}, CompactionThreshold: 0.6}); err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*copilot.InfiniteSessionConfig{"create": h.fc.create[1].InfiniteSessions, "resume": h.fc.resume[0].InfiniteSessions} {
+		if got == nil || got.Enabled != nil || got.BackgroundCompactionThreshold == nil || *got.BackgroundCompactionThreshold != 0.6 || got.BufferExhaustionThreshold != nil {
+			t.Fatalf("%s infinite sessions = %+v", name, got)
+		}
+	}
+}

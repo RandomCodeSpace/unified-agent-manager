@@ -284,7 +284,12 @@ export interface Settings {
   saved_prompts?: SavedPrompt[];
   /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
   utility_daily_limit?: number;
+  /** The share of the context, in percent (50 to 90), at which a Task's conversation starts compacting; omitted for the default, 80. PATCH null puts it back. */
+  compact_threshold?: number | null;
 }
+
+/** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
+export const DEFAULT_COMPACT_THRESHOLD = 80;
 
 /** A message the owner saved to insert again from a composer; `project_id` limits it to that Project's Tasks. */
 export interface SavedPrompt {

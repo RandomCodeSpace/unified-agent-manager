@@ -294,8 +294,10 @@ sign-outs are logged without the token.
   provider.
 - **Context usage**: the ring beside the composer model shows used tokens
   as a share of the active prompt budget. Click it for token counts and the
-  reported cached share. Before a report, the track is empty and its popover
-  says usage is unavailable. Effort and context size share one menu.
+  reported cached share. A short mark on the ring, and a line in its
+  popover ("Compacts at 80% (218K tokens)"), show where Copilot starts
+  compacting the conversation (see Settings). Before a report, the track is
+  empty and its popover says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
   or changing its selection clears it until a fresh report. Compaction or
   truncation appears as a notice in the conversation; the next usage report
@@ -713,7 +715,15 @@ sign-outs are logged without the token.
   service checks them as it checks a Task's selection. Until they are set,
   a new Task starts with the provider's own defaults. Defaults that older
   versions kept per Project are adopted from the newest Project that had
-  them the first time the service loads the store. `hidden_models`, e.g.
+  them the first time the service loads the store. **Compact the
+  conversation when its context reaches** sets where Copilot starts
+  compacting a Task's conversation: 50% to 90% in steps of 5, 80% (Copilot's
+  own default) unless changed. Compacting earlier keeps answers faster and
+  cheaper but drops older detail sooner. It is kept as `compact_threshold`
+  (a whole percent; `null` or 80 puts the default back, which is not
+  stored) and applies to new Tasks and to a Task already open the next time
+  its conversation reopens. Where a turn waits for compaction to finish
+  stays Copilot's default, 95%. `hidden_models`, e.g.
   `{"hidden_models": {"copilot": ["gpt-5-mini"]}}`, lists the models not
   offered in the pickers; a `PATCH` replaces the list of each provider it
   names, and an empty list shows all of that provider's models again. At

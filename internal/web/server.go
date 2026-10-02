@@ -580,6 +580,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "utility_daily_limit must be a whole number or null")
 				return
 			}
+		case "compact_threshold":
+			// null puts the default back.
+			patch.CompactionThreshold = new(*int)
+			if json.Unmarshal(raw, patch.CompactionThreshold) != nil {
+				writeError(w, http.StatusBadRequest, "compact_threshold must be a whole number or null")
+				return
+			}
 		default:
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown setting %q", key))
 			return
