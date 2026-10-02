@@ -297,6 +297,25 @@ export function startedUnderReason(c: Card, byId: ReadonlyMap<string, Card>): st
 }
 
 /**
+ * Why `c` can't leave its level (a move to another parent, a split into a story), or null when it
+ * can: a link joins cards of one kind under one parent, so the service wants its links removed first.
+ */
+export function linkedReason(c: Card, byId: ReadonlyMap<string, Card>): string | null {
+  const ids = [...new Set([...c.blocked_by, ...c.blocks])];
+  if (!ids.length) return null;
+  const refs = ids.map((id) => byId.get(id)).filter((x): x is Card => !!x).map((x) => `#${x.seq}`);
+  return `Linked to ${refs.length ? refs.join(', ') : 'other cards'}: remove those blocker links first.`;
+}
+
+/**
+ * The subtasks launching the container `c` may start, as the service picks them: confirmed, not
+ * held, planned or to do, anywhere under it.
+ */
+export function pendingUnder(c: Card, byId: ReadonlyMap<string, Card>): Card[] {
+  return [...byId.values()].filter((x) => x.kind === 'subtask' && x.confirmed && !x.held_by && (x.status === 'planned' || x.status === 'todo') && x !== c && cardPath(x, byId).includes(c));
+}
+
+/**
  * The cards `card` may be blocked by (§3): links map one level at a time, so only cards of its
  * kind under its parent (epics with epics), not cancelled, not started, and not linked already.
  */

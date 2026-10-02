@@ -4,7 +4,7 @@
 // staleness markers (§9) and the import (§11). Not part of the production bundle.
 
 import { LIVE, type BoardRequest, type Card, type CardComment, type CardKind, type CardStatus, type ChecklistItem, type Evidence, type Hold, type Project, type SessionSummary, type Settings } from '../api';
-import { cardPath, childIndex, deriveBoard, leavesUnder, lockedReason, startedUnderReason } from '../lib/board';
+import { cardPath, childIndex, deriveBoard, leavesUnder, linkedReason, lockedReason, startedUnderReason } from '../lib/board';
 
 type Json = Record<string, unknown>;
 
@@ -420,9 +420,10 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     let leaf = c;
     let pending: Card[] = [];
     if (c.kind !== 'subtask') {
-      pending = leavesUnder(c.id, childIndex(cards)).filter((l) => l.confirmed && (l.status === 'planned' || l.status === 'todo'));
-      const first = pending.find((l) => !openBlockers(l).length && !l.blocked);
-      if (!first) return refuse('invalid', 'nothing under this card is ready to launch');
+      // As the service picks: a ready subtask first, else a blocked one; refused only with none.
+      pending = leavesUnder(c.id, childIndex(cards)).filter((l) => l.confirmed && !l.held_by && (l.status === 'planned' || l.status === 'todo'));
+      const first = pending.find((l) => !openBlockers(l).length && !l.blocked) ?? pending[0];
+      if (!first) return refuse('invalid', `#${c.seq} has no pending confirmed subtasks`);
       leaf = first;
     }
     if (leaf.status !== 'planned' && leaf.status !== 'todo') return refuse('invalid', `a ${leaf.status} subtask cannot be launched`);
@@ -654,8 +655,12 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           }
         }), ok);
       case 'POST move': {
-        // A move takes the cards under it along: refused while one of them has started.
-        const under = startedUnderReason(c, new Map(cards.map((k) => [k.id, k])));
+        // A linked card leaves its level only once its links are removed; a move takes the cards
+        // under it along, so it is refused while one of them has started.
+        const all = new Map(cards.map((k) => [k.id, k]));
+        const linked = typeof body.parent_id !== 'undefined' && (body.parent_id || null) !== c.parent_id ? linkedReason(c, all) : null;
+        if (linked) return refuse('invalid', linked);
+        const under = startedUnderReason(c, all);
         if (under) return refuse('in_progress', under);
         const wrong = misplaced(c.kind, body.parent_id, c.project_id);
         if (wrong) return wrong;
@@ -722,6 +727,10 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         const children = Array.isArray(body.children) ? (body.children as { title: string; win_condition: string }[]) : [];
         if (c.kind !== 'subtask') return refuse('invalid', 'only a subtask can be split');
         if (!children.length && !c.checklist.length) return refuse('invalid', 'a split needs children');
+        // Split into a story (not under a story), it leaves its level: its links go first.
+        const all = new Map(cards.map((k) => [k.id, k]));
+        const linked = (c.parent_id ? all.get(c.parent_id)?.kind : undefined) !== 'story' && linkedReason(c, all);
+        if (linked) return refuse('invalid', linked);
         return done(commit(() => splitCard(c, children, false)), ok);
       }
       case 'POST launch':

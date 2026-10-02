@@ -1,7 +1,7 @@
 import { Ban, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { api, plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { cardPath, isStarted, startedUnderReason } from '../../lib/board';
+import { cardPath, isStarted, linkedReason, pendingUnder, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
@@ -89,7 +89,11 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     const actions: CardAction[] = [];
     if (!c.confirmed) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
     if (leaf && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => void launch('Launch') });
-    if (c.kind === 'story' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, onClick: () => void launch('Do whole story') });
+    // A story's launch starts one of its confirmed subtasks waiting to start; with none, the service refuses it.
+    if (c.kind === 'story' && c.status !== 'done' && c.status !== 'cancelled') {
+      const reason = pendingUnder(c, byId).length ? undefined : 'No confirmed subtask is waiting to start: confirm or add one first.';
+      actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, reason, onClick: () => void launch('Do whole story') });
+    }
     if (!leaf && c.status !== 'cancelled') {
       actions.push({ key: 'plan', label: 'Plan with agent', icon: <Workflow />, onClick: () => setBrief({ kind: 'plan', title: `Plan #${c.seq} with an agent`, run: async ({ brief: b }) => { const r = await api.planner.plan(c.id, { brief: b }); notify({ tone: 'muted', text: `A planning task started for #${c.seq}.`, task: r.session.id }); } }) });
       actions.push({ key: 'suggest', label: c.kind === 'epic' ? 'Suggest stories' : 'Suggest subtasks', icon: <Sparkles />, onClick: () => setBrief({ kind: 'suggest', title: c.kind === 'epic' ? `Suggest stories for #${c.seq}` : `Suggest subtasks for #${c.seq}`, run: (body) => api.planner.suggest(c.id, body) }) });
@@ -105,10 +109,16 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     }
     if (leaf && c.stale && onTriage) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run(c.id, 'triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && onTriage(c, r)) });
     // A started subtask keeps its plan until it is released: no move, no split. A story moves
-    // only while nothing under it has started, so it says which subtask holds it in place.
+    // only while nothing under it has started, so it says which subtask holds it in place. A
+    // linked card leaves its level (a move, a split into a story) only once its links are removed.
     const started = isStarted(c);
-    if (c.kind !== 'epic' && c.status !== 'cancelled' && !started && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, reason: startedUnderReason(c, byId) ?? undefined, onClick: () => open(c, 'move') });
-    if (leaf && c.status !== 'cancelled' && !started) actions.push({ key: 'split', label: 'Split', icon: <Split />, onClick: () => open(c, 'split') });
+    const linked = linkedReason(c, byId);
+    if (c.kind !== 'epic' && c.status !== 'cancelled' && !started && (c.parent_id || moveTargets(c, cards).length > 0)) actions.push({ key: 'move', label: 'Move to…', icon: <MoveRight />, reason: linked ?? startedUnderReason(c, byId) ?? undefined, onClick: () => open(c, 'move') });
+    if (leaf && c.status !== 'cancelled' && !started) {
+      // Under a story the split makes siblings; elsewhere the subtask becomes a story.
+      const parent = c.parent_id ? byId.get(c.parent_id) : undefined;
+      actions.push({ key: 'split', label: 'Split', icon: <Split />, reason: (parent?.kind !== 'story' && linked) || undefined, onClick: () => open(c, 'split') });
+    }
     if (c.status !== 'cancelled' && c.status !== 'done') {
       actions.push({
         key: 'cancel',
