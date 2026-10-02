@@ -1028,12 +1028,15 @@ are logged only at debug level (`UAM_DEBUG=1`).
     is kept per browser. The gear at the right of each Project opens "Edit
     project", where its name and Task defaults live together with "Previous
     sessions" and "Remove project".
-  - **Hide the sidebar**: the UAM icon beside Search in the sidebar header, or
-    Ctrl+B (⌘+B on a Mac), hides the sidebar and the conversation takes the
-    width; the same icon then sits at the start of the main pane's header.
-    Toggling it keeps the selected Task and its URL.
+  - **Collapse the sidebar**: the UAM icon beside Search in the sidebar
+    header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
+    rail and the conversation takes the width. The rail keeps, top to bottom,
+    the UAM icon (shows the sidebar again, with the Needs you count on it),
+    New task, the Project filter, Add project, and at the foot Settings, the
+    planner and the connection dot; each opens exactly what the sidebar's
+    own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
-    drawer that the button and the shortcut open and close.
+    drawer that the button and the shortcut open and close; there is no rail.
   - With no Task open, the main pane shows only the uam mark and one line;
     New task and Add project are in the sidebar. There is one theme; it does
     not follow the system.

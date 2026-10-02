@@ -45,16 +45,17 @@ describe('app shell', () => {
     expect(statuses.some((s) => s.textContent?.includes('Connection lost, reconnecting.'))).toBe(true);
   });
 
-  test('Ctrl+B hides the sidebar and brings it back, remembered per browser', async () => {
+  test('Ctrl+B collapses the sidebar to its rail and brings it back, remembered per browser', async () => {
     const { user } = renderApp();
     await sidebar();
-    const aside = document.querySelector('aside')!;
+    const list = document.querySelector('aside > [aria-hidden]')!;
     await user.keyboard('{Control>}b{/Control}');
-    await waitFor(() => expect(aside.getAttribute('aria-hidden')).toBe('true'));
+    await waitFor(() => expect(list.getAttribute('aria-hidden')).toBe('true'));
     expect(localStorage.getItem('uam.sidebar')).toBe('false');
-    await user.click(screen.getByRole('button', { name: /^Show sidebar/ }));
-    await waitFor(() => expect(aside.getAttribute('aria-hidden')).toBe('false'));
+    await user.click(within(screen.getByRole('navigation', { name: 'Sidebar' })).getByRole('button', { name: /^Show sidebar/ }));
+    await waitFor(() => expect(list.getAttribute('aria-hidden')).toBe('false'));
     expect(localStorage.getItem('uam.sidebar')).toBe('true');
+    expect(screen.queryByRole('navigation', { name: 'Sidebar' })).toBeNull();
   });
 
   test('the gear opens Settings in the pane, kept in the URL as #settings', async () => {
@@ -66,6 +67,63 @@ describe('app shell', () => {
     await user.click(screen.getByRole('button', { name: 'Close settings' }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
     expect(window.location.hash).toBe('');
+  });
+});
+
+describe('collapsed sidebar rail', () => {
+  /** The app with the sidebar collapsed, once the Projects have loaded onto the rail. */
+  async function rail() {
+    localStorage.setItem('uam.sidebar', 'false');
+    const rendered = renderApp();
+    const nav = within(await screen.findByRole('navigation', { name: 'Sidebar' }));
+    await nav.findByRole('button', { name: 'New task' });
+    return { ...rendered, nav };
+  }
+
+  test('its mark shows the sidebar, carries the Needs you count, and focus follows the toggle', async () => {
+    const { user, nav } = await rail();
+    expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
+    await user.click(nav.getByRole('button', { name: 'Show sidebar, 7 need you' }));
+    const side = await sidebar();
+    await waitFor(() => expect(document.activeElement?.id).toBe('sidebar-hide'));
+    await user.click(side.getByRole('button', { name: /^Hide sidebar/ }));
+    await waitFor(() => expect(document.activeElement?.id).toBe('sidebar-show'));
+    expect(document.activeElement?.closest('nav')?.getAttribute('aria-label')).toBe('Sidebar');
+  });
+
+  test('New task opens the palette and the chosen project\'s draft', async () => {
+    const { user, nav } = await rail();
+    await user.click(nav.getByRole('button', { name: 'New task' }));
+    const palette = await screen.findByRole('dialog');
+    await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
+    await waitFor(() => expect(header().textContent).toBe('New task'));
+    expect(screen.getByText('New task in notes-site')).toBeTruthy();
+  });
+
+  test('Projects opens the project filter, and the choice is the sidebar\'s', async () => {
+    const { user, nav } = await rail();
+    await user.click(nav.getByRole('button', { name: 'Project filter: all projects' }));
+    const search = await screen.findByRole('combobox', { name: 'Search projects' });
+    await user.type(search, 'notes');
+    await user.keyboard('{Enter}');
+    expect(await nav.findByRole('button', { name: 'Project filter: notes-site' })).toBeTruthy();
+    expect(localStorage.getItem('uam.projectFilter')).toBe('"p3"');
+    await user.click(nav.getByRole('button', { name: /^Show sidebar/ }));
+    expect(await screen.findByRole('button', { name: 'Project filter: notes-site' })).toBeTruthy();
+  });
+
+  test('Add project opens the Add project dialog', async () => {
+    const { user, nav } = await rail();
+    await user.click(nav.getByRole('button', { name: 'Add project' }));
+    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+  });
+
+  test('Settings and the connection sit at its foot', async () => {
+    const { user, nav } = await rail();
+    expect(nav.getByRole('status').textContent).toContain('Connected');
+    await user.click(nav.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(header().textContent).toBe('Settings'));
+    expect(nav.getByRole('button', { name: 'Settings' }).getAttribute('aria-pressed')).toBe('true');
   });
 });
 
