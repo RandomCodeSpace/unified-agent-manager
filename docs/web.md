@@ -1172,6 +1172,60 @@ reloading the page or losing the connection hangs up the shell and the
 command it runs; there is no reattach. Turning the setting off or stopping
 the service closes every open terminal the same way.
 
+## MCP servers
+
+MCP servers give the agent extra tools: a command this host runs (stdio) or
+a remote address (HTTP or SSE). Copilot keeps them in its own user-wide MCP
+configuration, the same one the `copilot` command on this host uses, so a
+server added in either place shows in both. uam edits that configuration
+only through the Copilot runtime's API; it never writes the file itself.
+
+**Settings → MCP servers** lists the configured servers: name, type, the
+command line or address, the names of its environment variables or headers
+(values show as `••••`), and a switch for whether new Tasks start it.
+Servers from a plugin or built into Copilot are listed read-only. **Add
+server** and **Edit** take a name, a type, and then either a command,
+arguments (one per line, passed as typed with no shell) and an optional
+absolute working folder, or an address. Environment variable and header
+values are write-only: no response carries them, an edit shows a stored
+value as `•••• set`, leaving it empty keeps it and typing replaces it. Put
+keys in a header, not in the address: the address is shown to anyone signed
+in, and one with a user name or password in it is refused.
+
+**Security.** A stdio server is a command run on this host as the uam user.
+Adding or editing one is therefore allowed only while Settings → Shell
+access → Terminal is on (see Terminal), which already grants a shell to
+anyone signed in; with it off the form offers HTTP and SSE only and the
+service refuses a stdio add or edit (`403`). Turning a server on or off and
+removing it need no Terminal.
+
+**In a Task**, the actions menu (`…`) → **MCP servers…** shows each server
+as that Task's conversation sees it: Connected (with its tools; tap the
+count to list them), Failed (with the error and **Restart**), Needs
+sign-in, Starting, or Off for this task. The switch turns a server off or on
+for this Task only, until its conversation closes. A conversation keeps the
+servers it started with: changes in Settings reach new Tasks, and an open
+Task picks them up with **Reconnect with current settings**, which closes
+and reopens its conversation (refused while a turn, queued prompt, subagent
+or background task is running). Opening the dialog opens the Task's
+conversation if it was closed; nothing is sent to the agent.
+
+**Signing in to a remote server.** A server that uses OAuth shows Needs
+sign-in. **Sign in** asks Copilot for the provider's sign-in page and shows
+a link to open it in a new tab. After you approve, the provider sends the
+browser to an address on `127.0.0.1` or `localhost`, where Copilot waits on
+this host. On the host's own desktop that finishes the sign-in by itself.
+From any other computer that page does not load; copy the whole address
+from the address bar, paste it into the dialog and choose **Finish
+sign-in**: the service passes it to Copilot's waiting listener on this host.
+It accepts only an address with the exact port, path and `state` of the
+sign-in it started for that Task and server, for 10 minutes and once, and
+never follows a redirect. Copilot keeps the sign-in for later Tasks and the
+`copilot` command. A connected remote server offers **Sign in again**, which
+discards the kept sign-in first. If the provider's redirect is not a
+loopback address, finish in that tab or sign in on the host by running
+`copilot` there and using `/mcp`.
+
 ## Install as an app
 
 The web interface is an installable web app: it opens in its own window with

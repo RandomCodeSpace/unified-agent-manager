@@ -1,4 +1,4 @@
-import { ArrowDown, Bot, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, SquareTerminal, TriangleAlert } from 'lucide-react';
+import { ArrowDown, Bot, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -26,6 +26,7 @@ import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { FinishCard, SinceYouLeft } from './Finish';
 import { away, sinceYouLeft } from '../lib/evidence';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
+import { McpTaskDialog } from './McpTask';
 import { Transcript, WorkingLabel } from './Transcript';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -90,6 +91,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [filesOpen, setFilesOpen] = useState(false);
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
@@ -557,6 +559,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (phone && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: toggleCharts });
   if (phone && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
+  if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   const changesLabel = fileCount === null ? 'Open changes' : `Open changes, ${fileCount} files`;
@@ -684,6 +687,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </Menu.Content>
           </Menu.Root>
         </header>
+        {mcpOpen && <McpTaskDialog sessionId={session.id} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
           <div className="shrink-0 px-3 pt-2 sm:px-4 md:px-6">

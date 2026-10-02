@@ -80,6 +80,9 @@ type Capabilities struct {
 	HostTools bool `json:"host_tools,omitempty"`
 	// Account is true when the provider implements AccountManager.
 	Account bool `json:"account,omitempty"`
+	// MCP is true when the provider implements MCPConfigurer and its
+	// conversations implement MCPController.
+	MCP bool `json:"mcp,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
