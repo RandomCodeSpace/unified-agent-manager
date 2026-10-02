@@ -1,8 +1,33 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
-import { composer, openMenu, openTask } from './render';
+import { composer, openMenu, openTask, renderApp } from './render';
 
 describe('assist', () => {
+  // First in the file: the replies are kept per Task for the page's life.
+  test('replies withheld while Background AI is paused are asked for again on the next look', async () => {
+    renderApp('#task=t3');
+    const real = window.fetch;
+    let paused = true;
+    let asked = 0;
+    window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith('/suggestions')) return real(input, init);
+      asked++;
+      if (paused) return new Response(JSON.stringify({ item_id: '', replies: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      return real(input, init);
+    }) as typeof fetch;
+    await screen.findByRole('region', { name: 'Conversation' });
+    await waitFor(() => expect(asked).toBeGreaterThan(0));
+    const title = screen.getByRole('heading', { level: 1 }).textContent;
+    await new Promise((r) => setTimeout(r, 200));
+    expect(screen.queryByRole('group', { name: 'Suggested replies' })).toBeNull();
+    // The limit is raised; another Task, then back: the service kept nothing, so the page asks again.
+    paused = false;
+    window.location.hash = '#task=t1';
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).not.toBe(title));
+    window.location.hash = '#task=t3';
+    expect(await screen.findByRole('group', { name: 'Suggested replies' })).toBeTruthy();
+  });
+
   test('a suggested reply fills the composer and sends nothing', async () => {
     const { user, mock } = await openTask('t3');
     const group = within(await screen.findByRole('group', { name: 'Suggested replies' }));

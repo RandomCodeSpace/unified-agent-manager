@@ -258,7 +258,8 @@ describe('settings in the toolbar', () => {
   test('a read-only task explains why nothing can change', async () => {
     renderApp('#task=t12');
     expect(await screen.findByText('Archived. This task is read-only.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^Model: Auto\. This task is read-only\./ }).getAttribute('aria-disabled')).toBe('true');
+    // The model picker replaces its skeleton once /api/meta answers, which can be after the snapshot.
+    expect((await screen.findByRole('button', { name: /^Model: Auto\. This task is read-only\./ })).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('button', { name: /^Permissions and execution: Safe\. This task is read-only\./ })).toBeTruthy();
   });
 });

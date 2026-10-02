@@ -328,3 +328,34 @@ func TestCompactionThresholdReachesNewAndReopenedTasks(t *testing.T) {
 		t.Fatalf("stored default = %v", *got)
 	}
 }
+
+// An open Task reports the threshold its conversation opened with: a
+// change in Settings reaches it only when it reopens.
+func TestOpenTaskReportsItsCompactionThreshold(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	threshold := func(id string) int {
+		ts.m.mu.Lock()
+		defer ts.m.mu.Unlock()
+		return ts.m.summaryLocked(ts.m.sessions[id]).CompactThreshold
+	}
+	sum, _ := createSession(t, ts.m, ts.prov)
+	if got := threshold(sum.ID); got != 80 {
+		t.Fatalf("open with the default: %d", got)
+	}
+	if w := ts.do(http.MethodPatch, "/api/settings", `{"compact_threshold":60}`, withCookie(ts)); w.Code != http.StatusOK {
+		t.Fatalf("set = %d %s", w.Code, w.Body)
+	}
+	if got := threshold(sum.ID); got != 80 {
+		t.Fatalf("still open after the change: %d, want 80", got)
+	}
+	if _, err := ts.m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := threshold(sum.ID); got != 0 {
+		t.Fatalf("closed: %d, want none", got)
+	}
+	if _, err := ts.m.Submit(sum.ID, PromptRequest{Text: "reopen", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the reopened threshold", func() bool { return threshold(sum.ID) == 60 })
+}

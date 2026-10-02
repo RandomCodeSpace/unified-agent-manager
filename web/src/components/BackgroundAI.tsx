@@ -31,7 +31,7 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
         <span className="shrink-0 text-ui font-medium text-ink">{purposeLabel(call.purpose)}</span>
         <span className="flex min-w-0 flex-1">
           {task ? (
-            <Button size="sm" variant="subtle" className="h-auto max-w-full min-w-0 px-1 py-0 text-ui text-body" title="Open the task" onClick={() => openTask(task.id)}>
+            <Button size="sm" variant="subtle" className="h-auto max-w-full min-w-0 px-1 py-0 text-ui text-body pointer-coarse:after:-inset-y-3.5" title="Open the task" onClick={() => openTask(task.id)}>
               <span className="truncate">{taskName(task)}</span>
             </Button>
           ) : (

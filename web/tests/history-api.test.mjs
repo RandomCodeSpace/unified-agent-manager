@@ -8,12 +8,12 @@ const hooks = registerHooks({
     return nextResolve(['./lib/models', './lib/reads', './lib/preview'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
-const { api, UPDATE_EVENTS } = await import('../src/api.ts');
+const { api, PAGE_ID, UPDATE_EVENTS } = await import('../src/api.ts');
 hooks.deregister();
 
 test('selected task streams request and listen for incremental tool output', () => {
-  assert.equal(api.eventsUrl('task/id'), '/api/events?session=task%2Fid&tool_output=delta&history=recent&view=compact-v1');
-  assert.equal(api.eventsUrl(null), '/api/events');
+  assert.equal(api.eventsUrl('task/id'), `/api/events?session=task%2Fid&tool_output=delta&history=recent&view=compact-v1&page=${PAGE_ID}`);
+  assert.equal(api.eventsUrl(null), `/api/events?page=${PAGE_ID}`);
   assert.ok(UPDATE_EVENTS.includes('tool_output'));
   assert.ok(UPDATE_EVENTS.includes('items_trimmed'));
 });

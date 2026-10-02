@@ -277,6 +277,9 @@ type webSession struct {
 	renames uint64
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
+	// compactAt is the compaction threshold, in percent, the conversation
+	// was last opened with; not persisted.
+	compactAt int
 	// mode is safe or yolo: a yolo Task's permission requests are allowed
 	// once without asking.
 	mode      store.Mode
@@ -472,6 +475,15 @@ func (s *webSession) setBase(state, detail string) {
 	s.base = state
 	s.detail = detail
 	s.turnSeq++
+}
+
+// openCompactAt is the open conversation's compaction threshold in
+// percent; 0 while none is open.
+func (s *webSession) openCompactAt() int {
+	if s.conv == nil {
+		return 0
+	}
+	return s.compactAt
 }
 
 func (s *webSession) pendingKinds() (permissions, questions int) {
@@ -960,7 +972,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
-		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil,
+		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome,
 	}
@@ -2403,6 +2415,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100
 	}
+	s.compactAt = m.settings.compactionThreshold()
 	if m.hostTools != nil {
 		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "")
 	}

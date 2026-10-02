@@ -112,10 +112,14 @@ export function ChangesSheet({
   // Viewed marks and line comments, per Task in localStorage; every change writes through.
   const [stored, setStored] = useState(() => ({ id: session.id, review: readReview(session.id) }));
   const review = stored.id === session.id ? stored.review : readReview(session.id);
+  // The latest review, for a change that lands later (a comment send resolving): it must not undo marks made meanwhile.
+  const latest = useRef(stored);
   const updateReview = (change: (r: Review) => Review) => {
-    const next = change(review);
-    writeReview(session.id, next);
-    setStored({ id: session.id, review: next });
+    const id = session.id;
+    const next = change(latest.current.id === id ? latest.current.review : readReview(id));
+    writeReview(id, next);
+    latest.current = { id, review: next };
+    setStored(latest.current);
   };
   const viewedCount = files.filter((f) => viewState(review, f) === 'viewed').length;
   const toggleViewed = (f: ChangeFile, viewed: boolean) => updateReview((r) => {

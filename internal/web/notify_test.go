@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -357,5 +358,114 @@ func TestServiceWorkerIsRevalidated(t *testing.T) {
 	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != noCache || !strings.Contains(w.Header().Get("Content-Type"), "javascript") ||
 		w.Header().Get("Content-Security-Policy") != contentSecurity {
 		t.Fatalf("GET /sw.js = %d %v", w.Code, w.Header())
+	}
+}
+
+// A Task a visible page shows is not pushed (the service worker shows every
+// push, so the decision is the service's); the notify event still reaches
+// the pages, with the same key a push for it carries.
+func TestNoPushForTheTaskOnScreen(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	var mu sync.Mutex
+	var bodies [][]byte
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, body)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+	m.push.client = srv.Client()
+	if _, err := m.push.publicKey(); err != nil {
+		t.Fatal(err)
+	}
+	browser := newPushReceiver(t)
+	if err := m.push.subscribe(pushSubscription{Subscription: browser.subscription(srv.URL + "/live")}); err != nil {
+		t.Fatal(err)
+	}
+	pushes := func() [][]byte {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(bodies)
+	}
+	sum, conv := createSession(t, m, prov)
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	m.notePage(sub, "page-1")
+	m.SetViewing("page-1", sum.ID)
+	frameKey := func() string {
+		t.Helper()
+		for {
+			select {
+			case raw := <-sub.Frames():
+				if f := parseFrame(t, raw); f.event == "notify" {
+					var key string
+					decodeField(t, f, "key", &key)
+					return key
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("no notify event")
+			}
+		}
+	}
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitInteraction(agentapi.Interaction{ID: "q1", Kind: agentapi.InteractionQuestion, Title: "Which?", State: agentapi.InteractionPending, Questions: []agentapi.Question{{Text: "Which?", Choices: []string{"x", "y"}}}})
+	if key := frameKey(); !strings.HasPrefix(key, sum.ID+":question:") {
+		t.Fatalf("notify key = %q", key)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := len(pushes()); n != 0 {
+		t.Fatalf("pushes while the Task is on screen = %d, want 0", n)
+	}
+	// The page went to the background: the next notice is pushed.
+	m.SetViewing("page-1", "")
+	if _, err := m.Answer(sum.ID, "q1", agentapi.Answer{Answers: [][]string{{"x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	key := frameKey()
+	waitUntil(t, "a push", func() bool { return len(pushes()) == 1 })
+	var payload pushPayload
+	if err := json.Unmarshal(browser.decrypt(t, pushes()[0]), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Key != key || payload.Kind != noticeFinished {
+		t.Fatalf("push key %q kind %q, notify key %q", payload.Key, payload.Kind, key)
+	}
+}
+
+func TestViewingRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	auth := withCookie(ts)
+	sub, _, err := ts.m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ts.m.Unsubscribe(sub)
+	ts.m.notePage(sub, "page-1")
+	for _, bad := range []string{`{"page":"","task":"x"}`, `{"page":"` + strings.Repeat("a", 65) + `","task":"x"}`, `{"page":"a b","task":"x"}`} {
+		if w := ts.do(http.MethodPost, "/api/viewing", bad, auth); w.Code != http.StatusBadRequest {
+			t.Fatalf("POST /api/viewing %s = %d", bad, w.Code)
+		}
+	}
+	if w := ts.do(http.MethodPost, "/api/viewing", `{"page":"page-1","task":"t1"}`, auth); w.Code != http.StatusNoContent {
+		t.Fatalf("POST /api/viewing = %d %s", w.Code, w.Body)
+	}
+	ts.m.mu.Lock()
+	on := ts.m.onScreenLocked("t1")
+	ts.m.mu.Unlock()
+	if !on {
+		t.Fatal("t1 is not on screen after the page said so")
+	}
+	ts.m.Unsubscribe(sub)
+	ts.m.mu.Lock()
+	on = ts.m.onScreenLocked("t1")
+	ts.m.mu.Unlock()
+	if on {
+		t.Fatal("t1 still on screen after its page's stream closed")
 	}
 }

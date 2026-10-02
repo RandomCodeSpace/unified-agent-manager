@@ -296,7 +296,9 @@ sign-outs are logged without the token.
   as a share of the active prompt budget. Click it for token counts and the
   reported cached share. A short mark on the ring, and a line in its
   popover ("Compacts at 80% (218K tokens)"), show where Copilot starts
-  compacting the conversation (see Settings). Before a report, the track is
+  compacting the conversation: the threshold it opened with, reported as
+  `compact_threshold` on the Task summary while it is open (a change in
+  Settings reaches it when it reopens), else the setting. Before a report, the track is
   empty and its popover says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
   or changing its selection clears it until a fresh report. Compaction or
@@ -1118,7 +1120,10 @@ sign-outs are logged without the token.
   - **Idle**: everything else.
 
   "Opened since" is tracked per browser: a Task you never opened in this
-  browser counts as unread once it changes after your first visit.
+  browser counts as unread once it changes after your first visit. The open
+  Task is read only while the page is visible: what it does while the tab is
+  in the background stays unread until you come back. Marks of deleted
+  Tasks are dropped.
   A row shows the Project badge, the Task's name, the lines it changed
   (`+N −M`, when known) and how long ago it changed, then one plain status
   line: "Asks: …" with the question, "Wants your OK to …" with what a
@@ -1294,8 +1299,11 @@ A notification is sent once each time a Task:
 - finishes a turn, with no subagent or background shell still running:
   "<Task name> finished"
 
-The Task you are looking at on a visible page is never announced. With
-several tabs open you still get one notification. Clicking it brings UAM to
+The Task you are looking at on a visible page is never announced, on any of
+your devices: each tab tells the service which Task it shows while it is
+visible (`POST /api/viewing`), and the service sends no push for that Task.
+A Task you open while its notification waits for the push is not announced
+either. With several tabs open you still get one notification. Clicking it brings UAM to
 the front and opens that Task. A newer notification for the same Task
 replaces the older one. A notification holds the Task's name and the
 question or request title, and nothing else from the conversation.
@@ -1320,12 +1328,14 @@ in the Home Screen app, not in a Safari tab.
    finishes**, then tap *Allow*.
 
 iOS notifications have no action buttons and no reply field. Tap one to open
-the Task. Apple requires every push to show a notification, so on iPhone you
-may also be notified about the Task you have open. Each push also sets
-the app icon's badge to the Task list's **Needs you** count. Failed or
-interrupted Tasks count until any browser opens them, because the service
-does not know which browser has read them. Opening the app recounts the badge
-with this browser's read marks and planner requests.
+the Task. Browsers expect every push to show a notification (Safari revokes
+the subscription otherwise, Chrome shows its own notice), so every push is
+shown; the service simply sends none for the Task you have open. While no
+UAM page is visible, each push also sets the app icon's badge to the Task
+list's **Needs you** count. Failed or interrupted Tasks count until any
+browser opens them, because the service does not know which browser has
+read them. A visible page keeps the badge at its own count, with this
+browser's read marks and planner requests.
 
 **Storage.** The first browser to turn notifications on makes the service
 generate its Web Push (VAPID) key pair. The keys and the subscribed

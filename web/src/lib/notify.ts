@@ -3,8 +3,8 @@
 // mode `push`; an open page still shows a notice whose push has not come within PUSH_GRACE_MS
 // (the service may not reach the push service). Where push does not work an open page shows the
 // service's `notify` events itself: mode `page`. Either way the open Task on a visible page is
-// not announced, each notice shows once across tabs, and nothing here surfaces an error beyond
-// the Settings switch.
+// not announced (the page tells the service which Task it shows, so no push goes out for it),
+// each notice shows once across tabs, and nothing here surfaces an error beyond the Settings switch.
 import { api } from '../api';
 
 export const NOTIFY_KEY = 'uam.notify';
@@ -23,16 +23,13 @@ export interface Notice {
   session_id: string;
   kind: 'question' | 'permission' | 'failed' | 'finished';
   title: string;
+  /** The notice's name in every tab and in its push, made by the service. */
+  key: string;
 }
 
 /** A stored value as a mode; anything else is off. */
 export function parseNotifyMode(raw: string | null): NotifyMode | null {
   return raw === 'push' || raw === 'page' ? raw : null;
-}
-
-/** The key every tab gives one notice. */
-export function noticeKey(n: Pick<Notice, 'seq' | 'session_id' | 'kind'>): string {
-  return `${n.session_id}:${n.kind}:${n.seq}`;
 }
 
 /** Takes `key` for this tab: the record to store (older entries dropped), or null when another tab took it. */
@@ -163,10 +160,28 @@ export async function disableNotifications(): Promise<void> {
 }
 
 let viewing: string | null = null;
+/** What the service last heard this tab shows; undefined before the first report. */
+let reported: string | undefined;
 
-/** The Task this page shows, if any; neither it nor the service worker announces that one while the page is visible. */
+/** Tells the service the Task this tab shows while it is visible ("" otherwise), when that changed or `again`. */
+function report(again = false): void {
+  const task = document.visibilityState === 'visible' ? (viewing ?? '') : '';
+  if (!again && task === reported) return;
+  reported = task;
+  api.viewing(task).catch(() => {
+    reported = undefined;
+  });
+}
+
+/** The Task this page shows, if any; it is not announced while the page is visible, and the service pushes nothing for it. */
 export function setViewing(id: string | null): void {
   viewing = id;
+  report();
+}
+
+/** A new event stream opened: the service learns again what this tab shows, for that stream. */
+export function streamOpened(): void {
+  report(true);
 }
 
 function openTask(id: string): void {
@@ -186,9 +201,14 @@ export function startNotifications(): () => void {
   };
   container?.addEventListener('message', onMessage);
   container?.startMessages();
+  const onVisibility = () => report();
+  document.addEventListener('visibilitychange', onVisibility);
   // A subscription the push service rotated, or a service that lost it, is sent again; where push stopped working, the page takes over.
   if (loadNotifyMode() === 'push') void subscribePush().then((ok) => { if (!ok && loadNotifyMode() === 'push') saveNotifyMode('page'); });
-  return () => container?.removeEventListener('message', onMessage);
+  return () => {
+    container?.removeEventListener('message', onMessage);
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 }
 
 async function claim(key: string): Promise<boolean> {
@@ -210,10 +230,10 @@ async function claim(key: string): Promise<boolean> {
 export async function handleNotice(n: Notice): Promise<void> {
   const mode = loadNotifyMode();
   if (!mode) return;
-  const onScreen = document.visibilityState === 'visible' && viewing === n.session_id;
-  // A page that shows the Task claims the notice first, so other tabs (and the push) skip it.
-  if (!onScreen) await new Promise((r) => setTimeout(r, mode === 'push' ? PUSH_GRACE_MS : 300));
-  if (!loadNotifyMode() || !(await claim(noticeKey(n))) || onScreen) return;
+  const onScreen = () => document.visibilityState === 'visible' && viewing === n.session_id;
+  // A page that shows the Task claims the notice first, so other tabs skip it; one that opens it while waiting does too.
+  if (!onScreen()) await new Promise((r) => setTimeout(r, mode === 'push' ? PUSH_GRACE_MS : 300));
+  if (!loadNotifyMode() || !(await claim(n.key)) || onScreen()) return;
   const options: NotificationOptions & { renotify?: boolean } = { tag: `uam-task-${n.session_id}`, renotify: true, icon: '/icon-192.png', data: { task: n.session_id } };
   try {
     const reg = await navigator.serviceWorker?.getRegistration('/');

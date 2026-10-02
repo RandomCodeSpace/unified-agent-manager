@@ -142,6 +142,7 @@
   --breakpoint-xl: 1800px;
 
   --spacing-rail: 320px;
+  --spacing-rail-collapsed: 48px;
   --spacing-drawer: 300px;
   --spacing-header: 44px;
   --spacing-sheet: 440px;
@@ -392,6 +393,12 @@
   }
 }
 
+/* The vertical fading rule, a utility so variants work (`before:fade-rule-y` draws the thought and step rails);
+   the element sets its own width (`w-px`, `before:w-0.5`). */
+@utility fade-rule-y {
+  background: linear-gradient(to bottom, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
+}
+
 @layer components {
   /* Fading separators (DESIGN.md Lines): where a seam still needs a rule, it fades out at both ends so
      nothing in the chrome is a full-width or full-height line. */
@@ -399,11 +406,6 @@
     height: 1px;
     flex: none;
     background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
-  }
-  .fade-rule-y {
-    width: 1px;
-    flex: none;
-    background: linear-gradient(to bottom, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
   }
   /* The sidebar's seam: the rail colour step and a fading rule at its right edge. */
   .rail-edge::after {

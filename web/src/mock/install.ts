@@ -754,6 +754,8 @@ export function install(): { received: Received[] } {
       return json(200, st.settings);
     }
     if (path === '/api/fs/dirs') return method === 'POST' ? makeDir(body) : listDirs(url);
+    // Which Task this tab shows: the real service skips pushes for it; the mock sends none.
+    if (path === '/api/viewing' && method === 'POST') return json(204);
 
     if (path === '/api/projects' && method === 'GET') return json(200, { projects: st.projects });
     if (path === '/api/projects' && method === 'POST') {

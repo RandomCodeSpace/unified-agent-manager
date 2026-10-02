@@ -178,7 +178,7 @@ layout:
   chat-gutter-phone: 12px
   panel-default-width: 440px
   panel-min-width: 320px
-  panel-max-width: "min(880px, viewport − 320px − 480px)"
+  panel-max-width: "min(880px, main pane − 480px)"
   bp-phone: 480px
   bp-sidebar-collapse: 960px
   bp-panels-inline: 1280px
@@ -639,7 +639,7 @@ Full viewport, no page scroll: `grid h-dvh grid-cols-[320px_minmax(0,1fr)]` from
 **Safe areas.** The page is an installable web app (`viewport-fit=cover`), so the shell pads all four sides with `env(safe-area-inset-*)`: the headers, the connection strip and the pinned composer keep clear of a notch, rounded corners and the home indicator, and the drawer and the side sheets, which are fixed to the viewport, pad their own top, bottom and outer edge. Nothing else reads the insets.
 
 ### Side panels (Changes, Subagents, Activity)
-From 1280px a panel sits inline to the right of the column and is **resizable**: an 8px handle on its inner edge (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow/min/max`), drag with pointer capture, arrow keys step 16px (64 with Shift), Home/End go to the limits, Enter or double-click resets to the default. Width is clamped to 320px … min(880px, viewport − 320 − 480) so the chat column keeps at least 480px, and saved per panel in `localStorage` (`uam.panel.changes`, `uam.panel.subagents`, `uam.panel.activity`). The width is applied as the `--panel-w` custom property through CSSOM during the drag, so nothing re-renders per pointer move. Between 960 and 1279px a panel is a 440px overlay from the right; below 960px it is a full-screen sheet. Overlays and sheets are Base UI dialogs (focus trap, Esc, a backdrop that fades both ways) that slide in and out over `slow`; an inline panel commits the column's width at once and slides over the space it left, and slides out before it leaves. Overlays and sheets do not resize. One panel is open at a time.
+From 1280px a panel sits inline to the right of the column and is **resizable**: an 8px handle on its inner edge (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow/min/max`), drag with pointer capture, arrow keys step 16px (64 with Shift), Home/End go to the limits, Enter or double-click resets to the default. Width is clamped to 320px … min(880px, main pane − 480) so the chat column keeps at least 480px (the main pane is the viewport less the sidebar, open or collapsed to its rail), and saved per panel in `localStorage` (`uam.panel.changes`, `uam.panel.subagents`, `uam.panel.activity`). The width is applied as the `--panel-w` custom property through CSSOM during the drag, so nothing re-renders per pointer move. Between 960 and 1279px a panel is a 440px overlay from the right; below 960px it is a full-screen sheet. Overlays and sheets are Base UI dialogs (focus trap, Esc, a backdrop that fades both ways) that slide in and out over `slow`; an inline panel commits the column's width at once and slides over the space it left, and slides out before it leaves. Overlays and sheets do not resize. One panel is open at a time.
 
 ### Breakpoints
 | Width | Sidebar | Column | Panels |

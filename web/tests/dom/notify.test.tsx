@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { handleNotice, noticeKey, NOTIFY_KEY, PUSH_GRACE_MS, SEEN_KEY, setViewing, type Notice } from '../../src/lib/notify';
-import { renderApp } from './render';
+import { handleNotice, NOTIFY_KEY, PUSH_GRACE_MS, SEEN_KEY, setViewing, type Notice } from '../../src/lib/notify';
+import { renderApp, sidebar } from './render';
 
 /** A browser's Notification API: permission granted (or not) on request, and every notification shown. */
 function fakeNotifications(answer: NotificationPermission) {
@@ -28,10 +28,17 @@ async function notifySwitch() {
   return { card, toggle: card.getByRole('switch', { name: 'Notify me when a Task needs me or finishes' }) };
 }
 
-const notice = (over: Partial<Notice> = {}): Notice => ({ seq: 1, session_id: 'task-b', kind: 'question', title: 'Fix it needs you: Which colour?', ...over });
+const notice = (over: Partial<Notice> = {}): Notice => {
+  const n = { seq: 1, session_id: 'task-b', kind: 'question' as const, title: 'Fix it needs you: Which colour?', ...over };
+  return { key: `${n.session_id}:${n.kind}:${n.seq}`, ...n };
+};
 
 describe('notifications', () => {
-  beforeEach(() => setViewing(null));
+  beforeEach(() => {
+    // The page reports the Task it shows (POST /api/viewing); tests without the mock service answer it here.
+    vi.stubGlobal('fetch', async () => new Response(null, { status: 204 }));
+    setViewing(null);
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -93,7 +100,7 @@ describe('notifications', () => {
     vi.useFakeTimers();
     try {
       // The service worker showed this one and told the page (uam-shown): it is taken.
-      localStorage.setItem(SEEN_KEY, JSON.stringify({ [noticeKey(notice({ seq: 5 }))]: Date.now() }));
+      localStorage.setItem(SEEN_KEY, JSON.stringify({ [notice({ seq: 5 }).key]: Date.now() }));
       let pending = handleNotice(notice({ seq: 5 }));
       await vi.advanceTimersByTimeAsync(PUSH_GRACE_MS);
       await pending;
@@ -107,5 +114,36 @@ describe('notifications', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test('a Task opened while its notice waits for the push is not announced', async () => {
+    const { shown, FakeNotification } = fakeNotifications('granted');
+    FakeNotification.permission = 'granted';
+    localStorage.setItem(NOTIFY_KEY, 'push');
+    setViewing('task-a');
+    vi.useFakeTimers();
+    try {
+      const pending = handleNotice(notice({ seq: 7 }));
+      await vi.advanceTimersByTimeAsync(1000);
+      setViewing('task-b'); // the owner opens it from Needs you
+      await vi.advanceTimersByTimeAsync(PUSH_GRACE_MS);
+      await pending;
+      expect(shown).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('the selected Task hidden behind Routines is announced', async () => {
+    const { shown, FakeNotification } = fakeNotifications('granted');
+    FakeNotification.permission = 'granted';
+    localStorage.setItem(NOTIFY_KEY, 'page');
+    const { user } = renderApp('#task=t3');
+    const side = await sidebar();
+    await user.click(side.getByRole('button', { name: 'Project filter: all projects' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Routines of unified-agent-manager' }));
+    await screen.findByRole('heading', { level: 1, name: /Routines · unified-agent-manager/ });
+    await handleNotice(notice({ session_id: 't3', seq: 8 }));
+    expect(shown.map((n) => n.title)).toEqual(['Fix it needs you: Which colour?']);
   });
 });

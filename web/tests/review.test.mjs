@@ -16,6 +16,15 @@ test('risky paths get a short reason; ordinary ones none', () => {
   assert.equal(label('internal/web/auth.go'), 'Auth/security');
   assert.equal(label('src/lib/crypto.ts'), 'Auth/security');
   assert.equal(label('src/author.ts'), null);
+  assert.equal(label('AUTHORS.md'), null);
+  assert.equal(label('internal/authorization/policy.go'), 'Auth/security');
+  assert.equal(label('middleware/authorize.go'), 'Auth/security');
+  assert.equal(label('pkg/authority/ca.go'), 'Auth/security');
+  assert.equal(label('.env'), 'Auth/security');
+  assert.equal(label('web/.env.production'), 'Auth/security');
+  assert.equal(label('.npmrc'), 'Auth/security');
+  assert.equal(label('.github/actions/setup/action.yml'), 'CI workflow');
+  assert.equal(label('src/environment.ts'), null);
   assert.equal(label('README.md'), null);
   assert.deepEqual(byRisk([{ path: 'a.go' }, { path: 'go.sum' }, { path: 'b.go' }]).map(f => f.path), ['go.sum', 'a.go', 'b.go']);
 });

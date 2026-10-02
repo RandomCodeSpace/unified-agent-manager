@@ -37,8 +37,9 @@ export function ComposerUsage({ session, model }: Readonly<{ session: SessionDet
   const context = session.context;
   const fraction = ringFraction(context);
   const contextLabel = context && context.limit > 0 ? contextText(context) : 'Context usage not reported yet';
-  // Where the conversation starts compacting, as a tick on the ring.
-  const threshold = (settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD) / 100;
+  // Where the conversation starts compacting, as a tick on the ring: what the open conversation uses (a later
+  // change in Settings reaches it when it reopens), else the setting it will open with.
+  const threshold = (session.compact_threshold ?? settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD) / 100;
   const tick = 2 * Math.PI * threshold;
   const quota = providerQuota(usage?.quotas, session.provider);
   const cost = estimateTurnCost(model, context, session.context_size);
