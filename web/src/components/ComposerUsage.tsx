@@ -46,8 +46,8 @@ export function ComposerUsage({ session, model }: Readonly<{ session: SessionDet
   const stale = usage?.stale ? ' · stale' : '';
   const quotaLabel = quota ? `${quotaFace(quota)}${stale}` : 'Usage unavailable';
   const reset = quota?.reset_at && Date.parse(quota.reset_at) > now ? new Date(quota.reset_at).toLocaleString() : null;
-  // The ring waits for a reported value; on a phone the credits are a glyph. The per-turn estimate lives in the credits
-  // popover at every width, so the control row stays one row.
+  // The ring waits for a reported value; on a phone, or when the toolbar folds them (lib/toolbarFold), the credits are a
+  // glyph. The per-turn estimate lives in the credits popover at every width, so the control row stays one row.
   return (
     <>
       {context && context.limit > 0 && <Value id="composer-context-usage" label={contextLabel} title="Context usage" className={tones[ringTone(fraction)]} face={
@@ -63,7 +63,7 @@ export function ComposerUsage({ session, model }: Readonly<{ session: SessionDet
         {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
       </Value>}
       {session.capabilities.usage && (
-        <Value id="composer-usage" label={`AI credits: ${quotaLabel}`} title="AI credits" face={<><Coins aria-hidden="true" className="size-4 text-faint sm:hidden" /><span className="max-sm:hidden">{quotaLabel}</span></>} className={quota ? tones[creditsTone(quota)] : 'text-muted'}>
+        <Value id="composer-usage" label={`AI credits: ${quotaLabel}`} title="AI credits" face={<><Coins aria-hidden="true" className="size-4 text-faint sm:hidden sm:in-data-[fold~=credits]:block" /><span className="max-sm:hidden in-data-[fold~=credits]:hidden">{quotaLabel}</span></>} className={quota ? tones[creditsTone(quota)] : 'text-muted'}>
           <p>{quota ? quotaText(quota) : 'The provider has not reported account usage.'}</p>
           {reset && <p className="text-caption text-muted">Resets {reset}</p>}
           <p className="text-caption">This task: {session.usage ? `${formatCredits(session.usage.ai_units)} AI units` : 'not reported yet'}</p>

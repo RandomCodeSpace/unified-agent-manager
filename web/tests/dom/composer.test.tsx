@@ -295,6 +295,40 @@ describe('settings in the toolbar', () => {
     expect((await screen.findByRole('button', { name: /^Model: Auto\. This task is read-only\./ })).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('button', { name: /^Permissions and execution: Safe\. This task is read-only\./ })).toBeTruthy();
   });
+
+  test('a narrow toolbar folds the lower-priority labels first and keeps the model and the actions', async () => {
+    // The environment has no layout: the row overflows until it carries five folds.
+    const proto = HTMLElement.prototype;
+    const saved = { scroll: Object.getOwnPropertyDescriptor(proto, 'scrollWidth'), client: Object.getOwnPropertyDescriptor(proto, 'clientWidth') };
+    const folds = (el: HTMLElement) => (el.dataset.fold ? el.dataset.fold.split(' ').length : 0);
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get(this: HTMLElement) { if (!this.hasAttribute('data-fold')) return 0; return folds(this) < 5 ? 500 : 400; } });
+    Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.hasAttribute('data-fold') ? 400 : 0; } });
+    try {
+      await openTask('t1');
+      const model = await screen.findByRole('button', { name: /^Model: Auto/ });
+      const row = model.parentElement!;
+      await waitFor(() => expect(row.dataset.fold).toBe('execution credits tuning permissions more'));
+      // Each control names the fold that shortens it: the mode loses its execution word, then its label; effort and
+      // context its label; both move into More; the model's name goes last and may truncate only to a few letters.
+      const mode = document.getElementById('composer-mode')!;
+      expect(within(mode).getByText('· Interactive', { exact: false }).className).toContain('in-data-[fold~=execution]:hidden');
+      expect(within(mode).getByText('Safe', { exact: false }).className).toContain('in-data-[fold~=permissions]:hidden');
+      expect(mode.className).toContain('in-data-[fold~=more]:hidden');
+      const effort = document.getElementById('composer-effort-context')!;
+      expect(within(effort).getByText('Default').className).toContain('in-data-[fold~=tuning]:hidden');
+      expect(effort.className).toContain('in-data-[fold~=more]:hidden');
+      expect(document.getElementById('composer-more')!.className).toContain('sm:in-data-[fold~=more]:inline-flex');
+      const name = within(model).getByText('Auto');
+      expect(name.hasAttribute('data-squeeze')).toBe(true);
+      expect(name.className).toContain('in-data-[fold~=model]:hidden');
+      expect(row.className).toContain('data-[fold~=wrap]:flex-wrap');
+      expect(screen.getByRole('button', { name: 'Send now' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'More send options' })).toBeTruthy();
+    } finally {
+      Object.defineProperty(proto, 'scrollWidth', saved.scroll ?? { configurable: true, value: 0 });
+      Object.defineProperty(proto, 'clientWidth', saved.client ?? { configurable: true, value: 0 });
+    }
+  });
 });
 
 describe('attachments', () => {
