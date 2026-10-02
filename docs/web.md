@@ -869,7 +869,12 @@ sign-outs are logged without the token.
 - **Finish card**: under a turn that completed, a card titled "Finished —
   check the evidence" puts what the agent did before what it says it did.
   It never uses a model; fixed rules in the service read the whole turn,
-  however long, and the outcome line reads the same result:
+  however long, and the outcome line reads the same result. The card
+  appears once that reading arrives and shows only the parts below that
+  have something; a turn that ran no check, made no claim and edited no
+  file, in a Task with no change to review or commit (a question answered
+  in chat), has no card at all. Once shown for a turn it stays, so a
+  commit's outcome stays in view:
   - **Checks**: each shell command of the main agent in the turn that runs
     tests, a build, a linter, `go vet` or a type check (`go test`,
     `npm test`, `pytest`, `cargo test`, `go build`, `npm run build`,
@@ -896,6 +901,8 @@ sign-outs are logged without the token.
     failure word is not read as a claim ("I did not run the linter, but the
     build passes" claims the build only); "no errors", "no failures" and
     the like are not negations. The header counts the claims not verified.
+    When the turn made claims but ran no check, one line says no tests,
+    builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the
     main agent's and its subagents'; edits that failed left out), the same
     files Changes lists for "Last turn", named from the repository's top
