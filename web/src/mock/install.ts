@@ -9,6 +9,7 @@ import { boardMock } from './board';
 import { gitMock } from './git';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
+import { accountMock } from './account';
 import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
@@ -173,6 +174,7 @@ export function install(): { received: Received[] } {
   const find = (id: string) => st.tasks.find((t) => t.id === id);
   const busy = (t: MockTask) => LIVE.includes(t.state);
   const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
+  const account = accountMock(st.meta);
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const assist = assistMock({
@@ -677,6 +679,8 @@ export function install(): { received: Received[] } {
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
     if (path === '/api/meta') return json(200, st.meta);
+    const accounted = account.route(method, path, body);
+    if (accounted) return accounted;
     const planned = plannerKnown ? board.route(method, url, body) : null;
     if (planned) return planned;
     const gitted = git.route(method, url, body);
@@ -820,6 +824,8 @@ export function install(): { received: Received[] } {
 
     if (path === '/api/sessions' && method === 'GET') return json(200, st.tasks.map(summary));
     if (path === '/api/sessions' && method === 'POST') {
+      const signedOut = body.provider === 'copilot' && account.refusal();
+      if (signedOut) return signedOut;
       // A repeated request_id answers with the Task it created, as the service does.
       const again = typeof body.request_id === 'string' && st.tasks.find((x) => createdBy.get(x.id) === body.request_id);
       if (again) return json(201, summary(again));
@@ -1086,6 +1092,8 @@ export function install(): { received: Received[] } {
       return json(200, { accepted: true, background_tasks: t.background_tasks });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/(prompt|cancel|close)$/)) && method === 'POST') {
+      const signedOut = r[2] === 'prompt' && account.refusal();
+      if (signedOut) return signedOut;
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       switch (r[2]) {

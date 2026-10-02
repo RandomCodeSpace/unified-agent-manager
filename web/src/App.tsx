@@ -2,7 +2,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { UPDATE_EVENTS, api, describeError, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { SIGNED_OUT, UPDATE_EVENTS, api, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -510,6 +510,17 @@ export default function App() {
     setSheetOpen(false);
   }, []);
   const openTask = useCallback((id: string) => select(id), [select]);
+  /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
+  const showSettings = useCallback(() => {
+    setSettingsOpen(true);
+    setPlannerOpen(false);
+    setRoutinesFor(null);
+    setNewTask(null);
+    setDrawerOpen(false);
+    setSheetOpen(false);
+  }, []);
+  // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
+  const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
   /** A Project's routines in the main pane (like Settings, it keeps the selected Task behind it). */
   const showRoutines = useCallback((projectId: string) => {
     setRoutinesFor(projectId);
@@ -649,10 +660,11 @@ export default function App() {
       let s: SessionSummary;
       try {
         const info = provider(meta, first.settings.provider);
-        if (info && !info.available) throw new Error(`${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
+        if (info && !info.available) throw new Error(info.signed_out && info.reason ? info.reason : `${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
         s = await api.createSession(createRequest(projectId, first.settings, entry.id));
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
+        if (errorCode(e) === SIGNED_OUT) refreshMeta();
         throw new Error(`Could not start the task: ${describeError(e)}`, { cause: e });
       }
       creating.current.delete(projectId);
@@ -684,7 +696,7 @@ export default function App() {
       select(s.id);
       if (failed) setNotice(`The task was created, but its first message was not sent: ${failed}. The message is in its composer.`);
     },
-    [meta, select],
+    [meta, select, refreshMeta],
   );
 
   /** Runs one lifecycle request; the result is dispatched, a failure becomes the notice line. */
@@ -985,6 +997,17 @@ export default function App() {
                   </Button>
                 </output>
               )}
+              {signedOut.map((p) => (
+                <output key={p.name} className="flex items-center gap-2 bg-warning-wash px-4 py-1 text-caption text-warning animate-fade-in">
+                  <Dot tone="warning" />
+                  <span className="flex-1">{p.reason || `${p.display_name} is signed out. Sign in in Settings.`}</span>
+                  {!settingsOpen && (
+                    <Button size="sm" variant="secondary" onClick={showSettings}>
+                      Open Settings
+                    </Button>
+                  )}
+                </output>
+              ))}
               {notice && (
                 <p className="flex items-center gap-2 bg-error-wash px-4 py-1.5 text-caption text-error animate-fade-in" role="alert">
                   <span className="flex-1">{notice}</span>

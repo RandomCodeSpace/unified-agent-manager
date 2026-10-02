@@ -78,10 +78,13 @@ const (
 
 // ProviderInfo describes one provider for the create form.
 type ProviderInfo struct {
-	Name         string                `json:"name"`
-	DisplayName  string                `json:"display_name"`
-	Available    bool                  `json:"available"`
-	Reason       string                `json:"reason"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Available   bool   `json:"available"`
+	Reason      string `json:"reason"`
+	// SignedOut is set when the provider is unavailable because its runtime
+	// has no account sign-in; Reason then says to sign in in Settings.
+	SignedOut    bool                  `json:"signed_out,omitempty"`
 	Capabilities agentapi.Capabilities `json:"capabilities"`
 	// Models are the selectable models; empty means the provider default only.
 	Models []agentapi.Model `json:"models"`

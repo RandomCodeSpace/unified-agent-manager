@@ -37,6 +37,8 @@ export interface Capabilities {
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   import?: boolean;
+  /** The provider's runtime sign-in is shown and changed in Settings (`api.account`). */
+  account?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -193,12 +195,31 @@ export interface ProviderInfo {
   display_name: string;
   available: boolean;
   reason?: string;
+  /** Unavailable because the provider's runtime is signed out; `reason` then says to sign in in Settings. */
+  signed_out?: boolean;
   capabilities: Capabilities;
   /** Selectable models; empty means "provider default only". */
   models: Model[];
   /** The cheapest priced model not hidden in Settings, the Utility model while `title_model` names none; omitted when none is priced. */
   cheapest_model?: string;
 }
+
+/** A provider runtime's sign-in, shared by every Task on the server; it never carries a credential. */
+export interface ProviderAccount {
+  signed_in: boolean;
+  login?: string;
+  host?: string;
+  /** How a signed-in runtime gets its credential. */
+  source?: 'stored' | 'env' | 'gh-cli' | 'other';
+  /** The service environment variable whose token takes precedence over a sign-in made here; never its value. */
+  env_var?: string;
+  message?: string;
+  /** False after a sign-in the runtime could not store: it lasts until the service restarts. */
+  stored?: boolean;
+}
+
+/** Refusal code of a create or send while the Task's provider is signed out. */
+export const SIGNED_OUT = 'provider_signed_out';
 
 export interface Meta {
   version: string;
@@ -1223,6 +1244,10 @@ export const api = {
   login: (token: string) => call<void>('POST', '/api/login', { token }),
   logout: () => call<void>('POST', '/api/logout'),
   meta: () => call<Meta>('GET', '/api/meta'),
+  account: (provider: string) => call<ProviderAccount>('GET', `/api/providers/${enc(provider)}/account`),
+  /** The token goes to the provider's runtime only; nothing here keeps it. */
+  signIn: (provider: string, token: string) => call<ProviderAccount>('POST', `/api/providers/${enc(provider)}/account/sign-in`, { token }),
+  signOut: (provider: string) => call<ProviderAccount>('POST', `/api/providers/${enc(provider)}/account/sign-out`),
 
   session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
   history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),

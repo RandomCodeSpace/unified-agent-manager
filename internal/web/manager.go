@@ -783,7 +783,7 @@ func (m *Manager) checkProviders(ctx context.Context) map[string]ProviderInfo {
 			cancel()
 			if err != nil {
 				info.Available = false
-				info.Reason = shortError(err)
+				info.Reason, info.SignedOut = unavailableReason(p, err)
 				log.Warn("web provider unavailable", "provider", name, "error", err)
 			} else if models, err := loadModels(ctx, p); err != nil {
 				log.Warn("load web provider models failed", "provider", name, "error", err)
@@ -2017,6 +2017,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		}
 		s.setBase(StateFailed, detail)
 		m.pauseQueueLocked(s)
+		m.kickSignedOutLocked(s, detail)
 	}
 	if turn.State != agentapi.TurnWorking {
 		// The agent may have switched branches during the turn.
@@ -2280,12 +2281,15 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	cancel()
 	m.mu.Lock()
 	info.Available = err == nil
-	info.Reason = ""
+	info.Reason, info.SignedOut = "", false
 	if err != nil {
-		info.Reason = shortError(err)
+		info.Reason, info.SignedOut = unavailableReason(prov, err)
 	}
 	m.infos[name] = info
 	m.mu.Unlock()
+	if info.SignedOut {
+		return nil, &Error{Status: http.StatusConflict, Code: codeSignedOut, Message: info.Reason}
+	}
 	if err != nil {
 		return nil, newError(http.StatusConflict, "%s is unavailable: %s", prov.DisplayName(), info.Reason)
 	}
@@ -2560,6 +2564,9 @@ func (m *Manager) Submit(id string, req PromptRequest) (Submission, error) {
 	}
 	s, err := m.lookup(id)
 	if err != nil {
+		return Submission{}, err
+	}
+	if err := m.refuseSignedOut(s); err != nil {
 		return Submission{}, err
 	}
 	return m.submit(s, turnInput{text: req.Text, files: req.Files, attachments: req.Attachments, settings: req.Settings}, req.RequestID, mode)
