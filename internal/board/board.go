@@ -228,7 +228,7 @@ const (
 	ReleaseEnded     ReleaseReason = "ended"     // Task archived or deleted → todo
 	ReleaseOwner     ReleaseReason = "released"  // owner Release → todo
 	ReleaseCancelled ReleaseReason = "cancelled" // owner cancel or cascade → cancelled
-	ReleaseSplit     ReleaseReason = "split"     // the subtask became a story; the hold moved
+	ReleaseSplit     ReleaseReason = "split"     // the subtask became a story; the hold moved (holds before split needed a release)
 )
 
 // Stage is a Task's lifecycle stage as Reconcile sees it. A Task absent from
@@ -257,6 +257,12 @@ const (
 	CodeForbidden      Code = "forbidden"
 	CodeLimit          Code = "limit"
 	CodeDuplicate      Code = "duplicate"
+	// CodeUnconfirmed refuses starting work while the subtask or an
+	// ancestor is unconfirmed; Refs lists them.
+	CodeUnconfirmed Code = "unconfirmed"
+	// CodeInProgress refuses changing the plan of a started subtask
+	// (lock.go) until the owner releases it.
+	CodeInProgress Code = "in_progress"
 	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
 	// acceptance: the Project's runner stayed busy past the timeout, or the
 	// command exited non-zero.

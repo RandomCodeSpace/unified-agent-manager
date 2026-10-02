@@ -269,7 +269,9 @@ var boardToolSet = []boardTool{
 			"labels":        labelsProp,
 			"checklist":     listProp("Checklist items, unticked.", map[string]any{"type": "string"}),
 		}), (*Manager).toolCreate),
-	defineTool("board_edit", "Change a card's fields or move it. A proposal changes at once; on a card the owner confirmed, the edit is filed as a change request for the owner.",
+	defineTool("board_edit", "Change a card's fields or move it. A card that has not started changes at once, confirmed or not. "+
+		"A subtask in progress or done keeps its plan: the edit is filed as a change request, which the owner can apply once it is released. "+
+		"Moving a confirmed card under a proposal is also filed as a change request.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref":           refProp,
 			"title":         stringProp("One line."),
@@ -281,7 +283,8 @@ var boardToolSet = []boardTool{
 			"parent":        stringProp("Move the card under this epic or story. " + refDesc),
 			"rank":          intProp("Place the card at this zero-based position among its siblings.", 0, 0),
 		}), (*Manager).toolEdit),
-	defineTool("board_checklist", "Tick, untick or add checklist items of a card. Indexes are the zero-based ones board_get shows.",
+	defineTool("board_checklist", "Tick, untick or add checklist items of a card. Indexes are the zero-based ones board_get shows. "+
+		"On a subtask in progress, only the task holding it ticks and unticks, and nothing is added.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref":    refProp,
 			"tick":   listProp("Indexes of items to tick.", map[string]any{"type": "integer", "minimum": 0}),
@@ -290,12 +293,20 @@ var boardToolSet = []boardTool{
 		}), (*Manager).toolChecklist),
 	defineTool("board_comment", "Add a comment to a card.",
 		toolSchema([]string{"ref", "body"}, map[string]any{"ref": refProp, "body": stringProp("The comment, in Markdown.")}), (*Manager).toolComment),
-	defineTool("board_link", "Record that another card, which the owner confirmed, blocks a card: it can't be finished until the blocker is done or cancelled.",
+	defineTool("board_link", "Record that another card blocks a card: it can't be finished, nor can anything under it, until the blocker is done or cancelled. "+
+		"Links map dependencies one level at a time: epics with epics, stories with stories of the same epic, subtasks with subtasks of the same story. "+
+		"Either card may be a proposal, so you can map dependencies while you plan; neither may be in progress or done.",
 		toolSchema([]string{"ref", "blocker"}, map[string]any{"ref": stringProp("The card that is blocked. " + refDesc), "blocker": stringProp("The card that blocks it. " + refDesc)}),
 		(*Manager).toolLink),
-	defineTool("board_claim", "Start work on a planned or todo subtask in your scope. You may hold one subtask at a time without a pending request on it.",
+	defineTool("board_unlink", "Remove the link between two cards, whichever way it points. Neither may be in progress or done.",
+		toolSchema([]string{"ref", "blocker"}, map[string]any{"ref": stringProp("The card that is blocked. " + refDesc), "blocker": stringProp("The card that blocks it. " + refDesc)}),
+		(*Manager).toolUnlink),
+	defineTool("board_dismiss", "Drop a proposal in your scope, with everything under it: it is cancelled with the comment \"dismissed\", and the owner can restore it. Confirmed cards are the owner's to cancel.",
+		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolDismiss),
+	defineTool("board_claim", "Start work on a planned or todo subtask in your scope that the owner confirmed: a proposal, or a subtask under one, waits for the owner. You may hold one subtask at a time without a pending request on it.",
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolClaim),
-	defineTool("board_split", "Split a subtask into new subtasks: the given children, then its checklist items. A proposal nobody holds splits at once; otherwise the split is filed as a request for the owner.",
+	defineTool("board_split", "Split a subtask into new subtasks: the given children, then its checklist items. A subtask that has not started splits at once; "+
+		"one in progress keeps its plan, and the split is filed as a request, which the owner can accept once it is released.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref": refProp,
 			"children": listProp("The new subtasks.", toolSchema([]string{"title"}, map[string]any{
@@ -723,9 +734,12 @@ func (m *Manager) toolEdit(ctx context.Context, sc boardScope, in editArgs) (too
 		if err != nil {
 			return err
 		}
-		if res.Request != nil {
-			reply = cardReply(res.Card, "#%d is confirmed, so the edit was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
-		} else {
+		switch {
+		case res.Request != nil && res.Card.Status != board.StatusDoing && res.Card.Status != board.StatusDone:
+			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+		case res.Request != nil:
+			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the edit was filed as a change request, which the owner can apply once it is released. It replaces your earlier pending one.", res.Card.Seq)
+		default:
 			reply = cardReply(res.Card, "Updated #%d.", res.Card.Seq)
 		}
 		return nil
@@ -811,6 +825,42 @@ func (m *Manager) toolLink(ctx context.Context, sc boardScope, in linkArgs) (too
 	return reply, err
 }
 
+func (m *Manager) toolUnlink(ctx context.Context, sc boardScope, in linkArgs) (toolReply, error) {
+	var reply toolReply
+	err := m.withBoard(func(st *board.Store) error {
+		c, err := sc.card(ctx, st, in.Ref)
+		if err != nil {
+			return err
+		}
+		blocker, err := sc.card(ctx, st, in.Blocker)
+		if err != nil {
+			return err
+		}
+		if err := st.Unlink(ctx, sc.actor, blocker.ID, c.ID); err != nil {
+			return err
+		}
+		reply = cardReply(c, "Removed the link between #%d and #%d.", blocker.Seq, c.Seq)
+		return nil
+	})
+	return reply, err
+}
+
+func (m *Manager) toolDismiss(ctx context.Context, sc boardScope, in refArgs) (toolReply, error) {
+	var reply toolReply
+	err := m.withBoard(func(st *board.Store) error {
+		c, err := sc.card(ctx, st, in.Ref)
+		if err != nil {
+			return err
+		}
+		if c, err = st.Dismiss(ctx, sc.actor, c.ID); err != nil {
+			return err
+		}
+		reply = cardReply(c, "Dismissed #%d and everything under it. The owner can restore it.", c.Seq)
+		return nil
+	})
+	return reply, err
+}
+
 func (m *Manager) toolClaim(ctx context.Context, sc boardScope, in refArgs) (toolReply, error) {
 	var c board.Card
 	err := m.withBoard(func(st *board.Store) error {
@@ -853,7 +903,7 @@ func (m *Manager) toolSplit(ctx context.Context, sc boardScope, in splitArgs) (t
 		case err != nil:
 			return err
 		case res.Request != nil:
-			reply = cardReply(res.Card, "#%d is confirmed or held, so the split was filed as a request for the owner to decide.", c.Seq)
+			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the split was filed as a request, which the owner can accept once it is released.", c.Seq)
 		case res.Card.Kind == board.KindStory:
 			reply = cardReply(res.Card, "Split #%d: it is now a story holding the new subtasks.", c.Seq)
 		default:

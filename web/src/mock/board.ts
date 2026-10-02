@@ -4,7 +4,7 @@
 // staleness markers (§9) and the import (§11). Not part of the production bundle.
 
 import { LIVE, type BoardRequest, type Card, type CardComment, type CardKind, type CardStatus, type ChecklistItem, type Evidence, type Hold, type Project, type SessionSummary, type Settings } from '../api';
-import { cardPath, childIndex, deriveBoard, leavesUnder } from '../lib/board';
+import { cardPath, childIndex, deriveBoard, leavesUnder, lockedReason } from '../lib/board';
 
 type Json = Record<string, unknown>;
 
@@ -110,12 +110,12 @@ function seedBoard(big: boolean): Seeded {
     card(23, P, 'story', 18, 'Sign release binaries', { win_condition: 'Every archive has a signature a user can verify.' }),
     card(24, P, 'subtask', 23, 'Generate the signing key in CI secrets', { status: 'done' }),
     card(25, P, 'subtask', 23, 'Sign archives and publish signatures', { checklist: items(['Sign in the release job', true], ['Upload .sig files', false], ['Document the key', false]) }),
-    card(26, P, 'subtask', 23, 'Verify signatures in the install script', { win_condition: 'install.sh refuses an archive whose signature does not match.' }),
+    card(26, P, 'subtask', 23, 'Verify signatures in the install script', { win_condition: 'install.sh refuses an archive whose signature does not match.', blocked_by: ['cp1-31'] }),
     card(27, P, 'story', 18, 'Changelog from merged pull requests', { win_condition: 'Release notes draft themselves from conventional commits.' }),
     card(28, P, 'subtask', 27, 'Group merged pull requests by conventional type', { status: 'doing', held_by: 't18', checklist: items(['Parse the commit type', true], ['Group feat and fix', false], ['Fold chores into one line', false]) }),
     card(29, P, 'subtask', 27, 'Write the upgrade notes section', {}),
     card(30, P, 'subtask', 27, 'Link each entry to its pull request', {}),
-    card(31, P, 'subtask', 23, 'Publish SHA-256 checksums beside the archives', { ...suggestion }),
+    card(31, P, 'subtask', 23, 'Publish SHA-256 checksums beside the archives', { ...suggestion, blocked_by: ['cp1-25'] }),
     // notes-site: a small plan.
     card(32, 'p3', 'epic', null, 'Accessible post template', { win_condition: 'The post page passes axe with no serious findings.' }),
     card(33, 'p3', 'story', 32, 'Alt text for every image', {}),
@@ -416,7 +416,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     return lines.join('\n');
   }
 
-  function launch(c: Card): Response {
+  function launch(c: Card, confirm: boolean): Response {
     let leaf = c;
     let pending: Card[] = [];
     if (c.kind !== 'subtask') {
@@ -426,6 +426,9 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       leaf = first;
     }
     if (leaf.status !== 'planned' && leaf.status !== 'todo') return refuse('invalid', `a ${leaf.status} subtask cannot be launched`);
+    // Work starts only on confirmed cards (§5): launching suggestions needs `confirm`.
+    const proposals = cardPath(leaf, new Map(cards.map((x) => [x.id, x]))).filter((x) => !x.confirmed).reverse();
+    if (proposals.length && !confirm) return refuse('unconfirmed', `${proposals.map((x) => `#${x.seq}`).join(', ')} must be confirmed to launch`);
     const session = host.createTask(leaf.project_id, `#${leaf.seq} ${leaf.title}`, preamble(leaf, pending));
     commit(() => {
       touch(leaf);
@@ -545,9 +548,14 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const blocker = byId(String(body.blocker ?? url.searchParams.get('blocker') ?? ''));
       const blocked = byId(String(body.blocked ?? url.searchParams.get('blocked') ?? ''));
       if (!blocker || !blocked) return refuse('not_found', 'card not found');
+      // Neither card may have started: a started subtask keeps its links.
+      const locked = lockedReason(blocked) ?? lockedReason(blocker);
+      if (locked) return refuse('in_progress', locked);
       if (method === 'POST') {
-        // Links point only at confirmed cards (§3); the refusal is a plain invalid.
-        if (!blocker.confirmed) return refuse('invalid', 'a blocker link may point only at a confirmed card');
+        // Either card may be a suggestion, at one level (§3): epics with epics, the rest with siblings of their kind.
+        if (blocker.kind !== blocked.kind || (blocker.parent_id ?? null) !== (blocked.parent_id ?? null)) {
+          return refuse('invalid', `#${blocker.seq} can't block #${blocked.seq}: ${blocked.kind === 'story' ? 'stories' : `${blocked.kind}s`} depend only on cards of their kind under the same parent`);
+        }
         return done(commit(() => {
           if (!blocked.blocked_by.includes(blocker.id)) blocked.blocked_by.push(blocker.id);
           if (!blocker.blocks.includes(blocked.id)) blocker.blocks.push(blocked.id);
@@ -615,6 +623,12 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (action === '' && method === 'GET') return json(200, { card: c, comments: comments[c.id] ?? [], requests: requests.filter((r) => r.card_id === c.id), holds: holds[c.id] ?? [] });
     // Unassigned cards are read-only until the owner moves one into a git Project (§11).
     if (!c.project_id && !(action === '' && method === 'PATCH' && Object.keys(body).every((k) => k === 'project_id'))) return refuse('read_only', 'move this card into a project first');
+    // A started subtask keeps its plan (ADR 0005 decision 8): ticks and owner fields still change.
+    const locked = lockedReason(c);
+    const retexts = Array.isArray(body.checklist) && (body.checklist as ChecklistItem[]).map((i) => i.text).join('\n') !== c.checklist.map((i) => i.text).join('\n');
+    if (locked && (['POST move', 'POST split'].includes(`${method} ${action}`) || (method === 'PATCH' && (retexts || ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels'].some((k) => k in body))))) {
+      return refuse('in_progress', locked);
+    }
     switch (`${method} ${action}`) {
       case 'PATCH ': {
         if (typeof body.project_id === 'string' && body.project_id !== c.project_id) {
@@ -708,7 +722,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         return done(commit(() => splitCard(c, children, false)), ok);
       }
       case 'POST launch':
-        return launch(c);
+        return launch(c, body.confirm === true);
       case 'POST plan': {
         if (c.kind === 'subtask') return refuse('invalid', 'plan with an agent on an epic or a story');
         const brief = String(body.brief ?? '').trim();

@@ -795,7 +795,8 @@ func (m *Manager) applyHoldDecisions(id string, a board.Actor, held []board.Card
 
 // LaunchRequest is the launch and plan body (ADR 0005 §14): the new Task's
 // selection, where an empty model takes the Task defaults in Settings, and a
-// plan's brief.
+// plan's brief. Confirm lets a launch confirm the proposals it holds or sits
+// under; without it such a launch is refused with code unconfirmed.
 type LaunchRequest struct {
 	Provider    string `json:"provider"`
 	Model       string `json:"model"`
@@ -803,6 +804,7 @@ type LaunchRequest struct {
 	ContextSize string `json:"context_size"`
 	Mode        string `json:"mode"`
 	Brief       string `json:"brief"`
+	Confirm     bool   `json:"confirm"`
 }
 
 // Launch starts a Task on the card ref (ADR 0005 §5). On a subtask it holds
@@ -830,8 +832,18 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 	var pending []board.Card
 	err := m.withBoard(func(st *board.Store) error {
 		var err error
-		if c, err = st.Card(ctx, ref); err != nil || c.Kind == board.KindSubtask {
+		if c, err = st.Card(ctx, ref); err != nil {
 			return err
+		}
+		if !plan && c.ProjectID != "" {
+			// An unconfirmed launch is refused before its Task exists, and
+			// Launch checks again. The checks below word the other refusals.
+			if err := st.CheckLaunch(ctx, board.Owner(""), c.ID, req.Confirm); board.CodeOf(err) == board.CodeUnconfirmed {
+				return err
+			}
+		}
+		if c.Kind == board.KindSubtask {
+			return nil
 		}
 		pending, err = st.PendingLeaves(ctx, c.ID)
 		return err
@@ -878,7 +890,7 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 			return st.StartPlanning(ctx, a, c.ID, summary.ID)
 		}
 		var err error
-		held, err = st.Launch(ctx, a, c.ID, summary.ID, base)
+		held, err = st.Launch(ctx, a, c.ID, summary.ID, base, req.Confirm)
 		return err
 	})
 	var prompt string

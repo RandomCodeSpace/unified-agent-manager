@@ -38,7 +38,7 @@ func TestDeriveTable(t *testing.T) {
 
 func TestActorTable(t *testing.T) {
 	agentOps := map[op]bool{opCreate: true, opCreateEpic: true, opEdit: true, opChange: true, opChecklist: true, opComment: true,
-		opLink: true, opClaim: true, opRequest: true, opSplit: true}
+		opLink: true, opUnlink: true, opDismiss: true, opClaim: true, opRequest: true, opSplit: true}
 	ownerless := map[op]bool{opClaim: true, opRequest: true}
 	agent := Agent("task", "sub")
 	for o := range actorTable {
@@ -93,17 +93,17 @@ func TestAgentLimits(t *testing.T) {
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.Purge(f.ctx, agent, proj)
 	wantCode(t, err, CodeForbidden)
-	_, err = f.s.Launch(f.ctx, agent, one.ID, "task-2", Baseline{})
+	_, err = f.s.Launch(f.ctx, agent, one.ID, "task-2", Baseline{}, false)
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.Accept(f.ctx, agent, "r", "")
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.Dismiss(f.ctx, agent, one.ID)
-	wantCode(t, err, CodeForbidden)
+	wantCode(t, err, CodeInvalid) // an agent dismisses proposals only
 	_, err = f.s.Confirm(f.ctx, agent, one.ID)
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.ReleaseHold(f.ctx, agent, one.ID, ReleaseOwner, "")
 	wantCode(t, err, CodeForbidden)
-	wantCode(t, f.s.Unlink(f.ctx, agent, one.ID, one.ID), CodeForbidden)
+	wantCode(t, f.s.Unlink(f.ctx, agent, one.ID, one.ID), CodeInProgress) // agents unlink, never on a started card
 	wantCode(t, f.s.StartPlanning(f.ctx, agent, one.ID, "t"), CodeForbidden)
 	wantCode(t, f.s.SetProjectAcceptCmd(f.ctx, agent, proj, "make"), CodeForbidden)
 	if after := f.revision(); after != before {

@@ -242,10 +242,12 @@ func (t *txn) caps(o *outline, a Actor, parentID string, created, unconfirmed in
 }
 
 // Edit applies p to the card ref. The owner may edit any field, and the
-// edit confirms the card and its ancestors. An agent edits an unconfirmed
-// card in its scope directly; its edit of a confirmed card is filed as a
-// change request, which replaces the Task's earlier pending one. An agent
-// patch carrying an owner-only field is refused before any write.
+// edit confirms the card and its ancestors. An agent edits a card in its
+// scope directly while it has not started, confirmed or not. Once a subtask
+// has started its plan is locked (lock.go): the owner's change to it is
+// refused, and an agent's is filed as a change request, which replaces the
+// Task's earlier pending one. An agent patch carrying an owner-only field is
+// refused before any write.
 func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditResult, error) {
 	if p.empty() {
 		return EditResult{}, invalid("nothing to change")
@@ -305,18 +307,27 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, error) {
 	if !a.owner() && a.Proposals && n.Confirmed() {
 		return nil, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
 	}
-	o2 := opEdit
-	if n.Confirmed() {
-		o2 = opChange
+	locked := n.started() && p.planning(n)
+	if locked && a.owner() {
+		return nil, inProgress(n)
 	}
-	if err := permit(a, o2, ""); err != nil {
+	if err := permit(a, opEdit, ""); err != nil {
 		return nil, err
 	}
 	plan, err := t.planEdit(o, a, n, p)
 	if err != nil {
 		return nil, err
 	}
-	if !a.owner() && n.Confirmed() {
+	// An agent never puts a confirmed card under a proposal, which the owner
+	// could dismiss with it: the owner decides that move, and accepting it
+	// confirms the proposal.
+	if !a.owner() && plan.moving && n.Confirmed() && plan.parent != "" && len(o.unconfirmed(o.byID[plan.parent])) > 0 {
+		locked = true
+	}
+	if locked {
+		if err := permit(a, opChange, ""); err != nil {
+			return nil, err
+		}
 		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
 		return &req, err
 	}
@@ -387,6 +398,12 @@ func (t *txn) planEdit(o *outline, a Actor, n *node, p Patch) (editPlan, error) 
 		plan.parent, plan.moving = parent, parent != n.ParentID
 	}
 	if plan.moving {
+		if err := o.unlinkedFor(n, "moving it changes its parent"); err != nil {
+			return editPlan{}, err
+		}
+		if err := o.startedUnder(n, false); err != nil {
+			return editPlan{}, err
+		}
 		if err := t.checkParent(o, a, n, plan.parent); err != nil {
 			return editPlan{}, err
 		}
@@ -534,7 +551,8 @@ func (t *txn) rerank(o *outline, ordered []*node, skip *node) error {
 }
 
 // Checklist ticks, unticks and adds checklist items. Agents may do this on
-// confirmed cards in their scope too.
+// confirmed cards in their scope too. On a started subtask nothing is added,
+// and only its Task and the owner tick.
 func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistEdit) (Card, error) {
 	if err := permit(a, opChecklist, ""); err != nil {
 		return Card{}, err
@@ -558,6 +576,14 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 			}
 			if err := t.inScope(o, a, n); err != nil {
 				return err
+			}
+			// A started subtask's items are its plan; ticking them is
+			// progress, for its Task and the owner.
+			if n.started() && len(e.Add) > 0 {
+				return inProgress(n)
+			}
+			if n.started() && !a.owner() && n.HeldBy != a.TaskID {
+				return refuse(CodeForbidden, "%s is in progress: only the Task holding it ticks its checklist", n.ref())
 			}
 			list := slices.Clone(n.Checklist)
 			for _, set := range []struct {
@@ -772,12 +798,15 @@ func (t *txn) setStatus(n *node, to Status, heldBy, cascade string) error {
 		return err
 	}
 	t.changed(n.ProjectID, n.ID)
-	return t.withdraw(n)
+	return t.withdraw(n, to == StatusTodo)
 }
 
-// withdraw marks n's pending requests withdrawn.
-func (t *txn) withdraw(n *node) error {
-	ids, err := t.ids(`SELECT id FROM requests WHERE card_id = ? AND status = 'pending'`, n.ID)
+// withdraw marks n's pending requests withdrawn. With planning set, as n
+// returns to To do, its change and split requests stay: they change its
+// plan, which they may only once it is no longer in progress (lock.go).
+func (t *txn) withdraw(n *node, planning bool) error {
+	ids, err := t.ids(`SELECT id FROM requests WHERE card_id = ?1 AND status = 'pending'
+		AND NOT (?2 AND kind IN ('change', 'split'))`, n.ID, planning)
 	if err != nil {
 		return err
 	}
@@ -787,7 +816,7 @@ func (t *txn) withdraw(n *node) error {
 		}
 		t.requestChanged(n.ProjectID, id)
 	}
-	n.PendingRequests = 0
+	n.PendingRequests = max(0, n.PendingRequests-len(ids))
 	return nil
 }
 
@@ -987,11 +1016,11 @@ func (t *txn) pending(o *outline, n *node) ([]*node, error) {
 		if !l.Confirmed() || l.HeldBy != "" || (l.stored != StatusPlanned && l.stored != StatusTodo) {
 			continue
 		}
-		open, err := t.openBlockers(o, l)
+		waits, err := t.waitsOn(o, l)
 		if err != nil {
 			return nil, err
 		}
-		if l.Blocked || len(open) > 0 {
+		if l.Blocked || len(waits) > 0 {
 			blocked = append(blocked, l)
 		} else {
 			ready = append(ready, l)

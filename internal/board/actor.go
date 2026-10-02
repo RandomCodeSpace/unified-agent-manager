@@ -51,8 +51,8 @@ const (
 	opCreate      op = "create"       // a card under a container
 	opCreateEpic  op = "create_epic"  // an epic at the root
 	opCreateTop   op = "create_top"   // a story or subtask at the root
-	opEdit        op = "edit"         // fields of an unconfirmed card
-	opChange      op = "change"       // fields of a confirmed card
+	opEdit        op = "edit"         // fields of a card that has not started
+	opChange      op = "change"       // fields of a started subtask, as a request
 	opOwnerFields op = "owner_fields" // accept_cmd, paths, project, blocked flag
 	opChecklist   op = "checklist"    // tick, untick or add items
 	opComment     op = "comment"
@@ -75,10 +75,11 @@ const (
 	opSettings    op = "settings"
 )
 
-// actorTable is ADR 0005 §3: which role may perform each write. Scope, caps
-// and the confirmed/unconfirmed split are checked by the write itself. An
-// agent's change to a confirmed card is filed as a change request, so
-// opChange is allowed for agents only as a request.
+// actorTable is ADR 0005 §3: which role may perform each write. Scope, caps,
+// the confirmed/unconfirmed split and the lock on started subtasks
+// (lock.go) are checked by the write itself. An agent's change to a started
+// subtask is filed as a change request, so opChange is allowed for agents
+// only as a request.
 var actorTable = map[op]struct{ owner, agent bool }{
 	opCreate:      {owner: true, agent: true},
 	opCreateEpic:  {owner: true, agent: true},
@@ -89,7 +90,7 @@ var actorTable = map[op]struct{ owner, agent bool }{
 	opChecklist:   {owner: true, agent: true},
 	opComment:     {owner: true, agent: true},
 	opLink:        {owner: true, agent: true},
-	opUnlink:      {owner: true},
+	opUnlink:      {owner: true, agent: true},
 	opClaim:       {agent: true},
 	opRequest:     {agent: true},
 	opSplit:       {owner: true, agent: true},
@@ -97,7 +98,7 @@ var actorTable = map[op]struct{ owner, agent bool }{
 	opPlan:        {owner: true},
 	opRelease:     {owner: true},
 	opConfirm:     {owner: true},
-	opDismiss:     {owner: true},
+	opDismiss:     {owner: true, agent: true},
 	opDone:        {owner: true},
 	opCancel:      {owner: true},
 	opReady:       {owner: true},

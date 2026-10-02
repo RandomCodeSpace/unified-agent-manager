@@ -1565,8 +1565,11 @@ function plannerApi() {
     comment: (ref: string, body: string) => call<unknown>('POST', card(ref, 'comments'), { body }),
     link: (blocker: string, blocked: string) => call<unknown>('POST', '/api/board/links', { blocker, blocked }),
     unlink: (blocker: string, blocked: string) => call<unknown>('DELETE', `/api/board/links?blocker=${enc(blocker)}&blocked=${enc(blocked)}`),
-    /** On a subtask it launches that subtask; on a story it is Do whole story. */
-    launch: (ref: string, body: TaskSettings = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
+    /**
+     * On a subtask it launches that subtask; on a story it is Do whole story. `confirm` lets it
+     * confirm the suggestions it holds or sits under; without it such a launch is refused (`unconfirmed`).
+     */
+    launch: (ref: string, body: TaskSettings & { confirm?: boolean } = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
     plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
     release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
     /** Starts Check at HEAD; its `board_job` frames carry the run. */

@@ -252,6 +252,9 @@ func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in R
 				return err
 			}
 		case RequestBlocked:
+			if in.Blocker != "" && n.started() {
+				return refuse(CodeInProgress, "%s is in progress, so no link is added to it until it is released: file blocked without a blocker, and name the blocker in the comment", n.ref())
+			}
 			if in.Blocker != "" {
 				blocker, err := t.blocker(o, n, in.Blocker)
 				if err != nil {
@@ -434,10 +437,11 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 // with the automatic comment "split into #a, #b, …", so Restore brings it
 // back and leaves the siblings. Unticked items become planned subtasks and
 // ticked ones subtasks with a pending done request that cites the tick: a
-// split never creates a done subtask. An agent's split of a confirmed or held
-// subtask is filed as one split request instead; the owner's, and an agent's
-// split of an unconfirmed unheld subtask, apply at once. A live hold moves to
-// the first pending new subtask.
+// split never creates a done subtask. A subtask that has not started splits
+// at once, for the owner and for an agent in scope. A started one keeps its
+// plan (lock.go): the owner's split is refused, and an agent's is filed as
+// one split request, which the owner can accept once the subtask is
+// released.
 func (s *Store) Split(ctx context.Context, a Actor, ref string, children []SplitChild) (SplitResult, error) {
 	if err := permit(a, opSplit, ""); err != nil {
 		return SplitResult{}, err
@@ -462,7 +466,10 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 			return err
 		}
 		count := len(children) + len(n.Checklist)
-		if !a.owner() && (n.Confirmed() || n.HeldBy != "") {
+		if n.started() && a.owner() {
+			return inProgress(n)
+		}
+		if n.started() {
 			if err := t.caps(o, a, n.ID, count, 0); err != nil {
 				return err
 			}
@@ -502,6 +509,11 @@ func checkSplit(o *outline, n *node, children []SplitChild) error {
 		return invalid("a split needs children or checklist items")
 	}
 	siblings := o.splitsIntoSiblings(n)
+	if !siblings {
+		if err := o.unlinkedFor(n, "a split makes it a story"); err != nil {
+			return err
+		}
+	}
 	seen := map[string]bool{}
 	for _, title := range splitTitles(n, children) {
 		key := normalTitle(title)
@@ -533,25 +545,13 @@ func splitTitles(n *node, children []SplitChild) []string {
 // ticked items' done requests are filed for; accept accepts them at once, as
 // accepting a split request does.
 func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, children []SplitChild, accept bool) error {
-	holder := n.HeldBy
-	var base Baseline
-	if holder != "" {
-		hold, err := t.openHold(n)
-		if err != nil {
-			return err
-		}
-		base = hold.Baseline
-	}
+	// A started subtask keeps its plan (lock.go), so n is never held here.
 	siblings := o.splitsIntoSiblings(n)
 	parent, to, cascade := n.ID, StatusPlanned, ""
 	if siblings {
 		parent, to, cascade = n.ParentID, StatusCancelled, t.s.newID()
 	}
-	if holder != "" {
-		if err := t.releaseHold(n, ReleaseSplit, to, cascade); err != nil {
-			return err
-		}
-	} else if err := t.setStatus(n, to, "", cascade); err != nil {
+	if err := t.setStatus(n, to, "", cascade); err != nil {
 		return err
 	}
 	checklist := n.Checklist
@@ -589,7 +589,6 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	}
 	sibs := slices.Clone(o.kids[parent])
 	var made []*node
-	var first *node
 	for _, p := range list {
 		kid := &node{stored: StatusPlanned, Card: Card{
 			ProjectID: n.ProjectID, Kind: KindSubtask, ParentID: parent, Title: p.child.Title,
@@ -608,9 +607,6 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		o.kids[parent] = append(o.kids[parent], kid)
 		made = append(made, kid)
 		if !p.tick {
-			if first == nil {
-				first = kid
-			}
 			continue
 		}
 		req, err := t.fileRequest(o, Agent(requester, ""), kid, requestFiling{
@@ -642,9 +638,6 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		if _, err := t.addComment(n, AuthorUAM, "", "split into "+strings.Join(refs, ", "), true, false); err != nil {
 			return err
 		}
-	}
-	if holder != "" && first != nil {
-		return t.startHold(first, holder, base)
 	}
 	return nil
 }
@@ -693,6 +686,9 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			if n.container() || n.stored.terminal() {
 				return invalid("%s can no longer be split", n.ref())
 			}
+			if err := inProgress(n); err != nil {
+				return err
+			}
 			if err := checkSplit(o, n, p.Children); err != nil {
 				return err
 			}
@@ -700,6 +696,11 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		}
 		if n.stored == StatusCancelled || p.Patch == nil {
 			return invalid("%s can no longer change", n.ref())
+		}
+		if p.Patch.planning(n) {
+			if err := inProgress(n); err != nil {
+				return err
+			}
 		}
 		plan, err := t.planEdit(o, a, n, *p.Patch)
 		if err != nil {

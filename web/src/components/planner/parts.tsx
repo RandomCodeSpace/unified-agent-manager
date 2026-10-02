@@ -129,7 +129,7 @@ export function CardMarkers({ card, blockers, compact = false }: Readonly<{ card
     );
   }
   if (card.blocked || blockers) {
-    const title = card.blocked ? 'Marked blocked' : `Blocked by ${blockers}`;
+    const title = card.blocked ? 'Marked blocked' : `Waiting on ${blockers}`;
     marks.push(
       <Chip key="blocked" title={title}>
         {card.blocked ? <Lock aria-hidden="true" className="size-3" /> : <Link2 aria-hidden="true" className="size-3" />}

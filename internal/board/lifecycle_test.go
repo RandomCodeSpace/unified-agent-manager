@@ -1,6 +1,7 @@
 package board
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -217,8 +218,7 @@ func TestSweep(t *testing.T) {
 	f.launch(loose.ID, "worker")
 	worker := Agent("worker", "")
 	f.done(loose.ID, worker)
-	_, err = f.s.Claim(f.ctx, worker, heldLeaf.ID, Baseline{})
-	f.must(err)
+	f.legacyClaim(worker, heldLeaf.ID)
 	f.clock.advance(ExpiryWindow - time.Minute)
 	if n, err := f.s.Sweep(f.ctx); err != nil || n != 0 {
 		t.Fatalf("early sweep = %d, %v", n, err)
@@ -274,7 +274,8 @@ func TestPurge(t *testing.T) {
 	other := f.create(owner, "", KindEpic, "Other")
 	otherStory := f.create(owner, other.ID, KindStory, "Other story")
 	otherLeaf := f.create(owner, otherStory.ID, KindSubtask, "Other leaf")
-	f.must(f.s.Link(f.ctx, owner, otherLeaf.ID, three.ID))
+	// A link from before links joined one level only.
+	f.raw(`INSERT INTO links (blocker_id, blocked_id) VALUES (?, ?)`, otherLeaf.ID, three.ID)
 	f.launch(otherLeaf.ID, "task-1")
 	_, err := f.s.AddComment(f.ctx, Agent("task-1", ""), otherLeaf.ID, "working")
 	f.must(err)
@@ -311,8 +312,7 @@ func TestPurge(t *testing.T) {
 	}
 }
 
-// Test plan 16: a cancelled or done blocker doesn't block, and a link to an
-// unconfirmed card is refused.
+// Test plan 16: a cancelled or done blocker doesn't block.
 func TestLinks(t *testing.T) {
 	f := newFixture(t)
 	epic, story, one, two := f.tree()
@@ -330,19 +330,22 @@ func TestLinks(t *testing.T) {
 	f.must(f.s.StartPlanning(f.ctx, owner, story.ID, "planner"))
 	planner := Agent("planner", "")
 	proposed := f.create(planner, story.ID, KindSubtask, "Proposed")
-	wantCode(t, f.s.Link(f.ctx, planner, proposed.ID, one.ID), CodeInvalid)
-	f.must(f.s.Link(f.ctx, planner, story.ID, proposed.ID)) // an unconfirmed card may be blocked
+	f.must(f.s.Link(f.ctx, planner, one.ID, proposed.ID)) // an unconfirmed card may be blocked
 	outside := f.create(owner, epic.ID, KindSubtask, "Outside")
 	wantCode(t, f.s.Link(f.ctx, planner, one.ID, outside.ID), CodeForbidden)
-	// A container blocker is open until its derived status is terminal.
+	// A container blocker is open until its derived status is terminal, and
+	// everything under the card it blocks waits on it.
 	blockerStory := f.create(owner, epic.ID, KindStory, "Blocker story")
 	b1 := f.create(owner, blockerStory.ID, KindSubtask, "B1")
-	f.must(f.s.Link(f.ctx, owner, blockerStory.ID, outside.ID))
-	_, err = f.s.CheckFinishable(f.ctx, owner, outside.ID)
+	f.must(f.s.Link(f.ctx, owner, blockerStory.ID, story.ID))
+	_, err = f.s.CheckFinishable(f.ctx, owner, two.ID)
 	wantCode(t, err, CodeGuardBlockers)
+	if want := fmt.Sprintf("%s still waits on %s (via its story %s)", two.ref(), blockerStory.ref(), story.ref()); err.Error() != want {
+		t.Fatalf("guard = %q, want %q", err, want)
+	}
 	_, err = f.s.SetStatus(f.ctx, owner, b1.ID, StatusDone, "done", false)
 	f.must(err)
-	if _, err := f.s.CheckFinishable(f.ctx, owner, outside.ID); err != nil {
+	if _, err := f.s.CheckFinishable(f.ctx, owner, two.ID); err != nil {
 		t.Fatalf("a done container still blocks: %v", err)
 	}
 	_, err = f.s.CheckFinishable(f.ctx, owner, one.ID)
@@ -352,13 +355,145 @@ func TestLinks(t *testing.T) {
 	if _, err := f.s.CheckFinishable(f.ctx, owner, one.ID); err != nil {
 		t.Fatalf("a done blocker still blocks: %v", err)
 	}
-	// Unlink, whichever way round.
+	// Unlink, whichever way round, once neither card is done or in progress.
+	wantCode(t, f.s.Unlink(f.ctx, owner, one.ID, two.ID), CodeInProgress)
+	_, err = f.s.SetStatus(f.ctx, owner, two.ID, StatusTodo, "", false)
+	f.must(err)
 	f.must(f.s.Unlink(f.ctx, owner, one.ID, two.ID))
 	wantCode(t, f.s.Unlink(f.ctx, owner, two.ID, one.ID), CodeNotFound)
 	wantCode(t, f.s.Unlink(f.ctx, owner, "#99", one.ID), CodeNotFound)
 	wantCode(t, f.s.Unlink(f.ctx, owner, one.ID, "#99"), CodeNotFound)
 	un := f.unassigned("Unassigned")
 	wantCode(t, f.s.Unlink(f.ctx, owner, un, one.ID), CodeReadOnly)
+}
+
+// Test plan 16: dependencies are planning, so a link joins proposals and
+// confirmed cards in every combination, for an agent within its scope and
+// for the owner anywhere; self links, duplicates and cycles are still
+// refused. A proposal blocks like any card until it is done or cancelled:
+// dismissing or expiring it cancels it, which releases the link and keeps
+// its row, and purge deletes the row with the card.
+func TestLinksOnProposals(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, story.ID, "planner"))
+	planner := Agent("planner", "")
+	p1 := f.create(planner, story.ID, KindSubtask, "P1")
+	p2 := f.create(planner, story.ID, KindSubtask, "P2")
+	p3 := f.create(planner, story.ID, KindSubtask, "P3")
+	f.must(f.s.Link(f.ctx, planner, p1.ID, p2.ID))  // proposal blocks proposal
+	f.must(f.s.Link(f.ctx, planner, p2.ID, one.ID)) // proposal blocks confirmed
+	f.must(f.s.Link(f.ctx, planner, two.ID, p3.ID)) // confirmed blocks proposal
+	if c := f.card(p2.ID); !slices.Equal(c.BlockedBy, []string{p1.ID}) || !slices.Equal(c.Blocks, []string{one.ID}) {
+		t.Fatalf("p2 links = %v, %v", c.BlockedBy, c.Blocks)
+	}
+	wantCode(t, f.s.Link(f.ctx, planner, one.ID, p1.ID), CodeInvalid) // p1 → p2 → one → p1
+	wantCode(t, f.s.Link(f.ctx, owner, one.ID, p1.ID), CodeInvalid)
+	wantCode(t, f.s.Link(f.ctx, planner, p1.ID, p2.ID), CodeDuplicate)
+	wantCode(t, f.s.Link(f.ctx, planner, p3.ID, p3.ID), CodeInvalid)
+	// An agent links only a blocked card in its scope; the owner links any
+	// two cards of one level.
+	story2 := f.create(owner, epic.ID, KindStory, "Story 2")
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "other"))
+	q := f.create(Agent("other", ""), story2.ID, KindSubtask, "Q")
+	wantCode(t, f.s.Link(f.ctx, planner, p3.ID, q.ID), CodeForbidden)
+	wantCode(t, f.s.Link(f.ctx, owner, p3.ID, q.ID), CodeInvalid) // another story
+	outside := f.create(owner, story2.ID, KindSubtask, "Outside")
+	f.must(f.s.Link(f.ctx, owner, q.ID, outside.ID))
+	// An open proposal blocks finishing.
+	_, err := f.s.CheckFinishable(f.ctx, owner, one.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	_, err = f.s.CheckFinishable(f.ctx, owner, outside.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	links := func(id string) int {
+		var n int
+		f.must(f.s.db.QueryRow(`SELECT COUNT(*) FROM links WHERE blocker_id = ?1 OR blocked_id = ?1`, id).Scan(&n))
+		return n
+	}
+	// Dismissing a proposal releases what it blocked.
+	_, err = f.s.Dismiss(f.ctx, owner, p2.ID)
+	f.must(err)
+	if _, err := f.s.CheckFinishable(f.ctx, owner, one.ID); err != nil {
+		t.Fatalf("a dismissed proposal still blocks: %v", err)
+	}
+	// So does its expiry.
+	f.clock.advance(ExpiryWindow + time.Minute)
+	_, err = f.s.Sweep(f.ctx)
+	f.must(err)
+	wantStatus(t, f.card(q.ID), StatusCancelled)
+	if _, err := f.s.CheckFinishable(f.ctx, owner, outside.ID); err != nil {
+		t.Fatalf("an expired proposal still blocks: %v", err)
+	}
+	if links(p2.ID) != 2 || links(q.ID) != 1 || !slices.Equal(f.card(outside.ID).BlockedBy, []string{q.ID}) {
+		t.Fatal("cancelling a proposal deleted its links")
+	}
+	n, err := f.s.Purge(f.ctx, owner, proj)
+	f.must(err)
+	if n != 4 {
+		t.Fatalf("purged %d cards, want the four proposals", n)
+	}
+	for _, c := range []Card{p1, p2, p3, q} {
+		if links(c.ID) != 0 {
+			t.Fatalf("purge left the links of %s", c.Title)
+		}
+	}
+	if c := f.card(one.ID); len(c.BlockedBy) != 0 {
+		t.Fatalf("one is still blocked by %v", c.BlockedBy)
+	}
+}
+
+// Test plan 16: nothing agentic runs on an unconfirmed card. Every way a
+// hold starts refuses while the subtask or an ancestor is a proposal: a
+// working Task's claim, and a launch the owner didn't confirm. Planning on
+// proposals still works, and a confirmed launch confirms the whole chain in
+// the write that starts the hold, leaving unconfirmed blockers as they are.
+func TestWorkStartsOnlyOnConfirmedCards(t *testing.T) {
+	f := newFixture(t)
+	epic, _, _, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	ps := f.create(planner, epic.ID, KindStory, "Proposed story")
+	pa := f.create(planner, ps.ID, KindSubtask, "Proposed A")
+	pb := f.create(planner, ps.ID, KindSubtask, "Proposed B")
+	f.must(f.s.Link(f.ctx, planner, pb.ID, pa.ID))
+	// A working Task scoped to the epic plans on the proposals but can't
+	// claim them.
+	whole, err := f.s.Launch(f.ctx, owner, epic.ID, "epic-task", Baseline{}, false)
+	f.must(err) // "Do whole story" holds a confirmed subtask
+	if whole.ID == pa.ID || whole.ID == pb.ID {
+		t.Fatalf("do whole story held a proposal: %+v", whole)
+	}
+	epicWorker := Agent("epic-task", "")
+	f.done(whole.ID, epicWorker)
+	_, err = f.s.Claim(f.ctx, epicWorker, pa.ID, Baseline{})
+	wantUnconfirmed(t, err, pa.ref(), ps.ref())
+	_, err = f.s.Edit(f.ctx, epicWorker, pa.ID, Patch{Title: ptr("Proposed A, renamed")})
+	f.must(err)
+	// "Do whole story" on a story of proposals has nothing to hold.
+	_, err = f.s.Launch(f.ctx, owner, ps.ID, "t-story", Baseline{}, true)
+	wantCode(t, err, CodeInvalid)
+	// A confirmed launch confirms the subtask and its story at once; its
+	// proposed blocker stays a proposal and still blocks.
+	_, err = f.s.Launch(f.ctx, owner, pa.ID, "t-a", Baseline{}, false)
+	wantUnconfirmed(t, err, pa.ref(), ps.ref())
+	held, err := f.s.Launch(f.ctx, Owner("head-7"), pa.ID, "t-a", Baseline{}, true)
+	f.must(err)
+	if story := f.card(ps.ID); held.HeldBy != "t-a" || !held.Confirmed() || !story.Confirmed() || story.PinnedSHA != "head-7" {
+		t.Fatalf("launched %+v under %+v", held, story)
+	}
+	if b := f.card(pb.ID); b.Confirmed() {
+		t.Fatal("launching confirmed the blocker")
+	}
+	_, err = f.s.CheckFinishable(f.ctx, owner, pa.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	// A confirmed card under a proposal, as an earlier store could leave
+	// it, is refused too.
+	pc := f.create(planner, epic.ID, KindStory, "Proposed C")
+	leaf := f.create(owner, pc.ID, KindSubtask, "Owner leaf")
+	f.raw(`UPDATE cards SET expires_at = ? WHERE id = ?`, stamp(f.clock.Now().Add(ExpiryWindow)), pc.ID)
+	_, err = f.s.Claim(f.ctx, epicWorker, leaf.ID, Baseline{})
+	wantUnconfirmed(t, err, pc.ref())
+	wantUnconfirmed(t, f.s.CheckLaunch(f.ctx, owner, leaf.ID, false), pc.ref())
 }
 
 // Test plan 19: staleness is never computed for held subtasks.
@@ -446,7 +581,7 @@ func TestNothingReopensUnderCancelledParent(t *testing.T) {
 	f.launch(loose.ID, "w")
 	f.done(loose.ID, Agent("w", ""))
 	f.raw(`UPDATE cards SET status = 'todo', cascade_id = '' WHERE id = ?`, two.ID)
-	_, err = f.s.Launch(f.ctx, owner, two.ID, "t1", Baseline{})
+	_, err = f.s.Launch(f.ctx, owner, two.ID, "t1", Baseline{}, false)
 	wantCode(t, err, CodeInvalid)
 	_, err = f.s.Claim(f.ctx, Agent("w", ""), two.ID, Baseline{})
 	wantCode(t, err, CodeInvalid)

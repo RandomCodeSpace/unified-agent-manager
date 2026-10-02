@@ -8,10 +8,11 @@ import (
 func TestUnassignMovesTheWholeBoard(t *testing.T) {
 	f := newFixture(t)
 	epic, story, one, two := f.tree()
+	f.must(f.s.Link(f.ctx, owner, two.ID, one.ID))
 	f.launch(one.ID, "task-1")
 	agent := Agent("task-1", "")
-	req := f.done(one.ID, agent)
-	f.must(f.s.Link(f.ctx, owner, two.ID, one.ID))
+	req, err := f.s.FileRequest(f.ctx, agent, one.ID, RequestInput{Kind: RequestCancel, Comment: "drop"})
+	f.must(err)
 	other, err := f.s.Create(f.ctx, owner, NewCard{ProjectID: "p2", Kind: KindSubtask, Title: "Elsewhere"})
 	f.must(err)
 	before := len(f.changes)

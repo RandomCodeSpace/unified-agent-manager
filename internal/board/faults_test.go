@@ -36,9 +36,16 @@ func newFaultScene(t *testing.T) *faultScene {
 	s.r1 = f.done(s.one.ID, worker)
 	s.big = f.create(owner, s.epic.ID, KindSubtask, "Big")
 	f.launch(s.big.ID, "task-5")
-	res, err := f.s.Split(f.ctx, Agent("task-5", ""), s.big.ID, []SplitChild{{Title: "c1"}})
+	_, err = f.s.Split(f.ctx, Agent("task-5", ""), s.big.ID, []SplitChild{{Title: "c1"}})
+	f.must(err)
+	// A released subtask keeps its split request, which can then be accepted.
+	ready := f.create(owner, s.epic.ID, KindSubtask, "Ready to split")
+	f.launch(ready.ID, "task-6")
+	res, err := f.s.Split(f.ctx, Agent("task-6", ""), ready.ID, []SplitChild{{Title: "r1"}})
 	f.must(err)
 	s.split = *res.Request
+	_, err = f.s.ReleaseHold(f.ctx, owner, ready.ID, ReleaseOwner, "")
+	f.must(err)
 	s.r2, err = f.s.FileRequest(f.ctx, planner, s.two.ID, RequestInput{Kind: RequestCancel, Comment: "obsolete"})
 	f.must(err)
 	f.must(f.s.Link(f.ctx, owner, s.two.ID, s.five.ID))
@@ -95,7 +102,7 @@ var faultOps = map[string]func(s *faultScene) error{
 		return errOf(s.f.s.SetStatus(s.f.ctx, owner, s.l3.ID, StatusDone, "x", false))
 	},
 	"launch": func(s *faultScene) error {
-		return errOf(s.f.s.Launch(s.f.ctx, owner, s.three.ID, "task-3", Baseline{}))
+		return errOf(s.f.s.Launch(s.f.ctx, owner, s.three.ID, "task-3", Baseline{}, false))
 	},
 	"claim": func(s *faultScene) error {
 		return errOf(s.f.s.Claim(s.f.ctx, Agent("task-1", ""), s.three.ID, Baseline{}))
@@ -150,8 +157,8 @@ func TestInjectedWriteFaults(t *testing.T) {
 			"accept", "reject", "acceptCancel", "reconcile", "sweep", "sweepOnWrite", "settle"}},
 		{"BEFORE INSERT ON comments WHEN new.automatic = 1 AND new.close = 0", []string{"cascade", "dismiss", "reconcile", "sweep", "settle"}},
 		{"BEFORE INSERT ON comments WHEN new.automatic = 1 AND new.close = 1", []string{"settle"}},
-		{"BEFORE INSERT ON holds", []string{"launch", "claim", "acceptSplit"}},
-		{"BEFORE UPDATE ON holds", []string{"release", "accept", "reject", "reconcile", "cascade", "acceptSplit"}},
+		{"BEFORE INSERT ON holds", []string{"launch", "claim"}},
+		{"BEFORE UPDATE ON holds", []string{"release", "accept", "reject", "reconcile", "cascade"}},
 		{"BEFORE INSERT ON requests", []string{"request", "change", "split", "splitRequest"}},
 		{"BEFORE UPDATE ON requests", []string{"accept", "reject", "acceptCancel", "requestAgain", "splitRequest", "cascade"}},
 		{"BEFORE INSERT ON cards", []string{"create", "split", "acceptSplit", "labels"}},
@@ -226,7 +233,7 @@ func TestCorruptRows(t *testing.T) {
 		{"request created", `UPDATE requests SET created_at = 'x' WHERE id = ?`, func(s *faultScene) string { return s.r1.ID }, []string{"getRequest"}},
 		{"request decided", `UPDATE requests SET decided_at = 'x' WHERE id = ?`, func(s *faultScene) string { return s.r1.ID }, []string{"getRequest"}},
 		{"request payload", `UPDATE requests SET payload = 'x' WHERE id = ?`, func(s *faultScene) string { return s.r1.ID }, []string{"accept"}},
-		{"hold baseline", `UPDATE holds SET baseline_status = 'x' WHERE card_id <> ?`, func(s *faultScene) string { return "" }, []string{"detail", "reconcile", "acceptSplit"}},
+		{"hold baseline", `UPDATE holds SET baseline_status = 'x' WHERE card_id <> ?`, func(s *faultScene) string { return "" }, []string{"detail", "reconcile"}},
 		{"hold started", `UPDATE holds SET started_at = 'x' WHERE card_id = ?`, func(s *faultScene) string { return s.one.ID }, []string{"detail"}},
 		{"hold ended", `UPDATE holds SET ended_at = 'x' WHERE card_id = ?`, func(s *faultScene) string { return s.four.ID }, []string{"detail4"}},
 		{"comment stamp", `UPDATE comments SET created_at = 'x' WHERE card_id = ?`, func(s *faultScene) string { return s.four.ID }, []string{"detail4"}},

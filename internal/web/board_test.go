@@ -379,13 +379,13 @@ func TestPlannerCardRoutes(t *testing.T) {
 	if head := gitOutput(t, f.repo, "rev-parse", "HEAD"); c.PinnedSHA != head {
 		t.Fatalf("re-pin = %s, want %s", c.PinnedSHA, head)
 	}
-	f.call(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, epic.ID, one.ID), http.StatusNoContent, nil)
-	if d := f.card(one.ID); !slices.Equal(d.Card.BlockedBy, []string{epic.ID}) {
+	f.call(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, two.ID, one.ID), http.StatusNoContent, nil)
+	if d := f.card(one.ID); !slices.Equal(d.Card.BlockedBy, []string{two.ID}) {
 		t.Fatalf("blocked_by = %v", d.Card.BlockedBy)
 	}
-	f.refused(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, epic.ID, one.ID), http.StatusConflict, string(board.CodeDuplicate))
+	f.refused(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, two.ID, one.ID), http.StatusConflict, string(board.CodeDuplicate))
 	f.refused(http.MethodPost, "/api/board/links", `{"blocker":"","blocked":"x"}`, http.StatusBadRequest, string(board.CodeInvalid))
-	f.call(http.MethodDelete, "/api/board/links?blocker="+epic.ID+"&blocked="+one.ID, "", http.StatusNoContent, nil)
+	f.call(http.MethodDelete, "/api/board/links?blocker="+two.ID+"&blocked="+one.ID, "", http.StatusNoContent, nil)
 	f.refused(http.MethodDelete, "/api/board/links?blocker="+epic.ID+"&blocked="+one.ID, "", http.StatusNotFound, string(board.CodeNotFound))
 	d := f.card("%23" + fmt.Sprint(two.Seq))
 	if d.Card.ID != two.ID || !slices.Contains(comments(d), "owner: hello") || d.Holds == nil || d.Requests == nil {
@@ -473,7 +473,7 @@ func TestPlannerRefusesProjectsWithoutGit(t *testing.T) {
 		if other, err = st.Create(ctx, board.Owner(""), board.NewCard{ProjectID: plain, Kind: board.KindSubtask, Title: "Other"}); err != nil {
 			return err
 		}
-		if _, err = st.Launch(ctx, board.Owner(""), c.ID, "task-1", board.Baseline{}); err != nil {
+		if _, err = st.Launch(ctx, board.Owner(""), c.ID, "task-1", board.Baseline{}, false); err != nil {
 			return err
 		}
 		req, err = st.FileRequest(ctx, board.Agent("task-1", ""), c.ID, board.RequestInput{Kind: board.RequestDone, Comment: "done"})
@@ -617,7 +617,17 @@ func TestPlannerFailedLaunchDiscardsTaskAndReleasesHold(t *testing.T) {
 	if leaf.Confirmed() {
 		t.Fatal("an agent's subtask is confirmed")
 	}
+	// Without confirm the launch is refused, naming the proposal, before a
+	// Task exists.
 	w := f.do(http.MethodPost, "/api/board/cards/"+leaf.ID+"/launch", `{}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"unconfirmed"`) ||
+		!strings.Contains(w.Body.String(), fmt.Sprintf(`"refs":["#%d"]`, leaf.Seq)) {
+		t.Fatalf("unconfirmed launch = %d %s", w.Code, w.Body)
+	}
+	if list := m.List(); len(list) != 0 || f.card(leaf.ID).Card.Confirmed {
+		t.Fatalf("a refused launch left tasks %+v or confirmed the leaf", list)
+	}
+	w = f.do(http.MethodPost, "/api/board/cards/"+leaf.ID+"/launch", `{"confirm":true}`)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "first prompt") {
 		t.Fatalf("failed launch = %d %s", w.Code, w.Body)
 	}
@@ -921,7 +931,7 @@ func TestPlannerReconcileAtStart(t *testing.T) {
 	for _, task := range []string{settled, archived, deleted} {
 		c, err := db.Create(ctx, board.Owner(""), board.NewCard{ProjectID: projectID, Kind: board.KindSubtask, Title: "for " + task})
 		if err == nil {
-			_, err = db.Launch(ctx, board.Owner(""), c.ID, task, board.Baseline{})
+			_, err = db.Launch(ctx, board.Owner(""), c.ID, task, board.Baseline{}, false)
 		}
 		if err != nil {
 			t.Fatal(err)

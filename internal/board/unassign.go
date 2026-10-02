@@ -34,7 +34,7 @@ func (s *Store) Unassign(ctx context.Context, projectID string) (int, error) {
 					return err
 				}
 			}
-			if err := t.withdraw(n); err != nil {
+			if err := t.withdraw(n, false); err != nil {
 				return err
 			}
 			if err := t.exec(`UPDATE cards SET project_id = '', updated_at = ? WHERE id = ?`, stamp(t.now), n.ID); err != nil {

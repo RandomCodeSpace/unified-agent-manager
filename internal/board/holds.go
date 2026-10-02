@@ -14,10 +14,13 @@ import (
 // Launch starts taskID's hold on the subtask ref and scopes the Task to the
 // subtask's parent. On a container it is "Do whole story": it holds the
 // container's first pending confirmed subtask and scopes the Task to the
-// container. Launch is an owner touch: the held subtask and its unconfirmed
-// ancestors are confirmed and pinned. base is the working tree state the
-// hold's evidence is measured from.
-func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Baseline) (Card, error) {
+// container. Work starts only on confirmed cards: while the held subtask or
+// an ancestor is unconfirmed, Launch refuses with CodeUnconfirmed, listing
+// them, unless confirm is set. Launch is an owner touch: the held subtask
+// and its unconfirmed ancestors are confirmed and pinned, in the write that
+// starts the hold. base is the working tree state the hold's evidence is
+// measured from.
+func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Baseline, confirm bool) (Card, error) {
 	if err := permit(a, opLaunch, ""); err != nil {
 		return Card{}, err
 	}
@@ -39,21 +42,8 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 			if err != nil {
 				return err
 			}
-			leaf, scopeID := n, n.ParentID
-			if n.container() {
-				leaves, err := t.pending(o, n)
-				if err != nil {
-					return err
-				}
-				if len(leaves) == 0 {
-					return invalid("%s has no pending confirmed subtasks", n.ref())
-				}
-				leaf, scopeID = leaves[0], n.ID
-			}
-			if err := permit(a, opLaunch, leaf.stored); err != nil {
-				return err
-			}
-			if err := o.underCancelled(leaf, nil); err != nil {
+			leaf, scopeID, err := t.launchLeaf(o, a, n, confirm)
+			if err != nil {
 				return err
 			}
 			held = leaf.ID
@@ -66,7 +56,7 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 			if err := t.setScope(taskID, project, scopeID, true); err != nil {
 				return err
 			}
-			return t.startHold(leaf, taskID, base)
+			return t.startHold(o, leaf, taskID, base)
 		})
 		if err != nil {
 			return err
@@ -75,6 +65,52 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 		return err
 	})
 	return withRevision(out, changes), err
+}
+
+// CheckLaunch refuses, without writing, a launch of ref that Launch would
+// refuse for the cards' own state, so a caller can check before it creates
+// the launch's Task. Launch checks again in its own write.
+func (s *Store) CheckLaunch(ctx context.Context, a Actor, ref string, confirm bool) error {
+	if err := permit(a, opLaunch, ""); err != nil {
+		return err
+	}
+	return s.read(ctx, func(t *txn) error {
+		o, n, err := t.find(ref)
+		if err != nil {
+			return err
+		}
+		if o.project == "" {
+			return errReadOnly
+		}
+		_, _, err = t.launchLeaf(o, a, n, confirm)
+		return err
+	})
+}
+
+// launchLeaf resolves the subtask a launch of n holds and the scope its Task
+// gets, refusing what Launch refuses before it writes.
+func (t *txn) launchLeaf(o *outline, a Actor, n *node, confirm bool) (*node, string, error) {
+	leaf, scopeID := n, n.ParentID
+	if n.container() {
+		leaves, err := t.pending(o, n)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(leaves) == 0 {
+			return nil, "", invalid("%s has no pending confirmed subtasks", n.ref())
+		}
+		leaf, scopeID = leaves[0], n.ID
+	}
+	if err := permit(a, opLaunch, leaf.stored); err != nil {
+		return nil, "", err
+	}
+	if err := o.underCancelled(leaf, nil); err != nil {
+		return nil, "", err
+	}
+	if un := o.unconfirmed(leaf); len(un) > 0 && !confirm {
+		return nil, "", unconfirmedRefusal(un, "launching confirms %[1]s, so confirm the launch")
+	}
+	return leaf, scopeID, nil
 }
 
 // StartPlanning scopes taskID, a planning Task or a Utility scout, to the
@@ -108,7 +144,7 @@ func (s *Store) StartPlanning(ctx context.Context, a Actor, ref, taskID string) 
 }
 
 // Claim starts the agent's Task's hold on the subtask ref, which must be in
-// the Task's scope. A Task may have only one hold without a pending done,
+// the Task's scope and confirmed, with its ancestors (startHold). A Task may have only one hold without a pending done,
 // blocked or split request at a time, and a planning Task may hold nothing.
 func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (Card, error) {
 	if err := permit(a, opClaim, ""); err != nil {
@@ -138,7 +174,7 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 		if open > 0 {
 			return refuse(CodeLimit, "the Task already holds a subtask without a pending request")
 		}
-		return t.startHold(n, a.TaskID, base)
+		return t.startHold(o, n, a.TaskID, base)
 	})
 }
 
@@ -216,8 +252,14 @@ func (s *Store) ReleaseHold(ctx context.Context, a Actor, ref string, reason Rel
 	})
 }
 
-// startHold records taskID's new attempt at n and moves n to doing.
-func (t *txn) startHold(n *node, taskID string, base Baseline) error {
+// startHold records taskID's new attempt at n and moves n to doing. Every
+// hold starts here, so it refuses while n or an ancestor is unconfirmed:
+// agents plan on proposals, and work starts only on what the owner
+// confirmed.
+func (t *txn) startHold(o *outline, n *node, taskID string, base Baseline) error {
+	if un := o.unconfirmed(n); len(un) > 0 {
+		return unconfirmedRefusal(un, "work on %[1]s starts only once the owner confirms %[1]s")
+	}
 	var attempt int
 	if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) + 1 FROM holds WHERE card_id = ?`, n.ID).Scan(&attempt); err != nil {
 		return fmt.Errorf("board: count attempts: %w", err)
@@ -235,8 +277,8 @@ func (t *txn) startHold(n *node, taskID string, base Baseline) error {
 
 // releaseHold is the single path by which a hold ends (ADR 0005 §5): it
 // closes the attempt on the held subtask n with reason and moves n to status
-// to. A subtask that is still unconfirmed when released is given a fresh
-// expiry.
+// to. A subtask that is still unconfirmed when released, one held before
+// holds needed confirmed cards, is given a fresh expiry.
 func (t *txn) releaseHold(n *node, reason ReleaseReason, to Status, cascade string) error {
 	if err := t.exec(`UPDATE holds SET ended_at = ?, end_reason = ? WHERE card_id = ? AND ended_at = ''`,
 		stamp(t.now), string(reason), n.ID); err != nil {

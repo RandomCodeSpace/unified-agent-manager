@@ -799,7 +799,7 @@ func (t *txn) importLinks(e *importEntry, entries map[string]*importEntry, r *Im
 			linked = append(linked, id)
 		case code == CodeDuplicate:
 			linked = append(linked, id)
-		case code == CodeInvalid:
+		case code == CodeInvalid || code == CodeInProgress:
 			r.skip(e.st, err.Error())
 		default:
 			return err
