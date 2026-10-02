@@ -874,12 +874,15 @@ export default function App() {
   // Pending planner requests need the owner too (ADR 0005 §10): they fold into the same count.
   const needsYouTasks = useMemo(() => needsYouCount(state.sessions, hasNews), [state.sessions, hasNews]);
   const attention = needsYouTasks + (plannerOn ? pendingRequests(state.boards) : 0);
-  // A new Task shows as "New task"; only real Tasks count as needing you.
-  let openName: string | null = null;
-  if (selected) openName = taskName(selected);
-  else if (newTask) openName = '';
+  // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
+  let shownName: string | null = null;
+  if (settingsOpen) shownName = 'Settings';
+  else if (plannerShown) shownName = 'Planner';
+  else if (routinesFor) shownName = 'Routines';
+  else if (newTask) shownName = '';
+  else if (selected) shownName = taskName(selected);
   useEffect(() => {
-    document.title = pageTitle(attention, openName);
+    document.title = pageTitle(attention, shownName);
     // The badge is this page's count while it is visible; otherwise the service worker sets the service's count with each push (public/sw.js).
     const badge = () => {
       if (document.visibilityState !== 'visible') return;
@@ -889,7 +892,7 @@ export default function App() {
     badge();
     document.addEventListener('visibilitychange', badge);
     return () => document.removeEventListener('visibilitychange', badge);
-  }, [attention, openName]);
+  }, [attention, shownName]);
 
   if (auth === 'checking') {
     return (
@@ -1022,7 +1025,7 @@ export default function App() {
     // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
       <EmptyPane leading={leading} connection={connection}>
-        <Brand markOnly className="[&_svg]:size-9 opacity-80" />
+        <Brand className="[&_svg]:size-9 [&>span]:text-display-md opacity-80" />
         <p className="text-ui text-muted">{state.projects.length > 0 ? 'Open a task from the sidebar, or start a new one there.' : 'Add a project in the sidebar to begin.'}</p>
       </EmptyPane>
     );
@@ -1185,7 +1188,7 @@ function PaneHeader({ leading, connection }: Readonly<{ leading: React.ReactNode
   return (
     <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">
       {leading}
-      <span className="text-title font-semibold text-ink">uam</span>
+      <span className="text-title font-semibold text-ink">UAM</span>
       <span className="flex-1" />
       {connection && connection !== 'connected' && (
         <output className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>

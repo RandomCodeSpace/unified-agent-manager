@@ -1203,7 +1203,11 @@ sign-outs are logged without the token.
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge and the sidebar button on a
     narrow window carry the Needs you count (the app badge and title add
-    pending planner requests).
+    pending planner requests). The tab title reads "UAM" on the home
+    screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
+    a new Task or one still waiting for a title), and "UAM - Settings",
+    "UAM - Planner" or "UAM - Routines" for those views; the count comes
+    first, as in "(9) UAM - Fix redraw".
 
   A shelf row shows the Project badge and title, faded until hovered or
   selected; its tooltip adds the Project name and directory and when the Task
@@ -1222,16 +1226,16 @@ sign-outs are logged without the token.
     is kept per browser. The gear at the right of each Project opens "Edit
     project", where its name and Task defaults live together with "Previous
     sessions" and "Remove project".
-  - **Collapse the sidebar**: the UAM icon beside Search in the sidebar
+  - **Collapse the sidebar**: the UAM mark and wordmark beside Search in the sidebar
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
-    the UAM icon (shows the sidebar again, with the Needs you count on it),
+    the UAM mark alone (shows the sidebar again, with the Needs you count on it),
     New task, the Project filter, Add project, and at the foot Settings, the
     planner and the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
-  - With no Task open, the main pane shows only the uam mark and one line;
+  - With no Task open, the main pane shows only the UAM mark with its wordmark and one line;
     New task and Add project are in the sidebar. There is one theme; it does
     not follow the system.
 
