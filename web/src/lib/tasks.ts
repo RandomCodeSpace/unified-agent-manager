@@ -1,4 +1,4 @@
-import type { Project, SessionState, SessionSummary } from '../api';
+import type { Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
 
@@ -15,6 +15,16 @@ export function newsReader(selectedId: string | null, viewed: Readonly<Record<st
 export function shownState(s: Pick<SessionSummary, 'state' | 'subagents_running' | 'compacting'>): SessionState {
   if (s.compacting && s.state !== 'awaiting_permission' && s.state !== 'awaiting_answer' && s.state !== 'starting') return 'working';
   return (s.state === 'completed' || s.state === 'idle') && s.subagents_running > 0 ? 'working' : s.state;
+}
+
+/**
+ * The finish card follows a turn that completed, at the live end of the history: not while the
+ * Task works (`live`, or a subagent still running after the turn, or compacting, keeps it Working).
+ */
+export function showsFinish(s: Pick<SessionDetail, 'state' | 'subagents_running' | 'compacting' | 'history_after' | 'turn_timings'>, items: readonly Item[], live: boolean): boolean {
+  const last = s.turn_timings?.at(-1);
+  return !live && shownState(s) !== 'working' && !s.history_after && items.some((item) => item.kind === 'assistant' && !item.agent_id)
+    && (last ? last.state === 'completed' : s.state === 'completed');
 }
 
 /** Something waits in the Task: a positive count, or a bare flag (`pendingCount` in api.ts). */

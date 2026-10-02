@@ -48,6 +48,8 @@ const SHEET_INLINE = '(min-width: 1280px)';
 /** A touch screen: focusing the composer would raise the keyboard over the conversation just opened. */
 const COARSE = '(pointer: coarse)';
 const VIEWED_KEY = 'uam.viewed';
+/** When the owner last had each Task on screen, by this browser's clock: "Since you left" counts from it. */
+const LOOKED_KEY = 'uam.looked';
 /** When this browser first ran the Task list's read tracking: a Task never opened here and changed since is unread. */
 const VIEWED_SINCE_KEY = 'uam.viewedSince';
 const SIDEBAR_KEY = 'uam.sidebar';
@@ -285,16 +287,40 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [sheetOpen]);
 
+  // When the owner last looked at each Task: while it is on screen, and as they leave it.
+  const markLooked = useCallback((id: string) => {
+    try {
+      localStorage.setItem(LOOKED_KEY, JSON.stringify({ ...readJSON<Record<string, string>>(LOOKED_KEY, {}), [id]: new Date().toISOString() }));
+    } catch {
+      // Storage unavailable: no mark, so no "Since you left".
+    }
+  }, []);
+
   // The selected task counts as viewed as long as it is on screen: every frame that carries
   // its updated_at marks it, so nothing it does while open shows as unread later.
   const markViewed = useCallback((id: string, at: string) => {
+    if (!document.hidden) markLooked(id);
     setViewed((v) => {
       if (v[id] === at) return v;
       const next = { ...v, [id]: at };
       localStorage.setItem(VIEWED_KEY, JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [markLooked]);
+  // Leaving a Task, hiding the page or closing it ends the look at the Task on screen.
+  useEffect(() => {
+    const id = state.selectedId;
+    if (!id) return;
+    const onHide = () => markLooked(id);
+    const onVisibility = () => { if (document.hidden) markLooked(id); };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHide);
+      markLooked(id);
+    };
+  }, [state.selectedId, markLooked]);
 
   // One EventSource at a time, scoped to the selected session.
   useEffect(() => {
@@ -429,9 +455,9 @@ export default function App() {
   }, [auth, state.selectedId, streamKey, markViewed, checkVersion, recentTasks]);
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
-  // What the owner last saw of the Task just opened, read before this visit marks it viewed: "Since you left" starts there.
+  // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.
   const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
-  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? viewed[state.selectedId] : undefined });
+  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);

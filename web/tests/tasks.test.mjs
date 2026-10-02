@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { filteredProject, groupTasks, mostRecentProject, newsReader, shownState, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
+import { filteredProject, groupTasks, mostRecentProject, newsReader, showsFinish, shownState, tasksOf, visibleProjects } from '../src/lib/tasks.ts';
 
 const p1 = { id: 'p1', name: 'one', dir: '/one', created_at: '2026-09-20T10:00:00Z' };
 const p2 = { id: 'p2', name: 'two', dir: '/two', created_at: '2026-09-23T10:00:00Z' };
@@ -190,4 +190,17 @@ test('Alt+J and Alt+K cycle through the Needs you Tasks and wrap', async () => {
   assert.equal(cycleTask(['a', 'b', 'c'], 'c', 1), 'a');
   assert.equal(cycleTask(['a', 'b', 'c'], 'a', -1), 'c');
   assert.equal(cycleTask(['a', 'b', 'c'], 'b', 1), 'c');
+});
+
+test('the finish card follows a completed turn, not while a subagent or compaction keeps the Task working', () => {
+  const items = [{ id: 'u', kind: 'user', time: 't' }, { id: 'a', kind: 'assistant', time: 't', text: 'Done.' }];
+  const done = { state: 'completed', subagents_running: 0, turn_timings: [{ id: 'tt', started_at: 't', ended_at: 't', state: 'completed' }] };
+  assert.equal(showsFinish(done, items, false), true);
+  // The turn completed, but a subagent still runs or the conversation compacts: Working, no card yet.
+  assert.equal(showsFinish({ ...done, subagents_running: 1 }, items, false), false);
+  assert.equal(showsFinish({ ...done, compacting: true }, items, false), false);
+  assert.equal(showsFinish(done, items, true), false);
+  assert.equal(showsFinish({ ...done, history_after: 'c' }, items, false), false);
+  assert.equal(showsFinish({ ...done, turn_timings: [{ id: 'tt', started_at: 't', state: 'failed' }] }, items, false), false);
+  assert.equal(showsFinish(done, items.slice(0, 1), false), false);
 });

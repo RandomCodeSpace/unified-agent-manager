@@ -1,7 +1,7 @@
 // Development-only: the assist routes (suggested replies, Run again, Export as Markdown, saved
 // prompts) for the in-browser mock service (install.ts). Not part of the production bundle.
 
-import type { SavedPrompt, SessionSummary, Settings } from '../api';
+import type { SavedPrompt, SessionSummary, Settings, TurnEvidence } from '../api';
 import type { MockTask } from './data';
 
 type Json = Record<string, unknown>;
@@ -24,6 +24,22 @@ function json(status: number, body?: unknown): Response {
 }
 const fail = (status: number, error: string) => json(status, { error });
 
+/** The service's reading of t20's turn (GET /api/sessions/{id}/evidence); other Tasks show none. */
+const EVIDENCE: Record<string, Omit<TurnEvidence, 'since'>> = {
+  t20: {
+    checks: [
+      { item_id: 'f5', kinds: ['test'], command: 'go test ./internal/vterm/... -run Redraw', outcome: 'pass', exit: 0, counts: '1 package ok', took_ms: 1400, has_output: true },
+      { item_id: 'f6', kinds: ['vet'], command: 'go vet ./internal/vterm/... 2>&1 | tail -5', outcome: 'unclear', exit: 0, note: 'piped, so the exit status is the last command’s', has_output: true },
+    ],
+    claims: [
+      { text: 'TestRedrawReplaysFocusEvents covers it, and the vterm tests pass.', verified: true, detail: 'go test ./internal/vterm/... -run Redraw · exit 0' },
+      { text: 'go vet is clean.', verified: false, detail: 'Not verified · the last run’s result is unclear' },
+      { text: 'docs/terminal.md describes the new replay order.', verified: false, detail: 'Not verified · no edit to docs/terminal.md in this turn' },
+    ],
+    files: [{ path: 'internal/vterm/redraw.go', additions: 3, deletions: 0 }, { path: 'internal/vterm/redraw_test.go', additions: 12, deletions: 0 }],
+  },
+};
+
 /** Replies the mock suggests for a Task's last answer. */
 const REPLIES = ['Run the whole test suite', 'Commit this with a short message', 'Show me the diff'];
 
@@ -42,6 +58,15 @@ export function assistMock(host: AssistHost) {
       const last = t.items.filter((i) => !i.agent_id).at(-1);
       const on = host.settings().suggest_replies !== false && t.state === 'completed' && last?.kind === 'assistant';
       return json(200, on ? { item_id: last.id, replies: REPLIES } : { item_id: '', replies: [] });
+    }
+    if ((r = path.match(/^\/api\/sessions\/([^/]+)\/evidence$/)) && method === 'GET') {
+      const t = host.task(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const out: TurnEvidence = { ...(EVIDENCE[t.id] ?? { checks: [], claims: [], files: [] }) };
+      const since = url.searchParams.get('since'), until = url.searchParams.get('until') ?? new Date().toISOString();
+      const fresh = since ? t.items.filter((i) => !i.agent_id && i.time > since && i.time <= until) : [];
+      if (fresh.length && EVIDENCE[t.id]) out.since = { text: 'the agent finished, ran the tests plus 1 other command, and changed 2 files', ids: fresh.map((i) => i.id) };
+      return json(200, out);
     }
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/rerun$/)) && method === 'POST') {
       const t = host.task(decodeURIComponent(r[1]));

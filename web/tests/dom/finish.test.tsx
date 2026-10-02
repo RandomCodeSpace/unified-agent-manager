@@ -1,10 +1,11 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and the finish card (mock t20).
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { openTask } from './render';
+import { openTask, sidebar } from './render';
 
-/** Marks t20 as last seen `minutes` ago, as an earlier visit would have. */
-const seen = (minutes: number) => localStorage.setItem('uam.viewed', JSON.stringify({ t20: new Date(Date.now() - minutes * 60000).toISOString() }));
+const before = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
+/** Marks t20 as last looked at `minutes` ago, as an earlier visit would have. */
+const seen = (minutes: number) => localStorage.setItem('uam.looked', JSON.stringify({ t20: before(minutes) }));
 
 describe('since you left', () => {
   test('a Task that changed since the last look says what happened and jumps to the first new item', async () => {
@@ -31,6 +32,23 @@ describe('since you left', () => {
     expect(screen.queryByText(/^Since you left/)).toBeNull();
   });
 
+  test('it counts from the owner’s last look, not from the Task’s last update', async () => {
+    // The Task last changed 42 minutes ago; the owner watched it until 30 minutes ago.
+    localStorage.setItem('uam.viewed', JSON.stringify({ t20: before(69.5) }));
+    seen(30);
+    await openTask('t20');
+    await screen.findByRole('heading', { name: 'Finished — check the evidence' });
+    expect(screen.queryByText(/^Since you left/)).toBeNull();
+  });
+
+  test('leaving a Task marks the last look', async () => {
+    seen(500);
+    const { user } = await openTask('t20');
+    const aside = await sidebar();
+    await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
+    await waitFor(() => expect(Date.now() - Date.parse((JSON.parse(localStorage.getItem('uam.looked') ?? '{}') as Record<string, string>).t20 ?? '')).toBeLessThan(5000));
+  });
+
   test('a Task never opened in this browser has no strip', async () => {
     await openTask('t20');
     await screen.findByRole('heading', { name: 'Finished — check the evidence' });
@@ -42,7 +60,8 @@ describe('finish card', () => {
   test('shows the checks before the claims and marks what nothing backs', async () => {
     const { user } = await openTask('t20');
     const card = within((await screen.findByRole('heading', { name: 'Finished — check the evidence' })).closest('section')!);
-    expect(card.getByText('2 claims not verified')).toBeTruthy();
+    // The service reads the turn; the card shows its reading once it arrives.
+    expect(await card.findByText('2 claims not verified')).toBeTruthy();
     const tests = card.getByText('Ran the tests').closest('li')!;
     expect(tests.textContent).toContain('go test ./internal/vterm/... -run Redraw · exit 0 · 1 package ok · 1s');
     expect(card.getByText('Ran go vet').closest('li')!.textContent).toContain('piped, so the exit status is the last command’s');
