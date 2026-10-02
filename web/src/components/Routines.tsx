@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, modelCatalog, resolveTaskDefaults, type Project, type Routine, type RoutineInput, type RoutineRun, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { modelChoices } from '../lib/models';
-import { SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, describeSchedule, outcomeLabel, outcomeTone, runTime, scheduleOf, untilText, type OutcomeTone, type ScheduleKind } from '../lib/routines';
+import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
 import { Note, ProjectBadge, ScrollSentinel, Skeleton, useApp, useMinuteTick, useScrolled } from './common';
 import { RoutinesProjectPicker } from './ProjectPicker';
 import { Field, choiceLabel } from './TaskDefaults';
@@ -240,7 +240,7 @@ function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit,
           {r.name}
         </Heading>
         {!r.enabled && <Chip fill="outline">Paused</Chip>}
-        {r.mode === 'yolo' && <Chip tone="warning" fill="well"><Zap className="size-3" />Yolo</Chip>}
+        {r.mode === 'yolo' && <Chip tone="warning" fill="well"><Zap className="size-3" />{routineModeLabel(r)}</Chip>}
       </div>
       <dl className="grid gap-x-6 gap-y-1.5 text-ui sm:grid-cols-[max-content_minmax(0,1fr)] max-sm:gap-y-0 max-sm:[&>dt]:mt-2 max-sm:[&>dt]:text-caption max-sm:[&>dt:first-child]:mt-0">
         <dt className="text-muted">When</dt>
@@ -259,7 +259,7 @@ function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit,
         </dd>
         <dt className="text-muted">Runs with</dt>
         <dd className="text-body">
-          {model} · {r.mode === 'yolo' ? 'Yolo' : 'Safe'} · at most {r.max_runs_per_day} {r.max_runs_per_day === 1 ? 'run' : 'runs'} a day, stopped after {r.max_minutes} min
+          {model} · {routineModeLabel(r)} · at most {r.max_runs_per_day} {r.max_runs_per_day === 1 ? 'run' : 'runs'} a day, stopped after {r.max_minutes} min
         </dd>
       </dl>
       <p className="line-clamp-2 text-caption whitespace-pre-line text-muted">{r.prompt}</p>
@@ -331,7 +331,8 @@ function RunLine({ run, sessions, onOpenTask, time = true }: Readonly<{ run: Rou
 }
 
 /**
- * Create or edit a routine. A new one runs with the model New task starts with, in Safe mode, until changed here.
+ * Create or edit a routine. A new one runs with the model New task starts with, Yolo with autopilot (nobody watches
+ * a run), until changed here; an existing one keeps the mode it was saved with.
  * Without a `project` (New routine over every Project) the form asks which one, while there are several.
  */
 function RoutineDialog({ open, projects, project, routine, onClose, onClosed, onSaved }: Readonly<{ open: boolean; projects: Project[]; project?: Project; routine?: Routine; onClose: () => void; onClosed: () => void; onSaved: (r: Routine) => void }>) {
@@ -350,7 +351,8 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
   const [time, setTime] = useState(s && s.kind !== 'hours' ? s.time : '09:00');
   const [weekday, setWeekday] = useState(s?.kind === 'weekly' ? s.weekday : 1);
   const [hours, setHours] = useState(String(s?.kind === 'hours' ? s.hours : 6));
-  const [mode, setMode] = useState<'safe' | 'yolo'>(routine?.mode ?? 'safe');
+  const [mode, setMode] = useState<RoutineMode>(routine ? routineMode(routine) : 'autopilot');
+  const modeHint = ROUTINE_MODES.find((m) => m.value === mode)?.hint;
   const [perDay, setPerDay] = useState(String(routine?.max_runs_per_day ?? 24));
   const [minutes, setMinutes] = useState(String(routine?.max_minutes ?? 30));
   const [busy, setBusy] = useState(false);
@@ -366,7 +368,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
       prompt,
       model,
       schedule: scheduleOf(kind, time, weekday, Number(hours)),
-      mode,
+      ...routineModeInput(mode),
       max_runs_per_day: Number(perDay),
       max_minutes: Number(minutes),
     };
@@ -451,24 +453,21 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
         </Field>
         <div className="flex flex-col gap-1">
           <span id="routine-mode-label" className="text-caption text-muted">
-            Permissions
+            Mode
           </span>
           <Segmented
             aria-labelledby="routine-mode-label"
             aria-describedby="routine-mode-hint"
-            className="self-start"
+            className="self-start max-sm:self-stretch"
             value={mode}
-            items={[
-              { value: 'safe', label: 'Safe' },
-              { value: 'yolo', label: 'Yolo' },
-            ]}
-            onValueChange={(v) => setMode(v as 'safe' | 'yolo')}
+            items={ROUTINE_MODES.map(({ value, label }) => ({ value, label }))}
+            onValueChange={(v) => setMode(v as RoutineMode)}
           />
           {mode === 'safe' ? (
-            <Note id="routine-mode-hint">Each permission request waits for you, and the run shows as Needs you until you answer.</Note>
+            <Note id="routine-mode-hint">{modeHint}</Note>
           ) : (
             <Note id="routine-mode-hint" tone="warn" role="status">
-              Yolo allows every permission request without asking, while nobody is watching: the agent can run any command and change any file it can reach. Use it only for work you would let run unattended.
+              {modeHint} It acts without asking while nobody is watching: the agent can run any command and change any file it can reach. Use it only for work you would let run unattended.
             </Note>
           )}
         </div>

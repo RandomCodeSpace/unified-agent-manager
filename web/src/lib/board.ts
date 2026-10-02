@@ -35,6 +35,17 @@ export function deriveContainer(leaves: readonly Leaf[]): { status: CardStatus; 
   return { status, progress };
 }
 
+/**
+ * A container's progress as every view shows it: proposals are plan items, so done counts over
+ * all live subtasks, proposals included, and the proposals are still named. `short` is for rows
+ * and nodes, `text` where words fit. The derived status keeps to confirmed subtasks (§2).
+ */
+export function shownProgress(p: CardProgress): { done: number; total: number; proposed: number; fraction: number; short: string; text: string } {
+  const total = p.total + p.proposed;
+  const proposed = p.proposed ? ` · ${p.proposed} proposed` : '';
+  return { done: p.done, total, proposed: p.proposed, fraction: total ? p.done / total : 0, short: `${p.done}/${total}${proposed}`, text: `${p.done}/${total} done${proposed}` };
+}
+
 /** Children by parent id (`''` for the root), in rank order, then by `#seq`. */
 export function childIndex(cards: readonly Card[]): Map<string, Card[]> {
   const index = new Map<string, Card[]>();

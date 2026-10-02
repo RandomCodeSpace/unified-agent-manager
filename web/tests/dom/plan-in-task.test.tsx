@@ -25,7 +25,8 @@ describe('the story strip', () => {
     expect(line.getAttribute('aria-label')).toBe('This task works on #25 Sign archives and publish signatures in Release automation › Sign release binaries. Show the plan');
     expect(line.textContent).toContain('Release automation ›');
     expect(line.textContent).toContain('Sign release binaries');
-    expect(line.textContent).toContain('1/3 done');
+    // #23 has #24 (done), #25, #26 and the proposal #31: proposals count, and are named.
+    expect(line.textContent).toContain('1/4 done · 1 proposed');
     expect(line.textContent).toContain('This task #25');
     // No next: #26 waits on #31, and every subtask here on the story's blocker #19.
     expect(line.textContent).not.toContain('next #');
@@ -69,6 +70,7 @@ describe('the Plan panel', () => {
     expect(here.getByText('Release automation › Sign release binaries')).toBeTruthy();
     expect(here.getByText(/Waits for/).textContent).toContain('#19 Cross-compile the release matrix (through its story)');
     const outline = within(panel.getByRole('list', { name: 'Plan outline' }));
+    expect(outline.getByRole('button', { name: /^#23 Sign release binaries/ }).textContent).toContain('1/4 · 1 proposed');
     const mine = outline.getByRole('button', { name: '#25 Sign archives and publish signatures, In progress, this task' });
     expect(mine.getAttribute('aria-expanded')).toBe('true');
     const details = within(panel.getByRole('region', { name: '#25 details' }));
@@ -120,6 +122,7 @@ describe('the Plan panel', () => {
     expect(panel.getByText(/This whole story waits for/).textContent).toContain('#19 Cross-compile the release matrix');
     const graph = within(panel.getByRole('group', { name: 'Dependencies between the subtasks' }));
     expect(graph.getByRole('button', { name: /^#25 Sign archives and publish signatures, In progress, this task/ })).toBeTruthy();
+    expect(panel.getByText(/^\d+ subtasks ·/).textContent).toContain('1/4 done · 1 proposed');
     // Plain SVG: no HTML inside the drawing.
     expect(panel.getByRole('group', { name: 'Dependencies between the subtasks' }).querySelector('foreignObject')).toBeNull();
     // A subtask opens its details under the graph.
@@ -133,6 +136,7 @@ describe('the Plan panel', () => {
     await user.click(epics.getByRole('button', { name: /^#18 Release automation/ }));
     expect(within(panel.getByRole('navigation', { name: 'Plan level' })).getByText('#18 Release automation').getAttribute('aria-current')).toBe('location');
     expect(panel.getByRole('group', { name: 'Dependencies between the stories' })).toBeTruthy();
+    expect(within(panel.getByRole('group', { name: 'Dependencies between the stories' })).getByRole('button', { name: /^#23 Sign release binaries, 1\/4 done · 1 proposed\. Show its subtasks$/ })).toBeTruthy();
     expect(panel.getByText(/This whole epic waits for/).textContent).toContain('#1 Faster first load of long transcripts');
   });
 });

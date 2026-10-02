@@ -145,7 +145,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           )}
           <div className="flex flex-wrap items-center gap-1.5 text-caption text-muted">
             <span>{kindLabel(c.kind)}</span>
-            {!leaf && <ProgressText card={c} />}
+            {!leaf && <ProgressText card={c} long />}
             {!c.confirmed && <Chip><Sparkles aria-hidden="true" className="size-3" />Suggested, {expiresIn(c.expires_at)}</Chip>}
             {c.held_by && <TaskChip taskId={c.held_by} />}
             <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} />

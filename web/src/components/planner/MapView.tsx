@@ -1,7 +1,7 @@
 import { Maximize, Minus, Plus } from 'lucide-react';
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react';
 import type { Card, CardStatus } from '../../api';
-import { KIND_LABEL, MAP_MAX_K, MAP_MIN_K, MAP_NODE_H, MAP_NODE_W, STATUS_LABEL, fitView, layoutMap, openingView, type MapEdge, type MapNode } from '../../lib/board';
+import { KIND_LABEL, MAP_MAX_K, MAP_MIN_K, MAP_NODE_H, MAP_NODE_W, STATUS_LABEL, fitView, layoutMap, openingView, shownProgress, type MapEdge, type MapNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { useShownBoard } from './context';
@@ -304,7 +304,7 @@ const Edges = memo(function Edges({ edges, nodes, arrow }: Readonly<{ edges: Map
 
 const Node = memo(function Node({ node, selected, onOpen, onFocusNode }: Readonly<{ node: MapNode; selected: boolean; onOpen: (id: string) => void; onFocusNode: (n: MapNode) => void }>) {
   const c: Card = node.card;
-  const meta = `#${c.seq} · ${KIND_LABEL[c.kind]} · ${STATUS_LABEL[c.status]}${c.progress ? ` · ${c.progress.done}/${c.progress.total}` : ''}`;
+  const meta = `#${c.seq} · ${KIND_LABEL[c.kind]} · ${STATUS_LABEL[c.status]}${c.progress ? ` · ${shownProgress(c.progress).short}` : ''}`;
   return (
     <button
       type="button"

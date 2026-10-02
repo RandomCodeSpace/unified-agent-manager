@@ -1,7 +1,7 @@
 import { Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
-import { KIND_LABEL, STATUS_LABEL } from '../../lib/board';
+import { KIND_LABEL, STATUS_LABEL, shownProgress } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -58,22 +58,20 @@ export function KindIcon({ kind, className }: Readonly<{ kind: CardKind; classNa
 
 export const kindLabel = (k: CardKind) => KIND_LABEL[k];
 
-/** A container's progress: done of total, with "+N proposed" for its suggestions. Memoised on the card, which stays the same object while unchanged. */
-export const ProgressText = memo(function ProgressText({ card, className }: Readonly<{ card: Card; className?: string }>) {
-  const p = card.progress;
-  if (!p) return null;
+/** A container's progress (`shownProgress`): "1/4 · 1 proposed", with "done" when `long`. Memoised on the card, which stays the same object while unchanged. */
+export const ProgressText = memo(function ProgressText({ card, long = false, className }: Readonly<{ card: Card; long?: boolean; className?: string }>) {
+  if (!card.progress) return null;
+  const p = shownProgress(card.progress);
   return (
-    <span className={cn('shrink-0 text-caption tabular-nums text-muted', className)} title={`${p.done} of ${p.total} confirmed subtasks done${p.proposed ? `, ${p.proposed} proposed` : ''}`}>
-      {p.done}/{p.total}
-      {p.proposed > 0 && <span className="text-muted"> +{p.proposed}</span>}
+    <span className={cn('shrink-0 text-caption tabular-nums text-muted', className)} title={`${p.done} of ${p.total} subtasks done${p.proposed ? `, ${p.proposed} of them proposed` : ''}`}>
+      {long ? p.text : p.short}
     </span>
   );
 });
 
 /** A 16px ring filled by a container's progress (the Map draws its own in SVG). */
 export function ProgressRing({ card, className }: Readonly<{ card: Card; className?: string }>) {
-  const p = card.progress;
-  const fraction = p && p.total ? p.done / p.total : 0;
+  const fraction = card.progress ? shownProgress(card.progress).fraction : 0;
   const r = 6;
   const length = 2 * Math.PI * r;
   return (

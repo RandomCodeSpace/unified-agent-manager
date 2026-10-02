@@ -1,6 +1,6 @@
 // Routine wording (docs/web.md, Routines). Pure, so the unit tests run in node.
 
-import type { RoutineOutcome, RoutineRun, RoutineSchedule, SessionState } from '../api';
+import type { Routine, RoutineInput, RoutineOutcome, RoutineRun, RoutineSchedule, SessionState } from '../api';
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 
@@ -32,6 +32,33 @@ export function scheduleOf(kind: ScheduleKind, time: string, weekday: number, ho
   if (kind === 'hours') return { kind, hours };
   if (kind === 'weekly') return { kind, time, weekday };
   return { kind, time };
+}
+
+/** The form's choice of how a run works: its permission mode, and autopilot. */
+export type RoutineMode = 'autopilot' | 'yolo' | 'safe';
+
+/** The modes the form offers, Yolo with autopilot first (a new routine's), each with a line on how a run then goes. */
+export const ROUTINE_MODES: { value: RoutineMode; label: string; hint: string }[] = [
+  { value: 'autopilot', label: 'Yolo with autopilot', hint: 'Allows every permission request and keeps working until the task is done or the time limit stops it.' },
+  { value: 'yolo', label: 'Yolo', hint: 'Allows every permission request for one turn: the run ends when the agent first stops.' },
+  { value: 'safe', label: 'Safe', hint: 'Each permission request waits for you, and the run shows as Needs you until you answer.' },
+];
+
+/** The form's mode for a routine; Safe with autopilot, which only the API sets, reads as Safe. */
+export function routineMode(r: Pick<Routine, 'mode' | 'autopilot'>): RoutineMode {
+  if (r.mode === 'safe') return 'safe';
+  return r.autopilot ? 'autopilot' : 'yolo';
+}
+
+/** A routine's mode in words, as its card shows it. */
+export function routineModeLabel(r: Pick<Routine, 'mode' | 'autopilot'>): string {
+  if (r.mode === 'safe') return r.autopilot ? 'Safe with autopilot' : 'Safe';
+  return r.autopilot ? 'Yolo with autopilot' : 'Yolo';
+}
+
+/** The fields the form sends for its mode. */
+export function routineModeInput(mode: RoutineMode): Pick<RoutineInput, 'mode' | 'autopilot'> {
+  return { mode: mode === 'safe' ? 'safe' : 'yolo', autopilot: mode === 'autopilot' };
 }
 
 /** How a run ended, in a word or two; a running run whose Task waits for the owner needs you. */

@@ -200,7 +200,7 @@ export function install(): { received: Received[] } {
       const p = st.projects.find((x) => x.id === projectId)!;
       const d = st.settings.task_defaults;
       const t: MockTask = {
-        id: nextId('t'), project_id: p.id, provider: 'copilot', name, title: '', workdir: p.dir, conversation_id: nextId('conv'),
+        id: nextId('t'), project_id: p.id, provider: 'copilot', name, title: name, workdir: p.dir, conversation_id: nextId('conv'),
         model: d?.model ?? 'auto', last_model: '', effort: d?.effort, context_size: d?.context_size, mode: d?.mode, subagents_running: 0,
         state: 'working', open: true, pending: 0, created_at: now(), updated_at: now(), capabilities: st.meta.providers[0].capabilities,
         items: [{ id: nextId('u'), kind: 'user', text: prompt, time: now() }], interactions: [], subagents: [], history_truncated: false, last_submission: null, agentItems: {},

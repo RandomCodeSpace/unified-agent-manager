@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -92,6 +93,7 @@ type Routine struct {
 	Schedule      store.RoutineSchedule `json:"schedule"`
 	Enabled       bool                  `json:"enabled"`
 	Mode          string                `json:"mode"`
+	Autopilot     bool                  `json:"autopilot"`
 	MaxRunsPerDay int                   `json:"max_runs_per_day"`
 	MaxMinutes    int                   `json:"max_minutes"`
 	CreatedAt     time.Time             `json:"created_at"`
@@ -100,8 +102,8 @@ type Routine struct {
 }
 
 // RoutineInput is the body of a routine's create (every field but Model,
-// Enabled, Mode and the limits required) or edit (only the fields given
-// change).
+// Enabled, Mode, Autopilot and the limits required) or edit (only the fields
+// given change).
 type RoutineInput struct {
 	Name          *string                `json:"name"`
 	Prompt        *string                `json:"prompt"`
@@ -109,6 +111,7 @@ type RoutineInput struct {
 	Schedule      *store.RoutineSchedule `json:"schedule"`
 	Enabled       *bool                  `json:"enabled"`
 	Mode          *string                `json:"mode"`
+	Autopilot     *bool                  `json:"autopilot"`
 	MaxRunsPerDay *int                   `json:"max_runs_per_day"`
 	MaxMinutes    *int                   `json:"max_minutes"`
 }
@@ -122,7 +125,7 @@ func routineView(r *store.WebRoutine) Routine {
 		runs = []store.WebRoutineRun{}
 	}
 	return Routine{ID: r.ID, ProjectID: r.ProjectID, Name: r.Name, Prompt: r.Prompt, Provider: r.Provider, Model: r.Model, Schedule: r.Schedule,
-		Enabled: r.Enabled, Mode: string(r.Mode), MaxRunsPerDay: r.MaxRunsPerDay, MaxMinutes: r.MaxMinutes, CreatedAt: r.CreatedAt, NextRun: r.NextRun, Runs: runs}
+		Enabled: r.Enabled, Mode: string(r.Mode), Autopilot: r.Autopilot, MaxRunsPerDay: r.MaxRunsPerDay, MaxMinutes: r.MaxMinutes, CreatedAt: r.CreatedAt, NextRun: r.NextRun, Runs: runs}
 }
 
 // nextRun is a schedule's first firing after now. Every N hours steps from
@@ -446,7 +449,7 @@ func (m *Manager) lastRunBusy(r *store.WebRoutine) bool {
 func (m *Manager) startRun(start routineStart) {
 	defer m.wg.Done()
 	r := start.routine
-	req := CreateRequest{ProjectID: r.ProjectID, Provider: r.Provider, Model: r.Model, Name: routineTaskName(r.Name, start.run.At), Prompt: r.Prompt, Mode: string(r.Mode), routineID: r.ID}
+	req := CreateRequest{ProjectID: r.ProjectID, Provider: r.Provider, Model: r.Model, Name: routineTaskName(r.Name, start.run.At), Prompt: r.Prompt, Mode: string(r.Mode), routineID: r.ID, autopilot: r.Autopilot}
 	summary, err := func() (SessionSummary, error) {
 		prov, workdir, mode, err := m.checkCreate(&req)
 		if err != nil {
@@ -476,6 +479,32 @@ func (m *Manager) startRun(start routineStart) {
 	}
 	m.saveRoutinesLocked(r.ID)
 	m.kickRoutines()
+}
+
+// startAutopilot turns autopilot on in a run's new Task before its first
+// message, as /autopilot on does: the Task then keeps working until the agent
+// calls task_complete, or the run's time limit stops it. When that fails the
+// first message still goes, and the Task works one turn as usual. A provider
+// without typed commands would take the command as a prompt: it is skipped.
+func (m *Manager) startAutopilot(s *webSession) {
+	m.mu.Lock()
+	_, typed := s.conv.(agentapi.CommandExecutor)
+	m.mu.Unlock()
+	if !typed {
+		log.Warn("routine run left autopilot off: the provider has no autopilot command", "session", s.id)
+		return
+	}
+	reqID, err := newUUID()
+	if err == nil {
+		var sub Submission
+		sub, err = m.executeCommand(s, CommandRequest{RequestID: reqID, Name: "autopilot", Arguments: "on"})
+		if err == nil && sub.Status != SubmissionAccepted {
+			err = errors.New(sub.Error)
+		}
+	}
+	if err != nil {
+		log.Warn("routine run could not turn autopilot on", "session", s.id, "error", err)
+	}
 }
 
 // Routines lists a Project's routines, oldest first.
@@ -544,6 +573,9 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 		}
 		r.Mode = mode
 	}
+	if in.Autopilot != nil {
+		r.Autopilot = *in.Autopilot
+	}
 	if in.MaxRunsPerDay != nil {
 		if *in.MaxRunsPerDay < 1 || *in.MaxRunsPerDay > store.MaxRoutineRunsPerDay {
 			return newError(http.StatusBadRequest, "runs a day must be 1 to %d", store.MaxRoutineRunsPerDay)
@@ -571,8 +603,9 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 }
 
 // CreateRoutine adds a routine to a Project. Without a model it takes the one
-// New task starts with; it is enabled, in safe mode, with the default limits
-// unless the input says otherwise.
+// New task starts with; it is enabled, with the default limits unless the
+// input says otherwise. Nobody watches a run, so it is Yolo with autopilot
+// unless the input says otherwise; autopilot defaults to on only in Yolo.
 func (m *Manager) CreateRoutine(projectID string, in RoutineInput) (Routine, error) {
 	if in.Name == nil || in.Prompt == nil || in.Schedule == nil {
 		return Routine{}, newError(http.StatusBadRequest, "name, prompt and schedule are required")
@@ -582,7 +615,7 @@ func (m *Manager) CreateRoutine(projectID string, in RoutineInput) (Routine, err
 		return Routine{}, fmt.Errorf("generate routine id: %w", err)
 	}
 	now := m.now()
-	r := store.WebRoutine{ID: id, ProjectID: projectID, Enabled: true, Mode: store.ModeSafe, MaxRunsPerDay: defaultRoutineRunsPerDay, MaxMinutes: defaultRoutineMinutes, CreatedAt: now}
+	r := store.WebRoutine{ID: id, ProjectID: projectID, Enabled: true, Mode: store.ModeYolo, MaxRunsPerDay: defaultRoutineRunsPerDay, MaxMinutes: defaultRoutineMinutes, CreatedAt: now}
 	m.mu.Lock()
 	known := m.projects[projectID] != nil
 	r.Provider, r.Model = m.newTaskSelectionLocked()
@@ -598,6 +631,9 @@ func (m *Manager) CreateRoutine(projectID string, in RoutineInput) (Routine, err
 	defer rs.mu.Unlock()
 	if err := m.applyRoutine(&r, in, true); err != nil {
 		return Routine{}, err
+	}
+	if in.Autopilot == nil {
+		r.Autopilot = r.Mode == store.ModeYolo
 	}
 	if r.Enabled {
 		r.NextRun = nextRun(r.Schedule, time.Time{}, now)
