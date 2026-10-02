@@ -12,9 +12,26 @@ export function isChartCall(item: Item): boolean {
   return item.kind === 'tool' && item.tool?.name === CHART_TOOL && item.tool.status === 'completed';
 }
 
-/** Series colours, in order: DESIGN.md tokens, each readable on `raised`. */
-export const SERIES_TOKENS = ['accent', 'badge-orange', 'badge-teal', 'badge-violet'] as const;
-const SERIES_FALLBACK = ['#2a55bd', '#a84c12', '#13756b', '#6c4fc6'];
+/**
+ * Series colours: the badge tones (DESIGN.md), each at least 4.5:1 on `raised`. The first four
+ * are the Okabe-Ito hues (blue, orange, bluish green, reddish purple), which stay apart under
+ * the common colour-blindness types; red is left out so no chart reads as an error.
+ */
+export const SERIES_TOKENS = ['badge-blue', 'badge-orange', 'badge-teal', 'badge-pink', 'badge-violet', 'badge-cyan', 'badge-green'] as const;
+const SERIES_FALLBACK = ['#3260c4', '#a84c12', '#13756b', '#b0347c', '#6c4fc6', '#0e7089', '#287541'];
+
+/**
+ * Each series' colour, as an index into SERIES_TOKENS. Several series take them in order, so
+ * the first four always differ. A lone series takes the tone its name hashes to, so charts of
+ * different measures differ and one measure keeps its colour. Both are stable across
+ * refreshes: a pinned chart re-runs the same command with the same `y` fields in order.
+ */
+export function seriesColorIndexes(series: readonly { name: string }[]): number[] {
+  if (series.length !== 1) return series.map((_, i) => i % SERIES_TOKENS.length);
+  let hash = 0x811c9dc5; // FNV-1a
+  for (const c of series[0].name) hash = Math.imul(hash ^ c.codePointAt(0)!, 0x01000193);
+  return [(hash >>> 0) % SERIES_TOKENS.length];
+}
 
 let tokens: Record<string, string> | null = null;
 /** A colour token's value from the live page, or the fallback (node tests have no page). */
@@ -80,7 +97,7 @@ export function chartSource(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
     themeVariables: {
       xyChart: {
         backgroundColor: token('raised', '#ffffff'),
-        plotColorPalette: chart.series.map((_, i) => seriesColors()[i % SERIES_TOKENS.length]).join(', '),
+        plotColorPalette: seriesColorIndexes(chart.series).map((i) => seriesColors()[i]).join(', '),
         ...Object.fromEntries(['x', 'y'].flatMap((a) => [
           [`${a}AxisLabelColor`, token('muted', '#686b77')],
           [`${a}AxisTitleColor`, token('body', '#494b53')],
