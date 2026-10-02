@@ -121,6 +121,10 @@ export function install(): { received: Received[] } {
   const plannerKnown = plannerMode !== 'unset';
   if (!plannerKnown) delete st.settings.planner;
   else if (plannerMode === 'off') st.settings.planner = false;
+  // `?mock&manychanges` adds 40 uncommitted files from no Task, to check Changes and Commit with a long list.
+  if (new URLSearchParams(window.location.search).has('manychanges')) {
+    for (let i = 1; i <= 40; i++) st.changes.p1.push({ path: `web/src/generated/module-${i}.ts`, status: 'M', additions: i, deletions: 1, patch: '' });
+  }
   // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
   st.settings.utility_daily_limit = 40;
   const utility = seedUtility(40);

@@ -339,7 +339,8 @@ export function ChangesSheet({
         <CommentBatch comments={comments} working={working} sending={sending} note={sendNote} onOpen={setPath} onRemove={removeComment} onSend={sendComments} />
       )}
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      <CommitPanel session={session} onChanged={() => setTick(t => t + 1)} />
+      {/* Expanded, the form outgrows a short column: it shrinks into the space left and scrolls, so its actions stay reachable. */}
+      <CommitPanel session={session} className="min-h-0 shrink overflow-y-auto overscroll-contain" onChanged={() => setTick(t => t + 1)} />
     </SidePanel>
   );
 }
