@@ -64,7 +64,10 @@ export function away(mark: string, now: number): string {
  * turn ran (tests, build, lint, vet, type checks) with their command, exit status, counts and
  * time, each opening its whole output; then each claim of the final message, backed or "Not
  * verified"; then the files the turn edited, which open Changes, and the actions. `commit` is
- * where the commit panel goes.
+ * where the commit panel goes. Only sections with content show, and no card at all until the
+ * evidence is read, nor while the turn ran no check, made no claim, edited no file and the Task
+ * has no change to review or commit (a chat-only answer); once shown for a turn it stays, so a
+ * commit's outcome stays in view after the files are committed.
  */
 export function FinishCard({ session, items, changes, onShowOutput, onReview, commit }: Readonly<{
   session: SessionDetail;
@@ -94,6 +97,13 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
   const claims = evidence?.claims ?? [];
   const files = evidence?.files ?? [];
   const unverified = claims.filter((c) => !c.verified).length;
+  const reviewable = !!onReview && (files.length > 0 || !!changes?.files.length);
+  // Nothing until the evidence is read: no big empty card while it loads.
+  const content = !!error || (!!evidence && (checks.length > 0 || claims.length > 0 || files.length > 0 || !!changes?.files.length));
+  // Kept per turn end: a commit that empties Changes must not take its own outcome away.
+  const turnKey = turnEnd ?? '';
+  const [kept, setKept] = useState<string | null>(null);
+  if (content && kept !== turnKey) setKept(turnKey);
 
   function show(c: EvidenceCheck) {
     const open = (body: Item) => onShowOutput({ id: c.item_id, name: c.command, title: c.command, text: body.tool?.output ?? '', markdown: false });
@@ -103,13 +113,14 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
     read({ id: c.item_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setError(describeError(e)));
   }
 
+  if (!content && kept !== turnKey) return null;
   return (
-    <section aria-labelledby="finish-title" aria-busy={!evidence && !error} className="flex flex-col gap-3 rounded-lg bg-raised p-4 shadow-raised animate-rise sm:p-5">
+    <section aria-labelledby="finish-title" className="flex flex-col gap-3 rounded-lg bg-raised p-4 shadow-raised animate-rise sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <h2 id="finish-title" className="text-title text-ink">Finished — check the evidence</h2>
         {unverified > 0 && <Chip className="bg-warning-wash text-warning">{unverified} {unverified === 1 ? 'claim' : 'claims'} not verified</Chip>}
       </div>
-      <ul className="flex flex-col divide-y divide-hairline">
+      {(checks.length > 0 || claims.length > 0) && <ul className="flex flex-col divide-y divide-hairline">
         {checks.map((c) => (
           <li key={c.item_id} className="flex items-start gap-3 py-2.5">
             {MARK[c.outcome]}
@@ -123,7 +134,7 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
             {c.has_output && <Button size="sm" variant="subtle" className="text-accent" onClick={() => show(c)}>Show output</Button>}
           </li>
         ))}
-        {evidence && checks.length === 0 && (
+        {checks.length === 0 && (
           <li className="flex items-start gap-3 py-2.5">
             <CircleDashed aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-faint" />
             <p className="text-ui text-muted">No tests, builds or linters ran in this turn.</p>
@@ -138,7 +149,7 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
             </div>
           </li>
         ))}
-      </ul>
+      </ul>}
       {error && <p role="alert" className="text-caption text-error">{error}</p>}
       {files.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -166,9 +177,11 @@ export function FinishCard({ session, items, changes, onShowOutput, onReview, co
         </div>
       )}
       {commit}
-      <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">
-        {onReview && (files.length > 0 || !!changes?.files.length) && <Button variant="secondary" onClick={onReview}>Review changes</Button>}
-      </div>
+      {reviewable && (
+        <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" onClick={onReview}>Review changes</Button>
+        </div>
+      )}
     </section>
   );
 }

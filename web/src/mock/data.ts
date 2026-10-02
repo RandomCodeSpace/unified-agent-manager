@@ -425,7 +425,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           id: 'i6',
           kind: 'assistant',
           time: ago(42),
-          text: 'Yes. With `TERM=dumb` the probe is skipped and the row reads `terminal  dumb · ASCII glyphs`. Covered by `TestDoctorDumbTerminal`.',
+          text: 'Yes. With `TERM=dumb` the probe is skipped and the row reads `terminal  dumb · ASCII glyphs`. Covered by `TestDoctorDumbTerminal`, and the doctor tests pass.',
         },
       ],
     }),
