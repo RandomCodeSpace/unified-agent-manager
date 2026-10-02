@@ -200,7 +200,7 @@ export function Brand({ className, markOnly = false }: Readonly<{ className?: st
         <rect x="11" y="5" width="4.5" height="6" rx="1.2" className="fill-raised" />
         <rect x="11" y="12.5" width="4.5" height="2.5" rx="1" className="fill-raised opacity-60" />
       </svg>
-      {!markOnly && <span className="text-title font-semibold text-ink">uam</span>}
+      {!markOnly && <span className="text-title font-semibold text-ink">UAM</span>}
     </span>
   );
 }
@@ -547,7 +547,7 @@ export const Sidebar = memo(function Sidebar({
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
-        <SidebarToggle id="sidebar-hide" open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
+        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
         {projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
         {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />

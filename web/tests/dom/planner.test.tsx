@@ -222,7 +222,7 @@ describe('planner', () => {
     await user.click(confirm);
     await waitFor(() => expect(inbox.queryByRole('article', { name: 'Change request on #9' })).toBeNull());
     expect(screen.getByText('5 pending')).toBeTruthy();
-    await waitFor(() => expect(document.title).toBe('(12) UAM'));
+    await waitFor(() => expect(document.title).toBe('(12) UAM - Planner'));
   });
 
   test('a cancelled card opened from a link turns Show cancelled on, so the Tree lists what it selects', async () => {
@@ -263,7 +263,7 @@ describe('planner', () => {
     expect(planner.queryByRole('form', { name: 'Import from kb' })).toBeNull();
     // Off, the planner leaves the sidebar and its requests the Needs-you count.
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Planner' })).toBeNull());
-    await waitFor(() => expect(document.title).toBe('(7) UAM'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM - Settings'));
   });
 });
 
@@ -313,7 +313,7 @@ describe('the planner setting', () => {
     expect(entry).toBeNull();
     expect(plan).toBe(0);
     await settleWait();
-    expect(document.title).toBe('(7) UAM');
+    expect(document.title).toBe('(7) UAM - Settings');
     // The request Settle always sent, and the Task settles with no question about holds.
     expect(await settleT15(user)).toBe('{}');
     expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
@@ -330,7 +330,7 @@ describe('the planner setting', () => {
     expect(entry).toBeNull();
     expect(plan).toBe(0);
     await settleWait();
-    expect(document.title).toBe('(7) UAM');
+    expect(document.title).toBe('(7) UAM - Settings');
     expect(await settleT15(user)).toBe('{}');
     expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -345,7 +345,7 @@ describe('the planner setting', () => {
     expect(entry).toBeTruthy();
     // dotfiles has no git: two of the three Projects can be planned.
     expect(plan).toBe(2);
-    await waitFor(() => expect(document.title).toBe('(13) UAM'));
+    await waitFor(() => expect(document.title).toBe('(13) UAM - Settings'));
     // Settle asks first: t15 holds a subtask.
     expect(await settleT15(user)).toBe('{}');
     expect(await screen.findByRole('dialog', { name: 'Settle “Remove unused exports across packages”?' })).toBeTruthy();
