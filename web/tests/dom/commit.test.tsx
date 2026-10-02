@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { defaultSelection } from '../../src/components/CommitPanel';
 import { composer, openTask, renderApp } from './render';
 
 /** Renders the app on a Task with the mock's Tasks counted as idle for git (`?gitidle`). */
@@ -57,15 +58,15 @@ describe('commit panel', () => {
     expect(message.value).toBe('fix: by hand');
   });
 
-  test('push refuses until a pull fast-forwards, then pushes', async () => {
+  // The service decides what git allows (git_actions_test.go); the panel shows its words.
+  test('shows the service\'s refusal as an alert, then the next action\'s outcome in its place', async () => {
     const { user } = await openIdle('t3');
     const panel = await commitPanel(user);
     await user.click(panel.getByRole('button', { name: 'Push' }));
-    expect(await panel.findByText(/Pull first, then push/)).toBeTruthy();
+    expect((await panel.findByRole('alert')).textContent).toMatch(/Pull first, then push:\n ! \[rejected\]/);
     await user.click(panel.getByRole('button', { name: 'Pull' }));
-    expect(await panel.findByText('Pulled 2 new commits.')).toBeTruthy();
-    await user.click(panel.getByRole('button', { name: 'Push' }));
-    expect(await panel.findByText(/^Pushed .* to origin\.$/)).toBeTruthy();
+    expect((await panel.findByText('Pulled 2 new commits.')).getAttribute('role')).toBe('status');
+    expect(panel.queryByRole('alert')).toBeNull();
   });
 
   test('says which task is mid-turn and keeps the writes off', async () => {
@@ -82,5 +83,53 @@ describe('commit panel', () => {
     await user.click(await screen.findByRole('button', { name: 'Set up git here' }));
     expect(await screen.findByRole('button', { name: /^Open changes/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Not a Git repository' })).toBeNull();
+  });
+});
+
+/** The finish card's commit panel on the finished mock Task t20, with git idle. */
+async function finishCommit() {
+  const rendered = await openIdle('t20');
+  const card = (await screen.findByRole('heading', { name: 'Finished — check the evidence' })).closest('section')!;
+  const panel = await within(card).findByRole('region', { name: 'Commit' });
+  return { ...rendered, card, panel: within(panel) };
+}
+
+describe('finish card commit', () => {
+  test('keeps the outcome in view after its files are committed, a failed push included', async () => {
+    const { user, card, panel } = await finishCommit();
+    await user.type(await panel.findByRole('textbox', { name: 'Commit message' }), 'fix(vterm): replay focus events');
+    await user.click(panel.getByRole('button', { name: 'Commit and push' }));
+    // The commit took the Task's files, so the Changes list empties; the push was refused.
+    const outcome = await within(card).findByText(/^Committed 2 files as 3f9c2e1\. The push failed: .*Pull first, then push/);
+    await waitFor(() => expect(within(card).queryByRole('checkbox', { name: /redraw\.go$/ })).toBeNull());
+    expect(outcome.isConnected).toBe(true);
+  });
+
+  test('shares one draft with the Changes panel', async () => {
+    const { user, panel } = await finishCommit();
+    await user.type(await panel.findByRole('textbox', { name: 'Commit message' }), 'fix: one');
+    await user.click(screen.getByRole('button', { name: 'Review changes' }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    const other = within(await sheet.findByRole('region', { name: 'Commit' }));
+    await user.click(other.getByRole('button', { name: /^Commit/ }));
+    const message = (await other.findByRole('textbox', { name: 'Commit message' })) as HTMLTextAreaElement;
+    expect(message.value).toBe('fix: one');
+    await user.type(message, ' and two');
+    await user.click(other.getByRole('checkbox', { name: /redraw\.go$/ }));
+    // The sheet is modal: the card behind it is hidden from the accessibility tree, not gone.
+    expect((panel.getByRole('textbox', { name: 'Commit message', hidden: true }) as HTMLTextAreaElement).value).toBe('fix: one and two');
+    expect((panel.getByRole('checkbox', { name: /redraw\.go$/, hidden: true }) as HTMLInputElement).checked).toBe(false);
+  });
+});
+
+describe('default selection', () => {
+  test('checks only the files this task edited, never another task’s or an unknown one', () => {
+    const files = [
+      { path: 'mine.go', status: 'modified', additions: 1, deletions: 0, mine: true },
+      { path: 'unknown.go', status: 'modified', additions: 1, deletions: 0 },
+      { path: 'theirs.go', status: 'modified', additions: 1, deletions: 0, other_task: true },
+    ];
+    // With this Task's edits unknown (after a restart) other Tasks' edits may be unknown too.
+    expect(defaultSelection(files)).toEqual(['mine.go']);
   });
 });

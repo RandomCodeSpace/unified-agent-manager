@@ -128,6 +128,10 @@ type Manager struct {
 	push pushStore
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
+	// gitWrites holds each git write action running, by the real path of its
+	// repository, closed when it ends (git_actions.go). A turn starting there
+	// waits for it.
+	gitWrites map[string]chan struct{}
 	// boardRevs is each Board's latest revision while the planner store is
 	// open, and nil otherwise (board.go).
 	boardRevs map[string]int64
@@ -2847,6 +2851,7 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	conv, workdir := s.conv, s.workdir
 	uploads, err := m.checkUploadsLocked(s, in.attachments)
 	m.mu.Unlock()
+	realWorkdir := realPath(workdir)
 	if conv == nil {
 		return m.recordSubmission(s, reqID, SubmissionRejected, msgConversationNotOpen, true), nil
 	}
@@ -2869,6 +2874,17 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 	}
 
 	m.mu.Lock()
+	// No turn starts writing in a repository while a commit or a pull runs
+	// there: it waits for the git action to end.
+	for done := m.gitWriteLocked(realWorkdir); done != nil; done = m.gitWriteLocked(realWorkdir) {
+		m.mu.Unlock()
+		select {
+		case <-done:
+		case <-m.ctx.Done():
+			return Submission{}, errShuttingDown
+		}
+		m.mu.Lock()
+	}
 	if s.conv != conv {
 		m.mu.Unlock()
 		return m.recordSubmission(s, reqID, SubmissionRejected, msgConversationNotOpen, true), nil

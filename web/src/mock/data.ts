@@ -949,7 +949,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   const changes: Record<string, MockChange[]> = {
     p1: [
-      { path: 'internal/vterm/redraw.go', status: 'M', additions: 3, deletions: 0, patch: EDIT_DIFF, by: ['t1'] },
+      { path: 'internal/vterm/redraw.go', status: 'M', additions: 3, deletions: 0, patch: EDIT_DIFF, by: ['t1', 't20'], turn: ['t20'] },
       {
         path: '.github/workflows/ci.yml',
         status: 'M',
@@ -972,8 +972,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         status: 'M',
         additions: 12,
         deletions: 0,
-        by: ['t1'],
-        turn: ['t1'],
+        by: ['t1', 't20'],
+        turn: ['t1', 't20'],
         patch: `--- a/internal/vterm/redraw_test.go
 +++ b/internal/vterm/redraw_test.go
 @@ -88,2 +88,14 @@ func TestRedrawReplaysPrivateModes(t *testing.T) {

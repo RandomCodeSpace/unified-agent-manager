@@ -49,7 +49,7 @@ describe('finish card', () => {
     expect(card.getByText(/vterm tests pass/).closest('li')!.textContent).toContain('Backed by go test ./internal/vterm/... -run Redraw · exit 0');
     expect(card.getByText('“go vet is clean.”').closest('li')!.textContent).toContain('Not verified · the last run’s result is unclear');
     expect(card.getByText(/describes the new replay order/).closest('li')!.textContent).toContain('Not verified · no edit to docs/terminal.md in this turn');
-    expect(card.getByText('internal/vterm/redraw_test.go')).toBeTruthy();
+    expect(within(card.getByText('Changed in this turn').parentElement!).getByText('internal/vterm/redraw_test.go')).toBeTruthy();
 
     expect(card.queryByRole('button', { name: 'Ask for changes' })).toBeNull();
     await user.click(card.getByRole('button', { name: 'Review changes' }));

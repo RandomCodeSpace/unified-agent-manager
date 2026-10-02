@@ -9,7 +9,7 @@ export interface GitHost {
   tasks: () => SessionSummary[];
   task: (id: string) => SessionSummary | undefined;
   changes: () => Record<string, MockChange[]>;
-  /** Paths a Task's edit tools touched, as the service reads them from its transcript. */
+  /** Paths a Task's edit tools touched, as the service records them. */
   touched: (taskId: string) => string[];
   projectChanged: (p: Project) => void;
   /** Background AI's daily limit in Settings; 0 pauses drafting. */
@@ -46,10 +46,10 @@ export function gitMock(host: GitHost) {
   const idle = new URLSearchParams(window.location.search).has('gitidle');
   const busyIn = (projectId: string) => {
     if (idle) return undefined;
-    const running = host.tasks().filter((t) => t.project_id === projectId && LIVE.includes(t.state) && t.state !== 'starting');
+    const running = host.tasks().filter((t) => t.project_id === projectId && LIVE.includes(t.state));
     if (running.length === 0) return undefined;
     const name = running[0].name || running[0].title || 'A task';
-    return running.length === 1 ? `“${name}” is still working in this repository. Wait for its turn to finish.` : `“${name}” and ${running.length - 1} other ${running.length === 2 ? 'task' : 'tasks'} are still working in this repository. Wait for their turns to finish.`;
+    return running.length === 1 ? `“${name}” is still working in this repository. Wait for it to finish.` : `“${name}” and ${running.length - 1} other ${running.length === 2 ? 'task' : 'tasks'} are still working in this repository. Wait for them to finish.`;
   };
 
   const state = (t: SessionSummary): GitState => {
@@ -96,6 +96,9 @@ export function gitMock(host: GitHost) {
           const bad = paths.find((x) => !st.files.some((f) => f.path === x));
           if (bad) return fail(400, `${bad} is not a changed file in this repository`);
           for (const x of paths) committed.add(`${p.id}:${x}`);
+          // Committed files leave the Changes lists too.
+          const changes = host.changes();
+          if (changes[p.id]) changes[p.id] = changes[p.id].filter((c) => !paths.includes(c.path));
           ahead[p.id] = (ahead[p.id] ?? 0) + 1;
           return json(200, { summary: `Committed ${paths.length} ${paths.length === 1 ? 'file' : 'files'} as 3f9c2e1.`, commit: '3f9c2e1' });
         }

@@ -660,20 +660,20 @@ func TestWorkspaceChangesCapsFileCount(t *testing.T) {
 	}
 }
 
-// parseStatus names each porcelain XY code and skips the original path of
-// renames and copies.
+// parseStatus names each porcelain XY code, keeps the original path of a
+// staged rename and skips that of other renames and copies.
 func TestParseStatusNamesEveryCode(t *testing.T) {
 	out := "UU both\x00AA added-both\x00DD deleted-both\x00R  new\x00old\x00 C copy\x00orig\x00A  add\x00 D del\x00M  mod\x00?? loose\x00x\x00"
 	want := []statusEntry{
-		{path: "both", status: "conflicted"},
-		{path: "added-both", status: "conflicted"},
-		{path: "deleted-both", status: "conflicted"},
-		{path: "new", status: "renamed"},
-		{path: "copy", status: "copied"},
-		{path: "add", status: "added"},
-		{path: "del", status: "deleted"},
-		{path: "mod", status: "modified"},
-		{path: "loose", status: "untracked", untracked: true},
+		{path: "both", status: "conflicted", x: 'U', y: 'U'},
+		{path: "added-both", status: "conflicted", x: 'A', y: 'A'},
+		{path: "deleted-both", status: "conflicted", x: 'D', y: 'D'},
+		{path: "new", orig: "old", status: "renamed", x: 'R', y: ' '},
+		{path: "copy", status: "copied", x: ' ', y: 'C'},
+		{path: "add", status: "added", x: 'A', y: ' '},
+		{path: "del", status: "deleted", x: ' ', y: 'D'},
+		{path: "mod", status: "modified", x: 'M', y: ' '},
+		{path: "loose", status: "untracked", x: '?', y: '?', untracked: true},
 	}
 	if got := parseStatus([]byte(out)); !slices.Equal(got, want) {
 		t.Fatalf("parseStatus = %+v\nwant %+v", got, want)
