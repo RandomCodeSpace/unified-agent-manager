@@ -973,7 +973,18 @@ are logged only at debug level (`UAM_DEBUG=1`).
   open beside the conversation above it. While the terminal has focus, keys
   go to the shell, not to uam's shortcuts. The browser keeps a few keys for
   itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
-  Ctrl+Tab on Windows and Linux; those cannot reach the shell. At
+  Ctrl+Tab on Windows and Linux; those cannot reach the shell. The mouse
+  works the clipboard as in Windows Terminal or PuTTY: releasing a mouse
+  selection copies it ("Copied" shows briefly in the panel's header), and
+  right-click or middle-click pastes the clipboard at the prompt instead of
+  opening the browser's menu. Ctrl+Shift+C (Cmd+C on a Mac) also copies the
+  selection and Ctrl+Shift+V (Cmd+V) pastes. When a program in the terminal
+  uses the mouse, its clicks go to it; hold Shift to select, copy and paste.
+  Click-to-paste needs the browser to let the page read the clipboard: the
+  first time, it asks. Where it refuses (permission denied, a plain-HTTP
+  address, or a managed browser's policy) the header says "Clipboard
+  blocked. Use Ctrl+Shift+V to paste." (Cmd+V on a Mac), and keyboard paste
+  still works. On a phone, touch is unchanged: a long-press never pastes. At
   most eight terminals run at once. When the service refuses one (too many,
   the folder is gone, or the setting is off) the panel says "Could not open a
   terminal." with Retry. The terminal draws with WebGL; in a browser with
