@@ -1,7 +1,8 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and the finish card (mock t20).
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { openTask, sidebar } from './render';
+import { api, type TurnEvidence } from '../../src/api';
+import { log, openTask, sidebar } from './render';
 
 const before = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
 /** Marks t20 as last looked at `minutes` ago, as an earlier visit would have. */
@@ -81,6 +82,49 @@ describe('finish card', () => {
     await user.click(within(tests).getByRole('button', { name: 'Show output' }));
     const output = await screen.findByRole('region', { name: 'Output of go test ./internal/vterm/... -run Redraw' });
     expect(output.textContent).toContain('--- PASS: TestRedrawReplaysFocusEvents');
+  });
+
+  test('a chat-only turn has no card: no check, claim, edited file or change to commit', async () => {
+    const evidence = vi.spyOn(api, 'evidence');
+    await openTask('t-chart');
+    await waitFor(() => expect(evidence).toHaveBeenCalled());
+    // Every read answered and rendered: still no card under the answer.
+    await act(async () => { await Promise.allSettled(evidence.mock.results.map((r) => r.value as Promise<unknown>)); });
+    expect(log().getByText(/September had/)).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
+    expect(screen.queryByText('No tests, builds or linters ran in this turn.')).toBeNull();
+    evidence.mockRestore();
+  });
+
+  test('claims with no checks show the claims and one line saying nothing ran, and no empty rows', async () => {
+    await openTask('t3');
+    const section = (await screen.findByRole('heading', { name: 'Finished — check the evidence' })).closest('section')!;
+    const card = within(section);
+    expect(card.getByText('1 claim not verified')).toBeTruthy();
+    expect(card.getByText(/doctor tests pass/).closest('li')!.textContent).toContain('Not verified · no test run in this turn');
+    expect(card.getAllByText('No tests, builds or linters ran in this turn.')).toHaveLength(1);
+    expect(card.queryByText('Changed in this turn')).toBeNull();
+    expect(card.queryByRole('button', { name: 'Review changes' })).toBeNull();
+    // The Task's own uncommitted files keep the commit panel; no part of the card is empty.
+    expect(await card.findByRole('region', { name: 'Commit' })).toBeTruthy();
+    for (const part of section.children) expect(part.textContent?.trim()).not.toBe('');
+  });
+
+  test('no card flashes while the evidence loads', async () => {
+    const real = api.evidence.bind(api);
+    const held: (() => void)[] = [];
+    let released = false;
+    const evidence = vi.spyOn(api, 'evidence').mockImplementation((...args) => released ? real(...args) : new Promise<TurnEvidence>((resolve, reject) => {
+      held.push(() => { real(...args).then(resolve, reject); });
+    }));
+    await openTask('t20');
+    await waitFor(() => expect(held.length).toBeGreaterThan(0));
+    expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
+    expect(document.getElementById('finish-title')).toBeNull();
+    released = true;
+    for (const release of held) release();
+    expect(await screen.findByRole('heading', { name: 'Finished — check the evidence' })).toBeTruthy();
+    evidence.mockRestore();
   });
 
   test('no card while the Task works', async () => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chartCsv, chartSource, headline, isChartCall, niceCeil, thinLabels } from '../src/lib/chart.ts';
+import { chartCsv, chartSource, headline, isChartCall, niceCeil, seriesColorIndexes, thinLabels } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
 
 const chart = {
@@ -35,6 +35,20 @@ test('the Mermaid source is an xychart from zero to a round top, with quotes kep
   assert.match(bars, /y-axis "Commits" -1 --> 8/);
   assert.match(bars, /\n {2}bar \[3, 7, 2\]\n {2}line \[1, 2, -1\]$/);
   assert.match(chartSource({ ...chart, x_label: 'a "b"\nc' }, { width: 800, height: 300 }), /x-axis "a 'b' c"/);
+});
+
+test('series colours are fixed: several take the palette in order, a lone one the tone its name hashes to', () => {
+  const palette = (series) => JSON.parse(chartSource({ ...chart, series }, { width: 800, height: 300 }).split('\n')[1].slice('config: '.length)).themeVariables.xyChart.plotColorPalette;
+  const named = (...names) => names.map((name) => ({ name, values: [1, 2, 3] }));
+  // Blue, orange, bluish green, reddish purple, then violet: the badge tones, never red.
+  assert.equal(palette(named('a', 'b')), '#3260c4, #a84c12');
+  assert.equal(palette(named('a', 'b', 'c', 'd', 'e')), '#3260c4, #a84c12, #13756b, #b0347c, #6c4fc6');
+  // One series: its name decides, the same on every draw and refresh, so measures differ.
+  assert.equal(palette(named('commits')), palette(named('commits')));
+  assert.equal(palette(named('commits')), '#a84c12');
+  assert.equal(palette(named('lines')), '#6c4fc6');
+  assert.equal(palette(named('open')), '#0e7089');
+  assert.deepEqual(seriesColorIndexes(named('lines')), [4]);
 });
 
 test('crowded x labels thin out to every n-th, the rest distinct and invisible', () => {
