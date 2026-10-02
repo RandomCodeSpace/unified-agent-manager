@@ -216,9 +216,11 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
  * The row that heads a compact turn (DESIGN.md turn line), in the turn status row's slot:
  * "Took 12s" once it ended (while it runs the working label says so), then the turn's counts,
  * "5 thoughts (42s) · 3 commands · 2 files read", updating in place as items append. With
- * anything folded it is a button that opens the turn's whole timeline in place, mounted on
+ * anything counted it is a button that opens the turn's whole timeline in place, mounted on
  * the first open only; the counts turn `error` after a failure and `attention`
- * while a call waits for the user.
+ * while a call waits for the user. Before the first count (the first step still runs, or the
+ * only call waits for the user) the row stays blank in its slot: the live step and the foot's
+ * label say what is happening, and the counts land without moving anything.
  */
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
@@ -249,7 +251,7 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx }: Reado
   return (
     <div id={domId} className="flex flex-col rounded-sm">
       <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : durationTitle(elapsed)}>
-        {summary.count > 0 ? (
+        {summary.parts.length > 0 ? (
           <button
             ref={headButton}
             type="button"

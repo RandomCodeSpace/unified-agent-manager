@@ -104,14 +104,19 @@ describe('activity', () => {
 
   test('a live compact turn shows its current step unfolded, then folds it into the turn line', async () => {
     const { user } = await openTask('t3');
+    const heads = () => log().queryAllByRole('button', { name: /activity of this turn/ });
+    const earlier = heads().length;
     await user.type(composer(), 'Run the tests please');
     await user.keyboard('{Enter}');
-    // The thought streams under the turn line while the line stays closed.
+    // The thought streams at the foot; the new turn's line has nothing counted yet, so it draws no bare chevron.
     await waitFor(() => expect(conversation().textContent).toContain('a small, safe change'), { timeout: 5000 });
-    const head = () => log().getAllByRole('button', { name: /activity of this turn/ }).at(-1)!;
-    expect(head().getAttribute('aria-expanded')).toBe('false');
+    expect(heads()).toHaveLength(earlier);
+    const head = () => heads().at(-1)!;
     // The running call is its tool row with the tail of its output; the finished thought is counted.
     const running = await log().findByRole('button', { name: /^bash.*go test \.\/\.\.\. -count=1.*running$/ }, { timeout: 5000 });
+    // The finished thought is the first count: the line appears, closed.
+    expect(heads()).toHaveLength(earlier + 1);
+    expect(head().getAttribute('aria-expanded')).toBe('false');
     expect(head().textContent).toMatch(/^1 thought/);
     await waitFor(() => expect(running.closest('.animate-rise')?.textContent).toContain('internal/agentapi'), { timeout: 3000 });
     // Once it completes it leaves the foot and the turn line counts it; nothing of it stays outside.

@@ -89,6 +89,22 @@ test('subagent compact density uses turn heads, follow-up boundaries and lazy ti
   assert.doesNotMatch(main, /Child question|Other child question/);
 });
 
+test('a compact turn line with nothing counted yet draws no bare chevron; the foot names a call waiting for permission', () => {
+  const items = [
+    { id: 'u1', kind: 'user', time: '2026-09-26T12:00:01Z', text: 'Clean up' },
+    { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'bash', input: '{"command":"rm -rf build"}', status: 'running' } },
+  ];
+  const waiting = { id: 'p1', kind: 'permission', state: 'pending', tool_call_id: 'c2', title: 'Run shell command', time: '2026-09-26T12:00:03Z' };
+  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true, density: 'compact', footVerb: false }));
+  const pending = draw([waiting]);
+  assert.doesNotMatch(pending, /activity of this turn/);
+  assert.match(pending, /Waiting for your approval: bash rm -rf build/);
+  // Running, the call is the live step at the foot, and the line still waits for its first count.
+  const running = draw([]);
+  assert.doesNotMatch(running, /activity of this turn/);
+  assert.match(running, /animate-rise[\s\S]*>bash<[\s\S]*, running/);
+});
+
 // Exercise the actual table override through react-markdown without importing the app shell.
 test('Markdown keeps native table semantics inside a keyboard reachable scroll region', async () => {
   const common = ts.createSourceFile('common.tsx', await readFile(new URL('../src/components/common.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
