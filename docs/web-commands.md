@@ -63,7 +63,8 @@ lost runtime connection have no claimed duration.
 
 An assistant idle or explicit autopilot session-idle boundary does not complete
 an autopilot foreground turn. A final session-idle event, with no autopilot mode
-or with an abort, ends it. Interactive assistant idle still ends the foreground
+or with an abort, ends it, as does the session-idle event that follows the
+agent's `task_complete`, which still reports the autopilot mode. Interactive assistant idle still ends the foreground
 while a background server keeps running. If execution mode cannot be read,
 UAM waits for authoritative session completion rather than guessing interactive
 mode. Disconnect retains the last state as unknown; a service restart has no

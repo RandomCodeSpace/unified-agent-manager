@@ -249,7 +249,8 @@ type DiffStat = { files: number; additions: number; deletions: number };
 
 /**
  * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * Otherwise a Task row: the Project badge, the name, `+N −M` and the time, then one plain status line.
+ * Otherwise a Task row, never more than two lines: the Project badge, the name, `+N −M` and the time, then one plain status line,
+ * truncated; the row's title holds the whole of it (what a Needs you row waits on, a finished turn's outcome).
  */
 function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
@@ -300,7 +301,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             type="button"
             data-nav=""
             aria-current={selected ? 'true' : undefined}
-            title={compact ? undefined : `${taskName(s) || 'New task'} · ${project.name}`}
+            title={compact ? undefined : `${taskName(s) || 'New task'} · ${project.name}\n${status.text}`}
             className={rowClass}
             onClick={(event) => {
               if (contextOpen.current) { event.preventDefault(); return; }
@@ -334,7 +335,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
                   )}
                   <time dateTime={s.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(s.updated_at)}</time>
                 </span>
-                <span className={cn('block w-full pl-6 font-normal', attention ? 'line-clamp-2' : 'truncate', TONE_TEXT[status.tone])}>
+                <span className={cn('block w-full truncate pl-6 font-normal', TONE_TEXT[status.tone])}>
                   <span className="sr-only">, </span>
                   {status.text}
                 </span>
@@ -383,8 +384,8 @@ function Group({ group, projects, tasks, selectedId }: Readonly<{ group: GroupKe
   const id = useId();
   if (tasks.length === 0) return null;
   return (
-    <section aria-labelledby={id} className="mb-3">
-      <h2 id={id} className={cn('flex h-7 items-center gap-2 px-2 text-eyebrow uppercase', group === 'you' ? 'text-attention' : 'text-muted')}>
+    <section aria-labelledby={id} className="mb-1">
+      <h2 id={id} className={cn('flex h-6 items-center gap-2 px-2 text-eyebrow uppercase', group === 'you' ? 'text-attention' : 'text-muted')}>
         {GROUP_TITLES[group]}
         <span className="rounded-full bg-sunken px-1.5 text-meta font-normal tracking-normal tabular-nums text-muted normal-case">{tasks.length}</span>
         {group === 'you' && (

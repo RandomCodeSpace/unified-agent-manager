@@ -764,9 +764,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
-        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
-          {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
+        <div className="group/dock transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
+          {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves.
+              Suggested replies float in the same band (Assist.tsx): while they show, both rise above them. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 transition-transform *:pointer-events-auto group-has-data-suggestions/dock:-translate-y-9">
             <div className="relative flex">
               <WorkingLabel working={labelled} compacting={compacting} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
               <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
