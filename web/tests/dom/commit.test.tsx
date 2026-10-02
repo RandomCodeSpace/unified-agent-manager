@@ -77,6 +77,19 @@ describe('commit panel', () => {
     expect((panel.getByRole('button', { name: 'Pull' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  // The Changes column has a fixed height and does not scroll; expanded, the form is taller
+  // than what a short window leaves it. It must shrink into that space and scroll itself, with
+  // the actions inside, or they sit below the window (jsdom has no layout: this pins the classes).
+  test('in Changes, the expanded form scrolls inside its own region so the actions stay reachable', async () => {
+    const { user } = await openIdle('t3');
+    const panel = await commitPanel(user);
+    await user.click(panel.getByRole('button', { name: /^Commit/ }));
+    const region = screen.getByRole('dialog', { name: 'Changes' }).querySelector('section[aria-label="Commit"]')!;
+    expect([...region.classList]).toEqual(expect.arrayContaining(['min-h-0', 'shrink', 'overflow-y-auto']));
+    expect(region.classList.contains('shrink-0')).toBe(false);
+    for (const name of [/^Commit \d+ files?$/, 'Commit and push']) expect(region.contains(await panel.findByRole('button', { name }))).toBe(true);
+  });
+
   test('sets up git in a project that has none', async () => {
     const { user } = await openIdle('t6');
     await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
@@ -97,6 +110,10 @@ async function finishCommit() {
 describe('finish card commit', () => {
   test('keeps the outcome in view after its files are committed, a failed push included', async () => {
     const { user, card, panel } = await finishCommit();
+    // The card's panel keeps its natural height in the conversation's scroll; only Changes makes it scroll.
+    const region = card.querySelector('section[aria-label="Commit"]')!;
+    expect(region.classList.contains('shrink-0')).toBe(true);
+    expect(region.classList.contains('overflow-y-auto')).toBe(false);
     await user.type(await panel.findByRole('textbox', { name: 'Commit message' }), 'fix(vterm): replay focus events');
     await user.click(panel.getByRole('button', { name: 'Commit and push' }));
     // The commit took the Task's files, so the Changes list empties; the push was refused.
