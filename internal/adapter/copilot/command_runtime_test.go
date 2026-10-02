@@ -132,6 +132,64 @@ func TestWebAutopilotLifecycleAndStop(t *testing.T) {
 	}
 }
 
+// Copilot CLI 1.0.89, live: an autopilot run continues after an assistant.idle
+// with a continuation message and no session.idle; after task_complete it
+// ends with session.idle still reporting the autopilot mode, which stays on.
+func TestWebAutopilotTaskCompleteEndsTurn(t *testing.T) {
+	h, runtime := runtimeHarness(t)
+	c := h.conv.(*conversation)
+	runtime.state.Mode = "autopilot"
+	c.refreshExecution(context.Background())
+	mode := rpc.SessionModeAutopilot
+	working := func(step string) {
+		t.Helper()
+		for _, event := range h.sink.all() {
+			if event.Turn != nil && event.Turn.State != agentapi.TurnWorking {
+				t.Fatalf("%s ended the autopilot turn: %+v", step, event.Turn)
+			}
+		}
+	}
+	if err := h.conv.Send(context.Background(), agentapi.Prompt{Text: "reply"}); err != nil {
+		t.Fatal(err)
+	}
+	h.fs.onEvent(ev("user", userMessage("p1", rpc.UserMessageDeliveryIdle, "reply")))
+	h.fs.onEvent(ev("start", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(ev("end", &rpc.AssistantTurnEndData{TurnID: "0"}))
+	h.fs.onEvent(ev("idle", &rpc.AssistantIdleData{}))
+	continuation := userMessage("p2", rpc.UserMessageDeliveryIdle, "")
+	continuation.IsAutopilotContinuation = copilot.Bool(true)
+	h.fs.onEvent(ev("continue", continuation))
+	h.fs.onEvent(ev("next", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	working("a continuation")
+	// A completion the CLI does not accept is followed by another
+	// continuation, which still keeps the turn working.
+	h.fs.onEvent(ev("rejected", &rpc.SessionTaskCompleteData{}))
+	h.fs.onEvent(ev("end-1", &rpc.AssistantTurnEndData{TurnID: "0"}))
+	h.fs.onEvent(ev("idle-1", &rpc.AssistantIdleData{}))
+	h.fs.onEvent(ev("continue-2", continuation))
+	h.fs.onEvent(ev("next-2", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(agentEv("sub-done", "sub", &rpc.SessionTaskCompleteData{}))
+	h.fs.onEvent(ev("boundary", &rpc.SessionIdleData{Mode: &mode}))
+	working("an autopilot boundary after a continuation")
+	h.fs.onEvent(ev("done", &rpc.SessionTaskCompleteData{}))
+	h.fs.onEvent(ev("end-2", &rpc.AssistantTurnEndData{TurnID: "0"}))
+	h.fs.onEvent(ev("idle-2", &rpc.AssistantIdleData{}))
+	working("assistant.idle")
+	h.fs.onEvent(ev("final", &rpc.SessionIdleData{Mode: &mode}))
+	var last *agentapi.Turn
+	for _, event := range h.sink.all() {
+		if event.Turn != nil {
+			last = event.Turn
+		}
+	}
+	if last == nil || last.State != agentapi.TurnCompleted {
+		t.Fatalf("idle after task_complete=%+v", last)
+	}
+	if runtime.state.Mode != "autopilot" {
+		t.Fatal("completion invented a mode exit")
+	}
+}
+
 func TestWebAutopilotCompletedModeAndPartialFailure(t *testing.T) {
 	h, runtime := runtimeHarness(t)
 	mode := rpc.SessionModeAutopilot
