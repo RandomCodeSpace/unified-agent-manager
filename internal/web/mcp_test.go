@@ -203,6 +203,8 @@ func TestMCPInputValidation(t *testing.T) {
 		{Name: "a", Type: "http", URL: "https://x.example", Command: "sh"},
 		{Name: "a", Type: "stdio"},
 		{Name: "a", Type: "stdio", Command: "sh\nrm"},
+		{Name: "a", Type: "stdio", Command: "sh\u0085rm"},
+		{Name: "a", Type: "http", URL: "https://x.example/\u009b"},
 		{Name: "a", Type: "stdio", Command: "sh", Cwd: "relative"},
 		{Name: "a", Type: "stdio", Command: "sh", Headers: []MCPSecretInput{{Key: "X"}}},
 	} {
@@ -218,6 +220,26 @@ func TestMCPInputValidation(t *testing.T) {
 	}
 	if _, err := mergeSecrets([]MCPSecretInput{{Key: "Bad Header"}}, nil, "header"); err == nil {
 		t.Error("accepted a header name with a space")
+	}
+}
+
+// A server listed under a name uam would not give one (the CLI's own
+// configuration allows more) can still be acted on in a Task: the name is
+// checked as the listing has it, not by uam's naming rule.
+func TestMCPTaskActionsTakeEveryListedName(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	for _, name := range []string{"my server", "@scope/tool:1"} {
+		if err := m.TaskMCPAction("no-task", name, "enable"); err == nil || err.Error() != msgSessionNotFound {
+			t.Errorf("action on %q = %v, want the Task looked up", name, err)
+		}
+		if _, err := m.StartMCPSignIn("no-task", name, false); err == nil || err.Error() != msgSessionNotFound {
+			t.Errorf("sign-in on %q = %v, want the Task looked up", name, err)
+		}
+	}
+	for _, name := range []string{"", "a\nb", strings.Repeat("x", 257)} {
+		if err := m.TaskMCPAction("no-task", name, "enable"); err == nil || err.Error() != "MCP server not found" {
+			t.Errorf("action on %q = %v", name, err)
+		}
 	}
 }
 
@@ -303,6 +325,23 @@ func TestMCPSignInRelayExpiresAndReportsRefusals(t *testing.T) {
 	pendSignIn(m, "task", "docs", callback2, time.Now().Add(time.Minute))
 	if err := m.FinishMCPSignIn("task", "docs", fmt.Sprintf("http://127.0.0.1:%s/callback?code=c&state=s1", callback2.Port())); err == nil || !strings.Contains(err.Error(), "no longer waiting") {
 		t.Fatalf("gone listener = %v", err)
+	}
+}
+
+// Abandoned sign-ins do not stay held: any later sign-in drops the expired.
+func TestMCPSignInDropsAbandonedEntries(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	_, callback, got := fakeCallback(t, http.StatusOK)
+	pendSignIn(m, "deleted-task", "docs", callback, time.Now().Add(-time.Second))
+	pendSignIn(m, "task", "docs", callback, time.Now().Add(time.Minute))
+	if err := m.FinishMCPSignIn("task", "docs", fmt.Sprintf("http://127.0.0.1:%s/callback?code=c&state=s1", callback.Port())); err != nil {
+		t.Fatal(err)
+	}
+	<-got
+	m.signIns.mu.Lock()
+	defer m.signIns.mu.Unlock()
+	if len(m.signIns.pending) != 0 {
+		t.Fatalf("held sign-ins = %d, want none", len(m.signIns.pending))
 	}
 }
 

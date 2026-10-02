@@ -253,11 +253,7 @@ func (m *Manager) TriageCard(ctx context.Context, ref string) (Triage, error) {
 	defer cancel()
 	req := agentapi.UtilityRequest{Model: model.Model, Workdir: dir, Purpose: purposePlannerTriage,
 		System: triageSystem, Prompt: triagePrompt(c, r), Timeout: triageTimeout}
-	reply, err := m.runUtility(ctx, UtilityCall{Purpose: purposePlannerTriage, Provider: model.Provider, Model: model.Model, ProjectID: c.ProjectID}, req.System+req.Prompt,
-		func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
-			req.OnUsage = onUsage
-			return runner.RunUtility(ctx, req)
-		})
+	reply, err := m.runUtilityRequest(ctx, UtilityCall{Purpose: purposePlannerTriage, Provider: model.Provider, Model: model.Model, ProjectID: c.ProjectID}, runner, req)
 	if err != nil {
 		return Triage{}, utilityFailed("the triage", err)
 	}
@@ -481,11 +477,7 @@ func (m *Manager) runSuggest(job *suggestJob) {
 	calls := &jobCalls{ctx: ctx}
 	req := agentapi.UtilityRequest{Model: job.model.Model, Workdir: job.dir, Purpose: purposePlannerSuggest,
 		System: suggestSystem, Prompt: suggestPrompt(job.card, job.req, job.limit), Tools: tools, CallTool: calls.wrap(job.capped(call)), Timeout: suggestTimeout}
-	_, err := m.runUtility(ctx, UtilityCall{Purpose: purposePlannerSuggest, Provider: job.model.Provider, Model: job.model.Model, ProjectID: project}, req.System+req.Prompt,
-		func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
-			req.OnUsage = onUsage
-			return job.runner.RunUtility(ctx, req)
-		})
+	_, err := m.runUtilityRequest(ctx, UtilityCall{Purpose: purposePlannerSuggest, Provider: job.model.Provider, Model: job.model.Model, ProjectID: project}, job.runner, req)
 	cancel()
 	calls.close()
 	if err != nil {

@@ -251,6 +251,8 @@ func TestRerunStartsALinkedTaskWithTheLastMessage(t *testing.T) {
 	}
 	finishTurn(prov.Last(), "first", "one")
 	finishTurn(prov.Last(), "second", "two")
+	// In autopilot the CLI continues the turn with a message of its own.
+	prov.Last().EmitItem(agentapi.Item{ID: "auto", Kind: agentapi.ItemUser, Text: "Continue working on the task.", Delivery: agentapi.DeliveryAutopilot})
 
 	again, err := m.Rerun(sum.ID, RerunRequest{RequestID: mustUUID(t)})
 	if err != nil {

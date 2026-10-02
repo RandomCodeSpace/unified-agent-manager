@@ -19,7 +19,9 @@ describe('routines', () => {
     expect(paused.getByText(/paused, no next run/)).toBeTruthy();
   });
 
-  test('Run now twice: the second run is skipped while the first runs', async () => {
+  // Whether a firing runs or is skipped is the service's rule (routines_test.go); the mock stands in for it. This checks the
+  // card: Run now posts, and each run the reply records shows at once with its outcome and reason.
+  test('Run now shows each recorded run on the card, a skip with its reason', async () => {
     const { user } = renderApp('#routines=p1');
     const card = within(await screen.findByRole('region', { name: 'Dependency check' }));
     await user.click(card.getByRole('button', { name: 'Run now' }));

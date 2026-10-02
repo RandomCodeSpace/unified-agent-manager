@@ -176,9 +176,10 @@ func routineTaskName(name string, at time.Time) string {
 	return name + " · " + at.Format("2006-01-02 15:04")
 }
 
-// loadRoutines takes the stored routines at Start. A run still running when
-// the service stopped is resolved from its Task by the first check, or failed
-// when it had no Task yet; an enabled routine without a next run gets one.
+// loadRoutines takes the stored routines at Start. The latest run still
+// running when the service stopped is resolved from its Task by the first
+// check, or failed when it had no Task yet; skips recorded after it do not
+// change that. An enabled routine without a next run gets one.
 func (m *Manager) loadRoutines(cfg store.Config) {
 	now := m.now()
 	rs := &m.routines
@@ -190,12 +191,18 @@ func (m *Manager) loadRoutines(cfg store.Config) {
 	for _, id := range slices.Sorted(maps.Keys(cfg.WebRoutines)) {
 		r := cfg.WebRoutines[id]
 		dirty := false
+		latest := -1
+		for i, run := range r.Runs {
+			if run.Outcome == RunRunning {
+				latest = i
+			}
+		}
 		for i := range r.Runs {
 			run := &r.Runs[i]
 			if run.Outcome != RunRunning {
 				continue
 			}
-			if run.TaskID == "" || i != len(r.Runs)-1 {
+			if run.TaskID == "" || i != latest {
 				run.Outcome, run.Reason, run.EndedAt = RunFailed, "the uam web service stopped before the task started", now
 				dirty = true
 				continue

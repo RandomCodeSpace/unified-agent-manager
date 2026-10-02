@@ -52,8 +52,8 @@ type createTaskArgs struct {
 }
 
 // taskToolsLocked is the Manager's hostTools: the planner tools the Task
-// gets (taskHostToolsLocked), uam_create_task unless that tool created the
-// Task, and uam_chart (charts.go). Its CallTool runs each call by the tool's
+// gets (taskHostToolsLocked), uam_create_task unless spawned (that tool or a
+// routine's run created the Task), and uam_chart (charts.go). Its CallTool runs each call by the tool's
 // name. The caller holds mu.
 func (m *Manager) taskToolsLocked(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 	tools, board := m.taskHostToolsLocked(taskID, projectID)

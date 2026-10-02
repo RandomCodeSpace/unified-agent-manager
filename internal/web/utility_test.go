@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
@@ -109,6 +110,65 @@ func TestUtilityCallsAreLoggedAndCapped(t *testing.T) {
 
 // The log pages newest first, totals every day kept, and drops lines past
 // retention or unreadable when it loads.
+// A Utility request's logged prompt size is what it sent the model: its
+// system message and its prompt, for every purpose alike.
+func TestUtilityPromptSizeIsSystemAndPrompt(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t", Model: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishTurn(prov.Last(), "fix the test", "Fixed it.")
+	if _, err := m.SuggestReplies(context.Background(), sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the suggested replies call", func() bool { return utilityCalls(prov, purposeSuggestReplies) == 1 })
+	var req agentapi.UtilityRequest
+	for _, r := range prov.UtilityRequests() {
+		if r.Purpose == purposeSuggestReplies {
+			req = r
+		}
+	}
+	if req.System == "" {
+		t.Fatal("the request has no system message")
+	}
+	want := utf8.RuneCountInString(req.System + req.Prompt)
+	waitUntil(t, "the logged call", func() bool {
+		for _, c := range m.UtilityLog(0, utilityPage).Calls {
+			if c.Purpose == purposeSuggestReplies && c.TaskID == sum.ID {
+				return c.PromptChars == want
+			}
+		}
+		return false
+	})
+}
+
+// Rewriting the log never writes through a file planted where a fixed
+// temporary name would be: each write uses a new temporary file.
+func TestUtilityLogRewriteUsesAFreshTemporaryFile(t *testing.T) {
+	st := openTestStore(t)
+	dir := filepath.Dir(st.Path())
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, utilityLogFile+".tmp")); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st)
+	m.utility.mu.Lock()
+	m.utility.calls = []UtilityCall{{ID: 1, At: time.Now(), Purpose: purposeTitle, Outcome: utilityOK}}
+	m.utility.rewriteLocked()
+	m.utility.mu.Unlock()
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" {
+		t.Fatalf("victim = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, utilityLogFile)); err != nil || !strings.Contains(string(data), `"id":1`) {
+		t.Fatalf("log = %q, %v", data, err)
+	}
+}
+
 func TestUtilityLogPagesAndRetention(t *testing.T) {
 	st := openTestStore(t)
 	now := time.Now()

@@ -17,6 +17,7 @@ import (
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 func TestWebConfigDiscoveryOnCreateAndResume(t *testing.T) {
@@ -348,6 +349,18 @@ func TestWebSendCarriesUploadsAsBlobsAndShowsThem(t *testing.T) {
 	history, err := h.conv.History(context.Background())
 	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0].Attachments, wantItem) {
 		t.Fatalf("history = %+v, %v", history.Items, err)
+	}
+}
+
+// Background compaction always starts below the point where the CLI makes a
+// turn wait for it: a higher threshold is held just under it, and the web
+// setting's top stays below that.
+func TestCompactionThresholdStaysBelowTheBlockingPoint(t *testing.T) {
+	if got := *infiniteSessions(0.97).BackgroundCompactionThreshold; got != maxBackgroundCompaction {
+		t.Fatalf("threshold 0.97 = %v, want %v", got, maxBackgroundCompaction)
+	}
+	if top := float64(store.MaxCompactionThreshold) / 100; top > maxBackgroundCompaction {
+		t.Fatalf("the setting's top %v is above %v", top, maxBackgroundCompaction)
 	}
 }
 

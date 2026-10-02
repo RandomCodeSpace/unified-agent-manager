@@ -1280,9 +1280,9 @@ function askOf(interactions: readonly Interaction[]): Ask | undefined {
   const i = waiting.find((x) => x.kind === 'permission') ?? waiting[0];
   if (!i) return undefined;
   const line = (text = '') => text.trim().split('\n')[0] ?? '';
-  if (i.kind === 'permission') return { id: i.id, kind: i.kind, title: i.title, detail: line(i.detail) || undefined, options: i.options };
+  if (i.kind === 'permission') return { kind: i.kind, title: i.title };
   const q = i.questions?.[0];
-  return { id: i.id, kind: i.kind, title: line(q?.text) || q?.header || i.title, choices: q?.choices, multiple: q?.multiple, custom: q?.custom, questions: i.questions?.length };
+  return { kind: i.kind, title: line(q?.text) || q?.header || i.title };
 }
 
 /** Mirrors the server's svgRoot: after a BOM, whitespace, `<?…?>`, `<!--…-->` and `<!…>`, does the text start with `<svg`? */

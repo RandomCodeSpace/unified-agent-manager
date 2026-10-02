@@ -147,6 +147,12 @@ func TestClosedTasksShowTheirTranscriptReadOnlyAfterRestart(t *testing.T) {
 	}
 	for key, rec := range before.Sessions {
 		got := after.Sessions[key]
+		// Opening records the Task as read for the badge; nothing else.
+		if rec.Web != nil && got.Web != nil && rec.Web.UnseenEnd && !got.Web.UnseenEnd {
+			web := *rec.Web
+			web.UnseenEnd = false
+			rec.Web = &web
+		}
 		was, _ := json.Marshal(rec)
 		now, _ := json.Marshal(got)
 		if string(was) != string(now) {

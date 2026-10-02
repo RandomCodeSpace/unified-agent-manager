@@ -522,8 +522,8 @@ sign-outs are logged without the token.
   never resent.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and the Task's row moves to
-  "Needs you" in the sidebar, where you can answer it without opening the
-  Task (see Sidebar). Nothing is approved
+  "Needs you" in the sidebar, with what it asks on its status line; open the
+  Task to answer (see Sidebar). Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
@@ -679,8 +679,8 @@ sign-outs are logged without the token.
   to search them by name; choosing one inserts it at the cursor on its own
   line. **Save as prompt** saves the composer's text under a name, for this
   Project or all Projects. The service keeps them, so they are the same in
-  every browser. Settings → **Saved prompts** renames and deletes them; a
-  prompt whose Project was removed stays there until you delete it.
+  every browser. Settings → **Saved prompts** renames and deletes them.
+  Removing a Project removes the prompts saved for it.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
   Task's row in the sidebar shows it as its status line ("Ready for review:"
@@ -931,7 +931,7 @@ sign-outs are logged without the token.
   | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
   | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
   | Delete Task | an archived Task | – | The Task is removed from UAM |
-  | Remove Project | any Project | every Task in it archived, or no Tasks | The Project and its archived Tasks are removed from UAM |
+  | Remove Project | any Project | every Task in it archived, or no Tasks | The Project, its archived Tasks, its routines and the prompts saved for it are removed from UAM |
 
   A settled or archived Task takes no messages, queue actions, model, effort,
   context-size or mode changes. You can still rename a settled Task. Stop a
@@ -1334,8 +1334,9 @@ shown; the service simply sends none for the Task you have open. While no
 UAM page is visible, each push also sets the app icon's badge to the Task
 list's **Needs you** count. Failed or interrupted Tasks count until any
 browser opens them, because the service does not know which browser has
-read them. A visible page keeps the badge at its own count, with this
-browser's read marks and planner requests.
+read them; that mark survives a restart, and a Task whose turn a restart
+interrupted counts too. A visible page keeps the badge at its own count,
+with this browser's read marks and planner requests.
 
 **Storage.** The first browser to turn notifications on makes the service
 generate its Web Push (VAPID) key pair. The keys and the subscribed

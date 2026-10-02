@@ -80,9 +80,9 @@ type pushPayload struct {
 }
 
 // noticeKind is what a Task's summary calls for: needs you (a question, a
-// permission, a failure), finished (the turn completed and nothing it
-// started still runs), or nothing. A settled or archived Task calls for
-// nothing.
+// permission, a failure), finished (the turn completed, nothing it started
+// still runs and no queued prompt waits to run next), or nothing. A settled
+// or archived Task calls for nothing.
 func noticeKind(s SessionSummary) string {
 	if s.Stage != StageActive {
 		return ""
@@ -95,7 +95,7 @@ func noticeKind(s SessionSummary) string {
 	case StateFailed:
 		return noticeFailed
 	case StateCompleted:
-		if s.SubagentsRunning == 0 && s.BackgroundTasksRunning == 0 {
+		if s.SubagentsRunning == 0 && s.BackgroundTasksRunning == 0 && s.Queued == 0 {
 			return noticeFinished
 		}
 	}
@@ -111,6 +111,10 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 		s.unseenEnd = !m.watchedLocked(s.id)
 	}
 	kind := noticeKind(after)
+	if kind == noticeFinished && s.queueSending != "" {
+		// The queue's head left it to be sent: its turn is starting.
+		kind = ""
+	}
 	if kind == "" || kind == noticeKind(before) || m.closed {
 		return
 	}
@@ -313,23 +317,7 @@ func (p *pushStore) saveLocked() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create push settings directory: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, pushFileName+".tmp.*") // owner-only (0600)
-	if err != nil {
-		return fmt.Errorf("write push settings: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write push settings: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write push settings: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("write push settings: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), p.path); err != nil {
+	if err := writeFileAtomic(p.path, pushFileName+".tmp.*", data); err != nil {
 		return fmt.Errorf("write push settings: %w", err)
 	}
 	return nil

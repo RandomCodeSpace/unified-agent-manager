@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
@@ -233,18 +234,27 @@ func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
 // Runs that started a Task count against the day's limit; skips do not.
 func TestRoutineDailyLimit(t *testing.T) {
 	m, prov, _, project := newRoutineManager(t)
-	in := hourly("Once a day")
-	in.MaxRunsPerDay = ptr(1)
+	in := hourly("Twice a day")
+	in.MaxRunsPerDay = ptr(2)
 	r := mustRoutine(t, m, project, in)
-	run := runNow(t, m, project, r.ID)
-	taskConv(t, prov, run.TaskID).EmitTurn(agentapi.TurnCompleted, "")
+	first := runNow(t, m, project, r.ID)
+	if busy, err := m.RunRoutine(r.ID); err != nil || busy.Runs[0].Outcome != RunSkipped || busy.Runs[0].Reason != "still running" {
+		t.Fatalf("run while busy = %+v, %v", busy.Runs, err)
+	}
+	taskConv(t, prov, first.TaskID).EmitTurn(agentapi.TurnCompleted, "")
+	m.checkRoutines()
+	second := runNow(t, m, project, r.ID)
+	if second.TaskID == "" {
+		t.Fatalf("second run = %+v, want a Task: the skip must not count", second)
+	}
+	taskConv(t, prov, second.TaskID).EmitTurn(agentapi.TurnCompleted, "")
 	m.checkRoutines()
 	again, err := m.RunRoutine(r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := again.Runs[0]; got.Outcome != RunSkipped || !strings.Contains(got.Reason, "limit of 1 run a day") {
-		t.Fatalf("second run = %+v", got)
+	if got := again.Runs[0]; got.Outcome != RunSkipped || !strings.Contains(got.Reason, "limit of 2 runs a day") {
+		t.Fatalf("third run = %+v", got)
 	}
 }
 
@@ -309,6 +319,75 @@ func TestRoutineRestartRunsAMissedFiringOnce(t *testing.T) {
 	}
 }
 
+// A running run followed by a "still running" skip is resolved from its Task
+// after a restart, not failed as never started. The service stops before
+// its check saw the turn end, as on a crash.
+func TestRoutineRestartKeepsARunningRunBeforeASkip(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	prov.SetModels(routineModels, nil)
+	st := openTestStore(t)
+	m := NewManager(st, []agentapi.Provider{prov})
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	project := addProject(t, m, t.TempDir())
+	r := mustRoutine(t, m, project, hourly("Busy"))
+	run := runNow(t, m, project, r.ID)
+	if again, err := m.RunRoutine(r.ID); err != nil || again.Runs[0].Outcome != RunSkipped {
+		t.Fatalf("second run = %+v, %v", again.Runs, err)
+	}
+	taskConv(t, prov, run.TaskID).EmitTurn(agentapi.TurnCompleted, "")
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// The stored run is as the crash left it: still running.
+	if err := st.Update(func(cfg *store.Config) error {
+		stored := cfg.WebRoutines[r.ID]
+		stored.Runs[0].Outcome, stored.Runs[0].EndedAt = RunRunning, time.Time{}
+		cfg.WebRoutines[r.ID] = stored
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m2 := startManager(t, st, prov)
+	m2.checkRoutines()
+	runs := routine(t, m2, project, r.ID).Runs
+	if len(runs) != 2 || runs[1].ID != run.ID || runs[1].Outcome != RunFinished {
+		t.Fatalf("runs after restart = %+v", runs)
+	}
+}
+
+// A run's Task says in its export which routine started it, as a spawned or
+// rerun Task names its origin.
+func TestRoutineTaskExportNamesTheRoutine(t *testing.T) {
+	m, _, _, project := newRoutineManager(t)
+	r := mustRoutine(t, m, project, hourly("Nightly"))
+	run := runNow(t, m, project, r.ID)
+	body, _, err := m.ExportMarkdown(context.Background(), run.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "\n- Started by routine "+r.ID+"\n") {
+		t.Fatalf("export = %s", body)
+	}
+}
+
+// A weekly routine on Sunday keeps its day in what the page reads: weekday 0
+// is a day, not an empty value.
+func TestWeeklyRoutineOnSundayListsItsDay(t *testing.T) {
+	m, _, _, project := newRoutineManager(t)
+	in := hourly("Sunday review")
+	in.Schedule = &store.RoutineSchedule{Kind: store.ScheduleWeekly, Time: "09:00", Weekday: 0}
+	r := mustRoutine(t, m, project, in)
+	body, err := json.Marshal(routine(t, m, project, r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"schedule":{"kind":"weekly","time":"09:00","weekday":0}`) {
+		t.Fatalf("listed routine = %s", body)
+	}
+}
+
 // Removing a Project removes its routines, on disk too.
 func TestRemoveProjectRemovesItsRoutines(t *testing.T) {
 	m, _, st, project := newRoutineManager(t)
@@ -327,6 +406,32 @@ func TestRemoveProjectRemovesItsRoutines(t *testing.T) {
 	defer m.routines.mu.Unlock()
 	if len(m.routines.list) != 0 {
 		t.Fatal("routine still held")
+	}
+}
+
+// Removing a Project removes the prompts saved for it, on disk too; those
+// for every Project stay.
+func TestRemoveProjectRemovesItsSavedPrompts(t *testing.T) {
+	m, _, st, project := newRoutineManager(t)
+	if _, err := m.AddPrompt(AddPromptRequest{Name: "Review", Text: "review the diff", ProjectID: project}); err != nil {
+		t.Fatal(err)
+	}
+	everywhere, err := m.AddPrompt(AddPromptRequest{Name: "Tests", Text: "run the tests"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RemoveProject(project); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Settings().SavedPrompts; len(got) != 1 || got[0].ID != everywhere.ID {
+		t.Fatalf("saved prompts = %+v", got)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.WebSettings.SavedPrompts; len(got) != 1 || got[0].ID != everywhere.ID {
+		t.Fatalf("stored prompts = %+v", got)
 	}
 }
 

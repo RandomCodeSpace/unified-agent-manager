@@ -69,7 +69,22 @@ func (m *Manager) storedPins(id string) ([]store.WebChart, error) {
 	if !ok {
 		return nil, errProjectNotFound
 	}
-	return slices.DeleteFunc(p.Charts, func(c store.WebChart) bool { return !validRequestID(c.ID) || pinSpec(c).check() != nil }), nil
+	return slices.DeleteFunc(p.Charts, func(c store.WebChart) bool { return !shownPin(c) }), nil
+}
+
+// shownPin reports whether this version shows the stored pin c. Only shown
+// pins count, toward the cap too; the others stay stored untouched.
+func shownPin(c store.WebChart) bool { return validRequestID(c.ID) && pinSpec(c).check() == nil }
+
+// shownPins counts the shown pins in charts.
+func shownPins(charts []store.WebChart) int {
+	n := 0
+	for _, c := range charts {
+		if shownPin(c) {
+			n++
+		}
+	}
+	return n
 }
 
 // pinned is the API view of c with the rows its file holds, if any.
@@ -139,12 +154,12 @@ func (m *Manager) PinChart(taskID, callID string) (PinnedChart, error) {
 			rec = p.Charts[existing]
 			return nil
 		}
-		if len(p.Charts) >= maxPinnedCharts {
+		if shownPins(p.Charts) >= maxPinnedCharts {
 			return newError(http.StatusConflict, "a project keeps at most %d pinned charts; unpin one first", maxPinnedCharts)
 		}
 		p.Charts = append(p.Charts, rec)
 		cfg.WebProjects[projectID] = p
-		count = len(p.Charts)
+		count = shownPins(p.Charts)
 		return nil
 	})
 	if err != nil {
@@ -181,7 +196,7 @@ func (m *Manager) UnpinChart(projectID, id string) error {
 		}
 		p.Charts = slices.Delete(p.Charts, i, i+1)
 		cfg.WebProjects[projectID] = p
-		count = len(p.Charts)
+		count = shownPins(p.Charts)
 		return nil
 	})
 	if err != nil {
