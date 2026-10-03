@@ -180,7 +180,7 @@ func TestSkillsSetupPreservesExistingSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := root.MkdirAll("skills/existing", 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -200,6 +200,27 @@ func TestSkillsSetupPreservesExistingSkills(t *testing.T) {
 }
 
 func TestSkillsSetupRefusesSymlinks(t *testing.T) {
+	t.Run("source parent outside staging", func(t *testing.T) {
+		stage, outside := t.TempDir(), t.TempDir()
+		stageTestSkill(t, outside, "probe")
+		if err := os.Symlink(filepath.Join(outside, ".agents"), filepath.Join(stage, ".agents")); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateStagedSkills(stage, []string{"probe"}); err == nil {
+			t.Fatal("validated a skill outside the staging root")
+		}
+		root, err := os.OpenRoot(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = root.Close() }()
+		if err := publishStagedSkills(root, "skills", stage, []string{"probe"}); err == nil {
+			t.Fatal("published a skill outside the staging root")
+		}
+		if _, err := root.Lstat("skills/probe"); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("failed publication left a partial skill: %v", err)
+		}
+	})
 	t.Run("source", func(t *testing.T) {
 		stage := t.TempDir()
 		stageTestSkill(t, stage, "probe")
@@ -224,7 +245,7 @@ func TestSkillsSetupRefusesSymlinks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer root.Close()
+			defer func() { _ = root.Close() }()
 			if err := publishStagedSkills(root, "skills", stage, []string{"probe"}); err == nil {
 				t.Fatal("accepted destination symlink")
 			}

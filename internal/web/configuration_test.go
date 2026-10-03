@@ -162,7 +162,7 @@ func TestConfigurationPublishDoesNotOverwriteConcurrentChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	for _, name := range []string{"staged", "destination"} {
 		if err := os.WriteFile(filepath.Join(scope.base, name), []byte(name), 0600); err != nil {
 			t.Fatal(err)
@@ -970,7 +970,7 @@ func TestConfigurationSkillRootRemainsAnchoredAfterParentReplacement(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	_, revision, err := readConfiguration(root, relative)
 	if err != nil {
 		t.Fatal(err)
@@ -995,7 +995,9 @@ func TestConfigurationSkillRootRemainsAnchoredAfterParentReplacement(t *testing.
 		t.Fatal("opened skills root was not retained")
 	}
 	if replacement, _, err := openConfigurationSkillRoot(scope, path); err == nil {
-		replacement.Close()
+		if err := replacement.Close(); err != nil {
+			t.Fatal(err)
+		}
 		t.Fatal("linked known root was accepted")
 	}
 }
@@ -1294,7 +1296,7 @@ func TestConfigurationDisableRollsBackLinkAfterRevisionChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := os.WriteFile(file.Path, []byte(testSkillDefinition+"Changed."), 0600); err != nil {
 		t.Fatal(err)
 	}

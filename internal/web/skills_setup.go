@@ -81,7 +81,7 @@ func (m *Manager) setupSkills(ctx context.Context, projectID string, input skill
 	if err != nil {
 		return result, err
 	}
-	defer os.RemoveAll(stage)
+	defer func() { _ = os.RemoveAll(stage) }()
 	args := []string{"--yes", skillsPackage, "add", input.Source, "--agent", "github-copilot", "--yes"}
 	if install {
 		args = append(args, "--copy", "--json", "--skill")
@@ -119,7 +119,7 @@ func (m *Manager) setupSkills(ctx context.Context, projectID string, input skill
 	if err != nil {
 		return result, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	rel := "skills"
 	if !scope.global {
 		rel = filepath.Join(".github", "skills")
@@ -186,21 +186,23 @@ func validateSkillSetupResult(output string, names []string) error {
 }
 
 func validateStagedSkills(stage string, names []string) error {
+	staged, err := os.OpenRoot(stage)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = staged.Close() }()
 	var size int64
 	files := 0
 	for _, name := range names {
-		dir := filepath.Join(stage, ".agents", "skills", name)
-		if info, err := os.Lstat(filepath.Join(dir, "SKILL.md")); err != nil || !info.Mode().IsRegular() {
-			return newError(http.StatusBadGateway, "skill %q has no regular SKILL.md file", name)
-		}
-		content, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+		dir := filepath.Join(".agents", "skills", name)
+		content, _, err := readConfiguration(staged, filepath.Join(dir, "SKILL.md"))
 		if err != nil {
+			return newError(http.StatusBadGateway, "skill %q has no readable regular SKILL.md file: %s", name, shortError(err))
+		}
+		if err := validateConfiguration("skills", content); err != nil {
 			return err
 		}
-		if err := validateConfiguration("skills", string(content)); err != nil {
-			return err
-		}
-		err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		err = fs.WalkDir(staged.FS(), filepath.ToSlash(dir), func(_ string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -231,6 +233,11 @@ func validateStagedSkills(stage string, names []string) error {
 // The root confines writes; exclusive directory creation prevents replacing an
 // existing skill. Only directories created by this call are rolled back.
 func publishStagedSkills(root *os.Root, rel, stage string, names []string) (err error) {
+	staged, err := os.OpenRoot(stage)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = staged.Close() }()
 	if err := configurationPath(root, filepath.Join(rel, "SKILL.md"), true); err != nil {
 		return err
 	}
@@ -253,8 +260,8 @@ func publishStagedSkills(root *os.Root, rel, stage string, names []string) (err 
 			return err
 		}
 		created = append(created, target)
-		source := filepath.Join(stage, ".agents", "skills", name)
-		err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		source := filepath.ToSlash(filepath.Join(".agents", "skills", name))
+		err = fs.WalkDir(staged.FS(), source, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
@@ -273,11 +280,21 @@ func publishStagedSkills(root *os.Root, rel, stage string, names []string) (err 
 			if !info.Mode().IsRegular() {
 				return errors.New("skill contains a symbolic link or special file")
 			}
-			in, err := os.Open(path)
+			if err := configurationPath(staged, path, false); err != nil {
+				return err
+			}
+			in, err := staged.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 			if err != nil {
 				return err
 			}
-			defer in.Close()
+			defer func() { _ = in.Close() }()
+			info, err = in.Stat()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return errors.New("skill changed to a special file while copying")
+			}
 			out, err := root.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm()&0o700)
 			if err != nil {
 				return err

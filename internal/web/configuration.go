@@ -203,7 +203,7 @@ func readConfiguration(root *os.Root, path string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return "", "", err
@@ -245,10 +245,10 @@ func configurationFileAtPath(scope configurationScope, kind, name, path string, 
 	}
 	root, err := openConfigurationRoot(scope, false)
 	if err == nil {
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		entry.Content, entry.Revision, err = readConfiguration(root, path)
 	}
-	if err != nil && !(kind == "instructions" && errors.Is(err, os.ErrNotExist)) {
+	if err != nil && (kind != "instructions" || !errors.Is(err, os.ErrNotExist)) {
 		entry.Error = "File cannot be edited: " + shortError(err)
 		entry.Editable = false
 	}
@@ -267,7 +267,7 @@ func listConfiguration(scope configurationScope, kind string, editable bool) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	path, err := filepath.Rel(scope.base, scope.root(kind))
 	if err != nil {
 		return nil, err
@@ -282,7 +282,7 @@ func listConfiguration(scope configurationScope, kind string, editable bool) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	entries, err := dir.ReadDir(maxConfigurationFiles + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
@@ -321,16 +321,16 @@ func listConfiguration(scope configurationScope, kind string, editable bool) ([]
 // checks after combining native, shared and built-in discovery sources.
 func listConfigurationSkills(dir string, scope configurationScope, editable bool) ([]ConfigurationFile, error) {
 	out := []ConfigurationFile{}
-	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 G703 -- authenticated discovery reads server-selected skill roots, including symlink aliases; writes use separate anchored roots.
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if _, statErr := os.Lstat(dir); errors.Is(statErr, os.ErrNotExist) {
+			if _, statErr := os.Lstat(dir); errors.Is(statErr, os.ErrNotExist) { // #nosec G703 -- only distinguishes missing configured roots from broken aliases; no mutation.
 				return out, nil
 			}
 		}
 		return []ConfigurationFile{{Name: filepath.Base(dir), Path: dir, Error: "Skill directory cannot be read: " + shortError(err)}}, nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	entries, err := f.ReadDir(maxConfigurationFiles + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return []ConfigurationFile{{Name: filepath.Base(dir), Path: dir, Error: "Skill directory cannot be read: " + shortError(err)}}, nil
@@ -347,8 +347,8 @@ func listConfigurationSkills(dir string, scope configurationScope, editable bool
 		path := filepath.Join(dir, entry.Name(), "SKILL.md")
 		actual, activeErr := filepath.EvalSymlinks(path)
 		disabled, disabledErr := disabledConfigurationSkillPath(path)
-		_, activeStatErr := os.Lstat(path)
-		_, disabledStatErr := os.Lstat(path + disabledConfigurationSuffix)
+		_, activeStatErr := os.Lstat(path)                                 // #nosec G703 -- fixed discovery filename under a server-selected skill root; symlink inspection is intentional.
+		_, disabledStatErr := os.Lstat(path + disabledConfigurationSuffix) // #nosec G703 -- fixed disabled discovery filename; only inspects the alias, without mutation.
 		type skillCandidate struct {
 			path, actual string
 			err          error
@@ -737,11 +737,12 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 			return ConfigurationFile{}, newError(http.StatusConflict, "an existing file revision is required; reload before saving or removing it")
 		}
 		var files []ConfigurationFile
-		if kind == "instructions" {
+		switch kind {
+		case "instructions":
 			files = []ConfigurationFile{configurationFile(scope, kind, name, true)}
-		} else if kind == "skills" {
+		case "skills":
 			files, err = m.configurationSkillsForScope(scope)
-		} else {
+		default:
 			files, err = listConfiguration(scope, kind, true)
 		}
 		if err != nil {
@@ -771,7 +772,7 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 	if err != nil {
 		return ConfigurationFile{}, newError(http.StatusConflict, "configuration directory is unavailable: %s", shortError(err))
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err = configurationPath(root, path, !remove && in.Path == ""); err != nil {
 		return ConfigurationFile{}, newError(http.StatusConflict, "configuration path is unavailable: %s", shortError(err))
 	}
@@ -819,7 +820,7 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 		if e != nil {
 			return ConfigurationFile{}, newError(http.StatusInternalServerError, "cannot create configuration file: %s", shortError(e))
 		}
-		defer root.Remove(tmp)
+		defer func() { _ = root.Remove(tmp) }()
 		err = nil
 		if in.Path != "" {
 			err = f.Chmod(mode)
