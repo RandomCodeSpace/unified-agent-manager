@@ -562,6 +562,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 	} else {
 		// An end event may omit what the start event said.
 		in.ParentToolCallID = cmp.Or(in.ParentToolCallID, cur.ParentToolCallID)
+		in.ParentAgentID = cmp.Or(in.ParentAgentID, cur.ParentAgentID)
 		in.Name = cmp.Or(in.Name, cur.Name)
 		in.Description = cmp.Or(in.Description, cur.Description)
 		in.Model = cmp.Or(in.Model, cur.Model)
@@ -618,6 +619,7 @@ func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
 	in.Effort = clampText(displaytext.Sanitize(in.Effort), maxLabelText)
 	in.Error = clipRunes(displaytext.Sanitize(in.Error), maxDetailRunes)
 	in.ParentToolCallID = clampText(in.ParentToolCallID, maxLabelText)
+	in.ParentAgentID = clampText(in.ParentAgentID, maxLabelText)
 	in.Result = boundedResultSummary(in.Result)
 	in.Runs = agentapi.CapSubagentRuns(in.Runs)
 	return in

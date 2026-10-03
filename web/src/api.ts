@@ -772,6 +772,8 @@ export interface Subagent {
   id: string;
   /** Item id of the `task` tool call that started this subagent (a tool item's id is the provider tool call id). */
   parent_tool_call_id?: string;
+  /** The subagent that spawned this one, when not the main agent: `parent_tool_call_id` is then in that subagent's transcript. */
+  parent_agent_id?: string;
   name: string;
   description?: string;
   /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */

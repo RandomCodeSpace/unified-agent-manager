@@ -13,6 +13,7 @@ import { CommitPanel, SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
+import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
@@ -476,7 +477,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** Scroll the transcript to the row of the subagent a `task` call spawned and flash it; `expand` opens the row and focuses it. */
   async function locate(toolCallId: string, expand = false) {
     setLocateError('');
-    if (!(await bring(toolCallId))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the header’s Subagents list.'); return; }
+    // One another subagent spawned is listed in its top-level ancestor's reply: bring that call in.
+    const subagents = latestSession.current.subagents;
+    const spawned = parentMap(subagents).get(toolCallId);
+    const call = (spawned && mainCall(spawned, subagents)) ?? toolCallId;
+    if (!(await bring(call))) { setLocateError('Where this subagent was spawned is not in the retained history. Open it from the header’s Subagents list.'); return; }
     atBottom.current = false;
     // The reply's subagent list opens on its own (its group and page too); this commits it now.
     const ask = () => flushSync(() => setReveal((r) => ({ toolCallId, expand, n: (r?.n ?? 0) + 1 })));
