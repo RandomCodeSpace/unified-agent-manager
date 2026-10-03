@@ -180,6 +180,16 @@ type UtilityRequest struct {
 type UtilityUsage struct {
 	InputTokens, OutputTokens int64
 	Credits                   float64
+	// Tokens preserves each reported model call for dated usage accounting.
+	Tokens []TokenUsage
+}
+
+// TokenUsage is one model call, including subagent calls. Input includes
+// cache reads and writes; neither cache count is added again to the total.
+type TokenUsage struct {
+	Model                                string
+	Time                                 time.Time
+	Input, Output, CacheRead, CacheWrite int64
 }
 
 // CustomModelUser is implemented by a provider that can offer custom
@@ -735,6 +745,7 @@ const (
 	EventContext EventKind = "context"
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
 	EventUsage     EventKind = "usage"
+	EventTokens    EventKind = "tokens"
 	EventExecution EventKind = "execution"
 	// EventCompaction reports that the provider started (Compacting) or
 	// finished compacting the main conversation; how it ended arrives as a
@@ -753,6 +764,7 @@ type Event struct {
 	BackgroundTasks *BackgroundTasks
 	Context         *Context
 	Usage           *Usage
+	Tokens          *TokenUsage
 	Execution       *ExecutionState
 	// Error is the sanitized reason for EventExit.
 	Error string

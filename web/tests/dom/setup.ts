@@ -15,7 +15,13 @@ configure({
 const getContext = HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
   if (kind !== '2d') return getContext.call(this, kind as '2d', ...(rest as []));
-  return new Proxy({}, { get: (_t, key) => (key === 'canvas' ? this : () => undefined), set: () => true });
+  return new Proxy({}, {
+    get: (_t, key) => key === 'canvas' ? this : key === 'measureText'
+      // ECharts uses text metrics even with its SVG renderer; layout assertions run in a real browser.
+      ? (text: string) => ({ width: String(text).length * 7, actualBoundingBoxAscent: 10, actualBoundingBoxDescent: 3 })
+      : () => undefined,
+    set: () => true,
+  });
 } as typeof HTMLCanvasElement.prototype.getContext;
 
 // The terminal waits for its font through the CSS Font Loading API, which happy-dom lacks.

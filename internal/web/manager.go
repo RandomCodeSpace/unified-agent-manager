@@ -200,6 +200,7 @@ type Manager struct {
 	// utility is the Utility log and today's count of Utility calls
 	// (utility.go).
 	utility utilityLog
+	tokens  tokenLedger // guarded by mu; persisted by the existing flush loop
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).
@@ -567,6 +568,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load web sessions: %w", err)
 	}
+	if err := m.loadTokenLedger(); err != nil {
+		return err
+	}
 	// The catalogs include the custom models, so providers get them first.
 	m.setCustomModels(cfg.WebSettings.CustomModels)
 	infos := m.checkProviders(ctx)
@@ -613,7 +617,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
-	m.settings = Settings{SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold}
 	if m.settings.SendDefault != store.WebSendQueue {
@@ -1349,6 +1353,7 @@ func (m *Manager) Settings() Settings {
 // CompactionThreshold works the same way, store.MinCompactionThreshold to
 // store.MaxCompactionThreshold; the default itself is stored as nil.
 type SettingsPatch struct {
+	TokenPrices  *map[string]map[string]store.WebTokenPrice
 	SendDefault  *string
 	Terminal     *bool
 	Planner      *bool
@@ -1368,6 +1373,23 @@ type SettingsPatch struct {
 // A Utility model must be one the provider lists now, and the provider must
 // have the titles capability; neither is needed to unset it or opt out.
 func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
+	if p.TokenPrices != nil {
+		count := 0
+		for provider, models := range *p.TokenPrices {
+			if !store.ValidHiddenModel(provider) {
+				return Settings{}, newError(http.StatusBadRequest, "invalid pricing provider")
+			}
+			for model, rates := range models {
+				count++
+				if !store.ValidTokenPriceModel(model) || !rates.Valid() {
+					return Settings{}, newError(http.StatusBadRequest, "token prices require a model ID and non-negative input/output rates; cache rates are optional")
+				}
+			}
+		}
+		if count > 1000 || len(*p.TokenPrices) > 100 {
+			return Settings{}, newError(http.StatusBadRequest, "too many token prices")
+		}
+	}
 	if p.SendDefault != nil && *p.SendDefault != store.WebSendSteer && *p.SendDefault != store.WebSendQueue {
 		return Settings{}, newError(http.StatusBadRequest, "send_default must be %q or %q", store.WebSendSteer, store.WebSendQueue)
 	}
@@ -1438,6 +1460,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		titles = withoutRemovedCustom(current, *p.CustomModels, hidden, titles)
 	}
 	next := current
+	if p.TokenPrices != nil {
+		next.TokenPrices = *p.TokenPrices
+	}
 	if p.SendDefault != nil {
 		next.SendDefault = *p.SendDefault
 	}
@@ -1474,7 +1499,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
-	if next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	opening := next.Planner && !current.Planner
@@ -1487,6 +1512,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
+		if p.TokenPrices != nil {
+			cfg.WebSettings.TokenPrices = next.TokenPrices
+		}
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.Planner = next.Planner
@@ -1777,9 +1805,10 @@ type recordPatch struct {
 }
 
 // flush writes the durable state of every dirty session.
-func (m *Manager) flush() error {
+func (m *Manager) flush() (err error) {
 	m.persistMu.Lock()
 	defer m.persistMu.Unlock()
+	defer func() { err = errors.Join(err, m.flushTokenLedger()) }()
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
 	for id := range m.dirty {
@@ -1808,7 +1837,7 @@ func (m *Manager) flush() error {
 	if len(patches) == 0 {
 		return nil
 	}
-	err := m.store.Update(func(cfg *store.Config) error {
+	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {
 			key := store.Key(p.provider, p.id)
 			rec, ok := cfg.Sessions[key]
@@ -2018,6 +2047,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		s.compacting = ev.Compacting
 	case agentapi.EventUsage:
 		m.applyUsageLocked(s, ev.Usage)
+	case agentapi.EventTokens:
+		if ev.Tokens != nil {
+			m.recordTokensLocked(s.provider, *ev.Tokens)
+		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title = title

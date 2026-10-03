@@ -12,6 +12,7 @@ import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
 import { ContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
+import { UsageButton } from './Usage';
 
 /** Project-level navigation and actions. */
 export interface WorkspaceActions {
@@ -54,7 +55,7 @@ export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = fa
         </>
       }
     >
-      <Button id={id} size={wordmark ? 'md' : size} aria-label={label} aria-expanded={open} aria-keyshortcuts="Control+B Meta+B" className={cn('[&_svg]:size-4', wordmark && 'px-1', className)} onClick={onToggle}>
+      <Button id={id} size={wordmark ? 'md' : size} aria-label={label} aria-expanded={open} aria-keyshortcuts="Control+B Meta+B" className={cn('[&_svg]:size-4', wordmark && 'px-2', className)} onClick={onToggle}>
         <Brand markOnly={!wordmark} />
         {count > 0 && (
           <span aria-hidden="true" className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-attention px-1 text-meta font-semibold text-on-primary tabular-nums pointer-coarse:top-0.5 pointer-coarse:right-0.5">
@@ -165,6 +166,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         <SettingsButton actions={actions} side="right" />
         <PlannerButton actions={actions} side="right" />
+        <UsageButton side="right" />
         <ConnectionDot connection={connection} side="right" />
       </div>
     </nav>
@@ -543,11 +545,11 @@ export const Sidebar = memo(function Sidebar({
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
+        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
         <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted transition-[background-color,box-shadow] duration-100 focus-within:bg-raised focus-within:shadow-focus">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
-        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
         {projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
         {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />
@@ -568,6 +570,7 @@ export const Sidebar = memo(function Sidebar({
       <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <SettingsButton actions={actions} className="-ml-1.5" />
         <PlannerButton actions={actions} className="-ml-1" />
+        <UsageButton className="-ml-1" />
         <ConnectionDot connection={connection} />
         {version && <span className="truncate text-meta" title={version}>{version}</span>}
         <span className="flex-1" />

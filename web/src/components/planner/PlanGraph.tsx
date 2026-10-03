@@ -1,16 +1,11 @@
-import { ChevronDown, ChevronRight, Lock } from 'lucide-react';
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, Lock, Minus, Plus, RotateCcw } from 'lucide-react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { Card } from '../../api';
-import { GRAPH_NODE, cardPath, layoutLevel, shownProgress, waitsOf, wrapText, type GraphNode } from '../../lib/board';
-import { cn } from '../../lib/cn';
+import { GRAPH_NODE, MAP_MAX_K, MAP_MIN_K, cardPath, layoutLevel, shownProgress, waitsOf } from '../../lib/board';
+import { EChart } from '../EChart';
 import { Button } from '../ui/button';
-import { STATUS_WORD, WaitList, type TaskPlan } from './TaskPlan';
-
-/** Room around the drawing, so focus rings and arrowheads stay inside it. */
-const PAD = 8;
-/** Characters per title line and lines per title, for the node's width at caption size. */
-const LINE_CHARS = 24;
-const TITLE_LINES = 2;
+import { WaitList, type TaskPlan } from './TaskPlan';
+import { PLAN_GRAPH_PAD, planGraphOption, planNodeLabel } from './graph-options';
 
 const KIND_WORDS = { epic: 'epics', story: 'stories', subtask: 'subtasks' } as const;
 
@@ -18,9 +13,9 @@ const KIND_WORDS = { epic: 'epics', story: 'stories', subtask: 'subtasks' } as c
  * The plan's dependencies one level at a time (ADR 0005 §3: links never mix levels): the
  * Project's epics, one epic's stories, or one story's subtasks. A breadcrumb moves between
  * levels and a container's node opens its level; a subtask's node opens its details under the
- * graph (`details`). Arrows run from what has to finish first. Drawn in plain SVG (shapes and
- * text, no HTML inside), left to right when the layers fit the panel's width, else top to
- * bottom; a level wider than the panel scrolls inside its own box.
+ * graph (`details`). Arrows run from what has to finish first. ECharts draws the existing
+ * layout left to right when it fits the panel, else top to bottom. Its own viewport pans
+ * and zooms without changing those positions.
  */
 export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }: Readonly<{
   plan: TaskPlan;
@@ -34,8 +29,28 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
   const container = level ? plan.byId.get(level) : undefined;
   const cards = plan.index.get(container ? level : '') ?? EMPTY;
   const box = useRef<HTMLDivElement>(null);
+  const help = useId();
   const [room, setRoom] = useState(0);
   const [headOpen, setHeadOpen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const dragged = useRef(false);
+  const zoomBy = (factor: number) => setZoom((current) => Math.max(MAP_MIN_K, Math.min(MAP_MAX_K, current * factor)));
+  const reset = () => {
+    setZoom(1);
+    if (box.current) { box.current.scrollLeft = 0; box.current.scrollTop = 0; }
+  };
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      setZoom((current) => Math.max(MAP_MIN_K, Math.min(MAP_MAX_K, current * Math.exp(-event.deltaY * 0.01))));
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => el.removeEventListener('wheel', wheel);
+  }, []);
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -47,20 +62,46 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
   }, []);
   const lr = useMemo(() => layoutLevel(cards, 'lr'), [cards]);
   const tb = useMemo(() => layoutLevel(cards, 'tb'), [cards]);
-  const layout = lr.width + PAD * 2 <= room ? lr : tb;
-  const uid = useId().replaceAll(':', '');
+  const layout = lr.width + PLAN_GRAPH_PAD * 2 <= room ? lr : tb;
   const path = container ? cardPath(container, plan.byId) : [];
-  const mineIds = new Set([plan.mine?.id, ...plan.path.map((c) => c.id)]);
+  const option = useMemo(() => planGraphOption(layout, plan, selected), [layout, plan, selected]);
   const shown = selected ? cards.find((c) => c.id === selected && c.kind === 'subtask') : undefined;
   const waits = container ? waitsOf(container, plan.byId) : [];
   const kinds = [...new Set(cards.map((c) => c.kind))].map((k) => KIND_WORDS[k]).join(' and ');
   const progress = container?.progress && shownProgress(container.progress);
 
   const open = (card: Card) => (card.kind === 'subtask' ? onSelect(card.id) : onLevel(card.id));
-  const onKey = (e: KeyboardEvent, card: Card) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    e.preventDefault();
-    open(card);
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    drag.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop };
+    dragged.current = false;
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const start = drag.current;
+    if (!start) return;
+    const dx = event.clientX - start.x, dy = event.clientY - start.y;
+    if (!dragged.current && Math.hypot(dx, dy) < 4) return;
+    if (!dragged.current) event.currentTarget.setPointerCapture(event.pointerId);
+    dragged.current = true;
+    event.currentTarget.scrollLeft = start.left - dx;
+    event.currentTarget.scrollTop = start.top - dy;
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    const el = event.currentTarget;
+    const step = event.shiftKey ? 160 : 40;
+    switch (event.key) {
+      case 'ArrowLeft': el.scrollLeft -= step; break;
+      case 'ArrowRight': el.scrollLeft += step; break;
+      case 'ArrowUp': el.scrollTop -= step; break;
+      case 'ArrowDown': el.scrollTop += step; break;
+      case '+': case '=': zoomBy(1.25); break;
+      case '-': zoomBy(0.8); break;
+      case '0': reset(); break;
+      default: return;
+    }
+    event.preventDefault();
   };
 
   return (
@@ -92,40 +133,50 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
         {progress && ` · ${progress.text}`}
         {layout.edges.length > 0 && ' · arrows point from what finishes first'}
       </p>
-      <div ref={box} className="min-w-0 overflow-x-auto overscroll-x-contain">
+      {cards.length > 0 && (
+        <div className="flex items-center gap-1">
+          <Button size="icon" aria-label="Zoom in on dependencies" disabled={zoom >= MAP_MAX_K} onClick={() => zoomBy(1.25)}><Plus /></Button>
+          <Button size="icon" aria-label="Zoom out of dependencies" disabled={zoom <= MAP_MIN_K} onClick={() => zoomBy(0.8)}><Minus /></Button>
+          <Button size="icon" aria-label="Reset dependency view" onClick={reset}><RotateCcw /></Button>
+          <span className="text-meta text-muted">{Math.round(zoom * 100)}%</span>
+        </div>
+      )}
+      <p id={help} className="sr-only">Drag or use arrow keys to pan. Plus and minus zoom; 0 resets the view.</p>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Focused graph viewport supports keyboard and pointer panning. */}
+      <div
+        ref={box}
+        role="group"
+        aria-label={`Dependencies between the ${kinds}`}
+        aria-describedby={help}
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The viewport itself supports keyboard pan and zoom.
+        tabIndex={cards.length ? 0 : undefined}
+        className="max-h-[60dvh] min-w-0 cursor-grab touch-none overflow-auto overscroll-contain select-none focus-visible:-outline-offset-2 active:cursor-grabbing"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => { drag.current = null; }}
+        onPointerCancel={() => { drag.current = null; }}
+        onClickCapture={(event) => { if (dragged.current && event.detail > 0) { event.preventDefault(); event.stopPropagation(); } }}
+        onKeyDown={onKeyDown}
+      >
         {cards.length > 0 && (
-          <svg
-            width={layout.width + PAD * 2}
-            height={layout.height + PAD * 2}
-            viewBox={`0 0 ${layout.width + PAD * 2} ${layout.height + PAD * 2}`}
-            role="group"
-            aria-label={`Dependencies between the ${kinds}`}
-            className="block"
-          >
-            <defs>
-              {(['muted', 'done', 'mine'] as const).map((k) => (
-                <marker key={k} id={`${uid}-${k}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                  <path d="M0 0 L8 4 L0 8 z" className={k === 'mine' ? 'fill-accent' : k === 'done' ? 'fill-hairline-strong' : 'fill-muted'} />
-                </marker>
-              ))}
-            </defs>
-            {layout.edges.map((e) => {
-              const tone = mineIds.has(e.from.card.id) || mineIds.has(e.to.card.id) ? 'mine' : e.from.card.status === 'done' ? 'done' : 'muted';
-              return (
-                <path
-                  key={`${e.from.card.id}>${e.to.card.id}`}
-                  d={edgePath(e.from, e.to, layout.dir)}
-                  markerEnd={`url(#${uid}-${tone})`}
-                  strokeWidth={1.5}
-                  strokeDasharray={!e.from.card.confirmed || !e.to.card.confirmed ? '4 3' : undefined}
-                  className={cn('fill-none', tone === 'mine' ? 'stroke-accent' : tone === 'done' ? 'stroke-hairline-strong' : 'stroke-muted')}
+          <div style={{ width: (layout.width + PLAN_GRAPH_PAD * 2) * zoom, height: (layout.height + PLAN_GRAPH_PAD * 2) * zoom }}>
+            <div className="relative origin-top-left" style={{ width: layout.width + PLAN_GRAPH_PAD * 2, height: layout.height + PLAN_GRAPH_PAD * 2, transform: `scale(${zoom})` }}>
+              <EChart option={option} width={layout.width + PLAN_GRAPH_PAD * 2} height={layout.height + PLAN_GRAPH_PAD * 2} className="pointer-events-none" />
+              {layout.nodes.map(({ card, x, y }) => (
+                <button
+                  key={card.id}
+                  type="button"
+                  data-plan-card={card.id}
+                  aria-label={planNodeLabel(card, card.id === plan.mine?.id)}
+                  aria-pressed={card.kind === 'subtask' ? card.id === selected : undefined}
+                  title={`#${card.seq} ${card.title}`}
+                  style={{ left: x + PLAN_GRAPH_PAD, top: y + PLAN_GRAPH_PAD, width: GRAPH_NODE.w, height: GRAPH_NODE.h }}
+                  className="absolute cursor-pointer rounded-sm bg-transparent hover:bg-tint-hover/30 focus-visible:outline-offset-2"
+                  onClick={() => open(card)}
                 />
-              );
-            })}
-            {layout.nodes.map((n) => (
-              <Node key={n.card.id} node={n} mine={n.card.id === plan.mine?.id} onPath={mineIds.has(n.card.id)} selected={n.card.id === selected} onOpen={open} onKey={onKey} />
-            ))}
-          </svg>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       {shown && details(shown)}
@@ -148,80 +199,4 @@ const EMPTY: Card[] = [];
 function levelFor(plan: TaskPlan, id: string): string {
   const card = plan.byId.get(id);
   return card?.parent_id && plan.byId.has(card.parent_id) ? card.parent_id : '';
-}
-
-/** A curve from the blocker's far side to the waiting card's near side, ending just short of it for the arrowhead. */
-function edgePath(a: GraphNode, b: GraphNode, dir: 'lr' | 'tb'): string {
-  const { w, h } = GRAPH_NODE;
-  if (dir === 'lr') {
-    const sx = a.x + w + PAD, sy = a.y + h / 2 + PAD, ex = b.x - 2 + PAD, ey = b.y + h / 2 + PAD, d = (ex - sx) / 2;
-    return `M${sx} ${sy} C${sx + d} ${sy} ${ex - d} ${ey} ${ex} ${ey}`;
-  }
-  const sx = a.x + w / 2 + PAD, sy = a.y + h + PAD, ex = b.x + w / 2 + PAD, ey = b.y - 2 + PAD, d = (ey - sy) / 2;
-  return `M${sx} ${sy} C${sx} ${sy + d} ${ex} ${ey - d} ${ex} ${ey}`;
-}
-
-/**
- * One card as a node: #seq and its title wrapped to two lines, then its state (a container's
- * progress), and "This task" or "Proposed". A focusable SVG group; Enter or Space opens it like a click.
- */
-function Node({ node: { card: c, x, y }, mine, onPath, selected, onOpen, onKey }: Readonly<{
-  node: GraphNode;
-  mine: boolean;
-  onPath: boolean;
-  selected: boolean;
-  onOpen: (c: Card) => void;
-  onKey: (e: KeyboardEvent, c: Card) => void;
-}>) {
-  const { w, h } = GRAPH_NODE;
-  const container = c.kind !== 'subtask';
-  const lines = wrapText(`#${c.seq} ${c.title}`, LINE_CHARS, TITLE_LINES);
-  const progress = shownProgress(c.progress ?? { done: 0, total: 0, proposed: 0 });
-  const state = container ? progress.short : STATUS_WORD[c.status];
-  const tag = mine ? 'This task' : c.confirmed ? '' : 'Proposed';
-  return (
-    // An SVG group as a button: SVG has no button element, and the drawing must stay plain SVG.
-    <g
-      role="button"
-      tabIndex={0}
-      data-plan-card={c.id}
-      aria-label={`#${c.seq} ${c.title}, ${container ? progress.text : state}${tag ? `, ${tag.toLowerCase()}` : ''}. ${container ? `Show its ${c.kind === 'epic' ? 'stories' : 'subtasks'}` : 'Show its details'}`}
-      aria-pressed={container ? undefined : selected}
-      transform={`translate(${x + PAD} ${y + PAD})`}
-      className="group/node cursor-pointer outline-none"
-      onClick={() => onOpen(c)}
-      onKeyDown={(e) => onKey(e, c)}
-    >
-      <title>{`#${c.seq} ${c.title}`}</title>
-      <rect
-        width={w}
-        height={h}
-        rx={6}
-        strokeWidth={mine ? 2 : 1}
-        strokeDasharray={c.confirmed ? undefined : '4 3'}
-        className={cn(
-          'transition-colors group-hover/node:fill-tint-hover',
-          onPath ? 'fill-tint-selected' : c.confirmed ? 'fill-raised' : 'fill-canvas',
-          mine ? 'stroke-accent' : selected ? 'stroke-ink' : 'stroke-hairline-strong',
-          c.status === 'done' && !onPath && 'fill-surface',
-        )}
-      />
-      <rect x={-3} y={-3} width={w + 6} height={h + 6} rx={8} strokeWidth={2} className="fill-none stroke-focus opacity-0 group-focus-visible/node:opacity-100" />
-      <text className="fill-ink text-caption">
-        {lines.map((line, i) => (
-          <tspan key={i} x={8} y={18 + i * 15}>
-            {line}
-          </tspan>
-        ))}
-      </text>
-      <text x={8} y={h - 9} className={cn('text-meta', c.status === 'done' ? 'fill-success' : c.status === 'doing' ? 'fill-accent' : 'fill-muted')}>
-        {state}
-      </text>
-      {tag && (
-        <text x={w - 8} y={h - 9} textAnchor="end" className={cn('text-meta', mine ? 'fill-accent font-medium' : 'fill-muted')}>
-          {tag}
-        </text>
-      )}
-    </g>
-  );
 }

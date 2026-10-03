@@ -11,6 +11,7 @@ import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
+import { ComposerTools } from './ComposerTools';
 import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
@@ -1415,6 +1416,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <Paperclip />
               </Button>
             </Tip>
+            <ComposerTools />
           </>
         )}
         {catalogPending ? (

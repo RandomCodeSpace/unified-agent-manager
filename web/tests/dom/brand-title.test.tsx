@@ -5,7 +5,7 @@ import { Login } from '../../src/components/Login';
 import { renderApp, sidebar } from './render';
 
 describe('the UAM wordmark', () => {
-  test('the sidebar toggle and the empty pane show the mark with UAM; the collapsed rail shows the mark alone', async () => {
+  test('the sidebar toggle and Home show the mark with UAM; the collapsed rail shows the mark alone', async () => {
     const { user } = renderApp('?planner=unset');
     const side = await sidebar();
     const hide = side.getByRole('button', { name: 'Hide sidebar' });
@@ -13,8 +13,9 @@ describe('the UAM wordmark', () => {
     expect(hide.textContent).toBe('UAM');
     // The planner's button is not the brand.
     expect(screen.queryByRole('button', { name: 'Planner' })?.textContent ?? '').not.toContain('UAM');
-    const hint = await screen.findByText('Open a task from the sidebar, or start a new one there.');
-    expect(hint.parentElement!.textContent).toContain('UAM');
+    const home = within(await screen.findByRole('region', { name: 'Home' }));
+    const brand = home.getByText('UAM');
+    expect(brand.parentElement!.querySelector('svg')).toBeTruthy();
     await user.click(hide);
     const rail = within(await screen.findByRole('navigation', { name: 'Sidebar' }));
     const show = rail.getByRole('button', { name: /^Show sidebar/ });

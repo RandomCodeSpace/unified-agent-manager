@@ -196,6 +196,14 @@ func (m *Manager) runUtility(ctx context.Context, call UtilityCall, prompt strin
 	call.PromptChars, call.ReplyChars = utf8.RuneCountInString(prompt), utf8.RuneCountInString(reply)
 	if usage != nil {
 		call.InputTokens, call.OutputTokens, call.Credits = usage.InputTokens, usage.OutputTokens, usage.Credits
+		m.mu.Lock()
+		if len(usage.Tokens) == 0 {
+			m.recordTokensLocked(call.Provider, agentapi.TokenUsage{Model: call.Model, Time: call.At, Input: usage.InputTokens, Output: usage.OutputTokens})
+		}
+		for _, tokens := range usage.Tokens {
+			m.recordTokensLocked(call.Provider, tokens)
+		}
+		m.mu.Unlock()
 	} else {
 		call.Estimated = true
 		call.InputTokens = int64((call.PromptChars + charsPerToken - 1) / charsPerToken)

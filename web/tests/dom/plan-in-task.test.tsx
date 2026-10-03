@@ -123,7 +123,8 @@ describe('the Plan panel', () => {
     const graph = within(panel.getByRole('group', { name: 'Dependencies between the subtasks' }));
     expect(graph.getByRole('button', { name: /^#25 Sign archives and publish signatures, In progress, this task/ })).toBeTruthy();
     expect(panel.getByText(/^\d+ subtasks ·/).textContent).toContain('1/4 done · 1 proposed');
-    // Plain SVG: no HTML inside the drawing.
+    // ECharts draws real text and shapes, with native buttons over its SVG.
+    await waitFor(() => expect(panel.getByRole('group', { name: 'Dependencies between the subtasks' }).querySelector('svg')?.textContent).toContain('This task'));
     expect(panel.getByRole('group', { name: 'Dependencies between the subtasks' }).querySelector('foreignObject')).toBeNull();
     // A subtask opens its details under the graph.
     await user.click(graph.getByRole('button', { name: /^#26 Verify signatures/ }));

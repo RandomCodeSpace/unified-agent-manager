@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chartCsv, chartSource, headline, isChartCall, niceCeil, seriesColorIndexes, thinLabels } from '../src/lib/chart.ts';
+import { chartCsv, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
 
 const chart = {
@@ -20,25 +20,70 @@ test('a completed uam_chart call stands in the answer as a chart card; a refused
   for (const status of ['running', 'failed']) assert.equal(callProduct({ ...call, tool: { ...call.tool, status } }, new Set()), null);
 });
 
-test('the Mermaid source is an xychart from zero to a round top, with quotes kept out of its strings', () => {
-  const source = chartSource(chart, { width: 800, height: 300 });
-  assert.match(source, /^---\nconfig: \{.*"width":800,"height":300.*\}\n---\nxychart-beta\n/);
-  assert.match(source, /x-axis "Day" \["09-01", "09-02", "09-03"\]/);
-  assert.match(source, /y-axis "Commits" 0 --> 8/);
-  assert.match(source, /\n {2}line \[3, 7, 2\]$/);
-  assert.doesNotMatch(source, /\n {2}title /);
-  const spark = chartSource(chart, { width: 300, height: 64, spark: true });
-  assert.match(spark, /"showLabel":false/);
-  assert.doesNotMatch(spark, /"Day"|"Commits"/);
-  // A bar chart's first series is its bars; the rest are lines, never stacked bars.
-  const bars = chartSource({ ...chart, kind: 'bar', series: [...chart.series, { name: 'files', values: [1, 2, -1] }] }, { width: 800, height: 300 });
-  assert.match(bars, /y-axis "Commits" -1 --> 8/);
-  assert.match(bars, /\n {2}bar \[3, 7, 2\]\n {2}line \[1, 2, -1\]$/);
-  assert.match(chartSource({ ...chart, x_label: 'a "b"\nc' }, { width: 800, height: 300 }), /x-axis "a 'b' c"/);
+test('ECharts draws data directly, with zero-based axes, mixed series, and axes-free sparklines', () => {
+  const option = chartOption(chart, { width: 800, height: 300 });
+  assert.deepEqual(option.xAxis.data, chart.labels);
+  assert.equal(option.xAxis.name, 'Day');
+  assert.equal(option.yAxis.name, 'Commits');
+  assert.equal(option.yAxis.min, 0);
+  assert.equal(option.yAxis.max, 8);
+  assert.equal(option.series[0].type, 'line');
+  assert.deepEqual(option.series[0].data, [3, 7, 2]);
+  assert.equal(option.tooltip.renderMode, 'richText');
+  assert.equal(option.dataZoom[0].zoomOnMouseWheel, true);
+  assert.equal(option.dataZoom[0].moveOnMouseWheel, false);
+  assert.deepEqual(option.dataZoom.map((z) => z.type), ['inside']);
+  const spark = chartOption(chart, { width: 300, height: 64, spark: true });
+  assert.equal(spark.xAxis.show, false);
+  assert.equal(spark.yAxis.show, false);
+  assert.equal(spark.tooltip.show, false);
+  assert.deepEqual(spark.dataZoom, []);
+  const bars = chartOption({ ...chart, kind: 'bar', series: [...chart.series, { name: 'files', values: [1, 2, -1] }] }, { width: 800, height: 300 });
+  assert.equal(bars.yAxis.min, -1);
+  assert.deepEqual(bars.series.map((s) => s.type), ['bar', 'line']);
+  // Text remains data, including quotes and markup; there is no Mermaid/HTML interpolation.
+  const unsafe = '<img src=x onerror=alert(1)> "quoted"';
+  assert.equal(chartOption({ ...chart, x_label: unsafe, labels: [unsafe] }, { width: 800, height: 300 }).xAxis.data[0], unsafe);
+});
+
+test('advanced chart options keep literal data, disable animation and use text-only tooltips at every scope', () => {
+  const options = {
+    animation: true,
+    tooltip: { renderMode: 'html' },
+    series: [{ type: 'effectScatter', animation: true, rippleEffect: { number: 3 }, tooltip: { renderMode: 'html' }, data: [{ value: [2, 4], rippleEffect: { number: 5 } }] }],
+    dataZoom: [{ type: 'inside', zoomOnMouseWheel: true, moveOnMouseWheel: true }],
+  };
+  const drawing = chartOption({ ...chart, kind: 'echarts', options }, { width: 800, height: 300 });
+  assert.equal(drawing.animation, false);
+  assert.equal(drawing.series[0].animation, false);
+  assert.equal(drawing.tooltip.renderMode, 'richText');
+  assert.equal(drawing.series[0].tooltip.renderMode, 'richText');
+  assert.equal(drawing.series[0].rippleEffect.number, 0);
+  assert.equal(drawing.series[0].data[0].rippleEffect.number, 0);
+  assert.equal(drawing.dataZoom[0].zoomOnMouseWheel, true);
+  assert.equal(drawing.dataZoom[0].moveOnMouseWheel, false);
+  assert.equal(options.animation, true, 'rendering does not mutate saved data');
+  const plotted = chartOption({ ...chart, kind: 'echarts', options: { xAxis: {}, yAxis: {}, series: [{ type: 'scatter', data: [[1, 2]] }] } }, { width: 800, height: 300 });
+  assert.equal(plotted.dataZoom[0].type, 'inside');
+  const graph = chartOption({ ...chart, kind: 'echarts', options: { series: [{ type: 'graph' }, { type: 'tree', roam: false }] } }, { width: 800, height: 300 });
+  assert.equal(graph.series[0].roam, true);
+  assert.equal(graph.series[1].roam, false);
+});
+
+test('dataset columns named like rendering controls remain unchanged', () => {
+  const source = [{ day: 'Mon', animation: 5, tooltip: { renderMode: 'html' }, rippleEffect: { number: 4 }, type: 'effectScatter' }];
+  for (const dataset of [{ source }, [{ source }]]) {
+    const options = { dataset, xAxis: { type: 'category' }, yAxis: {}, series: [{ type: 'bar', encode: { x: 'day', y: 'animation' } }] };
+    const drawing = chartOption({ ...chart, kind: 'echarts', options }, { width: 800, height: 300 });
+    const drawn = Array.isArray(drawing.dataset) ? drawing.dataset[0].source : drawing.dataset.source;
+    assert.deepEqual(drawn, source);
+    assert.notEqual(drawn, source, 'the render options keep a separate copy of the stored data');
+    assert.equal(drawing.series[0].animation, false, 'actual rendering options are still normalized');
+  }
 });
 
 test('series colours are fixed: several take the palette in order, a lone one the tone its name hashes to', () => {
-  const palette = (series) => JSON.parse(chartSource({ ...chart, series }, { width: 800, height: 300 }).split('\n')[1].slice('config: '.length)).themeVariables.xyChart.plotColorPalette;
+  const palette = (series) => chartOption({ ...chart, series }, { width: 800, height: 300 }).color.join(', ');
   const named = (...names) => names.map((name) => ({ name, values: [1, 2, 3] }));
   // Blue, orange, bluish green, reddish purple, then violet: the badge tones, never red.
   assert.equal(palette(named('a', 'b')), '#3260c4, #a84c12');
@@ -51,15 +96,13 @@ test('series colours are fixed: several take the palette in order, a lone one th
   assert.deepEqual(seriesColorIndexes(named('lines')), [4]);
 });
 
-test('crowded x labels thin out to every n-th, the rest distinct and invisible', () => {
+test('crowded axis labels thin out while categories and tooltip labels stay intact', () => {
   const labels = Array.from({ length: 30 }, (_, i) => `2026-09-${String(i + 1).padStart(2, '0')}`);
-  assert.deepEqual(thinLabels(labels.slice(0, 5), 800), labels.slice(0, 5));
-  const thin = thinLabels(labels, 400);
-  assert.equal(thin.length, 30);
-  assert.equal(new Set(thin).size, 30);
-  const shown = thin.filter((l) => /\d/.test(l));
-  assert.ok(shown.length > 1 && shown.length < 8, shown.join());
-  assert.equal(thin[0], labels[0]);
+  assert.equal(labelInterval(labels.slice(0, 5), 800), 0);
+  const option = chartOption({ ...chart, labels }, { width: 400, height: 300 });
+  assert.deepEqual(option.xAxis.data, labels);
+  const shown = Math.ceil(labels.length / (option.xAxis.axisLabel.interval + 1));
+  assert.ok(shown > 1 && shown < 8);
 });
 
 test('CSV quotes what needs it; the headline is a line\'s latest value or a bar\'s total', () => {
