@@ -72,6 +72,9 @@ function editing(): boolean {
 }
 
 // With the on-screen keyboard open the shell covers only what is visible above it (lib/viewport).
+// iOS paints the status bar in the colour of a full-width fixed element at the page's top edge, so
+// the drawer's dim (grey there) starts at the drawer's edge, which covers the rest; the bar keeps the page's colour.
+const DRAWER_BACKDROP = 'supports-[-webkit-touch-callout:none]:left-[min(360px,calc(100vw-44px))]';
 const SHELL = 'grid h-[var(--app-height,100dvh)] mt-[var(--app-top,0px)] overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] in-data-keyboard:pb-0';
 
 // Older servers omit `required`; treat absent as true.
@@ -1056,7 +1059,7 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]">
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
               </Sheet>
             )}
