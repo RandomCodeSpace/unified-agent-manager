@@ -442,7 +442,7 @@ sign-outs are logged without the token.
 - **Charts**: ask a Task a data question ("chart commits per day this
   month") and its agent can answer with a chart through the `uam_chart`
   tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
-  browser with Mermaid like a diagram. The agent either passes the rows or,
+  browser with Apache ECharts. The agent either passes the rows or,
   cheaper, gives a shell command that prints them as CSV or JSON. uam runs
   that command itself in the Task's folder (30 seconds at most, 1 MiB of
   output), so the rows never pass through the model; the agent gets only a
@@ -468,6 +468,23 @@ sign-outs are logged without the token.
   with no agent and no model call; it works at most once a minute per
   chart. Opening the panel refreshes each chart whose rows are more than an
   hour old. A failed refresh keeps the last rows and shows why.
+  Full charts support zooming and panning; Ctrl/Cmd plus the mouse wheel
+  zooms without taking over normal page scrolling. Series can be toggled
+  through the legend. Small pinned previews keep their compact view.
+  For other chart families, `uam_chart` accepts `kind: "echarts"` with an
+  `options` JSON object, or a command with `format: "json"` that prints that
+  object. This supports pie/donut, scatter, radar, heatmap, candlestick,
+  boxplot, tree, treemap, sunburst, Sankey, graph, chord, funnel, gauge,
+  parallel, pictorial bar, theme river, effect scatter and lines, alongside
+  line and bar. These charts offer **Data** to inspect the saved specification and
+  **Copy JSON** to copy it. Pinning and refresh work as above.
+  The same saved specification, data and viewport size produce the same
+  initial drawing: animation and random layouts are disabled. Interactions
+  change the view, not the saved data. Options are bounded JSON, with no
+  executable callbacks, external assets, custom series or geographic maps.
+  Repeated pictorial symbols need an explicit integer `symbolRepeat` from
+  0 to 1000; automatic repetition is unavailable. `splitNumber` uses the
+  same limit. Sankey `layoutIterations` defaults to 32 and accepts 0 to 128.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
   flaky tests and report failures". **Routines** (the clock) in the
@@ -1144,7 +1161,9 @@ sign-outs are logged without the token.
   an **Outline** (epics › stories › subtasks with their progress, the Task's
   card marked and its story open) or a **Graph** of one level's dependencies
   at a time (the Project's epics, an epic's stories, a story's subtasks), with
-  a breadcrumb to move between levels. Clicking a card opens its details in
+  a breadcrumb to move between levels. Both planner graph views use
+  ECharts with fixed node positions. Drag to pan, zoom with the controls,
+  and reset the view without changing cards or dependencies. Clicking a card opens its details in
   place: done when, description, checklist, dependencies (its own level, and
   what it waits for through its story or epic), the agents' requests on it,
   Edit, Discard for a proposal, and Launch. Launch, Do whole story and Plan with agent in

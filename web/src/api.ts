@@ -608,7 +608,9 @@ export interface Project {
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
   title: string;
-  kind: 'line' | 'bar';
+  kind: 'line' | 'bar' | 'echarts';
+  /** A validated JSON chart specification; advanced charts do not have tabular rows. */
+  options?: import('echarts').EChartsOption;
   x_label?: string;
   y_label?: string;
   /** The shell command that printed the rows, run in the Project directory; absent for rows the agent passed. */

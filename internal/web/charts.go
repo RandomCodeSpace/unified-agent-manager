@@ -58,24 +58,27 @@ const (
 
 var chartTool = agentapi.HostTool{
 	Name: chartToolName,
-	Description: "Show the owner a line or bar chart in this conversation; their browser draws it. " +
+	Description: "Show the owner a chart in this conversation; their browser draws it. " +
 		"Prefer `command`, even when the rows need computing: uam runs it in the task's directory and reads its CSV or JSON output itself, " +
 		"so the rows never pass through you, and you get back only a short summary (row count, ranges). Pass the rows as `data` only when you have a few at hand. " +
-		fmt.Sprintf("At most %d rows and %d series; x values must be unique, y values numbers. ", maxChartRows, maxChartSeries) +
+		fmt.Sprintf("Line and bar charts take at most %d rows and %d series; x values must be unique, y values numbers. ", maxChartRows, maxChartSeries) +
 		"If uam refuses the command because the task is in Safe mode, run it with your shell tool and pass its rows as `data`. " +
-		"The owner can pin the chart to the project and refresh it later, which re-runs the command without you.",
-	Parameters: toolSchema([]string{"title", "kind", "x", "y"}, map[string]any{
+		"For other standard 2D Apache ECharts charts use kind echarts with options, or a command printing one JSON option object with format json. " +
+		"Do not pass x, y or data with echarts. Options are bounded JSON only: no JavaScript, external images, maps, custom series, toolbox or force layouts. " +
+		"Graphs use fixed coordinates or circular layout; animations are disabled. The owner can pin the chart to the project and refresh it later, which re-runs the command without you.",
+	Parameters: toolSchema([]string{"title", "kind"}, map[string]any{
 		"title":   stringProp(fmt.Sprintf("What the chart shows, up to %d characters, e.g. \"Commits per day, September\".", maxChartTitle)),
-		"kind":    enumProp("line for a trend over an ordered x, such as days; bar to compare categories.", "line", "bar"),
+		"kind":    enumProp("line for a trend, bar to compare categories, echarts for other standard 2D chart families.", "line", "bar", "echarts"),
 		"x_label": stringProp(fmt.Sprintf("The x axis title, up to %d characters.", maxChartLabel)),
 		"y_label": stringProp(fmt.Sprintf("The y axis title, up to %d characters.", maxChartLabel)),
-		"x":       stringProp("The field holding each row's x value: a column of the CSV header, or a key of each JSON object or data row. Rows keep their order."),
-		"y": listProp(fmt.Sprintf("The fields holding the numbers, one series each, 1 to %d.", maxChartSeries),
+		"x":       stringProp("Required for line/bar: the field holding each row's x value, a CSV column or JSON object key. Rows keep their order."),
+		"y": listProp(fmt.Sprintf("Required for line/bar: the fields holding the numbers, one series each, 1 to %d.", maxChartSeries),
 			map[string]any{"type": "string"}),
 		"command": stringProp(fmt.Sprintf("A shell command, such as a pipeline or a short script, run in the task's directory with a %s limit and %d KiB of output. "+
-			"It prints CSV with a header row, or JSON: an array of objects or one object per line. It must not depend on files you made, since a refresh runs it again later.", chartTimeout, maxChartOutput>>10)),
-		"format": enumProp("The command's output: csv or json. Required with command.", "csv", "json"),
-		"data":   listProp("Rows instead of a command: objects holding the x and y fields.", map[string]any{"type": "object"}),
+			"For line/bar it prints CSV with a header row, or JSON rows. For echarts it prints one JSON option object. It must not depend on files you made, since a refresh runs it again later.", chartTimeout, maxChartOutput>>10)),
+		"format":  enumProp("The command's output: csv or json. Required with command.", "csv", "json"),
+		"data":    listProp("Rows instead of a command: objects holding the x and y fields.", map[string]any{"type": "object"}),
+		"options": map[string]any{"type": "object", "description": "For kind echarts only: an Apache ECharts option object with 1 to 32 series. Supported types: " + strings.Join(chartOptionSeries, ", ") + ". Prefer a command printing this object when computing the data. At most 1 MiB, 32 levels and 20000 JSON values. Use explicit axes/coordinates; lines needs cartesian2d or polar. No maps, custom series, external assets or JavaScript."},
 	}),
 }
 
@@ -98,11 +101,12 @@ type ChartSeries struct {
 	Values []float64 `json:"values"`
 }
 
-// ChartData is a chart's rows, column-wise, and when they were read.
+// ChartData is a chart's rows or validated ECharts options, and when they were read.
 type ChartData struct {
-	Labels []string      `json:"labels"`
-	Series []ChartSeries `json:"series"`
-	At     time.Time     `json:"at"`
+	Labels  []string        `json:"labels"`
+	Series  []ChartSeries   `json:"series"`
+	Options json.RawMessage `json:"options,omitempty"`
+	At      time.Time       `json:"at"`
 }
 
 // Chart is a chart a Task drew. PinnedID is the Project's pinned chart made
@@ -123,6 +127,13 @@ type chartArgs struct {
 	Command string           `json:"command"`
 	Format  string           `json:"format"`
 	Data    []map[string]any `json:"data"`
+	Options json.RawMessage  `json:"options"`
+}
+
+// chartInput holds one of the two inline forms; a command supplies its own data.
+type chartInput struct {
+	rows    []map[string]any
+	options json.RawMessage
 }
 
 // fieldList is a list of field names; a model that passes one name as a
@@ -156,13 +167,17 @@ func (c ChartSpec) check() error {
 		}
 		return nil
 	}
+	advanced := c.Kind == "echarts"
 	errs := []error{text("title", c.Title, maxChartTitle, true), text("x_label", c.XLabel, maxChartLabel, false),
-		text("y_label", c.YLabel, maxChartLabel, false), text("x", c.X, maxChartField, true)}
-	if c.Kind != "line" && c.Kind != "bar" {
-		errs = append(errs, errors.New("kind must be line or bar"))
+		text("y_label", c.YLabel, maxChartLabel, false), text("x", c.X, maxChartField, !advanced)}
+	if c.Kind != "line" && c.Kind != "bar" && !advanced {
+		errs = append(errs, errors.New("kind must be line or bar, or echarts for other charts"))
+	}
+	if advanced && (c.X != "" || len(c.Y) != 0 || c.XLabel != "" || c.YLabel != "") {
+		errs = append(errs, errors.New("echarts puts axes and data in options; do not pass x, y, x_label or y_label"))
 	}
 	switch {
-	case len(c.Y) == 0:
+	case !advanced && len(c.Y) == 0:
 		errs = append(errs, errors.New("y needs at least one field"))
 	case len(c.Y) > maxChartSeries:
 		errs = append(errs, fmt.Errorf("y has %d fields; a chart shows at most %d series", len(c.Y), maxChartSeries))
@@ -180,7 +195,9 @@ func (c ChartSpec) check() error {
 		case !utf8.ValidString(c.Command) || strings.ContainsFunc(c.Command, func(r rune) bool { return unicode.IsControl(r) && r != '\t' && r != '\n' }):
 			errs = append(errs, errors.New("command has a control character other than a newline or a tab"))
 		}
-		if c.Format != "csv" && c.Format != "json" {
+		if advanced && c.Format != "json" {
+			errs = append(errs, errors.New("format must be json for an echarts command"))
+		} else if c.Format != "csv" && c.Format != "json" {
 			errs = append(errs, errors.New("format must be csv or json with a command"))
 		}
 	} else if c.Format != "" {
@@ -190,24 +207,37 @@ func (c ChartSpec) check() error {
 }
 
 // chartFromArgs checks a uam_chart call's arguments and returns its spec
-// and inline rows.
-func chartFromArgs(raw json.RawMessage) (ChartSpec, []map[string]any, error) {
+// and inline data.
+func chartFromArgs(raw json.RawMessage) (ChartSpec, chartInput, error) {
 	var in chartArgs
 	if err := decodeToolArgs(raw, &in); err != nil {
-		return ChartSpec{}, nil, err
+		return ChartSpec{}, chartInput{}, err
 	}
 	spec := ChartSpec{Title: strings.TrimSpace(in.Title), Kind: in.Kind, XLabel: strings.TrimSpace(in.XLabel), YLabel: strings.TrimSpace(in.YLabel),
 		Command: strings.TrimSpace(in.Command), Format: in.Format, X: in.X, Y: in.Y}
-	switch {
-	case spec.Command != "" && in.Data != nil:
-		return ChartSpec{}, nil, errors.New("pass either command or data, not both")
-	case spec.Command == "" && len(in.Data) == 0:
-		return ChartSpec{}, nil, errors.New("pass a command that prints the rows, or the rows as data")
+	if spec.Kind == "echarts" {
+		switch {
+		case in.Data != nil:
+			return ChartSpec{}, chartInput{}, errors.New("echarts takes options, not data rows")
+		case spec.Command != "" && in.Options != nil:
+			return ChartSpec{}, chartInput{}, errors.New("pass either command or options, not both")
+		case spec.Command == "" && in.Options == nil:
+			return ChartSpec{}, chartInput{}, errors.New("pass a command that prints an option object, or inline options")
+		}
+	} else {
+		switch {
+		case in.Options != nil:
+			return ChartSpec{}, chartInput{}, errors.New("options requires kind echarts")
+		case spec.Command != "" && in.Data != nil:
+			return ChartSpec{}, chartInput{}, errors.New("pass either command or data, not both")
+		case spec.Command == "" && len(in.Data) == 0:
+			return ChartSpec{}, chartInput{}, errors.New("pass a command that prints the rows, or the rows as data")
+		}
 	}
 	if err := spec.check(); err != nil {
-		return ChartSpec{}, nil, err
+		return ChartSpec{}, chartInput{}, err
 	}
-	return spec, in.Data, nil
+	return spec, chartInput{rows: in.Data, options: in.Options}, nil
 }
 
 // parseChartOutput reads a command's output as rows: CSV with a header row,
@@ -424,8 +454,9 @@ func runChartCommand(ctx context.Context, dir, command string) ([]byte, error) {
 
 // readChart reads the rows of spec: from its command, run in dir, or else
 // from inline. It returns them with how long the command took.
-func readChart(ctx context.Context, spec ChartSpec, dir string, inline []map[string]any) (ChartData, time.Duration, error) {
-	rows, fields := inline, []string(nil)
+func readChart(ctx context.Context, spec ChartSpec, dir string, inline chartInput) (ChartData, time.Duration, error) {
+	rows, fields := inline.rows, []string(nil)
+	options := inline.options
 	var took time.Duration
 	if spec.Command != "" {
 		start := time.Now()
@@ -434,9 +465,18 @@ func readChart(ctx context.Context, spec ChartSpec, dir string, inline []map[str
 		if err != nil {
 			return ChartData{}, took, err
 		}
-		if rows, fields, err = parseChartOutput(spec.Format, out); err != nil {
+		if spec.Kind == "echarts" {
+			options = out
+		} else if rows, fields, err = parseChartOutput(spec.Format, out); err != nil {
 			return ChartData{}, took, err
 		}
+	}
+	if spec.Kind == "echarts" {
+		checked, err := chartOptions(options)
+		if err != nil {
+			return ChartData{}, took, err
+		}
+		return ChartData{Labels: []string{}, Series: []ChartSeries{}, Options: checked, At: time.Now().UTC()}, took, nil
 	}
 	labels, series, err := chartRows(spec, rows, fields)
 	if err != nil {
@@ -448,6 +488,13 @@ func readChart(ctx context.Context, spec ChartSpec, dir string, inline []map[str
 // chartSummary is what the model gets back: the rows' extent, never the
 // rows.
 func chartSummary(spec ChartSpec, data ChartData, took time.Duration) string {
+	if spec.Kind == "echarts" {
+		pinned := "a snapshot"
+		if spec.Command != "" {
+			pinned = "the command for refresh"
+		}
+		return fmt.Sprintf("Charted %q (echarts) for the owner. The validated options show in the conversation; do not repeat the data. Pinning keeps %s.", spec.Title, pinned)
+	}
 	var b strings.Builder
 	noun := "rows"
 	if len(data.Labels) == 1 {
@@ -545,7 +592,7 @@ func (m *Manager) drawChart(ctx context.Context, taskID string, call agentapi.Ho
 	// A command runs without a permission request, so only where the owner
 	// allows every request without asking.
 	if spec.Command != "" && mode != store.ModeYolo {
-		return "", errors.New("this task is in Safe mode, so uam does not run commands for it. Run the command with your shell tool, which asks the owner, and pass its rows as data")
+		return "", errors.New("this task is in Safe mode, so uam does not run commands for it. Run the command with your shell tool, which asks the owner, and pass its rows as data or its echarts option object as options")
 	}
 	data, took, err := readChart(ctx, spec, dir, inline)
 	if err != nil {

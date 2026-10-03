@@ -377,6 +377,8 @@ describe('the map', () => {
     const layer = map.firstElementChild as HTMLElement;
     await waitFor(() => expect(layer.style.transform).toBe('translate(24px, 24px) scale(1)'));
     expect(within(map).getByRole('button', { name: /^#1 · Epic · Doing/ })).toBeTruthy();
+    await waitFor(() => expect(map.querySelector('svg')?.textContent).toContain('#1 · Epic · Doing'));
+    expect(map.querySelector('foreignObject')).toBeNull();
     // The test environment lays nothing out (a 0 × 0 viewport): Fit stops at the 0.4 limit.
     await user.click(screen.getByRole('button', { name: 'Fit the plan' }));
     expect(layer.style.transform).toMatch(/scale\(0\.4\)$/);

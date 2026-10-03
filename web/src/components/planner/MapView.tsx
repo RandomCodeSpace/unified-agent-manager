@@ -1,24 +1,21 @@
 import { Maximize, Minus, Plus } from 'lucide-react';
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react';
-import type { Card, CardStatus } from '../../api';
-import { KIND_LABEL, MAP_MAX_K, MAP_MIN_K, MAP_NODE_H, MAP_NODE_W, STATUS_LABEL, fitView, layoutMap, openingView, shownProgress, type MapEdge, type MapNode } from '../../lib/board';
-import { cn } from '../../lib/cn';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type KeyboardEvent, type PointerEvent } from 'react';
+import type { Card } from '../../api';
+import { MAP_MAX_K, MAP_MIN_K, MAP_NODE_H, MAP_NODE_W, fitView, layoutMap, openingView, type MapNode } from '../../lib/board';
+import { EChart } from '../EChart';
 import { Button } from '../ui/button';
 import { useShownBoard } from './context';
-import { ProgressRing } from './parts';
+import { MAP_GRAPH_GUTTER, mapGraphOption, mapNodeMeta } from './graph-options';
 
 const PAD = 24;
-
-// Only doing cards take a coloured outline; the dot carries every status.
-const DOT: Record<CardStatus, string> = { planned: 'bg-raised border-faint', todo: 'bg-raised border-muted', doing: 'bg-accent border-accent', done: 'bg-success border-success', cancelled: 'bg-hairline-strong border-hairline-strong' };
 
 /**
  * The Map (ADR 0005 §10): the plan as a tree, epic → story → subtask left to right, with
  * blocker links as dashed secondary edges. Nodes carry their status colour and word, and
  * containers a progress ring. Pan (drag, wheel, arrows) and zoom (pinch, Ctrl+wheel, + and −)
  * move one layer through a CSS transform written straight to the CSSOM, one frame at a time,
- * so a large plan never re-renders or lays out while it moves: nodes are HTML over an SVG of
- * the edges, because SVG text lays out again at every scale. A click opens the card.
+ * so a large plan never re-renders or lays out while it moves. ECharts draws the graph, with
+ * transparent native buttons above it for keyboard focus and opening cards.
  */
 export function MapView() {
   const { ui, cards, openCard, board } = useShownBoard();
@@ -35,7 +32,7 @@ export function MapView() {
   const gesture = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean; distance?: number; k?: number } | null>(null);
   const dragged = useRef(false);
   const opened = useRef<string | null>(null);
-  const marker = useId();
+  const option = useMemo(() => mapGraphOption(layout, ui.selected), [layout, ui.selected]);
 
   const paint = useCallback(() => {
     frame.current = 0;
@@ -223,15 +220,8 @@ export function MapView() {
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
       >
-        <div ref={layer} className="absolute top-0 left-0 origin-top-left">
-          <svg width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} className="absolute top-0 left-0 overflow-visible">
-            <defs>
-              <marker id={`${marker}-arrow`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M0,0 L8,4 L0,8 z" className="fill-warning" />
-              </marker>
-            </defs>
-            <Edges edges={layout.edges} nodes={layout.nodes} arrow={`url(#${marker}-arrow)`} />
-          </svg>
+        <div ref={layer} className="absolute top-0 left-0 origin-top-left" style={{ width: layout.width + MAP_GRAPH_GUTTER, height: layout.height }}>
+          <EChart option={option} width={layout.width + MAP_GRAPH_GUTTER} height={layout.height} className="pointer-events-none [&_svg]:overflow-visible" />
           {layout.nodes.map((n) => (
             <Node key={n.card.id} node={n} selected={ui.selected === n.card.id} onOpen={open} onFocusNode={reveal} />
           ))}
@@ -252,59 +242,9 @@ export function MapView() {
   );
 }
 
-const isOpen = (c: Card) => c.status !== 'done' && c.status !== 'cancelled';
-
-/** Equal while the same edges join nodes at the same places, each blocker as open as before: a title or checklist change redraws no edge. */
-function sameEdges(a: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>, b: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>): boolean {
-  if (a.arrow !== b.arrow || a.edges.length !== b.edges.length || a.nodes.length !== b.nodes.length) return false;
-  for (let i = 0; i < a.nodes.length; i++) {
-    const p = a.nodes[i], q = b.nodes[i];
-    if (p !== q && (p.card.id !== q.card.id || p.x !== q.x || p.y !== q.y || isOpen(p.card) !== isOpen(q.card))) return false;
-  }
-  for (let i = 0; i < a.edges.length; i++) {
-    const x = a.edges[i], y = b.edges[i];
-    if (x.from !== y.from || x.to !== y.to || x.kind !== y.kind) return false;
-  }
-  return true;
-}
-
-const Edges = memo(function Edges({ edges, nodes, arrow }: Readonly<{ edges: MapEdge[]; nodes: MapNode[]; arrow: string }>) {
-  const at = new Map(nodes.map((n) => [n.card.id, n]));
-  const h = MAP_NODE_H / 2;
-  return (
-    <g fill="none">
-      {edges.map((e) => {
-        const a = at.get(e.from), b = at.get(e.to);
-        if (!a || !b) return null;
-        if (e.kind === 'parent') {
-          const x1 = a.x + MAP_NODE_W, y1 = a.y + h, x2 = b.x, y2 = b.y + h;
-          const bend = (x2 - x1) / 2;
-          return <path key={`${e.from}>${e.to}`} d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`} strokeWidth="1.25" className="stroke-hairline-strong" />;
-        }
-        // A blocker link loops out to the right of both cards, so it never crosses the tree's own edges.
-        const x1 = a.x + MAP_NODE_W, y1 = a.y + h, x2 = b.x + MAP_NODE_W, y2 = b.y + h;
-        const out = Math.max(x1, x2) + 36 + Math.min(80, Math.abs(y2 - y1) / 6);
-        const open = isOpen(a.card);
-        return (
-          <path
-            key={`${e.from}~${e.to}`}
-            d={`M${x1},${y1} C${out},${y1} ${out},${y2} ${x2 + 2},${y2}`}
-            strokeWidth="1.5"
-            strokeDasharray="4 4"
-            markerEnd={open ? arrow : undefined}
-            className={open ? 'stroke-warning' : 'stroke-hairline-strong'}
-          >
-            <title>{`#${a.card.seq} blocks #${b.card.seq}${open ? '' : ' (closed)'}`}</title>
-          </path>
-        );
-      })}
-    </g>
-  );
-}, sameEdges);
-
 const Node = memo(function Node({ node, selected, onOpen, onFocusNode }: Readonly<{ node: MapNode; selected: boolean; onOpen: (id: string) => void; onFocusNode: (n: MapNode) => void }>) {
   const c: Card = node.card;
-  const meta = `#${c.seq} · ${KIND_LABEL[c.kind]} · ${STATUS_LABEL[c.status]}${c.progress ? ` · ${shownProgress(c.progress).short}` : ''}`;
+  const meta = mapNodeMeta(c);
   return (
     <button
       type="button"
@@ -313,27 +253,9 @@ const Node = memo(function Node({ node, selected, onOpen, onFocusNode }: Readonl
       title={`${meta}: ${c.title}`}
       // Placed through the CSSOM, like the layer's transform.
       style={{ left: node.x, top: node.y, width: MAP_NODE_W, height: MAP_NODE_H }}
-      className={cn(
-        'absolute flex cursor-pointer items-center gap-2.5 rounded-[10px] border-[1.5px] bg-raised pr-3 pl-3 text-left focus-visible:outline-offset-1',
-        selected || c.status === 'doing' ? 'border-accent' : 'border-hairline-strong',
-        selected && 'border-2',
-        !c.confirmed && 'border-dashed',
-        c.status === 'cancelled' && 'opacity-50',
-      )}
+      className="absolute cursor-pointer rounded-[10px] bg-transparent focus-visible:outline-offset-1"
       onClick={() => onOpen(c.id)}
       onFocus={() => onFocusNode(node)}
-    >
-      {c.kind === 'subtask' ? <span aria-hidden="true" className={cn('size-2.5 shrink-0 rounded-full border-[1.5px]', DOT[c.status])} /> : <ProgressRing card={c} />}
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-meta tabular-nums text-muted">{meta}</span>
-        <span className={cn('truncate text-ui text-ink', c.kind !== 'subtask' && 'font-semibold')}>{c.title}</span>
-      </span>
-      {(c.pending_requests > 0 || c.held_by) && (
-        <span aria-hidden="true" className="absolute top-1.5 right-2 flex items-center gap-1">
-          {c.held_by && <span className="size-1.5 rounded-full bg-accent" />}
-          {c.pending_requests > 0 && <span className="size-2 rounded-full bg-attention" />}
-        </span>
-      )}
-    </button>
+    />
   );
 });

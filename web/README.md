@@ -64,6 +64,8 @@ contain it. `#task=<id>` in the URL opens a task directly.
   listbox, New folder, Use this folder), Settings (service-wide preferences), Login, `taskActions.tsx` (the
   shared Rename/Settle/Reopen/Archive/Delete menu items and their rules)
   Diagram (the `mermaid` card: Diagram / Code toggle, lightbox, fallback note)
+  and EChart (the lazy Apache ECharts SVG renderer used by chart cards and
+  planner graphs),
   and shared atoms in `common.tsx` (markdown with lazy code highlighting).
 - `src/components/ui/` — the Base UI wrappers (button, menu and context
   menu, dialog, alert dialog, sheet, tooltip, select, segmented control) styled with the
@@ -72,6 +74,10 @@ contain it. `#task=<id>` in the URL opens a task directly.
   `useResizable` hook, flat sidebar filtering and lifecycle helpers, folder path and breadcrumb logic (`folders.ts`), `diagram.ts` (the frame
   protocol, queue and theme; see ADR 0004) and `highlight.ts` (lowlight
   with the grammars, loaded on demand).
+  `echarts.ts` registers the supported chart types and components in a
+  separate lazy bundle. Chart options stay JSON data; no model-produced
+  functions are evaluated. Tooltips render as SVG text, and planner nodes
+  retain native keyboard controls over the drawing.
 - `src/diagram-frame/` — the entry of the second bundle: the classic script
   that runs Mermaid inside `/diagram-frame.html`, built by the
   `diagramFrame` plugin in `vite.config.ts` after the app.
