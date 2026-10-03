@@ -624,7 +624,7 @@ sign-outs are logged without the token.
   and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
-  Subagents retain their Stop action in the subagent panel and context menu.
+  A running subagent's Stop sits in its row, expanded in the conversation.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
   ignored, and their directories. Picking one inserts `@path` and adds a chip;
@@ -1068,7 +1068,7 @@ sign-outs are logged without the token.
   sends them as one message, at once to an idle Task or after the running
   turn. Viewed marks and unsent comments are kept in this browser per Task
   and survive a reload; a settled or archived Task takes no comments. On a
-  wide window this panel and the Subagents panel can be
+  wide window this panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
   An open panel on the active, visible Task refreshes its selected scope

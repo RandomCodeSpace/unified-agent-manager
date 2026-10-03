@@ -37,11 +37,15 @@ test('the turn line counts thoughts with their time, and what the tools did by k
     prose('m1', at(14)),
   );
   const s = summarizeTurn(turn, { live: false });
-  assert.deepEqual(s.parts.map((p) => p.text), ['2 thoughts (5s)', '2 commands', '1 file changed', '2 files read', '1 search', '1 subagent', '1 tool']);
+  // A subagent's call is the reply's subagent chip, never a count here.
+  assert.deepEqual(s.parts.map((p) => p.text), ['2 thoughts (5s)', '2 commands', '1 file changed', '2 files read', '1 search', '1 tool']);
   assert.ok(s.parts.every((p) => p.tone === 'muted'));
   assert.equal(s.label, s.parts.map((p) => p.text).join(' · '));
   assert.equal(s.tone, 'muted');
-  assert.equal(s.count, 11);
+  assert.equal(s.count, 10);
+  // Nor is a failed or unfinished one: the chip says how its subagent did.
+  const spawned = (status) => call('t9', tool('task', '{"description":"d"}', { status }), at(20));
+  for (const status of ['failed', 'running', 'completed']) assert.deepEqual(summarizeTurn(entries(spawned(status)), { live: false }), { parts: [], label: '', tone: 'muted', count: 0 });
   // Prose alone folds nothing: the head row stays a plain "Took".
   assert.deepEqual(summarizeTurn(entries(prose('m1', at(1))), { live: false }), { parts: [], label: '', tone: 'muted', count: 0 });
   // A thought without text or still streaming is not counted; two searches read "searches".
@@ -76,9 +80,10 @@ test('the foot line names thinking that streams or the last open call, waiting f
   assert.equal(currentStep([user('u1', at(0)), thought('r1', at(1))], { live: true, streamingId: 'm9' }), null);
   const running = bash('c1', 'npm test', at(2), { status: 'running' });
   assert.deepEqual(currentStep([running], { live: true }), { label: 'Running: bash npm test', tone: 'muted', shimmer: false, item: running });
-  // A question or a subagent's call keeps its own place: the foot names it but does not unfold it.
+  // A question keeps its own place: the foot names it but does not unfold it.
   assert.equal(currentStep([asked('a1', 'Which?', at(2), { status: 'running', output: undefined })], { live: true }).item, undefined);
-  assert.equal(currentStep([call('t1', tool('task', '{"description":"d"}', { status: 'running' }))], { live: true }).item, undefined);
+  // A subagent's call is never the step: the live subagent card shows it.
+  assert.equal(currentStep([call('t1', tool('task', '{"description":"d"}', { status: 'running' }))], { live: true }), null);
   const approvals = new Map([['c1', [perm('p1', { tool_call_id: 'c1', state: 'pending', resolution: undefined })]]]);
   assert.deepEqual(currentStep([running], { live: true, approvals }), { label: 'Waiting for your approval: bash npm test', tone: 'attention', shimmer: false });
   const question = new Map([['c1', [q('q1', 'Which?', { tool_call_id: 'c1', state: 'pending' })]]]);

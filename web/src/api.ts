@@ -786,9 +786,9 @@ export interface Subagent {
    * Its periods of work, oldest first, when the provider tracks them: a reused subagent keeps its id and
    * gains a run each time the main agent (`agent`) or a UAM follow-up (`user`) starts it again; the first
    * run is `spawn`. The latest run carries `status` and `ended_at`; an ended run keeps the status it ended
-   * with. At most 50: the first and the newest.
+   * with. At most 50: the first and the newest. `started_at` is absent when it was not recorded.
    */
-  runs?: { started_at: string; ended_at?: string; status: SubagentStatus; trigger: 'spawn' | 'agent' | 'user' }[];
+  runs?: { started_at?: string; ended_at?: string; status: SubagentStatus; trigger: 'spawn' | 'agent' | 'user' }[];
 }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
@@ -1707,7 +1707,7 @@ export function modelName(meta: Meta | null, providerName: string, id: string): 
   return modelCatalog(meta, providerName).find((m) => m.id === id)?.name ?? id;
 }
 
-export const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
+export const readOnly = (s: Pick<SessionSummary, 'stage'>): boolean => s.stage === 'settled' || s.stage === 'archived';
 export const stageLabel = (s: SessionSummary): string => {
   if (s.stage === 'settled') return 'Settled';
   if (s.stage === 'archived') return 'Archived';

@@ -486,7 +486,8 @@ export interface ActivitySummary {
  */
 export function summarizeActivity(entries: Entry[], { live, streamingId, approvals, endedAt }: { live: boolean; streamingId?: string; approvals?: Map<string, Interaction[]>; endedAt?: string }): ActivitySummary {
   const items = entries.flatMap((e) => (e.item ? [e.item] : []));
-  const tools = items.filter((it) => it.kind === 'tool');
+  // A subagent's call is its row (and the live card), never a count or the running step here.
+  const tools = items.filter((it) => it.kind === 'tool' && !isSubagentCall(it));
   const thinking = items.some((it) => it.kind === 'reasoning' && it.id === streamingId);
   const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && (it.text?.trim() || it.compact?.has_reasoning)).length;
   // A question that no longer waits counts as a question, never as a tool call; one still waiting stays a call.
@@ -706,19 +707,20 @@ export interface TurnSummary {
 /**
  * The turn line's counts (DESIGN.md turn line): finished thoughts with their total time, then
  * what the tools did by kind (commands, files changed and read by distinct path, searches,
- * subagents, other tools), the questions answered or declined and the requests decided, then
- * what stays explicit: failures, calls without a result, questions without an answer and
- * images returned. A call still running and thinking still streaming are not counted: the
- * live foot line names them.
+ * other tools), the questions answered or declined and the requests decided, then what stays
+ * explicit: failures, calls without a result, questions without an answer and images returned.
+ * A call still running and thinking still streaming are not counted: the live foot line names
+ * them. A subagent's `task` call is never counted, failed or not: the reply's subagent chip is.
  */
 export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSummary {
-  let count = 0, thoughts = 0, thinkMs = 0, commands = 0, searches = 0, subagents = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
+  let count = 0, thoughts = 0, thinkMs = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
   const changed = new Set<string>();
   const read = new Set<string>();
   const outcomes: AskedQuestion['outcome'][] = [];
   let waiting = false;
   for (const entry of entries) {
-    if (!isWork(entry)) continue;
+    // A subagent's call is not counted here: the reply's subagent chip counts its subagents.
+    if (!isWork(entry) || isSubagentCall(entry.item)) continue;
     count++;
     if (entry.interaction) {
       if (entry.interaction.kind === 'question') outcomes.push(questionOf(undefined, entry.interaction, ctx.live)!.outcome);
@@ -763,9 +765,6 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
       case 'search':
         searches++;
         break;
-      case 'subagent':
-        subagents++;
-        break;
       default:
         other++;
     }
@@ -781,7 +780,6 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(changed.size && `${noun(changed.size, 'file')} changed`),
     quiet(read.size && `${noun(read.size, 'file')} read`),
     quiet(searches && noun(searches, 'search', 'searches')),
-    quiet(subagents && noun(subagents, 'subagent')),
     quiet(other && noun(other, 'tool')),
     quiet(asked('answered') && `${noun(asked('answered'), 'question')} answered`),
     quiet(asked('declined') && `${noun(asked('declined'), 'question')} declined`),
@@ -800,7 +798,7 @@ export interface Step {
   tone: 'muted' | 'attention';
   /** The label is a state word that shimmers, not a command to read. */
   shimmer: boolean;
-  /** The thought streaming or the call running, which the foot shows unfolded (DESIGN.md live step); absent for a call that waits for the user, asks a question or spawns a subagent. */
+  /** The thought streaming or the call running, which the foot shows unfolded (DESIGN.md live step); absent for a call that waits for the user or asks a question. */
   item?: Item;
 }
 
@@ -808,29 +806,34 @@ export interface Step {
  * What the live foot line names while a turn runs: thinking that still streams, or the last
  * call still open (by name and argument), waiting for the user when its request does. Null
  * when the agent is between steps or prose streams, so the line falls back to its verb. A
- * call `own` claims (a subagent's) is its own row and never a step. A streaming thought and a
- * running call carry their item, which the foot shows unfolded until it folds into the counts.
+ * call `own` claims (a declared file's card) and a subagent's call (the live subagent card
+ * shows it) are never a step. A streaming thought and a running call carry their item, which
+ * the foot shows unfolded until it folds into the counts.
  */
 export function currentStep(items: readonly Item[], ctx: ActivityContext, own?: (item: Item) => boolean): Step | null {
   const last = items.at(-1);
   if (!last) return null;
   if (last.kind === 'reasoning') return last.id === ctx.streamingId ? { label: 'Thinking…', tone: 'muted', shimmer: true, item: last } : null;
-  if (last.kind !== 'tool' || own?.(last)) return null;
+  if (last.kind !== 'tool' || own?.(last) || isSubagentCall(last)) return null;
   const status = last.tool?.status;
   if (!ctx.live || (status !== 'pending' && status !== 'running')) return null;
   const { name, arg } = toolLabel(last.tool);
   const call = arg ? `${name} ${arg}` : name;
   const pending = ctx.approvals?.get(last.id)?.find(awaitsUser);
   if (pending) return { label: `Waiting for your ${pending.kind === 'question' ? 'answer' : 'approval'}: ${call}`, tone: 'attention', shimmer: false };
-  const kind = toolKind(name);
-  return { label: `Running: ${call}`, tone: 'muted', shimmer: false, item: kind === 'question' || kind === 'subagent' ? undefined : last };
+  return { label: `Running: ${call}`, tone: 'muted', shimmer: false, item: toolKind(name) === 'question' ? undefined : last };
+}
+
+/** A `task` call, which spawned a subagent: the live subagent card and the reply's chip show it, never the turn line or the foot. */
+export function isSubagentCall(item: Item | undefined): boolean {
+  return item?.kind === 'tool' && toolKind(item.tool?.name ?? '') === 'subagent';
 }
 
 /**
  * Whether an entry stands in the answer at its place (DESIGN.md promotion) rather than folding
  * into the turn line: prose, notices and steer bubbles always; a question that no longer waits;
  * a call whose result returned images (the images do, while the call folds, see `callProduct`);
- * a call `own` takes over (a subagent row, a declared file's card); a question request.
+ * a call `own` takes over (a declared file's card); a question request.
  * Thoughts, calls (failed ones too: the turn line counts them) and decided permissions never do.
  */
 export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) => boolean): boolean {

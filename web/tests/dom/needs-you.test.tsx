@@ -10,12 +10,13 @@ const header = () => screen.getByRole('heading', { level: 1 });
 describe('the Task list', () => {
   test('groups the active Tasks by state, each with its count', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
-    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which works on a planner subtask.
+    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which works on a planner subtask;
+    // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
     renderApp('?planner=unset');
     const side = await sidebar();
     const titles = side.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
-    expect(titles).toEqual(['Needs you9Alt+J next', 'Ready for review5', 'Working3', 'Idle2']);
+    expect(titles).toEqual(['Needs you9Alt+J next', 'Ready for review5', 'Working4', 'Idle2']);
     const you = within(side.getByRole('region', { name: /Needs you/ }));
     expect(you.getByRole('button', { name: /Bump GitHub Actions pins.*Stopped with an error/ })).toBeTruthy();
     expect(you.getByRole('button', { name: /Tidy zsh startup.*Wants your OK to run a shell command outside the project/ })).toBeTruthy();
