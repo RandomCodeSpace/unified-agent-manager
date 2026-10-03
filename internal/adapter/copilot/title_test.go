@@ -125,6 +125,36 @@ func TestTitleEffortIsTheLowestTheModelOffers(t *testing.T) {
 	}
 }
 
+func TestUtilityUsesLowestSupportedEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		efforts []string
+		want    string
+	}{
+		{"none", []string{"high", "low", "none"}, "none"},
+		{"minimal", []string{"low", "minimal"}, "minimal"},
+		{"low", []string{"high", "low", "medium"}, "low"},
+		{"medium", []string{"high", "medium"}, "medium"},
+		{"high", []string{"max", "xhigh", "high"}, "high"},
+		{"xhigh", []string{"max", "xhigh"}, "xhigh"},
+		{"max", []string{"max"}, "max"},
+		{"no effort control", nil, ""},
+		{"unknown effort", []string{"future"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, fc := titleProvider(func(context.Context, copilot.MessageOptions) (string, error) { return "draft", nil })
+			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+			fc.models = []rpc.Model{{ID: "utility-model", SupportedReasoningEfforts: tc.efforts}}
+			if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "utility-model", Purpose: "configuration-draft", Prompt: "Create a draft"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := fc.create[0].ReasoningEffort; got != tc.want {
+				t.Fatalf("Utility effort = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // Every path after a created session deletes it, with a context of its own;
 // a failed create has nothing to delete.
 func TestTitleAlwaysDeletesItsSession(t *testing.T) {

@@ -1,20 +1,35 @@
+import { createContext, useContext, type ReactNode } from 'react';
 import { modelCatalog, provider, type TaskDefaults } from '../api';
 import { modelChoices } from '../lib/models';
 import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
 import { Select } from './ui/select';
+import { HelpTip } from './ui/tooltip';
 
 /** A model in a menu: its name, with the note ("hidden in Settings", "not offered now") in parentheses. */
 export const choiceLabel = (name: string, note?: string): string => (note ? `${name} (${note.toLowerCase()})` : name);
 
-export function Field({ id, label, hint, children }: Readonly<{ id: string; label: string; hint?: string; children: React.ReactNode }>) {
+const FieldHelpContext = createContext(false);
+
+/** Settings use compact help; fields in project and task forms retain their inline guidance. */
+export function FieldHelpProvider({ children }: Readonly<{ children: ReactNode }>) {
+  return <FieldHelpContext value>{children}</FieldHelpContext>;
+}
+
+export function Field({ id, label, hint, hintVisible = false, hintId = `${id}-hint`, children }: Readonly<{ id: string; label: string; hint?: string; hintVisible?: boolean; hintId?: string; children: ReactNode }>) {
+  const compactHelp = useContext(FieldHelpContext) && !hintVisible;
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <label htmlFor={id} className="text-caption text-muted">
-        {label}
-      </label>
+      {hint && compactHelp ? (
+        <div className="flex min-w-0 items-center gap-1">
+          <label htmlFor={id} className="text-caption text-muted">{label}</label>
+          <HelpTip label={label} id={hintId}>{hint}</HelpTip>
+        </div>
+      ) : (
+        <label htmlFor={id} className="text-caption text-muted">{label}</label>
+      )}
       {children}
-      {hint && <Note id={`${id}-hint`}>{hint}</Note>}
+      {hint && !compactHelp && <Note id={hintId}>{hint}</Note>}
     </div>
   );
 }
@@ -52,7 +67,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           </Field>
         </div>
       )}
-      <Field id={`${prefix}-effort`} label="Effort" hint={noEffort || undefined}>
+      <Field id={`${prefix}-effort`} label="Effort" hint={noEffort || undefined} hintVisible={!!noEffort}>
         <Select
           id={`${prefix}-effort`}
           value={value.effort}
@@ -62,7 +77,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           onValueChange={(effort) => onChange({ ...value, effort })}
         />
       </Field>
-      <Field id={`${prefix}-context-size`} label="Context size" hint={noContext || (value.context_size === 'long_context' ? 'Long context may cost more.' : undefined)}>
+      <Field id={`${prefix}-context-size`} label="Context size" hintVisible={!!noContext} hint={noContext || (value.context_size === 'long_context' ? 'Long context may cost more.' : undefined)}>
         <Select
           id={`${prefix}-context-size`}
           value={value.context_size || 'default'}

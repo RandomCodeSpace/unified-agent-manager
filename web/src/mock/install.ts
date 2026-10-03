@@ -10,6 +10,7 @@ import { gitMock } from './git';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
 import { accountMock } from './account';
+import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
@@ -180,6 +181,7 @@ export function install(): { received: Received[] } {
   const busy = (t: MockTask) => LIVE.includes(t.state);
   const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
   const account = accountMock(st.meta);
+  const configuration = configurationMock(() => !!st.settings.terminal);
   const mcp = mcpMock(() => !!st.settings.terminal);
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
@@ -694,6 +696,8 @@ export function install(): { received: Received[] } {
     if (charted) return charted;
     const routined = routines.route(method, path, body);
     if (routined) return routined;
+    const configured = configuration.route(method, url, body);
+    if (configured) return configured;
     const mcped = mcp.route(method, path, body);
     if (mcped) return mcped;
     const assisted = assist(method, url, body);

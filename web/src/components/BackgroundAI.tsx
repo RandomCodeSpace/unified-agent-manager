@@ -11,6 +11,7 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse } from './ui/collapse';
 import { Input } from './ui/input';
+import { HelpTip } from './ui/tooltip';
 
 /** How often the open section reads today's count and the newest calls again. */
 const REFRESH_MS = 15000;
@@ -138,9 +139,6 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
   const fraction = today.limit > 0 ? Math.min(1, today.calls / today.limit) : 1;
   return (
     <>
-      <Note>
-        UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, and planner suggestions and triage. Each one costs AI credits. Every call is kept here for 30 days.
-      </Note>
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-title text-ink tabular-nums">
@@ -168,7 +166,7 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
       </div>
       <form aria-label="Daily limit" className="flex flex-wrap items-end gap-2" onSubmit={(e) => void save(e)}>
         <div className="w-40">
-          <Field id="utility-limit" label="Daily limit (calls)">
+          <Field id="utility-limit" label="Daily limit (calls)" hintId="utility-limit-help" hint={`At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.`}>
             <Input
               id="utility-limit"
               type="number"
@@ -187,9 +185,6 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
         <Button type="submit" variant="secondary" size="lg" disabled={saving || !valid || parsed === limit}>
           Save
         </Button>
-        <Note id="utility-limit-help" className="basis-full">
-          At most {MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.
-        </Note>
       </form>
       <div className="flex flex-col gap-1">
         {error && (
@@ -197,13 +192,15 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
             Could not refresh Background AI: {error}
           </Note>
         )}
-        <Button variant="subtle" className="-ml-3 self-start text-muted" aria-expanded={open} aria-controls="utility-log" onClick={() => setOpen((o) => !o)}>
-          <ChevronRight className={cn('transition-transform duration-160', open && 'rotate-90')} />
-          {open ? 'Hide log' : `Show log · ${today.calls.toLocaleString('en-US')} ${today.calls === 1 ? 'call' : 'calls'} today`}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="subtle" className="-ml-3 self-start text-muted" aria-expanded={open} aria-controls="utility-log" onClick={() => setOpen((o) => !o)}>
+            <ChevronRight className={cn('transition-transform duration-160', open && 'rotate-90')} />
+            {open ? 'Hide log' : `Show log · ${today.calls.toLocaleString('en-US')} ${today.calls === 1 ? 'call' : 'calls'} today`}
+          </Button>
+          <HelpTip label="Background AI log">Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</HelpTip>
+        </div>
         <Collapse open={open}>
           <div id="utility-log" className="flex flex-col gap-1">
-            <Note>Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</Note>
             {!logRead && <Skeleton label="Loading the log…" rows={3} className="pt-2" />}
             {logRead && calls.length === 0 && <Note>No Background AI calls in the last 30 days.</Note>}
             {byDay(calls).map((group) => {

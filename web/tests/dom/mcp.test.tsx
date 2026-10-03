@@ -5,6 +5,7 @@ import { openMenu, openTask, renderApp } from './render';
 describe('MCP servers', () => {
   test('Settings lists servers with their secrets as names only, and a command server needs Terminal', async () => {
     const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
     const list = within(await section.findByRole('list', { name: 'MCP servers' }));
     expect(list.getByText('/opt/mcp/echo-server --stdio')).toBeTruthy();
@@ -14,8 +15,10 @@ describe('MCP servers', () => {
     await user.click(section.getByRole('button', { name: 'Add server' }));
     expect(section.getByRole('radio', { name: 'Command' })).toBeTruthy();
     await user.click(section.getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'General', exact: true }));
     await user.click(screen.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect((screen.getByRole('switch', { name: 'Terminal' }) as HTMLElement).getAttribute('aria-checked')).toBe('false'));
+    await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
     await user.click(section.getByRole('button', { name: 'Add server' }));
     expect(section.queryByRole('radio', { name: 'Command' })).toBeNull();
     expect(section.getByText(/needs Settings → Shell access → Terminal on/)).toBeTruthy();
@@ -27,6 +30,7 @@ describe('MCP servers', () => {
 
   test('a stored header value stays write-only when the server is edited', async () => {
     const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
     await section.findByRole('list', { name: 'MCP servers' });
     await user.click(section.getAllByRole('button', { name: 'Edit' })[0]);
