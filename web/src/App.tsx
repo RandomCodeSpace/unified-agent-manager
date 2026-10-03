@@ -71,7 +71,8 @@ function editing(): boolean {
   return el instanceof HTMLElement && (el.isContentEditable || el.matches('textarea, input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])'));
 }
 
-const SHELL = 'grid h-dvh overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]';
+// With the on-screen keyboard open the shell covers only what is visible above it (lib/viewport).
+const SHELL = 'grid h-[var(--app-height,100dvh)] mt-[var(--app-top,0px)] overflow-x-clip pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] in-data-keyboard:pb-0';
 
 // Older servers omit `required`; treat absent as true.
 const loggedIn = (r: { authenticated: boolean; required?: boolean }) => r.authenticated || r.required === false;

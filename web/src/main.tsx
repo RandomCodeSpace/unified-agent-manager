@@ -6,9 +6,11 @@ import '@fontsource-variable/jetbrains-mono';
 import './index.css';
 import App from './App';
 import { applyMotion, loadMotion } from './lib/motion';
+import { trackViewport } from './lib/viewport';
 
 // The Motion setting applies before the first render, so nothing animates that should not.
 applyMotion(loadMotion());
+trackViewport();
 
 function render() {
   createRoot(document.getElementById('root')!).render(
