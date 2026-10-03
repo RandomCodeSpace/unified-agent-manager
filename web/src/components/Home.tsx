@@ -7,10 +7,11 @@ import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, relTime, useMinuteTick } from 
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
 
-export function Home({ projects, sessions, hasNews, onNewTask, onAddProject, onSelect }: Readonly<{
+export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTask, onAddProject, onSelect }: Readonly<{
   projects: Project[];
   sessions: SessionSummary[];
   hasNews: Unread;
+  newTaskReady?: boolean;
   onNewTask: () => void;
   onAddProject: () => void;
   onSelect: (id: string) => void;
@@ -38,7 +39,7 @@ export function Home({ projects, sessions, hasNews, onNewTask, onAddProject, onS
           <p className="mt-3 text-chat leading-relaxed text-muted">
             {hasProjects ? introduction : <>Choose a folder on the machine running UAM.<br />Then start your first task.</>}
           </p>
-          <Button variant="primary" size="lg" className="mt-6 h-10 gap-2 px-4" onClick={hasProjects ? onNewTask : onAddProject}>
+          <Button variant="primary" size="lg" className="mt-6 h-10 gap-2 px-4" disabled={hasProjects && !newTaskReady} onClick={hasProjects ? onNewTask : onAddProject}>
             {hasProjects ? <SquarePen aria-hidden="true" /> : <FolderPlus aria-hidden="true" />}
             {hasProjects ? 'New task' : 'Add project'}
           </Button>

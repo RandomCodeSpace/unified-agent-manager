@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api, type SessionSummary } from '../../src/api';
@@ -50,6 +50,7 @@ describe('Home', () => {
     const { user } = renderApp();
     await sidebar();
     const main = within(screen.getByRole('main'));
+    await waitFor(() => expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(false));
     await user.click(main.getByRole('button', { name: 'New task' }));
     const palette = within(await screen.findByRole('dialog'));
     await user.click(palette.getByRole('option', { name: /notes-site/ }));
@@ -73,11 +74,16 @@ describe('Home', () => {
     state.projects = [state.projects[2]];
     state.tasks = [];
     vi.spyOn(data, 'seed').mockReturnValue(state);
+    let loadMeta!: (meta: typeof state.meta) => void;
+    vi.spyOn(api, 'meta').mockReturnValue(new Promise((resolve) => { loadMeta = resolve; }));
     const create = vi.spyOn(api, 'createSession');
     const { user } = renderApp('?planner=unset');
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
     expect(main.queryByRole('region', { name: 'Recent tasks' })).toBeNull();
+    expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(true);
+    await act(async () => loadMeta(state.meta));
+    await waitFor(() => expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(false));
     await user.click(main.getByRole('button', { name: 'New task' }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
     expect(screen.getByText('New task in notes-site')).toBeTruthy();

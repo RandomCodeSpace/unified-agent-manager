@@ -1037,7 +1037,7 @@ export default function App() {
     pane = (
       <div className="flex min-h-0 flex-1 flex-col">
         {leading && <PaneHeader leading={leading} connection={connection} />}
-        <Home projects={state.projects} sessions={state.sessions} hasNews={hasNews} onNewTask={openNewTask} onAddProject={actions.onAddProject} onSelect={select} />
+        <Home projects={state.projects} sessions={state.sessions} hasNews={hasNews} newTaskReady={meta !== null} onNewTask={openNewTask} onAddProject={actions.onAddProject} onSelect={select} />
       </div>
     );
   }
