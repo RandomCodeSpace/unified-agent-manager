@@ -108,7 +108,7 @@ func (m *Manager) recordTokensLocked(provider string, usage agentapi.TokenUsage)
 	key := day + "\x00" + provider + "\x00" + model
 	d := m.tokens.Days[key]
 	d.Day, d.Provider, d.Model = day, provider, model
-	d.TokenCounts.add(counts)
+	d.add(counts)
 	m.tokens.Days[key] = d
 	m.tokens.revision++
 	select {
@@ -155,7 +155,7 @@ func (m *Manager) TokenUsage() TokenUsageReport {
 			key := d.Provider + "\x00" + d.Model
 			model := models[key]
 			model.Provider, model.Model = d.Provider, d.Model
-			model.TokenCounts.add(d.TokenCounts)
+			model.add(d.TokenCounts)
 			models[key] = model
 			p.Total.add(d.TokenCounts)
 		}

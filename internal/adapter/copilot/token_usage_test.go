@@ -1,10 +1,10 @@
 package copilot
 
 import (
-	"github.com/github/copilot-sdk/go/rpc"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 func TestWebTokenUsageIncludesSubagentsAndDeduplicates(t *testing.T) {
