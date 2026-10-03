@@ -286,7 +286,7 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagen
   };
   return (
     <div id={domId} className="flex flex-col rounded-sm">
-      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : durationTitle(elapsed)}>
+      <div data-history-anchor={`turn-head-${id}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} className="flex min-h-[34px] flex-wrap items-center gap-x-4 py-2 text-caption tabular-nums text-muted" title={working || summary.count ? undefined : durationTitle(elapsed)}>
         {summary.parts.length > 0 ? (
           <button
             ref={headButton}

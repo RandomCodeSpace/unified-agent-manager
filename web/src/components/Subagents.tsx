@@ -411,14 +411,14 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
       aria-expanded={open}
       aria-controls={controls}
       title={[lead, partial, ...countParts(c).map((p) => p.text)].filter(Boolean).join(' · ')}
-      className={cn('flex h-6 min-w-0 shrink items-center gap-1.5 rounded-full px-2 text-caption shadow-well transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11', open ? 'bg-tint-selected text-ink' : 'bg-tint-well text-body')}
+      className={cn('-mx-1.5 flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-left text-caption transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11', open ? 'text-body' : 'text-muted')}
       onClick={onToggle}
     >
       {total <= IDENTITY_LIMIT ? (
         <span aria-hidden="true" className="flex shrink-0 items-center gap-1">
           {subagents.map((s) => {
             const tone = tones.get(s.id);
-            return <span key={s.id} className={cn('size-2 rounded-full', tone ? DOT[tone] : 'bg-faint')} />;
+            return <span key={s.id} className={cn('size-1.5 rounded-full', tone ? DOT[tone] : 'bg-faint')} />;
           })}
         </span>
       ) : (
@@ -427,7 +427,7 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
       <span className="min-w-0 truncate tabular-nums">
         <Counts c={c} lead={partial ? <>{lead} · <span className="text-muted">{partial}</span></> : lead} />
       </span>
-      <ChevronDown aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-180')} />
+      <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
     </button>
   );
 }
