@@ -116,7 +116,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     const agent = inline ? byParent.get(item.id) : undefined;
     return agent ? (
       <div key={item.id} className="overflow-hidden rounded-md bg-raised shadow-raised">
-        <SubagentRow subagent={agent} tone={tones.get(agent.id)} place="list" anchor />
+        <SubagentRow subagent={agent} tone={tones.get(agent.id)} anchor />
       </div>
     ) : null;
   };

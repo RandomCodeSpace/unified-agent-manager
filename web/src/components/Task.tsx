@@ -501,7 +501,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
     land(el);
-    if (expand) el.querySelector<HTMLElement>('[data-subagent-toggle]')?.focus({ preventScroll: true });
+    // Its transcript opens beside the row it landed on.
+    if (expand) el.querySelector<HTMLElement>('[data-subagent-toggle]')?.click();
   }
 
   /** Scroll to the reply a user message started ("start": the one before any) and flash its turn line. */
@@ -516,23 +517,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     atBottom.current = false;
     await settle(0);
     land(turn.querySelector<HTMLElement>('[data-history-anchor^="turn-head-"]') ?? turn);
-  }
-
-  /**
-   * A subagent row opened in the conversation: the view stops following the foot at once (so a
-   * row near it is not pushed up out of sight), and once the row has opened it shows as much of
-   * it as fits with its head still in view. Not while the reader scrolls, nor after they did.
-   */
-  async function keepInView(row: HTMLElement) {
-    atBottom.current = false;
-    const asked = performance.now();
-    await settle(EXIT_MS);
-    const view = scroller.current;
-    if (!view || !row.isConnected || lastScrollAt.current > asked) return;
-    const box = row.getBoundingClientRect(), frame = view.getBoundingClientRect();
-    const down = Math.min(Math.max(0, box.bottom - frame.bottom + LAND_MARGIN), box.top - frame.top - LAND_MARGIN);
-    const shift = box.top < frame.top ? box.top - frame.top - LAND_MARGIN : down;
-    if (Math.abs(shift) > 1) view.scrollTo({ top: view.scrollTop + shift });
   }
 
   /**
@@ -672,7 +656,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
     <TaskCardOpener.Provider value={plan ? openCardHere : null}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onExpand={(row) => void keepInView(row)}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>

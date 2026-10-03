@@ -12,7 +12,7 @@ import { Button } from './button';
  * popup so app-level Esc handlers stand back while one is open.
  */
 
-const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0';
+export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0';
 
 const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 max-sm:items-end max-sm:p-0';
 

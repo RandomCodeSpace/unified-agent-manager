@@ -1031,6 +1031,10 @@ type Subagent struct {
 	// latest run carries Status and EndedAt. At most MaxSubagentRuns are
 	// kept: the first and the newest.
 	Runs []SubagentRun `json:"runs,omitempty"`
+	// Tokens is the input and output tokens it consumed, over all runs.
+	Tokens int64 `json:"tokens,omitempty"`
+	// ToolCalls is the number of tool calls it made, over all runs.
+	ToolCalls int64 `json:"tool_calls,omitempty"`
 	// Result is the start of the output its parent tool call recorded, when
 	// a read record has it but not that tool call's item.
 	Result string `json:"-"`

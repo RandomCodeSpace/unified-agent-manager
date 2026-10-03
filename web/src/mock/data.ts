@@ -219,6 +219,8 @@ export function seed(): MockState {
     started_at: ago(11),
     model: 'claude-haiku-4.5',
     effort: 'medium',
+    tokens: 182_400,
+    tool_calls: 14,
   };
   const a2: Subagent = {
     id: 'a2',
@@ -229,6 +231,8 @@ export function seed(): MockState {
     started_at: ago(11),
     model: 'gpt-5-mini',
     effort: 'low',
+    tokens: 96_300,
+    tool_calls: 9,
     // Resumed a minute ago; nothing of this run is recorded yet.
     runs: [
       { started_at: ago(11), ended_at: ago(10.5), status: 'completed', trigger: 'spawn' },
@@ -246,6 +250,8 @@ export function seed(): MockState {
     ended_at: ago(10),
     model: 'claude-haiku-4.5',
     effort: 'high',
+    tokens: 41_800,
+    tool_calls: 3,
   };
   const a4: Subagent = {
     id: 'a4',
@@ -257,6 +263,8 @@ export function seed(): MockState {
     ended_at: ago(9),
     model: 'claude-haiku-4.5',
     effort: 'low',
+    tokens: 1_326_764,
+    tool_calls: 88,
     // Asked once more after its first pass (a follow-up).
     runs: [
       { started_at: ago(11), ended_at: ago(10), status: 'completed', trigger: 'spawn' },
@@ -284,6 +292,22 @@ export function seed(): MockState {
     ended_at: ago(2),
     model: 'claude-haiku-4.5',
     effort: 'medium',
+    tokens: 2_140_000,
+    tool_calls: 212,
+  };
+  // Spawned by a2 for the caller sweep: its call is in a2's transcript.
+  const a6: Subagent = {
+    id: 'a6',
+    parent_tool_call_id: 'k-a6',
+    parent_agent_id: 'a2',
+    name: 'Verify store callers',
+    description: 'Check the callers of store.Open for the old cursor.',
+    status: 'running',
+    started_at: ago(0.8),
+    model: 'gpt-5-mini',
+    effort: 'low',
+    tokens: 22_100,
+    tool_calls: 4,
   };
 
   const tasks: MockTask[] = [
@@ -554,7 +578,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           output: '## Heading order\n\n**The byline skips a level** in `templates/post.html`: it jumps from `h1` to `h3`. Demoted it to `h2`; [list.html](templates/list.html) nests correctly.\n\n- `templates/post.html`: 1 change\n- `templates/list.html`: no change',
         }),
       ],
-      subagents: [a1, a2, a3, a4],
+      subagents: [a1, a2, a3, a4, a6],
       agentItems: {
         a4: [
           tool('w1', 11, { name: 'grep', title: 'Search "<h[1-6]" in templates', status: 'completed', output: 'templates/post.html:9\ntemplates/post.html:14\ntemplates/list.html:7' }, 'a4'),
@@ -996,7 +1020,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       const audit = (n: number, min: number, pkg: string, status: Subagent['status'], extra: Partial<Subagent> = {}) => {
         const id = `sa${n}`, call = `sc${n}`;
         items.push(tool(call, min, { name: 'task', title: `Audit package ${pkg}`, status: status === 'running' ? 'running' : status === 'failed' ? 'failed' : 'completed', input: JSON.stringify({ description: `Audit package ${pkg}` }), output: status === 'failed' ? extra.error : status === 'running' ? undefined : `${pkg}: ${n % 4} exports without callers.` }));
-        subagents.push({ id, parent_tool_call_id: call, name: `Audit package ${pkg}`, description: `List the exported symbols of ${pkg} that nothing calls.`, status, started_at: ago(min), ...(status === 'running' ? {} : { ended_at: ago(min - 1 - (n % 3)) }), model: n % 2 ? 'gpt-5-mini' : 'claude-haiku-4.5', effort: 'low', ...(status === 'completed' || status === 'idle' ? { summary: `${pkg}: ${n % 4} exports without callers.` } : {}), ...extra });
+        subagents.push({ id, parent_tool_call_id: call, name: `Audit package ${pkg}`, description: `List the exported symbols of ${pkg} that nothing calls.`, status, started_at: ago(min), ...(status === 'running' ? {} : { ended_at: ago(min - 1 - (n % 3)) }), model: n % 2 ? 'gpt-5-mini' : 'claude-haiku-4.5', effort: 'low', tokens: 8_000 + ((n * 37_919) % 400_000), tool_calls: 3 + (n % 17), ...(status === 'completed' || status === 'idle' ? { summary: `${pkg}: ${n % 4} exports without callers.` } : {}), ...extra });
         agentItems[id] = [
           tool(`${id}-g`, min - 0.5, { name: 'grep', title: `Search "export" in ${pkg}`, status: 'completed', output: `${(n % 5) + 2} matches` }, id),
           { id: `${id}-m`, kind: 'assistant', time: ago(min - 1), agent_id: id, text: status === 'running' ? `Reading ${pkg} for callers…` : `${pkg}: ${n % 4} exports without callers.` },

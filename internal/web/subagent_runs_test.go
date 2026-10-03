@@ -84,6 +84,39 @@ func TestSubagentUpdatesKeepKnownRuns(t *testing.T) {
 	}
 }
 
+func TestSubagentUpdatesKeepKnownCounts(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	t0 := time.Now().Add(-time.Hour)
+	conv.EmitSubagent(agentapi.Subagent{ID: "a", Name: "helper", Status: agentapi.SubagentRunning, StartedAt: t0, Tokens: 450_000, ToolCalls: 9})
+	// The provider's totals replace the live counts, even lower ones.
+	conv.EmitSubagent(agentapi.Subagent{ID: "a", Status: agentapi.SubagentCompleted, EndedAt: t0.Add(time.Minute), Tokens: 412_000, ToolCalls: 7})
+	// An update without counts, as a record rebuilt from recorded events
+	// may be, keeps them.
+	conv.EmitSubagent(agentapi.Subagent{ID: "a", Status: agentapi.SubagentIdle, EndedAt: t0.Add(time.Minute)})
+	d, err := m.CompactDetail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Subagents []struct {
+			Status    agentapi.SubagentStatus `json:"status"`
+			Tokens    int64                   `json:"tokens"`
+			ToolCalls int64                   `json:"tool_calls"`
+		} `json:"subagents"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil || len(decoded.Subagents) != 1 {
+		t.Fatalf("compact detail = %v, %s", err, raw)
+	}
+	if sa := decoded.Subagents[0]; sa.Status != agentapi.SubagentIdle || sa.Tokens != 412_000 || sa.ToolCalls != 7 {
+		t.Fatalf("subagent = %+v", sa)
+	}
+}
+
 func TestRecordedSubagentPagesCarryRuns(t *testing.T) {
 	record := subagentRecord(250)
 	t0 := time.Now().Add(-time.Hour)
