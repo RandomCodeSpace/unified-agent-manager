@@ -478,16 +478,10 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
   const total = Math.max(calls, subagents.length);
   const lead = subagentNoun(total);
   return (
-    <section id={id} aria-label={lead} className="overflow-hidden rounded-md bg-raised shadow-raised">
-      <header className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 bg-surface px-3.5 py-1.5">
-        <span className="flex items-center gap-2">
-          <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
-          <span className="text-ui font-semibold text-ink">{lead}</span>
-        </span>
-        {subagents.length > FILTER_OVER && (
-          <Input size="sm" type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label={`Filter ${subagentNoun(subagents.length)} by name or result`} placeholder={`Filter ${subagents.length} by name or result`} className="max-w-80 min-w-40 flex-1 text-caption" />
-        )}
-      </header>
+    <section id={id} aria-label={lead} className="flex flex-col">
+      {subagents.length > FILTER_OVER && (
+        <Input size="sm" type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label={`Filter ${subagentNoun(subagents.length)} by name or result`} placeholder={`Filter ${subagents.length} by name or result`} className="mb-1 max-w-80 text-caption" />
+      )}
       {grouped ? (
         statusGroups(shown, pinned).map((g) => {
           // A filter shows every match, and the open row's group stays open.
@@ -502,16 +496,16 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
                 aria-expanded={opened}
                 aria-controls={opened ? listId : undefined}
                 disabled={!!query || holdsOpen}
-                className="flex h-8 w-full items-center gap-2 bg-surface px-3.5 text-left text-caption text-muted transition-colors duration-100 hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11"
+                className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11"
                 onClick={() => setFolds((f) => ({ ...f, [g.key]: !opened }))}
               >
                 <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', opened && 'rotate-90')} />
                 <span className={cn('font-semibold', g.key === 'failed' && 'text-error', g.key === 'running' && 'text-accent')}>{g.label}</span>
                 <span className="tabular-nums">{g.subagents.length}</span>
               </button>
-              {opened && <ul id={listId} className="divide-y divide-hairline">{g.subagents.slice(0, limit).map(row)}</ul>}
+              {opened && <ul id={listId} className="flex flex-col pl-3">{g.subagents.slice(0, limit).map(row)}</ul>}
               {opened && g.subagents.length > limit && (
-                <button type="button" className="flex h-8 w-full items-center px-3.5 text-left text-caption text-accent hover:underline focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setLimits((l) => ({ ...l, [g.key]: limit + PAGE_ROWS }))}>
+                <button type="button" className="flex h-7 w-full items-center pl-5 text-left text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => setLimits((l) => ({ ...l, [g.key]: limit + PAGE_ROWS }))}>
                   Show {Math.min(PAGE_ROWS, g.subagents.length - limit)} more
                 </button>
               )}
@@ -519,17 +513,17 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
           );
         })
       ) : (
-        <ul className="divide-y divide-hairline">{shown.map(row)}</ul>
+        <ul className="flex flex-col">{shown.map(row)}</ul>
       )}
-      {query && !shown.length && <p className="px-3.5 py-2 text-caption text-muted">No subagent matches “{query}”.</p>}
-      {subagents.length < total && <p className="bg-surface px-3.5 py-2 text-caption text-muted">{total - subagents.length} more not loaded here: the header’s Subagents list reads older ones from the record.</p>}
+      {query && !shown.length && <p className="px-2 py-1 text-caption text-muted">No subagent matches “{query}”.</p>}
+      {subagents.length < total && <p className="px-2 py-1 text-caption text-muted">{total - subagents.length} more not loaded here: the header’s Subagents list reads older ones from the record.</p>}
     </section>
   );
 }
 
 /**
- * One subagent (DESIGN.md subagent row): its status mark, its identity (a 3px stripe and a dot,
- * while its reply has at most five), its name, one line of what it is doing or reported, model,
+ * One subagent (DESIGN.md subagent row): its status mark, its identity (a dot, and a 3px stripe
+ * in the live card, while its reply has at most five), its name, one line of what it is doing or reported, model,
  * duration and runs. It expands in place onto its description, its runs, its own transcript in a
  * bounded scroller, Stop while it runs and a follow-up while it is idle; Esc inside folds it back.
  * In a reply's list (`anchor`) it carries its `task` call's id, so "Show where it was spawned"
@@ -550,6 +544,8 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
   const again = useScope((d) => (place === 'list' ? ranAgainKey(s, d.replies) : '')) ?? '';
   const presence = usePresence(expanded);
   if (!actions) return null;
+  // In a list or the index it reads like a tool row: one short line. The live card keeps the full row.
+  const compact = place !== 'live';
   const name = s.name || 'Subagent';
   const parentId = s.parent_tool_call_id;
   const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
@@ -566,9 +562,9 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
     ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop subagent', icon: <Square />, danger: true, disabled: locked || stopping.busy || stopping.requested, onSelect: () => actions.stop(s), separator: true }] : []),
   ];
   return (
-    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className={cn('flex flex-col', tone && STRIPE[tone])}>
+    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className={cn('flex flex-col', tone && !compact && STRIPE[tone])}>
       <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div className="group/agent relative flex min-h-10 items-center gap-2.5 py-1.5 pr-1.5 pl-3.5 transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11" />}>
+        <ContextMenu.Trigger render={<div className={cn('group/agent relative flex items-center transition-colors duration-100 pointer-coarse:min-h-11', compact ? 'min-h-7 gap-2 rounded-sm py-0.5 pr-1 pl-2 hover:bg-tint-well' : 'min-h-10 gap-2.5 py-1.5 pr-1.5 pl-3.5 hover:bg-tint-hover')} />}>
           {/* The whole line toggles; the tags and the actions sit above it. */}
           <button
             ref={toggleRef}
@@ -585,10 +581,17 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
             <SubagentMark status={s.status} />
           </span>
           {tone && <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', DOT[tone])} />}
-          <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-            <span className="min-w-0 truncate text-ui font-medium text-ink sm:max-w-[45%] sm:shrink-0">{name}</span>
-            {summary && <span className={cn('min-w-0 truncate text-caption', s.status === 'failed' ? 'text-error' : 'text-body')}>{summary}</span>}
-          </span>
+          {compact ? (
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-caption">
+              <span className="max-w-[60%] min-w-0 shrink-0 truncate font-medium text-body">{name}</span>
+              {summary && <span className={cn('min-w-0 truncate', s.status === 'failed' ? 'text-error' : 'text-muted')}>{summary}</span>}
+            </span>
+          ) : (
+            <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
+              <span className="min-w-0 truncate text-ui font-medium text-ink sm:max-w-[45%] sm:shrink-0">{name}</span>
+              {summary && <span className={cn('min-w-0 truncate text-caption', s.status === 'failed' ? 'text-error' : 'text-body')}>{summary}</span>}
+            </span>
+          )}
           {earlier && <EarlierTag subagent={s} />}
           {againAt && (
             <button type="button" className={TAG} title="Show the reply it ran in again" onClick={() => actions.jumpToReply(againReply)}>
@@ -596,7 +599,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
             </button>
           )}
           {info && <span className="shrink-0 text-meta tabular-nums text-muted max-md:hidden">{info}</span>}
-          <ChevronRight aria-hidden="true" className={cn('size-3.5 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />
+          <ChevronRight aria-hidden="true" className={cn('shrink-0 text-faint transition-transform duration-160 ease-app', compact ? 'size-3' : 'size-3.5', expanded && 'rotate-90')} />
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for subagent ${name}`} className="relative text-muted opacity-0 transition-opacity group-hover/agent:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
               <Ellipsis />
@@ -611,13 +614,13 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place,
         </ContextMenu.Content>
       </ContextMenu.Root>
       {stopping.error && (
-        <p role="alert" className="pr-2 pb-1.5 pl-10 text-caption text-error">
+        <p role="alert" className={cn('pr-2 pb-1.5 text-caption text-error', compact ? 'pl-8' : 'pl-10')}>
           Could not stop it: {stopping.error}
         </p>
       )}
       {presence.mounted && (
         <Collapse open={expanded} appear onClosed={presence.onClosed}>
-          <SubagentDetail id={panelId} open={expanded} subagent={s} name={name} onCollapse={collapse} />
+          <SubagentDetail id={panelId} open={expanded} subagent={s} name={name} compact={compact} onCollapse={collapse} />
         </Collapse>
       )}
     </div>
@@ -655,7 +658,7 @@ function EarlierTag({ subagent }: Readonly<{ subagent: Subagent }>) {
 const otherPopupOpen = (target: EventTarget) => [...document.querySelectorAll('[data-popup]:not([data-popup="tooltip"])')].some((popup) => !popup.contains(target as Node));
 
 /** An expanded row: what the subagent was asked, its runs, its transcript (fetched while open), Stop while it runs, the follow-up while it is idle. */
-function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ id: string; open: boolean; subagent: Subagent; name: string; onCollapse: () => void }>) {
+function SubagentDetail({ id, open, subagent: s, name, compact, onCollapse }: Readonly<{ id: string; open: boolean; subagent: Subagent; name: string; compact: boolean; onCollapse: () => void }>) {
   const { meta } = useApp();
   const actions = useActions();
   const task = useScope((d) => d.task);
@@ -674,7 +677,7 @@ function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ 
       id={id}
       role="region"
       aria-label={`Subagent ${name}`}
-      className="flex flex-col gap-2 pt-1 pr-2 pb-3 pl-3.5"
+      className={cn('flex flex-col gap-2 pt-1 pr-2 pb-3', compact ? 'pl-2' : 'pl-3.5')}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || e.defaultPrevented || otherPopupOpen(e.target)) return;
         e.preventDefault();
@@ -683,13 +686,13 @@ function SubagentDetail({ id, open, subagent: s, name, onCollapse }: Readonly<{ 
       }}
     >
       {(s.description || setup) && (
-        <div className="flex flex-col gap-0.5 pl-6.5">
+        <div className={cn('flex flex-col gap-0.5', compact ? 'pl-6' : 'pl-6.5')}>
           {s.description && <p className="line-clamp-2 text-caption text-body" title={s.description}>{s.description}</p>}
           {setup && <p className="text-meta text-muted">{setup}</p>}
         </div>
       )}
       {runs.length > 0 && (
-        <ol aria-label="Runs" className="flex flex-col pl-5">
+        <ol aria-label="Runs" className={cn('flex flex-col', compact ? 'pl-4.5' : 'pl-5')}>
           {runs.map((r, i) => {
             const at = clock(r.started_at);
             const parts = [r.n === null ? '' : `Run ${r.n}`, at, r.trigger].filter(Boolean).join(' · ');
@@ -985,19 +988,22 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                 <ul className="flex flex-col">
                   {g.rows.map((s) => {
                     const summary = rowSummary(summaries, s);
+                    const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
                     return (
                       <li key={s.id}>
                         <button
                           type="button"
-                          title={summary || undefined}
-                          className="flex min-h-[30px] w-full items-center gap-2 rounded-sm py-1 pr-2 pl-5 text-left text-ui text-body transition-colors duration-100 hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11"
+                          title={[s.name || 'Subagent', summary].filter(Boolean).join('\n')}
+                          className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 pl-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
                           onClick={() => onPick(s.parent_tool_call_id!, true)}
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
                             <SubagentMark status={s.status} />
                           </span>
-                          <span className="min-w-0 flex-1 truncate">{s.name || 'Subagent'}</span>
+                          <span className="max-w-[60%] min-w-0 shrink-0 truncate font-medium text-body">{s.name || 'Subagent'}</span>
                           <span className="sr-only">, {STATUS_WORD[s.status]}</span>
+                          <span className={cn('min-w-0 flex-1 truncate', s.status === 'failed' ? 'text-error' : 'text-muted')}>{summary}</span>
+                          {took && <span className="shrink-0 text-meta tabular-nums text-muted">{took}</span>}
                         </button>
                       </li>
                     );
@@ -1005,7 +1011,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                 </ul>
               ) : (
                 // Not placed in the conversation (no call, or one past the history held): they open right here.
-                <ul className="flex flex-col overflow-hidden rounded-md bg-raised shadow-raised">
+                <ul className="flex flex-col">
                   {g.rows.map((s) => (
                     <li key={s.id}>
                       <SubagentRow subagent={s} place="index" />
