@@ -1,4 +1,4 @@
-import type { Item, Subagent, SubagentStatus } from '../api';
+import type { Item, OutlineItem, Subagent, SubagentStatus } from '../api';
 import { duration, toolKind } from './transcript.ts';
 
 // Subagents in the conversation (DESIGN.md Subagents): which reply spawned which, their identity
@@ -107,6 +107,21 @@ export function spawnedBy(items: readonly Item[], subagents: readonly Subagent[]
   });
 }
 
+/**
+ * The outline the replies are read from: the server's (`outline`, the whole transcript it holds)
+ * with what is loaded here and not in it, by time: older pages read from the record before it,
+ * newer items after it. Without one, the loaded items alone.
+ */
+export function mergeOutline(server: readonly OutlineItem[] | undefined, held: readonly OutlineItem[]): readonly OutlineItem[] {
+  if (!server?.length) return held;
+  const known = new Set(server.map((item) => item.id));
+  const extra = held.filter((item) => !known.has(item.id));
+  if (!extra.length) return server;
+  const first = Date.parse(server[0].time);
+  const before = extra.filter((item) => Date.parse(item.time) < first);
+  return [...before, ...server, ...extra.filter((item) => !before.includes(item))];
+}
+
 /** One reply: from a user message (steers stay in it) to the next. */
 export interface Reply {
   /** The user message's id; "start" before the first one. */
@@ -134,7 +149,7 @@ export interface Replies {
  * there is none), with the `task` calls and loaded subagents of each. Membership comes from here,
  * never from the window on screen or the live tail, so a long reply is counted whole.
  */
-export function replyIndex(index: readonly Item[], subagents: readonly Subagent[]): Replies {
+export function replyIndex(index: readonly OutlineItem[], subagents: readonly Subagent[]): Replies {
   const byParent = parentMap(subagents);
   const list: Reply[] = [];
   const byKey = new Map<string, Reply>();
@@ -366,16 +381,17 @@ export interface IndexGroup {
  * message is loaded. A subagent another one spawned goes with its top-level ancestor. Subagents
  * whose call is not placed (older ones paged in from the record) form the last group, keyed "".
  */
-export function indexGroups(index: readonly Item[], items: readonly Item[], subagents: readonly Subagent[]): IndexGroup[] {
-  const replyOf = new Map<string, Item | null>();
+export function indexGroups(index: readonly OutlineItem[], items: readonly Item[], subagents: readonly Subagent[]): IndexGroup[] {
+  const replyOf = new Map<string, OutlineItem | null>();
   const position = new Map<string, number>();
-  let user: Item | null = null;
+  let user: OutlineItem | null = null;
   index.forEach((item, i) => {
     if (item.kind === 'user' && !item.delivery) user = item;
     replyOf.set(item.id, user);
     position.set(item.id, i);
   });
-  const texts = new Map(items.filter((i) => i.kind === 'user').map((i) => [i.id, i.text ?? '']));
+  // A loaded message's own text, else the outline's first line.
+  const texts = new Map([...index, ...items].filter((i) => i.kind === 'user').map((i) => [i.id, i.text ?? '']));
   const groups = new Map<string, IndexGroup & { at: number }>();
   // One another subagent spawned is placed by its top-level ancestor's call.
   const call = new Map(subagents.map((s) => [s.id, mainCall(s, subagents) ?? '']));

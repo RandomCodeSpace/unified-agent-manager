@@ -4,12 +4,12 @@ import { isSubagentCall, subagentSummary, duration, windowInteractions } from '.
 import { BodyNotice, DetailVisibility, useDetailAgent, useDisclosure, useItemBody } from './Details';
 import { Bot, Check, ChevronDown, ChevronRight, Copy, Crosshair, Ellipsis, Minus, Square, X } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
+import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
-import { FILTER_OVER, GROUP_OVER, IDENTITY_LIMIT, LIVE_ROWS, PAGE_ROWS, countParts, countSubagents, earlierTag, inFilter, indexGroups, liveRows, liveSet, matches, ms, parentMap, ranAgain, replyIndex, runCount, runLines, statusGroups, subagentNoun, type CountPart, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type StatusGroup, type SubagentCounts } from '../lib/subagents';
+import { FILTER_OVER, GROUP_OVER, IDENTITY_LIMIT, LIVE_ROWS, PAGE_ROWS, countParts, countSubagents, earlierTag, inFilter, indexGroups, liveRows, liveSet, matches, mergeOutline, ms, parentMap, ranAgain, replyIndex, runCount, runLines, statusGroups, subagentNoun, type CountPart, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type StatusGroup, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
@@ -181,8 +181,8 @@ interface ScopeData {
   agents: Record<string, AgentTranscript>;
   snapshotSeq: number;
   summaries: Summaries;
-  /** The identity index's user messages and `task` calls (it outlives history pages). */
-  outline: readonly Item[];
+  /** The user messages and `task` calls of the outline (lib/subagents `mergeOutline`), loaded or not. */
+  outline: readonly OutlineItem[];
   /** The user messages held, for the index's quotes. */
   messages: readonly Item[];
   /** When each `task` call ran, from the outline. */
@@ -274,7 +274,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   const held = [...session.items, ...(session.recent_items ?? [])];
   const calls = useKept(held.filter((item) => isSubagentCall(item) || byParent.has(item.id)));
   const messages = useKept(held.filter((item) => item.kind === 'user'));
-  const outline = useKept((session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id)));
+  const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id))));
   const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
   const callTimes = useMemo(() => new Map(outline.flatMap((item) => (item.kind === 'tool' && item.time ? [[item.id, item.time] as const] : []))), [outline]);
   const messageIds = useMemo(() => new Set(messages.map((item) => item.id)), [messages]);

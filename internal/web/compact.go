@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -56,7 +57,57 @@ type compactSessionDetail struct {
 	// listed and not listed, empty when there are none or they cannot be
 	// read.
 	SubagentsBefore string `json:"subagents_before,omitempty"`
+	// Outline is every user message and subagent call of the transcript
+	// held, in order, so the client can tell which reply spawned which
+	// subagent before those history pages are loaded.
+	Outline []outlineItem `json:"outline,omitempty"`
 }
+
+// outlineItem is an outline entry: a user message, its first line clipped,
+// or a subagent's tool call, by name only.
+type outlineItem struct {
+	ID       string            `json:"id"`
+	Kind     agentapi.ItemKind `json:"kind"`
+	Time     time.Time         `json:"time"`
+	Text     string            `json:"text,omitempty"`
+	Delivery string            `json:"delivery,omitempty"`
+	Tool     *outlineTool      `json:"tool,omitempty"`
+}
+type outlineTool struct {
+	Name string `json:"name"`
+}
+
+// Bounds of the outline: the newest entries, and a message's first line.
+const (
+	maxOutlineItems = 2000
+	maxOutlineText  = 160
+)
+
+// subagentTool is the name of the tool call that spawns a subagent.
+const subagentTool = "task"
+
+// compactOutline is the outline of items, the newest maxOutlineItems.
+func (s *webSession) compactOutline(items []agentapi.Item) []outlineItem {
+	spawned := make(map[string]bool, len(s.subagents))
+	for _, sa := range s.subagents {
+		spawned[sa.ParentToolCallID] = true
+	}
+	var out []outlineItem
+	for _, it := range items {
+		switch {
+		case it.Kind == agentapi.ItemUser:
+			first, _, _ := strings.Cut(strings.TrimSpace(it.Text), "\n")
+			out = append(out, outlineItem{ID: it.ID, Kind: it.Kind, Time: it.Time, Text: clipRunes(strings.TrimSpace(first), maxOutlineText), Delivery: it.Delivery})
+		case it.Kind == agentapi.ItemTool && it.Tool != nil && (it.Tool.Name == subagentTool || spawned[it.ID]):
+			out = append(out, outlineItem{ID: it.ID, Kind: it.Kind, Time: it.Time, Tool: &outlineTool{Name: it.Tool.Name}})
+		}
+	}
+	if len(out) > maxOutlineItems {
+		out = out[len(out)-maxOutlineItems:]
+	}
+	return out
+}
+
 type compactHistoryPage struct {
 	Seq            uint64        `json:"seq"`
 	Epoch          string        `json:"epoch"`
@@ -301,7 +352,7 @@ func (m *Manager) compactDetailLocked(s *webSession, d SessionDetail) compactSes
 	v := m.viewLocked(s, "", nil)
 	page := v.page(len(v.items))
 	d.HistoryBefore, d.HistoryTruncated = &page.Before, v.truncated(s)
-	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents(), SubagentsBefore: m.subagentsBeforeLocked(s)}
+	return compactSessionDetail{SessionDetail: d, Representation: compactRepresentation, Epoch: m.epoch, DetailStream: true, Items: page.Items, Subagents: s.compactSubagents(), SubagentsBefore: m.subagentsBeforeLocked(s), Outline: s.compactOutline(v.items)}
 }
 func (m *Manager) CompactDetail(id string) (compactSessionDetail, error) {
 	if _, err := m.Detail(id); err != nil {
