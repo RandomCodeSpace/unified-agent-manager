@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -353,7 +354,7 @@ func TestReadSubagentsReadsTheRecordsUpToOne(t *testing.T) {
 	}
 	for _, sa := range w.Subagents {
 		want := h.Subagents[slices.IndexFunc(h.Subagents, func(r agentapi.Subagent) bool { return r.ID == sa.ID })]
-		if sa != want || sa.Status != agentapi.SubagentCompleted || len(sa.Result) != webResultBytes {
+		if !reflect.DeepEqual(sa, want) || sa.Status != agentapi.SubagentCompleted || len(sa.Result) != webResultBytes {
 			t.Fatalf("record %+v, want %+v", sa, want)
 		}
 	}

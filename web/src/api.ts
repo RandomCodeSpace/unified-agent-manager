@@ -782,6 +782,13 @@ export interface Subagent {
   /** Model id and effort level the subagent runs with, when the provider reports them. */
   model?: string;
   effort?: string;
+  /**
+   * Its periods of work, oldest first, when the provider tracks them: a reused subagent keeps its id and
+   * gains a run each time the main agent (`agent`) or a UAM follow-up (`user`) starts it again; the first
+   * run is `spawn`. The latest run carries `status` and `ended_at`; an ended run keeps the status it ended
+   * with. At most 50: the first and the newest.
+   */
+  runs?: { started_at: string; ended_at?: string; status: SubagentStatus; trigger: 'spawn' | 'agent' | 'user' }[];
 }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */

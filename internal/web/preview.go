@@ -1,6 +1,7 @@
 package web
 
 import (
+	"reflect"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -41,7 +42,7 @@ func (m *Manager) queueSubagentPreviewLocked(s *webSession, id string, force boo
 	}
 	if force || state.at.IsZero() || m.now().Sub(state.at) >= previewInterval {
 		next := s.compactSubagent(*sa)
-		if next == state.sent {
+		if reflect.DeepEqual(next, state.sent) {
 			return
 		}
 		if state.timer != nil {
@@ -63,7 +64,7 @@ func (m *Manager) queueSubagentPreviewLocked(s *webSession, id string, force boo
 		}
 		if sa := s.subIdx[id]; sa != nil {
 			next := s.compactSubagent(*sa)
-			if next != state.sent {
+			if !reflect.DeepEqual(next, state.sent) {
 				m.sendSubagentPreviewLocked(s, state, next)
 			}
 		}
