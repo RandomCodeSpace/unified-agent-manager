@@ -179,7 +179,12 @@ func (m *Manager) copilotOwnedAtLocked(id string, at time.Time) bool {
 
 func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
 	defer m.wg.Done()
-	defer ledger.Close() // A timed-out Shutdown must not close an active reader.
+	// A timed-out Shutdown must not close an active reader.
+	defer func() {
+		if err := ledger.Close(); err != nil {
+			log.Warn("close harness usage ledger failed", "error", err)
+		}
+	}()
 	err := collect.Run(m.ctx, time.Minute, all.Default(), usageOnlyStore{Ledger: ledger, m: m}, adapter.DiscoverConfig{Home: m.usageHome},
 		collect.WithoutRaw(), collect.WithCycleCallback(func(stats collect.CycleStats, cycleErr error) {
 			if m.ctx.Err() != nil {

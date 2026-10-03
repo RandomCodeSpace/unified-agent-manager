@@ -110,7 +110,11 @@ func TestHarnessUsageOwnershipPersistenceAndPrivacy(t *testing.T) {
 	if err != nil || next == nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer next.Close()
+	defer func() {
+		if err := next.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if err := again.refreshHarnessUsage(context.Background(), next.Reader, false); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +125,11 @@ func TestHarnessUsageOwnershipPersistenceAndPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	for _, table := range []string{"activity_events", "usage_turn_context", "code_changes"} {
 		var n int
 		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil || n != 0 {
