@@ -176,13 +176,14 @@ export function Sheet({
   side = 'left',
   label,
   className,
+  backdropClassName,
   children,
   ...props
-}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; side?: 'left' | 'right'; label: string }) {
+}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; side?: 'left' | 'right'; label: string; backdropClassName?: string }) {
   return (
     <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className={backdropClass} />
+        <BaseDialog.Backdrop className={cn(backdropClass, backdropClassName)} />
         <BaseDialog.Popup
           data-popup=""
           aria-label={label}
