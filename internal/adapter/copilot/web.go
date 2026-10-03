@@ -330,6 +330,11 @@ type webProvider struct {
 	shut            bool
 	importSupported bool
 	importProbed    bool
+
+	// Guarded by mu; invoked outside the lock before a session can send.
+	usageSessionRecorder func(string, bool) error
+	usageMu              sync.Mutex
+	usageOwned           map[string]sdkClient
 	// customMu guards custom, the owner's custom models; it is never held
 	// with mu, which a CLI start holds for long.
 	customMu sync.Mutex
@@ -359,7 +364,11 @@ func newSDKClient() (sdkClient, error) {
 		return nil, err
 	}
 	env := append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
-	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}})}, nil
+	telemetry, err := usageTelemetry(env, os.UserHomeDir)
+	if err != nil {
+		log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
+	}
+	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}, nil
 }
 
 func resolveCopilot() (string, error) {
@@ -682,10 +691,16 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	if err != nil {
 		return "", fmt.Errorf("create copilot %s session: %s", purpose, errText(err))
 	}
+	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
+		_ = sess.Disconnect()
+		return "", fmt.Errorf("record copilot %s usage ownership: %w", purpose, err)
+	}
 	defer func() {
 		id := sess.ID()
 		if err := sess.Disconnect(); err != nil {
 			log.Info("disconnect copilot utility session failed", "purpose", purpose, "conversation", id, "error", err)
+		} else if err := p.recordUsageSession(client, id, false); err != nil {
+			log.Warn("release copilot utility usage ownership failed", "purpose", purpose, "conversation", id, "error", err)
 		}
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleDeleteTimeout)
 		defer cancel()
@@ -915,6 +930,16 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		p.poke()
 		return nil, fmt.Errorf("open copilot conversation: %s", errText(err))
 	}
+	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
+		c.mu.Lock()
+		c.closed = true
+		c.mu.Unlock()
+		if c.tools != nil {
+			c.tools.stop()
+		}
+		_ = sess.Disconnect()
+		return nil, fmt.Errorf("record copilot usage ownership: %w", err)
+	}
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
@@ -925,13 +950,11 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.mu.Unlock()
 	if c.tools != nil {
 		if err := c.tools.catalog(ctx, sess, uamTools...); err != nil {
-			_ = c.Close(ctx)
-			return nil, err
+			return nil, errors.Join(err, c.Close(ctx))
 		}
 	}
 	if !p.track(c) {
-		_ = c.Close(ctx)
-		return nil, agentapi.ErrClosed
+		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
 	}
 	c.control.Lock()
 	c.refreshExecution(ctx)
@@ -1505,6 +1528,9 @@ func (p *webProvider) fail(c sdkClient, reason string) {
 		conv.exit(reason)
 	}
 	c.ForceStop()
+	if err := p.releaseClientUsage(c); err != nil {
+		log.Warn("release stopped copilot usage ownership failed", "error", err)
+	}
 }
 
 func (p *webProvider) takeConvs() []*conversation {
@@ -1551,6 +1577,9 @@ func (p *webProvider) Shutdown(ctx context.Context) error {
 	}
 	if client != nil {
 		if err := stopClient(ctx, client); err != nil {
+			errs = append(errs, err)
+		}
+		if err := p.releaseClientUsage(client); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -2447,7 +2476,16 @@ func (c *conversation) Close(ctx context.Context) error {
 		_, _ = c.sess.RespondPermission(ctx, id, &rpc.PermissionDecisionUserNotAvailable{})
 	}
 	done := make(chan error, 1)
-	go func() { done <- c.sess.Disconnect() }()
+	go func() {
+		err := c.sess.Disconnect()
+		if err == nil {
+			if releaseErr := c.p.recordUsageSession(c.client, c.id, false); releaseErr != nil {
+				log.Warn("release copilot usage ownership failed", "conversation", c.id, "error", releaseErr)
+				err = fmt.Errorf("release usage ownership: %w", releaseErr)
+			}
+		}
+		done <- err
+	}()
 	select {
 	case err := <-done:
 		if err != nil {

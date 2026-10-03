@@ -3,6 +3,7 @@ module github.com/RandomCodeSpace/unified-agent-manager
 go 1.26.6
 
 require (
+	github.com/RandomCodeSpace/aiusage-core v0.0.0-20261003153309-617d8d748269
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
@@ -21,6 +22,7 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

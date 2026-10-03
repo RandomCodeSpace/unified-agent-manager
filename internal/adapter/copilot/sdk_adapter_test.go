@@ -483,6 +483,7 @@ func TestSDKSessionAdapterExecution(t *testing.T) {
 
 // newSDKClient needs the CLI on PATH; it starts nothing.
 func TestNewSDKClientResolvesTheCLI(t *testing.T) {
+	t.Setenv("COPILOT_OTEL_ENABLED", "false")
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 	if c, err := newSDKClient(); err == nil || c != nil {

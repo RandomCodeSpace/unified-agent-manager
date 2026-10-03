@@ -18,6 +18,7 @@ import (
 // Exercise the actual SDK process boundary, including a nested shell, without
 // calling a model or touching the user's shell configuration or history.
 func TestSDKShellHistoryDisabled(t *testing.T) {
+	t.Setenv("COPILOT_OTEL_ENABLED", "false")
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is unavailable")
