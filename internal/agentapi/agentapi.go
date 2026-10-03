@@ -1015,10 +1015,13 @@ type Subagent struct {
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
 	// ParentToolCallID is the ID of the tool call item that spawned it.
-	ParentToolCallID string         `json:"parent_tool_call_id,omitempty"`
-	Name             string         `json:"name"`
-	Description      string         `json:"description,omitempty"`
-	Status           SubagentStatus `json:"status"`
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	// ParentAgentID is the subagent whose tool call spawned it, empty when
+	// the main agent did: that call is in the parent's transcript.
+	ParentAgentID string         `json:"parent_agent_id,omitempty"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description,omitempty"`
+	Status        SubagentStatus `json:"status"`
 	// Error is the provider's reason for SubagentFailed.
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`

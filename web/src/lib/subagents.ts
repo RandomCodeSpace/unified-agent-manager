@@ -74,6 +74,30 @@ export function parentMap(subagents: readonly Subagent[]): ReadonlyMap<string, S
   return map;
 }
 
+const agents = new WeakMap<readonly Subagent[], ReadonlyMap<string, Subagent>>();
+
+/** Each subagent by its id, built once per list. */
+function agentMap(subagents: readonly Subagent[]): ReadonlyMap<string, Subagent> {
+  let map = agents.get(subagents);
+  if (!map) {
+    map = new Map(subagents.map((s) => [s.id, s]));
+    agents.set(subagents, map);
+  }
+  return map;
+}
+
+/**
+ * The `task` call in the main transcript a subagent comes from: its own, or, for one another
+ * subagent spawned (that call is in the spawner's transcript), its top-level ancestor's.
+ * Undefined when an ancestor is not loaded here.
+ */
+export function mainCall(s: Subagent, subagents: readonly Subagent[]): string | undefined {
+  const byId = agentMap(subagents);
+  let at: Subagent | undefined = s;
+  for (let hops = 0; at?.parent_agent_id && hops < 32; hops++) at = byId.get(at.parent_agent_id);
+  return at && !at.parent_agent_id ? at.parent_tool_call_id : undefined;
+}
+
 /** The subagents one of `items` spawned (a reused one keeps its first `task` call), in spawn order. */
 export function spawnedBy(items: readonly Item[], subagents: readonly Subagent[]): Subagent[] {
   const byParent = parentMap(subagents);
@@ -133,6 +157,14 @@ export function replyIndex(index: readonly Item[], subagents: readonly Subagent[
     reply!.calls.push(item.id);
     ofCall.set(item.id, reply!);
     if (s) reply!.subagents.push(s);
+  }
+  // A subagent another one spawned joins its top-level ancestor's reply, its call with it.
+  for (const s of subagents) {
+    const reply = s.parent_agent_id && s.parent_tool_call_id ? ofCall.get(mainCall(s, subagents) ?? '') : undefined;
+    if (!reply) continue;
+    reply.calls.push(s.parent_tool_call_id!);
+    ofCall.set(s.parent_tool_call_id!, reply);
+    reply.subagents.push(s);
   }
   for (const r of list) {
     if (r.calls.length > IDENTITY_LIMIT) continue;
@@ -331,8 +363,8 @@ export interface IndexGroup {
  * The header index: subagents grouped by the user message that started the reply that spawned
  * them, newest message first, in spawn order within each. `index` places the calls (the
  * identity index, which outlives history pages); the message text comes from `items` when that
- * message is loaded. Subagents whose call is not placed (older ones paged in from the record)
- * form the last group, keyed "".
+ * message is loaded. A subagent another one spawned goes with its top-level ancestor. Subagents
+ * whose call is not placed (older ones paged in from the record) form the last group, keyed "".
  */
 export function indexGroups(index: readonly Item[], items: readonly Item[], subagents: readonly Subagent[]): IndexGroup[] {
   const replyOf = new Map<string, Item | null>();
@@ -345,9 +377,11 @@ export function indexGroups(index: readonly Item[], items: readonly Item[], suba
   });
   const texts = new Map(items.filter((i) => i.kind === 'user').map((i) => [i.id, i.text ?? '']));
   const groups = new Map<string, IndexGroup & { at: number }>();
-  const placed = [...subagents].sort((a, b) => (position.get(a.parent_tool_call_id ?? '') ?? Infinity) - (position.get(b.parent_tool_call_id ?? '') ?? Infinity));
+  // One another subagent spawned is placed by its top-level ancestor's call.
+  const call = new Map(subagents.map((s) => [s.id, mainCall(s, subagents) ?? '']));
+  const placed = [...subagents].sort((a, b) => (position.get(call.get(a.id)!) ?? Infinity) - (position.get(call.get(b.id)!) ?? Infinity));
   for (const s of placed) {
-    const parent = s.parent_tool_call_id ?? '';
+    const parent = call.get(s.id)!;
     const known = replyOf.has(parent);
     const message = known ? replyOf.get(parent) : null;
     const key = known ? message?.id ?? 'start' : '';

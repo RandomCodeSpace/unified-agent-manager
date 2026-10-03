@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, matches, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, mainCall, matches, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -195,4 +195,21 @@ test('"ran again" compares instants, whatever the zone or fraction of each time'
   // Half a second before the message, though "…00Z" sorts after "…00.500Z" as text.
   assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T17:10:00Z')] }), replies), null);
   assert.deepEqual(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T19:12:00.123+02:00')] }), replies), { at: '2026-10-02T19:12:00.123+02:00', reply: 'u2' });
+});
+
+test('a subagent another one spawned joins its top-level ancestor\'s reply and index group, its call with it', () => {
+  const index = [user('u1', 0), call('c1', 1), user('u2', 5), call('c2', 6)];
+  const outer = agent('outer', 'c1');
+  const inner = agent('inner', 'k1', 'completed', { parent_agent_id: 'outer' });
+  const deeper = agent('deeper', 'k2', 'failed', { parent_agent_id: 'inner' });
+  const lost = agent('lost', 'k3', 'completed', { parent_agent_id: 'not-loaded' });
+  const subagents = [outer, agent('later', 'c2'), inner, deeper, lost];
+  assert.equal(mainCall(deeper, subagents), 'c1');
+  assert.equal(mainCall(lost, subagents), undefined);
+  const r = replyIndex(index, subagents);
+  assert.deepEqual(r.byKey.get('u1').subagents.map((s) => s.id), ['outer', 'inner', 'deeper']);
+  assert.deepEqual(r.byKey.get('u1').calls, ['c1', 'k1', 'k2']);
+  assert.equal(r.ofCall.get('k2').key, 'u1');
+  const groups = indexGroups(index, index, subagents);
+  assert.deepEqual(groups.map((g) => [g.key, g.subagents.map((s) => s.id)]), [['u2', ['later']], ['u1', ['outer', 'inner', 'deeper']], ['', ['lost']]]);
 });
