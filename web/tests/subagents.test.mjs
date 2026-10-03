@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, mainCall, matches, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, mainCall, matches, mergeOutline, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -150,8 +150,9 @@ test('the header index groups subagents by the user message that started their r
     ['u1', 'Audit every package.', at(0), ['a1', 'a2']],
     ['', '', undefined, ['lost']],
   ]);
-  // A message whose text is not loaded keeps its time; the caller words it.
-  assert.deepEqual(indexGroups(index, [], [agent('a1', 'c1')]).map((g) => [g.key, g.text, g.time]), [['u1', '', at(0)]]);
+  // A message whose text is neither loaded nor outlined keeps its time; the caller words it.
+  const bare = index.map((i) => (i.kind === 'user' ? { ...i, text: undefined } : i));
+  assert.deepEqual(indexGroups(bare, [], [agent('a1', 'c1')]).map((g) => [g.key, g.text, g.time]), [['u1', '', at(0)]]);
 });
 
 test('an open row keeps its place: in the live card at the index it was opened at, in a long list in the group it was opened in', () => {
@@ -212,4 +213,17 @@ test('a subagent another one spawned joins its top-level ancestor\'s reply and i
   assert.equal(r.ofCall.get('k2').key, 'u1');
   const groups = indexGroups(index, index, subagents);
   assert.deepEqual(groups.map((g) => [g.key, g.subagents.map((s) => s.id)]), [['u2', ['later']], ['u1', ['outer', 'inner', 'deeper']], ['', ['lost']]]);
+});
+
+test('the server\'s outline places subagents whose reply is not loaded; loaded items it lacks go by time', () => {
+  const server = [{ id: 'u1', kind: 'user', time: at(10), text: 'Audit every package' }, { id: 'c1', kind: 'tool', time: at(11), tool: { name: 'task' } }, { id: 'u2', kind: 'user', time: at(15), text: 'Thanks' }];
+  const held = [{ ...server[2], text: 'Thanks, all of it' }, call('c2', 16)];
+  const older = user('u0', 1);
+  const merged = mergeOutline(server, [older, ...held]);
+  assert.deepEqual(merged.map((i) => i.id), ['u0', 'u1', 'c1', 'u2', 'c2']);
+  assert.equal(mergeOutline(undefined, held), held);
+  const subagents = [agent('a1', 'c1'), agent('a2', 'c2')];
+  assert.deepEqual(replyIndex(merged, subagents).byKey.get('u1').subagents.map((s) => s.id), ['a1']);
+  const groups = indexGroups(merged, held, subagents);
+  assert.deepEqual(groups.map((g) => [g.key, g.text]), [['u2', 'Thanks, all of it'], ['u1', 'Audit every package']]);
 });

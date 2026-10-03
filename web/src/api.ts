@@ -764,6 +764,9 @@ export interface Item {
 /** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
 export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
+/** An outline entry: a user message (its first line) or a subagent's tool call (its name only). */
+export type OutlineItem = Pick<Item, 'id' | 'kind' | 'time' | 'text' | 'delivery'> & { tool?: { name: string } };
+
 export interface Subagent {
   preview?: string;
   result_summary?: string;
@@ -939,6 +942,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   recent_items?: Item[];
   recent_before?: string;
   history_index?: Item[];
+  /** Every user message and subagent call of the transcript the server holds, in order (compact-v1), so subagents find their reply before its page is loaded. */
+  outline?: OutlineItem[];
   queue?: QueuedPrompt[];
   queue_paused?: boolean;
   /** Main agent items only; subagent items come from the subagent route. */

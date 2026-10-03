@@ -138,3 +138,24 @@ func TestExportCountsSubagentRuns(t *testing.T) {
 		t.Fatalf("two runs = %q", line)
 	}
 }
+
+func TestCompactDetailOutlinesMessagesAndSubagentCalls(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	t0 := time.Now().Add(-time.Hour)
+	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "  Audit every package\nthen fix them", Time: t0})
+	conv.EmitItem(agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolCompleted}, Time: t0.Add(time.Second)})
+	conv.EmitItem(agentapi.Item{ID: "b1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted}, Time: t0.Add(2 * time.Second)})
+	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Done.", Time: t0.Add(3 * time.Second)})
+	d, err := m.CompactDetail(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, it := range d.Outline {
+		got = append(got, it.ID+":"+string(it.Kind)+":"+it.Text)
+	}
+	if strings.Join(got, ",") != "u1:user:Audit every package,c1:tool:" || d.Outline[1].Tool == nil || d.Outline[1].Tool.Name != "task" {
+		t.Fatalf("outline = %+v", d.Outline)
+	}
+}
