@@ -134,6 +134,7 @@ type Badge struct {
 
 // Settings are the web interface's settings, shared by every browser.
 type Settings struct {
+	TokenPrices map[string]map[string]store.WebTokenPrice `json:"token_prices,omitempty"`
 	// SendDefault is what Enter does while a turn runs: steer or queue.
 	SendDefault string `json:"send_default"`
 	// Terminal lets anyone signed in open a shell, as the service user, at a

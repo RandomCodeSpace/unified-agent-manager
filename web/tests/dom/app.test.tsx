@@ -5,11 +5,11 @@ import { renderApp, sidebar } from './render';
 const header = () => screen.getByRole('heading', { level: 1 });
 
 describe('app shell', () => {
-  test('lists the projects and tasks, and says how to begin', async () => {
+  test('lists the projects and tasks, with the Home launcher in the main pane', async () => {
     // A service that predates the planner: the count is the Tasks' alone.
     renderApp('?planner=unset');
     const side = await sidebar();
-    expect(await screen.findByText('Open a task from the sidebar, or start a new one there.')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
     expect(side.getByRole('button', { name: /Archived 2/ })).toBeTruthy();
     expect(side.getByRole('status').textContent).toContain('Connected');
@@ -215,7 +215,7 @@ describe('task lifecycle', () => {
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Delete' }));
     const del = await screen.findByRole('alertdialog', { name: /Delete “Bump dependencies”\?/ });
     await user.click(within(del).getByRole('button', { name: 'Delete task' }));
-    expect(await screen.findByText('Open a task from the sidebar, or start a new one there.')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     expect(window.location.hash).toBe('');
     expect(screen.queryByRole('button', { name: /Bump dependencies/ })).toBeNull();
   });

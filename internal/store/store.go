@@ -578,6 +578,7 @@ func (p *WebProject) UnmarshalJSON(data []byte) error {
 // WebSettings are the web interface's settings. The zero value writes no
 // web_settings key.
 type WebSettings struct {
+	TokenPrices map[string]map[string]WebTokenPrice `json:"token_prices,omitempty"`
 	// SendDefault is what Enter does while a turn runs: WebSendSteer or
 	// WebSendQueue. Empty or unrecognised values mean steer at runtime.
 	SendDefault string `json:"send_default,omitempty"`
@@ -787,6 +788,7 @@ const (
 type webSettingsAlias WebSettings
 
 var knownWebSettingsFields = map[string]struct{}{
+	"token_prices":        {},
 	"send_default":        {},
 	"terminal":            {},
 	"planner":             {},

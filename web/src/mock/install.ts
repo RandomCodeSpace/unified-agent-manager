@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { boardMock } from './board';
 import { gitMock } from './git';
@@ -15,6 +15,7 @@ import { mcpMock } from './mcp';
 import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
+import { tokenPriceFixture, tokenUsageFixture } from './token-usage';
 
 type Json = Record<string, unknown>;
 
@@ -704,6 +705,8 @@ export function install(): { received: Received[] } {
     if (assisted) return assisted;
 
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
+    if (path === '/api/usage/tokens' && method === 'GET') return json(200, tokenUsageFixture(st.settings));
+    if (path === '/api/usage/prices' && method === 'GET') return json(200, tokenPriceFixture(st.settings));
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));
     if (path === '/api/settings/custom-models/discover' && method === 'POST') {
       // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
@@ -711,7 +714,8 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
         broadcast('settings', { settings: st.settings });

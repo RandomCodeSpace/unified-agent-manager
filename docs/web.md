@@ -442,7 +442,7 @@ sign-outs are logged without the token.
 - **Charts**: ask a Task a data question ("chart commits per day this
   month") and its agent can answer with a chart through the `uam_chart`
   tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
-  browser with Mermaid like a diagram. The agent either passes the rows or,
+  browser with Apache ECharts. The agent either passes the rows or,
   cheaper, gives a shell command that prints them as CSV or JSON. uam runs
   that command itself in the Task's folder (30 seconds at most, 1 MiB of
   output), so the rows never pass through the model; the agent gets only a
@@ -468,6 +468,23 @@ sign-outs are logged without the token.
   with no agent and no model call; it works at most once a minute per
   chart. Opening the panel refreshes each chart whose rows are more than an
   hour old. A failed refresh keeps the last rows and shows why.
+  Full charts support zooming and panning; Ctrl/Cmd plus the mouse wheel
+  zooms without taking over normal page scrolling. Series can be toggled
+  through the legend. Small pinned previews keep their compact view.
+  For other chart families, `uam_chart` accepts `kind: "echarts"` with an
+  `options` JSON object, or a command with `format: "json"` that prints that
+  object. This supports pie/donut, scatter, radar, heatmap, candlestick,
+  boxplot, tree, treemap, sunburst, Sankey, graph, chord, funnel, gauge,
+  parallel, pictorial bar, theme river, effect scatter and lines, alongside
+  line and bar. These charts offer **Data** to inspect the saved specification and
+  **Copy JSON** to copy it. Pinning and refresh work as above.
+  The same saved specification, data and viewport size produce the same
+  initial drawing: animation and random layouts are disabled. Interactions
+  change the view, not the saved data. Options are bounded JSON, with no
+  executable callbacks, external assets, custom series or geographic maps.
+  Repeated pictorial symbols need an explicit integer `symbolRepeat` from
+  0 to 1000; automatic repetition is unavailable. `splitNumber` uses the
+  same limit. Sankey `layoutIterations` defaults to 32 and accepts 0 to 128.
 - **Routines**: recurring work in a Project, such as "every weekday at
   09:00, check the dependencies for updates" or "every 6 hours, run the
   flaky tests and report failures". **Routines** (the clock) in the
@@ -1144,7 +1161,9 @@ sign-outs are logged without the token.
   an **Outline** (epics › stories › subtasks with their progress, the Task's
   card marked and its story open) or a **Graph** of one level's dependencies
   at a time (the Project's epics, an epic's stories, a story's subtasks), with
-  a breadcrumb to move between levels. Clicking a card opens its details in
+  a breadcrumb to move between levels. Both planner graph views use
+  ECharts with fixed node positions. Drag to pan, zoom with the controls,
+  and reset the view without changing cards or dependencies. Clicking a card opens its details in
   place: done when, description, checklist, dependencies (its own level, and
   what it waits for through its story or epic), the agents' requests on it,
   Edit, Discard for a proposal, and Launch. Launch, Do whole story and Plan with agent in
@@ -1601,3 +1620,36 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   finishes; UAM does not track or stop it.
 - **Older uam binaries** do not know about web sessions and show them as
   ordinary stopped sessions.
+
+## Token usage and estimated cost
+
+The Usage button beside Settings and Planner opens a popover with Today,
+7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
+and estimated USD cost. Cache is read plus write tokens; click its count for
+the breakdown. Input already includes cache, so Total is input plus output.
+The 7-day and 30-day windows include today and use the service's local dates.
+
+UAM records provider-reported task, subagent, and Background AI token usage
+from the time recording begins. Earlier ephemeral token events cannot be
+recovered. The popover shows that starting date; Lifetime means all recorded
+usage. Daily totals live in `web-token-usage.json` beside `sessions.json`,
+survive restarts and task removal, and have no retention cutoff. Estimates
+based on prompt length are excluded. The open popover refreshes every 15 seconds.
+
+Settings → Models → Token costs lets you set prices for a model, including
+models missing from the bundled catalog. Prices are USD per million tokens.
+Input and Output are required; Cache read and Cache write are optional. An
+absent cache price uses the Input rate; an explicit zero is free. Removing a
+manual override restores the bundled price, or marks the model Unpriced if
+none exists. Costs use current base rates for every period, excluding tier,
+batch, priority, tool and other non-token charges. They are estimates, not
+invoices or Copilot credit balances. Totals identify unpriced models and
+show a partial cost when only some models have prices.
+
+The build embeds a pinned, MIT-licensed LiteLLM token-price snapshot. It needs
+no runtime network fetch or LiteLLM dependency. To refresh it before a build,
+run `python3 scripts/update-model-prices.py <full BerriAI/litellm commit SHA>`
+and review `internal/web/model-prices.json` and `model-prices.LICENSE`.
+Pricing matches exact IDs, plus Copilot's dotted Claude version spelling.
+Custom endpoint prefixes are retained so unrelated provider prices are not
+silently assigned to them.

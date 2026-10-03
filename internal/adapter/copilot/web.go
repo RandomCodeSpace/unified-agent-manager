@@ -644,7 +644,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		defer gate.stop()
 	}
 	if req.OnUsage != nil {
-		usage := &utilityUsage{}
+		usage := &utilityUsage{provider: p, selected: req.Model}
 		observe = func(ev copilot.SessionEvent) {
 			if gate != nil {
 				gate.observe(ev)
@@ -710,9 +710,12 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 // SendAndWait returns on, so the sum is complete when it returns; mu covers
 // a call ended early by its context.
 type utilityUsage struct {
+	provider *webProvider
+	selected string
 	mu       sync.Mutex
 	sum      agentapi.UtilityUsage
 	reported bool
+	seen     map[string]bool
 }
 
 func (u *utilityUsage) add(ev copilot.SessionEvent) {
@@ -722,7 +725,22 @@ func (u *utilityUsage) add(ev copilot.SessionEvent) {
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	if ev.ID != "" {
+		if u.seen[ev.ID] {
+			return
+		}
+		if u.seen == nil {
+			u.seen = map[string]bool{}
+		}
+		u.seen[ev.ID] = true
+	}
 	u.reported = true
+	if tokens := modelTokens(ev, d); tokens != nil {
+		if u.provider != nil && d.IsByok != nil && *d.IsByok {
+			tokens.Model = u.provider.customSelection(d.Model, u.selected)
+		}
+		u.sum.Tokens = append(u.sum.Tokens, *tokens)
+	}
 	if d.InputTokens != nil && *d.InputTokens > 0 {
 		u.sum.InputTokens += *d.InputTokens
 	}
@@ -738,6 +756,7 @@ func (u *utilityUsage) add(ev copilot.SessionEvent) {
 func (u *utilityUsage) report(fn func(agentapi.UtilityUsage)) {
 	u.mu.Lock()
 	sum, reported := u.sum, u.reported
+	sum.Tokens = slices.Clone(sum.Tokens)
 	u.mu.Unlock()
 	if reported {
 		fn(sum)
@@ -1566,9 +1585,10 @@ type conversation struct {
 	id     string
 	sink   agentapi.EventSink
 
-	mu      sync.Mutex
-	closed  bool
-	pending map[string]*interaction
+	mu        sync.Mutex
+	closed    bool
+	pending   map[string]*interaction
+	tokenSeen map[string]bool
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
 	stoppedSubagents map[string]bool
@@ -2777,6 +2797,21 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.emitLocked(deltaEvent(agentID, reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.DeltaContent))
 		return
 	case *rpc.AssistantUsageData:
+		if ev.ID != "" {
+			if c.tokenSeen[ev.ID] {
+				return
+			}
+			if c.tokenSeen == nil {
+				c.tokenSeen = map[string]bool{}
+			}
+			c.tokenSeen[ev.ID] = true
+		}
+		if tokens := modelTokens(ev, d); tokens != nil {
+			if d.IsByok != nil && *d.IsByok {
+				tokens.Model = c.p.customSelection(d.Model, c.selected)
+			}
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventTokens, Tokens: tokens})
+		}
 		// The account's quotas as of this call, a subagent's included.
 		c.p.noteQuota(d.QuotaSnapshots)
 		if agentID == "" && d.Model != "" {

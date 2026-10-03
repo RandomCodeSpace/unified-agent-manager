@@ -11,6 +11,7 @@ import { byCodeUnit } from '../lib/order';
 import { Field, FieldHelpProvider, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
+import { TokenPricing } from './TokenPricing';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
@@ -647,6 +648,7 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               </div>;
             })}
           </Section>}
+          {loaded && section === 'models' && <Section id="token-prices" title="Token costs"><TokenPricing /></Section>}
           {loaded && <Section hidden={section !== 'providers'} id="providers" title="Providers" help="Manage provider endpoints and credentials here. Choose visible models and the Utility model in Models.">
             {catalogPending && <Note role="status">Loading provider accounts…</Note>}
             {metaError && <Note tone="error" role="alert">Could not load provider accounts: {metaError} <Button size="sm" onClick={refreshMeta}>Retry</Button></Note>}

@@ -1,11 +1,11 @@
 import { BarChart3, Check, ChevronDown, Copy, LineChart, Pin, RefreshCw, Table2, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
 import { popupOpen } from '../App';
-import { chartCsv, chartSource, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
+import { chartCsv, chartOption, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
+import { EChart } from './EChart';
 import { Note, Skeleton, Spinner, timeAgo, useMedia } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -15,43 +15,33 @@ const PHONE = '(width < 40rem)';
 /** Pinned charts refresh on their own when the panel opens, at most this often (the service holds the same line). */
 const AUTO_EVERY = 60 * 60_000;
 
-type ChartRows = Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'x' | 'labels' | 'series'>;
+type ChartRows = Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'x' | 'labels' | 'series' | 'options'>;
 
 /** Swatches in the order of SERIES_TOKENS (lib/chart), spelled out so the classes are generated. */
 const SWATCHES = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-pink', 'bg-badge-violet', 'bg-badge-cyan', 'bg-badge-green'];
 
 /** A script's first line and an ellipsis; the whole command is in the title and the pin prompt. */
 
-/** The chart drawn by the diagram frame, shown as an image like a diagram. */
-export function ChartImage({ chart, look, className }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string }>) {
-  const source = chartSource(chart, look);
-  const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);
-  useEffect(() => {
-    let on = true;
-    renderDiagram(source).then(
-      (rendered) => on && setResult({ source, rendered }),
-      (err: unknown) => on && setResult({ source, error: err instanceof DiagramError ? err.message : 'Rendering failed' }),
-    );
-    return () => { on = false; };
-  }, [source]);
-  const rendered = result?.source === source ? result.rendered : undefined;
-  const error = result?.source === source ? result.error : undefined;
-  const label = `${chart.kind === 'bar' ? 'Bar' : 'Line'} chart: ${chart.title}, ${chart.labels.length} ${chart.labels.length === 1 ? 'point' : 'points'}`;
-  if (error) return <Note className="px-1 py-2">The chart could not be drawn: {error.split('\n')[0]}</Note>;
-  if (!rendered) return <div aria-hidden="true" className={cn('skeleton rounded-sm bg-sunken', className)} style={{ aspectRatio: `${look.width} / ${look.height}` }} />;
-  return <img src={svgDataUrl(rendered.svg)} width={rendered.width} height={rendered.height} alt={label} decoding="async" className={cn('block h-auto w-full animate-fade-in', className)} />;
+/** The chart's data is rendered directly, with the same drawing used for pinned sparklines. */
+export function ChartImage({ chart, look: { width, height, spark }, className, hidden, zoomControls = true, legend }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string; hidden?: ReadonlySet<string>; zoomControls?: boolean; legend?: ReactNode }>) {
+  const compact = legend !== undefined;
+  const option = useMemo(() => chartOption(chart, { width, height, spark, compact }, hidden), [chart, width, height, spark, compact, hidden]);
+  const label = chart.kind === 'echarts' ? `Chart: ${chart.title}` : `${chart.kind === 'bar' ? 'Bar' : 'Line'} chart: ${chart.title}, ${chart.labels.length} ${chart.labels.length === 1 ? 'point' : 'points'}`;
+  return <EChart option={option} width={width} height={height} label={label} className={className} zoomControls={zoomControls && !spark} legend={legend} />;
 }
 
 /** Each series' colour and name, when there is more than one; a bar chart's first series is its bars. */
-function Legend({ chart }: Readonly<{ chart: ChartRows }>) {
+function Legend({ chart, hidden, onToggle }: Readonly<{ chart: ChartRows; hidden: ReadonlySet<string>; onToggle: (name: string) => void }>) {
   if (chart.series.length < 2) return null;
   const colors = seriesColorIndexes(chart.series);
   return (
-    <ul className="flex flex-wrap gap-x-3 gap-y-1 px-5 text-caption text-body" aria-label="Series">
+    <ul className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1 text-caption text-body" aria-label="Series">
       {chart.series.map((s, i) => (
-        <li key={s.name} className="flex items-center gap-1.5">
-          <span aria-hidden="true" className={cn('inline-block rounded-full', chart.kind === 'bar' && i === 0 ? 'h-2.5 w-2.5 rounded-xs' : 'h-0.5 w-3', SWATCHES[colors[i]])} />
-          {s.name}
+        <li key={s.name} className="min-w-0 max-w-full">
+          <button type="button" aria-pressed={!hidden.has(s.name)} aria-label={`Show ${s.name} series`} className={cn('flex min-h-7 max-w-full items-center gap-1.5 rounded-xs px-1 text-left pointer-coarse:min-h-11', hidden.has(s.name) && 'text-muted line-through')} onClick={() => onToggle(s.name)}>
+            <span aria-hidden="true" className={cn('inline-block shrink-0 rounded-full', chart.kind === 'bar' && i === 0 ? 'h-2.5 w-2.5 rounded-xs' : 'h-0.5 w-3', SWATCHES[colors[i]])} />
+            <span className="[overflow-wrap:anywhere]">{s.name}</span>
+          </button>
         </li>
       ))}
     </ul>
@@ -78,6 +68,16 @@ function RowsTable({ chart }: Readonly<{ chart: ChartRows }>) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** The original data and chart configuration remain available to inspect and copy. */
+function ChartData({ chart }: Readonly<{ chart: ChartRows }>) {
+  return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled data region accepts keyboard scrolling.
+    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto overscroll-contain px-5">
+      <pre className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{JSON.stringify(chart.options, null, 2)}</pre>
     </div>
   );
 }
@@ -121,7 +121,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
             <pre translate="no" className="max-h-60 overflow-auto rounded-xs bg-code-bg px-2 py-1 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{chart.command}</pre>
           </>
         ) : (
-          <Popover.Description>The agent gave these {chart.labels.length} rows itself, so the pinned chart is a snapshot: it has no command and does not refresh.</Popover.Description>
+          <Popover.Description>{chart.kind === 'echarts' ? 'The agent supplied this chart’s data' : `The agent gave these ${chart.labels.length} rows itself`}, so the pinned chart is a snapshot: it has no command and does not refresh.</Popover.Description>
         )}
         {error && <Note tone="error" role="alert">{error}</Note>}
         <div className="flex justify-end gap-1.5 pt-1">
@@ -135,7 +135,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
 
 /**
  * The width a chart is drawn at: its box's, in 40px steps so a resize redraws rarely and the
- * same width hits the diagram cache, so text keeps its size instead of scaling with the image.
+ * label density changes in steps, so text keeps its size as the drawing follows the box.
  */
 function useDrawWidth(fallback: number) {
   const [width, setWidth] = useState(0);
@@ -161,6 +161,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
   const [chart, setChart] = useState<Chart | null>(null);
   const [error, setError] = useState('');
   const [table, setTable] = useState(false);
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const [copied, copy] = useCopied();
   useEffect(() => {
     const controller = new AbortController();
@@ -171,8 +172,12 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
   }, [sessionId, callId]);
   if (error) return <Note>{error}</Note>;
   if (!chart) return <Skeleton label="Loading the chart…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />;
-  const Icon = chart.kind === 'bar' ? BarChart3 : LineChart;
+  const advanced = chart.kind === 'echarts';
+  const Icon = chart.kind === 'line' ? LineChart : BarChart3;
   const rows = chart.labels.length;
+  // Keep the plotted area after removing the toolbar row and excess axis padding.
+  const height = (phone ? 260 : 320) - (advanced ? 0 : 56);
+  const legend = advanced ? undefined : <Legend chart={chart} hidden={hidden} onToggle={(name) => setHidden((previous) => { const next = new Set(previous); if (next.has(name)) next.delete(name); else next.add(name); return next; })} />;
   return (
     <figure aria-label={`Chart: ${chart.title}`} className="flex flex-col gap-2 rounded-lg bg-raised pt-2 shadow-raised">
       <header className="flex items-center gap-2 pr-2 pl-5">
@@ -180,19 +185,19 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
         <figcaption className="min-w-0 flex-1 truncate text-ui font-medium text-ink" title={chart.title}>{chart.title}</figcaption>
         <Button size="md" aria-pressed={table} className="px-2 text-muted max-sm:min-w-11" onClick={() => setTable((t) => !t)}>
           <Table2 />
-          <span className="max-sm:sr-only">Table</span>
+          <span className="max-sm:sr-only">{advanced ? 'Data' : 'Table'}</span>
         </Button>
-        <Button size="md" className="px-2 text-muted max-sm:min-w-11" onClick={() => copy(chartCsv(chart))}>
+        <Button size="md" className="px-2 text-muted max-sm:min-w-11" onClick={() => copy(advanced ? JSON.stringify(chart.options, null, 2) : chartCsv(chart))}>
           {copied ? <Check /> : <Copy />}
-          <span className="max-sm:sr-only">{copied ? 'Copied' : 'Copy CSV'}</span>
+          <span className="max-sm:sr-only">{copied ? 'Copied' : advanced ? 'Copy JSON' : 'Copy CSV'}</span>
         </Button>
         <PinButton sessionId={sessionId} callId={callId} chart={chart} onPinned={(id) => setChart({ ...chart, pinned_id: id })} />
       </header>
-      {table ? <RowsTable chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height: phone ? 260 : 320 }} /></div>}
-      <Legend chart={chart} />
+      {table ? advanced ? <ChartData chart={chart} /> : <RowsTable chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height }} hidden={hidden} legend={legend} /></div>}
+      {table && legend && <div className="px-5">{legend}</div>}
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
-        <span>{chart.command ? 'From a command' : 'From rows the agent gave'}, {timeAgo(chart.at)}</span>
-        <span>· Drawn from {rows} {rows === 1 ? 'row' : 'rows'}</span>
+        <span>{chart.command ? 'From a command' : advanced ? 'From data the agent gave' : 'From rows the agent gave'}, {timeAgo(chart.at)}</span>
+        {!advanced && <span>· Drawn from {rows} {rows === 1 ? 'row' : 'rows'}</span>}
       </p>
     </figure>
   );
@@ -236,11 +241,13 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
           <span className="min-w-0 truncate text-meta text-muted">{head.note}</span>
         </p>
       )}
-      {chart.labels.length > 0 && (
-        <button ref={box} type="button" aria-expanded={expanded} aria-label={expanded ? `Show ${chart.title} small` : `Show ${chart.title} large`} className="group/spark relative -mx-1 rounded-sm px-1 pt-1 outline-hidden focus-visible:outline-2 focus-visible:outline-focus" onClick={() => setExpanded((e) => !e)}>
-          {expanded ? <ChartImage chart={chart} look={{ width, height: 320 }} /> : <ChartImage chart={chart} look={{ width: 300, height: 64, spark: true }} />}
-          <ChevronDown aria-hidden="true" className={cn('absolute right-0 bottom-0 size-3.5 text-faint opacity-0 transition-[opacity,transform] group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100', expanded && 'rotate-180')} />
-        </button>
+      {(chart.kind === 'echarts' ? !!chart.options : chart.labels.length > 0) && (
+        <div ref={box} className="relative -mx-1 px-1 pt-1">
+          <ChartImage chart={chart} look={expanded ? { width, height: 320 } : chart.kind === 'echarts' ? { width, height: 180 } : { width: 300, height: 64, spark: true }} zoomControls={expanded} />
+          <button type="button" aria-expanded={expanded} aria-label={expanded ? `Show ${chart.title} small` : `Show ${chart.title} large`} className={cn('group/spark absolute rounded-sm outline-hidden focus-visible:outline-2 focus-visible:outline-focus', expanded ? 'right-0 bottom-0 grid size-7 place-items-center bg-raised pointer-coarse:size-11' : 'inset-0')} onClick={() => setExpanded((e) => !e)}>
+            <ChevronDown aria-hidden="true" className={cn('size-3.5 text-faint transition-[opacity,transform]', expanded ? 'rotate-180' : 'absolute right-0 bottom-0 opacity-0 group-hover/spark:opacity-100 group-focus-visible/spark:opacity-100')} />
+          </button>
+        </div>
       )}
       {chart.error && <Note tone="warn" className="[overflow-wrap:anywhere]">Last refresh failed{chart.error_at ? `, ${timeAgo(chart.error_at)}` : ''}: {chart.error}</Note>}
       {notice && <Note tone="warn" role="status">{notice}</Note>}

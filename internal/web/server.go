@@ -177,6 +177,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("PUT /api/configuration/{kind}/{name}", s.handleSaveConfiguration)
 	mux.HandleFunc("DELETE /api/configuration/{kind}/{name}", s.handleSaveConfiguration)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)
+	mux.HandleFunc("GET /api/usage/tokens", s.handleTokenUsage)
+	mux.HandleFunc("GET /api/usage/prices", s.handleTokenPrices)
 	mux.HandleFunc("GET /api/providers/{provider}/account", s.handleAccount)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-in", s.handleSignIn)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
@@ -534,6 +536,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var patch SettingsPatch
 	for key, raw := range body {
 		switch key {
+		case "token_prices":
+			var prices map[string]map[string]store.WebTokenPrice
+			if json.Unmarshal(raw, &prices) != nil || prices == nil {
+				writeError(w, http.StatusBadRequest, "token_prices must map providers and models to input/output prices and optional cache prices")
+				return
+			}
+			patch.TokenPrices = &prices
 		case "send_default":
 			patch.SendDefault = new(string)
 			if json.Unmarshal(raw, patch.SendDefault) != nil {

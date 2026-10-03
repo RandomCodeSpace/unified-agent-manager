@@ -285,7 +285,7 @@ func (m *Manager) RefreshChart(ctx context.Context, projectID, id string, auto b
 		r.mu.Unlock()
 	}()
 
-	data, _, err := readChart(ctx, pinSpec(rec), dir, nil)
+	data, _, err := readChart(ctx, pinSpec(rec), dir, chartInput{})
 	if ctx.Err() != nil {
 		return PinnedChart{}, context.Cause(ctx)
 	}

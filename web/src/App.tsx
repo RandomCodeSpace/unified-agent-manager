@@ -6,6 +6,7 @@ import { SIGNED_OUT, UPDATE_EVENTS, api, describeError, errorCode, isStatus, new
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
+import { Home } from './components/Home';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
 import { SettingsView } from './components/Settings';
@@ -142,7 +143,14 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
   const [viewed, setViewed] = useState<Record<string, string>>(() => readJSON(VIEWED_KEY, {}));
-  const [sidebarOpen, setSidebarOpen] = useState(() => readJSON<boolean>(SIDEBAR_KEY, true));
+  const emptyWorkspace = state.loaded && state.sessions.length === 0;
+  const [sidebarState, setSidebarState] = useState(() => ({ emptyWorkspace, open: readJSON<boolean>(SIDEBAR_KEY, true) }));
+  // Apply the empty-workspace default only when entering it; subsequent snapshots preserve a manual toggle.
+  // The browser's saved preference still applies once a Task exists, and after signing in again.
+  if (sidebarState.emptyWorkspace !== emptyWorkspace) {
+    setSidebarState({ emptyWorkspace, open: emptyWorkspace ? false : readJSON<boolean>(SIDEBAR_KEY, true) });
+  }
+  const sidebarOpen = sidebarState.open;
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
   const [plannerOpen, setPlannerOpen] = useState(() => window.location.hash.startsWith(PLANNER_PREFIX));
@@ -248,7 +256,7 @@ export default function App() {
    */
   const toggleSidebar = useCallback(() => {
     const next = !sidebarOpen;
-    setSidebarOpen(next);
+    setSidebarState((current) => ({ ...current, open: next }));
     localStorage.setItem(SIDEBAR_KEY, JSON.stringify(next));
     if (aside.current?.contains(document.activeElement)) requestAnimationFrame(() => document.getElementById(next ? 'sidebar-hide' : 'sidebar-show')?.focus());
   }, [sidebarOpen]);
@@ -967,7 +975,7 @@ export default function App() {
   );
 
   // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
-  const leading = narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1" /> : null;
+  const leading = narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1 pointer-coarse:-ml-2.5" /> : null;
   // The sidebar's column, animated between its width and the rail's.
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
@@ -1026,12 +1034,11 @@ export default function App() {
     // The Task's detail, or the first snapshot, is on its way: a skeleton, never the placeholder that says there is nothing.
     pane = <LoadingPane leading={leading} />;
   } else {
-    // A quiet placeholder (issue #185): New task and Add project live in the sidebar.
     pane = (
-      <EmptyPane leading={leading} connection={connection}>
-        <Brand className="[&_svg]:size-9 [&>span]:text-display-md opacity-80" />
-        <p className="text-ui text-muted">{state.projects.length > 0 ? 'Open a task from the sidebar, or start a new one there.' : 'Add a project in the sidebar to begin.'}</p>
-      </EmptyPane>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {leading && <PaneHeader leading={leading} connection={connection} />}
+        <Home projects={state.projects} sessions={state.sessions} hasNews={hasNews} newTaskReady={meta !== null} onNewTask={openNewTask} onAddProject={actions.onAddProject} onSelect={select} />
+      </div>
     );
   }
 

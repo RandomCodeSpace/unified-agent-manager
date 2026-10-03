@@ -108,6 +108,39 @@ export interface Quota {
   reset_at?: string;
 }
 
+/** Recorded input includes cache reads and writes. Total is input + output. */
+export interface TokenCounts {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  total: number;
+}
+
+export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
+export interface TokenUsageReport {
+  since: string;
+  today: string;
+  periods: Record<TokenPeriodKey, {
+    models: (TokenCounts & { provider: string; model: string; cost_usd: number | null })[];
+    total: TokenCounts;
+    cost_usd: number | null;
+    unpriced_models: number;
+  }>;
+}
+
+export interface TokenPrice {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+}
+
+export interface TokenPriceCatalog {
+  commit: string;
+  models: { provider: string; model: string; rates: TokenPrice | null; source: 'manual' | 'bundled' | 'unpriced' }[];
+}
+
 /** `GET /api/usage`, the `usage` frame and the snapshot's `usage`: the last quota read that succeeded. */
 export interface AccountUsage {
   quotas: Quota[];
@@ -265,6 +298,8 @@ export type SendDefault = 'steer' | 'queue';
 
 /** The web interface's settings, kept by the service so they apply in every browser. */
 export interface Settings {
+  /** Manual USD prices per million tokens, keyed by provider and exact model ID. PATCH replaces the map. */
+  token_prices?: Record<string, Record<string, TokenPrice>>;
   /** What Enter does while a turn runs. */
   send_default: SendDefault;
   /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
@@ -656,7 +691,9 @@ export interface Project {
 /** A chart an agent drew with `uam_chart`: what it shows, where its rows came from, and the rows column-wise. */
 export interface Chart {
   title: string;
-  kind: 'line' | 'bar';
+  kind: 'line' | 'bar' | 'echarts';
+  /** A validated JSON chart specification; advanced charts do not have tabular rows. */
+  options?: import('echarts').EChartsOption;
   x_label?: string;
   y_label?: string;
   /** The shell command that printed the rows, run in the Project directory; absent for rows the agent passed. */
@@ -1446,6 +1483,8 @@ export const api = {
     call<{ models: string[]; truncated?: boolean; key_present: boolean }>('POST', '/api/settings/custom-models/discover', body),
   /** The cached account quotas; never calls the provider. */
   usage: () => call<AccountUsage>('GET', '/api/usage'),
+  tokenUsage: () => call<TokenUsageReport>('GET', '/api/usage/tokens'),
+  tokenPrices: () => call<TokenPriceCatalog>('GET', '/api/usage/prices'),
   utility: (before?: number, limit = 25) => call<UtilityLog>('GET', `/api/utility?limit=${limit}${before ? `&before=${before}` : ''}`),
   /** Web Push: the service's public key, and this browser's subscription (lib/notify.ts). */
   pushKey: () => call<{ public_key: string }>('GET', '/api/push'),

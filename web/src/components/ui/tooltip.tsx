@@ -13,9 +13,10 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
   const shown = useRef(false);
   const openAtPress = useRef(false);
   const [open, setOpen] = useState(false);
-  if (disabled || !label) return children;
+  if (!label) return children;
   return (
     <BaseTooltip.Root
+      disabled={disabled}
       open={openOnClick ? open : undefined}
       onOpenChange={(open, details) => {
         // A view transition puts a snapshot over the page, so the browser reports the pointer leaving a
