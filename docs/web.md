@@ -1626,15 +1626,42 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 The Usage button beside Settings and Planner opens a popover with Today,
 7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
 and estimated USD cost. Cache is read plus write tokens; click its count for
-the breakdown. Input already includes cache, so Total is input plus output.
+the breakdown. Input already includes cache. Totals preserve the harness's
+reported accounting; reasoning already included in output is counted once.
 The 7-day and 30-day windows include today and use the service's local dates.
 
-UAM records provider-reported task, subagent, and Background AI token usage
-from the time recording begins. Earlier ephemeral token events cannot be
-recovered. The popover shows that starting date; Lifetime means all recorded
-usage. Daily totals live in `web-token-usage.json` beside `sessions.json`,
-survive restarts and task removal, and have no retention cutoff. Estimates
-based on prompt length are excluded. The open popover refreshes every 15 seconds.
+UAM records SDK-reported Copilot task, subagent, and Background AI usage.
+The embedded `aiusage-core` library also reads local harness records once a
+minute, including Claude Code, Codex, OpenCode, and external Copilot sessions.
+No aiusage CLI installation or provider billing API is needed. Rows identify
+the harness, even when several harnesses use the same model.
+
+SDK counts remain authoritative while UAM owns a Copilot session. Ownership
+intervals are saved before inference and closed on disconnect, so replayed
+OTEL does not count the same call twice and later terminal usage can count.
+Existing daily totals remain in `web-token-usage.json`; local harness records
+and collection checkpoints live in `web-token-usage.db` beside it. Both survive
+task removal and have no retention cutoff. Since older daily totals lack call
+identities, external Copilot history is imported only after a saved one-time
+cutover. Other harnesses can contribute older local history. After an unclean
+shutdown, an ownership interval without a known end is excluded through
+recovery and marked as incomplete coverage. Copilot telemetry without a
+usable session identity is also omitted and marked incomplete.
+
+If any `OTEL_*` or `COPILOT_OTEL_*` environment configuration exists, UAM leaves
+it untouched, including explicit disable flags, exporter destinations, and
+content capture settings. Otherwise UAM enables a private local file export
+for its Copilot child process under `~/.copilot/otel/`, with message content
+capture off. This does not change the user's shell or separately launched
+Copilot. A remote-only exporter supplies no local history to aiusage-core;
+UAM's own SDK usage remains available. The usage database omits raw payloads,
+activity, turn-context, and code-change records even when the user's exporter
+captures content. User-configured telemetry files retain their own content
+and retention settings.
+
+Lifetime means all recorded usage, not a provider account's complete history.
+The popover distinguishes collection failures from zero usage. Prompt-length
+estimates are excluded. The open popover refreshes every 15 seconds.
 
 Settings → Models → Token costs lets you set prices for a model, including
 models missing from the bundled catalog. Prices are USD per million tokens.
@@ -1643,8 +1670,10 @@ absent cache price uses the Input rate; an explicit zero is free. Removing a
 manual override restores the bundled price, or marks the model Unpriced if
 none exists. Costs use current base rates for every period, excluding tier,
 batch, priority, tool and other non-token charges. They are estimates, not
-invoices or Copilot credit balances. Totals identify unpriced models and
-show a partial cost when only some models have prices.
+invoices or Copilot credit balances. When no token rate is available, a
+source-reported cost is retained, including harnesses that report costs without
+tokens. Totals identify unpriced models and show a partial cost when only some
+usage has prices.
 
 The build embeds a pinned, MIT-licensed LiteLLM token-price snapshot. It needs
 no runtime network fetch or LiteLLM dependency. To refresh it before a build,

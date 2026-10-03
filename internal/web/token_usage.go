@@ -16,8 +16,8 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
 
-// TokenCounts keeps cache separate for inspection. Total is input + output:
-// the provider's input already includes cache reads and writes.
+// TokenCounts includes cache reads and writes in Input. Total preserves the
+// harness-authoritative total; optional reasoning counters are not added twice.
 type TokenCounts struct {
 	Input      int64 `json:"input"`
 	Output     int64 `json:"output"`
@@ -31,14 +31,15 @@ func (t *TokenCounts) add(v TokenCounts) {
 	t.Output += v.Output
 	t.CacheRead += v.CacheRead
 	t.CacheWrite += v.CacheWrite
-	t.Total = t.Input + t.Output
+	t.Total += v.Total
 }
 
 type ModelTokens struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 	TokenCounts
-	CostUSD *float64 `json:"cost_usd"`
+	CostUSD     *float64 `json:"cost_usd"`
+	CostPartial bool     `json:"cost_partial,omitempty"`
 }
 
 type TokenPeriod struct {
@@ -49,9 +50,10 @@ type TokenPeriod struct {
 }
 
 type TokenUsageReport struct {
-	Since   time.Time              `json:"since"`
-	Today   string                 `json:"today"`
-	Periods map[string]TokenPeriod `json:"periods"`
+	Since      time.Time              `json:"since"`
+	Today      string                 `json:"today"`
+	Periods    map[string]TokenPeriod `json:"periods"`
+	Collection *HarnessCollection     `json:"collection,omitempty"`
 }
 
 type tokenDay struct {
@@ -62,10 +64,13 @@ type tokenDay struct {
 // Daily aggregates have no transcript or task dependency, so removing a
 // task cannot subtract its usage. There is no retention cutoff for Lifetime.
 type tokenLedger struct {
-	Version         int                 `json:"version"`
-	Since           time.Time           `json:"since"`
-	Days            map[string]tokenDay `json:"days"`
-	revision, saved uint64
+	Version             int                           `json:"version"`
+	Since               time.Time                     `json:"since"`
+	Days                map[string]tokenDay           `json:"days"`
+	CopilotSince        time.Time                     `json:"copilot_since,omitzero"`
+	CopilotSessions     map[string][]copilotOwnership `json:"copilot_sessions,omitempty"`
+	CopilotUnattributed bool                          `json:"copilot_unattributed,omitempty"`
+	revision, saved     uint64
 }
 
 func (m *Manager) tokenLedgerPath() string {
@@ -84,8 +89,11 @@ func (m *Manager) loadTokenLedger() error {
 	if err != nil {
 		return fmt.Errorf("load token usage: %w", err)
 	}
-	if m.tokens.Version != 1 || m.tokens.Since.IsZero() || m.tokens.Days == nil {
+	if (m.tokens.Version != 1 && m.tokens.Version != 2) || m.tokens.Since.IsZero() || m.tokens.Days == nil {
 		return fmt.Errorf("load token usage: unsupported or incomplete ledger")
+	}
+	if m.tokens.Version == 2 && m.tokens.CopilotSince.IsZero() {
+		return fmt.Errorf("load token usage: missing Copilot history boundary")
 	}
 	return nil
 }
@@ -100,6 +108,7 @@ func (m *Manager) recordTokensLocked(provider string, usage agentapi.TokenUsage)
 	if counts == (TokenCounts{}) {
 		return
 	}
+	counts.Total = counts.Input + counts.Output
 	at := usage.Time
 	if at.IsZero() || at.After(m.now()) {
 		at = m.now()
@@ -159,12 +168,14 @@ func (m *Manager) TokenUsage() TokenUsageReport {
 			models[key] = model
 			p.Total.add(d.TokenCounts)
 		}
+		coreCosts := m.mergeHarnessTokensLocked(period, today, models, &p)
 		cost, priced := 0.0, 0
 		for _, model := range models {
-			model.CostUSD = tokenCost(model.TokenCounts, m.tokenPriceLocked(model.Provider, model.Model).Rates)
-			if model.CostUSD == nil {
+			model.CostUSD, model.CostPartial = m.modelTokenCostLocked(model, coreCosts[model.Provider+"\x00"+model.Model])
+			if model.CostUSD == nil || model.CostPartial {
 				p.UnpricedModels++
-			} else {
+			}
+			if model.CostUSD != nil {
 				cost += *model.CostUSD
 				priced++
 			}
@@ -177,6 +188,13 @@ func (m *Manager) TokenUsage() TokenUsageReport {
 			return cmp.Or(cmp.Compare(b.Total, a.Total), strings.Compare(a.Provider, b.Provider), strings.Compare(a.Model, b.Model))
 		})
 		out.Periods[period] = p
+	}
+	if m.harness != nil {
+		status := m.harness.collection
+		if m.harness.today != "" && m.harness.today != today {
+			status.Status = "partial"
+		}
+		out.Collection = &status
 	}
 	return out
 }

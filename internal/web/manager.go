@@ -199,8 +199,10 @@ type Manager struct {
 	spawnWait time.Duration
 	// utility is the Utility log and today's count of Utility calls
 	// (utility.go).
-	utility utilityLog
-	tokens  tokenLedger // guarded by mu; persisted by the existing flush loop
+	utility   utilityLog
+	tokens    tokenLedger   // guarded by mu; persisted by the existing flush loop
+	harness   *harnessUsage // optional local harness collector; snapshots guarded by mu
+	usageHome string        // set by RunDaemon before Start; empty disables local discovery
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).
@@ -571,6 +573,16 @@ func (m *Manager) Start(ctx context.Context) error {
 	if err := m.loadTokenLedger(); err != nil {
 		return err
 	}
+	usageLedger, err := m.prepareHarnessUsage()
+	if err != nil {
+		return err
+	}
+	startedUsage := false
+	defer func() {
+		if usageLedger != nil && !startedUsage {
+			_ = usageLedger.Close()
+		}
+	}()
 	// The catalogs include the custom models, so providers get them first.
 	m.setCustomModels(cfg.WebSettings.CustomModels)
 	infos := m.checkProviders(ctx)
@@ -656,6 +668,11 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.sweepUploads()
 	m.loadUtilityLog()
 	m.sweepPins(cfg)
+	if usageLedger != nil {
+		m.wg.Add(1)
+		go m.harnessUsageLoop(usageLedger)
+		startedUsage = true
+	}
 	m.wg.Add(4)
 	go m.persistLoop()
 	go m.sweepLoop()

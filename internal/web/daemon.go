@@ -402,6 +402,10 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 		return err
 	}
 	mgr := NewManager(st, cfg.Providers)
+	mgr.usageHome, err = os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate harness usage: %w", err)
+	}
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
 	}

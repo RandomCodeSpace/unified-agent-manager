@@ -96,6 +96,11 @@ func (s *Server) handleTokenPrices(w http.ResponseWriter, _ *http.Request) {
 	for _, day := range s.m.tokens.Days {
 		add(day.Provider, day.Model)
 	}
+	if s.m.harness != nil {
+		for _, bucket := range s.m.harness.periods["lifetime"] {
+			add(bucket.Keys["tool"], harnessModel(bucket.Keys["model"]))
+		}
+	}
 	rows := make([]ModelTokenPrice, 0, len(models))
 	for _, row := range models {
 		rows = append(rows, row)

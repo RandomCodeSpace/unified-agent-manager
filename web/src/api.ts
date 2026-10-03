@@ -108,7 +108,7 @@ export interface Quota {
   reset_at?: string;
 }
 
-/** Recorded input includes cache reads and writes. Total is input + output. */
+/** Input includes cache reads and writes. Total is the collector-normalized token count. */
 export interface TokenCounts {
   input: number;
   output: number;
@@ -121,8 +121,13 @@ export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
 export interface TokenUsageReport {
   since: string;
   today: string;
+  collection?: {
+    status: 'starting' | 'ready' | 'partial' | 'unavailable';
+    updated_at?: string;
+    copilot_since: string;
+  };
   periods: Record<TokenPeriodKey, {
-    models: (TokenCounts & { provider: string; model: string; cost_usd: number | null })[];
+    models: (TokenCounts & { provider: string; model: string; cost_usd: number | null; cost_partial?: boolean })[];
     total: TokenCounts;
     cost_usd: number | null;
     unpriced_models: number;

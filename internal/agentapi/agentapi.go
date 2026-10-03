@@ -192,6 +192,14 @@ type TokenUsage struct {
 	Input, Output, CacheRead, CacheWrite int64
 }
 
+// UsageSessionRecorder lets the host persist ownership of provider sessions
+// before inference. Configure it before starting or checking the provider.
+// Active marks ownership before inference; inactive follows a successful disconnect.
+// A recorder error prevents use of the session without deleting its history.
+type UsageSessionRecorder interface {
+	SetUsageSessionRecorder(func(sessionID string, active bool) error)
+}
+
 // CustomModelUser is implemented by a provider that can offer custom
 // models next to its own. SetCustomModels replaces them: Models lists them,
 // and conversations opened or switched afterwards can select them.
