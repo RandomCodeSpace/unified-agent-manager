@@ -4,10 +4,11 @@ import { PlannerContext } from './planner/context';
 import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
+import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
-import { Field, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
+import { Field, FieldHelpProvider, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
@@ -21,26 +22,41 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
-import { Tip } from './ui/tooltip';
+import { HelpTip, Tip } from './ui/tooltip';
 
 const NO_PROJECTS: Project[] = [];
+const SETTINGS_SECTIONS = [
+  { id: 'general', label: 'General' },
+  { id: 'models', label: 'Models' },
+  { id: 'providers', label: 'Providers' },
+  { id: 'agents', label: 'Agents' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'hooks', label: 'Hooks' },
+  { id: 'instructions', label: 'Instructions' },
+  { id: 'mcp', label: 'MCP servers' },
+  { id: 'browser', label: 'This browser' },
+] as const;
+type SettingsSection = typeof SETTINGS_SECTIONS[number]['id'];
 
 /** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
-function Section({ id, title, children }: Readonly<{ id: string; title: string; children: ReactNode }>) {
+function Section({ id, title, help, hidden = false, children }: Readonly<{ id: string; title: string; help?: ReactNode; hidden?: boolean; children: ReactNode }>) {
   return (
-    <section aria-labelledby={`${id}-title`} className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
-      <h2 id={`${id}-title`} className="text-title text-ink">
-        {title}
-      </h2>
+    <section hidden={hidden} aria-labelledby={`${id}-title`} className="not-hidden:flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
+      <div className="flex items-center gap-1">
+        <h2 id={`${id}-title`} className="text-title text-ink">
+          {title}
+        </h2>
+        {help && <HelpTip label={title}>{help}</HelpTip>}
+      </div>
       {children}
     </section>
   );
 }
 
 /** A section whose content is still on its way (the first snapshot, the catalogs): the card with its title over a skeleton. */
-function PendingSection({ id, title, label }: Readonly<{ id: string; title: string; label: string }>) {
+function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: string; title: string; label: string; hidden?: boolean }>) {
   return (
-    <section aria-labelledby={`${id}-title`} aria-busy="true" className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
+    <section hidden={hidden} aria-labelledby={`${id}-title`} aria-busy="true" className="not-hidden:flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
         {title}
       </h2>
@@ -53,14 +69,17 @@ function PendingSection({ id, title, label }: Readonly<{ id: string; title: stri
 const COMPACT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90];
 
 /** A label and its help on the left, the control on the right; stacked on a phone. */
-function Row({ id, label, help, children }: Readonly<{ id: string; label: string; help: ReactNode; children: ReactNode }>) {
+function Row({ id, label, help, helpVisible = false, children }: Readonly<{ id: string; label: string; help: ReactNode; helpVisible?: boolean; children: ReactNode }>) {
   return (
     <div className="grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]">
       <div className="flex min-w-0 max-w-3xl flex-col gap-1">
-        <span id={`${id}-label`} className="text-ui font-medium text-ink">
-          {label}
-        </span>
-        <Note id={`${id}-help`}>{help}</Note>
+        <div className="flex items-center gap-1">
+          <span id={`${id}-label`} className="text-ui font-medium text-ink">
+            {label}
+          </span>
+          {!helpVisible && <HelpTip label={label} id={`${id}-help`}>{help}</HelpTip>}
+        </div>
+        {helpVisible && <Note id={`${id}-help`}>{help}</Note>}
       </div>
       {children}
     </div>
@@ -114,6 +133,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
   const busy = disabled || loading;
   // Removing a provider or one of its models is confirmed first (DESIGN.md Confirmations).
   const removal = useConfirm<Removal>();
+  const replacement = useConfirm<{ next: CustomModel[]; removed: string[] }>();
   const pending = removal.target;
   function remove() {
     const r = removal.target;
@@ -142,7 +162,10 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
   async function save(e: SubmitEvent, d: ProviderDraft) {
     e.preventDefault();
     const provider = { name: d.name.trim(), base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() };
-    if (await onSave(withProvider(models, d.original, provider, d.selected))) setDraft(null);
+    const next = withProvider(models, d.original, provider, d.selected);
+    const removed = models.filter((model) => !next.some((entry) => entry.name === model.name && entry.model_id === model.model_id)).map((model) => `${model.name}/${model.model_id}`);
+    if (removed.length) replacement.ask({ next, removed });
+    else if (await onSave(next)) setDraft(null);
   }
   const field = (d: ProviderDraft, key: 'name' | 'base_url' | 'api_key_env', label: string, placeholder: string) => (
     <Field id={`custom-${key}`} label={label}>
@@ -163,17 +186,16 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-3">
-        <h3 className="flex-1 text-ui font-medium">Custom models</h3>
+        <div className="flex flex-1 items-center gap-1">
+          <h3 className="text-ui font-medium">Custom models</h3>
+          <HelpTip label="Custom models">OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: export it as a variable named UAM_BYOM_&lt;NAME&gt; where the service starts (for example in ~/.bashrc), restart the service, and name that variable here.</HelpTip>
+        </div>
         {!draft && (
           <Button size="sm" variant="secondary" disabled={disabled} onClick={() => edit()}>
             Add provider
           </Button>
         )}
       </div>
-      <Note>
-        OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: export it as a variable named UAM_BYOM_&lt;NAME&gt; where the
-        service starts (for example in ~/.bashrc), restart the service, and name that variable here.
-      </Note>
       {providers.map((p) => (
         <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col rounded-md bg-tint-well px-3 py-2">
           <div className="flex min-h-8 items-center gap-2">
@@ -209,6 +231,10 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
         confirmLabel={pending?.model ? 'Remove model' : 'Remove provider'}
         onConfirm={remove}
       />
+      <AlertDialog {...replacement.props} title="Remove models from this provider?" description={<>Saving these changes removes the following model IDs from the selection menus. Tasks already using them keep their current model.<span className="mt-2 block">{replacement.target?.removed.map((id) => <span key={id} className="block break-all font-mono text-meta">{id}</span>)}</span></>} confirmLabel="Save and remove models" busy={busy} onConfirm={() => {
+        const next = replacement.target?.next;
+        if (next) void onSave(next).then((saved) => { if (saved) setDraft(null); replacement.close(); });
+      }} />
       {draft && (
         <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
@@ -297,7 +323,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
  * binary), the Utility model its suggestions and triage use, and the one-time import of a board
  * from the kb app: a source directory in, a report out.
  */
-function PlannerSection({ settings, saving, projects, providers, onSave }: Readonly<{ settings: Settings; saving: boolean; projects: Project[]; providers: ProviderInfo[]; onSave: (patch: Partial<Settings>) => void }>) {
+function PlannerSection({ settings, saving, projects, providers, onSave, hidden }: Readonly<{ settings: Settings; saving: boolean; projects: Project[]; providers: ProviderInfo[]; hidden?: boolean; onSave: (patch: Partial<Settings>) => void }>) {
   const [dir, setDir] = useState('');
   const [report, setReport] = useState<ImportReport | null>(null);
   const [importing, setImporting] = useState(false);
@@ -326,15 +352,17 @@ function PlannerSection({ settings, saving, projects, providers, onSave }: Reado
     }
   };
   return (
-    <Section id="planner" title="Planner">
-      <Row id="planner-switch" label="Planner" help={noGit ? 'Git is not installed on the server, so the planner cannot turn on.' : 'Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows.'}>
+    <Section hidden={hidden} id="planner" title="Planner">
+      <Row id="planner-switch" label="Planner" helpVisible={noGit} help={noGit ? 'Git is not installed on the server, so the planner cannot turn on.' : 'Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows.'}>
         <Switch aria-label="Planner" aria-describedby="planner-switch-help" checked={!!settings.planner} disabled={saving || (noGit && !settings.planner)} onCheckedChange={(planner) => onSave({ planner })} />
       </Row>
       {settings.planner && utility.length > 0 && <Note>Suggestions and triage use the Utility model: {utility.join('; ')}.</Note>}
       {settings.planner && (
         <form aria-label="Import from kb" className="flex flex-col gap-2" onSubmit={(e) => void run(e)}>
-          <span id="planner-import-label" className="text-ui font-medium text-ink">Import from kb</span>
-          <Note id="planner-import-help">Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.</Note>
+          <div className="flex items-center gap-1">
+            <span id="planner-import-label" className="text-ui font-medium text-ink">Import from kb</span>
+            <HelpTip label="Import from kb" id="planner-import-help">Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.</HelpTip>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input aria-labelledby="planner-import-label" aria-describedby="planner-import-help" className="max-w-md flex-1 text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
             <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim() || importMissing}>
@@ -402,7 +430,7 @@ function NotifyRow() {
   else if (mode === 'page') help += ' This browser shows them only while UAM is open in a tab.';
   return (
     <>
-      <Row id="notify" label="Notify me when a Task needs me or finishes" help={help}>
+      <Row id="notify" label="Notify me when a Task needs me or finishes" help={help} helpVisible={support !== 'ok'}>
         <Switch aria-label="Notify me when a Task needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
       </Row>
       {problem && (
@@ -419,6 +447,9 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
+  const [section, setSection] = useState<SettingsSection>('general');
+  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set(['general']));
+  const scrollArea = useRef<HTMLDivElement>(null);
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -468,12 +499,33 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
   const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
   // What New task uses today: the setting checked against the live catalog, or the provider's own defaults until it is set.
   const taskDefaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
+  const configured = customProviders(settings.custom_models ?? []);
+  const customIds = new Set(configured.flatMap((p) => p.models.map((m) => `${p.name}/${m.model_id}`)));
+  const copilotModels = meta?.providers.find((p) => p.name === 'copilot')?.models ?? [];
+  // Custom providers own their display groups, but Copilot still owns their selection IDs and visibility settings.
+  const modelGroups: { key: string; label: string; owner: string; models: Model[]; offered: Model[]; usage: boolean; custom?: CustomProvider }[] = [
+    ...(meta?.providers ?? []).map((p) => ({
+      key: p.name, label: p.display_name, owner: p.name, offered: p.models, usage: !!p.capabilities.usage,
+      models: [...p.models, ...(settings.hidden_models?.[p.name] ?? []).filter((id) => !p.models.some((m) => m.id === id)).map((id) => ({ id, name: id }))]
+        .filter((m) => p.name !== 'copilot' || !customIds.has(m.id)),
+    })),
+    ...configured.map((p) => ({
+      key: `custom:${p.name}`, label: p.name, owner: 'copilot', offered: copilotModels, usage: false, custom: p,
+      models: p.models.map((m) => {
+        const id = `${p.name}/${m.model_id}`;
+        return copilotModels.find((offered) => offered.id === id) ?? { id, name: m.display_name || m.model_id };
+      }),
+    })),
+  ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col animate-rise">
+    <FieldHelpProvider><div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
-        <h1 className="min-w-0 flex-1 truncate text-display-sm text-ink">Settings</h1>
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <h1 className="truncate text-display-sm text-ink">Settings</h1>
+          <HelpTip label="Settings">{section === 'browser' ? 'These preferences apply only in this browser.' : 'Kept by the service and shared across browsers.'}</HelpTip>
+        </div>
         {saving && <Spinner className="shrink-0" />}
         <Tip label="Close settings">
           <Button size="icon-md" aria-label="Close settings" className="text-muted" onClick={onClose}>
@@ -481,23 +533,30 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
           </Button>
         </Tip>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <nav aria-label="Settings sections" className="flex min-w-0 shrink-0 gap-1 overflow-x-auto px-4 py-2 md:flex-wrap md:overflow-visible md:px-6">
+        {SETTINGS_SECTIONS.map((item) => (
+          <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
+            {item.label}
+          </Button>
+        ))}
+      </nav>
+      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
-          <p className="text-caption text-muted">Kept by the service, so they apply in every browser. This browser's own settings are at the end.</p>
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
-            <Section key={p.name} id={`account-${p.name}`} title={p.display_name}>
+            <Section hidden={section !== 'providers'} key={p.name} id={`account-${p.name}`} title={p.display_name}>
               <CopilotAccount provider={p} />
             </Section>
           ))}
           {!loaded && (
             <>
-              <PendingSection id="composer" title="Composer" label="Loading settings…" />
-              <PendingSection id="new-tasks" title="New tasks" label="" />
-              <PendingSection id="models" title="Models" label="" />
+              <PendingSection hidden={section !== 'general'} id="composer" title="Composer" label="Loading settings…" />
+              <PendingSection hidden={section !== 'general'} id="new-tasks" title="New tasks" label="" />
+              <PendingSection hidden={section !== 'models'} id="models" title="Models" label="" />
+              <PendingSection hidden={section !== 'providers'} id="providers" title="Providers" label="Loading settings…" />
             </>
           )}
-          {loaded && <Section id="composer" title="Composer">
+          {loaded && <Section hidden={section !== 'general'} id="composer" title="Composer">
             <Row
               id="send-default"
               label="While a task is running, Enter…"
@@ -523,12 +582,11 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
             </Row>
           </Section>}
-          {loaded && catalogPending && <PendingSection id="new-tasks" title="New tasks" label="Loading the model catalog…" />}
-          {loaded && catalogPending && <PendingSection id="utility" title="Utility model" label="" />}
-          {loaded && catalogPending && <PendingSection id="models" title="Models" label="" />}
+          {loaded && catalogPending && <PendingSection hidden={section !== 'general'} id="new-tasks" title="New tasks" label="Loading the model catalog…" />}
+          {loaded && catalogPending && <PendingSection hidden={section !== 'models'} id="utility" title="Utility model" label="" />}
+          {loaded && catalogPending && <PendingSection hidden={section !== 'models'} id="models" title="Models" label="" />}
           {loaded && taskDefaults && (
-            <Section id="new-tasks" title="New tasks">
-              <Note>What a new task starts with, in every project. The composer can still change each one before the first message.</Note>
+            <Section hidden={section !== 'general'} id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
               <div className="max-w-xl">
                 <TaskDefaultsFields prefix="new-tasks" value={taskDefaults} disabled={saving} onChange={(next) => void save({ task_defaults: next })} />
               </div>
@@ -537,13 +595,13 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               </Row>
             </Section>
           )}
-          {loaded && titled.length > 0 && <Section id="utility" title="Utility model">
+          {loaded && titled.length > 0 && <Section hidden={section !== 'models'} id="utility" title="Utility model">
             {titled.map((p) => {
               const current = settings.title_model?.[p.name] ?? '';
               const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
               const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
               const cheapest = p.models.find((m) => m.id === p.cheapest_model);
-              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies and phrase turn outcomes. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.">
+              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.">
                 <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
                   { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
                   { value: UTILITY_NONE, label: 'None (no utility AI)' },
@@ -552,11 +610,10 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
               </Row>;
             })}
           </Section>}
-          {loaded && <Section id="background-ai" title="Background AI">
+          {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
             <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
           </Section>}
-          {loaded && !catalogPending && <Section id="models" title="Models">
-            <Note>Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.</Note>
+          {loaded && !catalogPending && <Section hidden={section !== 'models'} id="models" title="Models" help="Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.">
             {metaError && (
               <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1">Could not load the model catalog: {metaError}</span>
@@ -565,43 +622,48 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
                 </Button>
               </Note>
             )}
-            <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
-            {(meta?.providers ?? []).map((p) => {
-              const hidden = settings.hidden_models?.[p.name] ?? [];
-              const models: Model[] = [...p.models, ...hidden.filter((id) => !p.models.some((m) => m.id === id)).map((id) => ({ id, name: id }))];
-              return <div key={p.name} className="flex flex-col gap-1">
-                <h3 className="mb-1 text-ui font-medium">{p.display_name}</h3>
+            {modelGroups.map((p) => {
+              const hidden = settings.hidden_models?.[p.owner] ?? [];
+              return <div key={p.key} role="group" aria-label={`${p.label} models`} className="flex flex-col gap-1">
+                <h3 className="mb-1 flex items-center gap-2 text-ui font-medium">{p.label}{p.custom && <Chip>Custom provider</Chip>}</h3>
+                {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env} is not set in the service's environment. Check this provider in Providers.</Note>}
                 <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
-                {models.map((m) => {
+                {p.models.map((m) => {
                   const shown = !hidden.includes(m.id);
-                  const offered = p.models.some((v) => v.id === m.id);
+                  const offered = p.offered.some((v) => v.id === m.id);
                   return <div key={m.id} className="flex min-h-12 items-center gap-3 py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
                         <span className="min-w-0 break-all">{m.id}{!offered ? ' · not offered now' : ''}</span>
-                        {p.capabilities.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
+                        {p.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>
                     {!shown && <span className="text-meta text-muted">Hidden</span>}
-                    <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.name]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
+                    <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
                   </div>;
                 })}
                 </div>
               </div>;
             })}
           </Section>}
+          {loaded && <Section hidden={section !== 'providers'} id="providers" title="Providers" help="Manage provider endpoints and credentials here. Choose visible models and the Utility model in Models.">
+            {catalogPending && <Note role="status">Loading provider accounts…</Note>}
+            {metaError && <Note tone="error" role="alert">Could not load provider accounts: {metaError} <Button size="sm" onClick={refreshMeta}>Retry</Button></Note>}
+            <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
+          </Section>}
           {/* A service that does not know the planner setting yet has no planner: no row at all. */}
-          {loaded && settings.planner !== undefined && <PlannerSection settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
-          {loaded && <Section id="shell" title="Shell access">
+          {loaded && settings.planner !== undefined && <PlannerSection hidden={section !== 'general'} settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
+          {loaded && <Section hidden={section !== 'general'} id="shell" title="Shell access">
             <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
             </Row>
           </Section>}
-          {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section id="mcp" title="MCP servers">
+          {(['agents', 'skills', 'hooks', 'instructions'] as const).map((kind) => visited.has(kind) && <Section key={kind} hidden={section !== kind} id={kind} title={SETTINGS_SECTIONS.find((item) => item.id === kind)!.label}><ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} /></Section>)}
+          {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section hidden={section !== 'mcp'} id="mcp" title="MCP servers">
             <McpServersSettings terminal={!!settings.terminal} />
           </Section>}
-          <Section id="browser" title="This browser">
+          <Section hidden={section !== 'browser'} id="browser" title="This browser">
             <NotifyRow />
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented
@@ -641,6 +703,6 @@ export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNod
           )}
         </div>
       </div>
-    </div>
+    </div></FieldHelpProvider>
   );
 }

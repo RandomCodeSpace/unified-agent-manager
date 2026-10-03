@@ -140,7 +140,8 @@ export function seed(): MockState {
         name: 'copilot',
         display_name: 'GitHub Copilot',
         available: true,
-        capabilities: CAPS,
+        capabilities: { ...CAPS, titles: true, host_tools: true },
+        cheapest_model: 'gpt-5-mini',
         models: [
           // `auto` reports no media and is not gated; kimi-k3 and the flash model take text only.
           { id: 'auto', name: 'Auto' },

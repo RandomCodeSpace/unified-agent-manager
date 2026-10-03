@@ -66,6 +66,8 @@ Authentication is required; there is no `--no-auth` mode.
 
 `uam web` accepts `--listen`, repeatable `--public-origin`, and `--log-headers`.
 See the [web guide](docs/web.md) for their behavior and deployment details.
+For agents, skills, hooks, and global instructions, see
+[settings management](docs/settings-management.md).
 
 ## Retired terminal support
 

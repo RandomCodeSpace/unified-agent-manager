@@ -9,6 +9,7 @@ const PURPOSES: Record<string, string> = {
   'planner-triage': 'Planner triage',
   'planner-suggest': 'Planner suggestion',
   'commit-message': 'Commit message',
+  'configuration-draft': 'Configuration draft',
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
 };

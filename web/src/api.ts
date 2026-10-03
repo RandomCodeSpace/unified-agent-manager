@@ -36,6 +36,8 @@ export interface Capabilities {
   usage?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
+  /** The provider can run Utility AI jobs with host tools. */
+  host_tools?: boolean;
   import?: boolean;
   /** The provider's runtime sign-in is shown and changed in Settings (`api.account`). */
   account?: boolean;
@@ -589,6 +591,52 @@ export interface CustomModel {
   api_key_env: string;
   /** Output only: whether the variable is set and non-empty in the service environment. */
   key_present?: boolean;
+}
+
+export type ConfigurationKind = 'agents' | 'skills' | 'hooks' | 'instructions';
+/** An AI suggestion for the guided creator. It is not saved until explicitly added. */
+export interface ConfigurationDraft {
+  name: string;
+  description?: string;
+  prompt?: string;
+  model?: string;
+  tools?: string[];
+  disable_model_invocation?: boolean;
+  user_invocable?: boolean;
+  event?: string;
+  bash?: string;
+  powershell?: string;
+  cwd?: string;
+  timeout_sec?: number;
+  env?: Record<string, string>;
+  similar_skills?: { name: string; path: string; project_id?: string; reason: string }[];
+  provider: string;
+  utility_model: string;
+}
+export interface ConfigurationFile {
+  name: string;
+  path: string;
+  content: string;
+  revision: string;
+  editable: boolean;
+  disabled?: boolean;
+  read_only_reason?: string;
+  error?: string;
+}
+export interface Configuration {
+  scope: 'global' | 'project';
+  project_id?: string;
+  terminal_allowed: boolean;
+  agents: ConfigurationFile[];
+  skills: ConfigurationFile[];
+  hooks: ConfigurationFile[];
+  instructions: ConfigurationFile;
+  /** Named instruction files for this scope; older services return only instructions. */
+  instruction_files?: ConfigurationFile[];
+  /** Different canonical files share one discovered agent or skill name. */
+  conflicts?: { kind: 'agents' | 'skills'; name: string; paths: string[] }[];
+  conflict_details?: { kind: 'agents' | 'skills'; path?: string; message: string }[];
+  conflict_warnings?: string[];
 }
 
 export interface Project {
@@ -1196,8 +1244,8 @@ export function isStatus(e: unknown, status: number): e is ApiError {
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 async function call<T>(method: Method, path: string, body?: unknown, omitBody = false, signal?: AbortSignal): Promise<T> {
-  // GET and DELETE carry no body; the others are JSON (the server rejects anything else).
-  const bodyless = method === 'GET' || method === 'DELETE';
+  // Existing DELETE routes are bodyless; revision-checked deletes carry JSON.
+  const bodyless = method === 'GET' || (method === 'DELETE' && body === undefined);
   let res: Response;
   try {
     res = await fetch(path, {
@@ -1384,6 +1432,13 @@ export const api = {
   makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
   webSettings: () => call<Settings>('GET', '/api/settings'),
+  configuration: (projectId = '') => call<Configuration>('GET', `/api/configuration${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+  draftConfiguration: (kind: Exclude<ConfigurationKind, 'instructions'>, brief: string, projectId = '') => call<ConfigurationDraft>('POST', `/api/configuration/${kind}/draft${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { brief }),
+  saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
+  setConfigurationDisabled: (kind: ConfigurationKind, name: string, body: { disabled: boolean; revision: string; path: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
+  deleteConfiguration: (kind: ConfigurationKind, name: string, revision: string, projectId = '', path?: string) => call<void>('DELETE', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { revision, ...(path ? { path } : {}) }),
+  listSkills: (source: string, projectId = '') => call<{ output: string }>('POST', `/api/configuration/skills/list${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source }),
+  installSkills: (source: string, skills: string[], projectId = '') => call<{ output: string; installed: string[] }>('POST', `/api/configuration/skills/install${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source, skills }),
   /** The service refuses an unknown key or value with 400 and changes nothing. */
   updateWebSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
   /** The model IDs an OpenAI-compatible endpoint lists; the service fetches them with the named key variable. */

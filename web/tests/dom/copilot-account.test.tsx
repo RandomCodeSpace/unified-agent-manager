@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { renderApp } from './render';
 
 async function account() {
+  (await screen.findByRole('button', { name: 'Providers', exact: true })).click();
   return within(await screen.findByRole('region', { name: 'GitHub Copilot' }));
 }
 

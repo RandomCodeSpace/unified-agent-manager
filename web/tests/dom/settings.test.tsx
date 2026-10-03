@@ -1,11 +1,18 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
+import { AppContext, type AppContextValue } from '../../src/components/common';
+import { SettingsView } from '../../src/components/Settings';
+import { seed } from '../../src/mock/data';
+import { install } from '../../src/mock/install';
 import { renderApp, type User } from './render';
 
-async function openSettings(user?: User) {
+async function openSettings(tab = 'General', user?: User) {
   const rendered = renderApp('#settings');
   await screen.findByRole('heading', { level: 1, name: 'Settings' });
-  await section('Models');
+  await rendered.user.click(screen.getByRole('button', { name: tab, exact: true }));
+  await section(tab === 'General' ? 'Composer' : tab);
   return { ...rendered, user: user ?? rendered.user };
 }
 
@@ -20,6 +27,85 @@ async function section(name: string) {
 }
 
 describe('settings', () => {
+  async function customModelSettings(change?: (context: AppContextValue) => void) {
+    install();
+    const fixture = seed();
+    const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: vi.fn(), narrow: false, hasNews: () => false, usage: null, refreshMeta: vi.fn() };
+    context.settings.custom_models = [{ name: 'ollama', base_url: 'https://ollama.com/v1', api_key_env: 'UAM_BYOM_OLLAMA', model_id: 'deepseek-v4.1-flash', display_name: 'DeepSeek V4.1 Flash', key_present: true }];
+    context.meta!.providers.find((p) => p.name === 'copilot')!.models.push({ id: 'ollama/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' });
+    change?.(context);
+    render(<AppContext.Provider value={context}><SettingsView onClose={() => {}} /></AppContext.Provider>);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    return { user, context, models: await section('Models') };
+  }
+
+  test('custom models have their own provider group and keep the Copilot visibility contract', async () => {
+    const { user, context, models } = await customModelSettings((context) => {
+      context.settings.hidden_models = { copilot: ['old-native-model'], another: ['other-hidden-model'] };
+    });
+    const custom = within(models.getByRole('group', { name: 'ollama models' }));
+    expect(custom.getByText('DeepSeek V4.1 Flash')).toBeTruthy();
+    expect(models.getAllByRole('switch', { name: 'Show DeepSeek V4.1 Flash' })).toHaveLength(1);
+    expect(within(models.getByRole('group', { name: 'GitHub Copilot models' })).queryByText('DeepSeek V4.1 Flash')).toBeNull();
+    const save = vi.spyOn(api, 'updateWebSettings').mockResolvedValue(context.settings);
+    try {
+      await user.click(custom.getByRole('switch', { name: 'Show DeepSeek V4.1 Flash' }));
+      await waitFor(() => expect(save).toHaveBeenCalledWith({ hidden_models: { copilot: ['old-native-model', 'ollama/deepseek-v4.1-flash'], another: ['other-hidden-model'] } }));
+      expect(context.refreshMeta).toHaveBeenCalled();
+    } finally {
+      save.mockRestore();
+    }
+  });
+
+  test.each(['stale', 'failed'] as const)('configured custom models remain visible with a %s catalog and missing credentials', async (state) => {
+    const { models } = await customModelSettings((context) => {
+      context.settings.custom_models![0].key_present = false;
+      context.settings.hidden_models = { copilot: ['ollama/deepseek-v4.1-flash'] };
+      if (state === 'failed') {
+        context.meta = null;
+        context.metaError = 'Catalog unavailable';
+      } else {
+        const copilot = context.meta!.providers.find((p) => p.name === 'copilot')!;
+        copilot.models = copilot.models.filter((m) => m.id !== 'ollama/deepseek-v4.1-flash');
+      }
+    });
+    const custom = within(models.getByRole('group', { name: 'ollama models' }));
+    expect(custom.getByText('DeepSeek V4.1 Flash')).toBeTruthy();
+    expect(custom.getByText('ollama/deepseek-v4.1-flash · not offered now')).toBeTruthy();
+    expect(custom.getByText(/UAM_BYOM_OLLAMA is not set/)).toBeTruthy();
+    expect(models.getAllByRole('switch', { name: /Show .*deepseek/i })).toHaveLength(1);
+    const visibility = custom.getByRole('switch', { name: 'Show DeepSeek V4.1 Flash' });
+    expect(visibility.getAttribute('aria-checked')).toBe('false');
+    expect(visibility.getAttribute('aria-disabled')).not.toBe('true');
+    if (state === 'failed') expect(models.getByRole('alert').textContent).toContain('Catalog unavailable');
+  });
+
+  test('Models contains model choices and Providers contains accounts and endpoints', async () => {
+    const { user } = await openSettings('Models');
+    expect(screen.getByRole('region', { name: 'Utility model' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Models', exact: true })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'GitHub Copilot' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
+    expect((await section('Providers')).getByRole('button', { name: 'Add provider' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'GitHub Copilot' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Models', exact: true })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Utility model' })).toBeNull();
+  });
+
+  test('sections keep an unfinished provider draft when navigating away and back', async () => {
+    const { user } = await openSettings('Providers');
+    const models = await section('Providers');
+    await user.click(models.getByRole('button', { name: 'Add provider' }));
+    await user.type(models.getByRole('textbox', { name: 'Provider name' }), 'draft-provider');
+    await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+    expect(screen.queryByRole('region', { name: 'Providers', exact: true })).toBeNull();
+    expect(screen.getByRole('button', { name: 'General', exact: true }).getAttribute('aria-current')).toBe('page');
+    await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
+    expect((models.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement).value).toBe('draft-provider');
+  });
+
   test('the Enter default switches between steer and queue, saved on the service', async () => {
     const { user } = await openSettings();
     const composer = await section('Composer');
@@ -57,7 +143,7 @@ describe('settings', () => {
   });
 
   test('a setting the service refuses goes back to its old value and says why', async () => {
-    const { user } = await openSettings();
+    const { user } = await openSettings('Models');
     const models = await section('Models');
     // The mock service knows no hidden_models setting, so hiding a model is refused.
     await user.click(models.getByRole('switch', { name: 'Show Kimi K3' }));
@@ -67,8 +153,8 @@ describe('settings', () => {
   });
 
   test('custom providers load their model list and save the chosen ones', async () => {
-    const { user } = await openSettings();
-    const models = await section('Models');
+    const { user } = await openSettings('Providers');
+    const models = await section('Providers');
     expect(models.getByRole('region', { name: 'openrouter models' })).toBeTruthy();
     expect(models.getByText("UAM_BYOM_OPENROUTER is not set in the service's environment")).toBeTruthy();
     await user.click(models.getByRole('button', { name: 'Add provider' }));
@@ -99,18 +185,52 @@ describe('settings', () => {
   });
 
   test('removing a custom provider is confirmed first', async () => {
-    const { user } = await openSettings();
-    const models = await section('Models');
+    const { user } = await openSettings('Providers');
+    const models = await section('Providers');
     await user.click(models.getByRole('button', { name: 'Remove provider openrouter' }));
-    const confirm = await screen.findByRole('alertdialog', { name: 'Remove provider openrouter?' });
+    let confirm = await screen.findByRole('alertdialog', { name: 'Remove provider openrouter?' });
     expect(within(confirm).getByText(/Its one model leaves the model menus\./)).toBeTruthy();
+    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }));
+    expect(models.getByRole('region', { name: 'openrouter models' })).toBeTruthy();
+    await user.click(models.getByRole('button', { name: 'Remove provider openrouter' }));
+    confirm = await screen.findByRole('alertdialog', { name: 'Remove provider openrouter?' });
     await user.click(within(confirm).getByRole('button', { name: 'Remove provider' }));
     await waitFor(() => expect(models.queryByRole('region', { name: 'openrouter models' })).toBeNull());
   });
 
+  test.each(['deselect', 'rename'])('provider edits confirm removed model IDs before saving: %s', async (action) => {
+    const { user } = await openSettings('Providers');
+    const providers = await section('Providers');
+    await user.click(within(providers.getByRole('region', { name: 'openrouter models' })).getByRole('button', { name: 'Edit' }));
+    const form = within(providers.getByRole('form', { name: 'Edit provider openrouter' }));
+    const before = (await api.webSettings()).custom_models!;
+    if (action === 'deselect') await user.click(form.getByRole('button', { name: 'None' }));
+    else {
+      await user.clear(form.getByRole('textbox', { name: 'Provider name' }));
+      await user.type(form.getByRole('textbox', { name: 'Provider name' }), 'renamed');
+    }
+    const save = vi.spyOn(api, 'updateWebSettings');
+    try {
+      await user.click(form.getByRole('button', { name: 'Save provider' }));
+      let dialog = within(await screen.findByRole('alertdialog', { name: 'Remove models from this provider?' }));
+      expect(dialog.getByText(`${before[0].name}/${before[0].model_id}`)).toBeTruthy();
+      expect(save).not.toHaveBeenCalled();
+      await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+      expect(save).not.toHaveBeenCalled();
+      expect((await api.webSettings()).custom_models).toEqual(before);
+      expect(form.getByText(action === 'deselect' ? '0 selected' : '1 selected')).toBeTruthy();
+      await user.click(form.getByRole('button', { name: 'Save provider' }));
+      dialog = within(await screen.findByRole('alertdialog', { name: 'Remove models from this provider?' }));
+      await user.click(dialog.getByRole('button', { name: 'Save and remove models' }));
+      await waitFor(() => expect(providers.queryByRole('form')).toBeNull());
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(((await api.webSettings()).custom_models ?? []).some((model) => model.name === 'openrouter')).toBe(false);
+    } finally { save.mockRestore(); }
+  });
+
   test('editing a provider keeps its saved models selected', async () => {
-    const { user } = await openSettings();
-    const models = await section('Models');
+    const { user } = await openSettings('Providers');
+    const models = await section('Providers');
     await user.click(within(models.getByRole('region', { name: 'openrouter models' })).getByRole('button', { name: 'Edit' }));
     const form = within(models.getByRole('form', { name: 'Edit provider openrouter' }));
     expect(form.getByText('1 selected')).toBeTruthy();
@@ -125,6 +245,7 @@ describe('settings', () => {
     const shell = await section('Shell access');
     await user.click(shell.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(shell.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
+    await user.click(screen.getByRole('button', { name: 'This browser', exact: true }));
     const browser = await section('This browser');
     await user.click(browser.getByRole('radio', { name: 'Match system' }));
     expect(localStorage.getItem('uam.motion')).toBe('system');

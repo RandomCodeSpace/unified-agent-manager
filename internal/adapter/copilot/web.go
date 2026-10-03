@@ -755,7 +755,7 @@ func titleEffort(ctx context.Context, client sdkClient, model string) string {
 		if m.ID != model {
 			continue
 		}
-		for _, effort := range []string{"none", "minimal", "low"} {
+		for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"} {
 			if slices.Contains(m.SupportedReasoningEfforts, effort) {
 				return effort
 			}

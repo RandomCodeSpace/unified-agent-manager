@@ -40,11 +40,12 @@ const (
 
 // The purposes of Utility calls.
 const (
-	purposeTitle           = "title"
-	purposeSubagentSummary = "subagent-summary"
-	purposePlannerTriage   = "planner-triage"
-	purposePlannerSuggest  = "planner-suggest"
-	purposeCommitMessage   = "commit-message"
+	purposeTitle              = "title"
+	purposeSubagentSummary    = "subagent-summary"
+	purposePlannerTriage      = "planner-triage"
+	purposePlannerSuggest     = "planner-suggest"
+	purposeCommitMessage      = "commit-message"
+	purposeConfigurationDraft = "configuration-draft"
 )
 
 // The outcomes of Utility calls, and why one was skipped.
