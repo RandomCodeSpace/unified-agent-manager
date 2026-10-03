@@ -1,25 +1,28 @@
 import { flushSync } from 'react-dom';
 import { HistoryAnchor } from './HistoryAnchor';
-import { isSubagentCall, subagentSummary, duration, windowInteractions } from '../lib/transcript';
-import { BodyNotice, DetailVisibility, useDetailAgent, useDisclosure, useItemBody } from './Details';
-import { Bot, Check, ChevronDown, ChevronRight, Copy, Crosshair, Ellipsis, Minus, Square, X } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
-import { LIVE, api, describeError, isStatus, modelName, newRequestId, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus, type Submission } from '../api';
+import { isSubagentCall, subagentSummary, duration, toolLabel, windowInteractions } from '../lib/transcript';
+import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Details';
+import { Popover as BasePopover } from '@base-ui/react/popover';
+import { Dialog as BaseDialog } from '@base-ui/react/dialog';
+import { ArrowLeft, Bot, Check, ChevronDown, ChevronRight, CornerDownRight, Minus, Square, X } from 'lucide-react';
+import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
+import { api, describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
-import { FILTER_OVER, GROUP_OVER, IDENTITY_LIMIT, LIVE_ROWS, PAGE_ROWS, countParts, countSubagents, earlierTag, inFilter, indexGroups, liveRows, liveSet, matches, mergeOutline, ms, parentMap, ranAgain, replyIndex, runCount, runLines, statusGroups, subagentNoun, type CountPart, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type StatusGroup, type SubagentCounts } from '../lib/subagents';
+import { compactTokens } from '../lib/cost';
+import { EXIT_MS } from './ui/collapse';
+import { FILTER_OVER, IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, families, inFilter, indexGroups, liveSet, matches, mergeOutline, ms, parentMap, replyIndex, runCount, runLines, subagentNoun, totalTokens, type CountPart, type Family, type IdentityTone, type IndexFilter, type IndexGroup, type LiveSubagent, type Replies, type SubagentCounts } from '../lib/subagents';
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, WorkingMark, useApp } from './common';
+import { Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, WorkingMark, useApp, useMedia } from './common';
 import { AgentItems } from './Transcript';
 import { Button } from './ui/button';
-import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
-import { AlertDialog, Sheet, useConfirm } from './ui/dialog';
+import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
-import { ContextMenu, Menu, type ActionItem } from './ui/menu';
+import { popupClass } from './ui/menu';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
 
@@ -73,13 +76,6 @@ function nearEdge(el: HTMLElement, direction: 'older' | 'newer'): boolean {
   return distance < Math.min(1000, Math.max(200, el.clientHeight * 2));
 }
 
-/** Why a follow-up cannot be sent now; null when it can. */
-function followUpBlocked(session: Pick<SessionDetail, 'stage' | 'state'>): string | null {
-  if (readOnly(session)) return session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.';
-  if (LIVE.includes(session.state)) return 'Unavailable while the task is running a turn.';
-  return null;
-}
-
 /**
  * A side panel: inline beside the column at ≥1280px with a draggable inner edge (width
  * remembered per panel), an overlay sheet from the right at 960–1279, a full-screen sheet
@@ -130,12 +126,9 @@ export function PanelHeader({ children, className }: Readonly<{ children: ReactN
   return <div className={cn('pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3', className)}>{children}</div>;
 }
 
-/** Where a row is drawn: a reply's list (in Detailed, its activity run), the live card, or the header index (subagents not placed in the conversation). A Task expands one row at a time. */
-type Place = 'list' | 'live' | 'index';
-
 /**
  * A request from `locate` to show the row of the subagent `toolCallId` spawned: its reply's list
- * opens, and the group and page holding the row; with `expand` the row opens too. `n` counts the
+ * opens, and the page holding the row; with `expand` its transcript opens too. `n` counts the
  * requests, so asking twice for the same row still opens it.
  */
 export interface Reveal {
@@ -144,12 +137,20 @@ export interface Reveal {
   n: number;
 }
 
-interface Expanded {
+/**
+ * The subagent whose transcript is open (one per Task): the row it was opened from, the ones it
+ * was opened through ("← parent"), and on a phone whether its sheet has grown from the peek to the
+ * transcript. `open` turns false while it closes.
+ */
+interface Pinned {
   id: string;
-  place: Place;
+  anchor: Element | null;
+  back: string[];
+  full: boolean;
+  open: boolean;
 }
 
-/** A run picked in an open row: its transcript shows the run's first item. `n` counts the picks. */
+/** A run picked in the transcript's run strip: the transcript shows the run's first item. `n` counts the picks. */
 interface Seek {
   time: string;
   /** The first run: the transcript's start. */
@@ -159,10 +160,10 @@ interface Seek {
   n: number;
 }
 
-/** What of the Task a subagent row and its composer read; kept while those fields are unchanged, so streaming leaves it alone. */
+/** What of the Task the transcript reads; kept while those fields are unchanged, so streaming leaves it alone. */
 type TaskInfo = Pick<SessionDetail, 'id' | 'provider' | 'workdir' | 'interactions' | 'stage' | 'state'>;
 
-/** What a row's one line is read from: its transcript or latest step, and its `task` call. */
+/** What a subagent's one line is read from: its transcript or latest step, and its `task` call. */
 interface Summaries {
   agents: Record<string, AgentTranscript>;
   agentSteps: Record<string, Item>;
@@ -188,26 +189,27 @@ interface ScopeData {
   /** When each `task` call ran, from the outline. */
   callTimes: ReadonlyMap<string, string>;
   replies: Replies;
-  /** The live card's set; empty while there is no card. */
+  /** The live set; empty while nothing is at work. */
   live: LiveSubagent[];
   liveIds: ReadonlySet<string>;
   stops: Record<string, StopState>;
-  expanded: Expanded | null;
+  /** The subagent whose transcript is open, or "". */
+  pinned: string;
+  /** Below 640px: a row opens a sheet instead of the peek and the panel. */
+  phone: boolean;
   reveal: Reveal | null;
 }
 
 /** Stable for the life of the scope, so rows never render for a new callback. */
 interface ScopeActions {
-  /** Scroll to the row of the subagent a call spawned, opening what holds it; `expand` opens the row. */
+  /** Scroll to the row of the subagent a call spawned, opening what holds it; `expand` opens its transcript. */
   locate: (toolCallId: string, expand?: boolean) => void;
   /** Scroll to the reply a user message started and flash its turn line. */
   jumpToReply: (key: string) => void;
   /** Asks to confirm, then stops. */
   stop: (s: Subagent) => void;
-  /** Opens one row (closing any other) or none; `row`, the opened row, stays in view. */
-  expand: (next: Expanded | null, row?: HTMLElement | null) => void;
-  /** Folds a row open in the header index, and only that. */
-  closeIndex: () => void;
+  /** Opens a subagent's transcript next to `anchor` (its row, or what stands for it); on a phone, its sheet at the peek. */
+  open: (id: string, anchor: Element | null) => void;
 }
 
 class ScopeStore {
@@ -229,7 +231,7 @@ class ScopeStore {
   }
 }
 
-const SubagentContext = createContext<{ store: ScopeStore; actions: ScopeActions } | null>(null);
+const SubagentContext = createContext<{ store: ScopeStore; actions: ScopeActions; peek: BasePopover.Handle<string> } | null>(null);
 const NO_SUBSCRIBE = () => () => {};
 
 /** One value from the Task's subagents; a component renders again only when it changes, so `select` returns primitives or kept references. */
@@ -249,25 +251,20 @@ function useKept<T>(next: readonly T[]): readonly T[] {
 
 /** The replies of the Task and the subagents each spawned (lib/subagents `replyIndex`); undefined outside a Task. */
 export const useSubagentReplies = () => useScope((d) => d.replies);
-/** The subagents the live card shows, while it shows. */
+/** The subagents the live set shows, while it shows. */
 export const useLiveSubagentIds = () => useScope((d) => d.liveIds);
 
 /**
- * The Task's subagents for everything that draws them (the reply chips and lists, the live card,
- * the header index): the session, the transcripts held, the one expanded row, stop requests and
- * their one confirmation, and `locate`.
+ * The Task's subagents for everything that draws them (the reply chips and lists, the live set,
+ * the header index): the session, the transcripts held, the one peek (DESIGN.md subagent peek),
+ * the one open transcript, stop requests and their one confirmation, and `locate`.
  */
-export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onExpand, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** A row opened in the conversation: keep it in view. */ onExpand: (row: HTMLElement) => void; children: ReactNode }>) {
+export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; children: ReactNode }>) {
   const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
-  const [expanded, setExpanded] = useState<Expanded | null>(null);
-  const [seen, setSeen] = useState(reveal?.n);
-  if (reveal && reveal.n !== seen) {
-    setSeen(reveal.n);
-    const s = reveal.expand ? session.subagents.find((x) => x.parent_tool_call_id === reveal.toolCallId) : undefined;
-    if (s) setExpanded({ id: s.id, place: 'list' });
-  }
+  const phone = useMedia('(max-width: 639px)');
+  const [pinned, setPinned] = useState<Pinned | null>(null);
   // The items and the index change with every streamed token; what is read from them (the user
   // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
   const byParent = parentMap(session.subagents);
@@ -277,56 +274,72 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   const outline = useKept(mergeOutline(session.outline, (session.history_index ?? session.items).filter((item) => (item.kind === 'user' && !item.delivery) || isSubagentCall(item) || byParent.has(item.id))));
   const callMap = useMemo(() => new Map(calls.map((item) => [item.id, item])), [calls]);
   const callTimes = useMemo(() => new Map(outline.flatMap((item) => (item.kind === 'tool' && item.time ? [[item.id, item.time] as const] : []))), [outline]);
-  const messageIds = useMemo(() => new Set(messages.map((item) => item.id)), [messages]);
   const replies = useMemo(() => replyIndex(outline, session.subagents), [outline, session.subagents]);
   const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);
   const { id, provider, workdir, interactions, stage, state } = session;
   const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);
-  const keep = expanded?.place === 'live' ? expanded.id : undefined;
+  // The open transcript keeps its subagent in the live set, so its row stays.
+  const keep = pinned?.id;
   const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, keep), [replies, session.subagents, keep]);
   const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
-  // An open row that nothing can draw any more (its subagent gone, its reply's list out of the window) closes.
-  if (expanded) {
-    const s = session.subagents.find((x) => x.id === expanded.id);
-    const parent = s?.parent_tool_call_id ?? '';
-    if (!s || (expanded.place === 'list' && !callMap.has(parent) && !messageIds.has(replies.ofCall.get(parent)?.key ?? ''))) setExpanded(null);
-  }
+  // A transcript whose subagent is gone closes.
+  if (pinned?.open && !session.subagents.some((x) => x.id === pinned.id)) setPinned({ ...pinned, open: false });
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, expanded, reveal }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, expanded, reveal],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned: pinned?.open ? pinned.id : '', phone, reveal }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned, phone, reveal],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
-  const handlers = useRef({ onLocate, onJumpToReply, onExpand, ask: stopConfirm.ask });
+  const handlers = useRef({ onLocate, onJumpToReply, ask: stopConfirm.ask });
   useLayoutEffect(() => {
-    handlers.current = { onLocate, onJumpToReply, onExpand, ask: stopConfirm.ask };
+    handlers.current = { onLocate, onJumpToReply, ask: stopConfirm.ask };
   });
-  const [value] = useState(() => ({
-    store,
-    actions: {
-      locate: (id: string, expand?: boolean) => handlers.current.onLocate(id, expand),
-      jumpToReply: (key: string) => handlers.current.onJumpToReply(key),
-      stop: (s: Subagent) => handlers.current.ask(s),
-      expand: (next: Expanded | null, row?: HTMLElement | null) => {
-        setExpanded(next);
-        if (next && row) handlers.current.onExpand(row);
-      },
-      closeIndex: () => setExpanded((x) => (x?.place === 'index' ? null : x)),
-    } satisfies ScopeActions,
-  }));
+  const [value] = useState(() => {
+    const peek = BasePopover.createHandle<string>();
+    return {
+      store,
+      peek,
+      actions: {
+        // What it lands on is in the conversation: the peek and an open transcript make way.
+        locate: (to: string, expand?: boolean) => {
+          peek.close();
+          setPinned((p) => (p?.open ? { ...p, open: false } : p));
+          handlers.current.onLocate(to, expand);
+        },
+        jumpToReply: (key: string) => handlers.current.onJumpToReply(key),
+        stop: (s: Subagent) => handlers.current.ask(s),
+        open: (to: string, anchor: Element | null) => {
+          peek.close();
+          setPinned({ id: to, anchor, back: [], full: false, open: true });
+        },
+      } satisfies ScopeActions,
+    };
+  });
   const stopName = stopConfirm.target ? `“${stopConfirm.target.name}”` : '';
+  // Its stop confirmation sits outside it: a press there is not a press away from the transcript.
+  const close = () => {
+    if (!stopConfirm.target) setPinned((p) => (p ? { ...p, open: false } : p));
+  };
+  const closed = () => setPinned((p) => (p?.open ? p : null));
+  // A subagent it spawned opens in its place, with the way back.
+  const child = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [...p.back, p.id], full: true } : p));
+  const back = () => setPinned((p) => (p?.back.length ? { ...p, id: p.back.at(-1)!, back: p.back.slice(0, -1) } : p));
   return (
     <SubagentContext.Provider value={value}>
       {children}
+      {!phone && <SubagentPeek handle={value.peek} />}
+      {pinned && (phone
+        ? <SubagentSheet pinned={pinned} onFull={() => setPinned((p) => (p ? { ...p, full: true } : p))} onClose={close} onClosed={closed} onChild={child} onBack={back} />
+        : <SubagentPanel pinned={pinned} onClose={close} onClosed={closed} onChild={child} onBack={back} />)}
       <AlertDialog
         {...stopConfirm.props}
         title={`Stop subagent ${stopName}?`}
         description="It stops where it is. What it has done so far stays in its transcript; the main agent gets no result from it."
         confirmLabel="Stop subagent"
         onConfirm={() => {
-          const id = stopConfirm.target?.id;
+          const target = stopConfirm.target?.id;
           stopConfirm.close();
-          if (id) stopNow(id);
+          if (target) stopNow(target);
         }}
       />
     </SubagentContext.Provider>
@@ -347,15 +360,10 @@ export function useSubagentDisclosure(key: string, subagents: readonly Subagent[
 
 // Identity tones as whole class names, so Tailwind sees them.
 const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
-const STRIPE: Record<IdentityTone, string> = {
-  violet: 'shadow-[inset_3px_0_0_var(--color-badge-violet)]',
-  pink: 'shadow-[inset_3px_0_0_var(--color-badge-pink)]',
-  cyan: 'shadow-[inset_3px_0_0_var(--color-badge-cyan)]',
-  amber: 'shadow-[inset_3px_0_0_var(--color-badge-amber)]',
-  teal: 'shadow-[inset_3px_0_0_var(--color-badge-teal)]',
-};
 const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
 const STATUS_WORD: Record<SubagentStatus, string> = { running: 'running', idle: 'idle', completed: 'completed', failed: 'failed', cancelled: 'stopped' };
+const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };
+const STATUS_TONE: Record<SubagentStatus, string> = { running: 'text-accent', idle: 'text-muted', completed: 'text-success', failed: 'text-error', cancelled: 'text-muted' };
 
 /** "3 subagents · 2 done · 1 failed", with each count in its tone. */
 function Counts({ c, lead }: Readonly<{ c: SubagentCounts; lead?: ReactNode }>) {
@@ -388,21 +396,48 @@ function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
   }
 }
 
-/** The line under a subagent's name: what it is doing or what it reported (`subagentSummary`). */
+/** What a subagent is doing or reported (`subagentSummary`): its line in the index and the peek. */
 function rowSummary(d: Summaries, s: Subagent): string {
   const steps = d.agents[s.id]?.items ?? (d.agentSteps[s.id] ? [d.agentSteps[s.id]] : undefined);
   return subagentSummary(s, steps, d.calls.get(s.parent_tool_call_id ?? '')?.tool);
 }
 
+/** The time now, every second while `on`. */
+function useNow(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [on]);
+  return now;
+}
+
+/** How long it took, or, while it runs, how long it has been running (in `accent`). */
+function Took({ subagent: s, className }: Readonly<{ subagent: Subagent; className?: string }>) {
+  const running = s.status === 'running';
+  const now = useNow(running && !!s.started_at);
+  let text = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
+  if (running && s.started_at) text = duration(s.started_at, new Date(Math.max(now, ms(s.started_at))).toISOString());
+  return <span className={cn('shrink-0 text-meta tabular-nums', running ? 'text-accent' : 'text-muted', className)}>{text ?? ''}</span>;
+}
+
+/** "2m 40s · 174K tokens · 19 tool calls", from what is known. */
+function usage(s: Subagent): string {
+  const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
+  return [took, s.tokens ? `${compactTokens(s.tokens)} tokens` : '', s.tool_calls ? `${s.tool_calls} tool ${s.tool_calls === 1 ? 'call' : 'calls'}` : ''].filter(Boolean).join(' · ');
+}
+
 /**
  * A reply's subagents on its turn line (DESIGN.md subagent chip): identity dots (the `Bot` glyph
- * past five calls), then "3 subagents · 2 done · 1 failed", and "2 of 3 loaded" while some of the
- * reply's calls have no subagent here yet. It opens the reply's list under the line.
+ * past five calls), then "3 subagents · 1.2M tokens · 2 done · 1 failed", and "2 of 3 loaded" while
+ * some of the reply's calls have no subagent here yet. It opens the reply's list under the line.
  */
 export function SubagentChip({ subagents, calls, tones, open, controls, onToggle }: Readonly<{ subagents: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls: number; tones: ReadonlyMap<string, IdentityTone>; open: boolean; controls?: string; onToggle: () => void }>) {
   const c = countSubagents(subagents);
   const total = Math.max(calls, subagents.length);
-  const lead = subagentNoun(total);
+  const tokens = totalTokens(subagents);
+  const lead = [subagentNoun(total), tokens ? `${compactTokens(tokens)} tokens` : ''].filter(Boolean).join(' · ');
   const partial = subagents.length < total ? `${subagents.length} of ${total} loaded` : '';
   return (
     <button
@@ -432,89 +467,66 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
   );
 }
 
+/** Rows a list draws past a filter's reach, and the columns they flow into. */
+const COLUMNS = 'columns-[20rem] gap-x-6';
+
 /**
- * A reply's subagents: a row each in spawn order. More than eight are grouped by status (Failed
- * and Running open, Done and Stopped folded; the group of the open row always open), more than
- * twelve get a filter by name or result, and a group renders 50 rows at a time. A `locate` for
- * one of them opens its group and page. Reused by Detailed for a reply past eight.
+ * Subagents as one-line rows flowing into columns as wide as the conversation allows (one on a
+ * phone): a family (a subagent and the ones it spawned) at a time, never split across columns,
+ * failed families first, then running ones (lib/subagents `families`). `limit` families render
+ * until "Show 50 more".
+ */
+function Families({ list, tones, anchor, limit, onMore }: Readonly<{ list: Family[]; tones: ReadonlyMap<string, IdentityTone>; anchor: boolean; limit: number; onMore: () => void }>) {
+  return (
+    <>
+      <ul className={COLUMNS}>
+        {list.slice(0, limit).map((f) => (
+          <li key={f.head.id} className="break-inside-avoid">
+            {f.rows.map(({ subagent, depth }) => (
+              <SubagentRow key={subagent.id} subagent={subagent} tone={tones.get(subagent.id)} depth={depth} anchor={anchor} />
+            ))}
+          </li>
+        ))}
+      </ul>
+      {list.length > limit && (
+        <button type="button" className="flex h-7 w-fit items-center px-2 text-left text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={onMore}>
+          Show {Math.min(PAGE_ROWS, list.length - limit)} more
+        </button>
+      )}
+    </>
+  );
+}
+
+/**
+ * A reply's subagents (DESIGN.md subagent list): their rows in columns, failed families first;
+ * past twelve a filter by name or line. A `locate` for one of them clears the filter and pages to
+ * it. Reused by Detailed for a reply past eight.
  */
 export function SubagentList({ id, subagents, calls = subagents.length, tones }: Readonly<{ id: string; subagents: Subagent[]; calls?: number; tones: ReadonlyMap<string, IdentityTone> }>) {
-  const grouped = subagents.length > GROUP_OVER;
   const [query, setQuery] = useState('');
-  const [folds, setFolds] = useState<Partial<Record<StatusGroup['key'], boolean>>>({});
-  const [limits, setLimits] = useState<Partial<Record<StatusGroup['key'], number>>>({});
+  const [limit, setLimit] = useState(PAGE_ROWS);
   const reveal = useScope((d) => d.reveal);
-  const open = useScope((d) => (d.expanded?.place === 'list' ? d.expanded.id : ''));
   // Only while a filter is set does the list read every row's line.
   const filtering = useScope((d) => (query ? d.summaries : null));
-  // The open row stays in the group it was opened in until it is folded: moving it would remount it.
-  const [pin, setPin] = useState<{ id: string; key: StatusGroup['key'] } | null>(null);
-  if (!open || !grouped || !subagents.some((s) => s.id === open)) {
-    if (pin) setPin(null);
-  } else if (pin?.id !== open) {
-    const key = statusGroups(subagents).find((g) => g.subagents.some((s) => s.id === open))?.key;
-    if (key) setPin({ id: open, key });
-  }
-  const pinned = pin && pin.id === open ? pin : undefined;
+  const all = useMemo(() => families(subagents), [subagents]);
   // A reveal from before this list mounted is not replayed (`locate` asks again once it has opened what holds the list).
   const [seen, setSeen] = useState(reveal?.n);
   if (reveal && reveal.n !== seen) {
     setSeen(reveal.n);
-    const target = subagents.find((s) => s.parent_tool_call_id === reveal.toolCallId);
-    const group = target && grouped ? statusGroups(subagents, pinned).find((g) => g.subagents.includes(target)) : undefined;
-    if (target && group) {
+    const at = all.findIndex((f) => f.rows.some((r) => r.subagent.parent_tool_call_id === reveal.toolCallId));
+    if (at >= 0) {
       setQuery('');
-      setFolds((f) => ({ ...f, [group.key]: true }));
-      const at = group.subagents.indexOf(target) + 1;
-      setLimits((l) => ({ ...l, [group.key]: Math.max(l[group.key] ?? PAGE_ROWS, at) }));
+      setLimit((l) => Math.max(l, at + 1));
     }
   }
-  const shown = filtering ? subagents.filter((s) => s.id === open || matches(s, rowSummary(filtering, s), query)) : subagents;
-  const row = (s: Subagent) => (
-    <li key={s.id}>
-      <SubagentRow subagent={s} tone={tones.get(s.id)} place="list" anchor />
-    </li>
-  );
+  const shown = filtering ? all.filter((f) => f.rows.some((r) => matches(r.subagent, rowSummary(filtering, r.subagent), query))) : all;
   const total = Math.max(calls, subagents.length);
-  const lead = subagentNoun(total);
   return (
-    <section id={id} aria-label={lead} className="flex flex-col">
+    <section id={id} aria-label={subagentNoun(total)} className="flex flex-col">
       {subagents.length > FILTER_OVER && (
         <Input size="sm" type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label={`Filter ${subagentNoun(subagents.length)} by name or result`} placeholder={`Filter ${subagents.length} by name or result`} className="mb-1 max-w-80 text-caption" />
       )}
-      {grouped ? (
-        statusGroups(shown, pinned).map((g) => {
-          // A filter shows every match, and the open row's group stays open.
-          const holdsOpen = !!open && g.subagents.some((s) => s.id === open);
-          const opened = query || holdsOpen ? true : folds[g.key] ?? g.open;
-          const limit = Math.max(limits[g.key] ?? PAGE_ROWS, holdsOpen ? g.subagents.findIndex((s) => s.id === open) + 1 : 0);
-          const listId = `${id}-${g.key}`;
-          return (
-            <div key={g.key}>
-              <button
-                type="button"
-                aria-expanded={opened}
-                aria-controls={opened ? listId : undefined}
-                disabled={!!query || holdsOpen}
-                className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-well hover:text-body pointer-coarse:min-h-11"
-                onClick={() => setFolds((f) => ({ ...f, [g.key]: !opened }))}
-              >
-                <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', opened && 'rotate-90')} />
-                <span className={cn('font-semibold', g.key === 'failed' && 'text-error', g.key === 'running' && 'text-accent')}>{g.label}</span>
-                <span className="tabular-nums">{g.subagents.length}</span>
-              </button>
-              {opened && <ul id={listId} className="flex flex-col pl-3">{g.subagents.slice(0, limit).map(row)}</ul>}
-              {opened && g.subagents.length > limit && (
-                <button type="button" className="flex h-7 w-full items-center pl-5 text-left text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => setLimits((l) => ({ ...l, [g.key]: limit + PAGE_ROWS }))}>
-                  Show {Math.min(PAGE_ROWS, g.subagents.length - limit)} more
-                </button>
-              )}
-            </div>
-          );
-        })
-      ) : (
-        <ul className="flex flex-col">{shown.map(row)}</ul>
-      )}
+      <Families list={shown} tones={tones} anchor limit={limit} onMore={() => setLimit(limit + PAGE_ROWS)} />
       {query && !shown.length && <p className="px-2 py-1 text-caption text-muted">No subagent matches “{query}”.</p>}
       {subagents.length < total && <p className="px-2 py-1 text-caption text-muted">{total - subagents.length} more not loaded here: the header’s Subagents list reads older ones from the record.</p>}
     </section>
@@ -522,223 +534,410 @@ export function SubagentList({ id, subagents, calls = subagents.length, tones }:
 }
 
 /**
- * One subagent (DESIGN.md subagent row): its status mark, its identity (a dot, and a 3px stripe
- * in the live card, while its reply has at most five), its name, one line of what it is doing or reported, model,
- * duration and runs. It expands in place onto its description, its runs, its own transcript in a
- * bounded scroller, Stop while it runs and a follow-up while it is idle; Esc inside folds it back.
- * In a reply's list (`anchor`) it carries its `task` call's id, so "Show where it was spawned"
- * lands on it. Memoised: it renders again only when what it shows changes.
+ * One subagent (DESIGN.md subagent row): one line of its state glyph, identity dot (while its
+ * reply has at most five), name, duration and tokens; a failed one adds its error under it. One
+ * spawned by another is indented under it. Hovering it peeks (after a moment); a click or a tap
+ * opens its transcript. In a reply's list (`anchor`) it carries its `task` call's id, so
+ * `locate` lands on it. Memoised: it renders again only when what it shows changes.
  */
-export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, place, anchor = false, earlier = false }: { subagent: Subagent; tone?: IdentityTone; place: Place; anchor?: boolean; /** Spawned by an earlier reply (the live card): a tag says how it came back and leads there. */ earlier?: boolean }) {
-  const actions = useActions();
-  const { meta } = useApp();
-  const [, copy] = useCopied();
-  const toggleRef = useRef<HTMLButtonElement>(null);
-  const panelId = useId();
-  const expanded = useScope((d) => d.expanded?.id === s.id && d.expanded.place === place) ?? false;
-  const summary = useScope((d) => rowSummary(d.summaries, s)) ?? '';
-  const provider = useScope((d) => d.task.provider) ?? '';
-  const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
-  const locked = useScope((d) => readOnly(d.task)) ?? true;
-  // "ran again 17:26 ↓", in an earlier reply's list: "<start>|<reply>".
-  const again = useScope((d) => (place === 'list' ? ranAgainKey(s, d.replies) : '')) ?? '';
-  const presence = usePresence(expanded);
-  if (!actions) return null;
-  // In a list or the index it reads like a tool row: one short line. The live card keeps the full row.
-  const compact = place !== 'live';
+export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth = 0, anchor = false }: { subagent: Subagent; tone?: IdentityTone; depth?: number; anchor?: boolean }) {
+  const scope = useContext(SubagentContext);
+  const phone = useScope((d) => d.phone) ?? false;
+  const open = useScope((d) => d.pinned === s.id) ?? false;
+  const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
+  if (!scope) return null;
   const name = s.name || 'Subagent';
   const parentId = s.parent_tool_call_id;
-  const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
-  const when = took ?? (s.status === 'running' && s.started_at ? `since ${clock(s.started_at)}` : '');
-  const info = [s.model ? modelName(meta, provider, s.model) : '', when, runCount(s)].filter(Boolean).join(' · ');
-  const [againAt, againReply] = again.split('|');
-  const collapse = () => {
-    actions.expand(null);
-    toggleRef.current?.focus({ preventScroll: true });
+  const failure = s.status === 'failed' ? s.error : '';
+  const props = {
+    type: 'button' as const,
+    'data-subagent-toggle': '',
+    'aria-haspopup': 'dialog' as const,
+    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}`,
+    className: cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11', open && 'bg-tint-selected hover:bg-tint-selected'),
+    style: { paddingLeft: `${8 + depth * 18}px` },
   };
-  const items: ActionItem[] = [
-    { key: 'copy', label: 'Copy agent ID', icon: <Copy />, onSelect: () => copy(s.id) },
-    ...(parentId ? [{ key: 'locate', label: 'Show where it was spawned', icon: <Crosshair />, onSelect: () => actions.locate(parentId) }] : []),
-    ...(s.status === 'running' ? [{ key: 'stop', label: stopping.requested ? 'Stop requested' : 'Stop subagent', icon: <Square />, danger: true, disabled: locked || stopping.busy || stopping.requested, onSelect: () => actions.stop(s), separator: true }] : []),
-  ];
+  const line = (
+    <>
+      {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <SubagentMark status={s.status} />
+      </span>
+      {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      <Took subagent={s} className="w-14 text-right" />
+      <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? compactTokens(s.tokens) : ''}</span>
+    </>
+  );
   return (
-    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className={cn('flex flex-col', tone && !compact && STRIPE[tone])}>
-      <ContextMenu.Root>
-        <ContextMenu.Trigger render={<div className={cn('group/agent relative flex items-center transition-colors duration-100 pointer-coarse:min-h-11', compact ? 'min-h-7 gap-2 rounded-sm py-0.5 pr-1 pl-2 hover:bg-tint-well' : 'min-h-10 gap-2.5 py-1.5 pr-1.5 pl-3.5 hover:bg-tint-hover')} />}>
-          {/* The whole line toggles; the tags and the actions sit above it. */}
-          <button
-            ref={toggleRef}
-            type="button"
-            data-subagent-toggle=""
-            aria-expanded={expanded}
-            aria-controls={expanded ? panelId : undefined}
-            aria-label={`${name}, ${STATUS_WORD[s.status]}${summary ? `: ${summary}` : ''}`}
-            title={[name, summary].filter(Boolean).join('\n')}
-            className="absolute inset-0 focus-visible:-outline-offset-2"
-            onClick={(e) => actions.expand(expanded ? null : { id: s.id, place }, expanded || place === 'index' ? null : e.currentTarget.closest<HTMLElement>('[data-subagent-row]'))}
-          />
-          <span className="flex size-4 shrink-0 items-center justify-center">
-            <SubagentMark status={s.status} />
-          </span>
-          {tone && <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', DOT[tone])} />}
-          {compact ? (
-            <span className="flex min-w-0 flex-1 items-center gap-2 text-caption">
-              <span className="max-w-[60%] min-w-0 shrink-0 truncate font-medium text-body">{name}</span>
-              {summary && <span className={cn('min-w-0 truncate', s.status === 'failed' ? 'text-error' : 'text-muted')}>{summary}</span>}
-            </span>
-          ) : (
-            <span className="flex min-w-0 flex-1 flex-col sm:flex-row sm:items-center sm:gap-3">
-              <span className="min-w-0 truncate text-ui font-medium text-ink sm:max-w-[45%] sm:shrink-0">{name}</span>
-              {summary && <span className={cn('min-w-0 truncate text-caption', s.status === 'failed' ? 'text-error' : 'text-body')}>{summary}</span>}
-            </span>
-          )}
-          {earlier && <EarlierTag subagent={s} />}
-          {againAt && (
-            <button type="button" className={TAG} title="Show the reply it ran in again" onClick={() => actions.jumpToReply(againReply)}>
-              ran again {clock(againAt)} ↓
-            </button>
-          )}
-          {info && <span className="shrink-0 text-meta tabular-nums text-muted max-md:hidden">{info}</span>}
-          <ChevronRight aria-hidden="true" className={cn('shrink-0 text-faint transition-transform duration-160 ease-app', compact ? 'size-3' : 'size-3.5', expanded && 'rotate-90')} />
-          <Menu.Root modal={false}>
-            <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for subagent ${name}`} className="relative text-muted opacity-0 transition-opacity group-hover/agent:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
-              <Ellipsis />
-            </Menu.Trigger>
-            <Menu.Content align="end">
-              <Menu.Actions items={items} />
-            </Menu.Content>
-          </Menu.Root>
-        </ContextMenu.Trigger>
-        <ContextMenu.Content>
-          <ContextMenu.Actions items={items} />
-        </ContextMenu.Content>
-      </ContextMenu.Root>
-      {stopping.error && (
-        <p role="alert" className={cn('pr-2 pb-1.5 text-caption text-error', compact ? 'pl-8' : 'pl-10')}>
-          Could not stop it: {stopping.error}
+    <div id={anchor && parentId ? `item-${parentId}` : undefined} data-subagent-row="" className="flex flex-col">
+      {phone ? (
+        <button {...props} onClick={(e) => scope.actions.open(s.id, e.currentTarget)}>
+          {line}
+        </button>
+      ) : (
+        <BasePopover.Trigger
+          {...props}
+          handle={scope.peek}
+          payload={s.id}
+          openOnHover
+          delay={400}
+          closeDelay={120}
+          onClick={(e) => {
+            e.preventBaseUIHandler();
+            scope.actions.open(s.id, e.currentTarget);
+          }}
+        >
+          {line}
+        </BasePopover.Trigger>
+      )}
+      {failure && (
+        <p className="truncate pr-2 pb-1 text-caption text-error" style={{ paddingLeft: `${32 + depth * 18}px` }} title={failure}>
+          {failure}
         </p>
       )}
-      {presence.mounted && (
-        <Collapse open={expanded} appear onClosed={presence.onClosed}>
-          <SubagentDetail id={panelId} open={expanded} subagent={s} name={name} compact={compact} onCollapse={collapse} />
-        </Collapse>
+      {stopError && (
+        <p role="alert" className="pr-2 pb-1 text-caption text-error" style={{ paddingLeft: `${32 + depth * 18}px` }}>
+          Could not stop it: {stopError}
+        </p>
       )}
     </div>
   );
 });
 
-const TAG = 'relative max-w-[40%] min-w-0 truncate rounded-full bg-tint-well px-2 py-0.5 text-meta whitespace-nowrap text-muted shadow-well transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11';
-
-/** The "ran again" target as one string, so the row's selection stays a primitive. */
-function ranAgainKey(s: Subagent, replies: Replies): string {
-  const again = ranAgain(s, replies);
-  return again ? `${again.at}|${again.reply}` : '';
+/** Who spawned it, and when: "Spawned 06:40 by the main agent". */
+function spawnedLine(s: Subagent, subagents: readonly Subagent[]): string {
+  const by = s.parent_agent_id ? subagents.find((x) => x.id === s.parent_agent_id)?.name || 'another subagent' : 'the main agent';
+  const at = clock(s.runs?.[0]?.started_at || s.started_at);
+  return `Spawned ${at ? `${at} ` : ''}by ${by}`;
 }
 
-/**
- * On a live row an earlier reply spawned: "resumed by the agent · first ran 17:05 ↑" or "your
- * follow-up · first ran 17:05 ↑" from its runs, else "from an earlier reply ↑". It leads to that reply's row.
- */
-function EarlierTag({ subagent }: Readonly<{ subagent: Subagent }>) {
-  const actions = useActions();
-  const parentId = subagent.parent_tool_call_id;
-  const parentTime = useScope((d) => (parentId ? d.callTimes.get(parentId) : undefined));
-  const tag = earlierTag(subagent, parentTime);
-  const first = clock(tag.first);
-  const text = first ? `${tag.text} · first ran ${first}` : tag.text;
-  if (!parentId || !actions) return <span className={cn(TAG, 'hover:bg-tint-well hover:text-muted')}>{text}</span>;
+/** A quiet text action: the peek's and the transcript's links. */
+const LINK = 'rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11';
+
+/** The last few steps of a running subagent: its transcript's newest items, one line each. */
+function LatestSteps({ subagent: s }: Readonly<{ subagent: Subagent }>) {
+  const detail = useDetailAgent(s.id, true);
+  const items = (detail.agent?.items ?? []).filter((item) => item.kind === 'tool' || item.kind === 'reasoning' || (item.kind === 'assistant' && item.text?.trim())).slice(-4);
+  const step = useScope((d) => d.summaries.agentSteps[s.id]);
+  const lines = items.length ? items : step ? [step] : [];
+  if (!lines.length) return <p className="text-caption text-muted">Nothing recorded yet.</p>;
   return (
-    <button type="button" className={TAG} title="Show where it was first spawned" onClick={() => actions.locate(parentId)}>
-      {text} ↑
-    </button>
+    <div className="flex flex-col gap-0.5 rounded-md bg-surface px-2.5 py-2 font-mono text-code-sm text-body shadow-well">
+      {lines.map((item) => {
+        let text: string;
+        if (item.kind === 'tool') {
+          const { name, arg } = toolLabel(item.tool);
+          text = arg ? `${name} ${arg}` : name;
+        } else if (item.kind === 'reasoning') text = item.ended_at ? 'Thought' : 'Thinking…';
+        else text = (item.text ?? '').trim().split('\n')[0];
+        return <span key={item.id} className="truncate">{text}</span>;
+      })}
+    </div>
   );
 }
 
-/** Whether a popup other than the one holding `target` (a menu, a dialog) is open and owns the keys. */
-const otherPopupOpen = (target: EventTarget) => [...document.querySelectorAll('[data-popup]:not([data-popup="tooltip"])')].some((popup) => !popup.contains(target as Node));
-
-/** An expanded row: what the subagent was asked, its runs, its transcript (fetched while open), Stop while it runs, the follow-up while it is idle. */
-function SubagentDetail({ id, open, subagent: s, name, compact, onCollapse }: Readonly<{ id: string; open: boolean; subagent: Subagent; name: string; compact: boolean; onCollapse: () => void }>) {
-  const { meta } = useApp();
+/**
+ * The peek (DESIGN.md subagent peek): name and state, how long, tokens and tool calls, model and
+ * runs; while it runs its last steps, once done its line, when failed its error; who spawned it
+ * and when; Stop while it runs, "Full transcript" and Copy agent ID. On a phone it is the sheet's
+ * first state, without Copy agent ID and "Show where it was spawned".
+ */
+function PeekBody({ id, onFull, phone = false }: Readonly<{ id: string; onFull: () => void; phone?: boolean }>) {
   const actions = useActions();
-  const task = useScope((d) => d.task);
-  const transcript = useScope((d) => d.agents[s.id]);
-  const snapshotSeq = useScope((d) => d.snapshotSeq) ?? 0;
-  const parent = useScope((d) => d.summaries.calls.get(s.parent_tool_call_id ?? ''));
-  const stopping = useScope((d) => d.stops[s.id]) ?? NOT_STOPPING;
-  const [seek, setSeek] = useState<Seek | null>(null);
-  if (!task || !actions) return null;
-  const started = clock(s.started_at);
-  const setup = [s.model ? modelName(meta, task.provider, s.model) : '', s.effort ?? '', started ? `started ${started}` : ''].filter(Boolean).join(' · ');
-  const runs = runLines(s);
+  const { meta } = useApp();
+  const [copied, copy] = useCopied();
+  const s = useScope((d) => d.subagents.find((x) => x.id === id));
+  const subagents = useScope((d) => d.subagents);
+  const provider = useScope((d) => d.task.provider) ?? '';
+  const summary = useScope((d) => (s ? rowSummary(d.summaries, s) : '')) ?? '';
+  const stopping = useScope((d) => d.stops[id]) ?? NOT_STOPPING;
+  const locked = useScope((d) => readOnly(d.task)) ?? true;
+  if (!s || !actions || !subagents) return null;
+  const runs = s.runs?.length ?? 0;
+  const setup = [s.model ? modelName(meta, provider, s.model) : '', runs > 1 ? runCount(s) : ''].filter(Boolean).join(' · ');
+  const parentId = s.parent_tool_call_id;
   return (
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Esc anywhere inside folds the row back.
-    <div
-      id={id}
-      role="region"
-      aria-label={`Subagent ${name}`}
-      className={cn('flex flex-col gap-2 pt-1 pr-2 pb-3', compact ? 'pl-2' : 'pl-3.5')}
-      onKeyDown={(e) => {
-        if (e.key !== 'Escape' || e.defaultPrevented || otherPopupOpen(e.target)) return;
-        e.preventDefault();
-        e.stopPropagation();
-        onCollapse();
-      }}
-    >
-      {(s.description || setup) && (
-        <div className={cn('flex flex-col gap-0.5', compact ? 'pl-6' : 'pl-6.5')}>
-          {s.description && <p className="line-clamp-2 text-caption text-body" title={s.description}>{s.description}</p>}
-          {setup && <p className="text-meta text-muted">{setup}</p>}
+    <div className="flex flex-col gap-2">
+      <div className="flex items-start gap-2">
+        <span className="flex size-5 shrink-0 items-center justify-center">
+          <SubagentMark status={s.status} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-ui font-medium text-ink">{s.name || 'Subagent'}</p>
+          <p className="text-caption tabular-nums text-muted">
+            {s.status === 'running' ? <Took subagent={s} /> : null}
+            {s.status === 'running' && usage(s) ? ' · ' : ''}
+            {usage(s)}
+          </p>
+          {setup && <p className="text-caption text-muted">{setup}</p>}
         </div>
-      )}
-      {runs.length > 0 && (
-        <ol aria-label="Runs" className={cn('flex flex-col', compact ? 'pl-4.5' : 'pl-5')}>
-          {runs.map((r, i) => {
-            const at = clock(r.started_at);
-            const parts = [r.n === null ? '' : `Run ${r.n}`, at, r.trigger].filter(Boolean).join(' · ');
-            return (
-              <li key={i}>
-                {r.gapBefore && <p className="px-1.5 text-meta text-faint">Earlier runs not kept · latest runs</p>}
-                <button
-                  type="button"
-                  disabled={!at}
-                  className="block h-6 max-w-full truncate rounded-sm px-1.5 text-left leading-6 text-caption text-muted tabular-nums transition-colors duration-100 hover:bg-tint-hover hover:text-body disabled:hover:bg-transparent pointer-coarse:min-h-11"
-                  title={at ? 'Show this run in the transcript' : 'When this run started was not recorded, so it cannot be found in the transcript.'}
-                  onClick={() => setSeek((x) => ({ time: r.started_at!, first: i === 0, running: r.running, n: (x?.n ?? 0) + 1 }))}
-                >
-                  <span className="text-body">{parts}</span> · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      )}
-      <DetailVisibility open={open}>
-        <div className="flex flex-col overflow-hidden rounded-md bg-surface shadow-well">
-          <AgentTranscriptView
-            key={s.id}
-            name={name}
-            provider={task.provider}
-            sessionId={task.id}
-            workdir={task.workdir}
-            subagent={s}
-            interactions={task.interactions}
-            transcript={transcript}
-            snapshotSeq={snapshotSeq}
-            open={open}
-            parent={parent}
-            result={s.status === 'completed' || s.status === 'idle' ? parent?.tool?.output : undefined}
-            seek={seek}
-          />
-        </div>
-      </DetailVisibility>
-      {s.status === 'running' && (
-        <div className="flex flex-wrap items-center gap-2">
-          <StopSubagent session={task} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
-        </div>
-      )}
-      <SubagentComposer session={task} subagent={s} />
+        <span className={cn('shrink-0 text-caption', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
+      </div>
+      {s.status === 'failed' && <p className="rounded-md bg-error-wash px-2.5 py-1.5 font-mono text-code-sm text-error">{s.error || 'Failed.'}</p>}
+      {s.status === 'running' && <LatestSteps subagent={s} />}
+      {s.status !== 'running' && s.status !== 'failed' && summary && <p className="line-clamp-4 text-caption text-body">{summary}</p>}
+      <p className="text-caption text-muted">
+        {spawnedLine(s, subagents)}
+        {!phone && parentId && (
+          <>
+            {' · '}
+            <button type="button" className={LINK} onClick={() => actions.locate(parentId)}>
+              Show where it was spawned
+            </button>
+          </>
+        )}
+      </p>
+      <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-2">
+        {s.status === 'running' && (
+          <Button size="sm" variant="danger" aria-label={`Stop subagent ${s.name}`} loading={stopping.busy} disabled={locked || stopping.requested} onClick={() => actions.stop(s)}>
+            <Square className="!size-3" fill="currentColor" />
+            {stopping.requested ? 'Stop requested' : 'Stop'}
+          </Button>
+        )}
+        <button type="button" className={LINK} onClick={onFull}>
+          Full transcript ›
+        </button>
+        <span className="flex-1" />
+        {!phone && (
+          <button type="button" className="rounded-xs text-caption text-muted hover:text-body" onClick={() => copy(s.id)}>
+            {copied ? 'Copied' : 'Copy agent ID'}
+          </button>
+        )}
+      </div>
     </div>
+  );
+}
+
+/** The one peek of the Task: opened by hovering any row (a detached trigger), it shows that row's subagent. */
+function SubagentPeek({ handle }: Readonly<{ handle: BasePopover.Handle<string> }>) {
+  const scope = useContext(SubagentContext);
+  return (
+    <BasePopover.Root handle={handle}>
+      {({ payload }) =>
+        payload ? (
+          <BasePopover.Portal>
+            <BasePopover.Positioner side="bottom" align="start" sideOffset={4} collisionPadding={8} className="z-50 outline-hidden">
+              <BasePopover.Popup data-popup="" aria-label="Subagent" className={cn(popupClass, 'w-96 max-w-(--available-width) px-3 py-2.5 text-body')}>
+                <PeekBody
+                  id={payload}
+                  onFull={() => {
+                    const row = document.querySelector(`[data-subagent-row] [aria-expanded][data-popup-open], [data-subagent-row] [data-popup-open]`);
+                    scope?.actions.open(payload, row);
+                  }}
+                />
+              </BasePopover.Popup>
+            </BasePopover.Positioner>
+          </BasePopover.Portal>
+        ) : null
+      }
+    </BasePopover.Root>
+  );
+}
+
+/**
+ * An open transcript's head and body, in the desktop panel and the phone sheet: the way back to
+ * the subagent it was opened through, state glyph, name, Stop while it runs and close; what it was
+ * asked (two lines); how long, tokens, tool calls and model; a strip of its runs (each shows its start) and of the subagents it
+ * spawned (each opens in its place), with, on desktop, "Show where it was spawned" and Copy agent
+ * ID; then its transcript, which scrolls on its own.
+ */
+function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pinned: Pinned; phone: boolean; onChild: (id: string) => void; onBack: () => void; close: ReactNode }>) {
+  const actions = useActions();
+  const { meta } = useApp();
+  const [copied, copy] = useCopied();
+  const task = useScope((d) => d.task);
+  const subagents = useScope((d) => d.subagents);
+  const s = subagents?.find((x) => x.id === pinned.id);
+  const transcript = useScope((d) => d.agents[pinned.id]);
+  const snapshotSeq = useScope((d) => d.snapshotSeq) ?? 0;
+  const parent = useScope((d) => d.summaries.calls.get(s?.parent_tool_call_id ?? ''));
+  const stopping = useScope((d) => d.stops[pinned.id]) ?? NOT_STOPPING;
+  const [seek, setSeek] = useState<Seek | null>(null);
+  if (!s || !task || !actions || !subagents) return null;
+  const name = s.name || 'Subagent';
+  const from = pinned.back.length ? subagents.find((x) => x.id === pinned.back.at(-1)) : undefined;
+  const spawned = subagents.filter((x) => x.parent_agent_id === s.id);
+  const runs = runLines(s);
+  const facts = [usage(s), s.model ? modelName(meta, task.provider, s.model) : ''].filter(Boolean).join(' · ');
+  const parentId = s.parent_tool_call_id;
+  return (
+    <>
+      <div className="flex shrink-0 flex-col gap-1.5 px-4 pt-3 pb-2">
+        {from && (
+          <button type="button" className={cn(LINK, 'flex w-fit items-center gap-1')} onClick={onBack}>
+            <ArrowLeft aria-hidden="true" className="size-3" />
+            {from.name || 'Subagent'}
+          </button>
+        )}
+        <div className="flex items-center gap-2">
+          <span className="flex size-5 shrink-0 items-center justify-center">
+            <SubagentMark status={s.status} />
+          </span>
+          <h2 className="min-w-0 flex-1 truncate text-ui font-semibold text-ink">{name}</h2>
+          <StopSubagent session={task} subagent={s} stopping={stopping} onStop={() => actions.stop(s)} />
+          {close}
+        </div>
+        {s.description && <p className="line-clamp-2 pl-7 text-caption text-body" title={s.description}>{s.description}</p>}
+        <p className="pl-7 text-caption tabular-nums text-muted">
+          <span className={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</span>
+          {s.status === 'running' && <> · <Took subagent={s} /></>}
+          {facts && ` · ${facts}`}
+        </p>
+        {(runs.length > 0 || spawned.length > 0 || !phone) && (
+          <div className="flex flex-wrap items-center gap-1.5 pl-7">
+            {runs.map((r, i) => {
+              const at = clock(r.started_at);
+              return (
+                <Fragment key={i}>
+                  {r.gapBefore && <span className="text-meta text-faint">Earlier runs not kept · latest runs</span>}
+                  <button
+                    type="button"
+                    disabled={!r.started_at}
+                    title={r.started_at ? `${r.trigger} · ${at}` : 'When this run started was not recorded, so it cannot be found in the transcript.'}
+                    className="h-6 rounded-full bg-tint-well px-2 text-meta tabular-nums text-body transition-colors duration-100 hover:bg-tint-hover disabled:hover:bg-tint-well pointer-coarse:min-h-11"
+                    onClick={() => setSeek((x) => ({ time: r.started_at!, first: i === 0, running: r.running, n: (x?.n ?? 0) + 1 }))}
+                  >
+                    {r.n === null ? 'Run' : `Run ${r.n}`} · <span className={PART_TONE[r.tone]}>{r.outcome}</span>
+                  </button>
+                </Fragment>
+              );
+            })}
+            {spawned.map((x) => (
+              <button key={x.id} type="button" className="flex h-6 items-center gap-1.5 rounded-full bg-tint-well px-2 text-meta text-body transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11" onClick={() => onChild(x.id)}>
+                <Bot aria-hidden="true" className="size-3 text-muted" />
+                {x.name || 'Subagent'}
+                <span className="text-accent">Open</span>
+              </button>
+            ))}
+            <span className="flex-1" />
+            {!phone && parentId && (
+              <button type="button" className={LINK} onClick={() => actions.locate(parentId)}>
+                Show where it was spawned
+              </button>
+            )}
+            {!phone && (
+              <button type="button" className="rounded-xs text-caption text-muted hover:text-body" onClick={() => copy(s.id)}>
+                {copied ? 'Copied' : 'Copy agent ID'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col bg-surface shadow-well">
+        <AgentTranscriptView
+          key={s.id}
+          name={name}
+          provider={task.provider}
+          sessionId={task.id}
+          workdir={task.workdir}
+          subagent={s}
+          interactions={task.interactions}
+          transcript={transcript}
+          snapshotSeq={snapshotSeq}
+          open
+          parent={parent}
+          result={s.status === 'completed' || s.status === 'idle' ? parent?.tool?.output : undefined}
+          seek={seek}
+        />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The open transcript on desktop (DESIGN.md subagent transcript): a 640px panel beside the row it
+ * was opened from (right of it, else wherever it fits), at most 70vh tall, over a dimmed page; Esc,
+ * the close button or a click outside closes it.
+ */
+function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack }: Readonly<{ pinned: Pinned; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void }>) {
+  const anchor = pinned.anchor?.isConnected ? pinned.anchor : document.getElementById('subagents-link');
+  return (
+    <BasePopover.Root open={pinned.open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
+      <BasePopover.Portal>
+        <BasePopover.Backdrop className={backdropClass} />
+        <BasePopover.Positioner anchor={anchor} side="right" align="start" sideOffset={8} collisionPadding={12} className="z-50 outline-hidden">
+          <BasePopover.Popup data-popup="" aria-label="Subagent transcript" className="flex max-h-[min(70vh,var(--available-height))] w-[640px] max-w-(--available-width) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
+            <TranscriptBody
+              pinned={pinned}
+              phone={false}
+              onChild={onChild}
+              onBack={onBack}
+              close={
+                <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
+                  <X />
+                </BasePopover.Close>
+              }
+            />
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
+  );
+}
+
+/**
+ * A subagent on a phone: a sheet from the bottom over a dimmed page, first its peek, then, after
+ * "Full transcript", 85% of the screen with its transcript. Dragging its handle down or the close
+ * button closes it.
+ */
+function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack }: Readonly<{ pinned: Pinned; onFull: () => void; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void }>) {
+  const popup = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y: number; dy: number } | null>(null);
+  const follow = (dy: number) => {
+    if (popup.current) popup.current.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+  };
+  const close = (
+    <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
+      <X />
+    </BaseDialog.Close>
+  );
+  return (
+    <BaseDialog.Root open={pinned.open} onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop className={backdropClass} />
+        <BaseDialog.Popup
+          ref={popup}
+          data-popup=""
+          aria-label="Subagent"
+          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full', pinned.full && 'h-[85dvh]')}
+        >
+          <div
+            aria-hidden="true"
+            className="flex h-6 shrink-0 touch-none items-center justify-center"
+            onPointerDown={(e) => {
+              drag.current = { y: e.clientY, dy: 0 };
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              if (!drag.current) return;
+              drag.current.dy = e.clientY - drag.current.y;
+              follow(drag.current.dy);
+            }}
+            onPointerUp={() => {
+              const dy = drag.current?.dy ?? 0;
+              drag.current = null;
+              follow(0);
+              if (dy > 80) onClose();
+            }}
+            onPointerCancel={() => {
+              drag.current = null;
+              follow(0);
+            }}
+          >
+            <span className="h-1 w-9 rounded-full bg-hairline-strong" />
+          </div>
+          {pinned.full ? (
+            <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} close={close} />
+          ) : (
+            <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">
+              <div className="flex justify-end">{close}</div>
+              <PeekBody id={pinned.id} phone onFull={onFull} />
+            </div>
+          )}
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
   );
 }
 
@@ -747,7 +946,7 @@ function Progress({ c }: Readonly<{ c: SubagentCounts }>) {
   const scale = (n: number) => ({ transform: `scaleX(${n / c.total})` });
   const bar = 'absolute inset-0 origin-left transition-transform duration-240 ease-app';
   return (
-    <div aria-hidden="true" className="relative h-1.5 overflow-hidden rounded-full bg-tint-well">
+    <div aria-hidden="true" className="relative h-1.5 w-40 overflow-hidden rounded-full bg-tint-well">
       <div className={cn(bar, 'bg-accent opacity-45')} style={scale(c.done + c.failed + c.running)} />
       <div className={cn(bar, 'bg-error')} style={scale(c.done + c.failed)} />
       <div className={cn(bar, 'bg-success')} style={scale(c.done)} />
@@ -758,27 +957,17 @@ function Progress({ c }: Readonly<{ c: SubagentCounts }>) {
 const NO_LIVE: LiveSubagent[] = [];
 
 /**
- * The live subagent card (DESIGN.md), at the conversation's foot while one of its subagents runs
- * or one of its rows is open: the latest reply's subagents and any earlier one still or again
- * running, counted in its head (a progress bar past five), the failed and running ones as rows,
- * five at most until "Show all"; the open row stays whatever becomes of it. A subagent failing is
- * said once, politely.
+ * The live set (DESIGN.md live subagents), at the conversation's foot while one of its subagents
+ * runs or its transcript is open: the latest reply's subagents and any earlier one still or again
+ * running, counted in a head line with their tokens (a progress bar past five), then their rows in
+ * columns like a reply's list, failed and running families first. A subagent failing is said
+ * once, politely.
  */
 export function LiveSubagents() {
   const set = useScope((d) => d.live) ?? NO_LIVE;
-  const keep = useScope((d) => (d.expanded?.place === 'live' ? d.expanded.id : ''));
   const tones = useScope((d) => d.replies.tones);
-  const [all, setAll] = useState(false);
   const [limit, setLimit] = useState(PAGE_ROWS);
-  const listId = useId();
-  // The open row keeps the place it was opened at until it is folded: moving it would reset its scroll and focus.
-  const [pin, setPin] = useState<{ id: string; at: number } | null>(null);
-  if (!keep) {
-    if (pin) setPin(null);
-  } else if (pin?.id !== keep) {
-    const at = liveRows(set, all, { id: keep }).rows.findIndex((x) => x.subagent.id === keep);
-    if (at >= 0) setPin({ id: keep, at });
-  }
+  const list = useMemo(() => families(set.map((x) => x.subagent)), [set]);
   // Failures said aloud: the ones seen failed already, and the last sentence.
   const failedNow = set.filter((x) => x.subagent.status === 'failed').map((x) => x.subagent.id).join(',');
   const [failedSeen, setFailedSeen] = useState(failedNow);
@@ -788,63 +977,36 @@ export function LiveSubagents() {
     setFailedSeen(failedNow);
     if (fresh) setAnnounced(`Subagent ${fresh.subagent.name || 'Subagent'} failed.`);
   }
-  // The card left: it comes back folded.
-  if (!set.length && (all || limit !== PAGE_ROWS)) {
-    setAll(false);
-    setLimit(PAGE_ROWS);
-  }
+  // The set left: it comes back at its first page.
+  if (!set.length && limit !== PAGE_ROWS) setLimit(PAGE_ROWS);
   const status = (
     <p role="status" className="sr-only">
       {announced}
     </p>
   );
   if (!set.length || !tones) return status;
-  const c = countSubagents(set.map((x) => x.subagent));
-  const { rows, rest } = liveRows(set, all, keep ? { id: keep, at: pin?.id === keep ? pin.at : undefined } : undefined);
+  const subagents = set.map((x) => x.subagent);
+  const c = countSubagents(subagents);
+  const tokens = totalTokens(subagents);
+  const lead = [c.running === c.total ? `${subagentNoun(c.total)} running` : subagentNoun(c.total), tokens ? `${compactTokens(tokens)} tokens` : ''].filter(Boolean).join(' · ');
   return (
     <>
       {status}
-      <section aria-label="Subagents at work" className="animate-rise overflow-hidden rounded-md bg-raised shadow-float">
-        <header className="flex flex-col gap-2 bg-surface px-3.5 py-2">
-          <div className="flex min-h-5 flex-wrap items-center gap-x-2.5 gap-y-0.5">
-            <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
-            <span className="text-ui font-semibold text-ink">{c.running === c.total ? `${subagentNoun(c.total)} running` : subagentNoun(c.total)}</span>
+      <section aria-label="Subagents at work" className="animate-rise flex flex-col gap-1">
+        <header className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-2 text-caption tabular-nums">
+          <Bot aria-hidden="true" className="size-4 shrink-0 text-muted" />
+          <span>
+            <span className="font-semibold text-ink">{lead}</span>
             {c.running < c.total && (
-              <span className="text-caption tabular-nums">
+              <>
+                {' · '}
                 <Counts c={c} />
-              </span>
+              </>
             )}
-          </div>
-          {c.total > LIVE_ROWS && <Progress c={c} />}
+          </span>
+          {c.total > IDENTITY_LIMIT && <Progress c={c} />}
         </header>
-        <ul id={listId} className="divide-y divide-hairline">
-          {rows.slice(0, limit).map(({ subagent, earlier }) => (
-            <li key={subagent.id}>
-              <SubagentRow subagent={subagent} tone={tones.get(subagent.id)} place="live" earlier={earlier} />
-            </li>
-          ))}
-        </ul>
-        {rows.length > limit && (
-          <button type="button" className="flex h-8 w-full items-center px-3.5 text-left text-caption text-accent hover:underline focus-visible:-outline-offset-2 pointer-coarse:min-h-11" onClick={() => setLimit(limit + PAGE_ROWS)}>
-            Show {Math.min(PAGE_ROWS, rows.length - limit)} more
-          </button>
-        )}
-        {(rest || all) && (
-          <button
-            type="button"
-            aria-expanded={all}
-            aria-controls={listId}
-            className="flex h-8 w-full items-center gap-2 bg-surface px-3.5 text-left text-caption text-muted transition-colors duration-100 hover:text-body focus-visible:-outline-offset-2 pointer-coarse:min-h-11"
-            onClick={() => {
-              setAll(!all);
-              setLimit(PAGE_ROWS);
-            }}
-          >
-            <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', all && 'rotate-90')} />
-            <span className="min-w-0 flex-1 truncate tabular-nums">{all ? `All ${c.total}` : rest}</span>
-            <span className="shrink-0 text-accent">{all ? 'Show fewer' : `Show all ${c.total}`}</span>
-          </button>
-        )}
+        <Families list={list} tones={tones} anchor={false} limit={limit} onMore={() => setLimit(limit + PAGE_ROWS)} />
       </section>
     </>
   );
@@ -863,31 +1025,36 @@ const INDEX_ROWS = 100;
  * The Task header's subagents (DESIGN.md subagent index): the count, the working mark while one
  * runs, and a popover to find any of them: search, status filters, the subagents grouped by the
  * message that started their reply (newest first, each with Jump), the ones not placed in the
- * conversation (they open right there) and the older ones from the record. Picking a placed one
- * scrolls to its row and expands it.
+ * conversation and the older ones from the record. Picking a placed one scrolls to its row and
+ * opens its transcript; picking one not placed opens its transcript by the header.
  */
 export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /** Why the last jump did not land, said where the reader is. */ error?: string }>) {
   const actions = useActions();
   const subagents = useScope((d) => d.subagents);
   const before = useScope((d) => d.subagentsBefore);
   const [open, setOpen] = useState(false);
-  // Where to go once the popover has closed; a pick keeps focus off the trigger (`finalFocus`), the row it lands on takes it.
-  const picked = useRef<{ id: string; expand: boolean } | null>(null);
+  // Where to go once the popover has closed; a pick keeps focus off the trigger (`finalFocus`), what it opens takes it.
+  const picked = useRef<{ call: string; expand: boolean } | { agent: string } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   if (!subagents || !actions) return null;
   const running = subagents.filter((s) => s.status === 'running').length;
   const label = `Subagents, ${subagents.length}${before ? ' or more' : ''}${running ? `, ${running} running` : ''}`;
+  const pick = (to: NonNullable<typeof picked.current>) => {
+    picked.current = to;
+    setOpen(false);
+  };
   return (
     <Popover.Root
       open={open}
       onOpenChange={(o) => {
         if (o) picked.current = null;
-        // A row opened in here goes with it; one open in the conversation stays.
-        else actions.closeIndex();
         setOpen(o);
       }}
       onOpenChangeComplete={(o) => {
-        if (!o && picked.current) actions.locate(picked.current.id, picked.current.expand);
+        const to = picked.current;
+        if (o || !to) return;
+        if ('agent' in to) actions.open(to.agent, document.getElementById('subagents-link'));
+        else actions.locate(to.call, to.expand);
       }}
     >
       <Tip label="Subagents">
@@ -903,21 +1070,13 @@ export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /**
         </Popover.Trigger>
       </Tip>
       <Popover.Content side="bottom" align="end" sideOffset={4} initialFocus={input} finalFocus={() => !picked.current} aria-label="Subagents" className="w-[440px] max-w-(--available-width) gap-1.5 p-1.5">
-        <IndexBody
-          input={input}
-          error={error}
-          onPick={(id, expand) => {
-            picked.current = { id, expand };
-            actions.closeIndex();
-            setOpen(false);
-          }}
-        />
+        <IndexBody input={input} error={error} onPick={pick} />
       </Popover.Content>
     </Popover.Root>
   );
 }
 
-function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInputElement | null>; error?: string; onPick: (toolCallId: string, expand: boolean) => void }>) {
+function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInputElement | null>; error?: string; onPick: (to: { call: string; expand: boolean } | { agent: string }) => void }>) {
   const taskId = useScope((d) => d.task.id);
   const subagents = useScope((d) => d.subagents);
   const before = useScope((d) => d.subagentsBefore);
@@ -979,46 +1138,36 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                   <Counts c={{ ...countSubagents(g.subagents), done: 0, stopped: 0 }} lead={`${g.subagents.length}`} />
                 </span>
                 {g.key && first && (
-                  <button type="button" aria-label={`Jump to the subagents of ${title}`} className="shrink-0 rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => onPick(first, false)}>
+                  <button type="button" aria-label={`Jump to the subagents of ${title}`} className="shrink-0 rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => onPick({ call: first, expand: false })}>
                     Jump
                   </button>
                 )}
               </div>
-              {g.key ? (
-                <ul className="flex flex-col">
-                  {g.rows.map((s) => {
-                    const summary = rowSummary(summaries, s);
-                    const took = s.started_at && s.ended_at ? duration(s.started_at, s.ended_at) : null;
-                    return (
-                      <li key={s.id}>
-                        <button
-                          type="button"
-                          title={[s.name || 'Subagent', summary].filter(Boolean).join('\n')}
-                          className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 pl-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
-                          onClick={() => onPick(s.parent_tool_call_id!, true)}
-                        >
-                          <span className="flex size-4 shrink-0 items-center justify-center">
-                            <SubagentMark status={s.status} />
-                          </span>
-                          <span className="max-w-[60%] min-w-0 shrink-0 truncate font-medium text-body">{s.name || 'Subagent'}</span>
-                          <span className="sr-only">, {STATUS_WORD[s.status]}</span>
-                          <span className={cn('min-w-0 flex-1 truncate', s.status === 'failed' ? 'text-error' : 'text-muted')}>{summary}</span>
-                          {took && <span className="shrink-0 text-meta tabular-nums text-muted">{took}</span>}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                // Not placed in the conversation (no call, or one past the history held): they open right here.
-                <ul className="flex flex-col">
-                  {g.rows.map((s) => (
+              <ul className="flex flex-col">
+                {g.rows.map((s) => {
+                  const summary = rowSummary(summaries, s);
+                  return (
                     <li key={s.id}>
-                      <SubagentRow subagent={s} place="index" />
+                      <button
+                        type="button"
+                        title={[s.name || 'Subagent', summary].filter(Boolean).join('\n')}
+                        className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 pl-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
+                        // Not placed in the conversation (no call, or one past the history held): it opens by the header.
+                        onClick={() => onPick(g.key && s.parent_tool_call_id ? { call: s.parent_tool_call_id, expand: true } : { agent: s.id })}
+                      >
+                        <span className="flex size-4 shrink-0 items-center justify-center">
+                          <SubagentMark status={s.status} />
+                        </span>
+                        <span className="max-w-[60%] min-w-0 shrink-0 truncate font-medium text-body">{s.name || 'Subagent'}</span>
+                        <span className="sr-only">, {STATUS_WORD[s.status]}</span>
+                        <span className={cn('min-w-0 flex-1 truncate', s.status === 'failed' ? 'text-error' : 'text-muted')}>{summary}</span>
+                        <Took subagent={s} />
+                        {s.tokens ? <span className="shrink-0 text-meta tabular-nums text-muted">{compactTokens(s.tokens)}</span> : null}
+                      </button>
                     </li>
-                  ))}
-                </ul>
-              )}
+                  );
+                })}
+              </ul>
             </section>
           );
         })}
@@ -1067,7 +1216,7 @@ function OlderSubagents({ sessionId, before }: Readonly<{ sessionId: string; bef
 }
 
 /**
- * One subagent's transcript, in its expanded row: a scroller at most 60vh tall that keeps its
+ * One subagent's transcript, in its open panel or sheet: a scroller filling it that keeps its
  * scrolling to itself. Mounting loads it from the subagent route, after which live frames
  * tagged with this agent_id keep it current (frames during the fetch are buffered and
  * replayed, see state.ts). Reloads on every fresh snapshot to close any gap.
@@ -1288,7 +1437,7 @@ function AgentTranscriptView({
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex max-h-[60vh] min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheel={event => {
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheel={event => {
       userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();
       if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer');
@@ -1307,109 +1456,6 @@ function AgentTranscriptView({
           <Markdown text={result} />
         </div>
       )}
-    </div>
-  );
-}
-
-const UNCERTAIN_FOLLOW_UP = 'The subagent may or may not have received your message. Check its transcript before sending again; it will not be resent automatically.';
-
-/**
- * A follow-up to one idle subagent, which the main agent never sees. Shown only while the
- * subagent is idle; enabled only while the task itself is active and between turns. The
- * status change and the user item both arrive over SSE, so nothing is added optimistically.
- */
-function SubagentComposer({ session, subagent }: Readonly<{ session: TaskInfo; subagent: Subagent }>) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [outcome, setOutcome] = useState<Submission | null>(null);
-  const pending = useRef<{ text: string; id: string } | null>(null);
-  // An uncertain follow-up keeps the subagent running until the provider settles it; say so meanwhile.
-  if (subagent.status !== 'idle') {
-    return outcome?.status === 'uncertain' ? (
-      <Note tone="warn" role="alert">
-        {UNCERTAIN_FOLLOW_UP}
-      </Note>
-    ) : null;
-  }
-  const blocked = followUpBlocked(session);
-  const cannotSubmit = busy || !!blocked || !text.trim();
-
-  async function send() {
-    const t = text.trim();
-    if (cannotSubmit) return;
-    if (pending.current?.text !== t) pending.current = { text: t, id: newRequestId() };
-    const id = pending.current.id;
-    setBusy(true);
-    setError(null);
-    try {
-      const sub = await api.promptSubagent(session.id, subagent.id, t, id);
-      setOutcome(sub);
-      pending.current = null;
-      if (sub.status === 'accepted') setText('');
-    } catch (e) {
-      // Only a transport failure leaves the outcome unknown; a server answer stands on its own.
-      setError(isStatus(e, 0) ? `${describeError(e)}. Nothing will be retried automatically. Repeating this action with unchanged text uses the same request (${id.slice(0, 8)}).` : describeError(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      void send();
-    }
-  }
-
-  const textId = `subagent-text-${subagent.id}`;
-  return (
-    <div className="shrink-0">
-      <form
-        className="relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100"
-        aria-label={`Follow up with subagent ${subagent.name}`}
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send();
-        }}
-      >
-        <div className="flex flex-col gap-1 px-3 pt-2">
-          <Note>Follow up with this subagent only. The main agent does not see this conversation.</Note>
-          {blocked && <Note role="status">{blocked}</Note>}
-          {outcome?.status === 'uncertain' && (
-            <Note tone="warn" role="alert">
-              {UNCERTAIN_FOLLOW_UP}
-            </Note>
-          )}
-          {outcome?.status === 'rejected' && (
-            <Note tone="error" role="alert">
-              Rejected{outcome.error ? `: ${outcome.error}` : '.'}
-            </Note>
-          )}
-          {error && (
-            <Note tone="error" role="alert">
-              {error}
-            </Note>
-          )}
-        </div>
-        <label className="sr-only" htmlFor={textId}>
-          Follow-up for subagent {subagent.name}
-        </label>
-        <textarea
-          id={textId}
-          rows={2}
-          value={text}
-          placeholder="Follow up with this subagent…"
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          disabled={busy || !!blocked}
-          className="max-h-40 min-h-12 w-full resize-none bg-transparent px-3 py-2 text-ui text-ink outline-hidden [field-sizing:content] max-sm:text-chat-lg"
-        />
-        <div className="flex justify-end px-2 pb-2">
-          <Button type="submit" size="sm" variant="primary" loading={busy} disabled={cannotSubmit}>
-            Send
-          </Button>
-        </div>
-      </form>
     </div>
   );
 }

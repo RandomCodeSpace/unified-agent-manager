@@ -761,7 +761,7 @@ export interface Item {
   clipped?: boolean;
 }
 
-/** `idle` is not terminal: the subagent finished and accepts a follow-up (see promptSubagent). */
+/** `idle` is not terminal: the subagent finished and the main agent may resume it. */
 export type SubagentStatus = 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
 
 /** An outline entry: a user message (its first line) or a subagent's tool call (its name only). */
@@ -794,6 +794,10 @@ export interface Subagent {
    * with. At most 50: the first and the newest. `started_at` is absent when it was not recorded.
    */
   runs?: { started_at?: string; ended_at?: string; status: SubagentStatus; trigger: 'spawn' | 'agent' | 'user' }[];
+  /** Input and output tokens it consumed over all runs: live while it runs, the provider's total once it ends. */
+  tokens?: number;
+  /** Tool calls it made over all runs: live while it runs, the provider's total once it ends. */
+  tool_calls?: number;
 }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
@@ -1414,9 +1418,6 @@ export const api = {
   queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
   cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
   cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),
-  /** Follow-up to an idle subagent; the main agent never sees it. A repeated request_id returns the recorded outcome without resending. */
-  promptSubagent: (id: string, agentId: string, text: string, request_id: string) =>
-    call<Submission>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/prompt`, { text, request_id }),
   deleteSession: (id: string) => call<void>('DELETE', `/api/sessions/${enc(id)}`),
   /** Replies to send next for the Task's last completed turn; the service asks the Utility model once per state. */
   suggestions: (id: string, signal?: AbortSignal) => call<Suggestions>('POST', `/api/sessions/${enc(id)}/suggestions`, undefined, false, signal),

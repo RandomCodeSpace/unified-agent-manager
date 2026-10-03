@@ -55,8 +55,9 @@ contain it. `#task=<id>` in the URL opens a task directly.
   output" button; pinned composer; a resizable Changes panel
   beside it), Transcript (user bubbles, flat assistant turns, markdown
   everywhere, Thinking disclosures, compact expandable tool summaries with copy
-  menus, one compact row per subagent), Subagents (the side panel and the
-  shared `SidePanel` with its drag handle), Interactions, Composer (the
+  menus, the subagent chips, lists and live set), Subagents (the subagent rows, peek,
+  transcript panel and phone sheet, the header index, and the shared
+  `SidePanel` with its drag handle), Interactions, Composer (the
   toolbar of model/effort/context/mode pickers plus send, stop, steer and
   queue), Changes (file list and diff), TaskDefaults, Projects (dialogs),
   FolderPicker (the Add project dialog's inline folder browser: breadcrumb,

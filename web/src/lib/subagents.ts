@@ -10,13 +10,11 @@ export type IdentityTone = (typeof IDENTITY_TONES)[number];
 
 /** A reply with more subagents than this draws them neutral: past five, colours stop telling them apart. */
 export const IDENTITY_LIMIT = 5;
-/** The live card's rows before "Show all". */
-export const LIVE_ROWS = 5;
-/** A list with more subagents than this groups them by status… */
+/** In Detailed, a reply with more subagents than this is one list instead of a row per call… */
 export const GROUP_OVER = 8;
 /** …and offers a filter with more than this. */
 export const FILTER_OVER = 12;
-/** Rows a group (or the live card's whole set) renders at a time; "Show 50 more" adds the next. */
+/** Families a list (or the live set) renders at a time; "Show 50 more" adds the next. */
 export const PAGE_ROWS = 50;
 
 export const isDone = (s: Subagent) => s.status === 'completed' || s.status === 'idle';
@@ -209,43 +207,6 @@ export function liveSet(latest: Reply | undefined, subagents: readonly Subagent[
   return set.some((x) => x.subagent.status === 'running' || x.subagent.id === keep) ? set : [];
 }
 
-const ORDER: Record<SubagentStatus, number> = { failed: 0, running: 1, idle: 2, completed: 3, cancelled: 4 };
-
-/** Failed first, then running, idle, completed and stopped; spawn order within each. */
-export function byStatus<T>(list: readonly T[], status: (x: T) => SubagentStatus): T[] {
-  return list.map((x, i) => [x, i] as const).sort((a, b) => ORDER[status(a[0])] - ORDER[status(b[0])] || a[1] - b[1]).map(([x]) => x);
-}
-
-export interface LiveRows {
-  rows: LiveSubagent[];
-  /** What the folded rows hold, for "3 more running · 31 done". */
-  rest: string;
-}
-
-/**
- * The live card's rows: its failed and running subagents, failed first, at most `LIVE_ROWS`, and
- * the open one (`keep`) whatever its state, so an open row never leaves under the reader; with
- * `all`, every one of the set (failed, running, idle, completed, stopped). `keep.at`, the place
- * the open row had when it was opened, holds it there whatever its state becomes, so it is never
- * moved (a move would reset its scroll and focus). `rest` names the ones left out, empty when none is.
- */
-export function liveRows(set: readonly LiveSubagent[], all: boolean, keep?: { id: string; at?: number }): LiveRows {
-  const sorted = byStatus(set, (x) => x.subagent.status);
-  const kept = sorted.find((x) => x.subagent.id === keep?.id);
-  const place = (rows: LiveSubagent[]) => {
-    if (!kept || keep?.at === undefined) return rows;
-    const others = rows.filter((x) => x !== kept);
-    return [...others.slice(0, keep.at), kept, ...others.slice(keep.at)];
-  };
-  if (all) return { rows: place(sorted), rest: '' };
-  const picked = new Set(sorted.filter((x) => x.subagent.status === 'failed' || x.subagent.status === 'running').slice(0, LIVE_ROWS));
-  if (kept) picked.add(kept);
-  const rows = place(sorted.filter((x) => picked.has(x)));
-  const c = countSubagents(sorted.filter((x) => !picked.has(x)).map((x) => x.subagent));
-  const rest = [c.running && `${c.running} more running`, c.failed && `${c.failed} more failed`, c.done && `${c.done} done`, c.stopped && `${c.stopped} stopped`].filter(Boolean).join(' · ');
-  return { rows, rest };
-}
-
 /** An ISO time as milliseconds, whatever its zone or fraction; NaN when absent or unreadable. */
 export const ms = (iso?: string) => (iso ? Date.parse(iso) : NaN);
 
@@ -261,36 +222,6 @@ export function runCount(s: Subagent): string {
 
 export type Run = NonNullable<Subagent['runs']>[number];
 const TRIGGER: Record<Run['trigger'], string> = { spawn: 'started by the agent', user: 'your follow-up', agent: 'resumed by the agent' };
-
-/**
- * What the live card says of a subagent an earlier reply spawned. Only its runs can tell a
- * subagent started again from one still running from that reply: with more than one, the
- * latest run's trigger (`agent`, `user`) and when it first ran; else just that it is from earlier.
- */
-export function earlierTag(s: Subagent, parentTime?: string): { text: 'resumed by the agent' | 'your follow-up' | 'from an earlier reply'; first?: string } {
-  const runs = s.runs ?? [];
-  const last = runs.at(-1);
-  if (runs.length > 1 && last && last.trigger !== 'spawn') return { text: last.trigger === 'agent' ? 'resumed by the agent' : 'your follow-up', first: runs[0].started_at || parentTime || undefined };
-  return { text: 'from an earlier reply' };
-}
-
-/**
- * A run of `s` that started after its reply (from the next user message on): the latest such run's
- * start and the reply it started in (the last user message before it). Null when it never ran
- * again after its reply, or when its reply is the latest.
- */
-export function ranAgain(s: Subagent, replies: Replies): { at: string; reply: string } | null {
-  const own = replies.ofCall.get(s.parent_tool_call_id ?? '');
-  if (!own || !s.runs?.length) return null;
-  const next = ms(replies.list[replies.list.indexOf(own) + 1]?.time);
-  if (Number.isNaN(next)) return null;
-  // Times compared as instants: a run's and a message's may differ in zone or fraction.
-  const later = s.runs.filter((r) => ms(r.started_at) >= next).at(-1);
-  if (!later?.started_at) return null;
-  const at = ms(later.started_at);
-  const reply = replies.list.filter((r) => ms(r.time) <= at).at(-1);
-  return reply ? { at: later.started_at, reply: reply.key } : null;
-}
 
 export interface RunLine {
   /** Its place among the runs; null after the gap where the record dropped runs. */
@@ -325,30 +256,40 @@ export function runLines(s: Subagent): RunLine[] {
   });
 }
 
-export interface StatusGroup {
-  key: 'failed' | 'running' | 'done' | 'stopped';
-  label: string;
-  /** Open until the reader folds it. */
-  open: boolean;
-  subagents: Subagent[];
+export interface Family {
+  /** A subagent no other one in the list spawned. */
+  head: Subagent;
+  /** It, then each one it spawned (and theirs), in spawn order, with how deep each is. */
+  rows: { subagent: Subagent; depth: number }[];
 }
 
-const GROUPS: { key: StatusGroup['key']; label: string; open: boolean; has: (s: Subagent) => boolean }[] = [
-  { key: 'failed', label: 'Failed', open: true, has: (s) => s.status === 'failed' },
-  { key: 'running', label: 'Running', open: true, has: (s) => s.status === 'running' },
-  { key: 'done', label: 'Done', open: false, has: isDone },
-  { key: 'stopped', label: 'Stopped', open: false, has: (s) => s.status === 'cancelled' },
-];
+const RANK: Partial<Record<SubagentStatus, number>> = { failed: 0, running: 1 };
 
 /**
- * A long list by status: Failed and Running open, Done (completed and idle) and Stopped folded;
- * empty groups left out. `pin` holds the open row in the group it was opened in, whatever its state
- * becomes, so it is never unmounted under the reader.
+ * A list's rows, each subagent followed by the ones it spawned: the families with a failed
+ * member first, then those with a running one, then the rest, each in spawn order.
  */
-export function statusGroups(list: readonly Subagent[], pin?: { id: string; key: StatusGroup['key'] }): StatusGroup[] {
-  const groupOf = (s: Subagent) => (s.id === pin?.id ? pin.key : GROUPS.find((g) => g.has(s))?.key);
-  return GROUPS.map(({ has: _has, ...g }) => ({ ...g, subagents: list.filter((s) => groupOf(s) === g.key) })).filter((g) => g.subagents.length > 0);
+export function families(subagents: readonly Subagent[]): Family[] {
+  const ids = new Set(subagents.map((s) => s.id));
+  const children = new Map<string, Subagent[]>();
+  for (const s of subagents) {
+    if (s.parent_agent_id && ids.has(s.parent_agent_id)) children.set(s.parent_agent_id, [...(children.get(s.parent_agent_id) ?? []), s]);
+  }
+  const ranked = subagents.filter((s) => !s.parent_agent_id || !ids.has(s.parent_agent_id)).map((head, at) => {
+    const rows: Family['rows'] = [];
+    const walk = (subagent: Subagent, depth: number) => {
+      if (rows.some((r) => r.subagent === subagent)) return;
+      rows.push({ subagent, depth });
+      for (const child of children.get(subagent.id) ?? []) walk(child, depth + 1);
+    };
+    walk(head, 0);
+    return { head, rows, at, rank: Math.min(...rows.map((r) => RANK[r.subagent.status] ?? 2)) };
+  });
+  return ranked.sort((a, b) => a.rank - b.rank || a.at - b.at).map(({ head, rows }) => ({ head, rows }));
 }
+
+/** The tokens the subagents used, as far as they are known. */
+export const totalTokens = (subagents: readonly Subagent[]) => subagents.reduce((n, s) => n + (s.tokens ?? 0), 0);
 
 /** Whether a subagent's name or one-line summary holds `query`, case-insensitively; an empty query holds everything. */
 export function matches(s: Subagent, summary: string, query: string): boolean {

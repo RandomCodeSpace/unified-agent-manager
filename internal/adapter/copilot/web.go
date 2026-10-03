@@ -2798,6 +2798,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.nanoAIU += d.CopilotUsage.TotalNanoAiu
 			c.emitUsageLocked()
 		}
+		if sa, ok := c.subs.count(ev); ok {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
+		}
 		return
 	case *rpc.SessionUsageCheckpointData:
 		// The CLI's session-wide total, which the next reopen reads back.
@@ -2915,6 +2918,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.SessionTaskCompleteData:
 		if agentID == "" {
 			c.taskCompleted = true
+		}
+	case *rpc.ToolExecutionStartData:
+		// Its item follows.
+		if sa, ok := c.subs.count(ev); ok {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
 	case *rpc.SessionIdleData:
 		// Copilot CLI 1.0.89 reports the autopilot mode on the idle that ends
@@ -3562,12 +3570,13 @@ func agentOf(ev copilot.SessionEvent) string {
 // and provider-reported reuse, which can make a completed or idle record run again.
 type subagentLog struct {
 	byID   map[string]*agentapi.Subagent
-	byCall map[string]string // spawning tool call ID -> agent ID
+	byCall map[string]string          // spawning tool call ID -> agent ID
+	tools  map[string]map[string]bool // agent ID -> tool call IDs counted live
 	order  []string
 }
 
 func newSubagentLog() *subagentLog {
-	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}}
+	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}, tools: map[string]map[string]bool{}}
 }
 
 // apply folds a subagent.* event into the log and returns the changed record,
@@ -3576,6 +3585,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 	agentID := agentOf(ev)
 	var callID, name, errMsg string
 	var status agentapi.SubagentStatus
+	var tokens, toolCalls *int64
 	switch d := ev.Data.(type) {
 	case *rpc.SubagentStartedData:
 		if agentID == "" {
@@ -3617,9 +3627,11 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		if d.Cancelled != nil && *d.Cancelled {
 			status = agentapi.SubagentCancelled
 		}
+		tokens, toolCalls = d.TotalTokens, d.TotalToolCalls
 	case *rpc.SubagentFailedData:
 		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentFailed
 		errMsg = clip(displaytext.Sanitize(d.Error), maxErrorText)
+		tokens, toolCalls = d.TotalTokens, d.TotalToolCalls
 	default:
 		return agentapi.Subagent{}, false
 	}
@@ -3631,6 +3643,12 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 	}
 	sa := l.get(agentID)
 	if sa.Status.Terminal() || sa.Status == agentapi.SubagentIdle && status == agentapi.SubagentCompleted {
+		// A later end, such as the cancelled one on disconnect, still
+		// reports the totals of every run, reuses included.
+		if tokens != nil && *tokens > sa.Tokens || toolCalls != nil && *toolCalls > sa.ToolCalls {
+			sa.Tokens, sa.ToolCalls = max(sa.Tokens, orZero(tokens)), max(sa.ToolCalls, orZero(toolCalls))
+			return sa.Snapshot(), true
+		}
 		return agentapi.Subagent{}, false
 	}
 	if sa.ParentToolCallID == "" {
@@ -3640,7 +3658,54 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		sa.Name = name
 	}
 	sa.Status, sa.Error, sa.EndedAt = status, errMsg, ev.Timestamp
+	// The provider's totals replace the live counts.
+	if tokens != nil {
+		sa.Tokens = *tokens
+	}
+	if toolCalls != nil {
+		sa.ToolCalls = *toolCalls
+	}
+	delete(l.tools, agentID)
 	return sa.Snapshot(), true
+}
+
+// count adds a running subagent's model call usage or tool call start to
+// its live counts and returns the changed record, or false when nothing
+// changed. Usage events are not recorded, so only live events count; the
+// end event's totals replace the sums.
+func (l *subagentLog) count(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
+	agentID := agentOf(ev)
+	sa := l.byID[agentID]
+	if agentID == "" || sa == nil || sa.Status != agentapi.SubagentRunning {
+		return agentapi.Subagent{}, false
+	}
+	switch d := ev.Data.(type) {
+	case *rpc.AssistantUsageData:
+		n := max(orZero(d.InputTokens), 0) + max(orZero(d.OutputTokens), 0)
+		if n == 0 {
+			return agentapi.Subagent{}, false
+		}
+		sa.Tokens += n
+	case *rpc.ToolExecutionStartData:
+		if l.tools[agentID][d.ToolCallID] {
+			return agentapi.Subagent{}, false
+		}
+		if l.tools[agentID] == nil {
+			l.tools[agentID] = map[string]bool{}
+		}
+		l.tools[agentID][d.ToolCallID] = true
+		sa.ToolCalls++
+	default:
+		return agentapi.Subagent{}, false
+	}
+	return sa.Snapshot(), true
+}
+
+func orZero(n *int64) int64 {
+	if n == nil {
+		return 0
+	}
+	return *n
 }
 
 func (l *subagentLog) get(agentID string) *agentapi.Subagent {

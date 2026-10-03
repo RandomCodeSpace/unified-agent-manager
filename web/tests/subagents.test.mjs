@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { countParts, countSubagents, earlierTag, indexGroups, inFilter, liveRows, liveSet, mainCall, matches, mergeOutline, parentMap, ranAgain, replyIndex, runCount, runLines, spawnedBy, statusGroups } from '../src/lib/subagents.ts';
+import { countParts, countSubagents, families, indexGroups, inFilter, liveSet, mainCall, matches, mergeOutline, parentMap, replyIndex, runCount, runLines, spawnedBy, totalTokens } from '../src/lib/subagents.ts';
 
 const at = (m) => `2026-10-02T17:${String(m).padStart(2, '0')}:00Z`;
 const user = (id, m, text = `Message ${id}`) => ({ id, kind: 'user', time: at(m), text });
@@ -70,48 +70,6 @@ test('the live set is the latest reply\'s subagents plus earlier running ones; e
   assert.deepEqual(liveSet(replyIndex(index, after).list.at(-1), after, 'new').map((x) => x.subagent.id), ['new', 'done']);
 });
 
-test('the live card shows failed then running rows, five at most, plus the open row; it says what the rest are until Show all', () => {
-  const set = [
-    ...['r1', 'r2', 'r3', 'r4', 'r5'].map((id) => ({ subagent: agent(id, `c-${id}`, 'running'), earlier: false })),
-    { subagent: agent('f1', 'c-f1', 'failed'), earlier: false },
-    { subagent: agent('d1', 'c-d1'), earlier: false },
-    { subagent: agent('d2', 'c-d2', 'idle'), earlier: false },
-    { subagent: agent('s1', 'c-s1', 'cancelled'), earlier: false },
-  ];
-  const capped = liveRows(set, false);
-  assert.deepEqual(capped.rows.map((x) => x.subagent.id), ['f1', 'r1', 'r2', 'r3', 'r4']);
-  assert.equal(capped.rest, '1 more running · 2 done · 1 stopped');
-  const all = liveRows(set, true);
-  assert.deepEqual(all.rows.map((x) => x.subagent.id), ['f1', 'r1', 'r2', 'r3', 'r4', 'r5', 'd2', 'd1', 's1']);
-  assert.equal(all.rest, '');
-  assert.equal(liveRows(set.slice(0, 2), false).rest, '');
-  // An open row that has finished stays where it was read.
-  const kept = liveRows(set, false, { id: 'd1' });
-  assert.deepEqual(kept.rows.map((x) => x.subagent.id), ['f1', 'r1', 'r2', 'r3', 'r4', 'd1']);
-  assert.equal(kept.rest, '1 more running · 1 done · 1 stopped');
-});
-
-test('an earlier reply\'s subagent on the live card says how it came back only when its runs tell', () => {
-  const run = (m, trigger, status = 'completed') => ({ started_at: at(m), ...(status === 'running' ? {} : { ended_at: at(m + 1) }), status, trigger });
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running'), at(1)), { text: 'from an earlier reply' });
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [run(1, 'spawn', 'running')] })), { text: 'from an earlier reply' });
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [run(1, 'spawn'), run(20, 'agent', 'running')] })), { text: 'resumed by the agent', first: at(1) });
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [run(1, 'spawn'), run(20, 'user', 'running')] })), { text: 'your follow-up', first: at(1) });
-  // Without a start on the first run, the call's time.
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [{ ...run(1, 'spawn'), started_at: '' }, run(20, 'user', 'running')] }), at(0)), { text: 'your follow-up', first: at(0) });
-});
-
-test('"ran again" names the latest run after the reply and the reply it started in; never for the latest reply or without runs', () => {
-  const run = (m, trigger) => ({ started_at: at(m), ended_at: at(m + 1), status: 'completed', trigger });
-  const index = [user('u1', 0), call('c1', 1), user('u2', 10), call('c2', 11), user('u3', 20)];
-  const replies = replyIndex(index, [agent('a1', 'c1'), agent('a2', 'c2')]);
-  assert.equal(ranAgain(agent('a1', 'c1'), replies), null);
-  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(1, 'spawn'), run(5, 'agent')] }), replies), null);
-  assert.deepEqual(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(1, 'spawn'), run(12, 'user'), run(25, 'agent')] }), replies), { at: at(25), reply: 'u3' });
-  assert.deepEqual(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(1, 'spawn'), run(12, 'user')] }), replies), { at: at(12), reply: 'u2' });
-  assert.equal(ranAgain(agent('a2', 'c2', 'completed', { runs: [run(11, 'spawn'), run(15, 'agent')] }), replies), null);
-});
-
 test('a subagent with several runs lists each: when, who started it, and how it ended', () => {
   assert.deepEqual(runLines(agent('a', 'c', 'running', { runs: [{ started_at: at(5), status: 'running', trigger: 'spawn' }] })), []);
   const lines = runLines(agent('a', 'c', 'running', { runs: [
@@ -128,9 +86,7 @@ test('a subagent with several runs lists each: when, who started it, and how it 
   ]);
 });
 
-test('a long list groups by status, Failed and Running open, Done and Stopped folded; the filter reads name and summary', () => {
-  const list = [agent('a', 'c1'), agent('b', 'c2', 'failed'), agent('c', 'c3', 'idle'), agent('d', 'c4', 'running')];
-  assert.deepEqual(statusGroups(list).map((g) => [g.key, g.open, g.subagents.map((s) => s.id)]), [['failed', true, ['b']], ['running', true, ['d']], ['done', false, ['a', 'c']]]);
+test('the filter reads name and summary; the index filters by status', () => {
   assert.equal(matches(agent('a', 'c', 'completed', { name: 'Audit internal/Store' }), '', 'store'), true);
   assert.equal(matches(agent('a', 'c'), 'go vet: undefined: pageCursor', 'PAGECURSOR'), true);
   assert.equal(matches(agent('a', 'c'), 'nothing', 'store'), false);
@@ -155,19 +111,6 @@ test('the header index groups subagents by the user message that started their r
   assert.deepEqual(indexGroups(bare, [], [agent('a1', 'c1')]).map((g) => [g.key, g.text, g.time]), [['u1', '', at(0)]]);
 });
 
-test('an open row keeps its place: in the live card at the index it was opened at, in a long list in the group it was opened in', () => {
-  const set = [agent('f', 'c-f', 'failed'), agent('r1', 'c-r1', 'running'), agent('r2', 'c-r2', 'running'), agent('r3', 'c-r3', 'running')].map((subagent) => ({ subagent, earlier: false }));
-  assert.deepEqual(liveRows(set, false, { id: 'r1' }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
-  // r1 finished while open: sorted by state it would go last; held at 1 it stays put.
-  const after = set.map((x) => (x.subagent.id === 'r1' ? { ...x, subagent: agent('r1', 'c-r1') } : x));
-  assert.deepEqual(liveRows(after, false, { id: 'r1' }).rows.map((x) => x.subagent.id), ['f', 'r2', 'r3', 'r1']);
-  assert.deepEqual(liveRows(after, false, { id: 'r1', at: 1 }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
-  assert.deepEqual(liveRows(after, true, { id: 'r1', at: 1 }).rows.map((x) => x.subagent.id), ['f', 'r1', 'r2', 'r3']);
-  const list = [agent('a', 'c1', 'completed'), agent('b', 'c2', 'running')];
-  assert.deepEqual(statusGroups(list, { id: 'a', key: 'running' }).map((g) => [g.key, g.subagents.map((x) => x.id)]), [['running', ['a', 'b']]]);
-  assert.deepEqual(statusGroups(list).map((g) => g.key), ['running', 'done']);
-});
-
 test('a full run record says "50+ runs" and marks where earlier runs were dropped', () => {
   const run = (m, trigger = 'agent') => ({ started_at: at(m % 60), ended_at: at(m % 60), status: 'completed', trigger });
   assert.equal(runCount(agent('a', 'c')), '');
@@ -179,23 +122,9 @@ test('a full run record says "50+ runs" and marks where earlier runs were droppe
   assert.equal(lines.at(-1).n, null);
 });
 
-test('a run without a recorded start keeps its line without a time and is not used for wording', () => {
+test('a run without a recorded start keeps its line without a time', () => {
   const lines = runLines(agent('a', 'c', 'running', { runs: [{ status: 'completed', trigger: 'spawn' }, { started_at: at(20), status: 'running', trigger: 'user' }] }));
   assert.deepEqual(lines.map((l) => [l.n, l.started_at, l.outcome]), [[1, undefined, '✓'], [2, at(20), 'running']]);
-  assert.deepEqual(earlierTag(agent('a', 'c', 'running', { runs: [{ status: 'completed', trigger: 'spawn' }, { started_at: at(20), status: 'running', trigger: 'user' }] })), { text: 'your follow-up', first: undefined });
-  const replies = replyIndex([user('u1', 0), call('c1', 1), user('u2', 10)], [agent('a1', 'c1')]);
-  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [{ status: 'completed', trigger: 'spawn' }, { status: 'completed', trigger: 'agent' }] }), replies), null);
-});
-
-test('"ran again" compares instants, whatever the zone or fraction of each time', () => {
-  const index = [user('u1', 0), call('c1', 1), { ...user('u2', 10), time: '2026-10-02T17:10:00.500Z' }];
-  const replies = replyIndex(index, [agent('a1', 'c1')]);
-  const run = (started_at) => ({ started_at, status: 'completed', trigger: 'agent' });
-  // 18:05 at +02:00 is 16:05Z, before the second message: as text it would sort after it.
-  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T18:05:00+02:00')] }), replies), null);
-  // Half a second before the message, though "…00Z" sorts after "…00.500Z" as text.
-  assert.equal(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T17:10:00Z')] }), replies), null);
-  assert.deepEqual(ranAgain(agent('a1', 'c1', 'completed', { runs: [run(at(1)), run('2026-10-02T19:12:00.123+02:00')] }), replies), { at: '2026-10-02T19:12:00.123+02:00', reply: 'u2' });
 });
 
 test('a subagent another one spawned joins its top-level ancestor\'s reply and index group, its call with it', () => {
@@ -226,4 +155,17 @@ test('the server\'s outline places subagents whose reply is not loaded; loaded i
   assert.deepEqual(replyIndex(merged, subagents).byKey.get('u1').subagents.map((s) => s.id), ['a1']);
   const groups = indexGroups(merged, held, subagents);
   assert.deepEqual(groups.map((g) => [g.key, g.text]), [['u2', 'Thanks, all of it'], ['u1', 'Audit every package']]);
+});
+
+test('a list draws families: each subagent then the ones it spawned, failed families first, then running ones, else in spawn order', () => {
+  const list = [
+    agent('done1', 'c1'),
+    agent('outer', 'c2'),
+    agent('run1', 'c3', 'running'),
+    agent('inner', 'k1', 'failed', { parent_agent_id: 'outer' }),
+    agent('deeper', 'k2', 'completed', { parent_agent_id: 'inner' }),
+    agent('orphan', 'k3', 'completed', { parent_agent_id: 'gone' }),
+  ];
+  assert.deepEqual(families(list).map((f) => f.rows.map((r) => `${r.subagent.id}:${r.depth}`)), [['outer:0', 'inner:1', 'deeper:2'], ['run1:0'], ['done1:0'], ['orphan:0']]);
+  assert.equal(totalTokens([agent('a', 'c', 'completed', { tokens: 1200 }), agent('b', 'c'), agent('d', 'c', 'running', { tokens: 800 })]), 2000);
 });

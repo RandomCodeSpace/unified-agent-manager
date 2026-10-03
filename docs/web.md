@@ -527,36 +527,38 @@ sign-outs are logged without the token.
   a run the stop interrupted is recorded as failed. Pausing clears the
   next run; resuming, or changing the schedule, sets it from then. Removing
   the Project removes its routines.
-- **Subagents**: when the agent delegates work to a subagent, the Task shows
-  one compact row under the tool call that started it (name, status, and
-  the duration once it ended) while the subagent runs. Once it is idle or has
-  ended, the row folds into the turn's collapsed activity, in place of that
-  tool call. There is also a "Subagents" button in the header with
-  the total and how many are running. The button opens a panel beside the
-  conversation that lists the subagents grouped by status (running, idle,
-  failed, completed, cancelled) with their start time and duration. Only the
-  running group is open; the others show their count and open on a click. The
+- **Subagents**: when the agent delegates work to a subagent, the reply that
+  started it gets a chip on its turn line ("3 subagents · 1.2M tokens · 2
+  done · 1 running") that opens the reply's subagents as one-line rows: state,
+  name, duration and tokens, a failed one with its error under it. A subagent
+  that another subagent spawned sits indented under it. While subagents run,
+  the same rows sit at the foot of the conversation with the total tokens.
+  Tokens are what Copilot reports for the subagent, shown as K, M or B; while it runs the count grows, and when it ends Copilot's
+  total replaces it. On a computer, resting the pointer on a row shows a peek:
+  how long it ran, tokens, tool calls, model, its last steps while it runs, its
+  result or error, who spawned it, and Stop, Full transcript and Copy agent ID.
+  Clicking a row opens its transcript in a panel beside it over a dimmed page;
+  on a phone a tap opens a sheet from the bottom, first the peek, then the
+  full transcript. The transcript shows the subagent's own prompt, replies and
+  tool calls, live while it runs, with a pill per run when it ran more than
+  once and a pill per subagent it spawned. "Show where it was spawned" jumps
+  to the tool call in the conversation. There is also a "Subagents" button in
+  the header with the total and how many are running; it lists the subagents
+  grouped by the message that started their reply, with filters by state. The
   list holds the newest 200 subagents; when Copilot's record has older ones,
   the count reads "200+" and the list ends with "Show older subagents", which
-  loads the next 100 from the record. Nothing older is read until you click. "Spawned
-  by" jumps to the tool call in the conversation. Opening a row, or "Open" on
-  its row in the conversation, shows that subagent's own prompt, replies,
-  and tool calls in the panel, live while it runs. The panel uses the same
-  Compact/Detailed preference as the main conversation. Prose and paths
-  wrap to fit; wide tables and code blocks scroll within their own regions.
-  Subagent output never
+  loads the next 100 from the record. Nothing older is read until you click.
+  The transcript uses the same Compact/Detailed preference as the main
+  conversation. Prose and paths wrap to fit; wide tables and code blocks
+  scroll within their own regions. Subagent output never
   appears in the Task's own conversation. Its model and effort are shown
   when Copilot reports them; they are not guessed from the parent Task.
-  Its row shows the latest activity while it works. After successful
-  completion, the Utility model generates a short saved result line. None,
-  an unavailable model or a failed request keeps the provider's report as
-  the fallback. A follow-up clears the old line until the new result is ready.
-  Opening an older conversation does not generate missing summaries.
-  A subagent is "Idle" when it has finished and Copilot still accepts a
-  follow-up for it. While the Task is between turns, the panel then offers a
-  composer that sends a message to that subagent only. The main agent does
-  not see that conversation, and a follow-up whose delivery is uncertain is
-  never resent.
+  After successful completion, the Utility model generates a short saved
+  result line. None, an unavailable model or a failed request keeps the
+  provider's report as the fallback. Opening an older conversation does not
+  generate missing summaries. A subagent is "Idle" when it has finished and the main
+  agent may still resume it. The web interface sends no messages to a
+  subagent.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and the Task's row moves to
   "Needs you" in the sidebar, with what it asks on its status line; open the
@@ -624,7 +626,7 @@ sign-outs are logged without the token.
   and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
-  A running subagent's Stop sits in its row, expanded in the conversation.
+  A running subagent's Stop sits in its peek and its transcript.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
   ignored, and their directories. Picking one inserts `@path` and adds a chip;
@@ -1016,7 +1018,7 @@ sign-outs are logged without the token.
 - **Another program using the session**: a session that another program has
   open, such as a terminal `copilot --resume`, is
   marked in use and cannot be imported. Before every message, command, steer,
-  queued message and subagent follow-up of an imported or terminal-linked
+  and queued message of an imported or terminal-linked
   Task, UAM checks that no other program has the session open, and refuses while one does; a queued
   message then waits and the queue pauses. The check is not a lock: a
   program that opens the session after it, for example during the turn, is
