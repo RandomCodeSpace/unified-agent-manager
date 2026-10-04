@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 const discoverKey = "sk-discover-secret"
@@ -132,5 +133,38 @@ func TestDiscoverModelsRoute(t *testing.T) {
 	}
 	if w := ts.do(http.MethodGet, "/api/settings/custom-models/discover", "", withCookie(ts)); w.Code == http.StatusOK {
 		t.Fatalf("GET discover = %d", w.Code)
+	}
+}
+
+func TestDiscoverModelsWithDirectAndSavedKey(t *testing.T) {
+	var hits atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.Header.Get("Authorization") != "Bearer fixture-direct-key" {
+			t.Error("wrong direct credential")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"coder"}]}`))
+	}))
+	defer upstream.Close()
+	st := openTestStore(t)
+	m := startManager(t, st)
+	req := DiscoverRequest{Name: "direct", BaseURL: upstream.URL, APIKey: "fixture-direct-key"}
+	if got, err := m.DiscoverModels(t.Context(), req); err != nil || len(got.Models) != 1 {
+		t.Fatalf("direct discovery = %v", err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(store.WebCustomModel{Name: req.Name, BaseURL: req.BaseURL, ModelID: "coder", APIKey: req.APIKey})}); err != nil {
+		t.Fatal(err)
+	}
+	req.APIKey = ""
+	if got, err := m.DiscoverModels(t.Context(), req); err != nil || len(got.Models) != 1 {
+		t.Fatalf("saved-key discovery = %v", err)
+	}
+	req.BaseURL += "/changed"
+	if _, err := m.DiscoverModels(t.Context(), req); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("changed endpoint = %v", err)
+	}
+	if hits.Load() != 2 {
+		t.Fatal("saved key was sent to a changed endpoint")
 	}
 }

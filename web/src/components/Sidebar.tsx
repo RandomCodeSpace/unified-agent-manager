@@ -1,4 +1,4 @@
-import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, Eye, FolderPlus, GitBranch, KanbanSquare, LogOut, MessageCircleQuestion, Minimize2, Pause, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -452,8 +452,6 @@ export const Sidebar = memo(function Sidebar({
   sessions,
   selectedId,
   actions,
-  authRequired,
-  onLogout,
   connection,
   version,
 }: {
@@ -463,8 +461,6 @@ export const Sidebar = memo(function Sidebar({
   sessions: SessionSummary[];
   selectedId: string | null;
   actions: WorkspaceActions;
-  authRequired: boolean;
-  onLogout: () => void;
   connection: Connection;
   version?: string;
 }) {
@@ -562,13 +558,6 @@ export const Sidebar = memo(function Sidebar({
         <UsageButton className="-ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
         <ConnectionDot connection={connection} />
         {version && <span className="truncate text-meta" title={version}>{version}</span>}
-        <span className="flex-1" />
-        {authRequired && (
-          <Button size="sm" className="-mr-2 text-muted" onClick={onLogout}>
-            <LogOut />
-            Log out
-          </Button>
-        )}
       </footer>
     </nav>
   );

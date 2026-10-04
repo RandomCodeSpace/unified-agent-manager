@@ -27,6 +27,28 @@ async function section(name: string) {
 }
 
 describe('settings', () => {
+  test('Log out lives in General and returns to sign in', async () => {
+    const auth = vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true });
+    const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined);
+    try {
+      const { user } = await openSettings();
+      expect(within(screen.getByRole('navigation', { name: 'Tasks' })).queryByRole('button', { name: 'Log out' })).toBeNull();
+      expect((await section('Session')).getByRole('button', { name: 'Log out' })).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
+      expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+      await user.click(screen.getByRole('button', { name: 'Log out' }));
+      expect(await screen.findByRole('heading', { name: 'Sign in to UAM' })).toBeTruthy();
+      expect(logout).toHaveBeenCalledTimes(1);
+    } finally { auth.mockRestore(); logout.mockRestore(); }
+  });
+
+  test('General omits Log out when the server does not require sign in', async () => {
+    await openSettings();
+    expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Session', exact: true })).toBeNull();
+  });
+
   async function customModelSettings(change?: (context: AppContextValue) => void) {
     install();
     const fixture = seed();
@@ -161,6 +183,7 @@ describe('settings', () => {
     const form = within(models.getByRole('form', { name: 'Add a provider' }));
     await user.type(form.getByRole('textbox', { name: 'Provider name' }), 'ollama');
     await user.type(form.getByRole('textbox', { name: 'Base URL' }), 'https://ollama.com/v1');
+    await user.click(form.getByRole('radio', { name: 'Environment variable' }));
     await user.type(form.getByRole('textbox', { name: 'API key variable' }), 'OLLAMA_KEY');
     await user.click(form.getByRole('button', { name: 'Load models' }));
     expect((await form.findByRole('alert')).textContent).toMatch(/API key variable must be named UAM_BYOM_<NAME>/);
@@ -201,6 +224,42 @@ describe('settings', () => {
     await waitFor(() => expect(models.queryByRole('form')).toBeNull());
     expect((await api.webSettings()).custom_models!.filter((m) => m.vision).map((m) => m.model_id)).toEqual(['llama4:scout']);
     expect((await api.meta()).providers[0].models.find((m) => m.id === 'ollama/gemma3:27b')?.media).toEqual({ images: false, pdf: false });
+  });
+
+  test('custom providers accept a direct key, keep it private on edit, and can switch to an environment variable', async () => {
+    const { user } = await openSettings('Providers');
+    const models = await section('Providers');
+    await user.click(models.getByRole('button', { name: 'Add provider' }));
+    let form = within(models.getByRole('form', { name: 'Add a provider' }));
+    await user.type(form.getByRole('textbox', { name: 'Provider name' }), 'direct');
+    await user.type(form.getByRole('textbox', { name: 'Base URL' }), 'https://llm.example/v1');
+    const key = form.getByLabelText('API key') as HTMLInputElement;
+    expect(key.type).toBe('password');
+    await user.type(key, 'fixture-only-secret');
+    await user.click(form.getByRole('button', { name: 'Load models' }));
+    await user.click(await form.findByRole('checkbox', { name: 'gpt-oss:120b' }));
+    await user.click(form.getByRole('button', { name: 'Save provider' }));
+    let saved = within(await models.findByRole('region', { name: 'direct models' }));
+    expect(saved.getByText('API key saved')).toBeTruthy();
+    expect(JSON.stringify(await api.webSettings())).not.toContain('fixture-only-secret');
+    await user.click(saved.getByRole('button', { name: 'Edit', exact: true }));
+    form = within(models.getByRole('form', { name: 'Edit provider direct' }));
+    expect((form.getByLabelText('API key') as HTMLInputElement).value).toBe('');
+    expect((form.getByLabelText('API key') as HTMLInputElement).required).toBe(false);
+    await user.click(form.getByRole('button', { name: 'Load models' }));
+    await waitFor(() => expect(form.getByRole('button', { name: 'Load models' }).hasAttribute('disabled')).toBe(false));
+    await user.click(form.getByRole('button', { name: 'Save provider' }));
+    await waitFor(() => expect(models.queryByRole('form')).toBeNull());
+    saved = within(models.getByRole('region', { name: 'direct models' }));
+    expect(saved.getByText('API key saved')).toBeTruthy();
+    await user.click(saved.getByRole('button', { name: 'Edit', exact: true }));
+    form = within(models.getByRole('form', { name: 'Edit provider direct' }));
+    await user.click(form.getByRole('radio', { name: 'Environment variable' }));
+    expect(form.queryByLabelText('API key')).toBeNull();
+    await user.type(form.getByRole('textbox', { name: 'API key variable' }), 'UAM_BYOM_DIRECT');
+    await user.click(form.getByRole('button', { name: 'Save provider' }));
+    await waitFor(() => expect(models.queryByRole('form')).toBeNull());
+    expect(models.getByText("UAM_BYOM_DIRECT is not set in the service's environment")).toBeTruthy();
   });
 
   test('removing a custom provider is confirmed first', async () => {

@@ -12,7 +12,7 @@ async function openIdle(id: string) {
 }
 
 async function commitPanel(user: ReturnType<typeof renderApp>['user']) {
-  await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+  await user.click(within(screen.getByRole('group', { name: 'Version control' })).getByRole('button'));
   const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
   return within(await sheet.findByRole('region', { name: 'Commit' }));
 }
@@ -99,21 +99,21 @@ describe('commit panel', () => {
   });
 });
 
-/** The finish card's commit panel on the finished mock Task t20, with git idle. */
+/** Opens Changes from the branch evidence on the finished mock Task t20, with git idle. */
 async function finishCommit() {
   const rendered = await openIdle('t20');
-  const card = (await screen.findByRole('heading', { name: 'Finished — check the evidence' })).closest('section')!;
-  const panel = await within(card).findByRole('region', { name: 'Commit' });
-  return { ...rendered, card, panel: within(panel) };
+  await rendered.user.click(await screen.findByRole('button', { name: /evidence available/ }));
+  const evidence = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
+  expect(evidence.queryByRole('textbox', { name: 'Commit message' })).toBeNull();
+  const card = await screen.findByRole('dialog', { name: 'Changes' });
+  const panel = within(await within(card).findByRole('region', { name: 'Commit' }));
+  await rendered.user.click(panel.getByRole('button', { name: /^Commit/ }));
+  return { ...rendered, card, panel };
 }
 
-describe('finish card commit', () => {
+describe('commit through Changes from branch evidence', () => {
   test('keeps the outcome in view after its files are committed, a failed push included', async () => {
     const { user, card, panel } = await finishCommit();
-    // The card's panel keeps its natural height in the conversation's scroll; only Changes makes it scroll.
-    const region = card.querySelector('section[aria-label="Commit"]')!;
-    expect(region.classList.contains('shrink-0')).toBe(true);
-    expect(region.classList.contains('overflow-y-auto')).toBe(false);
     await user.type(await panel.findByRole('textbox', { name: 'Commit message' }), 'fix(vterm): replay focus events');
     await user.click(panel.getByRole('button', { name: 'Commit and push' }));
     // The commit took the Task's files, so the Changes list empties; the push was refused.
@@ -122,20 +122,20 @@ describe('finish card commit', () => {
     expect(outcome.isConnected).toBe(true);
   });
 
-  test('shares one draft with the Changes panel', async () => {
-    const { user, panel } = await finishCommit();
+  test('keeps the draft and selected files when Changes is reopened from evidence', async () => {
+    const { user, card, panel } = await finishCommit();
     await user.type(await panel.findByRole('textbox', { name: 'Commit message' }), 'fix: one');
-    await user.click(screen.getByRole('button', { name: 'Review changes' }));
+    await user.click(panel.getByRole('checkbox', { name: /redraw\.go$/ }));
+    await user.click(within(card).getByRole('button', { name: 'Close changes' }));
+    await user.click(screen.getByRole('button', { name: /evidence available/ }));
+    const evidence = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
+    expect(evidence.queryByRole('textbox', { name: 'Commit message' })).toBeNull();
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     const other = within(await sheet.findByRole('region', { name: 'Commit' }));
     await user.click(other.getByRole('button', { name: /^Commit/ }));
     const message = (await other.findByRole('textbox', { name: 'Commit message' })) as HTMLTextAreaElement;
     expect(message.value).toBe('fix: one');
-    await user.type(message, ' and two');
-    await user.click(other.getByRole('checkbox', { name: /redraw\.go$/ }));
-    // The sheet is modal: the card behind it is hidden from the accessibility tree, not gone.
-    expect((panel.getByRole('textbox', { name: 'Commit message', hidden: true }) as HTMLTextAreaElement).value).toBe('fix: one and two');
-    expect((panel.getByRole('checkbox', { name: /redraw\.go$/, hidden: true }) as HTMLInputElement).checked).toBe(false);
+    expect((other.getByRole('checkbox', { name: /redraw\.go$/ }) as HTMLInputElement).checked).toBe(false);
   });
 });
 

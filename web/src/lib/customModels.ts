@@ -7,6 +7,7 @@ export interface CustomProvider {
   name: string;
   base_url: string;
   api_key_env: string;
+  api_key?: string;
   wire_api?: NonNullable<CustomModel['wire_api']>;
   key_present?: boolean;
   models: CustomModel[];
@@ -44,7 +45,7 @@ export function withProvider(models: readonly CustomModel[], original: string | 
     const previous = old.find((m) => m.model_id === model_id);
     const display_name = previous?.display_name || model_id;
     const images = vision ? vision.includes(model_id) : previous?.vision;
-    return { name: provider.name, base_url: provider.base_url, api_key_env: provider.api_key_env, ...(provider.wire_api ? { wire_api: provider.wire_api } : {}), model_id, display_name, ...(images ? { vision: true } : {}) };
+    return { name: provider.name, base_url: provider.base_url, api_key_env: provider.api_key_env, ...(provider.api_key ? { api_key: provider.api_key } : {}), ...(provider.wire_api ? { wire_api: provider.wire_api } : {}), model_id, display_name, ...(images ? { vision: true } : {}) };
   });
   const at = stored.findIndex((m) => m.name === original);
   const rest = stored.filter((m) => m.name !== original);

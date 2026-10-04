@@ -299,17 +299,17 @@ describe('settings in the toolbar', () => {
   });
 
   test('a narrow toolbar folds the lower-priority labels first and keeps the model and the actions', async () => {
-    // The environment has no layout: the row overflows until it carries five folds.
+    // The environment has no layout: the row overflows until it carries four folds.
     const proto = HTMLElement.prototype;
     const saved = { scroll: Object.getOwnPropertyDescriptor(proto, 'scrollWidth'), client: Object.getOwnPropertyDescriptor(proto, 'clientWidth') };
     const folds = (el: HTMLElement) => (el.dataset.fold ? el.dataset.fold.split(' ').length : 0);
-    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get(this: HTMLElement) { if (!this.hasAttribute('data-fold')) return 0; return folds(this) < 5 ? 500 : 400; } });
+    Object.defineProperty(proto, 'scrollWidth', { configurable: true, get(this: HTMLElement) { if (!this.hasAttribute('data-fold')) return 0; return folds(this) < 4 ? 500 : 400; } });
     Object.defineProperty(proto, 'clientWidth', { configurable: true, get(this: HTMLElement) { return this.hasAttribute('data-fold') ? 400 : 0; } });
     try {
       await openTask('t1');
       const model = await screen.findByRole('button', { name: /^Model: Auto/ });
       const row = model.parentElement!;
-      await waitFor(() => expect(row.dataset.fold).toBe('execution credits tuning permissions more'));
+      await waitFor(() => expect(row.dataset.fold).toBe('execution tuning permissions more'));
       // Each control names the fold that shortens it: the mode loses its execution word, then its label; effort and
       // context its label; both move into More; the model's name goes last and may truncate only to a few letters.
       const mode = document.getElementById('composer-mode')!;

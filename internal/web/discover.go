@@ -27,6 +27,8 @@ const (
 
 // DiscoverRequest names an OpenAI-compatible endpoint whose models to list.
 type DiscoverRequest struct {
+	Name      string `json:"name"`
+	APIKey    string `json:"api_key"`
 	BaseURL   string `json:"base_url"`
 	APIKeyEnv string `json:"api_key_env"`
 	WireAPI   string `json:"wire_api"`
@@ -52,15 +54,25 @@ var discoverSlots = make(chan struct{}, 2)
 var discoverClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirect }}
 
 // DiscoverModels lists the models an OpenAI-compatible endpoint serves with
-// one GET of base_url + "/models", authenticated with the key read from the
-// named UAM_BYOM_ variable. Only the IDs come back; an upstream failure is
+// one GET of base_url + "/models", authenticated with a supplied or saved
+// key, or the key read from the named UAM_BYOM_ variable. Only the IDs come back; an upstream failure is
 // reported by status line or kind, never by its body.
 func (m *Manager) DiscoverModels(ctx context.Context, req DiscoverRequest) (DiscoverResult, error) {
-	probe := store.WebCustomModel{Name: "discover", ModelID: "discover", BaseURL: req.BaseURL, WireAPI: req.WireAPI, APIKeyEnv: req.APIKeyEnv}
+	probe := store.WebCustomModel{Name: "discover", ModelID: "discover", BaseURL: req.BaseURL, WireAPI: req.WireAPI, APIKeyEnv: req.APIKeyEnv, APIKey: req.APIKey}
+	if probe.APIKeyEnv == "" && probe.APIKey == "" && req.Name != "" {
+		cfg, err := m.store.Load()
+		if err != nil {
+			return DiscoverResult{}, fmt.Errorf("load custom model settings: %w", err)
+		}
+		probe.APIKey = savedCustomKey(cfg.WebSettings.CustomModels, req.Name, req.BaseURL, req.WireAPI)
+	}
 	if err := store.ValidCustomModel(probe); err != nil {
 		return DiscoverResult{}, newError(http.StatusBadRequest, "%s", err.Error())
 	}
-	key := os.Getenv(req.APIKeyEnv)
+	key := probe.APIKey
+	if req.APIKeyEnv != "" {
+		key = os.Getenv(req.APIKeyEnv)
+	}
 	if key == "" {
 		return DiscoverResult{}, newError(http.StatusBadRequest, "%s is not set in the uam web service's environment; export it where the service starts and restart the service", req.APIKeyEnv)
 	}

@@ -517,9 +517,17 @@ export default function App() {
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
   const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
+  const openUsage = useCallback(() => {
+    if (narrow) setDrawerOpen(true);
+    // The drawer's portal mounts before the next frame.
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLElement>('[data-account-usage]');
+      Array.from(buttons).find((button) => !button.closest('[inert], [aria-hidden="true"]'))?.click();
+    });
+  }, [narrow]);
   const ctx = useMemo(
-    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta }),
-    [meta, metaError, state.loaded, narrow, hasNews, state.settings, state.usage, refreshMeta],
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta, openUsage }),
+    [meta, metaError, state.loaded, narrow, hasNews, state.settings, state.usage, refreshMeta, openUsage],
   );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
@@ -970,8 +978,6 @@ export default function App() {
       sessions={state.sessions}
       selectedId={state.selectedId}
       actions={actions}
-      authRequired={authRequired}
-      onLogout={logout}
       connection={connection}
       version={meta?.version}
     />
@@ -987,7 +993,7 @@ export default function App() {
   const gitProjects = state.projects.filter((p) => !p.no_git);
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} tokenPricesRequest={tokenPricesRequest} />;
+    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} />;
   } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
   } else if (routinesShown) {

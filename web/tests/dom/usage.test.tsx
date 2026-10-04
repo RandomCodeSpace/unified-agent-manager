@@ -2,9 +2,10 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
+import { AppContext, type AppContextValue } from '../../src/components/common';
 import { UsageButton } from '../../src/components/Usage';
 import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage';
-import { renderApp, sidebar } from './render';
+import { composer, renderApp, sidebar } from './render';
 
 beforeEach(() => { vi.spyOn(api, 'tokenPrices').mockResolvedValue(tokenPriceFixture()); });
 afterEach(() => vi.restoreAllMocks());
@@ -22,6 +23,53 @@ function expectPricingCaveatsHidden() {
 }
 
 describe('Usage popover', () => {
+  test.each([false, true])('/usage opens the visible account popover with collapsed sidebar %s', async (collapsed) => {
+    vi.spyOn(api, 'commands').mockResolvedValue([{ name: 'usage', description: 'Show usage', kind: 'command', input_hint: '' }]);
+    vi.spyOn(api, 'command').mockResolvedValue({ request_id: 'usage', status: 'accepted', time: new Date().toISOString(), command_result: { kind: 'action', action: 'usage' } });
+    const { user } = renderApp('#task=t3');
+    await screen.findByRole('region', { name: 'Conversation' });
+    if (collapsed) await user.click(screen.getByRole('button', { name: /^Hide sidebar/ }));
+    await user.type(composer(), '/usage');
+    await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/usage/ });
+    await user.keyboard('{Enter}{Enter}');
+    expect(await screen.findByRole('region', { name: 'AI allowance' })).toBeTruthy();
+    const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Tasks' }));
+    expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
+    expect(document.getElementById('composer-usage')).toBeNull();
+  });
+
+  test('moves the account allowance out of the composer and into Usage', async () => {
+    const { user } = renderApp('#task=t20');
+    const nav = await sidebar();
+    const button = nav.getByRole('button', { name: 'Usage', exact: true });
+    await waitFor(() => expect(button.textContent).toBe('96'));
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('96% left');
+    expect(document.getElementById('composer-usage')).toBeNull();
+    expect(button.querySelector('circle[pathLength]')?.getAttribute('stroke-dasharray')).toBe('96 100');
+    await user.click(button);
+    const allowance = within(await screen.findByRole('region', { name: 'AI allowance' }));
+    expect(allowance.getByText('96% left')).toBeTruthy();
+    expect(allowance.getByText('280 of 7,000 ai credits used')).toBeTruthy();
+    expect(allowance.getByText(/until reset.*left at this pace/)).toBeTruthy();
+  });
+
+  test('stale quota keeps the number but clears the pace assessment', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
+    const quota = { provider: 'copilot', type: 'ai_credits', used: 0, entitlement: 7000, remaining_percent: 100, unlimited: false, overage: 0 };
+    const renderQuota = (stale: boolean) => <AppContext.Provider value={{ usage: { quotas: [quota], stale }, meta: null } as AppContextValue}><UsageButton /></AppContext.Provider>;
+    const view = render(renderQuota(false));
+    const button = screen.getByRole('button', { name: 'Usage', exact: true });
+    expect(button.textContent).toBe('100');
+    expect(button.className).toContain('text-warning');
+    view.rerender(renderQuota(true));
+    expect(button.className).toContain('text-muted');
+    expect(button.textContent).toBe('100');
+    await user.click(button);
+    expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
+    expect(screen.queryByText('Behind pace')).toBeNull();
+  });
+
   test.each(['top', 'right'] as const)('keeps its %s anchor on the first click and after reopening', async (side) => {
     vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
     const measure = HTMLElement.prototype.getBoundingClientRect;

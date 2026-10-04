@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -323,5 +324,98 @@ func TestTaskRecoversFromMissingCustomModelKey(t *testing.T) {
 	conv = prov.Last()
 	if d := detail(t, m, restarted); d.State == StateFailed || d.StateDetail != "" || len(conv.Sends()) != 1 || !slices.Equal(conv.ModelSets(), []string{"acme/coder"}) {
 		t.Fatalf("after restart with the key: %s %q sends %d sets %q", d.State, d.StateDetail, len(conv.Sends()), conv.ModelSets())
+	}
+}
+
+// The UI never receives saved key values, including when it saves an unrelated
+// model change. A replacement key must still reach the adapter and disk.
+func TestCustomModelsDirectKeyLifecycle(t *testing.T) {
+	st := openTestStore(t)
+	prov := &customProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	m := startManager(t, st, prov)
+	model := acme
+	model.APIKeyEnv, model.APIKey = "", "fixture-direct-key"
+	save := func(c store.WebCustomModel) Settings {
+		t.Helper()
+		view, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(c)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(view)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "fixture-direct") || strings.Contains(string(data), `"api_key":`) {
+			t.Fatal("settings exposed a direct key")
+		}
+		return view
+	}
+	if !save(model).CustomModels[0].KeyPresent {
+		t.Fatal("saved key not reported available")
+	}
+	info, err := os.Stat(st.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("store permissions = %o", info.Mode().Perm())
+	}
+	if prov.last()[0].APIKey != model.APIKey {
+		t.Fatal("adapter did not receive direct key")
+	}
+	model.APIKey = ""
+	model.DisplayName = "Renamed display"
+	save(model)
+	if prov.last()[0].APIKey != "fixture-direct-key" {
+		t.Fatal("editing discarded the saved key")
+	}
+	model.APIKey = "fixture-direct-replacement"
+	save(model)
+	if prov.last()[0].APIKey != model.APIKey {
+		t.Fatal("key replacement did not reach adapter")
+	}
+	if err := m.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	prov2 := &customProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	m = startManager(t, st, prov2)
+	if prov2.last()[0].APIKey != model.APIKey {
+		t.Fatal("restart lost the saved key")
+	}
+	// A saved credential cannot be silently forwarded to a changed endpoint.
+	model.APIKey, model.BaseURL = "", "https://another.example/v1"
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(model)}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("changed endpoint without key = %v", err)
+	}
+	model.BaseURL, model.APIKeyEnv = acme.BaseURL, acme.APIKeyEnv
+	save(model)
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebSettings.CustomModels[0].APIKey != "" || prov2.last()[0].APIKey != "" {
+		t.Fatal("switching to environment retained direct key")
+	}
+}
+
+func TestCustomModelsDirectKeyRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
+	auth := withCookie(ts)
+	body := `{"custom_models":[{"name":"direct","base_url":"https://llm.example/v1","model_id":"m","api_key":"fixture-route-key"}]}`
+	for _, method := range []string{http.MethodPatch, http.MethodGet} {
+		request := body
+		if method == http.MethodGet {
+			request = ""
+		}
+		w := ts.do(method, "/api/settings", request, auth)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", method, w.Code)
+		}
+		if strings.Contains(w.Body.String(), "fixture-route-key") || strings.Contains(w.Body.String(), `"api_key":`) {
+			t.Fatal("route exposed key")
+		}
+		if !strings.Contains(w.Body.String(), `"key_present":true`) {
+			t.Fatal("route did not report saved key")
+		}
 	}
 }

@@ -208,9 +208,8 @@ type CustomModelUser interface {
 }
 
 // CustomModel is an OpenAI-compatible model the owner brought. Its model ID
-// is SelectionID. APIKeyEnv names the service environment variable holding
-// the key; the provider reads it when it needs it, and the key goes nowhere
-// else.
+// is SelectionID. APIKey holds a saved key, or APIKeyEnv names the service
+// environment variable the provider reads when it needs the key.
 type CustomModel struct {
 	// Name names the provider connection; models with one Name share
 	// BaseURL, WireAPI and APIKeyEnv.
@@ -222,6 +221,7 @@ type CustomModel struct {
 	// WireAPI is "completions" (also for "") or "responses".
 	WireAPI   string
 	APIKeyEnv string
+	APIKey    string `json:"-"`
 }
 
 // SelectionID is the model's ID among the provider's models.

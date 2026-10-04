@@ -620,3 +620,27 @@ func TestValidCustomModels(t *testing.T) {
 		t.Error("too many custom models accepted")
 	}
 }
+
+func TestCustomModelDirectKeyValidation(t *testing.T) {
+	model := WebCustomModel{Name: "direct", BaseURL: "https://llm.example/v1", ModelID: "m", APIKey: "fixture-key"}
+	if err := ValidCustomModel(model); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{strings.Repeat("k", MaxCustomModelKeyBytes+1), "line\nbreak", "nul\x00byte"} {
+		bad := model
+		bad.APIKey = key
+		if err := ValidCustomModel(bad); err == nil {
+			t.Fatal("invalid direct key accepted")
+		}
+	}
+	both := model
+	both.APIKeyEnv = "UAM_BYOM_DIRECT"
+	if err := ValidCustomModel(both); err == nil {
+		t.Fatal("both key sources accepted")
+	}
+	other := model
+	other.ModelID, other.APIKey = "second", "different-key"
+	if err := ValidCustomModels([]WebCustomModel{model, other}); err == nil {
+		t.Fatal("inconsistent provider keys accepted")
+	}
+}

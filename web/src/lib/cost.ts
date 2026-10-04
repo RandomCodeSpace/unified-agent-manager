@@ -1,5 +1,5 @@
 // Context usage, credits and cost (issues #186, #188): the numbers behind the composer's
-// context ring, credits chip and cost estimate. Pure, so the unit tests run in node.
+// context ring, account quota and cost estimate. Pure, so the unit tests run in node.
 
 import type { ContextUsage, CostTier, Model, Prices, Quota, TierPrices } from '../api';
 
@@ -18,12 +18,45 @@ export function ringTone(fraction: number): Tone {
   return 'accent';
 }
 
-/** The credits chip's colour: `attention` at 20% left or less, `danger` at 5% or less (#188); unlimited quotas stay quiet. */
-export function creditsTone(quota: Pick<Quota, 'unlimited' | 'remaining_percent'>): Tone {
-  if (quota.unlimited) return 'muted';
-  if (quota.remaining_percent <= 5) return 'danger';
-  if (quota.remaining_percent <= 20) return 'attention';
-  return 'muted';
+/** Account pace uses Copilot's calendar-month allowance, not the task's token totals.
+ * https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing
+ * Unknown reset periods and stale reports must not imply a healthy pace.
+ */
+export function quotaPace(quota: Quota | null, now: number, stale = false): {
+  remaining: number | null; tone: 'healthy' | 'attention' | 'danger' | 'muted';
+  daysUntilReset: number | null; daysAtPace: number | null; label: string;
+} {
+  const unknown = { remaining: null, tone: 'muted' as const, daysUntilReset: null, daysAtPace: null, label: 'Account usage unavailable' };
+  if (!quota) return unknown;
+  if (quota.unlimited) return { ...unknown, remaining: 100, tone: stale ? 'muted' : 'healthy', label: stale ? 'Previous unlimited allowance; refresh failed' : 'Unlimited allowance' };
+  if (!Number.isFinite(quota.remaining_percent)) return unknown;
+  const remaining = Math.max(0, Math.min(100, quota.remaining_percent));
+  const date = new Date(now);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+  // Copilot sometimes omits reset_at; its allowance still resets on the first UTC day.
+  const reset = quota.reset_at ? Date.parse(quota.reset_at) : quota.provider === 'copilot' ? next : NaN;
+  const daysUntilReset = reset > now ? (reset - now) / 86400000 : null;
+  const result = { ...unknown, remaining, daysUntilReset, label: 'Usage pace unavailable' };
+  if (stale) return { ...result, label: 'Previous quota; refresh failed' };
+  if (quota.reset_at && !(reset > now)) return { ...result, label: 'Waiting for the refreshed allowance' };
+  if (remaining === 0) return { ...result, tone: 'danger', daysAtPace: 0, label: 'Allowance exhausted' };
+  // No other provider's billing cycle is inferred from its reset date.
+  if (quota.provider !== 'copilot' || reset !== next || now <= start) return result;
+  const elapsed = (now - start) / 86400000;
+  const used = 100 - remaining;
+  if (used === 0) return { ...result, tone: 'attention', label: 'Behind pace' };
+  const daysAtPace = remaining * elapsed / used;
+  // Compare average consumption with the daily allowance budget; allow 5% either way.
+  const relativePace = (used / 100) / ((now - start) / (next - start));
+  if (relativePace < 0.95) return { ...result, daysAtPace, tone: 'attention', label: 'Behind pace' };
+  if (relativePace > 1.05) return { ...result, daysAtPace, tone: 'danger', label: 'Ahead of pace' };
+  return { ...result, daysAtPace, tone: 'healthy', label: 'On pace' };
+}
+
+/** First limited account allowance, otherwise the first reported allowance. */
+export function accountQuota(quotas: readonly Quota[] | undefined): Quota | null {
+  return quotas?.find((q) => !q.unlimited) ?? quotas?.[0] ?? null;
 }
 
 /** 31K, 200K, 1.2M. */

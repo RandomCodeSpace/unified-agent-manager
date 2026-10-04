@@ -350,6 +350,25 @@ func TestDraftCommitMessage(t *testing.T) {
 	}
 }
 
+func TestDraftCommitMessageWithoutConventionalHistory(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	g.prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		for _, rule := range []string{"Always use Conventional Commits", "feat, fix, docs, style, refactor, perf, test, build, ci, chore, or revert", "one or two content lines total", "even when the repository uses another style or has no commits"} {
+			if !strings.Contains(req.System, rule) {
+				t.Errorf("commit system prompt lacks %q", rule)
+			}
+		}
+		return "fix: keep three lines", nil
+	})
+	var draft CommitDraft
+	g.call(http.MethodPost, "/message", `{"paths":["tracked.txt"]}`, http.StatusOK, &draft)
+	if draft.Conventional || draft.Message != "fix: keep three lines" {
+		t.Fatalf("draft = %+v", draft)
+	}
+}
+
 func TestCleanCommitMessage(t *testing.T) {
 	for reply, want := range map[string]string{
 		"feat: add x":                         "feat: add x",

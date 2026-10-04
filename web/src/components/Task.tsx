@@ -1,4 +1,4 @@
-import { ArrowDown, ChartLine, Ellipsis, FileDiff, FolderTree, GitBranch, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, api, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -9,7 +9,7 @@ import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { showsFinish, shownState } from '../lib/tasks';
 import { ChangesSheet, defaultScope } from './Changes';
-import { CommitPanel, SetUpGitButton } from './CommitPanel';
+import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
@@ -23,7 +23,7 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
-import { away, FinishCard, SinceYouLeft } from './Finish';
+import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript, WorkingLabel } from './Transcript';
@@ -603,7 +603,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const name = taskName(session);
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
-  const fileCount = changes?.supported ? changes.files.length : null;
   // Without git there is nothing for Changes or Files to show: a warning stands in their place (DESIGN.md D3).
   const noGit = project?.no_git;
   const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
@@ -611,6 +610,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const state = shownState(session);
   const compacting = !!session.compacting && state === 'working';
   const finished = !historyLoading && showsFinish(session, liveItems, live);
+  const turnEvidence = useTurnEvidence(session, changes, finished);
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
@@ -649,7 +649,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  const changesLabel = fileCount === null ? 'Open changes' : `Open changes, ${fileCount} files`;
+  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -691,36 +691,29 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Tip>
             )}
           </div>
-          {/* The project strip (DESIGN.md D3): the branch, then Changes, beside the title. */}
-          {project?.branch && room === 'wide' && (
-            <span className="flex min-w-0 max-w-40 items-center gap-1 text-meta text-muted max-sm:hidden" title={`Project branch: ${project.branch}\nProject folder: ${session.workdir}`}>
-              <GitBranch aria-hidden="true" className="size-3 shrink-0" />
-              <span className="truncate">{project.branch}</span>
-            </span>
-          )}
+          {/* The branch-named Changes control and its evidence cue, beside the title. */}
           {noGit ? (
-            <Popover.Root>
-              <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
-                <TriangleAlert />
-                <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
-              </Popover.Trigger>
-              <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
-                <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
-                <Popover.Description>
-                  {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
-                </Popover.Description>
-                {noGit === 'not_repository' && <SetUpGitButton session={session} />}
-              </Popover.Content>
-            </Popover.Root>
+            <>
+              <Popover.Root>
+                <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
+                  <TriangleAlert />
+                  <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
+                </Popover.Trigger>
+                <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+                  <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
+                  <Popover.Description>
+                    {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
+                  </Popover.Description>
+                  {noGit === 'not_repository' && <SetUpGitButton session={session} />}
+                </Popover.Content>
+              </Popover.Root>
+              {vcs}
+            </>
           ) : (
             <>
-              <Tip label={`Changes in ${project?.name ?? 'the project'}`}>
-                <Button id="changes-link" size="md" aria-pressed={sheetOpen} aria-label={changesLabel} className="px-2 text-muted" onClick={openChanges}>
-                  <FileDiff />
-                  {labels && <span>Changes</span>}
-                  {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
-                </Button>
-              </Tip>
+              <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
+                {vcs}
+              </div>
               {!fold && (
                 <Tip label={`Files in ${project?.name ?? 'the project'}`}>
                   <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
@@ -813,7 +806,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
             />
             </HistoryAnchor>
-            {finished && <FinishCard session={session} items={liveItems} changes={changes} onShowOutput={showOutput} onReview={noGit ? undefined : openChanges} commit={!noGit && <CommitPanel session={session} defaultOpen quiet onChanged={() => setChangesTick((t) => t + 1)} />} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>
@@ -863,7 +855,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <ChangesSheet session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {sheetPresence.mounted && <ChangesSheet evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
       {/* The Task's name only seeds "Add to a story": a Task with a card passes none, so its title arriving does not render the panel. */}
       {planPresence.mounted && plan && <PlanPanel plan={plan} taskId={session.id} taskName={plan.mine ? '' : name} focus={planFocus ?? lastPlanFocus} inline={sidePanelInline} open={planOpen} onClose={closePlan} onClosed={onPlanClosed} />}

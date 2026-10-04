@@ -38,25 +38,25 @@ func (p *webProvider) customModel(id string) (agentapi.CustomModel, bool) {
 	return agentapi.CustomModel{}, false
 }
 
-// customKeyErr refuses a custom model whose key variable is unset or empty
-// in the service environment, so the model fails with a reason instead of
+// customKeyErr refuses a custom model with no saved key or populated
+// environment variable, so the model fails with a reason instead of
 // an unauthenticated request. It is nil for any other model.
 func (p *webProvider) customKeyErr(id string) error {
 	m, ok := p.customModel(id)
-	if !ok || os.Getenv(m.APIKeyEnv) != "" {
+	if !ok || m.APIKey != "" || os.Getenv(m.APIKeyEnv) != "" {
 		return nil
 	}
 	return fmt.Errorf("custom model %s needs its API key in the environment variable %s, which is not set in the uam web service's environment; export it where the service starts and restart the service", id, m.APIKeyEnv)
 }
 
 // byom builds the session registry for models: one provider per Name,
-// with the key read from the service environment now, and one model each.
+// with its saved key or a key read from the service environment now, and one model each.
 func byom(models []agentapi.CustomModel) ([]copilot.NamedProviderConfig, []copilot.ProviderModelConfig) {
 	var providers []copilot.NamedProviderConfig
 	var out []copilot.ProviderModelConfig
 	for _, m := range models {
 		if !slices.ContainsFunc(providers, func(pc copilot.NamedProviderConfig) bool { return pc.Name == m.Name }) {
-			providers = append(providers, copilot.NamedProviderConfig{Name: m.Name, Type: "openai", WireAPI: m.WireAPI, BaseURL: m.BaseURL, APIKey: os.Getenv(m.APIKeyEnv)})
+			providers = append(providers, copilot.NamedProviderConfig{Name: m.Name, Type: "openai", WireAPI: m.WireAPI, BaseURL: m.BaseURL, APIKey: cmp.Or(m.APIKey, os.Getenv(m.APIKeyEnv))})
 		}
 		out = append(out, copilot.ProviderModelConfig{ID: m.ModelID, Provider: m.Name, Name: cmp.Or(m.DisplayName, m.SelectionID()), Capabilities: &rpc.ModelCapabilitiesOverride{Supports: &rpc.ModelCapabilitiesOverrideSupports{Vision: copilot.Bool(m.Vision)}}})
 	}

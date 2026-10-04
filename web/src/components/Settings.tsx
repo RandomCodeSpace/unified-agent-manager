@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { LogOut, X } from 'lucide-react';
 import { useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
 import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
@@ -93,6 +93,9 @@ interface ProviderDraft {
   name: string;
   base_url: string;
   api_key_env: string;
+  api_key: string;
+  key_source: 'direct' | 'env';
+  wire_api?: CustomModel['wire_api'];
   /** The IDs offered in the checklist: loaded from the endpoint, saved, or typed in. */
   ids: string[];
   selected: string[];
@@ -101,7 +104,7 @@ interface ProviderDraft {
   manual: string;
 }
 
-const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', ids: [], selected: [], vision: [], query: '', manual: '' };
+const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', api_key: '', key_source: 'direct', ids: [], selected: [], vision: [], query: '', manual: '' };
 
 /** What Remove is about to take away: one of a provider's models, or the provider with all of them. */
 interface Removal {
@@ -124,8 +127,8 @@ function removalDescription(pending: Removal | null): string | undefined {
 
 /**
  * Custom (BYOM) models, by provider: an OpenAI-compatible endpoint whose models are chosen
- * from what it lists (the service loads the list) or typed in. The key never passes through
- * here; each provider names the service environment variable that holds it.
+ * from what it lists (the service loads the list) or typed in. Direct keys are write-only;
+ * the edit form can keep a saved key without receiving its value.
  */
 function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomModel[]; disabled: boolean; onSave: (next: CustomModel[]) => Promise<boolean> }>) {
   const [draft, setDraft] = useState<ProviderDraft | null>(null);
@@ -146,13 +149,19 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
 
   function edit(p?: CustomProvider) {
     setLoadError(null);
-    setDraft(p ? { ...newProvider, original: p.name, name: p.name, base_url: p.base_url, api_key_env: p.api_key_env, ids: p.models.map((m) => m.model_id), selected: p.models.map((m) => m.model_id), vision: p.models.filter((m) => m.vision).map((m) => m.model_id) } : newProvider);
+    setDraft(p ? { ...newProvider, original: p.name, name: p.name, base_url: p.base_url, api_key_env: p.api_key_env, key_source: p.api_key_env ? 'env' : 'direct', wire_api: p.wire_api, ids: p.models.map((m) => m.model_id), selected: p.models.map((m) => m.model_id), vision: p.models.filter((m) => m.vision).map((m) => m.model_id) } : newProvider);
+  }
+  function connection(d: ProviderDraft) {
+    return { name: d.name.trim(), base_url: d.base_url.trim(), wire_api: d.wire_api, api_key_env: d.key_source === 'env' ? d.api_key_env.trim() : '', ...(d.key_source === 'direct' && d.api_key.trim() ? { api_key: d.api_key.trim() } : {}) };
+  }
+  function keepsKey(d: ProviderDraft) {
+    return models.some((m) => m.name === d.name.trim() && m.base_url === d.base_url.trim() && m.wire_api === d.wire_api && !m.api_key_env && m.key_present);
   }
   async function load(d: ProviderDraft) {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await api.discoverModels({ base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() });
+      const res = await api.discoverModels(connection(d));
       setDraft((cur) => cur && { ...cur, ids: [...new Set([...res.models, ...cur.selected])].sort(byCodeUnit) });
       if (res.truncated) setLoadError(`Showing the first ${res.models.length} models the endpoint lists.`);
     } catch (e) {
@@ -163,7 +172,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
   }
   async function save(e: SubmitEvent, d: ProviderDraft) {
     e.preventDefault();
-    const provider = { name: d.name.trim(), base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() };
+    const provider = connection(d);
     const next = withProvider(models, d.original, provider, d.selected, d.vision);
     const removed = models.filter((model) => !next.some((entry) => entry.name === model.name && entry.model_id === model.model_id)).map((model) => `${model.name}/${model.model_id}`);
     if (removed.length) replacement.ask({ next, removed });
@@ -190,7 +199,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
       <div className="flex items-center gap-3">
         <div className="flex flex-1 items-center gap-1">
           <h3 className="text-ui font-medium">Custom models</h3>
-          <HelpTip label="Custom models">OpenAI-compatible endpoints, offered with GitHub Copilot's models. The API key stays in the service's environment: export it as a variable named UAM_BYOM_&lt;NAME&gt; where the service starts (for example in ~/.bashrc), restart the service, and name that variable here.</HelpTip>
+          <HelpTip label="Custom models">OpenAI-compatible endpoints, offered with GitHub Copilot's models. Enter an API key here, or use a UAM_BYOM_&lt;NAME&gt; environment variable from the service.</HelpTip>
         </div>
         {!draft && (
           <Button size="sm" variant="secondary" disabled={disabled} onClick={() => edit()}>
@@ -204,7 +213,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
             <div className="flex min-w-0 flex-1 flex-col">
               <span className="text-ui font-medium text-ink">{p.name}</span>
               <span className="min-w-0 break-all text-meta text-muted">{p.base_url}</span>
-              <Note tone={p.key_present ? 'muted' : 'warn'}>{p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`}</Note>
+              <Note tone={p.key_present ? 'muted' : 'warn'}>{p.api_key_env ? (p.key_present ? `Key from ${p.api_key_env}` : `${p.api_key_env} is not set in the service's environment`) : (p.key_present ? 'API key saved' : 'API key missing')}</Note>
             </div>
             <Button size="sm" disabled={busy || !!draft} onClick={() => edit(p)}>
               Edit
@@ -239,13 +248,20 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
       }} />
       {draft && (
         <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
-          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2">
             {field(draft, 'name', 'Provider name', 'ollama')}
             {field(draft, 'base_url', 'Base URL', 'https://ollama.com/v1')}
-            {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_OLLAMA')}
           </div>
+          <Segmented aria-label="API key source" value={draft.key_source} disabled={busy} items={[{ value: 'direct', label: 'API key' }, { value: 'env', label: 'Environment variable' }]} onValueChange={(value) => { setDraft({ ...draft, key_source: value as ProviderDraft['key_source'], api_key: '' }); setLoadError(null); }} />
+          {draft.key_source === 'env' ? <>
+            {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_OLLAMA')}
+            <Note>Export this variable where the service starts, then restart the service.</Note>
+          </> : <Field id="custom-api-key" label="API key">
+            <Input id="custom-api-key" type="password" autoComplete="new-password" spellCheck={false} disabled={busy} required={!keepsKey(draft)} value={draft.api_key} placeholder={keepsKey(draft) ? 'Leave blank to keep the saved key' : 'Enter API key'} onChange={(e) => setDraft({ ...draft, api_key: e.target.value })} />
+            <Note>{keepsKey(draft) ? 'Leave blank to keep the saved key, or enter a new key to replace it.' : 'Saved privately on the server. The key is never shown again.'}</Note>
+          </Field>}
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" loading={loading} disabled={busy || !draft.base_url.trim() || !draft.api_key_env.trim()} onClick={() => void load(draft)}>
+            <Button size="sm" variant="secondary" loading={loading} disabled={busy || !draft.base_url.trim() || (draft.key_source === 'env' ? !draft.api_key_env.trim() : !draft.api_key.trim() && !keepsKey(draft))} onClick={() => void load(draft)}>
               Load models
             </Button>
             <Input
@@ -458,7 +474,7 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose, tokenPricesRequest = 0 }: Readonly<{ leading?: ReactNode; onClose: () => void; tokenPricesRequest?: number }>) {
+export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0 }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
@@ -656,7 +672,7 @@ export function SettingsView({ leading, onClose, tokenPricesRequest = 0 }: Reado
               const hidden = settings.hidden_models?.[p.owner] ?? [];
               return <div key={p.key} role="group" aria-label={`${p.label} models`} className="flex flex-col gap-1">
                 <h3 className="mb-1 flex items-center gap-2 text-ui font-medium">{p.label}{p.custom && <Chip>Custom provider</Chip>}</h3>
-                {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env} is not set in the service's environment. Check this provider in Providers.</Note>}
+                {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env ? `${p.custom.api_key_env} is not set in the service's environment.` : 'The API key is missing.'} Check this provider in Providers.</Note>}
                 <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
                 {p.models.map((m) => {
                   const shown = !hidden.includes(m.id);
@@ -689,6 +705,12 @@ export function SettingsView({ leading, onClose, tokenPricesRequest = 0 }: Reado
             <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
             </Row>
+          </Section>}
+          {onLogout && <Section hidden={section !== 'general'} id="session" title="Session">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Note>Sign out of UAM in this browser.</Note>
+              <Button variant="secondary" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
+            </div>
           </Section>}
           {(['agents', 'skills', 'hooks', 'instructions'] as const).map((kind) => visited.has(kind) && <Section key={kind} hidden={section !== kind} id={kind} title={SETTINGS_SECTIONS.find((item) => item.id === kind)!.label}><ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} /></Section>)}
           {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section hidden={section !== 'mcp'} id="mcp" title="MCP servers">
