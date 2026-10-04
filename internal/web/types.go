@@ -179,6 +179,7 @@ type CustomModel struct {
 	DisplayName string `json:"display_name,omitempty"`
 	BaseURL     string `json:"base_url"`
 	ModelID     string `json:"model_id"`
+	Vision      bool   `json:"vision,omitempty"`
 	WireAPI     string `json:"wire_api,omitempty"`
 	APIKeyEnv   string `json:"api_key_env"`
 	KeyPresent  bool   `json:"key_present"`

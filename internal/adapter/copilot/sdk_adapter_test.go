@@ -394,7 +394,7 @@ func TestSDKSessionAdapterRequests(t *testing.T) {
 	// Custom providers and models go out as one provider.add request.
 	err = s.AddProviders(ctx,
 		[]copilot.NamedProviderConfig{{Name: "acme", Type: "openai", BaseURL: "https://llm.example/v1", WireAPI: "responses", APIKey: "key"}, {Name: "local", Type: "openai", BaseURL: "http://127.0.0.1:1/v1"}},
-		[]copilot.ProviderModelConfig{{ID: "acme-1", Provider: "acme", Name: "Acme One"}})
+		[]copilot.ProviderModelConfig{{ID: "acme-1", Provider: "acme", Name: "Acme One", Capabilities: &rpc.ModelCapabilitiesOverride{Supports: &rpc.ModelCapabilitiesOverrideSupports{Vision: copilot.Bool(true)}}}})
 	if err != nil {
 		t.Fatalf("AddProviders: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestSDKSessionAdapterRequests(t *testing.T) {
 		map[string]any{"name": "acme", "type": "openai", "baseUrl": "https://llm.example/v1", "wireApi": "responses", "apiKey": "key"},
 		map[string]any{"name": "local", "type": "openai", "baseUrl": "http://127.0.0.1:1/v1"},
 	}
-	wantModels := []any{map[string]any{"id": "acme-1", "provider": "acme", "name": "Acme One"}}
+	wantModels := []any{map[string]any{"id": "acme-1", "provider": "acme", "name": "Acme One", "capabilities": map[string]any{"supports": map[string]any{"vision": true}}}}
 	if p := rt.last("session.provider.add"); !reflect.DeepEqual(p["providers"], wantProviders) || !reflect.DeepEqual(p["models"], wantModels) {
 		t.Fatalf("provider.add params = %v", p)
 	}

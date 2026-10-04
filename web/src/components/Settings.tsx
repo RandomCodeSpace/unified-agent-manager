@@ -96,11 +96,12 @@ interface ProviderDraft {
   /** The IDs offered in the checklist: loaded from the endpoint, saved, or typed in. */
   ids: string[];
   selected: string[];
+  vision: string[];
   query: string;
   manual: string;
 }
 
-const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', ids: [], selected: [], query: '', manual: '' };
+const newProvider: ProviderDraft = { name: '', base_url: '', api_key_env: '', ids: [], selected: [], vision: [], query: '', manual: '' };
 
 /** What Remove is about to take away: one of a provider's models, or the provider with all of them. */
 interface Removal {
@@ -145,7 +146,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
 
   function edit(p?: CustomProvider) {
     setLoadError(null);
-    setDraft(p ? { ...newProvider, original: p.name, name: p.name, base_url: p.base_url, api_key_env: p.api_key_env, ids: p.models.map((m) => m.model_id), selected: p.models.map((m) => m.model_id) } : newProvider);
+    setDraft(p ? { ...newProvider, original: p.name, name: p.name, base_url: p.base_url, api_key_env: p.api_key_env, ids: p.models.map((m) => m.model_id), selected: p.models.map((m) => m.model_id), vision: p.models.filter((m) => m.vision).map((m) => m.model_id) } : newProvider);
   }
   async function load(d: ProviderDraft) {
     setLoading(true);
@@ -163,7 +164,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
   async function save(e: SubmitEvent, d: ProviderDraft) {
     e.preventDefault();
     const provider = { name: d.name.trim(), base_url: d.base_url.trim(), api_key_env: d.api_key_env.trim() };
-    const next = withProvider(models, d.original, provider, d.selected);
+    const next = withProvider(models, d.original, provider, d.selected, d.vision);
     const removed = models.filter((model) => !next.some((entry) => entry.name === model.name && entry.model_id === model.model_id)).map((model) => `${model.name}/${model.model_id}`);
     if (removed.length) replacement.ask({ next, removed });
     else if (await onSave(next)) setDraft(null);
@@ -269,19 +270,33 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
           {draft.ids.length > 0 && (
             <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm bg-raised px-2 py-1 shadow-well">
               {matchingIds(draft.ids, draft.query).map((id) => (
-                <label key={id} className="flex min-h-7 items-center gap-2 text-ui text-ink">
-                  <input
-                    type="checkbox"
-                    className="size-3.5 accent-accent"
-                    disabled={busy}
-                    checked={draft.selected.includes(id)}
-                    onChange={(e) => setDraft({ ...draft, selected: e.target.checked ? [...draft.selected, id] : draft.selected.filter((s) => s !== id) })}
-                  />
-                  {id}
-                </label>
+                <div key={id} className="flex min-h-7 items-center gap-3 text-ui text-ink">
+                  <label className="flex min-w-0 flex-1 items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 shrink-0 accent-accent"
+                      disabled={busy}
+                      checked={draft.selected.includes(id)}
+                      onChange={(e) => setDraft({ ...draft, selected: e.target.checked ? [...draft.selected, id] : draft.selected.filter((s) => s !== id) })}
+                    />
+                    <span className="break-all">{id}</span>
+                  </label>
+                  <label className="flex shrink-0 items-center gap-2 text-muted">
+                    <input
+                      type="checkbox"
+                      aria-label={`Enable vision for ${id}`}
+                      className="size-3.5 accent-accent"
+                      disabled={busy || !draft.selected.includes(id)}
+                      checked={draft.vision.includes(id)}
+                      onChange={(e) => setDraft({ ...draft, vision: e.target.checked ? [...draft.vision, id] : draft.vision.filter((s) => s !== id) })}
+                    />
+                    Vision
+                  </label>
+                </div>
               ))}
             </fieldset>
           )}
+          {!!draft.ids.length && <Note>Enable Vision only for models that support image input.</Note>}
           <div className="flex flex-wrap items-end gap-2">
             <Field id="custom-manual" label="Add a model ID the endpoint does not list">
               <Input

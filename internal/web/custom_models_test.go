@@ -31,7 +31,7 @@ func (p *customProvider) SetCustomModels(models []agentapi.CustomModel) {
 	p.got = append(p.got, models)
 	list := []agentapi.Model{{ID: "own"}}
 	for _, m := range models {
-		list = append(list, agentapi.Model{ID: m.SelectionID(), Name: m.DisplayName})
+		list = append(list, agentapi.Model{ID: m.SelectionID(), Name: m.DisplayName, Media: &agentapi.Media{Images: m.Vision}})
 	}
 	p.SetModels(list, nil)
 }
@@ -125,7 +125,7 @@ func TestCustomModelsStoredListedAndRedacted(t *testing.T) {
 
 func TestCustomModelsRoute(t *testing.T) {
 	t.Setenv("UAM_BYOM_TEST_ACME", "acme-secret")
-	ts := newTestServer(t, ServerConfig{})
+	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
 	auth := withCookie(ts)
 	patch := func(body string, want int) string {
 		t.Helper()
@@ -151,8 +151,49 @@ func TestCustomModelsRoute(t *testing.T) {
 	if got := strings.TrimSpace(w.Body.String()); got != want || strings.Contains(got, "acme-secret") {
 		t.Fatalf("GET = %s", got)
 	}
+	visionBody := strings.Replace(body, `"model_id":"coder"`, `"model_id":"coder","vision":true`, 1)
+	visionWant := strings.Replace(want, `"model_id":"coder"`, `"model_id":"coder","vision":true`, 1)
+	if got := patch(visionBody, http.StatusOK); got != visionWant {
+		t.Fatalf("enable vision = %s", got)
+	}
+	if got := patch(body, http.StatusOK); got != want {
+		t.Fatalf("disable vision = %s", got)
+	}
 	if got := patch(`{"custom_models":[]}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false}` {
 		t.Fatalf("remove = %s", got)
+	}
+}
+
+func TestCustomModelVisionControlsImageUploads(t *testing.T) {
+	st := openTestStore(t)
+	prov := &customProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	m := startManager(t, st, prov)
+	model := acme
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(model)}); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: addProject(t, m, t.TempDir()), Model: "acme/coder"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := pngBytes(t)
+	for _, vision := range []bool{false, true, false} {
+		model.Vision = vision
+		settings, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels(model)})
+		if err != nil || settings.CustomModels[0].Vision != vision || prov.last()[0].Vision != vision {
+			t.Fatalf("vision %t: settings = %+v, error = %v", vision, settings, err)
+		}
+		cfg, err := st.Load()
+		if err != nil || cfg.WebSettings.CustomModels[0].Vision != vision {
+			t.Fatalf("stored vision %t: %+v, %v", vision, cfg.WebSettings, err)
+		}
+		_, err = m.Upload(sum.ID, "shot.png", img)
+		if vision && err != nil || !vision && statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("upload with vision %t: %v", vision, err)
+		}
+		if _, err := m.Upload(sum.ID, "doc.pdf", pdfBytes); statusOf(err) != http.StatusBadRequest {
+			t.Fatalf("PDF with vision %t: %v", vision, err)
+		}
 	}
 }
 

@@ -45,3 +45,16 @@ test('the checklist search matches IDs case-insensitively', () => {
   assert.deepEqual(matchingIds(['gpt-oss:20b', 'Qwen3.5:397b', 'kimi'], ' QWEN '), ['Qwen3.5:397b']);
   assert.deepEqual(matchingIds(['a', 'b'], ''), ['a', 'b']);
 });
+
+test('vision is opt-in per model and survives edits and removal of other models', () => {
+  const provider = { name: 'ollama', ...conn };
+  const ids = ['gpt-oss:20b', 'qwen3.5:397b'];
+  const enabled = withProvider(list, 'ollama', provider, ids, ['qwen3.5:397b']);
+  assert.equal(enabled[0].vision ?? false, false);
+  assert.equal(enabled[1].vision, true);
+  assert.deepEqual(enabled[2], storedModels(list)[1]);
+  const kept = withProvider(enabled, 'ollama', provider, ['qwen3.5:397b']);
+  assert.equal(kept[0].vision, true);
+  assert.equal(withProvider(kept, 'ollama', provider, ['qwen3.5:397b'], [])[0].vision ?? false, false);
+  assert.equal(withProvider(list, undefined, { ...provider, name: 'new' }, ['m'])[3].vision ?? false, false);
+});

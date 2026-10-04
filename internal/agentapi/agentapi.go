@@ -218,6 +218,7 @@ type CustomModel struct {
 	DisplayName string
 	BaseURL     string
 	ModelID     string
+	Vision      bool
 	// WireAPI is "completions" (also for "") or "responses".
 	WireAPI   string
 	APIKeyEnv string

@@ -1959,6 +1959,10 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	}
 	tier := rpc.ContextTier(contextSize)
 	req := &rpc.ModelSwitchToRequest{ModelID: model, ContextTier: &tier, RunCompactionPreflight: copilot.Bool(true)}
+	custom, isCustom := c.p.customModel(model)
+	if isCustom {
+		req.ModelCapabilities = &rpc.ModelCapabilitiesOverride{Supports: &rpc.ModelCapabilitiesOverrideSupports{Vision: copilot.Bool(custom.Vision)}}
+	}
 	if effort != "" {
 		req.ReasoningEffort = &effort
 	}
@@ -2008,6 +2012,9 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	c.mu.Lock()
 	c.usage = agentapi.Context{}
 	c.selected = model
+	if isCustom {
+		c.byom.models[model] = custom.Vision
+	}
 	c.mu.Unlock()
 	return nil
 }
@@ -2157,6 +2164,9 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := c.refreshCustomVision(ctx); err != nil {
+		return err
+	}
 	if _, err := c.sess.Send(ctx, msg); err != nil {
 		return c.sendError(err)
 	}
@@ -2189,6 +2199,14 @@ func (c *conversation) sendError(err error) error {
 // message is marked as a steer, and a steer a stopped or failed turn ends
 // without is reported as not delivered (the CLI drops unused steers on abort).
 func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error {
+	for _, attachment := range prompt.Attachments {
+		if strings.HasPrefix(attachment.MIME, "image/") {
+			if err := c.refreshCustomVision(ctx); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()

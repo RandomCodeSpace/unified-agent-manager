@@ -1614,7 +1614,7 @@ func customModelsView(list []store.WebCustomModel) []CustomModel {
 	}
 	out := make([]CustomModel, 0, len(list))
 	for _, c := range list {
-		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: os.Getenv(c.APIKeyEnv) != ""})
+		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: os.Getenv(c.APIKeyEnv) != ""})
 	}
 	return out
 }
@@ -1623,7 +1623,7 @@ func customModelsView(list []store.WebCustomModel) []CustomModel {
 func (m *Manager) setCustomModels(list []store.WebCustomModel) {
 	models := make([]agentapi.CustomModel, 0, len(list))
 	for _, c := range list {
-		models = append(models, agentapi.CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv})
+		models = append(models, agentapi.CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv})
 	}
 	for _, name := range m.order {
 		if u, ok := m.providers[name].(agentapi.CustomModelUser); ok {
