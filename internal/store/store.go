@@ -145,7 +145,7 @@ var knownConfigFields = map[string]struct{}{
 }
 
 func (c Config) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(configAlias{
+	return marshalUnknownJSON(configAlias{
 		SchemaVersion:  c.SchemaVersion,
 		DefaultAgent:   c.DefaultAgent,
 		DefaultProfile: c.DefaultProfile,
@@ -155,11 +155,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		WebProjects:    c.WebProjects,
 		WebSettings:    c.WebSettings,
 		WebRoutines:    c.WebRoutines,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, c.unknown, knownConfigFields)
+	}, c.unknown, knownConfigFields)
 }
 
 func (c *Config) UnmarshalJSON(data []byte) error {
@@ -182,6 +178,15 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	}
 	c.unknown = unknown
 	return nil
+}
+
+// marshalUnknownJSON encodes a method-free alias and restores unmodeled fields.
+func marshalUnknownJSON(value any, unknown map[string]json.RawMessage, known map[string]struct{}) ([]byte, error) {
+	base, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return mergeUnknownJSON(base, unknown, known)
 }
 
 func mergeUnknownJSON(base []byte, unknown map[string]json.RawMessage, known map[string]struct{}) ([]byte, error) {
@@ -257,11 +262,7 @@ var knownProfileFields = map[string]struct{}{
 }
 
 func (p Profile) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(profileAlias(p))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, p.unknown, knownProfileFields)
+	return marshalUnknownJSON(profileAlias(p), p.unknown, knownProfileFields)
 }
 
 func (p *Profile) UnmarshalJSON(data []byte) error {
@@ -458,11 +459,7 @@ var knownWebStateFields = map[string]struct{}{
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(webStateAlias(w))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, w.unknown, knownWebStateFields)
+	return marshalUnknownJSON(webStateAlias(w), w.unknown, knownWebStateFields)
 }
 
 func (w *WebState) UnmarshalJSON(data []byte) error {
@@ -554,11 +551,7 @@ var knownWebProjectFields = map[string]struct{}{
 }
 
 func (p WebProject) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(webProjectAlias(p))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, p.unknown, knownWebProjectFields)
+	return marshalUnknownJSON(webProjectAlias(p), p.unknown, knownWebProjectFields)
 }
 
 func (p *WebProject) UnmarshalJSON(data []byte) error {
@@ -802,11 +795,7 @@ var knownWebSettingsFields = map[string]struct{}{
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(webSettingsAlias(w))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, w.unknown, knownWebSettingsFields)
+	return marshalUnknownJSON(webSettingsAlias(w), w.unknown, knownWebSettingsFields)
 }
 
 func (w *WebSettings) UnmarshalJSON(data []byte) error {
@@ -861,11 +850,7 @@ var knownSessionRecordFields = map[string]struct{}{
 }
 
 func (r SessionRecord) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(sessionRecordAlias(r))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, r.unknown, knownSessionRecordFields)
+	return marshalUnknownJSON(sessionRecordAlias(r), r.unknown, knownSessionRecordFields)
 }
 
 func (r *SessionRecord) UnmarshalJSON(data []byte) error {
