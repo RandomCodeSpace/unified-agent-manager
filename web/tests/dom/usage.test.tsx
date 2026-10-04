@@ -23,15 +23,18 @@ function expectPricingCaveatsHidden() {
 }
 
 describe('Usage popover', () => {
-  test('/usage opens the shared account popover', async () => {
+  test.each([false, true])('/usage opens the visible account popover with collapsed sidebar %s', async (collapsed) => {
     vi.spyOn(api, 'commands').mockResolvedValue([{ name: 'usage', description: 'Show usage', kind: 'command', input_hint: '' }]);
     vi.spyOn(api, 'command').mockResolvedValue({ request_id: 'usage', status: 'accepted', time: new Date().toISOString(), command_result: { kind: 'action', action: 'usage' } });
     const { user } = renderApp('#task=t3');
     await screen.findByRole('region', { name: 'Conversation' });
+    if (collapsed) await user.click(screen.getByRole('button', { name: /^Hide sidebar/ }));
     await user.type(composer(), '/usage');
     await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/usage/ });
     await user.keyboard('{Enter}{Enter}');
     expect(await screen.findByRole('region', { name: 'AI allowance' })).toBeTruthy();
+    const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Tasks' }));
+    expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('composer-usage')).toBeNull();
   });
 

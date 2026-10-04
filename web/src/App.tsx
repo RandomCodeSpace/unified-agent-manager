@@ -520,7 +520,10 @@ export default function App() {
   const openUsage = useCallback(() => {
     if (narrow) setDrawerOpen(true);
     // The drawer's portal mounts before the next frame.
-    requestAnimationFrame(() => document.getElementById('account-usage')?.click());
+    requestAnimationFrame(() => {
+      const buttons = document.querySelectorAll<HTMLElement>('[data-account-usage]');
+      Array.from(buttons).find((button) => !button.closest('[inert], [aria-hidden="true"]'))?.click();
+    });
   }, [narrow]);
   const ctx = useMemo(
     () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta, openUsage }),

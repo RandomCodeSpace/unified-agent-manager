@@ -201,7 +201,7 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
   const popup = useRef<HTMLDivElement>(null);
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Tip label={`Usage · ${description}`} side={side} disabled={open}>
-      <Popover.Trigger render={<Button id="account-usage" size="icon" aria-label="Usage" aria-describedby={descriptionId} className={cn('[&_svg]:size-full', QUOTA_TONES[pace.tone], className)} />}>
+      <Popover.Trigger render={<Button data-account-usage size="icon" aria-label="Usage" aria-describedby={descriptionId} className={cn('[&_svg]:size-full', QUOTA_TONES[pace.tone], className)} />}>
         <span aria-hidden="true" className={cn('relative block size-4 shrink-0', QUOTA_TONES[pace.tone])}>
           <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90" fill="none">
             <circle cx="18" cy="18" r="15.5" stroke="currentColor" strokeWidth="2.5" className="text-hairline-strong" />
