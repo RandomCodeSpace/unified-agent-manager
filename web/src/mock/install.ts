@@ -445,7 +445,7 @@ export function install(): { received: Received[] } {
         }
         return () => sources.delete(src);
       }
-      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, ...(st.settings.planner ? { boards: { ...Object.fromEntries(st.projects.map((p) => [p.id, 0])), ...board.revisions() } } : {}), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, ...(st.settings.planner ? { boards: { ...Object.fromEntries(st.projects.map((p) => [p.id, 0])), ...board.revisions() } } : {}), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) window.setTimeout(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {
@@ -710,7 +710,7 @@ export function install(): { received: Received[] } {
     if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 200, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200));
     if (path === '/api/settings/custom-models/discover' && method === 'POST') {
       // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
-      if (!/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
+      if (!body.api_key && !st.settings.custom_models?.some((c) => c.name === body.name && c.base_url === body.base_url && !c.api_key_env && c.key_present) && !/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
@@ -751,7 +751,7 @@ export function install(): { received: Received[] } {
       }
       if (Array.isArray(body.custom_models)) {
         // The mock sets no key variables; the service lists the models after Copilot's own.
-        const custom = (body.custom_models as CustomModel[]).map((c) => ({ ...c, key_present: false }));
+        const custom = (body.custom_models as CustomModel[]).map(({ api_key, ...c }) => ({ ...c, key_present: !c.api_key_env && (!!api_key || !!st.settings.custom_models?.some((old) => old.name === c.name && old.base_url === c.base_url && !old.api_key_env && old.key_present)) }));
         const copilot = st.meta.providers[0];
         copilot.models = [...copilot.models.filter((mo) => !mo.id.includes('/')), ...custom.map((c) => ({ id: `${c.name}/${c.model_id}`, name: c.display_name || `${c.name}/${c.model_id}`, efforts: [], context_sizes: [], media: { images: !!c.vision, pdf: false } }))];
         st.settings = { ...st.settings, custom_models: custom.length ? custom : undefined };

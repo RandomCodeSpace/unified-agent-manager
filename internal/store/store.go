@@ -591,8 +591,8 @@ type WebSettings struct {
 	// priced model; WebTitleModelNone opts it out (it keeps its own title).
 	TitleModel map[string]string `json:"title_model,omitempty"`
 	// CustomModels are the OpenAI-compatible models the owner brought
-	// (BYOM), valid as ValidCustomModels checks. No key is stored: only the
-	// name of the service environment variable that holds it.
+	// (BYOM), valid as ValidCustomModels checks. Direct keys are kept in this
+	// private store; environment-backed keys store only the variable name.
 	CustomModels []WebCustomModel `json:"custom_models,omitempty"`
 	// TaskDefaults are the settings a new Task starts with; zero when unset.
 	TaskDefaults WebTaskDefaults `json:"task_defaults,omitzero"`
@@ -637,6 +637,7 @@ type WebCustomModel struct {
 	// WireAPI is "", "completions" (the default) or "responses".
 	WireAPI   string `json:"wire_api,omitempty"`
 	APIKeyEnv string `json:"api_key_env"`
+	APIKey    string `json:"api_key,omitempty"`
 }
 
 // Custom model limits: models, and bytes per field.
@@ -644,6 +645,7 @@ const (
 	MaxCustomModels         = 100
 	MaxCustomModelNameBytes = 64
 	MaxCustomModelURLBytes  = 512
+	MaxCustomModelKeyBytes  = 4096
 	// CustomModelKeyPrefix starts every custom model's key variable name.
 	CustomModelKeyPrefix = "UAM_BYOM_"
 )
@@ -668,6 +670,14 @@ func ValidCustomModel(m WebCustomModel) error {
 		return fmt.Errorf("model ID must be 1 to %d bytes without spaces or control characters", MaxHiddenModelBytes)
 	case m.WireAPI != "" && m.WireAPI != "completions" && m.WireAPI != "responses":
 		return errors.New(`wire API must be "completions" or "responses"`)
+	case m.APIKey == "" && m.APIKeyEnv == "":
+		return errors.New("enter an API key or choose an API key variable; changing a saved provider name or endpoint requires entering the key again")
+	case m.APIKey != "" && m.APIKeyEnv != "":
+		return errors.New("choose either an API key or an API key variable")
+	case m.APIKeyEnv == "" && m.APIKey != "":
+		if len(m.APIKey) > MaxCustomModelKeyBytes || !utf8.ValidString(m.APIKey) || hasControlChar(m.APIKey) {
+			return errors.New("API key must be at most 4096 bytes without control characters")
+		}
 	case len(m.APIKeyEnv) > MaxCustomModelNameBytes || !envVarName.MatchString(m.APIKeyEnv):
 		return fmt.Errorf("API key variable must be named %s<NAME>, with letters, digits and '_' after the prefix, at most %d bytes; only such variables are sent to custom model endpoints", CustomModelKeyPrefix, MaxCustomModelNameBytes)
 	}
@@ -696,8 +706,8 @@ func ValidCustomModels(list []WebCustomModel) error {
 			return fmt.Errorf("custom model %s is configured twice", id)
 		}
 		seen[id] = true
-		if c, ok := conn[m.Name]; ok && (c.BaseURL != m.BaseURL || c.WireAPI != m.WireAPI || c.APIKeyEnv != m.APIKeyEnv) {
-			return fmt.Errorf("models of provider %s must share its base URL, wire API and API key variable", m.Name)
+		if c, ok := conn[m.Name]; ok && (c.BaseURL != m.BaseURL || c.WireAPI != m.WireAPI || c.APIKeyEnv != m.APIKeyEnv || c.APIKey != m.APIKey) {
+			return fmt.Errorf("models of provider %s must share its base URL, wire API and API key source", m.Name)
 		}
 		conn[m.Name] = m
 	}

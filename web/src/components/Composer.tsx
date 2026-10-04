@@ -277,7 +277,7 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput }: Readonly<ComposerProps>) {
-  const { meta, metaError, settings: appSettings, dispatch, refreshMeta } = useApp();
+  const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
   // The draft this Task left behind (text, `@` files, finished uploads); read once, on mount.
@@ -434,7 +434,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     const timer = window.setTimeout(() => {
       setCommandAction(null);
       if (action === 'rename') { onRename(); return; }
-      const target = document.getElementById({ model: 'composer-model', permissions: 'composer-mode', context: 'composer-context-usage', usage: 'composer-usage' }[action]);
+      if (action === 'usage') { openUsage?.(); return; }
+      const target = document.getElementById({ model: 'composer-model', permissions: 'composer-mode', context: 'composer-context-usage' }[action]);
       if (!target || target.getAttribute('aria-disabled') === 'true' || target.hasAttribute('disabled')) {
         setError(`The ${action} control is unavailable now.`);
         return;
@@ -442,7 +443,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       target.click();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [busy, commandAction, onRename]);
+  }, [busy, commandAction, onRename, openUsage]);
 
   // Files: debounced search; a stale answer never overwrites a newer one.
   const fileQuery = trigger?.kind === '@' ? trigger.query : null;

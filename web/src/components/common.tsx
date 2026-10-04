@@ -88,6 +88,8 @@ export interface AppContextValue {
   /** The service's settings (the send default the composer follows). */
   settings: Settings;
   usage: AccountUsage | null;
+  /** Opens the shared account Usage popover, revealing the sidebar on phones. */
+  openUsage?: () => void;
   /** Reads GET /api/meta again: the catalogs and each provider's cheapest_model. */
   refreshMeta: () => void;
 }

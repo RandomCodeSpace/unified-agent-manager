@@ -10,8 +10,7 @@ import { Collapse } from './ui/collapse';
 export const SUBJECT_LIMIT = 72;
 
 /**
- * A Task's commit draft, one per Task and shared by every panel showing it (the finish card and
- * Changes), kept while they are closed: the message, the checked files, and a count that moves
+ * A Task's commit draft, kept while Changes is closed: the message, the checked files, and a count that moves
  * after each action so every panel re-reads the repository.
  */
 interface Draft {
@@ -65,8 +64,7 @@ type Action = 'draft' | 'commit' | 'push' | 'pull' | 'init';
  * on the Utility model from the chosen files and edited freely; it is committed as written,
  * with no co-author or AI credit. The files default to this Task's own. While any Task in the
  * repository could still be writing the service refuses every write and the panel says why.
- * Hosts: the Changes panel (collapsed until asked), and the task pane's finish card
- * (`defaultOpen`, `quiet`). Both edit the Task's one draft.
+ * Hosted in the Changes panel, collapsed until asked.
  */
 export function CommitPanel({
   session,

@@ -1430,11 +1430,6 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
 		}
 	}
-	if p.CustomModels != nil {
-		if err := store.ValidCustomModels(*p.CustomModels); err != nil {
-			return Settings{}, newError(http.StatusBadRequest, "%s", err.Error())
-		}
-	}
 	if l := p.UtilityLimit; l != nil && *l != nil && (**l < 0 || **l > store.MaxUtilityDailyLimit) {
 		return Settings{}, newError(http.StatusBadRequest, "utility_daily_limit must be 0 to %d", store.MaxUtilityDailyLimit)
 	}
@@ -1450,6 +1445,25 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	m.settingsMu.Lock()
 	defer m.settingsMu.Unlock()
+	customKeysChanged := false
+	if p.CustomModels != nil {
+		cfg, err := m.store.Load()
+		if err != nil {
+			return Settings{}, fmt.Errorf("load custom model settings: %w", err)
+		}
+		list := slices.Clone(*p.CustomModels)
+		for i := range list {
+			c := &list[i]
+			if c.APIKeyEnv == "" && c.APIKey == "" {
+				c.APIKey = savedCustomKey(cfg.WebSettings.CustomModels, c.Name, c.BaseURL, c.WireAPI)
+			}
+		}
+		if err := store.ValidCustomModels(list); err != nil {
+			return Settings{}, newError(http.StatusBadRequest, "%s", err.Error())
+		}
+		customKeysChanged = !slices.Equal(list, cfg.WebSettings.CustomModels)
+		p.CustomModels = &list
+	}
 	m.mu.Lock()
 	current := m.settings
 	for provider, ids := range hidden {
@@ -1513,7 +1527,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			next.CompactionThreshold = nil
 		}
 	}
-	customChanged := !slices.Equal(next.CustomModels, current.CustomModels)
+	customChanged := customKeysChanged || !slices.Equal(next.CustomModels, current.CustomModels)
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
@@ -1605,16 +1619,26 @@ func withoutRemovedCustom(current Settings, list []store.WebCustomModel, hidden 
 	return out
 }
 
+// savedCustomKey reuses a key only for the same provider connection. Changing
+// an endpoint or provider name requires entering the key again.
+func savedCustomKey(list []store.WebCustomModel, name, baseURL, wireAPI string) string {
+	for _, c := range list {
+		if c.Name == name && c.BaseURL == baseURL && c.WireAPI == wireAPI && c.APIKeyEnv == "" {
+			return c.APIKey
+		}
+	}
+	return ""
+}
+
 // customModelsView is the settings view of stored custom models: each says
-// whether its key variable is set in the service environment, never what it
-// holds.
+// whether a saved or environment key is available, never its value.
 func customModelsView(list []store.WebCustomModel) []CustomModel {
 	if len(list) == 0 {
 		return nil
 	}
 	out := make([]CustomModel, 0, len(list))
 	for _, c := range list {
-		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: os.Getenv(c.APIKeyEnv) != ""})
+		out = append(out, CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, KeyPresent: c.APIKey != "" || os.Getenv(c.APIKeyEnv) != ""})
 	}
 	return out
 }
@@ -1623,7 +1647,7 @@ func customModelsView(list []store.WebCustomModel) []CustomModel {
 func (m *Manager) setCustomModels(list []store.WebCustomModel) {
 	models := make([]agentapi.CustomModel, 0, len(list))
 	for _, c := range list {
-		models = append(models, agentapi.CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv})
+		models = append(models, agentapi.CustomModel{Name: c.Name, DisplayName: c.DisplayName, BaseURL: c.BaseURL, ModelID: c.ModelID, Vision: c.Vision, WireAPI: c.WireAPI, APIKeyEnv: c.APIKeyEnv, APIKey: c.APIKey})
 	}
 	for _, name := range m.order {
 		if u, ok := m.providers[name].(agentapi.CustomModelUser); ok {

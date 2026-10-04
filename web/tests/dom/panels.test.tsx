@@ -7,7 +7,7 @@ import { log, openMenu, openTask } from './render';
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
     const { user } = await openTask('t1');
-    await user.click(await screen.findByRole('button', { name: 'Open changes, 3 files' }));
+    await user.click(await screen.findByRole('button', { name: /^Open changes.*3 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
     expect(sheet.getByText(/^Files this task's agent edited/)).toBeTruthy();
@@ -26,7 +26,7 @@ describe('changes', () => {
 
   test('a file row has actions for its diff and its path', async () => {
     const { user } = await openTask('t8');
-    await user.click(await screen.findByRole('button', { name: /^Open changes, 2 files/ }));
+    await user.click(await screen.findByRole('button', { name: /^Open changes.*2 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     const menu = await openMenu(user, 'Actions for assets/theme.css');
     await user.click(menu.getByRole('menuitem', { name: 'Open diff' }));

@@ -618,8 +618,8 @@ export function undecidedHolds(e: unknown): Card[] | null {
 export type Rejection = BoardRequest & { steered: boolean };
 
 /**
- * A custom (BYOM) model, offered by Copilot as `name/model_id`. No key passes through the
- * browser: `api_key_env` names the service environment variable that holds it.
+ * A custom (BYOM) model, offered by Copilot as `name/model_id`. Keys may be supplied
+ * directly or through `api_key_env`; saved key values never come back in responses.
  */
 export interface CustomModel {
   /** Provider name: letters, digits, `.`, `_`, `-`. Models with one name share its URL and key variable. */
@@ -631,7 +631,9 @@ export interface CustomModel {
   vision?: boolean;
   wire_api?: 'completions' | 'responses';
   api_key_env: string;
-  /** Output only: whether the variable is set and non-empty in the service environment. */
+  /** Write only. Omit to keep a saved key for the same provider connection. */
+  api_key?: string;
+  /** Output only: whether a saved or environment key is available. */
   key_present?: boolean;
 }
 
@@ -1486,7 +1488,7 @@ export const api = {
   /** The service refuses an unknown key or value with 400 and changes nothing. */
   updateWebSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
   /** The model IDs an OpenAI-compatible endpoint lists; the service fetches them with the named key variable. */
-  discoverModels: (body: { base_url: string; api_key_env: string; wire_api?: string }) =>
+  discoverModels: (body: { name?: string; base_url: string; api_key_env: string; api_key?: string; wire_api?: string }) =>
     call<{ models: string[]; truncated?: boolean; key_present: boolean }>('POST', '/api/settings/custom-models/discover', body),
   /** The cached account quotas; never calls the provider. */
   usage: () => call<AccountUsage>('GET', '/api/usage'),

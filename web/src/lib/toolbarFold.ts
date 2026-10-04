@@ -4,7 +4,6 @@
  * The row's folds in the order they apply as it narrows; each keeps the ones before it, so the Model
  * picker keeps its name longest and the actions never change:
  * - `execution`: Permissions and execution reads the permission alone ("Safe"); its glyph still says autopilot.
- * - `credits`: the AI credits value becomes its glyph, as on a phone.
  * - `tuning`: Effort and context size becomes its glyph.
  * - `permissions`: Permissions and execution becomes its glyph.
  * - `more`: both move into the More menu, as on a phone.
@@ -12,7 +11,7 @@
  * - `wrap`: the actions take a row of their own.
  * Each fold is a word in the row's `data-fold`, which the controls style with `in-data-[fold~=…]`.
  */
-export const FOLDS = ['execution', 'credits', 'tuning', 'permissions', 'more', 'model', 'wrap'] as const;
+export const FOLDS = ['execution', 'tuning', 'permissions', 'more', 'model', 'wrap'] as const;
 
 /** A label marked `data-squeeze` may truncate, but never below this (about five letters): its picker folds instead. */
 export const SQUEEZE_MIN = 48;

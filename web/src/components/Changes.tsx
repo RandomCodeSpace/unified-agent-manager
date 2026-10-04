@@ -1,5 +1,5 @@
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, api, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -50,6 +50,7 @@ function writeReview(id: string, r: Review) {
  * list seeds it and receives refreshed counts. Polling reads only the selected scope.
  */
 export function ChangesSheet({
+  evidence,
   session,
   projectName,
   changes,
@@ -62,6 +63,7 @@ export function ChangesSheet({
   onClose,
   onClosed,
 }: Readonly<{
+  evidence?: ReactNode;
   session: SessionSummary;
   projectName: string;
   changes: ChangesData | null;
@@ -265,6 +267,7 @@ export function ChangesSheet({
           <X />
         </Button>
       </PanelHeader>
+      {evidence}
       <div className="shrink-0 px-3 pb-1.5">
         <Segmented
           size="sm"

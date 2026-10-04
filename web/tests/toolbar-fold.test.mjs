@@ -19,7 +19,7 @@ function row(width, need, label = [], full = 120) {
 }
 
 test('the folds go least important first, the Model picker and then wrapping last', () => {
-  assert.deepEqual(FOLDS, ['execution', 'credits', 'tuning', 'permissions', 'more', 'model', 'wrap']);
+  assert.deepEqual(FOLDS, ['execution', 'tuning', 'permissions', 'more', 'model', 'wrap']);
 });
 
 test('a row with room keeps every label', () => {
@@ -31,12 +31,12 @@ test('a row with room keeps every label', () => {
 test('a narrower row takes the fewest folds that fit, each keeping the ones before it', () => {
   const r = row(600, [900, 820, 760, 650, 600, 520]);
   assert.equal(foldToFit(r), 4);
-  assert.equal(r.dataset.fold, 'execution credits tuning permissions');
+  assert.equal(r.dataset.fold, 'execution tuning permissions more');
 });
 
 test('the Model label may truncate, but folds instead of going below a few letters', () => {
   // Fits at every fold from the start, but the label is squeezed to one letter until the Model fold hides it.
-  const squeezed = row(400, [400], [10, 10, 10, 10, 10, 10, 0], 120);
+  const squeezed = row(400, [400], [10, 10, 10, 10, 10, 0], 120);
   assert.equal(foldToFit(squeezed), FOLDS.indexOf('model') + 1);
   assert.match(squeezed.dataset.fold, / model$/);
   // A label truncated at or above the floor stays.

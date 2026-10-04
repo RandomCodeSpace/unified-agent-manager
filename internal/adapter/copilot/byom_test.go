@@ -279,3 +279,38 @@ func TestWebCustomModelTurnPrefersSelectedProvider(t *testing.T) {
 		}
 	}
 }
+
+// Saving a direct key recovers the missing-environment failure without a
+// service restart, for new, resumed and utility conversations.
+func TestBYOMDirectKey(t *testing.T) {
+	t.Setenv("UAM_TEST_DIRECT_KEY", "")
+	fc := &fakeClient{reply: func(context.Context, copilot.MessageOptions) (string, error) { return "A title", nil }}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	model := agentapi.CustomModel{Name: "direct", BaseURL: "https://llm.example/v1", ModelID: "coder", APIKeyEnv: "UAM_TEST_DIRECT_KEY"}
+	p.SetCustomModels([]agentapi.CustomModel{model})
+	req := agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Model: "direct/coder", Events: &recSink{}}
+	if _, err := p.Open(t.Context(), req); err == nil {
+		t.Fatal("missing environment key accepted")
+	}
+	model.APIKeyEnv, model.APIKey = "", "fixture-key"
+	p.SetCustomModels([]agentapi.CustomModel{model})
+	if _, err := p.Open(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.SessionID, req.ConversationID = "s-2", "conv-2"
+	if _, err := p.Open(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Title(t.Context(), agentapi.TitleRequest{Model: "direct/coder", Workdir: "/work", Text: "fix it"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fc.create) != 2 || len(fc.resume) != 1 {
+		t.Fatal("expected new, resumed and utility conversations")
+	}
+	for _, providers := range [][]copilot.NamedProviderConfig{fc.create[0].Providers, fc.resume[0].Providers, fc.create[1].Providers} {
+		if len(providers) != 1 || providers[0].APIKey != "fixture-key" {
+			t.Fatal("direct key did not reach SDK conversation")
+		}
+	}
+}

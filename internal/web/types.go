@@ -171,9 +171,9 @@ type Settings struct {
 	CompactionThreshold *int `json:"compact_threshold,omitempty"`
 }
 
-// CustomModel is one custom model in Settings. APIKeyEnv only names the
-// service environment variable holding the key; KeyPresent says whether it
-// is set and non-empty there. No key value is ever sent.
+// CustomModel is one custom model in Settings. APIKeyEnv names an environment
+// source, or is empty for a saved key. KeyPresent reports availability; no key
+// value is ever sent.
 type CustomModel struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"display_name,omitempty"`
