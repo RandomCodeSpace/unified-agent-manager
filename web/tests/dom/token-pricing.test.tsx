@@ -3,6 +3,30 @@ import { describe, expect, test } from 'vitest';
 import { renderApp, sidebar } from './render';
 
 describe('model token prices', () => {
+  test('defaults to models without prices and can show all catalog models', async () => {
+    const { user } = renderApp('#settings');
+    await sidebar();
+    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    const section = within(await screen.findByRole('region', { name: 'Token costs' }));
+    await section.findByText('Unpriced. Add input and output prices to estimate cost.');
+    const showAll = section.getByRole('checkbox', { name: 'Show all models' });
+    expect(showAll).toHaveProperty('checked', false);
+    await user.click(section.getByRole('combobox', { name: 'Model', exact: true }));
+    expect(await screen.findByRole('option', { name: /copilot · gpt-6-luna/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /copilot · claude-sonnet-5/ })).toBeNull();
+    await user.keyboard('{Escape}');
+    await user.click(showAll);
+    expect(showAll).toHaveProperty('checked', true);
+    await user.click(section.getByRole('combobox', { name: 'Model', exact: true }));
+    expect(await screen.findByRole('option', { name: /copilot · gpt-6-luna/ })).toBeTruthy();
+    await user.click(screen.getByRole('option', { name: /copilot · claude-sonnet-5/ }));
+    await section.findByText('Bundled LiteLLM prices');
+    await user.click(showAll);
+    expect(showAll).toHaveProperty('checked', false);
+    await section.findByText('Unpriced. Add input and output prices to estimate cost.');
+    expect(section.getByRole('combobox', { name: 'Model', exact: true }).textContent).toContain('gpt-6-luna');
+  });
+
   test('saves input/output prices without cache, persists on reopening, and recalculates Usage', async () => {
     const { user } = renderApp('#settings');
     await sidebar();
@@ -16,15 +40,20 @@ describe('model token prices', () => {
     expect(section.getByRole('spinbutton', { name: 'Cache read', exact: true })).toHaveProperty('value', '');
     expect(section.getByRole('spinbutton', { name: 'Cache write', exact: true })).toHaveProperty('value', '');
     await user.click(save);
-    await section.findByText('Manual prices');
+    await section.findByText('All models have prices. Select Show all models to edit them.');
+    expect(section.queryByRole('combobox', { name: 'Model', exact: true })).toBeNull();
+    expect(section.queryByRole('button', { name: 'Save token prices' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Usage', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByText('$0.08');
-    expect(popover.queryByText(/models? (is|are) unpriced/)).toBeNull();
+    expect(popover.queryByText(/^Prices missing for/)).toBeNull();
+    expect(popover.queryByRole('link', { name: 'Add prices' })).toBeNull();
     await user.click(popover.getByRole('button', { name: 'Close usage' }));
     await user.click(screen.getByRole('button', { name: 'General', exact: true }));
     await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
     const reopened = within(await screen.findByRole('region', { name: 'Token costs' }));
+    await reopened.findByText('All models have prices. Select Show all models to edit them.');
+    await user.click(reopened.getByRole('checkbox', { name: 'Show all models' }));
     await user.click(await reopened.findByRole('combobox', { name: 'Model', exact: true }));
     await user.click(await screen.findByRole('option', { name: /copilot · gpt-6-luna/ }));
     await reopened.findByText('Manual prices');
@@ -36,5 +65,8 @@ describe('model token prices', () => {
     await waitFor(() => expect(reopened.getByRole('spinbutton', { name: 'Cache read', exact: true })).toHaveProperty('value', '0'));
     await user.click(reopened.getByRole('button', { name: 'Remove override' }));
     await reopened.findByText('Unpriced. Add input and output prices to estimate cost.');
+    await user.click(reopened.getByRole('checkbox', { name: 'Show all models' }));
+    expect(reopened.getByRole('combobox', { name: 'Model', exact: true }).textContent).toContain('gpt-6-luna');
+    expect(reopened.queryByText('All models have prices. Select Show all models to edit them.')).toBeNull();
   });
 });

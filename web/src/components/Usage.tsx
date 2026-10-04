@@ -1,8 +1,9 @@
-import { ChartNoAxesColumn, X } from 'lucide-react';
+import { ChartNoAxesColumn, Info, Search, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { api, describeError, type TokenCounts, type TokenPeriodKey, type TokenUsageReport } from '../api';
+import { api, describeError, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
-import { compactTokens } from '../lib/cost';
+import { aggregateUsageModels, estimateWithoutCache, groupUsageModels } from '../lib/token-usage';
+import { Count, costText, MODEL_COLORS, ModelOverview, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { HelpTip, Tip } from './ui/tooltip';
@@ -19,131 +20,154 @@ const COLLECTION_STATUS = {
   unavailable: 'Local harness usage is unavailable. Showing available usage.',
 };
 
-function costText(value: number | null, partial = false): string {
-  if (value === null) return 'Unpriced';
-  const amount = value > 0 && value < 0.01
-    ? '<$0.01'
-    : value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return partial ? `${amount} · partial` : amount;
-}
-
-function Count({ value }: Readonly<{ value: number }>) {
-  return <span title={`${value.toLocaleString('en-US')} tokens`}>{compactTokens(value)}</span>;
-}
-
-function Counts({ value }: Readonly<{ value: TokenCounts }>) {
-  const read = value.cache_read.toLocaleString('en-US');
-  const written = value.cache_write.toLocaleString('en-US');
-  return <>
-    <td className="py-2 pl-3 text-right tabular-nums"><Count value={value.input} /></td>
-    <td className="py-2 pl-3 text-right tabular-nums"><Count value={value.output} /></td>
-    <td className="py-2 pl-3 text-right tabular-nums">
-      <Tip label={`Read: ${read} · Write: ${written}`} openOnClick>
-        <Button size="sm" className="-mr-1 h-auto px-1 py-0 text-ui font-normal tabular-nums pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:after:inset-0" aria-label={`Cache: ${read} read, ${written} written`}>
-          {compactTokens(value.cache_read + value.cache_write)}
-        </Button>
-      </Tip>
-    </td>
-  </>;
-}
-
-function UsageContent({ onClose }: Readonly<{ onClose: () => void }>) {
+function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; onAddPrices?: () => void }>) {
   const [period, setPeriod] = useState<TokenPeriodKey>('today');
   const [report, setReport] = useState<TokenUsageReport | null>(null);
+  const [prices, setPrices] = useState<TokenPriceCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [priceError, setPriceError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [all, setAll] = useState(false);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<UsageSort>('tokens');
+  const [colors, setColors] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
     let current = true;
-    let pending = false;
-    const read = async () => {
-      if (pending) return;
-      pending = true;
+    let usagePending = false;
+    let pricesPending = false;
+    const readUsage = async () => {
+      if (usagePending) return;
+      usagePending = true;
       try {
         const result = await api.tokenUsage();
-        if (current) { setReport(result); setError(null); }
-      } catch (e) {
-        if (current) setError(describeError(e));
-      } finally { pending = false; }
+        if (current) {
+          setReport(result);
+          setError(null);
+          setColors((previous) => {
+            const next = new Map(previous);
+            const models = groupUsageModels(result.periods.lifetime.models);
+            for (const model of models) if (!next.has(model.model)) next.set(model.model, MODEL_COLORS[next.size % MODEL_COLORS.length]);
+            return next;
+          });
+        }
+      } catch (e) { if (current) setError(describeError(e)); }
+      finally { usagePending = false; }
     };
-    void read();
-    const timer = window.setInterval(() => void read(), 15000);
+    const readPrices = async () => {
+      if (pricesPending) return;
+      pricesPending = true;
+      try {
+        const result = await api.tokenPrices();
+        if (current) { setPrices(result); setPriceError(false); }
+      } catch { if (current) { setPrices(null); setPriceError(true); } }
+      finally { pricesPending = false; }
+    };
+    // A slow price request must not delay usage or its subsequent refreshes.
+    const read = () => { void readUsage(); void readPrices(); };
+    read();
+    const timer = window.setInterval(read, 15000);
     return () => { current = false; window.clearInterval(timer); };
   }, [retry]);
   const shown = report?.periods[period];
+  const models = groupUsageModels(shown?.models ?? []);
+  const combined = aggregateUsageModels(models, 'All models');
+  const noCache = estimateWithoutCache(shown?.models ?? [], prices);
+  const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
+  const filtered = models.filter((model) => (model.model || 'Unspecified model').toLowerCase().includes(query.toLowerCase()));
   return <>
-    <div className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-1">
-        <Popover.Title>Usage</Popover.Title>
-        <HelpTip label="Usage">
-          <span className="block">Cache is read + write tokens, already included in Input.</span>
-          {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
-          {report?.collection && <>
-            <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {new Date(report.collection.copilot_since).toLocaleString()}. Other harness history may start earlier.</span>
-            {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
-          </>}
-        </HelpTip>
-      </div>
-      <Button size="icon-sm" aria-label="Close usage" onClick={onClose}><X aria-hidden="true" /></Button>
-    </div>
-    {report?.collection?.updated_at && <p role="status" className="text-caption text-muted">Last fetched {new Date(report.collection.updated_at).toLocaleString()}.</p>}
-    <div role="group" aria-label="Usage period" className="flex gap-1 py-2">
-      {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className="flex-1" aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
-    </div>
-    {error && <div role="alert" className="flex items-center gap-2 text-caption text-error">
-      <span className="min-w-0 flex-1">{report ? 'Could not refresh usage. Showing the last read. ' : 'Could not load usage. '}{error}</span>
-      <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry</Button>
-    </div>}
-    {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
-    {shown && <>
-      <div className="flex items-baseline justify-between gap-4 pb-2">
-        <span className="text-muted">Total tokens</span>
-        <span className="text-title font-semibold text-ink tabular-nums"><Count value={shown.total.total} /></span>
-      </div>
-      <div className="flex items-baseline justify-between gap-4 pb-2">
-        <span className="flex items-center gap-1 text-muted">Estimated cost
-          <HelpTip label="Estimated cost">
-            <span className="block">Costs use current base token prices or source-reported amounts when available. These are not provider bills.</span>
-            {shown.unpriced_models > 0 && <span className="mt-2 block">{shown.unpriced_models} {shown.unpriced_models === 1 ? 'model is' : 'models are'} unpriced. Add prices in Settings → Models → Token costs.</span>}
+    <div className="shrink-0 px-4 pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
+          <Popover.Title className="text-title">Usage</Popover.Title>
+          <HelpTip label="Usage">
+            <span className="block">Input, Output, and Cache are separate parts of the recorded token split. Cache includes reads and writes. Bars show proportions within each model; totals retain the source-reported count.</span>
+            {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
+            {report?.collection && <>
+              <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {new Date(report.collection.copilot_since).toLocaleString()}. Other harness history may start earlier.</span>
+              {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
+            </>}
           </HelpTip>
-        </span>
-        <span className="font-medium text-ink tabular-nums">{costText(shown.cost_usd, shown.unpriced_models > 0 || shown.models.some((model) => model.cost_partial))}</span>
+        </div>
+        <Button size="icon-sm" aria-label="Close usage" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
-      <div className="min-h-0 overflow-y-auto overscroll-contain">
-        <table className="w-full table-fixed text-ui">
-          <caption className="sr-only">{PERIODS.find((p) => p.key === period)?.label} token usage by model</caption>
-          <thead className="sticky top-0 bg-raised text-caption text-muted">
-            <tr><th scope="col" className="w-2/5 py-1 text-left font-normal">Model</th>{['Input', 'Output', 'Cache'].map((name) => <th key={name} scope="col" className="py-1 pl-3 text-right font-normal">{name}</th>)}</tr>
-          </thead>
-          <tbody>
-            {shown.models.map((model) => <tr key={`${model.provider}/${model.model}`}>
-              <th scope="row" className="py-2 text-left font-normal">
-                <span className="block truncate text-ink" title={model.model || 'Unspecified model'}>{model.model || 'Unspecified model'}</span>
-                <span className="block truncate text-meta text-muted">{model.provider}</span>
-                <span className="block truncate text-caption text-muted tabular-nums" title="Estimated or source-reported cost in USD">{costText(model.cost_usd, model.cost_partial)}</span>
-              </th>
-              <Counts value={model} />
-            </tr>)}
-          </tbody>
-          <tfoot className="font-medium text-ink"><tr><th scope="row" className="py-2 text-left">All models</th><Counts value={shown.total} /></tr></tfoot>
-        </table>
-        {shown.models.length === 0 && <p className="py-3 text-caption text-muted">No usage recorded for this period.</p>}
+      {report?.collection?.updated_at && <p role="status" className="mt-1 text-meta text-muted">Last fetched {new Date(report.collection.updated_at).toLocaleString()}.</p>}
+      <div role="group" aria-label="Usage period" className="mt-3 flex rounded-sm bg-sunken p-0.5">
+        {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
+      </div>
+      {error && <div role="alert" className="mt-3 flex items-center gap-2 text-caption text-error">
+        <span className="min-w-0 flex-1">{report ? 'Could not refresh usage. Showing the last read. ' : 'Could not load usage. '}{error}</span>
+        <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry</Button>
+      </div>}
+      {priceError && shown && <div className="mt-3 flex items-center gap-2 text-caption text-muted">
+        <span className="min-w-0 flex-1">Could not load token prices.</span>
+        <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry prices</Button>
+      </div>}
+      {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
+      {shown && <>
+        <div className="grid grid-cols-3 gap-3 py-4 max-[360px]:grid-cols-2">
+          <div className="max-[360px]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p><p className="mt-1 text-meta text-muted">Across {models.length} {models.length === 1 ? 'model' : 'models'}</p></div>
+          <div>
+            <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Estimated cost</span>
+              <HelpTip label="Estimated cost">
+                <span className="block">Costs use current base token prices or source-reported amounts when available. These are not provider bills.</span>
+                {shown.cost_usd === null ? <span className="mt-2 block">Cost unavailable: prices or token counts are missing.</span> : (shown.unpriced_models > 0 || unpriced > 0) && <span className="mt-2 block">Partial estimate: includes known costs only.</span>}
+              </HelpTip>
+            </div>
+            <p className="mt-1 text-display-md text-ink tabular-nums [overflow-wrap:anywhere]">{costText(shown.cost_usd)}</p>
+          </div>
+          <div>
+            <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Without cache</span>
+              <HelpTip label="Cost without cache">
+                <span className="block">Input and cache tokens charged once at each tool's standard input rate. Output keeps its standard output rate.</span>
+                {noCache.cost === null ? <span className="mt-2 block">Estimate unavailable: prices or token counts are missing.</span> : noCache.partial && <span className="mt-2 block">Partial estimate: some usage has missing prices or token counts.</span>}
+                <span className="mt-2 block">Uses current configured prices and available token counts. Records without prices or token counts are excluded. Source-only charges cannot be reconstructed. This is an alternative total estimate, not an extra charge.</span>
+              </HelpTip>
+            </div>
+            <p className={cn('mt-1 text-ink tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-display-md')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(noCache.cost)}</p>
+          </div>
+        </div>
+        <div className="mb-3 rounded-sm bg-surface px-3 py-2" role="group" aria-label="Total token split"><TokenSplitValues value={combined} /></div>
+        <div role="group" aria-label="Usage view" className="mb-3 flex gap-1">
+          <Button size="sm" aria-pressed={!all} onClick={() => { setAll(false); setQuery(''); }}>Overview</Button>
+          <Button size="sm" aria-pressed={all} onClick={() => setAll(true)}>All models · {models.length}</Button>
+        </div>
+        {!all && models.length > 0 && <div className="flex items-center justify-between gap-2 pb-2"><h3 className="font-medium text-ink">{models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
+        {all && <label className="mb-2 flex items-center gap-2 rounded-sm bg-sunken px-3 py-2 shadow-well focus-within:outline-2 focus-within:outline-focus">
+          <Search aria-hidden="true" className="size-4 shrink-0 text-muted" />
+          <input aria-label="Find a model" placeholder="Find a model" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-ui outline-none" />
+        </label>}
+      </>}
+    </div>
+    {shown && <>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
+      <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pb-2 [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible" role="region" aria-label="Model usage" tabIndex={0}>
+        {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
+          <ModelTable models={filtered} colors={colors} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
+          {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
+        </> : <ModelOverview models={models} colors={colors} />}
+      </div>
+      <div className="shrink-0 bg-surface px-4 py-3">
+        {all && <p className="mb-2 text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models · Scroll for more`} · Token splits in the info tooltips.</p>}
+        {unpriced > 0 && <p className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta text-muted">
+          <span>Prices missing for {unpriced} {unpriced === 1 ? 'model' : 'models'}.</span>
+          <a href="#settings" className="text-ink underline underline-offset-2" onClick={(event) => { if (onAddPrices) { event.preventDefault(); onAddPrices(); } onClose(); }}>Add prices</a>
+        </p>}
+        <p className="flex gap-1.5 text-meta text-muted"><Info aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Estimates include known costs only. They are not provider bills.</p>
       </div>
     </>}
   </>;
 }
 
-/** Workspace-wide recorded tokens. Reads only while the popover is open. */
-export function UsageButton({ side = 'top', className }: Readonly<{ side?: 'top' | 'right'; className?: string }>) {
+/** Workspace-wide recorded usage. Reads only while the popover is open. */
+export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; className?: string; onAddPrices?: () => void }>) {
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Tip label="Usage" side={side} disabled={open}>
-      <Popover.Trigger render={<Button size="icon" aria-label="Usage" className={cn('text-muted', className)} />}>
-        <ChartNoAxesColumn aria-hidden="true" />
-      </Popover.Trigger>
+      <Popover.Trigger render={<Button size="icon" aria-label="Usage" className={cn('text-muted', className)} />}><ChartNoAxesColumn aria-hidden="true" /></Popover.Trigger>
     </Tip>
-    <Popover.Content ref={popup} initialFocus={popup} side={side} className="w-[28rem] max-w-[calc(100vw-1rem)] max-h-[min(36rem,calc(100dvh-2rem))] gap-1 overflow-y-auto p-4">
-      {open && <UsageContent onClose={() => setOpen(false)} />}
+    <Popover.Content ref={popup} initialFocus={popup} side={side} className="w-[29rem] max-w-[calc(100vw-1rem)] max-h-[min(43rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 [@media(max-height:600px)]:overflow-y-auto">
+      {open && <UsageContent onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;
 }
