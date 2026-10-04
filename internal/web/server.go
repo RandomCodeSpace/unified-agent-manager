@@ -1191,11 +1191,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if !write(append([]byte("retry: 2000\n\n"), snapshot...)) {
 		return
 	}
+	s.streamEvents(r.Context(), sub, write)
+}
+
+// streamEvents sends queued updates and heartbeats after the handler has sent
+// its initial frames. The handler remains responsible for unsubscribing.
+func (s *Server) streamEvents(ctx context.Context, sub *Subscriber, write func([]byte) bool) {
 	ticker := time.NewTicker(s.heartbeat)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-sub.Gone():
 			return
