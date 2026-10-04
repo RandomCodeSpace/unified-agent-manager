@@ -1,8 +1,10 @@
-import { BarChart3, Check, ChevronDown, Copy, LineChart, Pin, RefreshCw, Table2, X } from 'lucide-react';
+import { BarChart3, Check, ChevronDown, Copy, Ellipsis, LineChart, Pin, RefreshCw, Table2, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
 import { popupOpen } from '../App';
 import { chartCsv, chartOption, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
+import { chartTable, type ChartTable } from '../lib/chart-table';
+import { DataTable } from './DataTable';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { EChart } from './EChart';
@@ -23,11 +25,11 @@ const SWATCHES = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge
 /** A script's first line and an ellipsis; the whole command is in the title and the pin prompt. */
 
 /** The chart's data is rendered directly, with the same drawing used for pinned sparklines. */
-export function ChartImage({ chart, look: { width, height, spark }, className, hidden, zoomControls = true, legend }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string; hidden?: ReadonlySet<string>; zoomControls?: boolean; legend?: ReactNode }>) {
+export function ChartImage({ chart, look: { width, height, spark }, className, hidden, zoomControls = true, controlsContainer, legend }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string; hidden?: ReadonlySet<string>; zoomControls?: boolean; controlsContainer?: HTMLElement | null; legend?: ReactNode }>) {
   const compact = legend !== undefined;
   const option = useMemo(() => chartOption(chart, { width, height, spark, compact }, hidden), [chart, width, height, spark, compact, hidden]);
   const label = chart.kind === 'echarts' ? `Chart: ${chart.title}` : `${chart.kind === 'bar' ? 'Bar' : 'Line'} chart: ${chart.title}, ${chart.labels.length} ${chart.labels.length === 1 ? 'point' : 'points'}`;
-  return <EChart option={option} width={width} height={height} label={label} className={className} zoomControls={zoomControls && !spark} legend={legend} />;
+  return <EChart option={option} width={width} height={height} label={label} className={className} zoomControls={zoomControls && !spark} controlsContainer={controlsContainer} legend={legend} />;
 }
 
 /** Each series' colour and name, when there is more than one; a bar chart's first series is its bars. */
@@ -48,28 +50,10 @@ function Legend({ chart, hidden, onToggle }: Readonly<{ chart: ChartRows; hidden
   );
 }
 
-function RowsTable({ chart }: Readonly<{ chart: ChartRows }>) {
-  return (
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
-    <div role="region" aria-label={`Rows of ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto overscroll-contain px-5">
-      <table className="w-full text-caption sm:w-auto sm:min-w-96">
-        <thead className="sticky top-0 bg-raised text-muted">
-          <tr>
-            <th scope="col" className="py-1.5 pr-3 text-left font-medium">{chart.x_label || chart.x}</th>
-            {chart.series.map((s) => <th key={s.name} scope="col" className="py-1.5 pl-3 text-right font-medium">{s.name}</th>)}
-          </tr>
-        </thead>
-        <tbody className="text-ink">
-          {chart.labels.map((label, i) => (
-            <tr key={label} className="border-t border-hairline">
-              <th scope="row" className="py-1 pr-3 text-left font-normal [overflow-wrap:anywhere]">{label}</th>
-              {chart.series.map((s) => <td key={s.name} className="py-1 pl-3 text-right tabular-nums">{formatNumber(s.values[i])}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+function RowsTable({ data, title }: Readonly<{ data: ChartTable; title: string }>) {
+  const columns = useMemo(() => data.columns.map((name, index) => ({ name, align: data.rows.some(row => typeof row[index] === 'number') ? 'right' as const : 'left' as const })), [data]);
+  const rows = useMemo(() => data.rows.map((values, id) => ({ id, values, cells: values.map(value => typeof value === 'number' ? formatNumber(value) : value ?? '—') })), [data]);
+  return <div className="px-3"><DataTable columns={columns} rows={rows} label={`Rows of ${title}`} rowHeaders /></div>;
 }
 
 /** The original data and chart configuration remain available to inspect and copy. */
@@ -91,7 +75,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
     return (
       <span className="inline-flex h-8 items-center gap-1.5 px-2 text-ui font-medium text-success [&_svg]:size-4">
         <Check aria-hidden="true" />
-        <span className="max-sm:sr-only">Pinned</span>
+        <span>Pinned</span>
       </span>
     );
   }
@@ -109,9 +93,9 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
   };
   return (
     <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); setError(''); }}>
-      <Popover.Trigger render={<Button size="md" className="bg-accent-wash px-2 text-accent not-aria-disabled:hover:bg-selection max-sm:min-w-11" />}>
+      <Popover.Trigger render={<Button size="md" className="w-full justify-start bg-accent-wash px-2 text-accent not-aria-disabled:hover:bg-selection" />}>
         <Pin />
-        <span className="max-sm:sr-only">Pin to project</span>
+        <span>Pin to project</span>
       </Popover.Trigger>
       <Popover.Content side="bottom" align="end" className="max-w-80 gap-2">
         <Popover.Title>Pin to the project</Popover.Title>
@@ -161,7 +145,9 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
   const [chart, setChart] = useState<Chart | null>(null);
   const [error, setError] = useState('');
   const [table, setTable] = useState(false);
+  const [controlsContainer, setControlsContainer] = useState<HTMLDivElement | null>(null);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const data = useMemo(() => chart ? chartTable(chart) : null, [chart]);
   const [copied, copy] = useCopied();
   useEffect(() => {
     const controller = new AbortController();
@@ -183,17 +169,26 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
       <header className="flex items-center gap-2 pr-2 pl-5">
         <Icon aria-hidden="true" className="size-4 shrink-0 text-accent" />
         <figcaption className="min-w-0 flex-1 truncate text-ui font-medium text-ink" title={chart.title}>{chart.title}</figcaption>
-        <Button size="md" aria-pressed={table} className="px-2 text-muted max-sm:min-w-11" onClick={() => setTable((t) => !t)}>
-          <Table2 />
-          <span className="max-sm:sr-only">{advanced ? 'Data' : 'Table'}</span>
-        </Button>
-        <Button size="md" className="px-2 text-muted max-sm:min-w-11" onClick={() => copy(advanced ? JSON.stringify(chart.options, null, 2) : chartCsv(chart))}>
-          {copied ? <Check /> : <Copy />}
-          <span className="max-sm:sr-only">{copied ? 'Copied' : advanced ? 'Copy JSON' : 'Copy CSV'}</span>
-        </Button>
-        <PinButton sessionId={sessionId} callId={callId} chart={chart} onPinned={(id) => setChart({ ...chart, pinned_id: id })} />
+        <Popover.Root>
+          <Popover.Trigger openOnHover render={<Button size="icon-md" aria-label="Chart tools" className="text-muted" />}><Ellipsis /></Popover.Trigger>
+          <Popover.Content side="bottom" align="end" className="w-56 gap-2">
+            <Popover.Title className="sr-only">Chart tools</Popover.Title>
+            <div className="flex flex-col items-stretch gap-1">
+              <Button size="md" aria-pressed={table} className="justify-start px-2 text-muted" onClick={() => setTable((t) => !t)}>
+                {table ? <Icon /> : <Table2 />}
+                <span>{table ? 'Chart' : data ? 'Table' : 'Data'}</span>
+              </Button>
+              <Button size="md" className="justify-start px-2 text-muted" onClick={() => copy(advanced ? JSON.stringify(chart.options, null, 2) : chartCsv(chart))}>
+                {copied ? <Check /> : <Copy />}
+                <span>{copied ? 'Copied' : advanced ? 'Copy JSON' : 'Copy CSV'}</span>
+              </Button>
+              <PinButton sessionId={sessionId} callId={callId} chart={chart} onPinned={(id) => setChart({ ...chart, pinned_id: id })} />
+            </div>
+            <div ref={setControlsContainer} className="border-t border-hairline pt-2 empty:hidden" />
+          </Popover.Content>
+        </Popover.Root>
       </header>
-      {table ? advanced ? <ChartData chart={chart} /> : <RowsTable chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height }} hidden={hidden} legend={legend} /></div>}
+      {table ? data ? <RowsTable data={data} title={chart.title} /> : <ChartData chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height }} hidden={hidden} legend={legend} controlsContainer={controlsContainer} /></div>}
       {table && legend && <div className="px-5">{legend}</div>}
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
         <span>{chart.command ? 'From a command' : advanced ? 'From data the agent gave' : 'From rows the agent gave'}, {timeAgo(chart.at)}</span>

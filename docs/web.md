@@ -439,6 +439,14 @@ sign-outs are logged without the token.
   most 5 Tasks, its subagents' calls included. Every Task it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Task can call the tool.
+- **Tables**: Markdown tables fill the message width. Each completed table
+  has header controls for sorting and a contains filter per column. Filters
+  combine; **Clear filters** restores all rows. Sorting cycles through ascending,
+  descending and original order. Plain numbers sort numerically; IDs, dates and
+  values with units remain text. Tables over 100 rows are paged, with sorting and
+  filtering applied to all rows. A table still streaming stays plain until complete.
+  These controls only change your view; they make no request to the agent and do
+  not change the stored message or its Markdown export.
 - **Charts**: ask a Task a data question ("chart commits per day this
   month") and its agent can answer with a chart through the `uam_chart`
   tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
@@ -457,6 +465,15 @@ sign-outs are logged without the token.
   colour: several series take blue, orange, green and purple in order, and a
   chart of one series takes the colour its name picks, so the same measure
   keeps its colour across charts and refreshes.
+  **Table** uses the same full-width sorting and filtering controls. **Chart**
+  returns to the drawing; table filters do not change the chart. Only the selected
+  view is mounted. Heatmaps with a single series of Cartesian category/value
+  tuples or calendar date/value pairs also offer Table. Advanced charts using one
+  explicit, column-oriented dataset with scalar rows expose that source as a table.
+  Other or ambiguous specifications retain **Data**, the saved JSON, and advanced
+  charts keep **Copy JSON**. Switching views uses the already fetched chart data.
+  The tool tells the agent to explain the result without repeating a Markdown
+  table, but UAM does not remove model-written tables from the transcript.
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.
@@ -468,8 +485,13 @@ sign-outs are logged without the token.
   with no agent and no model call; it works at most once a minute per
   chart. Opening the panel refreshes each chart whose rows are more than an
   hour old. A failed refresh keeps the last rows and shows why.
-  Full charts support zooming and panning; Ctrl/Cmd plus the mouse wheel
-  zooms without taking over normal page scrolling. Series can be toggled
+  Conversation charts have one **Chart tools** button in the header. Tap,
+  click or hover to open Table/Data, Copy, Pin, and available zoom/reset controls.
+  Range handles live in this menu too, with the selected category/date endpoints;
+  saved chart sliders no longer add a control bar beneath the drawing.
+  Full charts support zooming and panning. Pause the mouse over the chart
+  for half a second to enable wheel zoom; moving the pointer or scrolling
+  the conversation restarts that pause. Series can be toggled
   through the legend. Small pinned previews keep their compact view.
   For other chart families, `uam_chart` accepts `kind: "echarts"` with an
   `options` JSON object, or a command with `format: "json"` that prints that

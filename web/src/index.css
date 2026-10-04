@@ -613,6 +613,30 @@
     font-weight: 600;
     color: var(--color-ink);
   }
+  .data-table,
+  .md .data-table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .data-table :is(th, td),
+  .md .data-table :is(th, td) {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--color-hairline);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .data-table thead th {
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-canvas);
+    font-weight: 500;
+  }
+  .data-table tbody th { font-weight: 400; }
+  .data-table tbody tr:last-child > * { border-bottom: 0; }
   .md hr {
     margin: 12px 0;
     border: 0;

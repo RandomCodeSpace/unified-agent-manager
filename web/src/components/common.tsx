@@ -15,6 +15,7 @@ import { hintPath } from '../lib/fileReferences';
 import { TempRootContext, usePreview } from '../lib/previewContext';
 import { Lightbox } from './Attachments';
 import { DiagramCard } from './Diagram';
+import { MarkdownTable } from './DataTable';
 import { useFileDemand, useFileReference } from './FileReferences';
 import { Button, buttonVariants } from './ui/button';
 import { Chip, chipVariants } from './ui/chip';
@@ -760,17 +761,15 @@ function textOf(children: ReactNode): string | null {
 /** react-markdown drops `file:` URLs as unsafe; here they are paths for the file routes, which MdImage and MdLink decide on. */
 const mdUrl = (url: string): string => (/^file:\/\//i.test(url) ? url : defaultUrlTransform(url));
 
+function MdTable({ children }: Readonly<{ children?: ReactNode }>) {
+  const { streaming } = useContext(MdContext);
+  return <MarkdownTable streaming={streaming}>{children}</MarkdownTable>;
+}
+
 const mdComponents: Components = {
   a: MdLink,
   img: MdImage,
-  table({ children }) {
-    return (
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled table scroll region accepts keyboard scrolling.
-      <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-x-auto [overflow-wrap:normal]">
-        <table className="!my-0">{children}</table>
-      </div>
-    );
-  },
+  table: MdTable,
   code({ className, children }) {
     const language = languageOf(className);
     const code = textOf(children);

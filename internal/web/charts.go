@@ -59,11 +59,13 @@ const (
 var chartTool = agentapi.HostTool{
 	Name: chartToolName,
 	Description: "Show the owner a chart in this conversation; their browser draws it. " +
+		"The card already contains the chart and its inspectable data. Give only a brief interpretation around it; do not emit a duplicate Markdown table before or after this call unless the owner explicitly requests a separate copy. " +
 		"Prefer `command`, even when the rows need computing: uam runs it in the task's directory and reads its CSV or JSON output itself, " +
 		"so the rows never pass through you, and you get back only a short summary (row count, ranges). Pass the rows as `data` only when you have a few at hand. " +
 		fmt.Sprintf("Line and bar charts take at most %d rows and %d series; x values must be unique, y values numbers. ", maxChartRows, maxChartSeries) +
 		"If uam refuses the command because the task is in Safe mode, run it with your shell tool and pass its rows as `data`. " +
 		"For other standard 2D Apache ECharts charts use kind echarts with options, or a command printing one JSON option object with format json. " +
+		"For tabular ECharts data, prefer one dataset.source with named dimensions and an explicit sourceHeader so the same data can be inspected as a sortable, filterable table. " +
 		"Do not pass x, y or data with echarts. Options are bounded JSON only: no JavaScript, external images, maps, custom series, toolbox or force layouts. " +
 		"Graphs use fixed coordinates or circular layout; animations are disabled. The owner can pin the chart to the project and refresh it later, which re-runs the command without you.",
 	Parameters: toolSchema([]string{"title", "kind"}, map[string]any{
@@ -493,7 +495,7 @@ func chartSummary(spec ChartSpec, data ChartData, took time.Duration) string {
 		if spec.Command != "" {
 			pinned = "the command for refresh"
 		}
-		return fmt.Sprintf("Charted %q (echarts) for the owner. The validated options show in the conversation; do not repeat the data. Pinning keeps %s.", spec.Title, pinned)
+		return fmt.Sprintf("Charted %q (echarts) for the owner. The chart and its data are available in the conversation card; do not repeat the data as a Markdown table. Give only a brief interpretation unless the owner asks for a separate copy. Pinning keeps %s.", spec.Title, pinned)
 	}
 	var b strings.Builder
 	noun := "rows"
@@ -516,7 +518,7 @@ func chartSummary(spec ChartSpec, data ChartData, took time.Duration) string {
 		}
 		fmt.Fprintf(&b, " %s: min %s, max %s, total %s, last %s.", s.Name, chartNumber(lo), chartNumber(hi), chartNumber(sum), chartNumber(s.Values[len(s.Values)-1]))
 	}
-	b.WriteString(" The chart shows in the conversation with a table of the rows; do not repeat them.")
+	b.WriteString(" The chart shows in the conversation with a sortable, filterable table of the rows; do not repeat them as a Markdown table. Give only a brief interpretation unless the owner asks for a separate copy.")
 	return b.String()
 }
 
