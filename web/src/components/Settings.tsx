@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useContext, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
 import { DEFAULT_COMPACT_THRESHOLD, api, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
@@ -44,7 +44,7 @@ function Section({ id, title, help, hidden = false, children }: Readonly<{ id: s
   return (
     <section hidden={hidden} aria-labelledby={`${id}-title`} className="not-hidden:flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <div className="flex items-center gap-1">
-        <h2 id={`${id}-title`} className="text-title text-ink">
+        <h2 id={`${id}-title`} tabIndex={id === 'token-prices' ? -1 : undefined} className="text-title text-ink">
           {title}
         </h2>
         {help && <HelpTip label={title}>{help}</HelpTip>}
@@ -443,14 +443,28 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose }: Readonly<{ leading?: ReactNode; onClose: () => void }>) {
+export function SettingsView({ leading, onClose, tokenPricesRequest = 0 }: Readonly<{ leading?: ReactNode; onClose: () => void; tokenPricesRequest?: number }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
-  const [section, setSection] = useState<SettingsSection>('general');
-  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set(['general']));
+  const [section, setSection] = useState<SettingsSection>(tokenPricesRequest ? 'models' : 'general');
+  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([tokenPricesRequest ? 'models' : 'general']));
+  const [handledPriceRequest, setHandledPriceRequest] = useState(tokenPricesRequest);
+  if (handledPriceRequest !== tokenPricesRequest) {
+    setHandledPriceRequest(tokenPricesRequest);
+    if (tokenPricesRequest) {
+      setSection('models');
+      setVisited((before) => new Set([...before, 'models']));
+    }
+  }
   const scrollArea = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!tokenPricesRequest || !loaded) return;
+    const title = scrollArea.current?.querySelector<HTMLElement>('#token-prices-title');
+    title?.focus({ preventScroll: true });
+    title?.scrollIntoView({ block: 'start' });
+  }, [tokenPricesRequest, loaded]);
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

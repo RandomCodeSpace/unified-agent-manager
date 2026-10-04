@@ -67,21 +67,27 @@ export function TokenPricing() {
   const [catalog, setCatalog] = useState<TokenPriceCatalog | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     let current = true;
     api.tokenPrices().then((result) => { if (current) { setCatalog(result); setError(null); } }).catch((e: unknown) => { if (current) setError(describeError(e)); });
     return () => { current = false; };
   }, [revision]);
-  const row = catalog?.models.find((model) => rowKey(model) === selected) ?? catalog?.models.find((model) => !model.rates) ?? catalog?.models[0];
+  const models = catalog?.models.filter((model) => showAll || !model.rates) ?? [];
+  const row = models.find((model) => rowKey(model) === selected) ?? models[0];
   return <div className="flex flex-col gap-3">
     <p className="text-caption text-muted">USD per million tokens. Usage estimates use these current base rates for every period, not provider bills or Copilot credits.</p>
+    <label className="flex min-h-8 items-center gap-2 self-start text-ui text-ink">
+      <input type="checkbox" className="size-3.5 accent-accent" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />
+      Show all models
+    </label>
     {error && <div role="alert" className="flex items-center gap-2 text-caption text-error">Could not load prices: {error}<Button size="sm" onClick={() => setRevision((n) => n + 1)}>Retry prices</Button></div>}
     {!catalog && !error && <p role="status" className="text-caption text-muted">Loading token prices…</p>}
-    {catalog && !row && <p className="text-caption text-muted">No models available yet.</p>}
+    {catalog && !row && <p role="status" className="text-caption text-muted">{catalog.models.length ? 'All models have prices. Select Show all models to edit them.' : 'No models available yet.'}</p>}
     {row && <>
       <Field id="token-price-model" label="Model">
-        <Select id="token-price-model" className="max-w-xl" value={rowKey(row)} onValueChange={setSelected} items={catalog!.models.map((model) => ({ value: rowKey(model), label: `${model.provider} · ${model.model}`, description: model.source === 'unpriced' ? 'Unpriced' : model.source === 'manual' ? 'Manual prices' : 'Bundled prices' }))} />
+        <Select id="token-price-model" className="max-w-xl" value={rowKey(row)} onValueChange={setSelected} items={models.map((model) => ({ value: rowKey(model), label: `${model.provider} · ${model.model}`, description: model.source === 'unpriced' ? 'Unpriced' : model.source === 'manual' ? 'Manual prices' : 'Bundled prices' }))} />
       </Field>
       <PriceForm key={`${rowKey(row)}/${revision}`} row={row} onSaved={() => { setSelected(rowKey(row)); setCatalog(null); setRevision((n) => n + 1); }} />
     </>}

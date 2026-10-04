@@ -33,7 +33,7 @@ export interface WorkspaceActions {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   settingsOpen: boolean;
-  onSettings: () => void;
+  onSettings: (target?: 'token-prices') => void;
   /** The planner, while Settings → Planner is on: whether its view is showing, and Plan (a Project's Board, or the last one shown). */
   planner?: { open: boolean; onOpen: (projectId?: string) => void };
 }
@@ -115,7 +115,7 @@ function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions;
 function SettingsButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
   return (
     <Tip label="Settings" side={side}>
-      <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className={cn('text-muted', className)} onClick={actions.onSettings}>
+      <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className={cn('text-muted', className)} onClick={() => actions.onSettings()}>
         <SettingsIcon />
       </Button>
     </Tip>
@@ -166,7 +166,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         <SettingsButton actions={actions} side="right" />
         <PlannerButton actions={actions} side="right" />
-        <UsageButton side="right" />
+        <UsageButton side="right" onAddPrices={() => actions.onSettings('token-prices')} />
         <ConnectionDot connection={connection} side="right" />
       </div>
     </nav>
@@ -570,7 +570,7 @@ export const Sidebar = memo(function Sidebar({
       <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
         <SettingsButton actions={actions} className="-ml-1.5" />
         <PlannerButton actions={actions} className="-ml-1" />
-        <UsageButton className="-ml-1" />
+        <UsageButton className="-ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
         <ConnectionDot connection={connection} />
         {version && <span className="truncate text-meta" title={version}>{version}</span>}
         <span className="flex-1" />

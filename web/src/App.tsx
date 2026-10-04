@@ -153,6 +153,7 @@ export default function App() {
   const sidebarOpen = sidebarState.open;
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
+  const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
   const [plannerOpen, setPlannerOpen] = useState(() => window.location.hash.startsWith(PLANNER_PREFIX));
   const [routinesFor, setRoutinesFor] = useState<string | null>(hashRoutines);
   // Settle found subtasks the Task holds: the dialog decides each (ADR 0005 §5).
@@ -587,6 +588,7 @@ export default function App() {
   const openTask = useCallback((id: string) => select(id), [select]);
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
+    setTokenPricesRequest(0);
     setSettingsOpen(true);
     setPlannerOpen(false);
     setRoutinesFor(null);
@@ -859,8 +861,9 @@ export default function App() {
       sidebarOpen: narrow ? drawerOpen : sidebarOpen,
       onToggleSidebar: () => (narrow ? setDrawerOpen((o) => !o) : toggleSidebar()),
       settingsOpen,
-      onSettings: () => {
-        setSettingsOpen((o) => !o);
+      onSettings: (target) => {
+        setTokenPricesRequest((request) => target ? request + 1 : 0);
+        setSettingsOpen((o) => target ? true : !o);
         setPlannerOpen(false);
         setRoutinesFor(null);
         setDrawerOpen(false);
@@ -984,7 +987,7 @@ export default function App() {
   const gitProjects = state.projects.filter((p) => !p.no_git);
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} />;
+    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} tokenPricesRequest={tokenPricesRequest} />;
   } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
   } else if (routinesShown) {
