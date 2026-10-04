@@ -185,6 +185,22 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
 });
 
+test('compact Task labels retain request priority and distinguish working, review and finished states', async () => {
+  const { taskStatus } = await import('../src/lib/tasks.ts');
+  const label = (extra, unread = false) => taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', extra), unread).label;
+  for (const state of ['awaiting_answer', 'awaiting_permission']) assert.equal(label({ state, compacting: true }), 'Input');
+  assert.equal(label({ state: 'working', pending: 1 }), 'Input');
+  assert.equal(label({ state: 'working', ask: { kind: 'question', title: 'Which one?' } }), 'Input');
+  assert.equal(label({ state: 'completed', compacting: true }, true), 'Compacting');
+  assert.equal(label({ state: 'completed', subagents_running: 1 }, true), 'Working');
+  assert.equal(label({ state: 'working', event_at: '2020-01-01T00:00:00Z' }), 'Working');
+  assert.equal(label({ state: 'completed', outcome: 'A long outcome' }, true), 'Review');
+  assert.equal(label({ state: 'completed', outcome: 'A long outcome' }), 'Finished');
+  for (const [state, expected] of Object.entries({ starting: 'Starting', failed: 'Error', interrupted: 'Interrupted', cancelled: 'Stopped', closed: 'Closed', idle: 'Idle' })) assert.equal(label({ state }), expected);
+  assert.equal(label({ state: 'completed', stage: 'settled' }), 'Settled');
+  assert.equal(label({ state: 'completed', stage: 'archived' }), 'Archived');
+});
+
 test('Alt+J and Alt+K cycle through the Needs you Tasks and wrap', async () => {
   const { cycleTask } = await import('../src/lib/tasks.ts');
   assert.equal(cycleTask([], 'a', 1), null);

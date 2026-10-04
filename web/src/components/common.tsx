@@ -1,4 +1,4 @@
-import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, Minus, Pause, X } from 'lucide-react';
+import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -42,8 +42,8 @@ export const STATE_TONE: Record<SessionState, Tone> = {
   idle: 'faint',
   starting: 'accent',
   working: 'accent',
-  awaiting_permission: 'attention',
-  awaiting_answer: 'attention',
+  awaiting_permission: 'warning',
+  awaiting_answer: 'warning',
   completed: 'success',
   cancelled: 'muted',
   failed: 'error',
@@ -124,12 +124,12 @@ export function useMedia(query: string): boolean {
  * finished ones, always with the word for assistive tech. `label` renders the word too,
  * as a chip; only the attention chip has a fill.
  */
-export function StateMark({ state, label = false, title, className, text = STATE_LABELS[state] ?? state }: Readonly<{ state: SessionState; label?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…"). */ text?: string }>) {
+export function StateMark({ state, label = false, compacting = false, title, className, text = STATE_LABELS[state] ?? state }: Readonly<{ state: SessionState; label?: boolean; compacting?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…"). */ text?: string }>) {
   const tone = STATE_TONE[state];
   // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
   const glyph = (
     <span key={state} className="flex animate-fade-in">
-      <StateGlyph state={state} />
+      {compacting ? <Minimize2 aria-hidden="true" className="size-3.5 text-badge-violet" /> : <StateGlyph state={state} />}
     </span>
   );
   if (!label) {
@@ -141,7 +141,7 @@ export function StateMark({ state, label = false, title, className, text = STATE
     );
   }
   return (
-    <Chip tone={tone === 'faint' ? 'muted' : tone} className={className} title={title}>
+    <Chip tone={tone === 'faint' ? 'muted' : tone} className={cn(compacting && 'text-badge-violet', className)} title={title}>
       {glyph}
       {text}
     </Chip>
@@ -149,21 +149,11 @@ export function StateMark({ state, label = false, title, className, text = STATE
 }
 
 /**
- * The working mark (DESIGN.md): an `accent` core that breathes while a satellite circles
- * it on a faint ring; under reduced motion the same glyph, still. 14px, crisp from 12 to 16.
- * One component, so the sidebar rows, the Task header, the subagent chips and the
- * transcript's working row all move alike.
+ * The same quiet ring used by requests and buttons, at 14px for task activity.
+ * Its one transform animation stops under the app's reduced-motion setting.
  */
 export function WorkingMark({ className }: Readonly<{ className?: string }>) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" className={cn('size-3.5 shrink-0 text-accent', className)}>
-      <circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.25" className="opacity-25" />
-      <circle cx="8" cy="8" r="2" fill="currentColor" className="animate-breathe motion-reduce:animate-none" />
-      <g className="origin-center animate-orbit motion-reduce:animate-none">
-        <circle cx="8" cy="2.5" r="1.5" fill="currentColor" />
-      </g>
-    </svg>
-  );
+  return <Spinner className={cn('size-3.5 border-current border-r-transparent text-accent', className)} />;
 }
 
 function StateGlyph({ state }: Readonly<{ state: SessionState }>) {
@@ -174,7 +164,7 @@ function StateGlyph({ state }: Readonly<{ state: SessionState }>) {
       return <WorkingMark />;
     case 'awaiting_permission':
     case 'awaiting_answer':
-      return <span aria-hidden="true" className="size-2 rounded-full bg-attention" />;
+      return <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" />;
     case 'completed':
       return <Check aria-hidden="true" className={cn('size-3.5', TONE_TEXT[tone])} strokeWidth={2.5} />;
     case 'failed':
@@ -277,17 +267,16 @@ export function ScrollSentinel({ sentinelRef }: Readonly<{ sentinelRef: (el: HTM
 
 /**
  * A skeleton (DESIGN.md Placeholder and loading states): `rows` bars of `sunken` in the shape
- * of what is coming, one highlight sweeping over the group, while a list or a transcript first
- * loads. It is a live status for screen readers and hidden decoration otherwise; the caller
- * marks the region `aria-busy`.
+ * of what is coming, with the delayed quiet ring and label while a list or transcript first
+ * loads. Decorative companion skeletons stay still; the caller marks the region `aria-busy`.
  */
 const SKELETON_WIDTHS = ['w-3/4', 'w-full', 'w-1/2'];
 
 export function Skeleton({ label, rows = 3, className, rowClassName, children, ...props }: Readonly<{ label: string; rows?: number; className?: string; rowClassName?: string; children?: ReactNode; 'aria-hidden'?: boolean | 'true' }>) {
   const hidden = !!props['aria-hidden'];
   return (
-    <div role={hidden ? undefined : 'status'} aria-hidden={hidden || undefined} className={cn('skeleton flex flex-col gap-3 motion-reduce:[&::after]:hidden', className)}>
-      {!hidden && <span className="sr-only">{label}</span>}
+    <div aria-hidden={hidden || undefined} className={cn('flex flex-col gap-3', className)}>
+      {!hidden && <Loading label={label} />}
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} aria-hidden="true" className={cn('h-4 rounded-sm bg-sunken', SKELETON_WIDTHS[i % 3], rowClassName)} />
       ))}

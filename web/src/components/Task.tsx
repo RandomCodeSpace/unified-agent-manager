@@ -677,7 +677,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (
-              <StateMark state={state} label={!phone} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
+              <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
             )}
             {/* The last completed turn in one line, beside its state (phones show it in the list). */}
             {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}

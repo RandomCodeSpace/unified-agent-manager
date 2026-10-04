@@ -1,11 +1,10 @@
-import { ChevronRight, CircleCheck, Clock, FolderPlus, KanbanSquare, LogOut, Settings as SettingsIcon, Search, SquarePen } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, Eye, FolderPlus, GitBranch, KanbanSquare, LogOut, MessageCircleQuestion, Minimize2, Pause, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { GROUP_TITLES, commandGroups, filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus, type GroupKey } from '../lib/tasks';
+import { commandGroups, filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus } from '../lib/tasks';
 import type { Connection } from '../state';
-import { Dot, InlineName, ProjectBadge, Skeleton, TONE_TEXT, TaskTitle, relTime, useApp, useMinuteTick } from './common';
-import { Key } from './InlinePicker';
+import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker } from './ProjectPicker';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { Button } from './ui/button';
@@ -263,10 +262,26 @@ function shelfTip(s: SessionSummary, project: Project) {
 /** This Task's own changes (contract C1), when the service reports them. */
 type DiffStat = { files: number; additions: number; deletions: number };
 
+const STATUS_MARKS = {
+  Input: { icon: MessageCircleQuestion, tone: 'text-warning' },
+  Starting: { icon: WorkingMark, tone: 'text-accent' },
+  Working: { icon: WorkingMark, tone: 'text-accent' },
+  Compacting: { icon: Minimize2, tone: 'text-badge-violet' },
+  Review: { icon: Eye, tone: 'text-badge-teal' },
+  Finished: { icon: CircleCheck, tone: 'text-success' },
+  Error: { icon: TriangleAlert, tone: 'text-error' },
+  Interrupted: { icon: Pause, tone: 'text-warning' },
+  Stopped: { icon: Square, tone: 'text-muted' },
+  Closed: { icon: CircleMinus, tone: 'text-muted' },
+  Idle: { icon: Clock, tone: 'text-muted' },
+  Settled: { icon: CircleCheck, tone: 'text-muted' },
+  Archived: { icon: Archive, tone: 'text-muted' },
+};
+
 /**
  * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * Otherwise a Task row, never more than two lines: the Project badge, the name, `+N −M` and the time, then one plain status line,
- * truncated; the row's title holds the whole of it (what a Needs you row waits on, a finished turn's outcome).
+ * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
+ * the row's title holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  */
 function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean }>) {
   const { hasNews } = useApp();
@@ -281,6 +296,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
   const settle = compact ? undefined : items.find((item) => item.key === 'settle' && !item.disabled);
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const status = taskStatus(s, unread);
+  const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A Task card on the rail: `raised` with the soft ring, the open one `tint-selected`; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
@@ -318,7 +334,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
             type="button"
             data-nav=""
             aria-current={selected ? 'true' : undefined}
-            title={compact ? undefined : `${taskName(s) || 'New task'} · ${project.name}\n${status.text}`}
+            title={compact ? undefined : `${taskName(s) || 'New task'} · ${project.name}\n${status.text}${project.branch ? `\nProject branch: ${project.branch}` : ''}${diff && diff.additions + diff.deletions > 0 ? `\n+${diff.additions} −${diff.deletions} lines` : ''}`}
             className={rowClass}
             onClick={(event) => {
               if (contextOpen.current) { event.preventDefault(); return; }
@@ -340,21 +356,18 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
               </>
             ) : (
               <>
-                <span className="flex w-full min-w-0 items-center gap-2">
+                <span className="flex w-full min-w-0 items-center gap-1.5">
                   <ProjectBadge badge={project.badge} />
-                  <span className="sr-only">{project.name}, </span>
-                  <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-                  {diff && diff.additions + diff.deletions > 0 && (
-                    <span className="shrink-0 font-mono text-meta font-normal tabular-nums">
-                      <span className="text-success">+{diff.additions}</span> <span className="text-error">−{diff.deletions}</span>
-                      <span className="sr-only"> lines,</span>
-                    </span>
-                  )}
-                  <time dateTime={s.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(s.updated_at)}</time>
+                  <span className="min-w-0 flex-1 truncate font-normal text-muted" title={project.name}>{project.name}</span>
+                  <span className={cn('flex shrink-0 items-center gap-1 font-normal', statusTone)}>
+                    <StatusIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                    {status.label}
+                  </span>
                 </span>
-                <span className={cn('block w-full truncate pl-6 font-normal', TONE_TEXT[status.tone])}>
-                  <span className="sr-only">, </span>
-                  {status.text}
+                <span className={cn('flex w-full min-w-0 items-baseline gap-1.5', settle && 'pr-6')}>
+                  <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
+                  {project.branch && <span className="min-w-0 max-w-20 truncate text-meta font-normal text-muted" title={`Project branch: ${project.branch}`}><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{project.branch}</span></span>}
+                  <time dateTime={s.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(s.updated_at)}</time>
                 </span>
               </>
             )}
@@ -362,7 +375,7 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
         </Tip>
       )}
       {settle && !renaming && (
-        // A sibling of the row button, not inside it, so clicking Settle never selects the row. It sits at the end of the status line.
+        // A sibling of the row button, not inside it, so clicking Settle never selects the row. Its reserved space at the end of the second line keeps the time visible.
         <Tip label="Settle">
           <Button
             size="icon-sm"
@@ -393,30 +406,6 @@ function TaskRow({ session: s, project, selected, compact = false }: Readonly<{ 
     </ViewTransition>
   );
 }
-
-/* ---------- State groups ---------- */
-
-/** One state group: its title and count, then its rows. Needs you carries the Alt+J hint (not on touch, where there are no keys). */
-function Group({ group, projects, tasks, selectedId }: Readonly<{ group: GroupKey; projects: ReadonlyMap<string, Project>; tasks: SessionSummary[]; selectedId: string | null }>) {
-  const id = useId();
-  if (tasks.length === 0) return null;
-  return (
-    <section aria-labelledby={id} className="mb-1">
-      <h2 id={id} className={cn('flex h-6 items-center gap-2 px-2 text-eyebrow uppercase', group === 'you' ? 'text-attention' : 'text-muted')}>
-        {GROUP_TITLES[group]}
-        <span className="rounded-full bg-sunken px-1.5 text-meta font-normal tracking-normal tabular-nums text-muted normal-case">{tasks.length}</span>
-        {group === 'you' && (
-          <span className="ml-auto flex items-center gap-1 text-meta font-normal tracking-normal text-muted normal-case pointer-coarse:hidden" aria-hidden="true">
-            <Key>Alt</Key>+<Key>J</Key> next
-          </span>
-        )}
-      </h2>
-      <ul className="flex flex-col gap-1">{tasks.map((t) => <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}</ul>
-    </section>
-  );
-}
-
-const GROUPS: readonly GroupKey[] = ['you', 'review', 'working', 'idle'];
 
 /* ---------- Shelf (Settled / Archived) ---------- */
 
@@ -530,9 +519,9 @@ export const Sidebar = memo(function Sidebar({
     body = (
       // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
       <div className="flex min-h-full flex-col">
-        <div className="animate-fade-in">
-          {GROUPS.map((g) => <Group key={g} group={g} projects={projectMap} tasks={groups[g]} selectedId={selectedId} />)}
-        </div>
+        <ul aria-label="Unsettled tasks" className="flex flex-col gap-1 animate-fade-in">
+          {[...groups.you, ...groups.review, ...groups.working, ...groups.idle].map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} />)}
+        </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
         <div className="mt-auto">
           <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={!!shelves[`${shelfScope}:settled`]} onToggle={() => toggleShelf(`${shelfScope}:settled`)} />
