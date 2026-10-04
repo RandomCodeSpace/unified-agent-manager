@@ -47,13 +47,12 @@ export interface CountPart {
 
 /** "2 done · 1 failed · 3 running · 1 stopped", only the parts that are not zero. */
 export function countParts(c: SubagentCounts): CountPart[] {
-  const parts: (CountPart | false)[] = [
-    c.done > 0 && { text: `${c.done} done`, tone: 'success' },
-    c.failed > 0 && { text: `${c.failed} failed`, tone: 'error' },
-    c.running > 0 && { text: `${c.running} running`, tone: 'accent' },
-    c.stopped > 0 && { text: `${c.stopped} stopped`, tone: 'muted' },
-  ];
-  return parts.filter(Boolean) as CountPart[];
+  const parts: CountPart[] = [];
+  if (c.done > 0) parts.push({ text: `${c.done} done`, tone: 'success' });
+  if (c.failed > 0) parts.push({ text: `${c.failed} failed`, tone: 'error' });
+  if (c.running > 0) parts.push({ text: `${c.running} running`, tone: 'accent' });
+  if (c.stopped > 0) parts.push({ text: `${c.stopped} stopped`, tone: 'muted' });
+  return parts;
 }
 
 export const subagentNoun = (n: number) => `${n} ${n === 1 ? 'subagent' : 'subagents'}`;

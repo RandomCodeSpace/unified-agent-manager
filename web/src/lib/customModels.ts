@@ -45,7 +45,8 @@ export function withProvider(models: readonly CustomModel[], original: string | 
   });
   const at = stored.findIndex((m) => m.name === original);
   const rest = stored.filter((m) => m.name !== original);
-  const index = at < 0 ? rest.length : stored.slice(0, at).filter((m) => m.name !== original).length;
+  // No removed model precedes the first match, so its index stays the same.
+  const index = at < 0 ? rest.length : at;
   return [...rest.slice(0, index), ...entries, ...rest.slice(index)];
 }
 
