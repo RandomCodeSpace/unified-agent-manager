@@ -142,6 +142,18 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   await Promise.resolve();
   const { frame, request } = messages.at(-1);
   const reply = { id: request.id, svg: '<svg/>', width: 100, height: 50 };
+  let settled = false;
+  void retry.then(() => { settled = true; });
+  for (const event of [
+    { source: frames[1].contentWindow, origin: 'null', data: reply },
+    { source: frame.contentWindow, origin: 'https://unrelated.example', data: reply },
+    { source: frame.contentWindow, origin: 'null', data: { ...reply, id: 'unknown-request' } },
+    { source: frame.contentWindow, origin: 'null', data: { id: request.id, svg: '<svg/>' } },
+  ]) {
+    page.dispatchEvent(Object.assign(new Event('message'), event));
+    await new Promise(setImmediate);
+    assert.equal(settled, false, 'only a valid reply from the current opaque-origin frame can settle the request');
+  }
   page.dispatchEvent(Object.assign(new Event('message'), { source: frame.contentWindow, origin: 'null', data: reply }));
   assert.deepEqual(await retry, { svg: '<svg/>', width: 100, height: 50 });
   assert.equal(renderDiagram('queued behind stall'), retry, 'successful results stay cached');
