@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "packages/ui/src", "vite.config.ts"]
 }

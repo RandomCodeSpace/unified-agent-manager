@@ -76,7 +76,12 @@ type pushPayload struct {
 	// saw it shown skips its own.
 	Key string `json:"key"`
 	// Badge is how many Tasks need the owner, for the app icon.
-	Badge int `json:"badge"`
+	Badge        int    `json:"badge"`
+	BadgePartial bool   `json:"badge_partial,omitempty"`
+	HomeID       string `json:"home_id,omitempty"`
+	InstanceID   string `json:"instance_id,omitempty"`
+	ConnectionID string `json:"connection_id,omitempty"`
+	Generation   uint64 `json:"generation,omitempty"`
 }
 
 // noticeKind is what a Task's summary calls for: needs you (a question, a
@@ -110,6 +115,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 		// page shows the Task as it ends.
 		s.unseenEnd = !m.watchedLocked(s.id)
 	}
+	m.recordAttentionLocked()
 	kind := noticeKind(after)
 	if kind == noticeFinished && s.queueSending != "" {
 		// The queue's head left it to be sent: its turn is starting.
@@ -122,6 +128,7 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	m.broadcastLocked("notify", "", func(seq uint64) any {
 		return noticeEvent{Seq: seq, SessionID: s.id, Kind: kind, Title: title, Key: noticeKey(s.id, kind, seq)}
 	})
+	m.recordNoticeLocked(s.id, kind, title)
 	// The owner is looking at the Task: no push. A service worker shows
 	// every push it gets (browsers penalise or replace silent ones), so the
 	// decision is made here.
@@ -130,6 +137,9 @@ func (m *Manager) noticeLocked(s *webSession, before, after SessionSummary) {
 	}
 	// broadcastLocked took the next seq whether or not a page listens.
 	payload := pushPayload{Title: title, Task: s.id, Kind: kind, Key: noticeKey(s.id, kind, m.seq), Badge: m.needsYouLocked()}
+	if m.connectedNotices != nil {
+		payload.Badge, payload.BadgePartial = m.connectedNotices.badge(payload.Badge)
+	}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -406,10 +416,17 @@ func (p *pushStore) send(ctx context.Context, payload pushPayload) {
 		urgency = webpush.UrgencyNormal
 	}
 	// A Topic replaces a still-undelivered notice of the same Task.
-	sum := sha256.Sum256([]byte(payload.Task))
+	topicTask := payload.Task
+	if payload.InstanceID != "" {
+		topicTask = payload.InstanceID + ":" + payload.Task
+	}
+	sum := sha256.Sum256([]byte(topicTask))
 	topic := hex.EncodeToString(sum[:16])
 	var gone []string
 	for _, sub := range subs {
+		if ctx.Err() != nil {
+			return
+		}
 		// A fresh message each time: the library pads it in place.
 		message, err := json.Marshal(payload)
 		if err != nil {

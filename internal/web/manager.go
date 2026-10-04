@@ -126,6 +126,9 @@ type Manager struct {
 	pick func(n int) int
 	// push keeps the Web Push keys and subscriptions (notify.go).
 	push pushStore
+	// noticeJournal contains only events produced by this manager.
+	noticeJournal    noticeJournal
+	connectedNotices *connectedNotices
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
 	// gitWrites holds each git write action running, by the real path of its
