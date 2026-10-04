@@ -269,32 +269,12 @@ const heldQuery = `SELECT id, seq, project_id, held_by FROM cards WHERE held_by 
 // agentWrite runs fn on the card ref inside one sweeping, settling write,
 // after refusing Unassigned cards and cards outside an agent's scope.
 func (s *Store) agentWrite(ctx context.Context, a Actor, ref string, fn func(*txn, *outline, *node) error) (Card, error) {
-	var out Card
-	changes, err := s.write(ctx, func(t *txn) error {
-		project, id, err := t.locate(ref)
-		if err != nil {
+	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+		if err := t.inScope(o, a, n); err != nil {
 			return err
 		}
-		if project == "" {
-			return errReadOnly
-		}
-		err = t.mutate(project, true, func() error {
-			o, n, err := t.cardIn(project, id)
-			if err != nil {
-				return err
-			}
-			if err := t.inScope(o, a, n); err != nil {
-				return err
-			}
-			return fn(t, o, n)
-		})
-		if err != nil {
-			return err
-		}
-		out, err = t.view(project, id)
-		return err
+		return fn(t, o, n)
 	})
-	return withRevision(out, changes), err
 }
 
 // ReleaseHold ends the hold on the subtask ref and returns it to todo, for
