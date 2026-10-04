@@ -175,7 +175,8 @@ export default function Federation() {
     history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
   }, [terminalOpen]);
   const resolveRoute = useCallback((force = false) => {
-    if (!registryRead) return;
+    // Local navigation does not depend on the optional connection registry.
+    if (!registryRead && hasIdentity(window.location.hash)) return;
     if (!force && !hasIdentity(window.location.hash) && !activeRef.current) return;
     const found = resolveIdentity(window.location.hash, registryRef.current?.instance_id ?? '', registryRef.current?.connections ?? []);
     if ('error' in found) { routeReady.current = false; setRouteError(found.error); return; }

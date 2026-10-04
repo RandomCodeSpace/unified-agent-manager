@@ -1,5 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { renderApp, sidebar } from './render';
 
 describe('routines', () => {
@@ -144,6 +145,46 @@ describe('routines', () => {
     window.location.hash = '#routines=p3';
     expect(await screen.findByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
     expect(await screen.findByRole('region', { name: 'Broken link check' })).toBeTruthy();
+  });
+
+  test.each(['routines', 'settings'] as const)('a local %s link survives navigation before the connection registry responds', async (kind) => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const readConnections = api.connections.bind(api);
+    const registry = vi.spyOn(api, 'connections').mockImplementation(async () => {
+      await held;
+      return readConnections();
+    });
+    const view = renderApp();
+    const hash = kind === 'routines' ? '#routines=p3' : '#settings';
+    const checkView = async () => {
+      if (kind === 'routines') {
+        expect(await screen.findByRole('button', { name: 'Project: notes-site' })).toBeTruthy();
+        expect(await screen.findByRole('region', { name: 'Broken link check' })).toBeTruthy();
+      } else expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeTruthy();
+      expect(window.location.hash).toBe(hash);
+    };
+    try {
+      await sidebar();
+      await waitFor(() => expect(registry).toHaveBeenCalled());
+      // Deliver the actual browser event while the registry response is still held.
+      await act(async () => {
+        await new Promise<void>(resolve => {
+          window.addEventListener('hashchange', () => resolve(), { once: true });
+          window.location.hash = hash;
+        });
+      });
+      await checkView();
+      await act(async () => {
+        release();
+        await Promise.all(registry.mock.results.map(result => result.value));
+      });
+      await checkView();
+    } finally {
+      release();
+      view.unmount();
+      registry.mockRestore();
+    }
   });
 
   test('Edit project → Routines opens that project’s routines', async () => {
