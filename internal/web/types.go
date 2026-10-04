@@ -210,6 +210,9 @@ type Quota struct {
 
 // Meta is the /api/meta response.
 type Meta struct {
+	InstanceID      string         `json:"instance_id"`
+	ProtocolMajor   int            `json:"protocol_major"`
+	Capabilities    []string       `json:"capabilities"`
 	Version         string         `json:"version"`
 	Providers       []ProviderInfo `json:"providers"`
 	RecentWorkdirs  []string       `json:"recent_workdirs"`

@@ -489,6 +489,7 @@ func TestPreviousAndImportRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	ts := &testServer{srv: srv, m: m, prov: prov}
 	base := time.Date(2026, 9, 24, 17, 0, 0, 0, time.UTC)
 	prov.SetPrevious([]agentapi.PreviousConversation{{ID: prevA, Title: "one", Workdir: p.Dir, CreatedAt: base, UpdatedAt: base}}, nil)

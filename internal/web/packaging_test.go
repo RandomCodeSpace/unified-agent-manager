@@ -22,7 +22,8 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 			expect = "absent"
 		}
 	}
-	s, err := NewServer(ServerConfig{Manager: &Manager{}, Token: testToken})
+	m, _, _ := newTestManager(t)
+	s, err := NewServer(ServerConfig{Manager: m, Token: testToken})
 	if expect == "absent" {
 		if err == nil || !strings.Contains(err.Error(), "web assets are not built; run make build or make install") {
 			t.Fatalf("unbuilt source should explain how to build the UI, got %v", err)
@@ -35,6 +36,7 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.Close)
 	get := func(path string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
 		w := httptest.NewRecorder()

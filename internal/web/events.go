@@ -229,6 +229,7 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 			m.dirty[s.id] = struct{}{}
 		}
 		s.unseenEnd = false
+		m.recordAttentionLocked()
 		d := m.detailLocked(s)
 		if recentHistory && !compact {
 			d = recentDetail(d)
@@ -302,6 +303,9 @@ func (m *Manager) broadcastLocked(event, sessionID string, build func(seq uint64
 // sequence counter; gaps are allowed, and snapshots still cover both.
 func (m *Manager) broadcastFilteredLocked(event, sessionID string, accepts func(*Subscriber) bool, build func(seq uint64) any) {
 	m.seq++
+	if event == "session" || event == "session_removed" {
+		m.recordAttentionLocked()
+	}
 	targets := 0
 	for sub := range m.subs {
 		if (sessionID == "" || sub.session == sessionID) && (accepts == nil || accepts(sub)) {

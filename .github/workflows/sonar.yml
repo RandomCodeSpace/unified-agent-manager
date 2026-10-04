@@ -47,7 +47,7 @@ jobs:
           node --experimental-strip-types --test --experimental-test-coverage \
             --test-reporter=lcov --test-reporter-destination=web/coverage/lcov.info \
             --test-reporter=spec --test-reporter-destination=stdout \
-            web/tests/*.test.mjs
+            web/packages/ui/tests/*.test.mjs
 
       - name: Run web component tests with coverage
         run: npm --prefix web run test:dom -- --coverage

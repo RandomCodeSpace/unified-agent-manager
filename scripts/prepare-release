@@ -2,12 +2,12 @@
 # Local preparation only: never moves the source branch or pushes a ref.
 set -euo pipefail
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: $0 vMAJOR.MINOR.PATCH[-beta.N] [SOURCE_REF]" >&2
+  echo "usage: $0 vMAJOR.MINOR.PATCH[-alpha.N|-beta.N] [SOURCE_REF]" >&2
   exit 2
 fi
 version=$1
-if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$ ]]; then
-  echo "release version must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N" >&2
+if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta)\.(0|[1-9][0-9]*))?$ ]]; then
+  echo "release version must be vMAJOR.MINOR.PATCH, vMAJOR.MINOR.PATCH-alpha.N or vMAJOR.MINOR.PATCH-beta.N" >&2
   exit 1
 fi
 repo=$(git rev-parse --show-toplevel)
@@ -21,7 +21,7 @@ if [[ -n $(git ls-tree -r --name-only "$source_commit" -- internal/web/dist) ]];
   echo "source must not track generated web assets" >&2
   exit 1
 fi
-if [[ $version != *-beta.* ]]; then
+if [[ $version != *-alpha.* && $version != *-beta.* ]]; then
   git fetch --no-tags origin main
   git merge-base --is-ancestor "$source_commit" origin/main || {
     echo "stable release source must already be on origin/main" >&2

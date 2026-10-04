@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   base: '/',
+  publicDir: 'packages/ui/public',
   plugins: [react(), tailwindcss(), diagramFrame(), mockAttachmentRoute()],
   build: {
     outDir: '../internal/web/dist',
@@ -32,7 +33,7 @@ export default defineConfig({
 });
 
 const FRAME_DOCUMENT = 'diagram-frame.html';
-const FRAME_ENTRY = 'src/diagram-frame/main.ts';
+const FRAME_ENTRY = 'packages/ui/src/diagram-frame/main.ts';
 
 /** The frame document around its one script element: inline in a build (see diagramFrame), the source module in dev. */
 const frameHtml = (script: string) =>
