@@ -20,7 +20,7 @@ describe('app shell', () => {
   test('opening a task from the sidebar shows it and keeps it in the URL', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    await user.click(side.getByRole('button', { name: /, Doctor: add terminal line/ }));
+    await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
     expect(window.location.hash).toBe('#task=t3');
     const log = within(screen.getByRole('log'));
