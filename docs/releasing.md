@@ -22,9 +22,10 @@ builds Go, and creates an annotated tag. It preserves the source branch and
 refuses to replace an existing tag. It never pushes. The child commit's only
 changes must be regular files added under `internal/web/dist`.
 
-Versions are `vMAJOR.MINOR.PATCH` or `vMAJOR.MINOR.PATCH-beta.N`. Stable preparation
+Versions are `vMAJOR.MINOR.PATCH`, `vMAJOR.MINOR.PATCH-alpha.N` or
+`vMAJOR.MINOR.PATCH-beta.N`. Stable preparation
 fetches `origin/main` and requires the source parent to be an ancestor of it.
-A beta may use an approved unmerged source commit. Both release kinds keep the
+An alpha or beta may use an approved unmerged source commit. All release kinds keep the
 same quality, coverage, security, release-configuration and protected release
 environment gates. Preparation is a packaging check, not evidence that those
 gates passed. Review the source, child commit and local tag before publication.
@@ -51,6 +52,6 @@ intentional without tracking a fake UI.
 
 Run `scripts/test-release-packaging` on a committed source checkout to check the
 contract in a disposable repository. It exercises source-only behavior,
-preparation, source isolation, stable ancestry, duplicate-tag refusal, a real
+alpha preparation, beta verification, version syntax, source isolation, stable ancestry, duplicate-tag refusal, a real
 versioned Go install from a local module proxy, and rejection of source edits
 in a generated child. It does not publish tags or contact a provider.

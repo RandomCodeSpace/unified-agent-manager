@@ -2,14 +2,14 @@
 # A release is a generated-only child of its reviewed source commit.
 set -euo pipefail
 if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "usage: $0 vMAJOR.MINOR.PATCH[-beta.N] COMMIT [MAIN_REF]" >&2
+  echo "usage: $0 vMAJOR.MINOR.PATCH[-alpha.N|-beta.N] COMMIT [MAIN_REF]" >&2
   exit 2
 fi
 version=$1
 commit=$(git rev-parse --verify "${2}^{commit}")
 main_ref=${3:-origin/main}
-if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-beta\.(0|[1-9][0-9]*))?$ ]]; then
-  echo "release version must be vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N" >&2
+if [[ ! $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta)\.(0|[1-9][0-9]*))?$ ]]; then
+  echo "release version must be vMAJOR.MINOR.PATCH, vMAJOR.MINOR.PATCH-alpha.N or vMAJOR.MINOR.PATCH-beta.N" >&2
   exit 1
 fi
 read -r -a parents <<< "$(git show -s --format=%P "$commit")"
@@ -36,7 +36,7 @@ if [[ -z $(git ls-tree -r --name-only "$commit" -- internal/web/dist/assets) ]];
   echo "release commit has no bundled web assets" >&2
   exit 1
 fi
-if [[ $version != *-beta.* ]]; then
+if [[ $version != *-alpha.* && $version != *-beta.* ]]; then
   git merge-base --is-ancestor "$source_commit" "$main_ref" || {
     echo "stable release source must be an ancestor of $main_ref" >&2
     exit 1
