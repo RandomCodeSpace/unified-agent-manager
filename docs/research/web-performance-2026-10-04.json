@@ -1,0 +1,98 @@
+{
+  "assets": [
+    {
+      "decodedBodySize": 1368758,
+      "encodedBodySize": 495640,
+      "name": "/assets/index-DXHxSZWx.js",
+      "protocol": "h2",
+      "transferSize": 495940
+    },
+    {
+      "decodedBodySize": 716,
+      "encodedBodySize": 438,
+      "name": "/assets/rolldown-runtime-hePW80VL.js",
+      "protocol": "h2",
+      "transferSize": 738
+    },
+    {
+      "decodedBodySize": 85310,
+      "encodedBodySize": 20070,
+      "name": "/assets/index-fDZs5fQH.css",
+      "protocol": "h2",
+      "transferSize": 20370
+    }
+  ],
+  "capturedAt": "2026-10-04T01:20:27.627Z",
+  "navigation": [
+    {
+      "durationMs": 358.39999997615814,
+      "protocol": "h2",
+      "ttfbMs": 105.10000002384186,
+      "type": "navigate"
+    }
+  ],
+  "paintSamples": 0,
+  "samples": [
+    {
+      "decodedBytes": 10606,
+      "durationMs": 96.8,
+      "status": 200
+    },
+    {
+      "decodedBytes": 10605,
+      "durationMs": 87.1,
+      "status": 200
+    },
+    {
+      "decodedBytes": 10605,
+      "durationMs": 91.1,
+      "status": 200
+    }
+  ],
+  "url": "https://uam.randomcodespace.dev",
+  "bundleSplitting": {
+    "baseline": {
+      "initialJavaScriptBytes": 1369377,
+      "initialGzipBytes": 496078,
+      "initialRequests": 2,
+      "largestChunkBytes": 1368661
+    },
+    "namedVendors": {
+      "initialJavaScriptBytes": 1368870,
+      "initialGzipBytes": 493164,
+      "initialRequests": 5,
+      "largestChunkBytes": 792904,
+      "initialChunks": [
+        {
+          "name": "assets/rolldown-runtime-hePW80VL.js",
+          "bytes": 716
+        },
+        {
+          "name": "assets/vendor-markdown-XX_9Uqpb.js",
+          "bytes": 154075
+        },
+        {
+          "name": "assets/vendor-react-CR5VJ85Q.js",
+          "bytes": 218840
+        },
+        {
+          "name": "assets/vendor-ui-CLjM14nU.js",
+          "bytes": 202335
+        },
+        {
+          "name": "assets/index-BifVee7J.js",
+          "bytes": 792904
+        }
+      ]
+    },
+    "compression": "Go compress/gzip BestSpeed, matching server setting",
+    "checks": {
+      "staticGraphAcyclic": true,
+      "allSupportingChunksPreloaded": true,
+      "cssUnchanged": true,
+      "diagramSha256Unchanged": "a0aacb8408fb1fad3cf8707e4eb615fe139c2e6318d2b3dc2b7ec399b9a0e715",
+      "finalBuildMatchesMeasuredChunks": true
+    },
+    "runtimeVerification": "Unverified: native preview cannot reach local test server; temporary compiled-entry DOM probe stopped after three resolution failures."
+  }
+}
