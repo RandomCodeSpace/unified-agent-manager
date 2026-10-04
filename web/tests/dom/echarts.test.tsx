@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { getInstanceByDom } from 'echarts/core';
 import type { EChartsOption } from 'echarts';
@@ -14,20 +14,6 @@ test('the actual SVG renderer draws chart data, replaces refreshed rows, resizes
   await waitFor(() => expect(host.querySelector('svg path')).toBeTruthy());
   expect(host.textContent).toContain('Monday');
   expect(screen.queryByRole('status')).toBeNull();
-  const wheel = vi.fn();
-  host.addEventListener('wheel', wheel);
-  const plain = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100 });
-  host.dispatchEvent(plain);
-  expect(plain.defaultPrevented).toBe(false);
-  expect(wheel).not.toHaveBeenCalled();
-  // happy-dom's WheelEvent extends UIEvent and omits MouseEvent's modifier fields.
-  for (const key of ['ctrlKey', 'metaKey']) {
-    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100 });
-    Object.defineProperty(event, key, { value: true });
-    host.dispatchEvent(event);
-  }
-  expect(wheel).toHaveBeenCalledTimes(2);
-  host.removeEventListener('wheel', wheel);
   const drawing = getInstanceByDom(host)!;
   drawing.dispatchAction({ type: 'dataZoom', start: 25, end: 75 });
   expect((drawing.getOption().dataZoom as { start: number; end: number }[])[0]).toMatchObject({ start: 25, end: 75 });
@@ -46,12 +32,55 @@ test('the actual SVG renderer draws chart data, replaces refreshed rows, resizes
   expect(drawing.isDisposed()).toBe(true);
 });
 
+test('wheel zoom waits for a stationary mouse and yields to ongoing conversation scrolling', async () => {
+  const chart = { title: 'Trend', kind: 'line' as const, labels: ['a', 'b'], series: [{ name: 'commits', values: [2, 8] }] };
+  const { unmount } = render(<EChart option={chartOption(chart, { width: 480, height: 240 })} width={480} height={240} label="Trend chart" />);
+  const host = screen.getByRole('img');
+  await waitFor(() => expect(getInstanceByDom(host)).toBeTruthy());
+  const wheel = vi.fn();
+  host.addEventListener('wheel', wheel);
+  const scroll = () => {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100 });
+    host.dispatchEvent(event);
+    return event;
+  };
+  vi.useFakeTimers();
+  try {
+    fireEvent.pointerEnter(host, { pointerType: 'mouse' });
+    act(() => vi.advanceTimersByTime(400));
+    expect(scroll().defaultPrevented).toBe(false);
+    expect(wheel).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(400));
+    fireEvent.scroll(document);
+    act(() => vi.advanceTimersByTime(400));
+    expect(scroll().defaultPrevented).toBe(false);
+    expect(wheel).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(500));
+    scroll();
+    expect(wheel).toHaveBeenCalledTimes(1);
+    fireEvent.pointerMove(host, { pointerType: 'mouse' });
+    expect(scroll().defaultPrevented).toBe(false);
+    expect(wheel).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(500));
+    fireEvent.pointerLeave(host, { pointerType: 'mouse' });
+    scroll();
+    expect(wheel).toHaveBeenCalledTimes(1);
+    fireEvent.pointerEnter(host, { pointerType: 'touch' });
+    act(() => vi.advanceTimersByTime(500));
+    scroll();
+    expect(wheel).toHaveBeenCalledTimes(1);
+    fireEvent.pointerEnter(host, { pointerType: 'mouse' });
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
 test('zoom buttons use the current range, stay within the data and reset after panning', async () => {
   const user = userEvent.setup();
   const chart = { title: 'Trend', kind: 'line' as const, labels: Array.from({ length: 21 }, (_, i) => String(i)), series: [{ name: 'commits', values: Array.from({ length: 21 }, (_, i) => i) }] };
   render(<EChart option={chartOption(chart, { width: 800, height: 320 })} width={800} height={320} label="Trend chart" zoomControls legend={<ul aria-label="Series"><li>commits</li></ul>} />);
   const host = screen.getByRole('img', { name: 'Trend chart' });
-  const zoomIn = screen.getByRole('button', { name: 'Zoom in on chart' });
+  const zoomIn = await screen.findByRole('button', { name: 'Zoom in on chart' });
   await waitFor(() => expect(zoomIn.hasAttribute('disabled')).toBe(false));
   const drawing = getInstanceByDom(host)!;
   const range = () => (drawing.getOption().dataZoom as { type: string; start: number; end: number }[])[0];
@@ -80,6 +109,44 @@ test('a sparkline uses the same real renderer without axes, labels or zoom contr
   expect(host.textContent).not.toContain('Monday');
   expect(host.querySelectorAll('text')).toHaveLength(0);
   expect(screen.queryByRole('group', { name: 'Chart zoom' })).toBeNull();
+});
+
+test('menu ranges follow nested saved options, refreshes, and independent axes', async () => {
+  const user = userEvent.setup();
+  const container = document.createElement('div');
+  document.body.append(container);
+  const option = (nested: boolean) => chartOption({
+    kind: 'echarts', title: 'Ranges', labels: [], series: [],
+    options: nested ? { baseOption: {
+      xAxis: { type: 'category', data: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] },
+      yAxis: { type: 'value' }, series: [{ type: 'line', data: [1, 2, 3, 4, 5] }],
+      dataZoom: [{ type: 'slider', start: 25, end: 75 }],
+    } } : {
+      xAxis: { type: 'category', data: ['June', 'July', 'August', 'September', 'October'] },
+      yAxis: { type: 'value' }, series: [{ type: 'line', data: [1, 2, 3, 4, 5] }],
+      dataZoom: [{ type: 'inside', xAxisIndex: 0 }, { type: 'slider', yAxisIndex: 0 }, { type: 'slider', xAxisIndex: [0] }],
+    },
+  }, { width: 480, height: 240 });
+  const { rerender, unmount } = render(<EChart option={option(true)} width={480} height={240} label="Ranges" zoomControls controlsContainer={container} />);
+  try {
+    expect((await screen.findByRole('slider', { name: 'Start of chart range' })).getAttribute('aria-valuetext')).toBe('Tue');
+    expect(screen.getByRole('slider', { name: 'End of chart range' }).getAttribute('aria-valuetext')).toBe('Thu');
+    rerender(<EChart option={option(false)} width={480} height={240} label="Ranges" zoomControls controlsContainer={container} />);
+    const start = await screen.findByRole('slider', { name: 'Start of chart range 1' });
+    expect(start.getAttribute('aria-valuetext')).toBe('June');
+    const second = screen.getByRole('slider', { name: 'Start of chart range 2' });
+    expect(screen.getAllByRole('slider')).toHaveLength(4);
+    second.focus();
+    await user.keyboard('{ArrowRight}');
+    const drawing = getInstanceByDom(screen.getByRole('img', { name: 'Ranges' }))!;
+    const ranges = () => drawing.getOption().dataZoom as { start: number; end: number }[];
+    expect(ranges()[0].start).toBe(0);
+    expect(ranges()[1].start).toBe(1);
+    await user.click(screen.getByRole('button', { name: 'Reset chart zoom' }));
+    expect(ranges().every((range) => range.start === 0 && range.end === 100)).toBe(true);
+    act(() => drawing.dispatchAction({ type: 'dataZoom', dataZoomIndex: 0, start: 25, end: 75 }));
+    expect(start.getAttribute('aria-valuetext')).toBe('July');
+  } finally { unmount(); container.remove(); }
 });
 
 const category = { xAxis: { type: 'category' as const, data: ['a', 'b'] }, yAxis: { type: 'value' as const } };

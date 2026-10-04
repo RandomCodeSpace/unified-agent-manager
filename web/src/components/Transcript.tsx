@@ -413,7 +413,7 @@ function liveAtFoot(items: Item[]): boolean {
 
 /**
  * The live line at the foot of a running turn, where new output lands: the working mark and a
- * shimmering gerund ("Untangling…") while prose streams or the agent is between steps. The verb
+ * steady gerund ("Untangling…") while prose streams or the agent is between steps. The verb
  * is picked from the id of the user message that began the turn, so it holds for the whole turn
  * and comes back the same after a reload. It steps aside while the last row is already live,
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
@@ -436,8 +436,8 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
       <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
         {current || (
           <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-            {text && <WorkingMark />}
-            <span className={cn('min-w-0 truncate', (!step || step.shimmer) && 'animate-shimmer motion-reduce:animate-none', step?.tone === 'attention' && 'text-attention')} title={step?.label}>
+            {text && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
+            <span className={cn('min-w-0 truncate', compacting ? 'text-badge-violet' : step?.tone === 'attention' && 'text-warning')} title={step?.label}>
               {text}
             </span>
           </div>
@@ -466,7 +466,7 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
       {thought ? (
         <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
           <WorkingMark />
-          <span className="animate-shimmer motion-reduce:animate-none">Thinking…</span>
+          <span>Thinking…</span>
         </div>
       ) : (
         <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} />
@@ -513,8 +513,8 @@ export function WorkingLabel({ working, compacting = false, since, items, identi
     <Appear show={working}>
       {working && <output className="sr-only">{compacting ? 'Compacting the conversation' : 'Busy'}</output>}
       <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
-        <WorkingMark />
-        <span className="animate-shimmer whitespace-nowrap motion-reduce:animate-none">{compacting ? 'Compacting the conversation' : turnVerb(turnId)}…</span>
+        <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />
+        <span className={cn('whitespace-nowrap', compacting && 'text-badge-violet')}>{compacting ? 'Compacting the conversation' : turnVerb(turnId)}…</span>
         {/* Under an hour the time is at most three characters wide: the slot holds them all. */}
         {elapsed && <span className="min-w-[3ch] text-right tabular-nums text-faint">{elapsed}</span>}
       </span>
@@ -1249,7 +1249,7 @@ const THINKING_KEY = 'uam.thinking:';
 export { duration };
 
 /**
- * A reasoning item: one 24px row, "Thinking…" shimmering while it streams and "Thought for
+ * A reasoning item: one 24px row, a quiet ring and "Thinking…" while it streams and "Thought for
  * 12s" once the next item's timestamp is known, which opens the text (`muted`, behind a
  * hairline rule) on click with a height collapse. Nothing of the text shows while it is
  * closed, so streaming never resizes the row. The choice is remembered per item for the
@@ -1275,8 +1275,8 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
   return (
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
-        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />
-        <span className={cn('tabular-nums', streaming && 'animate-shimmer motion-reduce:animate-none')}>{thinkingLabel(streaming, took)}</span>
+        {streaming ? <WorkingMark className="size-3" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
+        <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>
         <BodyNotice body={body} retry={retry} />

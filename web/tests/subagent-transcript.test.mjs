@@ -5,8 +5,6 @@ import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
@@ -119,31 +117,6 @@ test('a compact turn line with nothing counted yet draws no bare chevron; the fo
   assert.doesNotMatch(running, /activity of this turn/);
   assert.match(running, /animate-rise[\s\S]*>bash<[\s\S]*, running/);
 });
-
-// Exercise the actual table override through react-markdown without importing the app shell.
-test('Markdown keeps native table semantics inside a keyboard reachable scroll region', async () => {
-  const common = ts.createSourceFile('common.tsx', await readFile(new URL('../src/components/common.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let table;
-  const visit = node => {
-    if (ts.isVariableDeclaration(node) && node.name.getText(common) === 'mdComponents') {
-      table = node.initializer.properties.find(property => property.name?.getText(common) === 'table');
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(common);
-  const scope = {};
-  if (table) runInNewContext(ts.transpileModule(`export const components = { ${table.getText(common)} };`, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, { exports: scope, require });
-  const markdown = '| Name | Value |\n| --- | ---: |\n| original path | ' + 'very-long-value'.repeat(20) + ' |';
-  const rendered = renderToStaticMarkup(React.createElement(ReactMarkdown, { remarkPlugins: [remarkGfm], components: scope.components }, markdown));
-  assert.match(rendered, /<div[^>]*role="region"[^>]*aria-label="Table"/);
-  assert.match(rendered, /tabindex="0"/);
-  assert.match(rendered, /overflow-x-auto/);
-  assert.match(rendered, /<table[^>]*><thead><tr><th>Name<\/th><th style="text-align:right">Value<\/th>/);
-  assert.match(rendered, /<tbody><tr><td>original path<\/td>/);
-  assert.match(rendered, new RegExp('very-long-value'.repeat(20)));
-  assert.doesNotMatch(rendered, /role="table"|display:block|overflow-hidden/);
-});
-
 
 test('same-ID main and child turns keep disclosure state and DOM targets independent', () => {
   const mainItems = [

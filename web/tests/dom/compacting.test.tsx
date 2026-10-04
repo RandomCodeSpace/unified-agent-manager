@@ -7,7 +7,7 @@ test('while the conversation compacts, the working label and the state chip say 
   const { container } = render(<WorkingLabel working compacting items={[]} />);
   expect(container.textContent).toContain('Compacting the conversation…');
   expect(screen.getByRole('status').textContent).toBe('Compacting the conversation');
-  render(<StateMark state="working" label text="Compacting…" />);
+  render(<StateMark state="working" label compacting text="Compacting…" />);
   expect(screen.getByText('Compacting…')).toBeTruthy();
   expect(screen.queryByText('Working')).toBeNull();
 });

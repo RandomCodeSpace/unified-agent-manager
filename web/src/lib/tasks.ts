@@ -112,44 +112,44 @@ function span(ms: number): string {
 export const QUIET_MS = 3 * 60_000;
 
 /**
- * A Task row's one plain line: what waits for you, or how the Task stands. Working says only how
- * long it has been quiet (from the provider's last event), never what it is doing.
+ * A compact row label plus the full detail for its hover text and the Home view.
+ * Working detail reports quiet time from the provider's last event, never invented activity.
  */
-export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): { text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' } {
-  if (s.stage === 'settled') return { text: 'Settled', tone: 'muted' };
-  if (s.stage === 'archived') return { text: 'Archived', tone: 'muted' };
+export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' } {
+  if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
+  if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
   const ask = s.ask;
   if (ask?.kind === 'permission') {
     const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
-    return { text: `Wants your OK to ${what}`, tone: 'attention' };
+    return { label: 'Input', text: `Wants your OK to ${what}`, tone: 'attention' };
   }
-  if (ask?.kind === 'question') return { text: `Asks: ${ask.title}`, tone: 'attention' };
-  if (s.state === 'awaiting_permission') return { text: 'Wants your OK to continue', tone: 'attention' };
-  if (s.state === 'awaiting_answer' || hasPending(s)) return { text: 'Has a question for you', tone: 'attention' };
+  if (ask?.kind === 'question') return { label: 'Input', text: `Asks: ${ask.title}`, tone: 'attention' };
+  if (s.state === 'awaiting_permission') return { label: 'Input', text: 'Wants your OK to continue', tone: 'attention' };
+  if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Input', text: 'Has a question for you', tone: 'attention' };
   const state = shownState(s);
   switch (state) {
     case 'starting':
-      return { text: 'Starting', tone: 'accent' };
+      return { label: 'Starting', text: 'Starting', tone: 'accent' };
     case 'working': {
-      if (s.compacting) return { text: 'Compacting…', tone: 'accent' };
+      if (s.compacting) return { label: 'Compacting', text: 'Compacting…', tone: 'accent' };
       const quiet = now - Date.parse(s.event_at ?? s.updated_at);
-      return { text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
+      return { label: 'Working', text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }
     // The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished.
     case 'completed':
-      if (unread) return { text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
-      return { text: s.outcome || 'Finished', tone: 'muted' };
+      if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
+      return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
     case 'failed':
-      return { text: 'Stopped with an error', tone: 'error' };
+      return { label: 'Error', text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':
-      return { text: 'Interrupted before it finished', tone: 'warning' };
+      return { label: 'Interrupted', text: 'Interrupted before it finished', tone: 'warning' };
     // uam names what stopped it when it was not you (a routine's time limit).
     case 'cancelled':
-      return { text: s.state_detail || 'You stopped it', tone: 'muted' };
+      return { label: 'Stopped', text: s.state_detail || 'You stopped it', tone: 'muted' };
     case 'closed':
-      return { text: 'Conversation closed', tone: 'muted' };
+      return { label: 'Closed', text: 'Conversation closed', tone: 'muted' };
     default:
-      return { text: 'Waiting for your message', tone: 'muted' };
+      return { label: 'Idle', text: 'Waiting for your message', tone: 'muted' };
   }
 }
 

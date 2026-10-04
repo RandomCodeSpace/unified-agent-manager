@@ -153,40 +153,12 @@
   --spacing-picker-phone: 40dvh;
 
   --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
-  --animate-spin: spin 0.9s linear infinite;
-  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-spin: spin 1s linear infinite;
   --animate-flash: flash 1.4s var(--ease-app);
   --animate-rise: rise 240ms var(--ease-app);
   --animate-fade-in: fade-in 160ms var(--ease-app);
   --animate-slide-in: slide-in 240ms var(--ease-app);
-  --animate-orbit: orbit 1.6s linear infinite;
-  --animate-breathe: breathe 1.6s ease-in-out infinite;
-  --animate-sweep: sweep 1.4s ease-in-out infinite;
 
-  /* The working mark: a satellite circles the core while the core breathes (1.6s, in step). */
-  @keyframes orbit {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @keyframes breathe {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.45;
-    }
-  }
-  /* Skeleton shimmer: one highlight band crosses the placeholder (transform only). */
-  @keyframes sweep {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(100%);
-    }
-  }
   @keyframes pulse-dot {
     0%,
     100% {
@@ -199,15 +171,6 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
-    }
-  }
-  @keyframes shimmer {
-    0%,
-    100% {
-      color: var(--color-muted);
-    }
-    50% {
-      color: var(--color-body);
     }
   }
   @keyframes flash {
@@ -490,21 +453,6 @@
     background: linear-gradient(to bottom, transparent, var(--color-canvas) 36px);
   }
 
-  /* Skeleton (DESIGN.md Placeholder and loading states): a few `sunken` bars while a list or a
-     transcript first loads, with one highlight band sweeping across the whole group (transform only). */
-  .skeleton {
-    position: relative;
-    overflow: hidden;
-  }
-  .skeleton::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: linear-gradient(to right, transparent 20%, rgba(255, 255, 255, 0.7) 50%, transparent 80%);
-    animation: var(--animate-sweep);
-  }
-
   /* Markdown from providers (react-markdown output; utilities cannot reach inside it). An unbroken
      run (a data URL, a hash) wraps instead of widening the column; code blocks keep their own scroll. */
   .md {
@@ -613,6 +561,30 @@
     font-weight: 600;
     color: var(--color-ink);
   }
+  .data-table,
+  .md .data-table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .data-table :is(th, td),
+  .md .data-table :is(th, td) {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--color-hairline);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .data-table thead th {
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-canvas);
+    font-weight: 500;
+  }
+  .data-table tbody th { font-weight: 400; }
+  .data-table tbody tr:last-child > * { border-bottom: 0; }
   .md hr {
     margin: 12px 0;
     border: 0;

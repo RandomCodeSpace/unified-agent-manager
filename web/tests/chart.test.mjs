@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chartCsv, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
+import { init } from '../src/lib/echarts.ts';
 
 const chart = {
   title: 'Commits "per" day',
@@ -12,6 +13,86 @@ const chart = {
   labels: ['09-01', '09-02', '09-03'],
   series: [{ name: 'commits', values: [3, 7, 2] }],
 };
+
+const pie = {
+  ...chart, kind: 'echarts', options: {
+    legend: { left: 'left', orient: 'vertical', top: 'middle' },
+    series: [{ type: 'pie', center: ['62%', '52%'], radius: ['38%', '68%'],
+      label: { formatter: '{b}\\n{d}%' },
+      data: [{ name: 'TypeScript', value: 70 }, { name: 'Go', value: 29 }, { name: 'Other', value: 1 }],
+    }],
+  },
+};
+
+test('saved label formatters display escaped newlines without rewriting chart data', () => {
+  const options = { ...pie.options, dataset: { source: [{ label: { formatter: '{b}\\n{d}%' }, name: 'literal\\nname' }] } };
+  const before = structuredClone(options);
+  const drawing = chartOption({ ...pie, options }, { width: 360, height: 260 });
+  assert.equal(drawing.series[0].label.formatter, '{b}\n{d}%');
+  assert.deepEqual(drawing.dataset.source, options.dataset.source);
+  assert.deepEqual(options, before);
+});
+
+test('a single pie moves its side legend below on phones and restores the desktop layout', () => {
+  const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 360, height: 260 });
+  const before = structuredClone(pie.options);
+  try {
+    drawing.setOption(chartOption(pie, { width: 360, height: 260 }));
+    const mobile = drawing.getOption();
+    assert.equal(mobile.legend[0].orient, 'horizontal');
+    assert.equal(mobile.legend[0].bottom, 0);
+    assert.deepEqual(mobile.series[0].center, ['50%', '50%']);
+    assert.equal(mobile.series[0].label.overflow, 'break');
+    assert.ok(!drawing.renderToSVGString().includes('\\n'));
+    assert.deepEqual(mobile.series[0].data, pie.options.series[0].data);
+    drawing.resize({ width: 840, height: 320 });
+    drawing.setOption(chartOption(pie, { width: 840, height: 320 }), { notMerge: true });
+    const desktop = drawing.getOption();
+    assert.equal(desktop.legend[0].orient, 'vertical');
+    assert.deepEqual(desktop.series[0].center, pie.options.series[0].center);
+    assert.deepEqual(desktop.series[0].radius, pie.options.series[0].radius);
+    assert.deepEqual(pie.options, before);
+  } finally { drawing.dispose(); }
+  const media = [{ query: { maxWidth: 480 }, option: { series: [{ center: ['40%', '40%'] }] } }];
+  const authored = chartOption({ ...pie, options: { ...pie.options, media } }, { width: 360, height: 260 });
+  assert.deepEqual(authored.media, media);
+  assert.deepEqual(authored.series[0].center, pie.options.series[0].center);
+});
+
+test('horizontal bars use the available width, contain labels and zoom categories', () => {
+  const options = {
+    grid: { left: '28%', right: '12%', top: '5%', bottom: '7%', containLabel: true },
+    xAxis: { type: 'value', name: 'Million tokens' },
+    yAxis: { type: 'category', inverse: true, axisLabel: { fontSize: 10 },
+      data: ['claude-opus-5-5', 'gpt-6-astra', 'claude-haiku-4-5-20251001', 'ollama/deepseek-v4.1-flash'] },
+    series: [{ type: 'bar', data: [5430.5, 2115.6, 0.7, 0.1] }],
+  };
+  const before = structuredClone(options);
+  for (const width of [280, 360, 840, 1600]) {
+    const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width, height: 260 });
+    try {
+      drawing.setOption(chartOption({ ...chart, kind: 'echarts', options }, { width, height: 260 }));
+      const rect = drawing.getModel().getComponent('grid').coordinateSystem.getRect();
+      assert.ok(rect.width >= width * (width < 480 ? 0.45 : 0.7), `only ${rect.width} plot pixels at width ${width}`);
+      const mobile = drawing.getOption();
+      assert.equal(mobile.xAxis[0].nameLocation, 'middle');
+      assert.equal(mobile.xAxis[0].axisLabel.hideOverlap, true);
+      assert.deepEqual(mobile.yAxis[0].data, options.yAxis.data);
+      assert.deepEqual(mobile.series[0].data, options.series[0].data);
+      assert.equal(mobile.dataZoom[0].yAxisIndex, 0);
+      drawing.dispatchAction({ type: 'dataZoom', start: 0, end: 50 });
+      assert.deepEqual(drawing.getModel().getComponent('yAxis').axis.scale.getExtent(), [0, 2]);
+      assert.equal(drawing.getModel().getComponent('xAxis').axis.scale.getExtent()[1], 6000);
+    } finally { drawing.dispose(); }
+  }
+  assert.deepEqual(options, before);
+  const saved = { ...chart, kind: 'echarts', options };
+  const media = [{ query: { maxWidth: 480 }, option: { grid: { left: 10 } } }];
+  const authored = chartOption({ ...saved, options: { ...options, media } }, { width: 360, height: 260 });
+  assert.deepEqual(authored.grid, options.grid);
+  const zoom = [{ type: 'inside', xAxisIndex: 0, start: 10, end: 90 }];
+  assert.equal(chartOption({ ...saved, options: { ...options, dataZoom: zoom } }, { width: 360, height: 260 }).dataZoom[0].xAxisIndex, 0);
+});
 
 test('a completed uam_chart call stands in the answer as a chart card; a refused one folds', () => {
   const call = { id: 'call-1', kind: 'tool', time: '2026-10-01T10:00:00Z', tool: { name: 'uam_chart', status: 'completed' } };
@@ -80,6 +161,37 @@ test('dataset columns named like rendering controls remain unchanged', () => {
     assert.notEqual(drawn, source, 'the render options keep a separate copy of the stored data');
     assert.equal(drawing.series[0].animation, false, 'actual rendering options are still normalized');
   }
+});
+
+test('saved range sliders never draw a second control bar and keep header zoom usable', () => {
+  for (const dataZoom of [
+    [{ type: 'inside', xAxisIndex: 0 }, { type: 'slider', xAxisIndex: 0, start: 10, end: 90, height: 24, bottom: 5 }],
+    { type: 'slider', xAxisIndex: 0, start: 10, end: 90, filterMode: 'none' },
+    { xAxisIndex: 0, start: 10, end: 90 },
+  ]) {
+    const options = { xAxis: { type: 'category', data: chart.labels }, yAxis: { type: 'value' }, series: [{ type: 'line', data: [3, 7, 2] }], dataZoom };
+    const saved = structuredClone(options);
+    const rendered = chartOption({ ...chart, kind: 'echarts', options }, { width: 900, height: 300 });
+    assert.ok(rendered.dataZoom.every(z => z.type === 'inside' || z.show === false));
+    const index = rendered.dataZoom.findIndex(z => z.type === 'inside');
+    assert.ok(index >= 0, 'the header controls and wheel still have an inside zoom');
+    const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 900, height: 300 });
+    try {
+      drawing.setOption(rendered);
+      drawing.dispatchAction({ type: 'dataZoom', dataZoomIndex: index, start: 25, end: 75 });
+      assert.equal(drawing.getOption().dataZoom[index].start, 25);
+      assert.equal(drawing.getOption().dataZoom[index].end, 75);
+    } finally { drawing.dispose(); }
+    assert.deepEqual(options, saved, 'rendering leaves saved ranges and options unchanged');
+  }
+});
+
+test('responsive and base options cannot restore visible range sliders', () => {
+  const options = { baseOption: { dataZoom: { type: 'slider', start: 20, end: 80 } }, media: [{ query: { maxWidth: 480 }, option: { dataZoom: [{ type: 'inside' }, { type: 'slider', show: true }] } }] };
+  const rendered = chartOption({ ...chart, kind: 'echarts', options }, { width: 360, height: 260 });
+  assert.equal(rendered.baseOption.dataZoom[0].type, 'inside');
+  assert.equal(rendered.baseOption.dataZoom[0].start, 20);
+  assert.equal(rendered.media[0].option.dataZoom[1].show, false);
 });
 
 test('series colours are fixed: several take the palette in order, a lone one the tone its name hashes to', () => {

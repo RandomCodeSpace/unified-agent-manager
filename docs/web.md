@@ -439,6 +439,14 @@ sign-outs are logged without the token.
   most 5 Tasks, its subagents' calls included. Every Task it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Task can call the tool.
+- **Tables**: Markdown tables fill the message width. Each completed table
+  has header controls for sorting and a contains filter per column. Filters
+  combine; **Clear filters** restores all rows. Sorting cycles through ascending,
+  descending and original order. Plain numbers sort numerically; IDs, dates and
+  values with units remain text. Tables over 100 rows are paged, with sorting and
+  filtering applied to all rows. A table still streaming stays plain until complete.
+  These controls only change your view; they make no request to the agent and do
+  not change the stored message or its Markdown export.
 - **Charts**: ask a Task a data question ("chart commits per day this
   month") and its agent can answer with a chart through the `uam_chart`
   tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
@@ -457,6 +465,15 @@ sign-outs are logged without the token.
   colour: several series take blue, orange, green and purple in order, and a
   chart of one series takes the colour its name picks, so the same measure
   keeps its colour across charts and refreshes.
+  **Table** uses the same full-width sorting and filtering controls. **Chart**
+  returns to the drawing; table filters do not change the chart. Only the selected
+  view is mounted. Heatmaps with a single series of Cartesian category/value
+  tuples or calendar date/value pairs also offer Table. Advanced charts using one
+  explicit, column-oriented dataset with scalar rows expose that source as a table.
+  Other or ambiguous specifications retain **Data**, the saved JSON, and advanced
+  charts keep **Copy JSON**. Switching views uses the already fetched chart data.
+  The tool tells the agent to explain the result without repeating a Markdown
+  table, but UAM does not remove model-written tables from the transcript.
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.
@@ -468,8 +485,13 @@ sign-outs are logged without the token.
   with no agent and no model call; it works at most once a minute per
   chart. Opening the panel refreshes each chart whose rows are more than an
   hour old. A failed refresh keeps the last rows and shows why.
-  Full charts support zooming and panning; Ctrl/Cmd plus the mouse wheel
-  zooms without taking over normal page scrolling. Series can be toggled
+  Conversation charts have one **Chart tools** button in the header. Tap,
+  click or hover to open Table/Data, Copy, Pin, and available zoom/reset controls.
+  Range handles live in this menu too, with the selected category/date endpoints;
+  saved chart sliders no longer add a control bar beneath the drawing.
+  Full charts support zooming and panning. Pause the mouse over the chart
+  for half a second to enable wheel zoom; moving the pointer or scrolling
+  the conversation restarts that pause. Series can be toggled
   through the legend. Small pinned previews keep their compact view.
   For other chart families, `uam_chart` accepts `kind: "echarts"` with an
   `options` JSON object, or a command with `format: "json"` that prints that
@@ -578,7 +600,7 @@ sign-outs are logged without the token.
   subagent.
 - **Approvals and questions**: when the provider asks for permission or asks a
   question, a card appears in the conversation and the Task's row moves to
-  "Needs you" in the sidebar, with what it asks on its status line; open the
+  the attention items at the top of the sidebar, labelled "Input"; open the
   Task to answer (see Sidebar). Nothing is approved
   automatically unless you turned on yolo for that Task, and questions always
   wait for you. If no browser is connected, the request waits; the first
@@ -743,8 +765,8 @@ sign-outs are logged without the token.
   **Suggest replies** turns it off.
 - **Outcome line**: when a turn completes, the Task gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
-  Task's row in the sidebar shows it as its status line ("Ready for review:"
-  first while you have not opened the Task since), and the Task header
+  Task's row in the sidebar keeps it in its hover text ("Review" is the
+  visible status until you open the Task, then "Finished"), and the Task header
   beside its state (not on a phone). Everything after the opening phrase
   is the finish card's own reading of the turn (the service reads it once,
   for both): the files the Task's edit tools changed in the turn (the main
@@ -1228,30 +1250,31 @@ sign-outs are logged without the token.
   the warning offers "Set up git here", which runs `git init` in the project
   folder (only when it is in no repository) and brings Changes and Files
   back.
-- **Sidebar**: active Tasks across every Project are grouped by what they
-  need from you, each group with its count, with collapsible "Settled" and
-  "Archived" shelves at the foot of the list:
-  - **Needs you**: a question or a permission request waits, or the Task
-    failed or was interrupted and you have not opened it since.
-  - **Ready for review**: the Task finished and you have not opened it since.
-  - **Working**: a turn, or a subagent, is still running.
-  - **Idle**: everything else.
+- **Loading indicators**: task activity, subagents, tool calls, request loading
+  and busy buttons share a quiet ring. Labels and skeleton bars stay still.
+  Brief request waits keep the existing 300ms delay. Motion → Match system
+  makes the ring static when the OS requests reduced motion.
+- **Sidebar**: all unsettled Tasks across every Project share one flat list
+  without group headings. Each row's status line says whether it needs
+  input, is ready for review, is running, or is idle. Tasks needing attention
+  come first, followed by review, running, and idle Tasks. Collapsible
+  "Settled" and "Archived" shelves remain at the foot of the list.
 
   "Opened since" is tracked per browser: a Task you never opened in this
   browser counts as unread once it changes after your first visit. The open
   Task is read only while the page is visible: what it does while the tab is
   in the background stays unread until you come back. Marks of deleted
   Tasks are dropped.
-  A row shows the Project badge, the Task's name, the lines it changed
-  (`+N −M`, when known) and how long ago it changed, then one plain status
-  line: "Asks: …" with the question, "Wants your OK to …" with what a
-  permission is for, "Finished, ready for your review", "Stopped with an
-  error", "Compacting…" while the conversation is compacted, or "Working ·
-  quiet 12m" once Copilot has reported nothing for a few minutes (the status
-  never shows what the agent is doing). A row is two lines at most: a long
-  status line is cut short, and hovering the row shows all of it. Hovering an
+  A row first shows the Project badge, Project name, and a short status
+  with an icon: "Input", "Starting", "Working", "Compacting", "Review",
+  "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
+  Input and Interrupted are amber; Working/Starting blue; Compacting violet;
+  Review teal; Finished green; Error red; inactive states gray.
+  The second line shows the Task title, the Project branch in muted text,
+  and how long ago the Task changed. Hovering the row shows the full request
+  or outcome, quiet duration, branch, and `+N −M` line counts when known. Hovering an
   active row that can settle shows Settle.
-  - **Alt+J / Alt+K** open the next / previous Task in "Needs you", wrapping
+  - **Alt+J / Alt+K** open the next / previous Task needing attention, wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge and the sidebar button on a

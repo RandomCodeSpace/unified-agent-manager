@@ -68,7 +68,7 @@ export function labelInterval(labels: string[], width: number): number {
 
 /** A bar chart keeps its first series as bars and the others as lines, matching saved charts. */
 export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y_label' | 'labels' | 'series' | 'options'>, look: ChartLook, hidden?: ReadonlySet<string>): EChartsOption {
-  if (chart.kind === 'echarts') return specOption(chart.options ?? {});
+  if (chart.kind === 'echarts') return specOption(chart.options ?? {}, look);
   const values = chart.series.flatMap((s) => s.values);
   const lo = Math.min(0, ...values);
   const hi = Math.max(lo + 1, niceCeil(Math.max(0, ...values)));
@@ -113,7 +113,16 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
 }
 
 /** Saved specifications are validated JSON; text tooltips and static rendering apply at every scope. */
-function specOption(options: EChartsOption): EChartsOption {
+function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
+  const zoomOptions = (value: unknown) => {
+    const zooms = (Array.isArray(value) ? value : [value]).filter((z): z is Record<string, unknown> => !!z && typeof z === 'object' && !Array.isArray(z));
+    const hasInside = zooms.some((z) => z.type === 'inside');
+    // The card owns controls. Keep linked sliders hidden; a slider-only spec
+    // becomes an inside zoom so the header buttons and guarded wheel still work.
+    return zooms.map((z) => z.type === 'inside' || !hasInside
+      ? { ...z, type: 'inside', zoomOnMouseWheel: true, moveOnMouseWheel: false }
+      : { ...z, show: false });
+  };
   const safe = (value: unknown, dataset = false): unknown => {
     if (Array.isArray(value)) return value.map((item) => safe(item, dataset));
     if (!value || typeof value !== 'object') return value;
@@ -122,6 +131,11 @@ function specOption(options: EChartsOption): EChartsOption {
       dataset && key === 'source' ? structuredClone(v) : safe(v, key === 'dataset'),
     ]));
     if ('animation' in object) object.animation = false;
+    if ('dataZoom' in object) object.dataZoom = zoomOptions(object.dataZoom);
+    // Some saved model-authored templates escaped the JSON newline twice.
+    // Decode label templates only; names, values and dataset source stay literal.
+    const label = object.label as { formatter?: unknown } | undefined;
+    if (label && typeof label.formatter === 'string') label.formatter = label.formatter.replaceAll('\\n', '\n');
     if (object.tooltip && typeof object.tooltip === 'object' && !Array.isArray(object.tooltip)) {
       object.tooltip = { ...object.tooltip, renderMode: 'richText', confine: true };
     }
@@ -131,17 +145,41 @@ function specOption(options: EChartsOption): EChartsOption {
   };
   const option = safe(options) as EChartsOption;
   const series = option.series ? Array.isArray(option.series) ? option.series : [option.series] : [];
+  const legends = option.legend ? Array.isArray(option.legend) ? option.legend : [option.legend] : [];
+  // Reuse the measured chart width and ECharts' label bounds. Preserve authored
+  // responsive layouts and multi-pie/coordinate layouts instead of rearranging them.
+  const smallPie = !look.spark && look.width < 480 && !option.media && legends.length <= 1 && series.length === 1
+    && series[0].type === 'pie' && (!series[0].coordinateSystem || series[0].coordinateSystem === 'none');
+  const xAxes = option.xAxis ? Array.isArray(option.xAxis) ? option.xAxis : [option.xAxis] : [];
+  const yAxes = option.yAxis ? Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis] : [];
+  const grids = option.grid ? Array.isArray(option.grid) ? option.grid : [option.grid] : [];
+  const valueAxis = xAxes[0]?.type === 'value' ? xAxes[0] : undefined;
+  const categoryAxis = yAxes[0]?.type === 'category' ? yAxes[0] : undefined;
+  const horizontalBar = !option.media && !option.baseOption && !option.title && legends.length === 0 && grids.length <= 1
+    && xAxes.length === 1 && yAxes.length === 1 && !!valueAxis && !!categoryAxis
+    && series.length === 1 && series[0].type === 'bar' && (!series[0].coordinateSystem || series[0].coordinateSystem === 'cartesian2d');
+  const fitBar = !look.spark && horizontalBar;
   const zoom = option.dataZoom ? Array.isArray(option.dataZoom) ? option.dataZoom : [option.dataZoom]
-    : option.xAxis ? [{ type: 'inside' as const, xAxisIndex: 0, filterMode: 'none' as const, moveOnMouseMove: true }] : [];
+    : option.xAxis ? [{ type: 'inside' as const, ...(horizontalBar ? { yAxisIndex: 0 } : { xAxisIndex: 0 }), filterMode: 'none' as const, moveOnMouseMove: true, zoomOnMouseWheel: true, moveOnMouseWheel: false }] : [];
   return {
     ...option,
+    // Authored percentage margins plus containLabel can leave only a few pixels
+    // for bars. Bound the whole drawing and give labels a limited share.
+    grid: fitBar ? { ...grids[0], left: 8, right: 8, top: 8, bottom: 8, width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' } : option.grid,
+    xAxis: fitBar && valueAxis ? { ...valueAxis, nameLocation: 'middle', nameGap: 28, splitNumber: look.width < 480 ? 2 : valueAxis.splitNumber ?? 5, axisLabel: { ...valueAxis.axisLabel, hideOverlap: true } } : option.xAxis,
+    yAxis: fitBar && categoryAxis ? { ...categoryAxis, axisLabel: { ...categoryAxis.axisLabel, width: Math.min(look.width < 480 ? 140 : 200, Math.floor(look.width * 0.38)), overflow: 'truncate' } } : option.yAxis,
+    legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto' })) : option.legend,
     animation: false,
     textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', color: token('body', '#494b53'), ...option.textStyle },
     tooltip: { ...(Array.isArray(option.tooltip) ? option.tooltip[0] : option.tooltip), renderMode: 'richText', confine: true },
     series: series.map((s) => s.type === 'graph' || s.type === 'tree' || s.type === 'treemap'
       ? { ...s, animation: false, roam: s.roam ?? true }
-      : { ...s, animation: false }),
-    dataZoom: zoom.filter((z) => z && typeof z === 'object' && !Array.isArray(z)).map((z) => z.type === 'inside' ? { ...z, zoomOnMouseWheel: true, moveOnMouseWheel: false } : z),
+      : smallPie && s.type === 'pie'
+        ? { ...s, animation: false, center: ['50%', '50%'], left: 0, right: 0, top: 8, bottom: legends.some((legend) => legend.show !== false) ? 36 : 8, width: 'auto', height: 'auto',
+          label: { ...s.label, alignTo: 'edge', edgeDistance: 8, overflow: 'break' },
+          labelLine: { ...s.labelLine, length: 8, length2: 8 } }
+        : { ...s, animation: false }),
+    dataZoom: zoom,
   };
 }
 
