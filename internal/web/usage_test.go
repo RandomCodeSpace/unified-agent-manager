@@ -212,6 +212,7 @@ func TestUsageRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	ts := &testServer{srv: srv, m: m, prov: prov}
 	if w := ts.do(http.MethodGet, "/api/usage", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("GET without sign-in = %d", w.Code)
@@ -297,6 +298,7 @@ func TestMetaModelCostTierAndDiscount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	ts := &testServer{srv: srv, m: m, prov: prov}
 	w := ts.do(http.MethodGet, "/api/meta", "", withCookie(ts))
 	if w.Code != http.StatusOK {
@@ -338,6 +340,7 @@ func TestMetaModelPrices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(srv.Close)
 	ts := &testServer{srv: srv, m: m, prov: prov}
 	w := ts.do(http.MethodGet, "/api/meta", "", withCookie(ts))
 	if w.Code != http.StatusOK {

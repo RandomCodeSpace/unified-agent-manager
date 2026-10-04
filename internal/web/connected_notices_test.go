@@ -157,7 +157,7 @@ func TestConnectedNoticeHeadlessReaderAndRevocation(t *testing.T) {
 		Open: func(ctx context.Context, _ string) (*http.Response, error) {
 			reader, writer := io.Pipe()
 			go func() {
-				defer writer.Close()
+				defer func() { _ = writer.Close() }()
 				for _, item := range []struct {
 					name string
 					seq  uint64

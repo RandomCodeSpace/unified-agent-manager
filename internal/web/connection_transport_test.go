@@ -50,7 +50,7 @@ func TestConnectionTransportTLSAndPinnedPrivateDestination(t *testing.T) {
 	s := &Server{}
 	transport, _ := s.connectionTransport(target)
 	if response, err := transport.RoundTrip(req); err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		t.Fatal("untrusted target TLS accepted")
 	}
 	roots := x509.NewCertPool()
@@ -59,7 +59,7 @@ func TestConnectionTransportTLSAndPinnedPrivateDestination(t *testing.T) {
 	target.AllowedAddresses = nil
 	transport, _ = s.connectionTransport(target)
 	if response, err := transport.RoundTrip(req); err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		t.Fatal("unapproved private address dialed")
 	}
 	if hits.Load() != 0 {
@@ -72,13 +72,13 @@ func TestConnectionTransportTLSAndPinnedPrivateDestination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response.Body.Close()
+	_ = response.Body.Close()
 	if response.StatusCode != 204 || hits.Load() != 1 {
 		t.Fatal("approved verified target not reached")
 	}
 	other, _ := http.NewRequest("GET", strings.Replace(host.URL, "127.0.0.1", "localhost", 1), nil)
 	if response, err := transport.RoundTrip(other); err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 		t.Fatal("transport dialed unregistered origin")
 	}
 }

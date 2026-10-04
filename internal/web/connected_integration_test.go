@@ -139,7 +139,7 @@ func (n *connectedTestNode) request(t *testing.T, method, path string, body any,
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)

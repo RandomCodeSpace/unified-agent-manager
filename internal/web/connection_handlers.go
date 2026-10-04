@@ -230,7 +230,7 @@ func (s *Server) pairConnection(parent context.Context, target connectionTarget,
 	if err != nil {
 		return target, connectionError(502, "remote_unavailable", "could not securely connect to the target instance")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	switch response.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return target, connectionError(424, "remote_auth_required", "the target refused the supplied access key")
@@ -281,7 +281,7 @@ func (s *Server) revokeRemote(target connectionTarget) {
 	req.Header.Set(headerUAMInstance, target.InstanceID)
 	response, err := transport.RoundTrip(req)
 	if err == nil {
-		response.Body.Close()
+		_ = response.Body.Close()
 	}
 }
 

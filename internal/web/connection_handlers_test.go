@@ -123,7 +123,7 @@ func TestFederationRevokeStopsStreamWithoutStoppingTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Fatalf("stream status %d", resp.StatusCode)
 	}
@@ -230,7 +230,7 @@ func TestFederationTerminalGrantRevocation(t *testing.T) {
 	headers.Set("Authorization", "Bearer "+pair.Credential)
 	headers.Set(headerUAMInstance, uuid.NewString())
 	if conn, response, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{HTTPHeader: headers}); err == nil {
-		conn.CloseNow()
+		_ = conn.CloseNow()
 		t.Fatal("mismatched owner opened terminal")
 	} else if response == nil || response.StatusCode != 409 {
 		t.Fatalf("mismatched identity response: %v", err)
@@ -246,7 +246,7 @@ func TestFederationTerminalGrantRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 	pid := shellPID(t, conn)
 	if err := target.srv.connections.revoke(pair.GrantID); err != nil {
 		t.Fatal(err)

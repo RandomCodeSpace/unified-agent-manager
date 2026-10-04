@@ -86,7 +86,7 @@ func writeConnectionDisk(root *os.Root, data []byte, initial bool) error {
 	if err != nil {
 		return err
 	}
-	defer root.Remove(name)
+	defer func() { _ = root.Remove(name) }()
 	_, err = file.Write(data)
 	if err == nil {
 		err = file.Sync()

@@ -237,7 +237,7 @@ func (h *connectedNotices) read(state *noticeSourceState, cursor string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = response.Body.Close() })
 	defer stop()
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusConflict {

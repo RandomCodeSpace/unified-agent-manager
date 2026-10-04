@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -182,6 +183,10 @@ func TestConnectedFilesTemporaryGrantRevocationAndURLRewrite(t *testing.T) {
 	if !strings.HasPrefix(grant.URL, "/api/connected/"+f.proxy.target.ID+"/grants/"+f.task.ID+"/") || strings.Contains(grant.URL, f.proxy.upstream.URL) {
 		t.Fatalf("remote URL escaped into browser: %q", grant.URL)
 	}
+	cookies := response.Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteNoneMode || cookies[0].MaxAge <= 0 || cookies[0].Path != grant.URL[:strings.LastIndex(grant.URL, "/")+1] {
+		t.Fatalf("temporary grant companion policy changed: %+v", cookies)
+	}
 	if result := f.readGrant(t, "GET", grant.URL, nil, nil); result.StatusCode != http.StatusForbidden {
 		t.Fatalf("temporary file without companion=%d", result.StatusCode)
 	}
@@ -263,5 +268,31 @@ func TestConnectedFileKeysNeverEnterRequestOrHeaderLogs(t *testing.T) {
 	}
 	if raw := output.String(); strings.Contains(raw, secret) || !strings.Contains(raw, "web request") {
 		t.Fatal("connected file authorization leaked into request or URL-valued header logs")
+	}
+}
+
+func TestConnectedFilesRedirectStaysOnHome(t *testing.T) {
+	server := &Server{token: testToken}
+	target := targetFixture()
+	for _, path := range []string{"https:/evil.example/report.html", "@evil.example/report.html", "report.html?next=https:evil.example#fragment", "<script>.html"} {
+		request := httptest.NewRequest(http.MethodGet, "https://home.example/", nil)
+		local := request.Clone(request.Context())
+		local.URL.Path = "/api/sessions/task/files/view/" + path
+		response := httptest.NewRecorder()
+		server.redirectConnectedView(response, request, local, target)
+		location, err := url.Parse(response.Header().Get("Location"))
+		if response.Code != http.StatusFound || err != nil || location.IsAbs() || location.Host != "" || !strings.HasPrefix(location.Path, "/api/connected/"+target.ID+"/files/task/") || location.RawQuery != "" || location.Fragment != "" {
+			t.Fatalf("path %q escaped home redirect: status=%d location=%q", path, response.Code, response.Header().Get("Location"))
+		}
+	}
+	for _, path := range []string{"//evil.example/report", "report.html?next=https://evil.example/#fragment", "../report", "\\evil.example", "report\r\nLocation: https://evil.example"} {
+		request := httptest.NewRequest(http.MethodGet, "https://home.example/", nil)
+		local := request.Clone(request.Context())
+		local.URL.Path = "/api/sessions/task/files/view/" + path
+		response := httptest.NewRecorder()
+		server.redirectConnectedView(response, request, local, target)
+		if response.Code != http.StatusBadRequest || response.Header().Get("Location") != "" {
+			t.Fatalf("unsafe redirect path accepted: %q", path)
+		}
 	}
 }

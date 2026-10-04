@@ -159,7 +159,7 @@ func readConnectionDisk(root *os.Root) (connectionDisk, error) {
 	if err != nil {
 		return data, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) || !privateConnectionFile(opened) {
 		return data, errors.New("connection state must be an owned private regular file")

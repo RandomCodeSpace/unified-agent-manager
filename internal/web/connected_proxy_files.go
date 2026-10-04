@@ -47,7 +47,7 @@ func (s *Server) redirectConnectedView(w http.ResponseWriter, r, local *http.Req
 	if r.URL.Query().Get("download") == "1" {
 		location += "?download=1"
 	}
-	http.Redirect(w, r, location, http.StatusFound)
+	http.Redirect(w, r, location, http.StatusFound) // #nosec G710 -- fixed /api/connected/ prefix, validated route IDs and escaped file path; never another host.
 }
 
 func (s *Server) connectedFileTarget(w http.ResponseWriter, r *http.Request, grant string) (connectionTarget, bool) {
@@ -116,7 +116,8 @@ func (s *Server) rewriteConnectedGrant(response *http.Response, r, local *http.R
 	prefix := "/api/connected/" + target.ID + "/grants/" + task + "/" + grant.ID + "/"
 	grant.URL = prefix + fileKey(s.token, r.Host, scope, expires)
 	if secureRequest(r) {
-		cookie := &http.Cookie{Name: fileCookieName, Value: fileCookie(s.token, r.Host, scope, expires), Path: prefix,
+		cookie := &http.Cookie{ // #nosec G124 -- SameSite=None is required for opaque sandbox requests; Secure and HttpOnly are always set, with a signed URL and one grant-scoped path.
+			Name: fileCookieName, Value: fileCookie(s.token, r.Host, scope, expires), Path: prefix,
 			MaxAge: int(time.Until(grant.ExpiresAt).Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteNoneMode}
 		response.Header.Add("Set-Cookie", cookie.String())
 	}

@@ -64,9 +64,10 @@ func connectedID(id string) bool {
 		return false
 	}
 	for _, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
-			return false
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+			continue
 		}
+		return false
 	}
 	return true
 }
@@ -304,8 +305,8 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 		if err != nil {
 			return errors.New("invalid remote content type")
 		}
-		if !connectedResourcePattern(pattern) && typeName != "application/json" &&
-			!((pattern == "GET /api/events" || pattern == "GET /api/events/detail") && response.StatusCode == http.StatusOK && typeName == "text/event-stream") {
+		eventStream := (pattern == "GET /api/events" || pattern == "GET /api/events/detail") && response.StatusCode == http.StatusOK && typeName == "text/event-stream"
+		if !connectedResourcePattern(pattern) && typeName != "application/json" && !eventStream {
 			return errors.New("unexpected remote content type")
 		}
 	}
