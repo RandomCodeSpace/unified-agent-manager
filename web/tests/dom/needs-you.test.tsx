@@ -22,7 +22,7 @@ describe('the Task list', () => {
     expect(you.getByRole('button', { name: /Input.*Tidy zsh startup/ }).title).toContain('Wants your OK to run a shell command outside the project');
     expect(you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }).title).toContain('Ready for review: Explained how a dumb terminal');
     // The title and app badge still count only Tasks needing attention.
-    expect(document.title).toBe('(9) UAM');
+    await waitFor(() => expect(document.title).toBe('(9) UAM'));
   });
 
   test('a Needs you row only says what it waits on; answering happens in the Task', async () => {
