@@ -10,6 +10,20 @@ export default defineConfig({
     emptyOutDir: true,
     // Never inline assets as data: URIs; the server's CSP allows fonts from 'self' only.
     assetsInlineLimit: 0,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          // Vite preloads these with the entry. Match only startup dependencies so
+          // terminal, chart and highlighting code keeps its existing on-demand loading.
+          // React comes first so recursive dependency capture keeps one runtime.
+          groups: [
+            { name: 'vendor-react', test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, tags: ['$initial'] },
+            { name: 'vendor-ui', test: /[\\/]node_modules[\\/]@(?:base-ui|floating-ui)[\\/]/, tags: ['$initial'] },
+            { name: 'vendor-markdown', test: /[\\/]node_modules[\\/](?:react-markdown|remark-breaks|remark-gfm)[\\/]/, tags: ['$initial'] },
+          ],
+        },
+      },
+    },
   },
   // Dev only: the diagram frame's module scripts come from an opaque origin (`Origin: null`),
   // which the default localhost-only CORS rule refuses. The production frame is a classic script.

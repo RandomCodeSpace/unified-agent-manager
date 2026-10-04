@@ -448,25 +448,7 @@ func (s *Server) handleDetailEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ticker := time.NewTicker(s.heartbeat)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-sub.Gone():
-			return
-		case frame := <-sub.Frames():
-			sub.Sent(frame)
-			if !write(frame) {
-				return
-			}
-		case <-ticker.C:
-			if !write([]byte(": keep-alive\n\n")) {
-				return
-			}
-		}
-	}
+	s.streamEvents(r.Context(), sub, write)
 }
 
 func legacySubscriber(sub *Subscriber) bool { return !sub.compact && !sub.detail }

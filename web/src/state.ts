@@ -490,8 +490,9 @@ function withAgentFrame(state: State, agentId: string, frame: Buffered): State {
   state = withAgentStep(state, agentId, frame);
   if (!a || a.error) return state;
   if (a.loading) {
-    const bufferedChars = a.bufferedChars + frameBytes(frame);
-    if (a.buffered.length >= MAX_BUFFERED_FRAMES || bufferedBytes(state) + frameBytes(frame) > MAX_BUFFERED_CHARS) {
+    const size = frameBytes(frame);
+    const bufferedChars = a.bufferedChars + size;
+    if (a.buffered.length >= MAX_BUFFERED_FRAMES || bufferedBytes(state) + size > MAX_BUFFERED_CHARS) {
       return { ...state, agents: { ...state.agents, [agentId]: { loading: false, snapshotSeq: -1, items: [], buffered: [], bufferedChars: 0, error: 'Too much output arrived while loading. Retry to load the latest transcript.' } } };
     }
     const items = frame.name === 'items_trimmed' ? applyFrame(a.items, frame, agentId) : a.items;

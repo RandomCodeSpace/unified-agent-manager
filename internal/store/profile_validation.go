@@ -54,11 +54,7 @@ func ValidateProfileName(name string) error {
 }
 
 func (o SessionProfileOverrides) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(sessionProfileOverridesAlias(o))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, o.unknown, knownSessionOverrideFields)
+	return marshalUnknownJSON(sessionProfileOverridesAlias(o), o.unknown, knownSessionOverrideFields)
 }
 
 func (o *SessionProfileOverrides) UnmarshalJSON(data []byte) error {

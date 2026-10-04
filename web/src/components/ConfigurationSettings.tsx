@@ -328,14 +328,24 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const models = loaded && !metaError && copilot?.available ? visibleModels(copilot.models, settings.hidden_models?.copilot).filter((model) => model.id !== 'auto' && !unavailableCustomModels.has(model.id)) : [];
   const invalidModel = kind === 'agents' && draft?.raw === null && authoredModels(draft).some((id) => !models.some((model) => model.id === id));
   const invalidEffort = kind === 'agents' && draft?.raw === null && authoredModels(draft).length > 0 && !!draft.reasoningEffort && !agentEfforts(draft, models).includes(draft.reasoningEffort);
-  const modelStatus = !loaded || (!meta && !metaError) ? 'Loading available models. You can still inherit the task model.' : metaError ? 'The model catalog could not be loaded. Retry below, or inherit the task model.' : !copilot?.available ? 'Copilot is unavailable. You can still inherit the task model.' : models.length === 0 ? 'No visible Copilot models are available. You can still inherit the task model.' : '';
+  let modelStatus = '';
+  if (!loaded || (!meta && !metaError)) modelStatus = 'Loading available models. You can still inherit the task model.';
+  else if (metaError) modelStatus = 'The model catalog could not be loaded. Retry below, or inherit the task model.';
+  else if (!copilot?.available) modelStatus = 'Copilot is unavailable. You can still inherit the task model.';
+  else if (models.length === 0) modelStatus = 'No visible Copilot models are available. You can still inherit the task model.';
   const utilityProviders = meta?.providers.filter((provider) => provider.available && provider.capabilities.host_tools) ?? [];
   const utilityProvider = utilityProviders.find((provider) => {
     const model = settings.title_model?.[provider.name] || provider.cheapest_model;
     return !!model && model !== UTILITY_NONE;
   });
   const utilityModel = utilityProvider && (settings.title_model?.[utilityProvider.name] || utilityProvider.cheapest_model);
-  const generationUnavailable = !loaded || (!meta && !metaError) ? 'Loading Utility AI settings…' : locked ? 'Turn on Terminal in General to create a draft with AI.' : metaError ? 'The model catalog could not be loaded. Retry before generating a draft.' : settings.utility_daily_limit === 0 ? 'Background AI is off. Set a daily limit in General to create a draft with AI.' : !utilityProviders.length ? 'No available provider supports Utility AI. Check Providers.' : !utilityProvider || !utilityModel || unavailableCustomModels.has(utilityModel) || !utilityProvider.models.some((model) => model.id === utilityModel) ? 'No available Utility model is selected. Choose one in Models.' : '';
+  let generationUnavailable = '';
+  if (!loaded || (!meta && !metaError)) generationUnavailable = 'Loading Utility AI settings…';
+  else if (locked) generationUnavailable = 'Turn on Terminal in General to create a draft with AI.';
+  else if (metaError) generationUnavailable = 'The model catalog could not be loaded. Retry before generating a draft.';
+  else if (settings.utility_daily_limit === 0) generationUnavailable = 'Background AI is off. Set a daily limit in General to create a draft with AI.';
+  else if (!utilityProviders.length) generationUnavailable = 'No available provider supports Utility AI. Check Providers.';
+  else if (!utilityProvider || !utilityModel || unavailableCustomModels.has(utilityModel) || !utilityProvider.models.some((model) => model.id === utilityModel)) generationUnavailable = 'No available Utility model is selected. Choose one in Models.';
   const briefTooLong = new TextEncoder().encode(brief.trim()).length > 8192;
   useEffect(() => {
     let current = true;

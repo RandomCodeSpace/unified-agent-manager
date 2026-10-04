@@ -2164,10 +2164,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer c.mu.Unlock()
 	// An idle seen while Send was in flight already ended this turn.
 	if c.idles == idles {
-		c.foregroundIdle, c.turnRunning = false, true
-		c.idleUnresolved, c.taskCompleted = false, false
-		c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
-		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+		c.startTurnLocked()
 	}
 	return nil
 }
@@ -2912,10 +2909,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.AssistantTurnStartData:
 		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
-			c.foregroundIdle, c.turnRunning = false, true
-			c.idleUnresolved, c.taskCompleted = false, false
-			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
-			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+			c.startTurnLocked()
 		} else if c.resumeSubagentLocked(agentID, ev.Timestamp) {
 			c.checkTasksLocked()
 		}
@@ -2945,10 +2939,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		// A message delivered while idle starts a turn: also a steer that
 		// reached the CLI after the idle of the turn it was meant for.
 		if agentID == "" && d.Delivery != nil && *d.Delivery == rpc.UserMessageDeliveryIdle {
-			c.foregroundIdle, c.turnRunning = false, true
-			c.idleUnresolved, c.taskCompleted = false, false
-			c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
-			c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
+			c.startTurnLocked()
 		}
 	case *rpc.SessionModeChangedData:
 		if agentID == "" {
@@ -3078,6 +3069,13 @@ func (c *conversation) emitUsageLocked() {
 	}
 	c.usageSent = c.nanoAIU
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventUsage, Usage: &agentapi.Usage{AIUnits: c.nanoAIU / nanoPerUnit}})
+}
+
+func (c *conversation) startTurnLocked() {
+	c.foregroundIdle, c.turnRunning = false, true
+	c.idleUnresolved, c.taskCompleted = false, false
+	c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 }
 
 func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {

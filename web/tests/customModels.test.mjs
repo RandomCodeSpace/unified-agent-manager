@@ -22,6 +22,19 @@ test('saving a provider replaces its models in place and keeps display names', (
   assert.ok(next.every((m) => !('key_present' in m)));
 });
 
+test('replacing an interleaved provider keeps its first position and surrounding providers', () => {
+  const models = [
+    list[1],
+    list[0],
+    { name: 'local', base_url: 'http://localhost/v1', api_key_env: 'LOCAL', model_id: 'm' },
+    list[2],
+  ];
+  const before = structuredClone(models);
+  const next = withProvider(models, 'ollama', { name: 'renamed', ...conn }, ['qwen3.5:397b']);
+  assert.deepEqual(next.map((m) => `${m.name}/${m.model_id}`), ['router/x/y', 'renamed/qwen3.5:397b', 'local/m']);
+  assert.deepEqual(models, before);
+});
+
 test('a new provider is appended; no models removes a provider', () => {
   assert.deepEqual(withProvider(list, undefined, { name: 'local', base_url: 'http://127.0.0.1:1/v1', api_key_env: 'UAM_BYOM_L' }, ['m']).map((m) => m.name), ['ollama', 'router', 'ollama', 'local']);
   assert.deepEqual(withProvider(list, 'ollama', { name: 'ollama', ...conn }, []).map((m) => m.name), ['router']);

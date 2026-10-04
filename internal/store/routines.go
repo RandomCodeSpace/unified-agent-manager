@@ -119,11 +119,7 @@ var knownWebRoutineFields = map[string]struct{}{
 }
 
 func (r WebRoutine) MarshalJSON() ([]byte, error) {
-	base, err := json.Marshal(webRoutineAlias(r))
-	if err != nil {
-		return nil, err
-	}
-	return mergeUnknownJSON(base, r.unknown, knownWebRoutineFields)
+	return marshalUnknownJSON(webRoutineAlias(r), r.unknown, knownWebRoutineFields)
 }
 
 func (r *WebRoutine) UnmarshalJSON(data []byte) error {
