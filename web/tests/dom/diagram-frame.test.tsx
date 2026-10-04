@@ -22,6 +22,27 @@ function draw(id: string, source: string): Promise<unknown> {
 }
 
 describe('diagram frame', () => {
+  test.each(['unrelated sender', 'malformed request'])('ignores a message with %s', async (kind) => {
+    mermaid.initialize.mockClear();
+    mermaid.parse.mockClear();
+    mermaid.render.mockClear();
+    const post = vi.spyOn(window.parent, 'postMessage').mockImplementation(() => {});
+    try {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: kind === 'malformed request' ? { id: 'untrusted', source: 'flowchart LR; a --> b' } : { id: 'untrusted', source: 'flowchart LR; a --> b', theme: {} },
+        source: kind === 'unrelated sender' ? null : window.parent,
+        origin: 'https://unrelated.example',
+      }));
+      await Promise.resolve();
+      expect(mermaid.initialize).not.toHaveBeenCalled();
+      expect(mermaid.parse).not.toHaveBeenCalled();
+      expect(mermaid.render).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      post.mockRestore();
+    }
+  });
+
   test('an xychart is drawn in a box as wide as the chart, so its labels measure at full size', async () => {
     const boxes: { width: string; attached: boolean }[] = [];
     let box: HTMLElement | undefined;
