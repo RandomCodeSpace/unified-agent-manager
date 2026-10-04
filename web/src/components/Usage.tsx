@@ -75,7 +75,7 @@ function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; 
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
   const filtered = models.filter((model) => (model.model || 'Unspecified model').toLowerCase().includes(query.toLowerCase()));
   return <>
-    <div className="shrink-0 px-4 pt-4">
+    <div className="shrink-0 px-4 pt-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1">
           <Popover.Title className="text-title">Usage</Popover.Title>
@@ -91,7 +91,7 @@ function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; 
         <Button size="icon-sm" aria-label="Close usage" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
       {report?.collection?.updated_at && <p role="status" className="mt-1 text-meta text-muted">Last fetched {new Date(report.collection.updated_at).toLocaleString()}.</p>}
-      <div role="group" aria-label="Usage period" className="mt-3 flex rounded-sm bg-sunken p-0.5">
+      <div role="group" aria-label="Usage period" className="mt-2 flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
       {error && <div role="alert" className="mt-3 flex items-center gap-2 text-caption text-error">
@@ -104,7 +104,7 @@ function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; 
       </div>}
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
-        <div className="grid grid-cols-3 gap-3 py-4 max-[360px]:grid-cols-2">
+        <div className="grid grid-cols-3 gap-3 py-2 max-[360px]:grid-cols-2">
           <div className="max-[360px]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p><p className="mt-1 text-meta text-muted">Across {models.length} {models.length === 1 ? 'model' : 'models'}</p></div>
           <div>
             <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Estimated cost</span>
@@ -126,12 +126,12 @@ function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; 
             <p className={cn('mt-1 text-ink tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-display-md')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(noCache.cost)}</p>
           </div>
         </div>
-        <div className="mb-3 rounded-sm bg-surface px-3 py-2" role="group" aria-label="Total token split"><TokenSplitValues value={combined} /></div>
-        <div role="group" aria-label="Usage view" className="mb-3 flex gap-1">
+        <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} /></div>
+        <div role="group" aria-label="Usage view" className="mb-2 flex gap-1">
           <Button size="sm" aria-pressed={!all} onClick={() => { setAll(false); setQuery(''); }}>Overview</Button>
           <Button size="sm" aria-pressed={all} onClick={() => setAll(true)}>All models · {models.length}</Button>
         </div>
-        {!all && models.length > 0 && <div className="flex items-center justify-between gap-2 pb-2"><h3 className="font-medium text-ink">{models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
+        {!all && models.length > 0 && <div className="flex items-center justify-between gap-2 pb-1"><h3 className="font-medium text-ink">{models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
         {all && <label className="mb-2 flex items-center gap-2 rounded-sm bg-sunken px-3 py-2 shadow-well focus-within:outline-2 focus-within:outline-focus">
           <Search aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <input aria-label="Find a model" placeholder="Find a model" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-ui outline-none" />
@@ -140,15 +140,15 @@ function UsageContent({ onClose, onAddPrices }: Readonly<{ onClose: () => void; 
     </div>
     {shown && <>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div className="min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pb-2 [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible" role="region" aria-label="Model usage" tabIndex={0}>
+      <div className={cn('min-w-0 px-4 pb-1', all ? 'min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible' : 'shrink-0 overflow-x-clip')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
           <ModelTable models={filtered} colors={colors} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
           {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
         </> : <ModelOverview models={models} colors={colors} />}
       </div>
-      <div className="shrink-0 bg-surface px-4 py-3">
+      <div className="shrink-0 bg-surface px-4 py-2">
         {all && <p className="mb-2 text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models · Scroll for more`} · Token splits in the info tooltips.</p>}
-        {unpriced > 0 && <p className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta text-muted">
+        {unpriced > 0 && <p className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta text-muted">
           <span>Prices missing for {unpriced} {unpriced === 1 ? 'model' : 'models'}.</span>
           <a href="#settings" className="text-ink underline underline-offset-2" onClick={(event) => { if (onAddPrices) { event.preventDefault(); onAddPrices(); } onClose(); }}>Add prices</a>
         </p>}
@@ -166,7 +166,7 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
     <Tip label="Usage" side={side} disabled={open}>
       <Popover.Trigger render={<Button size="icon" aria-label="Usage" className={cn('text-muted', className)} />}><ChartNoAxesColumn aria-hidden="true" /></Popover.Trigger>
     </Tip>
-    <Popover.Content ref={popup} initialFocus={popup} side={side} className="w-[29rem] max-w-[calc(100vw-1rem)] max-h-[min(43rem,calc(100dvh-2rem))] gap-0 overflow-hidden p-0 [@media(max-height:600px)]:overflow-y-auto">
+    <Popover.Content ref={popup} initialFocus={popup} side={side} className="w-[29rem] max-w-[calc(100vw-1rem)] max-h-[min(calc(100dvh-2rem),var(--available-height))] gap-0 overflow-x-hidden overflow-y-auto p-0">
       {open && <UsageContent onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;

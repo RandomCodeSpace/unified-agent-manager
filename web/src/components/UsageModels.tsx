@@ -35,10 +35,10 @@ export function Count({ value }: Readonly<{ value: number }>) {
 
 export function TokenSplitValues({ value }: Readonly<{ value: TokenCounts }>) {
   const split = splitTokens(value);
-  return <dl className="grid grid-cols-3 gap-2 text-meta">
-    {PARTS.map(({ key, label, shade }) => <div key={key}>
+  return <dl className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-meta">
+    {PARTS.map(({ key, label, shade }) => <div key={key} className="flex items-baseline gap-1.5">
       <dt className="flex items-center gap-1.5 text-muted"><span aria-hidden="true" className={cn('size-2 shrink-0 rounded-xs bg-muted', shade)} />{label}</dt>
-      <dd className="mt-1 text-caption text-ink tabular-nums"><Count value={split[key]} /></dd>
+      <dd className="text-caption text-ink tabular-nums"><Count value={split[key]} /></dd>
     </div>)}
   </dl>;
 }
@@ -86,7 +86,7 @@ export function ModelOverview({ models, colors }: Readonly<{ models: UsageModel[
   const rows = models.slice(0, 5);
   if (remainder.length) rows.push(aggregateUsageModels(remainder, `Other ${remainder.length} models`));
   return <figure aria-label="Token proportions by model, with total tokens and estimated cost in USD" className="pb-1 pt-1">
-    <div className="space-y-3">
+    <div className="space-y-1">
       {rows.map((model, i) => <div key={i === 5 ? 'other' : model.model}>
         <div className="mb-1 flex min-w-0 items-center gap-2 text-caption">
           <ModelName model={model} />
