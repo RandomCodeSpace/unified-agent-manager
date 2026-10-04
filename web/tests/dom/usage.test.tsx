@@ -157,6 +157,24 @@ describe('Usage popover', () => {
     expect(screen.getByText(/Costs use/).textContent).toContain('source-reported amounts');
   });
 
+  test.each([
+    [null, 'Unpriced'],
+    [0, '$0.00 · partial'],
+    [0.001, '<$0.01 · partial'],
+    [0.01, '$0.01 · partial'],
+    [2.5, '$2.50 · partial'],
+  ] as const)('formats partial model and total costs consistently for %s', async (cost, expected) => {
+    const report = tokenUsageFixture();
+    const model = { ...report.periods.today.models[0], cost_usd: cost, cost_partial: true };
+    report.periods.today = { models: [model], total: model, cost_usd: cost, unpriced_models: 0 };
+    vi.spyOn(api, 'tokenUsage').mockResolvedValue(report);
+    const user = userEvent.setup();
+    render(<UsageButton />);
+    await user.click(screen.getByRole('button', { name: 'Usage' }));
+    await screen.findByRole('table');
+    expect(screen.getAllByText(expected)).toHaveLength(2);
+  });
+
   test('retains the last report when refreshing fails', async () => {
     let refresh!: () => void;
     const setInterval = window.setInterval.bind(window);

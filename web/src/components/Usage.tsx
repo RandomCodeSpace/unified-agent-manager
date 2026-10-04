@@ -19,10 +19,12 @@ const COLLECTION_STATUS = {
   unavailable: 'Local harness usage is unavailable. Showing available usage.',
 };
 
-function costText(value: number | null): string {
+function costText(value: number | null, partial = false): string {
   if (value === null) return 'Unpriced';
-  if (value > 0 && value < 0.01) return '<$0.01';
-  return value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const amount = value > 0 && value < 0.01
+    ? '<$0.01'
+    : value.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return partial ? `${amount} · partial` : amount;
 }
 
 function Count({ value }: Readonly<{ value: number }>) {
@@ -30,12 +32,14 @@ function Count({ value }: Readonly<{ value: number }>) {
 }
 
 function Counts({ value }: Readonly<{ value: TokenCounts }>) {
+  const read = value.cache_read.toLocaleString('en-US');
+  const written = value.cache_write.toLocaleString('en-US');
   return <>
     <td className="py-2 pl-3 text-right tabular-nums"><Count value={value.input} /></td>
     <td className="py-2 pl-3 text-right tabular-nums"><Count value={value.output} /></td>
     <td className="py-2 pl-3 text-right tabular-nums">
-      <Tip label={`Read: ${value.cache_read.toLocaleString('en-US')} · Write: ${value.cache_write.toLocaleString('en-US')}`} openOnClick>
-        <Button size="sm" className="-mr-1 h-auto px-1 py-0 text-ui font-normal tabular-nums pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:after:inset-0" aria-label={`Cache: ${value.cache_read.toLocaleString('en-US')} read, ${value.cache_write.toLocaleString('en-US')} written`}>
+      <Tip label={`Read: ${read} · Write: ${written}`} openOnClick>
+        <Button size="sm" className="-mr-1 h-auto px-1 py-0 text-ui font-normal tabular-nums pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:after:inset-0" aria-label={`Cache: ${read} read, ${written} written`}>
           {compactTokens(value.cache_read + value.cache_write)}
         </Button>
       </Tip>
@@ -102,7 +106,7 @@ function UsageContent({ onClose }: Readonly<{ onClose: () => void }>) {
             {shown.unpriced_models > 0 && <span className="mt-2 block">{shown.unpriced_models} {shown.unpriced_models === 1 ? 'model is' : 'models are'} unpriced. Add prices in Settings → Models → Token costs.</span>}
           </HelpTip>
         </span>
-        <span className="font-medium text-ink tabular-nums">{costText(shown.cost_usd)}{shown.cost_usd !== null && (shown.unpriced_models > 0 || shown.models.some((model) => model.cost_partial)) ? ' · partial' : ''}</span>
+        <span className="font-medium text-ink tabular-nums">{costText(shown.cost_usd, shown.unpriced_models > 0 || shown.models.some((model) => model.cost_partial))}</span>
       </div>
       <div className="min-h-0 overflow-y-auto overscroll-contain">
         <table className="w-full table-fixed text-ui">
@@ -115,7 +119,7 @@ function UsageContent({ onClose }: Readonly<{ onClose: () => void }>) {
               <th scope="row" className="py-2 text-left font-normal">
                 <span className="block truncate text-ink" title={model.model || 'Unspecified model'}>{model.model || 'Unspecified model'}</span>
                 <span className="block truncate text-meta text-muted">{model.provider}</span>
-                <span className="block truncate text-caption text-muted tabular-nums" title="Estimated or source-reported cost in USD">{costText(model.cost_usd)}{model.cost_partial && model.cost_usd !== null ? ' · partial' : ''}</span>
+                <span className="block truncate text-caption text-muted tabular-nums" title="Estimated or source-reported cost in USD">{costText(model.cost_usd, model.cost_partial)}</span>
               </th>
               <Counts value={model} />
             </tr>)}
