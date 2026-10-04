@@ -28,7 +28,5 @@ function render() {
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('mock')) {
   const m = await import('./mock/install');
   m.install();
-  render();
-} else {
-  render();
 }
+render();

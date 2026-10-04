@@ -505,10 +505,10 @@ function OwnerFields({ card: c }: Readonly<{ card: Card }>) {
   const [cmd, setCmd] = useState(c.accept_cmd ?? '');
   const [paths, setPaths] = useState(c.paths.join('\n'));
   const storedPaths = c.paths.join('\n');
+  const accept_cmd = mode === 'inherit' ? null : mode === 'none' ? '' : cmd.trim();
   const [base, setBase] = useState({ accept: c.accept_cmd, paths: storedPaths });
   if (base.accept !== c.accept_cmd || base.paths !== storedPaths) {
-    const localAccept = mode === 'inherit' ? null : mode === 'none' ? '' : cmd.trim();
-    if (localAccept === base.accept) {
+    if (accept_cmd === base.accept) {
       setMode(modeOf(c.accept_cmd));
       setCmd(c.accept_cmd ?? '');
     }
@@ -524,9 +524,8 @@ function OwnerFields({ card: c }: Readonly<{ card: Card }>) {
       alive = false;
     };
   }, [c.project_id]);
-  const accept_cmd = mode === 'inherit' ? null : mode === 'none' ? '' : cmd.trim();
   const nextPaths = paths.split('\n').map((p) => p.trim()).filter(Boolean);
-  const changed = accept_cmd !== c.accept_cmd || nextPaths.join('\n') !== c.paths.join('\n');
+  const changed = accept_cmd !== c.accept_cmd || nextPaths.join('\n') !== storedPaths;
   const save = async () => {
     setBusy(true);
     try {
