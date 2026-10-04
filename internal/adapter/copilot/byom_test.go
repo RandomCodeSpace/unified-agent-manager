@@ -17,7 +17,7 @@ import (
 var testCustom = []agentapi.CustomModel{
 	{Name: "acme", DisplayName: "Acme Coder", BaseURL: "https://llm.example/v1", ModelID: "coder", APIKeyEnv: "UAM_TEST_ACME_KEY"},
 	{Name: "acme", BaseURL: "https://llm.example/v1", ModelID: "org/fast", APIKeyEnv: "UAM_TEST_ACME_KEY"},
-	{Name: "local", BaseURL: "http://127.0.0.1:9/v1", ModelID: "m", WireAPI: "responses", APIKeyEnv: "UAM_TEST_LOCAL_KEY"},
+	{Name: "local", BaseURL: "http://127.0.0.1:9/v1", ModelID: "m", Vision: true, WireAPI: "responses", APIKeyEnv: "UAM_TEST_LOCAL_KEY"},
 }
 
 func wantRegistry(t *testing.T, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) {
@@ -29,8 +29,13 @@ func wantRegistry(t *testing.T, providers []copilot.NamedProviderConfig, models 
 	if want := []string{"acme openai  https://llm.example/v1 acme-secret", "local openai responses http://127.0.0.1:9/v1 "}; !slices.Equal(got, want) {
 		t.Fatalf("providers = %q, want %q", got, want)
 	}
-	if len(models) != 3 || models[0] != (copilot.ProviderModelConfig{ID: "coder", Provider: "acme", Name: "Acme Coder"}) || models[1].ID != "org/fast" || models[1].Name != "acme/org/fast" || models[2].Provider != "local" {
+	if len(models) != 3 || models[0].ID != "coder" || models[0].Provider != "acme" || models[0].Name != "Acme Coder" || models[1].ID != "org/fast" || models[1].Name != "acme/org/fast" || models[2].Provider != "local" {
 		t.Fatalf("models = %+v", models)
+	}
+	for i, model := range models {
+		if model.Capabilities == nil || model.Capabilities.Supports == nil || model.Capabilities.Supports.Vision == nil || *model.Capabilities.Supports.Vision != testCustom[i].Vision {
+			t.Fatalf("model %s vision override = %+v", model.ID, model.Capabilities)
+		}
 	}
 }
 
@@ -65,7 +70,7 @@ func TestWebCustomModelsReachEverySession(t *testing.T) {
 }
 
 // Models lists the account's models, then the custom ones by selection ID
-// with no price, cost tier, effort, context size or uploads.
+// with no price, cost tier, effort or context size; images are opt-in.
 func TestWebModelsAppendCustomModels(t *testing.T) {
 	fc := &fakeClient{models: []rpc.Model{{ID: "gpt-6-luna", Name: "GPT-6 Luna"}}}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
@@ -85,6 +90,9 @@ func TestWebModelsAppendCustomModels(t *testing.T) {
 	c := models[1]
 	if c.Prices != nil || c.CostTier != "" || c.DiscountPercent != 0 || len(c.Efforts) != 0 || len(c.ContextSizes) != 0 || c.Media == nil || c.Media.Images || c.Media.PDF {
 		t.Fatalf("custom model = %+v", c)
+	}
+	if c := models[3]; c.Media == nil || !c.Media.Images || c.Media.PDF {
+		t.Fatalf("vision model = %+v", c)
 	}
 }
 
@@ -129,6 +137,79 @@ func TestWebCustomModelAddedToOpenSession(t *testing.T) {
 	}
 	if !slices.Equal(h.fs.models, []string{"acme/coder", "acme/org/fast", "acme/coder"}) {
 		t.Fatalf("switched to %v", h.fs.models)
+	}
+}
+
+func TestWebCustomModelVisionEditsReachTheNextPrompt(t *testing.T) {
+	t.Setenv("UAM_TEST_ACME_KEY", "acme-secret")
+	h := openWeb(t)
+	models := slices.Clone(testCustom)
+	h.p.SetCustomModels(models)
+	ctx := context.Background()
+	if err := h.conv.SetModel(ctx, "acme/coder", "", "default"); err != nil {
+		t.Fatal(err)
+	}
+	for i, vision := range []bool{true, false, false} {
+		models[0].Vision = vision
+		h.p.SetCustomModels(models)
+		if err := h.conv.Send(ctx, agentapi.Prompt{Text: "hello"}); err != nil {
+			t.Fatal(err)
+		}
+		request := h.fs.modelRequests[len(h.fs.modelRequests)-1]
+		if caps := request.ModelCapabilities; caps == nil || caps.Supports == nil || caps.Supports.Vision == nil || *caps.Supports.Vision != vision {
+			t.Fatalf("vision %t: switch = %+v", vision, request)
+		}
+		if len(h.fs.msgs) != i+1 || len(h.fs.added) != 2 {
+			t.Fatalf("messages %d, registry calls %v", len(h.fs.msgs), h.fs.added)
+		}
+		h.fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	}
+	if len(h.fs.modelRequests) != 3 {
+		t.Fatalf("unchanged vision caused another switch: %d requests", len(h.fs.modelRequests))
+	}
+}
+
+func TestWebCustomModelVisionEditRefusesImagesDuringTurn(t *testing.T) {
+	t.Setenv("UAM_TEST_ACME_KEY", "acme-secret")
+	h := openWeb(t)
+	models := slices.Clone(testCustom)
+	h.p.SetCustomModels(models)
+	ctx := context.Background()
+	if err := h.conv.SetModel(ctx, "acme/coder", "", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	models[0].Vision = true
+	h.p.SetCustomModels(models)
+	image := agentapi.Prompt{Attachments: []agentapi.Blob{{MIME: "image/png", Data: []byte("png")}}}
+	if err := h.conv.Steer(ctx, image); err == nil || !strings.Contains(err.Error(), "wait for the current turn") {
+		t.Fatalf("image steer after vision edit: %v", err)
+	}
+	if len(h.fs.msgs) != 1 || len(h.fs.modelRequests) != 1 {
+		t.Fatal("vision edit switched models or sent an image during a turn")
+	}
+	h.fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	if err := h.conv.Send(ctx, image); err != nil || len(h.fs.msgs) != 2 || len(h.fs.msgs[1].Attachments) != 1 {
+		t.Fatalf("image after idle: %v, messages %+v", err, h.fs.msgs)
+	}
+}
+
+func TestWebCustomModelVisionEditFailureDoesNotSend(t *testing.T) {
+	t.Setenv("UAM_TEST_ACME_KEY", "acme-secret")
+	h := openWeb(t)
+	models := slices.Clone(testCustom)
+	h.p.SetCustomModels(models)
+	ctx := context.Background()
+	if err := h.conv.SetModel(ctx, "acme/coder", "", "default"); err != nil {
+		t.Fatal(err)
+	}
+	models[0].Vision = true
+	h.p.SetCustomModels(models)
+	h.fs.modelErr = errors.New("JSON-RPC Error: vision override refused")
+	if err := h.conv.Send(ctx, agentapi.Prompt{Text: "hello"}); err == nil || len(h.fs.msgs) != 0 {
+		t.Fatalf("failed vision override: %v, sent %d messages", err, len(h.fs.msgs))
 	}
 }
 

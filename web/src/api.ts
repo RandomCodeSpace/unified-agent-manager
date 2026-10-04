@@ -627,6 +627,8 @@ export interface CustomModel {
   display_name?: string;
   base_url: string;
   model_id: string;
+  /** Enable image input for this model. Defaults to false. */
+  vision?: boolean;
   wire_api?: 'completions' | 'responses';
   api_key_env: string;
   /** Output only: whether the variable is set and non-empty in the service environment. */

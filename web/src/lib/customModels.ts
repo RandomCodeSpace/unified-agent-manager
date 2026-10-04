@@ -34,14 +34,17 @@ export function storedModels(models: readonly CustomModel[]): CustomModel[] {
 /**
  * The list with provider `original` (none for a new one) replaced by `provider` offering the
  * model IDs in `ids`, in place; a model it already had keeps its display name, a new one is
- * named by its ID. No IDs removes the provider.
+ * named by its ID. `vision` replaces the image-enabled IDs when supplied, otherwise their
+ * saved settings are kept. No IDs removes the provider.
  */
-export function withProvider(models: readonly CustomModel[], original: string | undefined, provider: Omit<CustomProvider, 'models' | 'key_present'>, ids: readonly string[]): CustomModel[] {
+export function withProvider(models: readonly CustomModel[], original: string | undefined, provider: Omit<CustomProvider, 'models' | 'key_present'>, ids: readonly string[], vision?: readonly string[]): CustomModel[] {
   const stored = storedModels(models);
   const old = stored.filter((m) => m.name === original);
   const entries: CustomModel[] = [...new Set(ids)].map((model_id) => {
-    const display_name = old.find((m) => m.model_id === model_id)?.display_name || model_id;
-    return { name: provider.name, base_url: provider.base_url, api_key_env: provider.api_key_env, ...(provider.wire_api ? { wire_api: provider.wire_api } : {}), model_id, display_name };
+    const previous = old.find((m) => m.model_id === model_id);
+    const display_name = previous?.display_name || model_id;
+    const images = vision ? vision.includes(model_id) : previous?.vision;
+    return { name: provider.name, base_url: provider.base_url, api_key_env: provider.api_key_env, ...(provider.wire_api ? { wire_api: provider.wire_api } : {}), model_id, display_name, ...(images ? { vision: true } : {}) };
   });
   const at = stored.findIndex((m) => m.name === original);
   const rest = stored.filter((m) => m.name !== original);
