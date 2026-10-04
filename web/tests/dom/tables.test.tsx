@@ -6,6 +6,31 @@ import { Markdown } from '../../src/components/common';
 const source = '| File | Count | Status |\n| --- | ---: | --- |\n| [ten](https://example.test/ten) | 10 | Ready |\n| `two` | 2 | Ready |\n| zero | 0 | Pending |';
 const names = () => within(screen.getByRole('table')).getAllByRole('row').slice(1).map(row => row.firstElementChild?.textContent);
 
+test.each([false, true])('Markdown preserves native table semantics and keyboard scrolling (streaming: %s)', async streaming => {
+  const user = userEvent.setup();
+  const value = 'very-long-value'.repeat(20);
+  render(<Markdown text={`| Name | Value |\n| --- | ---: |\n| original path | ${value} |`} streaming={streaming} />);
+  const region = screen.getByRole('region', { name: 'Table' });
+  const table = within(region).getByRole('table');
+  expect(region.tabIndex).toBe(0);
+  await user.tab();
+  expect(document.activeElement).toBe(region);
+  expect(region.classList.contains('overflow-auto')).toBe(true);
+  expect(table.tagName).toBe('TABLE');
+  expect(table.getAttribute('role')).toBeNull();
+  expect(table.style.display).not.toBe('block');
+  expect(table.classList.contains('w-full')).toBe(true);
+  expect(table.querySelectorAll(':scope > thead > tr')).toHaveLength(1);
+  expect(table.querySelectorAll(':scope > tbody > tr')).toHaveLength(1);
+  const headers = within(table).getAllByRole('columnheader');
+  expect(headers.map(header => header.tagName)).toEqual(['TH', 'TH']);
+  expect(headers.map(header => header.textContent)).toEqual(['Name', 'Value']);
+  expect(headers[1].style.textAlign === 'right' || headers[1].classList.contains('text-right')).toBe(true);
+  const cells = within(table).getAllByRole('cell');
+  expect(cells.map(cell => cell.tagName)).toEqual(['TD', 'TD']);
+  expect(cells.map(cell => cell.textContent)).toEqual(['original path', value]);
+});
+
 test('Markdown tables sort numbers, keep formatted cells and return to source order', async () => {
   const user = userEvent.setup();
   const fetch = vi.spyOn(globalThis, 'fetch');
