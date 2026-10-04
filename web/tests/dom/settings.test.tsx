@@ -170,18 +170,37 @@ describe('settings', () => {
     await user.click(form.getByRole('button', { name: 'Load models' }));
     const list = within(await form.findByRole('group', { name: 'Models to offer' }));
     await user.type(form.getByRole('searchbox', { name: 'Search models' }), 'gpt-oss');
-    await waitFor(() => expect(list.getAllByRole('checkbox')).toHaveLength(2));
+    await waitFor(() => expect(list.getAllByRole('checkbox', { name: /^gpt-oss/ })).toHaveLength(2));
     await user.click(form.getByRole('button', { name: 'Select all' }));
     expect(form.getByText('2 selected')).toBeTruthy();
     await user.clear(form.getByRole('searchbox', { name: 'Search models' }));
+    expect((list.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }) as HTMLInputElement).disabled).toBe(true);
     await user.click(list.getByRole('checkbox', { name: 'gemma3:27b' }));
+    await user.click(list.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }));
     await user.type(form.getByRole('textbox', { name: 'Add a model ID the endpoint does not list' }), 'llama4:scout');
     await user.click(form.getByRole('button', { name: 'Add ID' }));
+    await user.click(list.getByRole('checkbox', { name: 'Enable vision for llama4:scout' }));
     expect(form.getByText('4 selected')).toBeTruthy();
     await user.click(form.getByRole('button', { name: 'Save provider' }));
     const saved = within(await models.findByRole('region', { name: 'ollama models' }));
     expect(saved.getByText('llama4:scout')).toBeTruthy();
     expect(saved.getByText('gpt-oss:120b')).toBeTruthy();
+    const offered = (await api.webSettings()).custom_models!.filter((m) => m.name === 'ollama');
+    expect(offered.filter((m) => m.vision).map((m) => m.model_id)).toEqual(['gemma3:27b', 'llama4:scout']);
+    expect((await api.meta()).providers[0].models.find((m) => m.id === 'ollama/gemma3:27b')?.media).toEqual({ images: true, pdf: false });
+
+    await user.click(saved.getByRole('button', { name: 'Edit', exact: true }));
+    const edit = within(models.getByRole('form', { name: 'Edit provider ollama' }));
+    expect((edit.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }) as HTMLInputElement).checked).toBe(true);
+    expect((edit.getByRole('checkbox', { name: 'Enable vision for gpt-oss:120b' }) as HTMLInputElement).checked).toBe(false);
+    await user.click(edit.getByRole('button', { name: 'Load models' }));
+    await waitFor(() => expect(edit.getByRole('button', { name: 'Load models' }).hasAttribute('disabled')).toBe(false));
+    expect((edit.getByRole('checkbox', { name: 'Enable vision for llama4:scout' }) as HTMLInputElement).checked).toBe(true);
+    await user.click(edit.getByRole('checkbox', { name: 'Enable vision for gemma3:27b' }));
+    await user.click(edit.getByRole('button', { name: 'Save provider' }));
+    await waitFor(() => expect(models.queryByRole('form')).toBeNull());
+    expect((await api.webSettings()).custom_models!.filter((m) => m.vision).map((m) => m.model_id)).toEqual(['llama4:scout']);
+    expect((await api.meta()).providers[0].models.find((m) => m.id === 'ollama/gemma3:27b')?.media).toEqual({ images: false, pdf: false });
   });
 
   test('removing a custom provider is confirmed first', async () => {

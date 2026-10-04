@@ -58,23 +58,22 @@ func byom(models []agentapi.CustomModel) ([]copilot.NamedProviderConfig, []copil
 		if !slices.ContainsFunc(providers, func(pc copilot.NamedProviderConfig) bool { return pc.Name == m.Name }) {
 			providers = append(providers, copilot.NamedProviderConfig{Name: m.Name, Type: "openai", WireAPI: m.WireAPI, BaseURL: m.BaseURL, APIKey: os.Getenv(m.APIKeyEnv)})
 		}
-		out = append(out, copilot.ProviderModelConfig{ID: m.ModelID, Provider: m.Name, Name: cmp.Or(m.DisplayName, m.SelectionID())})
+		out = append(out, copilot.ProviderModelConfig{ID: m.ModelID, Provider: m.Name, Name: cmp.Or(m.DisplayName, m.SelectionID()), Capabilities: &rpc.ModelCapabilitiesOverride{Supports: &rpc.ModelCapabilitiesOverrideSupports{Vision: copilot.Bool(m.Vision)}}})
 	}
 	return providers, out
 }
 
 // customCatalog lists the custom models as selectable models: no prices,
-// cost tier, efforts or context sizes, and no uploads, as the CLI gives a
-// custom model no vision.
+// cost tier, efforts or context sizes. Image input is opted in per model.
 func customCatalog(models []agentapi.CustomModel) []agentapi.Model {
 	out := make([]agentapi.Model, 0, len(models))
 	for _, m := range models {
-		out = append(out, agentapi.Model{ID: m.SelectionID(), Name: cmp.Or(m.DisplayName, m.SelectionID()), Efforts: []string{}, ContextSizes: []agentapi.ContextSize{}, Media: &agentapi.Media{}})
+		out = append(out, agentapi.Model{ID: m.SelectionID(), Name: cmp.Or(m.DisplayName, m.SelectionID()), Efforts: []string{}, ContextSizes: []agentapi.ContextSize{}, Media: &agentapi.Media{Images: m.Vision}})
 	}
 	return out
 }
 
-// registered records the custom models a session was given.
+// registered records the custom models a session was given and their applied vision settings.
 type registered struct {
 	providers, models map[string]bool
 }
@@ -82,7 +81,7 @@ type registered struct {
 func newRegistered(models []agentapi.CustomModel) registered {
 	r := registered{providers: map[string]bool{}, models: map[string]bool{}}
 	for _, m := range models {
-		r.providers[m.Name], r.models[m.SelectionID()] = true, true
+		r.providers[m.Name], r.models[m.SelectionID()] = true, m.Vision
 	}
 	return r
 }
@@ -93,7 +92,8 @@ func newRegistered(models []agentapi.CustomModel) registered {
 func (c *conversation) registerCustom(ctx context.Context, id string) error {
 	m, ok := c.p.customModel(id)
 	c.mu.Lock()
-	done := !ok || c.byom.models[id]
+	_, registered := c.byom.models[id]
+	done := !ok || registered
 	hasProvider := c.byom.providers[m.Name]
 	c.mu.Unlock()
 	if done {
@@ -108,9 +108,27 @@ func (c *conversation) registerCustom(ctx context.Context, id string) error {
 		return fmt.Errorf("register custom model %s: %s", id, errText(err))
 	}
 	c.mu.Lock()
-	c.byom.providers[m.Name], c.byom.models[id] = true, true
+	c.byom.providers[m.Name], c.byom.models[id] = true, m.Vision
 	c.mu.Unlock()
 	return nil
+}
+
+// refreshCustomVision applies edits before the next idle prompt. The runtime
+// rejects duplicate registry entries, so update the selected model's override.
+func (c *conversation) refreshCustomVision(ctx context.Context) error {
+	c.mu.Lock()
+	id, running := c.selected, c.turnRunning
+	vision := c.byom.models[id]
+	c.mu.Unlock()
+	m, ok := c.p.customModel(id)
+	if !ok || m.Vision == vision {
+		return nil
+	}
+	if running {
+		return fmt.Errorf("vision settings changed; wait for the current turn to finish before sending images")
+	}
+	// Custom models offer no effort or context-size choices.
+	return c.SetModel(ctx, id, "", "default")
 }
 
 // addProviders converts the SDK's session config types to the
@@ -132,7 +150,7 @@ func addProviders(providers []copilot.NamedProviderConfig, models []copilot.Prov
 	}
 	for _, m := range models {
 		name := m.Name
-		req.Models = append(req.Models, rpc.ProviderModelConfig{ID: m.ID, Provider: m.Provider, Name: &name})
+		req.Models = append(req.Models, rpc.ProviderModelConfig{ID: m.ID, Provider: m.Provider, Name: &name, Capabilities: m.Capabilities})
 	}
 	return req
 }

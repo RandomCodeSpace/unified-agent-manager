@@ -534,7 +534,7 @@ func TestWebCustomModelsLoadClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"later_setting":"t","custom_models":[` +
-		`{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_ACME"},` +
+		`{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","vision":true,"api_key_env":"UAM_BYOM_ACME"},` +
 		`{"name":"acme","base_url":"https://other.example/v1","model_id":"other","api_key_env":"UAM_BYOM_ACME"},` +
 		`{"name":"bad/name","base_url":"https://llm.example/v1","model_id":"m","api_key_env":"UAM_BYOM_K"},` +
 		`{"name":"acme","display_name":"Dup","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_ACME"},` +
@@ -547,7 +547,7 @@ func TestWebCustomModelsLoadClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := cfg.WebSettings.CustomModels
-	if len(got) != 2 || got[0].DisplayName != "Acme Coder" || got[1].Name != "local" || got[1].WireAPI != "responses" || got[1].ModelID != "org/m" {
+	if len(got) != 2 || got[0].DisplayName != "Acme Coder" || !got[0].Vision || got[1].Vision || got[1].Name != "local" || got[1].WireAPI != "responses" || got[1].ModelID != "org/m" {
 		t.Fatalf("loaded custom models = %+v", got)
 	}
 	if err := s.Update(func(cfg *Config) error {

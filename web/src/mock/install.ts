@@ -753,7 +753,7 @@ export function install(): { received: Received[] } {
         // The mock sets no key variables; the service lists the models after Copilot's own.
         const custom = (body.custom_models as CustomModel[]).map((c) => ({ ...c, key_present: false }));
         const copilot = st.meta.providers[0];
-        copilot.models = [...copilot.models.filter((mo) => !mo.id.includes('/')), ...custom.map((c) => ({ id: `${c.name}/${c.model_id}`, name: c.display_name || `${c.name}/${c.model_id}`, efforts: [], context_sizes: [], media: { images: false, pdf: false } }))];
+        copilot.models = [...copilot.models.filter((mo) => !mo.id.includes('/')), ...custom.map((c) => ({ id: `${c.name}/${c.model_id}`, name: c.display_name || `${c.name}/${c.model_id}`, efforts: [], context_sizes: [], media: { images: !!c.vision, pdf: false } }))];
         st.settings = { ...st.settings, custom_models: custom.length ? custom : undefined };
         broadcast('settings', { settings: st.settings });
       }
