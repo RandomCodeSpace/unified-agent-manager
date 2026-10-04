@@ -89,7 +89,8 @@ describe('evidence inside Changes', () => {
     expect(card.queryByRole('button', { name: 'Review changes' })).toBeNull();
     const panel = await screen.findByRole('dialog', { name: 'Changes' });
     expect(within(panel).getByRole('region', { name: 'Finished — check the evidence' })).toBeTruthy();
-    expect(within(panel).getByRole('region', { name: 'Commit' })).toBeTruthy();
+    // The repository read starts when Changes opens, independently of the evidence.
+    expect(await within(panel).findByRole('region', { name: 'Commit' })).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Finished — check the evidence' })).toBeNull();
   });
 
