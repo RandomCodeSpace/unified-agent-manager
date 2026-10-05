@@ -140,7 +140,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
     return () => {
       current = false;
     };
-  }, [name, deviceCapable]);
+  }, [api, name, deviceCapable]);
 
   function follow(d: DeviceSignIn) {
     if (d.state === 'signed_in') {
@@ -170,7 +170,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       current = false;
       window.clearInterval(timer);
     };
-  }, [name, waiting]);
+  }, [api, name, waiting]);
 
   const code = device?.user_code;
   useEffect(() => {
