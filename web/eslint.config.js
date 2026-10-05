@@ -8,11 +8,11 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['../internal/web/dist/**', 'node_modules/**'] },
+  { ignores: ['../internal/web/dist/**', '**/node_modules/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'packages/ui/src/**/*.{ts,tsx}'],
     extends: [jsxA11y.flatConfigs.recommended, reactHooks.configs.flat.recommended],
     languageOptions: {
       globals: globals.browser,
@@ -26,11 +26,11 @@ export default defineConfig(
     },
   },
   {
-    files: ['public/sw.js'],
+    files: ['packages/ui/public/sw.js'],
     languageOptions: { globals: globals.serviceworker },
   },
   {
-    files: ['tests/**/*.mjs', 'vite.config.ts', 'eslint.config.js'],
+    files: ['packages/ui/tests/**/*.mjs', 'vite.config.ts', 'eslint.config.js'],
     languageOptions: { globals: globals.node },
   },
 );

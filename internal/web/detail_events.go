@@ -424,7 +424,7 @@ func (s *Server) handleDetailEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	write := func(frame []byte) bool {
 		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteWait))
-		if _, err := w.Write(frame); err != nil {
+		if _, err := w.Write(frame); err != nil { // #nosec G705 -- text/event-stream contains JSON-escaped data and fixed event names, never HTML.
 			return false
 		}
 		return rc.Flush() == nil

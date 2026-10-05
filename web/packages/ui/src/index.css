@@ -1,0 +1,787 @@
+/* Tailwind v4 theme built from DESIGN.md. One cool light theme (reference direction, 2026-09-24):
+   a near-white canvas, quiet gray rail and bubbles, white raised controls.
+   Every colour, size, radius and shadow in the app is one of these tokens. */
+
+@import 'tailwindcss' source('.');
+
+/* `motion-reduce:` yields to the Motion setting like the global rule below: it applies only under
+   "Match system" (`data-motion="system"` on <html>, lib/motion.ts). */
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    &:where([data-motion='system'], [data-motion='system'] *) {
+      @slot;
+    }
+  }
+}
+
+@theme {
+  /* Surfaces and text: only the DESIGN.md ladder exists; Tailwind's palette is removed. */
+  --color-*: initial;
+  --color-rail: #f7f8fa;
+  --color-canvas: #fcfcfd;
+  --color-surface: #f7f8fa;
+  --color-raised: #ffffff;
+  --color-sunken: #f0f1f4;
+  --color-bubble: #f1f2f5;
+  --color-ink: #25262b;
+  --color-body: #494b53;
+  --color-muted: #686b77;
+  /* Non-text only (glyphs, chevrons, rules): 3:1 on every surface, never under words. Text that read as faint is `muted`. */
+  --color-faint: #858995;
+  --color-hairline: #e6e7ec;
+  --color-hairline-strong: #c9ccd5;
+  --color-primary: #25262b;
+  --color-on-primary: #ffffff;
+  --color-accent: #2a55bd;
+  --color-on-accent: #ffffff;
+  --color-accent-wash: #dbe3f5;
+  --color-focus: #2a55bd;
+  --color-selection: #cfdaf3;
+  --color-attention: #9a400a;
+  --color-attention-wash: #f4e1cf;
+  --color-success: #196a41;
+  --color-success-wash: #d8e8dd;
+  --color-warning: #7a5500;
+  --color-warning-wash: #efe3c3;
+  --color-error: #b3261e;
+  --color-error-wash: #f4d9d5;
+  --color-info: #2a55bd;
+  --color-info-wash: #dbe3f5;
+  --color-code-bg: #f3f4f7;
+  --color-diff-add-bg: #d3e6da;
+  --color-diff-add-text: #14532d;
+  --color-diff-del-bg: #efd6d2;
+  --color-diff-del-text: #7f1d1d;
+  --color-backdrop: rgba(28, 27, 24, 0.35);
+  --color-scrim: rgba(16, 17, 20, 0.8);
+  /* The three tint steps between the surfaces: a hover on raised/canvas (1.16:1 on raised, muted text stays 4.57:1),
+     the selected row on the rail (accent-tinted; muted text 4.53:1), and the well under chips and uploads, also the fill of settled question blocks and the finish card. */
+  --color-tint-hover: #eceef2;
+  --color-tint-selected: #e9edf8;
+  --color-tint-well: #f4f5f8;
+
+  /* Project badge tones (DESIGN.md Badges): fills under `on-primary` text, every pair at least 4.5:1. */
+  --color-badge-red: #b3352a;
+  --color-badge-orange: #a84c12;
+  --color-badge-amber: #876000;
+  --color-badge-lime: #56740f;
+  --color-badge-green: #287541;
+  --color-badge-teal: #13756b;
+  --color-badge-cyan: #0e7089;
+  --color-badge-blue: #3260c4;
+  --color-badge-violet: #6c4fc6;
+  --color-badge-pink: #b0347c;
+
+  --font-sans: 'Figtree Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* Type scale: the DESIGN.md names, used as text-<name>. */
+  --text-*: initial;
+  --text-badge: 8px;
+  --text-badge--line-height: 1;
+  --text-eyebrow: 11px;
+  --text-eyebrow--line-height: 1.2;
+  --text-eyebrow--letter-spacing: 0.66px;
+  --text-eyebrow--font-weight: 600;
+  --text-keycap: 11px;
+  --text-keycap--line-height: 1;
+  --text-meta: 11px;
+  --text-meta--line-height: 1.3;
+  --text-caption: 12px;
+  --text-caption--line-height: 1.4;
+  --text-code-sm: 12px;
+  --text-code-sm--line-height: 1.5;
+  --text-ui: 13px;
+  --text-ui--line-height: 1.4;
+  --text-code: 13px;
+  --text-code--line-height: 1.55;
+  --text-title: 14px;
+  --text-title--line-height: 1.4;
+  --text-title--font-weight: 600;
+  --text-chat: 14px;
+  --text-chat--line-height: 1.7;
+  --text-chat-lg: 16px;
+  --text-chat-lg--line-height: 1.6;
+  --text-display-sm: 17px;
+  --text-display-sm--line-height: 1.35;
+  --text-display-sm--letter-spacing: -0.1px;
+  --text-display-sm--font-weight: 600;
+  --text-display-md: 20px;
+  --text-display-md--line-height: 1.3;
+  --text-display-md--letter-spacing: -0.2px;
+  --text-display-md--font-weight: 600;
+
+  --radius-*: initial;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  /* Elevation (DESIGN.md Elevation & Depth): surfaces float on cool ink shadows instead of drawn borders.
+     Every level is two layers at most: a near-invisible 1px ring (0 blur, the crisp edge) and one soft
+     shadow. `well` is the inset ring of a sunken surface; `focus` lifts a focused field (it turns `raised` and rises, no coloured edge); `focus-float` the composer's deeper neutral shadow. */
+  --shadow-*: initial;
+  --shadow-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
+  --shadow-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
+  --shadow-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
+  --shadow-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
+  --shadow-focus: 0 0 0 1px rgba(20, 28, 45, 0.08), 0 2px 8px rgba(20, 28, 45, 0.1);
+  --shadow-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
+
+  /* Durations are the bare duration-100/160/240 utilities (DESIGN.md fast/base/slow); only the easing is a token. */
+  --ease-app: cubic-bezier(0.2, 0, 0, 1);
+  --default-transition-timing-function: var(--ease-app);
+  --default-transition-duration: 100ms;
+
+  /* Breakpoints (min-width): sm = above the phone, md = fixed rail, lg = inline side panels. */
+  --breakpoint-*: initial;
+  --breakpoint-sm: 481px;
+  --breakpoint-md: 960px;
+  --breakpoint-lg: 1280px;
+  --breakpoint-xl: 1800px;
+
+  --spacing-rail: 320px;
+  --spacing-rail-collapsed: 48px;
+  --spacing-drawer: 300px;
+  --spacing-header: 44px;
+  --spacing-sheet: 440px;
+  --spacing-sheet-wide: 560px;
+  --spacing-panel: 440px;
+  /* The folder picker's well: fixed so moving between folders never changes the dialog's height. */
+  --spacing-picker: min(320px, 40dvh);
+  --spacing-picker-phone: 40dvh;
+
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-spin: spin 1s linear infinite;
+  --animate-flash: flash 1.4s var(--ease-app);
+  --animate-rise: rise 240ms var(--ease-app);
+  --animate-fade-in: fade-in 160ms var(--ease-app);
+  --animate-slide-in: slide-in 240ms var(--ease-app);
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes flash {
+    0% {
+      background-color: var(--color-accent-wash);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    /* View transitions (React <ViewTransition>): the page itself never snapshots (see the view transition rules below). */
+    view-transition-name: none;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  /* Nothing here scrolls sideways, so nothing rubber-bands sideways: desktop Safari stretches any box without a
+     vertical scrollbar (the page itself never scrolls) and iOS bounces scrollers on both axes. Important, since
+     overscroll-contain utilities set both axes. Code blocks still scroll; they stop at their ends. */
+  * {
+    overscroll-behavior-x: none !important;
+  }
+  /* iOS zooms the page into a focused field whose text is under 16px. Only iOS matches; utilities size fields. */
+  @supports (-webkit-touch-callout: none) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
+  body {
+    overflow: hidden;
+    background: var(--color-canvas);
+    color: var(--color-body);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--color-selection);
+    color: var(--color-ink);
+  }
+  /* Keyboard focus: the 2px ring (≥3:1 on every surface), no halo. */
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 1px;
+  }
+  button,
+  [role='button'],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled,
+  [data-disabled] {
+    cursor: not-allowed;
+  }
+  h1,
+  h2,
+  h3 {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+  code,
+  pre {
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  input,
+  textarea {
+    caret-color: var(--color-accent);
+  }
+  ::placeholder {
+    color: var(--color-muted);
+    opacity: 1;
+  }
+  /* Scrollbars: thin, with no track or buttons; a faint thumb (`hairline`) that darkens to `hairline-strong`
+     while the pointer is over the scroller or focus is in it (where the browser repaints for it), and over the
+     thumb itself. Only the colour changes, so nothing moves. Chromium and
+     WebKit take the pseudo-elements (the standard properties would switch those off and draw arrow buttons), so
+     those are Firefox's only. iOS draws its own overlay bars while scrolling. Nothing scrolls sideways
+     (DESIGN.md Scrolling). */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--color-hairline) transparent;
+    }
+    :where(*:hover, *:focus-within) {
+      scrollbar-color: var(--color-hairline-strong) transparent;
+    }
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: var(--radius-full);
+    background: var(--color-hairline);
+    background-clip: content-box;
+  }
+  :hover::-webkit-scrollbar-thumb,
+  :focus-within::-webkit-scrollbar-thumb,
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-hairline-strong);
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  /* Reduced motion only when the Motion setting is "Match system" (lib/motion.ts); by default everything animates. */
+  @media (prefers-reduced-motion: reduce) {
+    :root[data-motion='system'],
+    :root[data-motion='system'] *,
+    :root[data-motion='system'] *::before,
+    :root[data-motion='system'] *::after,
+    :root[data-motion='system']::view-transition-group(*),
+    :root[data-motion='system']::view-transition-old(*),
+    :root[data-motion='system']::view-transition-new(*) {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* View transitions (React <ViewTransition>): only the parts React names take part; the page itself
+     never snapshots (`:root` above), so streamed text keeps painting live during one. The classes are React's
+     `view-transition-class` values; the keyframes are the theme's. */
+  ::view-transition-group(.vt-row) {
+    animation-duration: 240ms;
+    animation-timing-function: var(--ease-app);
+  }
+  ::view-transition-old(.vt-row),
+  ::view-transition-new(.vt-row) {
+    animation-duration: 100ms;
+  }
+  ::view-transition-new(.vt-row-enter) {
+    animation: rise 240ms var(--ease-app);
+  }
+  ::view-transition-old(.vt-row-exit) {
+    animation: fade-out 160ms var(--ease-app);
+  }
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+}
+
+/* The vertical fading rule, a utility so variants work (`before:fade-rule-y` draws the thought and step rails);
+   the element sets its own width (`w-px`, `before:w-0.5`). */
+@utility fade-rule-y {
+  background: linear-gradient(to bottom, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
+}
+
+@layer components {
+  /* Fading separators (DESIGN.md Lines): where a seam still needs a rule, it fades out at both ends so
+     nothing in the chrome is a full-width or full-height line. */
+  .fade-rule {
+    height: 1px;
+    flex: none;
+    background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent);
+  }
+  /* The sidebar's seam: the rail colour step and a fading rule at its right edge. */
+  .rail-edge::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 1px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+
+  /* Hover lift: the element rises 1px (transform) while a pre-drawn float shadow on its pseudo-element
+     fades in (opacity); nothing else is animated. Off under Motion: Match system with reduced motion. */
+  .lift {
+    position: relative;
+    isolation: isolate;
+    transition: transform 160ms var(--ease-app);
+  }
+  .lift::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    box-shadow: var(--shadow-float);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+    pointer-events: none;
+  }
+  .lift:hover {
+    transform: translateY(-1px);
+  }
+  .lift:hover::before {
+    opacity: 1;
+  }
+
+  /* The pane header (Task, Settings): no rule; once content is scrolled beneath it, `data-scrolled`
+     fades in (opacity) a short fade of the canvas below its edge. */
+  .pane-header {
+    position: relative;
+    z-index: 10;
+    background: var(--color-canvas);
+  }
+  .pane-header::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 24px;
+    pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(20, 28, 45, 0.05), transparent 60%),
+      linear-gradient(to bottom, var(--color-canvas), transparent);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+  }
+  .pane-header[data-scrolled]::after {
+    opacity: 1;
+  }
+  /* Floating panels (components/ui/panel.tsx): the head sits on the panel's surface with no rule; once the
+     body scrolls beneath it, `data-scrolled` fades in (opacity) a short fade below its edge. */
+  .panel-head {
+    position: relative;
+    z-index: 10;
+    background: var(--color-raised);
+  }
+  .panel-head::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 20px;
+    pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(20, 28, 45, 0.05), transparent 60%),
+      linear-gradient(to bottom, var(--color-raised), transparent);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+  }
+  .panel-head[data-scrolled]::after {
+    opacity: 1;
+  }
+  /* A panel's foot: a fading rule above it. */
+  .panel-foot {
+    position: relative;
+  }
+  .panel-foot::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+  /* A collapsed long text: the last lines fade into the surface beneath (an overlay, not a mask). */
+  .clamp-fade::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 32px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--clamp-surface, var(--color-raised)));
+  }
+  /* The composer's dock overlaps the transcript's foot: one gradient (canvas from the composer up to
+     transparent) lets the conversation fade out beneath the floating control plane. */
+  .transcript-dock {
+    position: relative;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .transcript-dock > * {
+    pointer-events: auto;
+  }
+  .transcript-dock::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--color-canvas) 36px);
+  }
+
+  /* Markdown from providers (react-markdown output; utilities cannot reach inside it). An unbroken
+     run (a data URL, a hash) wraps instead of widening the column; code blocks keep their own scroll. */
+  .md {
+    overflow-wrap: anywhere;
+  }
+  .md > :first-child {
+    margin-top: 0;
+  }
+  .md > :last-child {
+    margin-bottom: 0;
+  }
+  .md p {
+    margin: 0 0 10px;
+  }
+  .md ul,
+  .md ol {
+    margin: 0 0 10px;
+    padding-left: 20px;
+  }
+  .md ul {
+    list-style: disc;
+  }
+  .md ol {
+    list-style: decimal;
+  }
+  .md li + li {
+    margin-top: 3px;
+  }
+  .md h1,
+  .md h2,
+  .md h3,
+  .md h4,
+  .md h5,
+  .md h6 {
+    margin: 14px 0 6px;
+    font-size: inherit;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .md h1 {
+    margin-top: 18px;
+  }
+  /* Thinking: the whole text stays muted, headings included, and its first heading sits flush. */
+  .md-quiet :is(h1, h2, h3, h4, h5, h6) {
+    color: inherit;
+    margin-top: 10px;
+  }
+  .md strong {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .md a {
+    color: var(--color-accent);
+    text-underline-offset: 3px;
+  }
+  .md a:hover {
+    text-decoration: underline;
+  }
+  .md code {
+    padding: 1px 4px;
+    border-radius: var(--radius-xs);
+    background: var(--color-sunken);
+    color: var(--color-ink);
+    font-size: 0.92em;
+  }
+  /* Inline code that names a file of the Task: same box, the link's colour. */
+  .md a.md-file > code {
+    color: inherit;
+  }
+  .md pre {
+    margin: 10px 0;
+    padding: 10px 12px;
+    max-height: 480px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-md);
+    background: var(--color-code-bg);
+    box-shadow: var(--shadow-well);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .md pre code {
+    padding: 0;
+    background: transparent;
+    font-size: inherit;
+  }
+  .md blockquote {
+    margin: 10px 0;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--color-sunken);
+    color: var(--color-muted);
+  }
+  .md table {
+    margin: 10px 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .md th,
+  .md td {
+    padding: 4px 14px 4px 0;
+    border-bottom: 1px solid var(--color-hairline);
+    text-align: left;
+    vertical-align: top;
+  }
+  .md th {
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  .data-table,
+  .md .data-table {
+    width: 100%;
+    margin: 0;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .data-table :is(th, td),
+  .md .data-table :is(th, td) {
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--color-hairline);
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-canvas);
+    font-weight: 500;
+  }
+  .data-table tbody th { font-weight: 400; }
+  .data-table tbody tr:last-child > * { border-bottom: 0; }
+  .md hr {
+    margin: 12px 0;
+    border: 0;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .md img {
+    display: none;
+  }
+
+  /* Code highlighting (highlight.js classes via lowlight): five tones on the `code-bg` well,
+     each a text or diff token; weight stays 400–500 and nothing is italic. */
+  .hljs-comment,
+  .hljs-quote,
+  .hljs-meta {
+    color: var(--color-muted);
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-doctag,
+  .hljs-name,
+  .hljs-tag {
+    color: var(--color-accent);
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-symbol,
+  .hljs-template-tag,
+  .hljs-bullet {
+    color: var(--color-success);
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-link {
+    color: var(--color-attention);
+  }
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable,
+  .hljs-built_in,
+  .hljs-type,
+  .hljs-params,
+  .hljs-selector-class,
+  .hljs-selector-id,
+  .hljs-selector-attr,
+  .hljs-selector-pseudo {
+    color: var(--color-warning);
+  }
+  .hljs-title,
+  .hljs-section {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+  .hljs-addition {
+    color: var(--color-diff-add-text);
+    background: var(--color-diff-add-bg);
+  }
+  .hljs-deletion {
+    color: var(--color-diff-del-text);
+    background: var(--color-diff-del-bg);
+  }
+  .hljs-strong {
+    font-weight: 600;
+  }
+
+  /* Unified diff table (Changes sheet). */
+  .diff {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--color-code-bg);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    font-variant-ligatures: none;
+  }
+  .diff caption {
+    padding: 6px 12px;
+    background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent) bottom / 100% 1px no-repeat;
+    color: var(--color-muted);
+    text-align: left;
+  }
+  .diff td {
+    padding: 0 8px;
+    white-space: pre;
+    vertical-align: top;
+  }
+  /* Both number columns are as wide as the longest number (`--num`, set by the table); the second also
+     holds the comment glyph (12px + 6px gap). */
+  .diff td.num {
+    box-sizing: content-box;
+    width: var(--num, 4ch);
+    min-width: var(--num, 4ch);
+    padding-right: 6px;
+    background: var(--color-code-bg);
+    color: var(--color-muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    user-select: none;
+  }
+  .diff td.num + td.num {
+    width: calc(var(--num, 4ch) + 18px);
+    min-width: calc(var(--num, 4ch) + 18px);
+  }
+  /* Code wraps and breaks anywhere, so no line widens the table: nothing on screen scrolls sideways. */
+  .diff td.code-cell {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .diff tr.add td {
+    background: var(--color-diff-add-bg);
+    color: var(--color-diff-add-text);
+  }
+  .diff tr.del td {
+    background: var(--color-diff-del-bg);
+    color: var(--color-diff-del-text);
+  }
+  .diff tr.hunk td {
+    padding: 2px 12px;
+    background: var(--color-hairline);
+    color: var(--color-muted);
+  }
+  .diff tr.meta td {
+    color: var(--color-muted);
+  }
+  .diff .sign {
+    display: inline-block;
+    width: 1.2em;
+    font-weight: 500;
+  }
+  /* The terminal's scrollbar slider (components/Terminal.tsx): xterm.js puts these colours in a <style>
+     element the CSP blocks (DESIGN.md CSP constraints), so they live here, from its foreground `ink`. */
+  .xterm .xterm-scrollable-element > .scrollbar > .slider {
+    background: #25262b33;
+  }
+  .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
+    background: #25262b66;
+  }
+  .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+    background: #25262b80;
+  }
+}

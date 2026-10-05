@@ -290,10 +290,12 @@ func TestSetTokenValidatesAndReplacesTheFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(before.Close)
 	after, err := NewServer(ServerConfig{Manager: m, Token: chosen, Assets: fstest.MapFS{"index.html": {Data: []byte("x")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(after.Close)
 	cookie := &http.Cookie{Name: cookieName, Value: sessionCookie(old, "127.0.0.1:8260", time.Now().Add(time.Hour).Unix())}
 	for _, tc := range []struct {
 		srv  *Server

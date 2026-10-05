@@ -322,7 +322,15 @@ func (g *tempGrants) close() {
 
 // Close cancels grants before HTTP shutdown waits for readers to drain. It is
 // safe to call more than once; a Server must not be reused after Close.
-func (s *Server) Close() { s.grants.close() }
+func (s *Server) Close() {
+	s.grants.close()
+	if s.connections != nil {
+		s.connections.close()
+	}
+	if s.notices != nil {
+		s.notices.close()
+	}
+}
 
 func grantKey(token, host, taskID, grantID string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
@@ -451,6 +459,9 @@ func (w grantResponse) WriteHeader(status int) {
 // Scrub grant and Task file-key URLs in request targets and headers, including
 // opaque-frame Referer values.
 func redactKeyURL(value string) string {
+	if redacted, ok := redactConnectedKeyURL(value); ok {
+		return redacted
+	}
 	u, err := url.Parse(value)
 	if err != nil {
 		// A malformed header value must not bypass redaction merely because

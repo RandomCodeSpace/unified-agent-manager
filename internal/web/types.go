@@ -84,8 +84,12 @@ type ProviderInfo struct {
 	Reason      string `json:"reason"`
 	// SignedOut is set when the provider is unavailable because its runtime
 	// has no account sign-in; Reason then says to sign in in Settings.
-	SignedOut    bool                  `json:"signed_out,omitempty"`
-	Capabilities agentapi.Capabilities `json:"capabilities"`
+	SignedOut bool `json:"signed_out,omitempty"`
+	// AccountMismatch is set when the provider is unavailable because its
+	// runtime is signed in as another account than the one this server is
+	// linked to; Reason then says which.
+	AccountMismatch bool                  `json:"account_mismatch,omitempty"`
+	Capabilities    agentapi.Capabilities `json:"capabilities"`
 	// Models are the selectable models; empty means the provider default only.
 	Models []agentapi.Model `json:"models"`
 	// CheapestModel is the cheapest priced model not hidden in Settings: the
@@ -210,6 +214,9 @@ type Quota struct {
 
 // Meta is the /api/meta response.
 type Meta struct {
+	InstanceID      string         `json:"instance_id"`
+	ProtocolMajor   int            `json:"protocol_major"`
+	Capabilities    []string       `json:"capabilities"`
 	Version         string         `json:"version"`
 	Providers       []ProviderInfo `json:"providers"`
 	RecentWorkdirs  []string       `json:"recent_workdirs"`

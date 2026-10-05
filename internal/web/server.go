@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -95,19 +97,27 @@ type ServerConfig struct {
 
 // Server is the HTTP handler for the web interface.
 type Server struct {
-	m         *Manager
-	token     string
-	headerLog bool
-	csrf      *http.CrossOriginProtection
-	assets    fs.FS
-	version   string
-	mux       *http.ServeMux
-	heartbeat time.Duration
-	grants    *tempGrants
+	connections   *connectionRegistry
+	notices       *connectedNotices
+	federationMux *http.ServeMux
+	// connectionTLS is a test seam for fixture certificate authorities.
+	connectionTLS *tls.Config
+	m             *Manager
+	token         string
+	headerLog     bool
+	csrf          *http.CrossOriginProtection
+	assets        fs.FS
+	version       string
+	mux           *http.ServeMux
+	heartbeat     time.Duration
+	grants        *tempGrants
 	// terminalOrigins are the public origins as WebSocket origin patterns.
 	terminalOrigins []string
 	// frameSecurity and frameETag are framePolicy's for the embedded frame document.
 	frameSecurity, frameETag string
+
+	// fleet is each connection's Copilot account as last read.
+	fleet fleetAccounts
 }
 
 // NewServer validates cfg and builds the handler.
@@ -141,8 +151,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	frame, _ := fs.ReadFile(s.assets, frameDocument)
 	s.frameSecurity, s.frameETag = framePolicy(frame)
+	if s.m.store == nil || s.m.ctx == nil {
+		return nil, errors.New("web server needs persistent manager state")
+	}
+	var err error
+	s.connections, err = openConnectionRegistry(s.m.ctx, filepath.Dir(s.m.store.Path()), s.token)
+	if err != nil {
+		return nil, fmt.Errorf("connection state: %w", err)
+	}
 	s.grants = newTempGrants(s.m)
 	s.routes()
+	s.initConnectedNotifications()
 	return s, nil
 }
 
@@ -159,6 +178,9 @@ func NormalizePublicOrigin(origin string) (string, error) {
 
 func (s *Server) routes() {
 	mux := http.NewServeMux()
+	s.connectionRoutes(mux)
+	s.connectedRoutes(mux)
+	s.connectedNotificationRoutes(mux)
 	mux.HandleFunc("GET /api/auth", s.handleAuth)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
@@ -181,6 +203,10 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/usage/prices", s.handleTokenPrices)
 	mux.HandleFunc("GET /api/providers/{provider}/account", s.handleAccount)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-in", s.handleSignIn)
+	mux.HandleFunc("POST /api/providers/{provider}/account/device", s.handleStartDeviceSignIn)
+	mux.HandleFunc("GET /api/providers/{provider}/account/device", s.handleDeviceSignIn)
+	mux.HandleFunc("DELETE /api/providers/{provider}/account/device", s.handleCancelDeviceSignIn)
+	mux.HandleFunc("DELETE /api/providers/{provider}/account/link", s.handleUnlinkAccount)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
 	mux.HandleFunc("GET /api/utility", s.handleUtility)
 	mux.HandleFunc("GET /api/push", s.handlePushKey)
@@ -296,7 +322,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
-	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) && !s.fileKeyRequest(r) {
+	if s.serveFederation(w, r) {
+		return
+	}
+	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) && !s.fileKeyRequest(r) && !s.connectedFileKeyRequest(r) {
 		s.refuse(w, r, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -374,6 +403,14 @@ func hasMediaType(value, want string) bool {
 
 // uploadPath matches exactly POST /api/sessions/{id}/attachments.
 func uploadPath(p string) bool {
+	if strings.HasPrefix(p, federationWorkloadPrefix) {
+		p = "/" + strings.TrimPrefix(p, federationWorkloadPrefix)
+	}
+	if rest, ok := strings.CutPrefix(p, "/api/connected/"); ok {
+		if _, tail, found := strings.Cut(rest, "/"); found {
+			p = "/" + tail
+		}
+	}
 	ok, _ := path.Match("/api/sessions/*/attachments", p)
 	return ok
 }
@@ -468,7 +505,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	s.m.RefreshModels()
-	meta := Meta{Version: s.version, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()}
+	descriptor := s.federationDescriptor()
+	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()}
 	if roots, err := s.grants.rootsForUse(); err == nil {
 		meta.TempRoot, meta.TempRootAliases = roots.canonical, roots.aliases
 	}

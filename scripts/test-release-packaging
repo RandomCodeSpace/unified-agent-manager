@@ -13,14 +13,22 @@ git config user.email 'packaging-test@example.invalid'
 git add .
 git commit -qm 'test: source fixture'
 git switch -qc smoke-source
-git commit -q --allow-empty -m 'test: unmerged beta source'
+git commit -q --allow-empty -m 'test: unmerged prerelease source'
 source_commit=$(git rev-parse HEAD)
-version="v0.0.0-beta.$(date +%s)${RANDOM}"
+version="v0.0.0-alpha.$(date +%s)${RANDOM}"
 module=github.com/RandomCodeSpace/unified-agent-manager
 
 UAM_EXPECT_WEB_ASSETS=absent go test ./internal/web -run '^TestEmbeddedFrontendPackaging$' -count=1
 scripts/prepare-release "$version"
 release_commit=$(git rev-parse "$version^{commit}")
+scripts/verify-release-source "${version/-alpha./-beta.}" "$release_commit" main
+for invalid in v0.0.0-alpha v0.0.0-alpha.01 v0.0.0-alpha.-1 v0.0.0-rc.1 v00.0.0-alpha.1; do
+  for script in scripts/prepare-release scripts/verify-release-source; do
+    if output=$("$script" "$invalid" "$source_commit" 2>&1) || [[ $output != *'release version must be'* ]]; then
+      echo "$script did not reject malformed version $invalid before preparation" >&2; exit 1
+    fi
+  done
+done
 test "$(git cat-file -t "refs/tags/$version")" = tag
 test "$(git rev-parse "$release_commit^")" = "$source_commit"
 test "$(git rev-parse HEAD)" = "$source_commit"
@@ -83,4 +91,4 @@ git -C "$scratch/tampered" commit -qm 'test: invalid release child'
 if scripts/verify-release-source "$version" "$(git -C "$scratch/tampered" rev-parse HEAD)" main >/dev/null 2>&1; then
   echo 'release verification accepted source edits in the generated child' >&2; exit 1
 fi
-printf 'PASS: source isolation, annotated generated child, ancestry, duplicate refusal, tagged go install, exact bundle parity, source-tampering refusal\n'
+printf 'PASS: alpha preparation, beta verification, version syntax, source isolation, annotated generated child, ancestry, duplicate refusal, tagged go install, exact bundle parity, source-tampering refusal\n'

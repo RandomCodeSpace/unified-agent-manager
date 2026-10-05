@@ -1,0 +1,52 @@
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
+import { cn } from '../../lib/cn';
+
+/** How long an exit takes (DESIGN.md `slow`), plus a frame so the last transition step has painted. */
+export const EXIT_MS = 260;
+
+/**
+ * Keeps something mounted through its exit: `mounted` holds from the first `open` until the
+ * animated component reports `onClosed` after `open` turned false. Under reduced motion the
+ * components still report, on a timer, so nothing lingers.
+ */
+export function usePresence(open: boolean): { mounted: boolean; onClosed: () => void } {
+  const [mounted, setMounted] = useState(open);
+  if (open && !mounted) setMounted(true);
+  return { mounted: mounted || open, onClosed: () => setMounted(false) };
+}
+
+/**
+ * One reveal for every disclosure (DESIGN.md: shelves, tool details, cards): the rows track
+ * switches 0fr ↔ 1fr at once, so the layout changes in one step and never per frame, and the
+ * content fades and slides in over `slow` (opacity and transform only). `soft` (disclosures
+ * outside the transcript scroller only) transitions the track over `slow` too, so the height
+ * glides natively; nothing is measured. Closed content is inert. `onClosed` fires once the
+ * exit is over, so the owner can unmount.
+ */
+export function Collapse({ open, appear = false, soft = false, onClosed, className, inner, children }: Readonly<{ open: boolean; /** Mounted open, reveal on the next frame (the first paint is at 0fr). */ appear?: boolean; /** Transition the rows track (`slow`): never inside the transcript, which must not reflow per frame. */ soft?: boolean; onClosed?: () => void; className?: string; inner?: string; children: ReactNode }>) {
+  const closed = useEffectEvent(() => onClosed?.());
+  // Its own window's timer and frames: a disclosure in a Picture-in-Picture pop-out must not wait on the main page's.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) return;
+    const win = box.current?.ownerDocument.defaultView ?? window;
+    const timer = win.setTimeout(closed, EXIT_MS);
+    return () => win.clearTimeout(timer);
+  }, [open]);
+  const [appeared, setAppeared] = useState(!appear);
+  useEffect(() => {
+    if (appeared) return;
+    const win = box.current?.ownerDocument.defaultView ?? window;
+    const frame = win.requestAnimationFrame(() => setAppeared(true));
+    return () => win.cancelAnimationFrame(frame);
+  }, [appeared]);
+  const shown = open && appeared;
+  return (
+    <div ref={box} className={cn('grid', soft && 'transition-[grid-template-rows] duration-240 ease-app', shown ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]', className)}>
+
+      <div className={cn('min-h-0 overflow-hidden transition-[opacity,translate] duration-240 ease-app', !shown && '-translate-y-1 opacity-0', inner)} inert={!open} aria-hidden={!open}>
+        {children}
+      </div>
+    </div>
+  );
+}

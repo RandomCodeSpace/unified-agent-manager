@@ -511,6 +511,7 @@ func TestRoutesReportFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(imp.Close)
 	prov.SetPrevious(nil, errors.New("listing failed"))
 	w = (&testServer{srv: imp, m: m, prov: prov}).do(http.MethodGet, "/api/previous/counts", "", auth)
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "could not list previous") {
