@@ -1,12 +1,12 @@
 import { useApi } from '../ApiContext';
-import { Check, Info, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Info, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { describeError, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { dateTime, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateCacheSaving, groupUsageModels } from '../lib/token-usage';
-import { Count, costText, MODEL_COLORS, ModelOverview, modelNames, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
+import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
 import { Button } from './ui/button';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Popover } from './ui/popover';
@@ -35,8 +35,6 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
   const [priceError, setPriceError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [all, setAll] = useState(false);
-  const [query, setQuery] = useState('');
-  const [sort, setSort] = useState<UsageSort>('tokens');
   const [colors, setColors] = useState<Map<string, string>>(() => new Map());
   useEffect(() => {
     let current = true;
@@ -81,7 +79,6 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
   const saved = estimateCacheSaving(shown?.models ?? [], prices);
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
   const names = modelNames(meta);
-  const filtered = models.filter((model) => `${model.model || 'Unspecified model'} ${names.get(model.model) ?? ''}`.toLowerCase().includes(query.toLowerCase()));
   const account = accountQuota(quotas);
   const [scrolled, setScrolled] = useState(false);
   return <>
@@ -146,24 +143,16 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         </div>
         <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>
         <div role="group" aria-label="Usage view" className="mb-2 flex gap-1">
-          <Button size="sm" aria-pressed={!all} onClick={() => { setAll(false); setQuery(''); }}>Overview</Button>
+          <Button size="sm" aria-pressed={!all} onClick={() => setAll(false)}>Overview</Button>
           <Button size="sm" aria-pressed={all} onClick={() => setAll(true)}>All models · {models.length}</Button>
         </div>
-        {!all && models.length > 0 && <div className="flex items-center justify-between gap-2 pb-1"><h3 className="font-medium text-ink">{models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
-        {all && <label className="mb-2 flex items-center gap-2 rounded-sm bg-sunken px-3 py-2 shadow-well focus-within:outline-2 focus-within:outline-focus">
-          <Search aria-hidden="true" className="size-4 shrink-0 text-muted" />
-          <input aria-label="Find a model" placeholder="Find a model" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-ui outline-none" />
-        </label>}
+        {models.length > 0 && <div className="flex items-center justify-between gap-2 pb-1"><h3 className="font-medium text-ink">{all ? 'All models' : models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
       </>}
     {shown && <>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
       <div className={cn('min-w-0', all && 'min-h-24 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
-        {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
-          <ModelTable models={filtered} colors={colors} names={names} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
-          {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
-        </> : <ModelOverview models={models} colors={colors} names={names} />}
+        {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : <ModelRows models={models} colors={colors} names={names} limit={all ? undefined : 5} />}
       </div>
-      {all && <p className="text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models`} · Token splits in the info tooltips.</p>}
     </>}
       </PanelSection>
       </div>

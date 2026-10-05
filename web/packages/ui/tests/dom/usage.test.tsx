@@ -145,14 +145,13 @@ describe('Usage popover', () => {
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('980K'));
     await user.keyboard('{Escape}');
     await user.click(popover.getByRole('button', { name: /All models/ }));
-    const table = within(popover.getByRole('table', { name: 'Today token usage by model' }));
-    expect(table.getAllByText('—').length).toBeGreaterThan(0);
-    for (const name of ['Model', 'Tokens', 'Est. cost', 'Cache hit']) expect(table.getByRole('columnheader', { name })).toBeTruthy();
-    expect(table.getByRole('rowheader', { name: /claude-sonnet-5/ })).toBeTruthy();
-    expect(table.queryByText('copilot', { exact: true })).toBeNull();
+    const list = within(popover.getByRole('region', { name: 'Model usage' }));
+    expect(list.getAllByTitle(/^Estimated cost — in USD/).length).toBeGreaterThan(0);
+    expect(list.getByRole('button', { name: 'About claude-sonnet-5 token split' })).toBeTruthy();
+    expect(list.queryByText('copilot', { exact: true })).toBeNull();
     for (const period of ['7 days', '30 days', 'Lifetime']) {
       await user.click(popover.getByRole('button', { name: period, exact: true }));
-      expect(popover.getByRole('table', { name: `${period} token usage by model` })).toBeTruthy();
+      expect(popover.getByRole('button', { name: period, exact: true }).getAttribute('aria-pressed')).toBe('true');
     }
     expect(popover.getAllByText('1.6B').length).toBeGreaterThan(0);
     await user.click(popover.getByRole('button', { name: 'Close usage' }));
@@ -265,9 +264,10 @@ describe('Usage popover', () => {
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('button', { name: 'About Unspecified model token split' });
     await user.click(screen.getByRole('button', { name: /All models/ }));
-    const row = within(screen.getByRole('rowheader', { name: /Unspecified model/ }).closest('tr')!);
-    expect(row.queryByText('crush', { exact: true })).toBeNull();
-    expect(row.getByText('$2.50')).toBeTruthy();
+    const list = screen.getByRole('region', { name: 'Model usage' });
+    expect(within(list).queryByText('crush', { exact: true })).toBeNull();
+    expect(within(list).getByTitle('Unspecified model')).toBeTruthy();
+    expect(within(list).getByTitle(/^Estimated cost \$2\.50 in USD/)).toBeTruthy();
     expect(summaryCost('Cache saving').textContent).toBe('—');
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
@@ -299,7 +299,7 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     await user.click(await screen.findByRole('button', { name: /All models/ }));
-    expect(within(screen.getByRole('table')).getByText(expected)).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Model usage' }).textContent).toContain(`${expected} · `);
     expect(summaryCost('Estimated cost').textContent).toBe(expected);
     expectPricingCaveatsHidden();
     await user.click(screen.getByRole('button', { name: 'About claude-sonnet-5 token split' }));
@@ -340,12 +340,9 @@ describe('Usage popover', () => {
     expect(overview.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
     expect(overview.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: /All models/ }));
-    const table = within(screen.getByRole('table'));
-    expect(table.getByRole('columnheader', { name: 'Cache hit' })).toBeTruthy();
-    const row = within(table.getByRole('rowheader', { name: /claude-sonnet-5/ }).closest('tr')!);
-    expect(row.getByRole('cell', { name: '17.3%' })).toBeTruthy();
-    const missing = within(table.getByRole('rowheader', { name: /unknown-input/ }).closest('tr')!);
-    expect(missing.getByRole('cell', { name: '—' })).toBeTruthy();
+    const all = screen.getByRole('figure');
+    expect(all.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
+    expect(all.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: 'About claude-sonnet-5 token split' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('Cache hit: 17.3% of input tokens served by cache reads. Cache writes are not hits.'));
   });
@@ -362,11 +359,10 @@ describe('Usage popover', () => {
     // A model no catalog lists keeps its ID.
     expect(overview.getByTitle('gpt-6-luna').textContent).toBe('gpt-6-luna');
     await user.click(screen.getByRole('button', { name: /All models/ }));
-    await user.type(screen.getByRole('textbox', { name: 'Find a model' }), 'sonnet 5');
-    expect(within(screen.getByRole('table')).getByRole('rowheader', { name: /Claude Sonnet 5/ })).toBeTruthy();
+    expect(within(screen.getByRole('figure')).getByTitle('Claude Sonnet 5 · claude-sonnet-5').textContent).toBe('Claude Sonnet 5');
   });
 
-  test('combines the same model across tools, limits the overview, and searches and sorts all models', async () => {
+  test('combines the same model across tools, shows the top five in Overview and every model the same way in All models', async () => {
     const report = tokenUsageFixture();
     const sonnet = report.periods.today.models[0];
     const models = [
@@ -408,26 +404,28 @@ describe('Usage popover', () => {
       expect(tooltip.textContent).toContain('208K tokens');
     });
     await user.keyboard('{Escape}');
+    const rowsIn = (view: HTMLElement) => [...view.querySelectorAll('figure > div > div')].map((row) => ({
+      name: row.querySelector('[title]')!.textContent,
+      line: row.firstElementChild!.lastElementChild!.textContent,
+      bar: row.querySelector('[role="img"]')!.getAttribute('aria-label'),
+    }));
+    const region = () => screen.getByRole('region', { name: 'Model usage' });
+    expect(screen.getByRole('heading', { name: 'Top 5 models' })).toBeTruthy();
+    expect(region().getAttribute('tabindex')).toBeNull();
+    const overview = rowsIn(region());
+    expect(overview).toHaveLength(6);
+    expect(overview[5].name).toBe('Other 2 models');
     await user.click(screen.getByRole('button', { name: 'All models · 7' }));
-    const table = within(screen.getByRole('table', { name: 'Today token usage by model' }));
-    expect(table.getAllByRole('rowheader')).toHaveLength(7);
-    const row = within(table.getByRole('rowheader', { name: /claude-sonnet-5/ }).closest('tr')!);
-    expect(row.getByText('1.5M')).toBeTruthy();
-    expect(row.getByText('$2.87')).toBeTruthy();
-    await user.click(table.getByRole('button', { name: 'Est. cost' }));
-    expect(table.getByRole('columnheader', { name: 'Est. cost' }).getAttribute('aria-sort')).toBe('descending');
-    expect(table.getAllByRole('rowheader')[0].textContent).toContain('model-5');
-    await user.click(table.getByRole('button', { name: 'Tokens' }));
-    expect(table.getAllByRole('rowheader')[0].textContent).toContain('claude-sonnet-5');
-    const search = screen.getByRole('textbox', { name: 'Find a model' });
-    await user.type(search, 'SONNET');
-    expect(table.getAllByRole('rowheader')).toHaveLength(1);
-    expect(table.getByRole('rowheader', { name: /claude-sonnet-5/ })).toBeTruthy();
-    await user.clear(search);
-    await user.type(search, 'no-such-model');
-    expect(table.queryAllByRole('rowheader')).toHaveLength(0);
-    await user.clear(search);
-    expect(table.getAllByRole('rowheader')).toHaveLength(7);
+    expect(screen.getByRole('heading', { name: 'All models' })).toBeTruthy();
+    expect(region().getAttribute('tabindex')).toBe('0');
+    const all = rowsIn(region());
+    expect(all).toHaveLength(7);
+    // The same rows, in the same order, carrying the same values; All models only goes on past the top five.
+    expect(all.slice(0, 5)).toEqual(overview.slice(0, 5));
+    expect(all[0].line).toContain('$2.87 · 1.5M');
+    expect(all.map((row) => row.name)).not.toContain('Other 2 models');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 
   test('keeps recorded usage available when the no-cache price lookup fails', async () => {
