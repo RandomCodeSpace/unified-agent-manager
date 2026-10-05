@@ -32,7 +32,7 @@ describe('Usage popover', () => {
     await user.type(composer(), '/usage');
     await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/usage/ });
     await user.keyboard('{Enter}{Enter}');
-    expect(await screen.findByRole('region', { name: 'AI allowance' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Allowance' })).toBeTruthy();
     const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Tasks' }));
     expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('composer-usage')).toBeNull();
@@ -48,10 +48,13 @@ describe('Usage popover', () => {
     expect(document.getElementById('composer-usage')).toBeNull();
     expect(button.querySelector<HTMLElement>('[style]')?.style.transform).toBe('scaleX(0.96)');
     await user.click(button);
-    const allowance = within(await screen.findByRole('region', { name: 'AI allowance' }));
-    expect(allowance.getByText('96% left')).toBeTruthy();
-    expect(allowance.getByText('280 of 7,000 ai credits used')).toBeTruthy();
-    expect(allowance.getByText(/until reset.*left at this pace/)).toBeTruthy();
+    const allowance = within(await screen.findByRole('region', { name: 'Allowance' }));
+    // The head carries what is left; the section, used of the whole, the month as a chart, the reset and the projection.
+    expect(within(screen.getByRole('dialog', { name: 'Usage' })).getByText('96% left')).toBeTruthy();
+    expect(allowance.getByText('280')).toBeTruthy();
+    expect(allowance.getByText('/ 7,000 used')).toBeTruthy();
+    expect(allowance.getByText('Resets')).toBeTruthy();
+    expect(allowance.getByText(/^(On track for ~[\d,]+ of 7,000|Runs out ~.+|About .+ left)$/)).toBeTruthy();
   });
 
   test('stale quota keeps the number but clears the pace assessment', async () => {
@@ -181,7 +184,7 @@ describe('Usage popover', () => {
     if (settingsOpen) await user.click(screen.getByRole('button', { name: 'General', exact: true }));
     await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
-    const notice = await popover.findByText('Prices missing for 1 model.');
+    const notice = await popover.findByText(/1 model unpriced/);
     expect(notice.closest('.sr-only')).toBeNull();
     const addPrices = popover.getByRole('link', { name: 'Add prices' });
     expect(addPrices.getAttribute('href')).toBe('#settings');
@@ -204,7 +207,7 @@ describe('Usage popover', () => {
     const user = userEvent.setup();
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
-    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Last fetched ${timeAgo(report.collection.updated_at!)}.`);
+    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Updated ${timeAgo(report.collection.updated_at!)}`);
     expect(screen.getByRole('status').querySelector('time')?.getAttribute('title')).toBe(dateTime(report.collection.updated_at!));
     expect(document.querySelector('[data-popup="tooltip"]')).toBeNull();
     expect(screen.getByText(message).closest('.sr-only')).toBeTruthy();
@@ -262,7 +265,7 @@ describe('Usage popover', () => {
     expect(summaryCost('Without cache').textContent).toBe('—');
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe(`Last fetched ${timeAgo(report.collection.updated_at!)}.`);
+    expect(screen.getByRole('status').textContent).toBe(`Updated ${timeAgo(report.collection.updated_at!)}`);
     expect(screen.getByText(/UAM tracking started/).textContent).toContain('local harness records and UAM task, subagent, and Background AI usage');
     expect(screen.getByText(/External Copilot usage/).textContent).toContain('requires local telemetry files');
     expect(screen.getByText(/External Copilot usage/).textContent).toContain(dateTime(report.collection.copilot_since));

@@ -1,12 +1,13 @@
-import { Info, Search, X } from 'lucide-react';
+import { Check, ChevronRight, Info, Search, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, describeError, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
-import { accountQuota, quotaFace, quotaLabel, quotaPace, quotaText } from '../lib/cost';
+import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { dateTime, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateWithoutCache, groupUsageModels } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, ModelOverview, modelNames, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
 import { Button } from './ui/button';
+import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Popover } from './ui/popover';
 import { HelpTip, Tip } from './ui/tooltip';
 
@@ -79,38 +80,30 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
   const names = modelNames(meta);
   const filtered = models.filter((model) => `${model.model || 'Unspecified model'} ${names.get(model.model) ?? ''}`.toLowerCase().includes(query.toLowerCase()));
+  const account = accountQuota(quotas);
+  const [scrolled, setScrolled] = useState(false);
   return <>
-    <div className="@container shrink-0 px-4 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-1">
-          <Popover.Title className="text-title">Usage</Popover.Title>
-          <HelpTip label="Usage">
-            <span className="block">Input, Output, and Cache are separate parts of the recorded token split. Cache includes reads and writes. Bars show proportions within each model; totals retain the source-reported count.</span>
-            {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
-            {report?.collection && <>
-              <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {dateTime(report.collection.copilot_since)}. Other harness history may start earlier.</span>
-              {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
-            </>}
-          </HelpTip>
-        </div>
-        <Button size="icon-sm" aria-label="Close usage" onClick={onClose}><X aria-hidden="true" /></Button>
+    <PanelHead scrolled={scrolled} className="px-4 pt-3 pb-2">
+      <div className="flex items-center gap-1">
+        <Popover.Title className="text-display-sm text-ink">Usage</Popover.Title>
+        <HelpTip label="Usage">
+          <span className="block">Input, Output, and Cache are separate parts of the recorded token split. Cache includes reads and writes. Bars show proportions within each model; totals retain the source-reported count.</span>
+          {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
+          {report?.collection && <>
+            <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {dateTime(report.collection.copilot_since)}. Other harness history may start earlier.</span>
+            {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
+          </>}
+        </HelpTip>
+        <span className="flex-1" />
+        {account && <span className="mr-1 text-title tabular-nums text-ink">{quotaFace(account)}</span>}
+        <Button size="icon-sm" aria-label="Close usage" className="text-muted" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
-      <section aria-label="AI allowance" className="mt-3 flex flex-col gap-2 rounded-sm bg-surface px-3 py-2">
-        {quotas.length === 0 && <p className="text-caption text-muted">Account usage not reported yet.</p>}
-        {quotas.map((quota) => {
-          const pace = quotaPace(quota, now, usage?.stale);
-          const provider = meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider;
-          return <div key={`${quota.provider}:${quota.type}`} className="text-caption">
-            <div className="flex items-baseline justify-between gap-3"><span className="font-medium text-ink">{provider} allowance</span><span className="font-medium tabular-nums text-ink">{quotaFace(quota)}</span></div>
-            <p className="mt-1 text-muted">{quotaText(quota)}</p>
-            <p className={cn('mt-1', QUOTA_TONES[pace.tone])}>{pace.label}</p>
-            {pace.daysUntilReset !== null && <p className="text-muted" title={dateTime(new Date(now + pace.daysUntilReset * 86400000))}>{daysText(pace.daysUntilReset)} until reset{pace.daysAtPace !== null ? ` · about ${daysText(pace.daysAtPace)} left at this pace` : ''}</p>}
-          </div>;
-        })}
-        {quotas.some((q) => quotaPace(q, now, usage?.stale).daysAtPace !== null) && <p className="text-meta text-muted">Pace uses average allowance spent per day this month.</p>}
-      </section>
-      {report?.collection?.updated_at && <p role="status" className="mt-1 text-meta text-muted">Last fetched <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time>.</p>}
-      <div role="group" aria-label="Usage period" className="mt-2 flex rounded-sm bg-sunken p-0.5">
+    </PanelHead>
+    <div className="@container flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
+      {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
+      {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
+      <PanelSection label="Tokens" meta="recorded by UAM">
+      <div role="group" aria-label="Usage period" className="flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
       {error && <div role="alert" className="mt-3 flex items-center gap-2 text-caption text-error">
@@ -156,25 +149,126 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
           <input aria-label="Find a model" placeholder="Find a model" value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-ui outline-none" />
         </label>}
       </>}
-    </div>
     {shown && <>
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div className={cn('min-w-0 px-4 pb-1', all ? 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible' : 'grow shrink-0 overflow-x-clip')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
+      <div className="min-w-0" role="region" aria-label="Model usage">
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
           <ModelTable models={filtered} colors={colors} names={names} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
           {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
         </> : <ModelOverview models={models} colors={colors} names={names} />}
       </div>
-      <div className="shrink-0 bg-surface px-4 py-2">
-        {all && <p className="mb-2 text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models · Scroll for more`} · Token splits in the info tooltips.</p>}
-        {unpriced > 0 && <p className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-meta text-muted">
-          <span>Prices missing for {unpriced} {unpriced === 1 ? 'model' : 'models'}.</span>
-          <a href="#settings" className="text-ink underline underline-offset-2" onClick={(event) => { if (onAddPrices) { event.preventDefault(); onAddPrices(); } onClose(); }}>Add prices</a>
-        </p>}
-        <p className="flex gap-1.5 text-meta text-muted"><Info aria-hidden="true" className="mt-0.5 size-3 shrink-0" />Estimates include known costs only. They are not provider bills.</p>
-      </div>
+      {all && <p className="text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models`} · Token splits in the info tooltips.</p>}
     </>}
+      </PanelSection>
+    </div>
+    <PanelFoot className="gap-3">
+      {report?.collection?.updated_at && <p role="status" className="min-w-0 truncate">Updated <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time></p>}
+      <span className="flex-1" />
+      {shown && unpriced > 0 && <p className="shrink-0">{unpriced} {unpriced === 1 ? 'model' : 'models'} unpriced · <a href="#settings" className="text-ink underline underline-offset-2" onClick={(event) => { if (onAddPrices) { event.preventDefault(); onAddPrices(); } onClose(); }}>Add prices</a></p>}
+      <Tip label="Estimates include known costs only. They are not provider bills.">
+        <button type="button" className="flex shrink-0 items-center gap-1 rounded-xs hover:text-body"><Info aria-hidden="true" className="size-3" />Estimates</button>
+      </Tip>
+    </PanelFoot>
   </>;
+}
+
+const PACE_CHIPS = { healthy: 'bg-success-wash text-success', attention: 'bg-warning-wash text-warning', danger: 'bg-error-wash text-error', muted: 'bg-tint-well text-muted' };
+
+/** "Nov 1": a day of the month, in the browser's locale. */
+const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/**
+ * One allowance (DESIGN.md Account allowance in Usage): used of the whole with its pace, the month as a
+ * chart where it is known (`BurnChart`), then when it resets and where the average pace so far lands.
+ */
+function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now: number; stale?: boolean; provider: string }>) {
+  const pace = quotaPace(quota, now, stale);
+  const burn = stale ? null : quotaBurn(quota, now);
+  const unit = quotaLabel(quota.type);
+  const n = (v: number) => Math.round(v).toLocaleString('en-US');
+  let projection: string | null = null;
+  if (burn?.runsOut) projection = `Runs out ~${day(burn.runsOut)}`;
+  else if (burn) projection = `On track for ~${n(burn.projected * quota.entitlement)} of ${n(quota.entitlement)}`;
+  else if (pace.daysAtPace !== null) projection = `About ${daysText(pace.daysAtPace)} left`;
+  const resetAt = pace.daysUntilReset !== null ? now + pace.daysUntilReset * 86400000 : null;
+  return (
+    <PanelSection label="Allowance" meta={`${provider} · ${allowanceName(quota.type)}`}>
+      {quota.unlimited ? (
+        <p className="text-ui text-body">Unlimited {unit}{stale ? ' · previous report; refresh failed' : ''}</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <p className="tabular-nums">
+              <span className="text-display-md text-ink">{n(quota.used)}</span>
+              <span className="text-ui text-muted"> / {n(quota.entitlement)} used</span>
+              {quota.overage > 0 && <span className="text-ui text-error"> · {n(quota.overage)} over</span>}
+            </p>
+            {!QUIET_PACE.has(pace.label) && (
+              <span className={cn('flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-caption font-medium', PACE_CHIPS[pace.tone])}>
+                {pace.tone === 'healthy' ? <Check aria-hidden="true" className="size-3.5" /> : <TriangleAlert aria-hidden="true" className="size-3.5" />}
+                {pace.label}
+              </span>
+            )}
+          </div>
+          {burn && <BurnChart burn={burn} tone={pace.tone} entitlement={quota.entitlement} />}
+          <dl className="flex flex-col text-ui">
+            {resetAt !== null && (
+              <div className="flex items-baseline justify-between gap-3 py-1.5">
+                <dt className="text-muted">Resets</dt>
+                <dd className="tabular-nums text-ink" title={dateTime(new Date(resetAt))}>{day(resetAt)} · {daysText(pace.daysUntilReset!)}</dd>
+              </div>
+            )}
+            {projection && (
+              <div className="flex items-baseline justify-between gap-3 py-1.5">
+                <dt className="flex items-center gap-1 text-muted">
+                  At this pace
+                  <HelpTip label="At this pace">The average spent per day so far this month, carried on to the reset. Pace allows 5% either way.</HelpTip>
+                </dt>
+                <dd className={cn('tabular-nums', burn?.runsOut ? 'text-error' : 'text-ink')}>{projection}</dd>
+              </div>
+            )}
+          </dl>
+        </>
+      )}
+    </PanelSection>
+  );
+}
+
+/**
+ * The allowance month as a chart, from what the account reports (only the total so far, no daily
+ * history): the cap, the even pace from nothing to the cap, the average pace so far up to today, and
+ * that pace carried on (dotted) to the reset, or to the cap where it runs out first. Lines keep their
+ * width as the chart stretches; the labels are text beside it.
+ */
+function BurnChart({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; entitlement: number }>) {
+  const top = 0.1;
+  const y = (share: number) => 100 * (1 - top - (1 - top) * Math.min(1, share));
+  const x = (t: number) => 100 * t;
+  const end = burn.runsOut ? (burn.runsOut - burn.start) / (burn.reset - burn.start) : 1;
+  const label = `${Math.round(burn.used * 100)}% used ${Math.round(burn.elapsed * 100)}% of the way through the month; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${Math.round(burn.projected * 100)}% by the reset`}.`;
+  // Early in the month "Today" stands for the start (the lines' origin says it); late, the reset keeps its date.
+  const early = burn.elapsed < 0.2, late = burn.elapsed > 0.8;
+  return (
+    <figure className="flex flex-col gap-1">
+      <div className="relative h-28">
+        <span className="absolute top-0 left-0 text-meta tabular-nums text-muted">{entitlement.toLocaleString('en-US')} cap</span>
+        <span className="absolute right-0 text-meta text-faint" style={{ top: `${y(0.8)}%` }}>even pace</span>
+        <svg role="img" aria-label={label} viewBox="0 0 100 100" preserveAspectRatio="none" className={cn('absolute inset-0 size-full overflow-visible', QUOTA_TONES[tone])} fill="none">
+          <line x1="0" y1={y(1)} x2="100" y2={y(1)} stroke="var(--color-hairline-strong)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1="100" x2="100" y2="100" stroke="var(--color-hairline)" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1={y(0)} x2="100" y2={y(1)} stroke="var(--color-hairline-strong)" vectorEffect="non-scaling-stroke" />
+          <line x1={x(burn.elapsed)} y1={y(1)} x2={x(burn.elapsed)} y2="100" stroke="var(--color-hairline)" vectorEffect="non-scaling-stroke" />
+          <line x1="0" y1={y(0)} x2={x(burn.elapsed)} y2={y(burn.used)} stroke="currentColor" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          <line x1={x(burn.elapsed)} y1={y(burn.used)} x2={x(end)} y2={y(Math.min(1, burn.projected))} stroke="currentColor" strokeWidth="2" strokeDasharray="2 4" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        </svg>
+        <span aria-hidden="true" className={cn('absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current ring-2 ring-raised', QUOTA_TONES[tone])} style={{ left: `${x(burn.elapsed)}%`, top: `${y(burn.used)}%` }} />
+      </div>
+      <figcaption aria-hidden="true" className="relative h-4 text-meta tabular-nums text-muted">
+        {!early && <span className="absolute left-0">{day(burn.start)}</span>}
+        {!late && <span className={cn('absolute font-medium text-body', !early && '-translate-x-1/2')} style={{ left: early ? `max(0px, calc(${x(burn.elapsed)}% - 1.25rem))` : `${x(burn.elapsed)}%` }}>Today</span>}
+        <span className="absolute right-0">{day(burn.reset)}</span>
+      </figcaption>
+    </figure>
+  );
 }
 
 const QUOTA_TONES = { healthy: 'text-success', attention: 'text-warning', danger: 'text-error', muted: 'text-muted' };
@@ -205,7 +299,10 @@ function AllowanceSummary({ quota, pace }: Readonly<{ quota: Quota | null; pace:
   return <>
     <span className="flex items-baseline justify-between gap-3 text-caption">
       <span className="truncate text-body">{quota ? allowanceName(quota.type) : 'Usage'}</span>
-      <span className={cn('shrink-0 tabular-nums', known ? 'font-medium text-ink' : 'text-muted')}>{known ? quotaFace(quota) : 'Not reported'}</span>
+      <span className="flex shrink-0 items-center gap-1">
+        <span className={cn('tabular-nums', known ? 'font-medium text-ink' : 'text-muted')}>{known ? quotaFace(quota) : 'Not reported'}</span>
+        <ChevronRight aria-hidden="true" className="size-3.5 self-center text-muted transition-transform duration-160 group-hover/usage:translate-x-0.5" />
+      </span>
     </span>
     {known && !quota.unlimited && <span aria-hidden="true" className="relative block h-1 overflow-hidden rounded-full bg-hairline">
       <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-300', QUOTA_FILLS[pace.tone])} style={{ transform: `scaleX(${(pace.remaining ?? 0) / 100})` }} />
@@ -241,8 +338,8 @@ export function UsageButton({ side = 'top', variant = 'ring', className, onAddPr
   };
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
     {variant === 'row' ? (
-      // The row says what it is, so it carries no tip.
-      <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('h-auto w-full flex-col items-stretch justify-start gap-1 px-2 py-1.5 text-left font-normal whitespace-normal', className)} />}>
+      // The row says what it is, so it carries no tip. A card like the Task rows above it, lifting on hover, with a chevron: it opens something.
+      <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('group/usage lift h-auto w-full flex-col items-stretch justify-start gap-1 rounded-md bg-raised px-2.5 py-2 text-left font-normal whitespace-normal shadow-raised hover:bg-raised data-popup-open:bg-tint-selected', className)} />}>
         <AllowanceSummary quota={quota} pace={pace} />
       </Popover.Trigger>
     ) : <Tip label={`Usage · ${description}`} side={side} disabled={open}>
@@ -259,7 +356,7 @@ export function UsageButton({ side = 'top', variant = 'ring', className, onAddPr
     </Tip>}
     <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
     {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-x-hidden overflow-y-auto p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
+    <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
       {open && <UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;
