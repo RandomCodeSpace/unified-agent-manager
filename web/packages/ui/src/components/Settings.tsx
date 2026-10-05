@@ -524,7 +524,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     if (tokenPricesRequest) return 'models';
     if (focusAccount) return 'providers';
     const next = carry?.read().nextSection;
-    const carried = SETTINGS_SECTIONS.find((item) => item.id === next && (item.id !== 'connections' || connections));
+    const carried = SETTINGS_SECTIONS.find((item) => item.id === next && (item.id !== 'connections' || Boolean(connections)));
     return carried?.id ?? 'general';
   });
   const [section, setSection] = useState<SettingsSection>(first);
@@ -643,7 +643,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       {/* The tabs wrap onto more rows when narrow; nothing scrolls sideways. */}
       <div className="relative min-w-0 shrink-0">
         <nav aria-label="Settings sections" className="flex min-w-0 flex-wrap gap-1 py-2 pl-4 pr-4 md:px-6">
-          {SETTINGS_SECTIONS.filter(item => item.id !== 'connections' || connections).map((item) => (
+          {SETTINGS_SECTIONS.filter(item => item.id !== 'connections' || Boolean(connections)).map((item) => (
             <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
               {item.label}
             </Button>
