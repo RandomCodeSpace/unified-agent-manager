@@ -1,9 +1,7 @@
-import { ChevronDown } from 'lucide-react';
 import type { Meta, TokenCounts } from '../api';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
 import { aggregateUsageModels, cacheHitRate, splitTokens, type UsageModel } from '../lib/token-usage';
-import { Button } from './ui/button';
 import { HelpTip } from './ui/tooltip';
 
 export const MODEL_COLORS = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge-pink', 'bg-badge-violet', 'bg-badge-cyan', 'bg-badge-green', 'bg-badge-amber', 'bg-badge-lime', 'bg-muted', 'bg-ink'];
@@ -12,7 +10,6 @@ const PARTS = [
   { key: 'output', label: 'Output', shade: 'opacity-60' },
   { key: 'cache', label: 'Cache', shade: 'opacity-25' },
 ] as const;
-export type UsageSort = 'tokens' | 'cost';
 type Colors = ReadonlyMap<string, string>;
 type Names = ReadonlyMap<string, string>;
 const modelName = (model: UsageModel, names?: Names) => names?.get(model.model) || model.model || 'Unspecified model';
@@ -94,46 +91,25 @@ function ModelName({ model, names }: Readonly<{ model: UsageModel; names?: Names
   </div>;
 }
 
-export function ModelOverview({ models, colors, names }: Readonly<{ models: UsageModel[]; colors: Colors; names?: Names }>) {
-  const remainder = models.slice(5);
-  const rows = models.slice(0, 5);
-  if (remainder.length) rows.push(aggregateUsageModels(remainder, `Other ${remainder.length} models`));
+/**
+ * Model rows, one line each (name, then cost, tokens and cache hit) over the model's token bar. With
+ * `limit`, the rows past it fold into one "Other n models" row; without it, every model shows.
+ */
+export function ModelRows({ models, colors, names, limit }: Readonly<{ models: UsageModel[]; colors: Colors; names?: Names; limit?: number }>) {
+  const remainder = limit === undefined ? [] : models.slice(limit);
+  const rows = remainder.length ? [...models.slice(0, limit), aggregateUsageModels(remainder, `Other ${remainder.length} models`)] : models;
+  const other = remainder.length ? rows.length - 1 : -1;
   return <figure aria-label="Token proportions by model, with total tokens and estimated cost in USD" className="pb-1 pt-1">
     <div className="space-y-1">
-      {rows.map((model, i) => <div key={i === 5 ? 'other' : model.model}>
+      {rows.map((model, i) => <div key={i === other ? 'other' : model.model}>
         <div className="mb-1 flex min-w-0 items-center gap-2 text-caption">
           <ModelName model={model} names={names} />
           {/* One line: cost, tokens, cache hit; the tip says each in full. */}
           <span className="shrink-0 whitespace-nowrap text-right tabular-nums" title={`Estimated cost ${costText(model.cost_usd)} in USD · ${compactTokens(model.total)} tokens · ${cacheHitText(model)} cache hit`}>{costText(model.cost_usd)} <span className="text-muted">· <Count value={model.total} /> · {cacheHitText(model)} cached</span></span>
         </div>
-        <TokenBar model={model} names={names} color={i === 5 ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
+        <TokenBar model={model} names={names} color={i === other ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
       </div>)}
     </div>
     <figcaption className="sr-only">Each full-width bar shows the model's recorded Input, Output, and Cache proportions.</figcaption>
   </figure>;
-}
-
-export function ModelTable({ models, colors, names, period, sort, onSort }: Readonly<{ models: UsageModel[]; colors: Colors; names?: Names; period: string; sort: UsageSort; onSort: (sort: UsageSort) => void }>) {
-  const sorted = [...models].sort((a, b) => (sort === 'tokens' ? b.total - a.total : (b.cost_usd ?? -1) - (a.cost_usd ?? -1)) || a.model.localeCompare(b.model));
-  return <table className="w-full table-fixed text-caption">
-    <caption className="sr-only">{period} token usage by model</caption>
-    <thead className="sticky top-0 z-10 bg-raised text-meta text-muted">
-      <tr>
-        <th scope="col" className="w-[33%] py-2 text-left font-normal">Model</th>
-        {(['tokens', 'cost'] as const).map((key) => <th key={key} scope="col" aria-sort={sort === key ? 'descending' : 'none'} className={cn('py-2 text-right font-normal', key === 'tokens' ? 'w-[20%]' : 'w-[30%]')}>
-          <Button size="sm" className="h-7 gap-0.5 px-0 text-meta" onClick={() => onSort(key)}>{key === 'tokens' ? 'Tokens' : 'Est. cost'}{sort === key && <ChevronDown aria-hidden="true" className="size-3!" />}</Button>
-        </th>)}
-        <th scope="col" className="py-2 pl-1 text-right font-normal">Cache hit</th>
-      </tr>
-    </thead>
-    {sorted.map((model) => <tbody key={model.model}>
-      <tr className="hover:bg-surface">
-        <th scope="row" className="py-1.5 pr-2 text-left font-normal"><ModelName model={model} names={names} /></th>
-        <td className="py-1.5 pl-1 text-right tabular-nums"><Count value={model.total} /></td>
-        <td className="py-1.5 pl-1 text-right tabular-nums [overflow-wrap:anywhere]">{costText(model.cost_usd)}</td>
-        <td className="py-1.5 pl-1 text-right tabular-nums">{cacheHitText(model)}</td>
-      </tr>
-      <tr><td colSpan={4} className="pb-3"><TokenBar model={model} names={names} color={colors.get(model.model) ?? MODEL_COLORS[0]} /></td></tr>
-    </tbody>)}
-  </table>;
 }
