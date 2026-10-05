@@ -481,6 +481,27 @@ func (m *Manager) linkAccount(name string, acct agentapi.Account) {
 	log.Info("web provider account linked", "provider", name, "login", acct.Login)
 }
 
+// adoptAccount links the provider to link's account when it has none, as
+// pairing with a connected instance linked to it does. A runtime signed in as
+// another account is then a mismatch, as after any link; it is checked now.
+func (m *Manager) adoptAccount(name string, link store.AccountLink, from string) {
+	if _, linked := m.accountLink(name); linked {
+		return
+	}
+	m.linkAccount(name, agentapi.Account{Login: link.Login, Host: link.Host})
+	log.Info("web provider account adopted from a connected instance", "provider", name, "login", link.Login, "instance", from)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		_ = m.verifyAccount(name, true)
+	}()
+}
+
 // revertAccount signs out a sign-in the runtime stored for another account
 // than link's, such as a `copilot login` run in a terminal, and returns the
 // account then in effect. A token in the service environment or another

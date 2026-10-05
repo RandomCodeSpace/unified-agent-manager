@@ -115,6 +115,9 @@ type Server struct {
 	terminalOrigins []string
 	// frameSecurity and frameETag are framePolicy's for the embedded frame document.
 	frameSecurity, frameETag string
+
+	// fleet is each connection's Copilot account as last read.
+	fleet fleetAccounts
 }
 
 // NewServer validates cfg and builds the handler.

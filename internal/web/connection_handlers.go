@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const federationWorkloadPrefix = "/api/federation/workload/"
@@ -35,6 +38,9 @@ type federationPairResponse struct {
 	federationDescriptor
 	GrantID    string `json:"grant_id"`
 	Credential string `json:"credential"`
+	// Account is the target's linked Copilot account, absent when it has none
+	// or predates the one-account rule.
+	Account *fleetAccount `json:"account,omitempty"`
 }
 
 func (s *Server) federationDescriptor() federationDescriptor {
@@ -69,11 +75,29 @@ func cleanConnectionLabel(label string) (string, error) {
 	return label, nil
 }
 
+// connectionView is a registration as the registry lists it: Status is
+// account_mismatch, with its Reason, when the connection breaks the
+// one-Copilot-account rule.
+type connectionView struct {
+	Connection
+	Status string `json:"status,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
 func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
+	list := s.connections.List()
+	s.checkFleetAccounts(r.Context(), list)
+	views := make([]connectionView, len(list))
+	for i, c := range list {
+		views[i].Connection = c
+		if reason := s.fleetAccountReason(c); c.Enabled && reason != "" {
+			views[i].Status, views[i].Reason = codeAccountMismatch, reason
+		}
+	}
 	writeJSON(w, http.StatusOK, struct {
-		InstanceID  string       `json:"instance_id"`
-		Connections []Connection `json:"connections"`
-	}{s.connections.InstanceID(), s.connections.List()})
+		InstanceID  string           `json:"instance_id"`
+		Connections []connectionView `json:"connections"`
+	}{s.connections.InstanceID(), views})
 }
 
 func (s *Server) handleAddConnection(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +121,7 @@ func (s *Server) handleAddConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := connectionTarget{Connection: Connection{ID: uuid.NewString(), Label: label, BaseURL: base, Enabled: true, AllowPrivate: body.AllowPrivate}}
-	target, err = s.pairConnection(r.Context(), target, body.Token)
+	target, peer, err := s.pairConnection(r.Context(), target, body.Token)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -108,6 +132,7 @@ func (s *Server) handleAddConnection(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	s.adoptFleetAccount(peer, target.InstanceID)
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -154,12 +179,13 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		next.AllowPrivate = *body.AllowPrivate
 	}
 	repair := body.Token != nil || next.BaseURL != old.BaseURL || next.AllowPrivate != old.AllowPrivate
+	var peer *fleetAccount
 	if repair {
 		if body.Token == nil {
 			writeFailure(w, connectionError(400, "invalid_connection", "enter the target access key to change its URL or private-address approval"))
 			return
 		}
-		next, err = s.pairConnection(r.Context(), next, *body.Token)
+		next, peer, err = s.pairConnection(r.Context(), next, *body.Token)
 		if err != nil {
 			writeFailure(w, err)
 			return
@@ -176,6 +202,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 	if repair && old.Credential != next.Credential {
 		s.revokeRemote(old)
 	}
+	s.adoptFleetAccount(peer, next.InstanceID)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -194,33 +221,36 @@ func (s *Server) handleRemoveConnection(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) pairConnection(parent context.Context, target connectionTarget, master string) (connectionTarget, error) {
+// pairConnection pairs with the target, sending this instance's linked
+// Copilot account, and returns the target's linked account, if any.
+func (s *Server) pairConnection(parent context.Context, target connectionTarget, master string) (connectionTarget, *fleetAccount, error) {
 	master = strings.TrimSpace(master)
 	if ValidateToken(master) != nil {
-		return target, connectionError(400, "invalid_connection", "enter a valid target access key")
+		return target, nil, connectionError(400, "invalid_connection", "enter a valid target access key")
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	allowed, err := connectionAddresses(ctx, target.BaseURL, target.AllowPrivate)
 	if err != nil {
-		return target, err
+		return target, nil, err
 	}
 	target.AllowedAddresses = allowed
 	transport, err := s.connectionTransport(target)
 	if err != nil {
-		return target, err
+		return target, nil, err
 	}
 	if closer, ok := transport.(interface{ CloseIdleConnections() }); ok {
 		defer closer.CloseIdleConnections()
 	}
 	body, _ := json.Marshal(struct {
-		Token            string `json:"token"`
-		ClientInstanceID string `json:"client_instance_id"`
-		Label            string `json:"label"`
-	}{master, s.connections.InstanceID(), target.Label})
+		Token            string        `json:"token"`
+		ClientInstanceID string        `json:"client_instance_id"`
+		Label            string        `json:"label"`
+		Account          *fleetAccount `json:"account,omitempty"`
+	}{master, s.connections.InstanceID(), target.Label, s.linkedFleetAccount()})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.BaseURL+"/api/federation/pair", bytes.NewReader(body))
 	if err != nil {
-		return target, connectionError(400, "invalid_connection", "invalid target URL")
+		return target, nil, connectionError(400, "invalid_connection", "invalid target URL")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if target.InstanceID != "" {
@@ -228,39 +258,42 @@ func (s *Server) pairConnection(parent context.Context, target connectionTarget,
 	}
 	response, err := transport.RoundTrip(req)
 	if err != nil {
-		return target, connectionError(502, "remote_unavailable", "could not securely connect to the target instance")
+		return target, nil, connectionError(502, "remote_unavailable", "could not securely connect to the target instance")
 	}
 	defer func() { _ = response.Body.Close() }()
 	switch response.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return target, connectionError(424, "remote_auth_required", "the target refused the supplied access key")
+		return target, nil, connectionError(424, "remote_auth_required", "the target refused the supplied access key")
 	case http.StatusConflict:
-		return target, connectionError(409, "identity_mismatch", "the target refused the expected instance identity")
+		if err := s.pairAccountRefusal(response.Body, target.Label); err != nil {
+			return target, nil, err
+		}
+		return target, nil, connectionError(409, "identity_mismatch", "the target refused the expected instance identity")
 	case http.StatusNotFound, http.StatusMethodNotAllowed:
-		return target, connectionError(409, "unsupported_remote", "the target does not support connected instances")
+		return target, nil, connectionError(409, "unsupported_remote", "the target does not support connected instances")
 	case http.StatusCreated:
 	default:
-		return target, connectionError(502, "remote_unavailable", "the target could not create a workload grant")
+		return target, nil, connectionError(502, "remote_unavailable", "the target could not create a workload grant")
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 64<<10+1))
 	var paired federationPairResponse
 	if err != nil || len(raw) > 64<<10 || json.Unmarshal(raw, &paired) != nil || !validInstanceID(paired.InstanceID) || !validInstanceID(paired.GrantID) || paired.ProtocolMajor != 1 || len(paired.Credential) > 512 || !strings.HasPrefix(paired.Credential, paired.GrantID+".") {
-		return target, connectionError(409, "unsupported_remote", "the target returned an unsupported pairing response")
+		return target, nil, connectionError(409, "unsupported_remote", "the target returned an unsupported pairing response")
 	}
 	for _, capability := range federationCoreCapabilities {
 		if !slices.Contains(paired.Capabilities, capability) {
-			return target, connectionError(409, "unsupported_remote", "the target is missing a required workload capability")
+			return target, nil, connectionError(409, "unsupported_remote", "the target is missing a required workload capability")
 		}
 	}
 	if target.InstanceID != "" && paired.InstanceID != target.InstanceID {
-		return target, connectionError(409, "identity_mismatch", "the target instance identity changed")
+		return target, nil, connectionError(409, "identity_mismatch", "the target instance identity changed")
 	}
 	target.InstanceID = paired.InstanceID
 	target.Credential = paired.Credential
 	target.Version = paired.Version
 	target.ProtocolMajor = paired.ProtocolMajor
 	target.Capabilities = slices.Clone(paired.Capabilities)
-	return target, nil
+	return target, paired.Account, nil
 }
 
 func (s *Server) revokeRemote(target connectionTarget) {
@@ -292,6 +325,9 @@ func (s *Server) handleFederationPair(w http.ResponseWriter, r *http.Request) {
 		Token            string `json:"token"`
 		ClientInstanceID string `json:"client_instance_id"`
 		Label            string `json:"label"`
+		// Account is the pairing instance's linked Copilot account; an
+		// instance that predates the one-account rule sends none.
+		Account *fleetAccount `json:"account"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -317,12 +353,28 @@ func (s *Server) handleFederationPair(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, err)
 		return
 	}
+	if body.Account != nil && !body.Account.valid() {
+		writeFailure(w, connectionError(400, "invalid_connection", "invalid linked account"))
+		return
+	}
+	// Every connected instance uses one Copilot account: both linked to
+	// different ones is refused; one unlinked adopts the other's link.
+	if link, linked := s.m.accountLink(fleetProvider); linked && body.Account != nil && !body.Account.same(link) {
+		log.Warn("refused pairing with an instance linked to another account", "provider", fleetProvider, "login", body.Account.Login, "linked", link.Login, "instance", body.ClientInstanceID)
+		writeJSON(w, http.StatusConflict, struct {
+			Error   string       `json:"error"`
+			Code    string       `json:"code"`
+			Account fleetAccount `json:"account"`
+		}{fmt.Sprintf("This instance is linked to Copilot account %s; the pairing instance is linked to %s. Both must use the same account.", link.Login, body.Account.Login), codeAccountMismatch, fleetAccount{Login: link.Login, Host: link.Host}})
+		return
+	}
 	grant, credential, err := s.connections.issue(body.ClientInstanceID, label)
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, federationPairResponse{s.federationDescriptor(), grant.ID, credential})
+	s.adoptFleetAccount(body.Account, body.ClientInstanceID)
+	writeJSON(w, http.StatusCreated, federationPairResponse{s.federationDescriptor(), grant.ID, credential, s.linkedFleetAccount()})
 }
 
 func (s *Server) handleWorkloadGrants(w http.ResponseWriter, r *http.Request) {

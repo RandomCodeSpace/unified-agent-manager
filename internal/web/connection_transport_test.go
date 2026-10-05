@@ -100,7 +100,7 @@ func TestConnectionPairDoesNotFollowRedirect(t *testing.T) {
 	target.BaseURL = origin.URL
 	target.AllowPrivate = true
 	target.InstanceID = ""
-	if _, err := home.srv.pairConnection(context.Background(), target, testToken); err == nil {
+	if _, _, err := home.srv.pairConnection(context.Background(), target, testToken); err == nil {
 		t.Fatal("redirect pairing succeeded")
 	}
 	if redirected.Load() != 0 {

@@ -116,6 +116,12 @@ func (s *Server) handleConnectedProxy(w http.ResponseWriter, r *http.Request) {
 		writeFailure(w, connectionError(http.StatusConflict, "connection_changed", "the connected instance changed; refresh its connection"))
 		return
 	}
+	if connectedAccountGated(pattern) {
+		if err := s.refuseFleetAccount(r.Context(), target); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
 	query := local.URL.Query()
 	query.Del("uam_generation")
 	local.URL.RawQuery = query.Encode()
