@@ -42,7 +42,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label = 'Table
   return (
     <div className="my-2.5 min-w-0 max-w-full">
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled scroll region accepts keyboard scrolling. */}
-      <div role="region" aria-label={label} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto overscroll-contain [overflow-wrap:normal]">
+      <div role="region" aria-label={label} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal]">
         <table className="data-table w-full">
           <thead><tr>{columns.map((column, index) => {
             const selected = sort?.column === index;

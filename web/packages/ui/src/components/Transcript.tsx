@@ -7,13 +7,13 @@ import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, newestFileDeclarations, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
-import { CodeBlock, DeclaredFileCard, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark } from './common';
+import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -101,7 +101,6 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     return map;
   }, [replies, items, density]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
-  const declarations = useMemo(() => newestFileDeclarations(items), [items]);
   const groupItems = useIdentityEntries(identityItems, loose, questions);
   const turnIds = useGroupIdentities(groupItems, 'turn');
   const groupIds = useGroupIdentities(groupItems, false);
@@ -123,12 +122,12 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
-  // other: a declared file's card in both densities, the images its result returned in Compact.
+  // other: a chart in both densities, the images its result returned in Compact.
   const product = (item: Item) => {
-    const kind = callProduct(item, declarations);
-    return kind === 'card' || kind === 'chart' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} card={kind === 'card'} className={arrival(item.id)} /> : null;
+    const kind = callProduct(item);
+    return kind === 'chart' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} className={arrival(item.id)} /> : null;
   };
-  const own = (item: Item) => ['card', 'chart'].includes(callProduct(item, declarations) ?? '');
+  const own = (item: Item) => callProduct(item) === 'chart';
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
   const out: ReactNode[] = [];
@@ -208,7 +207,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
 /**
  * Compact (DESIGN.md turn line): the entries that stand in the answer, in order. Prose,
  * notices and steer bubbles; the promoted work, that is a question that no longer waits and
- * what a call produced (the images its result returned, a declared file's card) without the
+ * what a call produced (the images its result returned, a chart) without the
  * call's row. Every other call, failed ones included, is in the turn line and its timeline; a
  * subagent's call is on the reply's subagent chip.
  */
@@ -555,7 +554,7 @@ function thoughtEnds(items: Item[]): Map<string, string> {
  * Entries in order. Each contiguous run of work between two messages (thinking, tool calls,
  * subagents' calls, decided requests, questions that no longer wait) folds into one activity
  * row; prose stands on its own between them, and what `product` draws for a call in a run (a
- * declared file's card) stands right after that run.
+ * chart) stands right after that run.
  */
 function renderEntries(entries: Entry[], ctx: RenderContext, product?: (item: Item) => ReactNode | null): ReactNode[] {
   // A pending request is the action card under the transcript; it is not drawn twice.
@@ -1054,13 +1053,13 @@ function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessi
 
 /**
  * What a folded call produced for the person (DESIGN.md promotion), standing in the answer
- * without the call's row, which is in the turn's activity: a declared file's card, or the
+ * without the call's row, which is in the turn's activity: a chart, or the
  * images its result returned. Memoised on the call, which a streamed delta elsewhere leaves alone.
  */
-const CallProduct = memo(function CallProduct({ item, sessionId, card, className }: { item: Item; sessionId?: string; card: boolean; className?: string }) {
+const CallProduct = memo(function CallProduct({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   return (
     <div data-history-anchor={item.id} className={className}>
-      {isChartCall(item) && sessionId ? <ChartCard sessionId={sessionId} callId={item.id} /> : card && item.tool?.declaration ? <DeclaredFileCard declaration={item.tool.declaration} /> : <ToolImages item={item} sessionId={sessionId} />}
+      {isChartCall(item) && sessionId ? <ChartCard sessionId={sessionId} callId={item.id} /> : <ToolImages item={item} sessionId={sessionId} />}
     </div>
   );
 });
