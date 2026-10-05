@@ -41,7 +41,13 @@ describe('Connected instances settings', () => {
     expect(screen.getByRole('region', { name: 'Work server' })).toBeTruthy();
   });
 
+  test('a connection names its version and the features it offers, in one line', () => {
+    setup({ connections: [{ ...connection, capabilities: ['events-v1', 'usage-v1', 'terminal-v1'] }] });
+    expect(screen.getByText('1.0.0 · Terminal, Usage')).toBeTruthy();
+  });
+
   test('editing a label preserves the credential and avoids re-pairing an unchanged URL', async () => {
+
     const { user, props } = setup();
     await user.click(screen.getByRole('button', { name: 'Edit connection' }));
     const form = within(screen.getByRole('form', { name: 'Edit Work server' }));
@@ -59,7 +65,7 @@ describe('Connected instances settings', () => {
     expect(props.onUpdate).not.toHaveBeenCalled();
     const dialog = within(await screen.findByRole('alertdialog'));
     expect(dialog.getByText(/active terminal shell will close/)).toBeTruthy();
-    await user.click(dialog.getByRole('button', { name: 'Disable instance' }));
+    await user.click(dialog.getByRole('button', { name: 'Disable connection' }));
     await waitFor(() => expect(props.onUpdate).toHaveBeenCalledWith('connection-b', { enabled: false }));
     expect(props.onRemove).not.toHaveBeenCalled();
   });
@@ -80,7 +86,8 @@ describe('Connected instances settings', () => {
     const dialog = within(await screen.findByRole('alertdialog'));
     expect(dialog.getByText('Remove Work server?')).toBeTruthy();
     expect(dialog.getByText(/Tasks and files on the other instance are not deleted/)).toBeTruthy();
-    await user.click(dialog.getByRole('button', { name: 'Remove instance' }));
+    await user.click(dialog.getByRole('button', { name: 'Remove connection' }));
+
     expect((await screen.findByRole('alert')).textContent).toContain('Connection changed');
     expect(onRemove).toHaveBeenCalledWith('connection-b');
     expect(screen.getByRole('region', { name: 'Work server' })).toBeTruthy();

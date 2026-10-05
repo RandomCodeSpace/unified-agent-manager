@@ -98,7 +98,8 @@ const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="
  * or panel is open: the transition's snapshots paint in the top layer, above its backdrop, so the rows
  * would flash undimmed. Then the list changes at once.
  */
-function sessionsUpdate(update: () => void) {
+export function sessionsUpdate(update: () => void) {
+
   if (keysTaken()) return update();
   startTransition(() => {
     addTransitionType('sessions');

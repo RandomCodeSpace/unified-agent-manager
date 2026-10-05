@@ -5,7 +5,7 @@ import { describeError, type ApiClient, type ConnectedStatus, type Quota, type T
 import { useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
-import { dateTime, timeAgo, useApp } from './common';
+import { dateTime, Note, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeTokenReports, sumCacheSavings } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
 import { Button } from './ui/button';
@@ -164,7 +164,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry prices</Button>
       </div>}
       {/* A machine left out of All machines is named, never silently skipped. */}
-      {shown && excluded.map(({ source, reason }) => <p key={source.id} className="mt-2 text-caption text-muted [overflow-wrap:anywhere]">{source.label} not included: {reason}</p>)}
+      {shown && excluded.map(({ source, reason }) => <Note key={source.id} className="mt-2 [overflow-wrap:anywhere]">{source.label} not included: {reason}</Note>)}
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
         <div className="grid grid-cols-3 gap-3 py-2 @max-[22rem]:grid-cols-2">
@@ -197,8 +197,10 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         {models.length > 0 && <div className="flex items-center justify-between gap-2 pb-1"><h3 className="font-medium text-ink">{all ? 'All models' : models.length > 5 ? 'Top 5 models' : 'Models'}</h3><span className="text-meta text-muted">By token usage</span></div>}
       </>}
     {shown && <>
+      {/* Keyed by machine and view, so another machine's rows or the other view cross-fade in (`base`); the totals above change in place. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div className={cn('min-w-0', all && 'min-h-24 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
+      <div key={`${one?.id ?? ALL_MACHINES}:${all}`} className={cn('min-w-0 animate-fade-in', all && 'min-h-24 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
+
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : <ModelRows models={models} colors={colors} names={names} limit={all ? undefined : 5} />}
       </div>
     </>}

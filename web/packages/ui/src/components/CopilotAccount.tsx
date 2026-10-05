@@ -277,7 +277,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1" role="status">
           <span className="flex items-center gap-2 text-ui font-medium text-ink">
-            <Dot tone={account.signed_in ? 'success' : 'warning'} />
+            <Dot tone={account.signed_in ? 'success' : 'warning'} className="transition-colors duration-160 ease-app" />
             {account.signed_in ? <span className="min-w-0 [overflow-wrap:anywhere]">Signed in{account.login ? ` as ${account.login}` : ''}{host}</span> : 'Signed out'}
           </span>
           <Note>
@@ -303,7 +303,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       </div>
       {mismatch && linked && (
         <Note tone="warn" className="[overflow-wrap:anywhere]">
-          GitHub Copilot is signed in as {account.login}{host}, but this server is linked to {linked.login}{onHost(linked.host)}. Sign in as {linked.login}, or unlink the account in Settings.
+          GitHub Copilot is signed in as {account.login}{host}, but this server is linked to {linked.login}{onHost(linked.host)}. Sign in as {linked.login}, or unlink the account.
         </Note>
       )}
       {linked && (
@@ -339,7 +339,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
           ) : waiting ? (
             <>
               {code && (
-                <div role="group" aria-label="Device code" className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <div role="group" aria-label="Device code" className="flex flex-wrap items-center gap-x-4 gap-y-2 animate-rise">
                   <span className="min-w-0 select-all font-mono text-display-md text-ink [overflow-wrap:anywhere]">{code}</span>
                   <Button ref={copyButton} size="md" variant="secondary" onClick={() => copy(code)}>
                     {copied ? <Check /> : <Copy />}
@@ -348,8 +348,9 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
                 </div>
               )}
               {code && <Note>Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.</Note>}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 animate-rise">
                 {code && device?.verification_uri && (
+
                   <a href={device.verification_uri} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'primary', size: 'md' })}>
                     Open GitHub
                     <ExternalLink aria-hidden="true" />

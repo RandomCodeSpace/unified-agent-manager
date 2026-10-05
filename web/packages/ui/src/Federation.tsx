@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import App from './App';
+import App, { sessionsUpdate } from './App';
 import { ApiContext } from './ApiContext';
 import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, UPDATE_EVENTS, type ApiClient, type AddConnectionInput, type ConnectedInstance, type ConnectedStatus, type Meta, type SnapshotData, type UpdateConnectionInput, type UpdateData } from './api';
 import { FederationContext, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
@@ -128,6 +128,8 @@ export default function Federation() {
       if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
       const before = registryRef.current;
       registryRef.current = next;
+      // A disabled or replaced machine's rows leave the Task list through the "sessions" view transition.
+      sessionsUpdate(() => {
       setSourceStates(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === HOME || next.connections.some(connection => connection.enabled && connection.id === id && before?.connections.some(old => old.id === id && old.generation === connection.generation && old.instance_id === connection.instance_id)))));
       setSources(previous => [homeSource, ...next.connections.filter(connection => connection.enabled).map(connection => {
         const prior = previous.find(source => source.connection?.id === connection.id && source.connection.instance_id === connection.instance_id && source.connection.generation === connection.generation);
@@ -143,7 +145,9 @@ export default function Federation() {
         } catch { /* The list remains usable without browser storage. */ }
         return { id: connection.id, label: connection.label, connection, client };
       })]);
-      setRegistry(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
+      });
+      setRegistry(previous =>
+ JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
       setRegistryError(null);
     } catch (error) { if (current()) setRegistryError(describeError(error)); }
     finally { if (current()) setRegistryRead(true); }
@@ -227,13 +231,15 @@ export default function Federation() {
   }, [registryRead, routeError]);
   const onState = useCallback((id: string, owner: ConnectedInstance | null, value: SourceState) => {
     if (!authRef.current || (owner && !registryRef.current?.connections.some(connection => connection.enabled && connection.id === owner.id && connection.instance_id === owner.instance_id && connection.generation === owner.generation))) return;
-    setSourceStates(previous => {
+    // Another machine's rows enter, change and leave the Task list with the same view transition as this one's.
+    sessionsUpdate(() => setSourceStates(previous => {
       const before = previous[id];
       const state = value.state.loaded ? value.state : before?.state ?? value.state;
       if (before?.state === state && before.status.status === value.status.status && before.status.error === value.status.error) return previous;
       return { ...previous, [id]: { ...value, state } };
-    });
+    }));
   }, []);
+
   const activeID = active?.id ?? HOME;
   const activeGeneration = active?.generation ?? 0;
   const activeInstanceID = active?.instance_id;

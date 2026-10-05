@@ -9,7 +9,9 @@ import { CopilotAccount } from './CopilotAccount';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
+import { cn } from '../lib/cn';
 import { byCodeUnit } from '../lib/order';
+
 import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSlot, TaskDefaultsFields, choiceLabel, useInlineForm } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
@@ -526,6 +528,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     return carried?.id ?? 'general';
   });
   const [section, setSection] = useState<SettingsSection>(first);
+  // Opened by switching the instance on screen: the header stays put and the body cross-fades, instead of the view rising in.
+  const [switched] = useState(() => !!carry?.read().nextSection);
   const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([first]));
   useEffect(() => carry?.write({ nextSection: null }), [carry]);
   useEffect(() => carry?.write({ section }), [carry, section]);
@@ -621,7 +625,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   ];
 
   return (
-    <FieldHelpProvider><div className="flex min-h-0 flex-1 flex-col animate-rise">
+    <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
         <div className="flex min-w-0 flex-1 items-center gap-1">
@@ -648,8 +652,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       </div>
       <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
         <ScrollSentinel sentinelRef={sentinel} />
-        <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
+        <div className={cn('flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6', switched && 'animate-fade-in')}>
           {api.owner && unsupported.length > 0 && <Note>Unavailable on {api.owner.label}: {unsupported.join(', ')}.</Note>}
+
           {section === 'connections' && <Section id="connections" title="Connected instances">{connections}</Section>}
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
             <Section hidden={section !== 'providers'} key={p.name} id={`account-${p.name}`} title={p.display_name}>

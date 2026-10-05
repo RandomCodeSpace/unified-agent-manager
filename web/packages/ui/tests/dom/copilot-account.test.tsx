@@ -137,7 +137,8 @@ describe('GitHub Copilot sign-in', () => {
 });
 
 describe('one linked Copilot account', () => {
-  const MISMATCH = 'GitHub Copilot is signed in as octocat, but this server is linked to monalisa. Sign in as monalisa, or unlink the account in Settings.';
+  const MISMATCH = 'GitHub Copilot is signed in as octocat, but this server is linked to monalisa. Sign in as monalisa, or unlink the account.';
+
   const NOT_LINKED = 'This server is linked to Copilot account monalisa. Sign in with that account.';
 
   test('the linked account shows; Unlink asks first, then clears the link and signs out', async () => {

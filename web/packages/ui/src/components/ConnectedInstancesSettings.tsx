@@ -1,6 +1,7 @@
 import { useId, useState, type SubmitEvent } from 'react';
 import { describeError, type AddConnectionInput, type ConnectedInstance, type ConnectedStatus, type UpdateConnectionInput } from '../api';
 import { Note } from './common';
+import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
@@ -27,6 +28,15 @@ const statusText: Record<ConnectedStatus['status'], string> = {
   unsupported: 'Update required',
   'account-mismatch': 'Linked to a different Copilot account',
 };
+
+/** The optional features a paired instance can offer this one, named as Settings names them, in its order. */
+const FEATURES: readonly (readonly [string, string])[] = [['files-v1', 'Files'], ['terminal-v1', 'Terminal'], ['configuration-v1', 'Configuration'], ['provider-accounts-v1', 'Provider accounts'], ['planner-v1', 'Planner'], ['routines-v1', 'Routines'], ['usage-v1', 'Usage']];
+
+/** "v0.7.1 · Files, Terminal, Planner": what the paired instance runs and offers, one line, or nothing known. */
+function offers(connection: ConnectedInstance): string {
+  const features = FEATURES.filter(([capability]) => connection.capabilities.includes(capability)).map(([, label]) => label);
+  return [connection.version, features.join(', ')].filter(Boolean).join(' · ');
+}
 
 /** Credentials live only in the form until submitted; the server returns redacted records. */
 function ConnectionForm({ initial, busy, onSubmit, onCancel }: Readonly<{
@@ -151,15 +161,17 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
                 <h3 className="break-words text-ui font-medium text-ink">{connection.label}</h3>
                 <Note><span className="break-all">{connection.base_url}</span></Note>
                 <Note><span className="break-all font-mono">{connection.instance_id}</span></Note>
+                {offers(connection) && <Note><span className="block truncate" title={offers(connection)}>{offers(connection)}</span></Note>}
               </div>
+
               <Switch checked={connection.enabled} disabled={busy} onCheckedChange={(enabled) => toggle(connection, enabled)} aria-label={`Enable ${connection.label}`} />
             </div>
-            <Note role="status" tone={connection.enabled && status && status.status !== 'online' && status.status !== 'connecting' ? 'warn' : 'muted'}>
+            <Note role="status" className="transition-colors duration-160 ease-app" tone={connection.enabled && status && status.status !== 'online' && status.status !== 'connecting' ? 'warn' : 'muted'}>
               {!connection.enabled ? 'Disabled' : status ? statusText[status.status] : 'Waiting for connection status'}
               {connection.enabled && status?.error ? ` — ${status.error}` : ''}
             </Note>
             <div className="flex flex-wrap gap-2">
-              {connection.enabled && status?.status === 'account-mismatch' && onOpenAccount && <Button variant="primary" onClick={() => onOpenAccount(connection.id)}>Open its GitHub Copilot settings</Button>}
+              {onOpenAccount && <Appear show={connection.enabled && status?.status === 'account-mismatch'}><Button variant="primary" onClick={() => onOpenAccount(connection.id)}>Open its GitHub Copilot settings</Button></Appear>}
               <Button variant="secondary" disabled={busy} onClick={() => { setEditor(connection.id); setAdding(false); setError(null); }}>Edit connection</Button>
               <Button variant="danger" disabled={busy} onClick={() => confirm.ask({ connection, action: 'remove' })}>Remove connection</Button>
             </div>
@@ -173,7 +185,8 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
         description={confirm.target?.action === 'disable'
           ? 'The active terminal shell will close. Running agent tasks continue on that instance. You can enable the connection again later.'
           : 'This removes the saved connection and closes any active terminal shell. Tasks and files on the other instance are not deleted. To connect again, you will need its access key.'}
-        confirmLabel={confirm.target?.action === 'disable' ? 'Disable instance' : 'Remove instance'}
+        confirmLabel={confirm.target?.action === 'disable' ? 'Disable connection' : 'Remove connection'}
+
         busy={busy}
         onConfirm={applyConfirmation}
       />
