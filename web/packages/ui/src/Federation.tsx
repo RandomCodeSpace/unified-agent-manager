@@ -5,6 +5,7 @@ import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, task
 import { FederationContext } from './FederationContext';
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
+import { Select } from './components/ui/select';
 import { TaskRowContent } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { initialState, reducer, type State, type Action } from './state';
@@ -19,6 +20,7 @@ interface Source { id: string; label: string; connection: ConnectedInstance | nu
 const HOME = '';
 const homeSource: Source = { id: HOME, label: 'This instance', connection: null, client: api };
 const emptySource = (): SourceState => ({ state: initialState, status: { status: 'connecting' } });
+const STATUS_NOTE: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'Offline', 'auth-required': 'Needs a new access key', unsupported: 'Needs an update' };
 
 function connectionFailure(error: unknown): ConnectedStatus {
   const code = errorCode(error);
@@ -255,12 +257,11 @@ export default function Federation() {
     await refresh();
   };
   const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
-  const unsupported = active ? ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'planner-v1', 'routines-v1', 'usage-v1'].filter(capability => !active.capabilities.includes(capability)).map(capability => capability.replace('-v1', '').replaceAll('-', ' ')) : [];
-  const sourceControl = connections.length > 0 ? <div><label className="flex items-center gap-2 border-b border-edge px-3 py-2 text-caption text-muted">Instance
-    <select aria-label="Active instance" className="min-w-0 flex-1 bg-transparent text-body" value={active?.id ?? HOME} onChange={event => navigate(connections.find(connection => connection.id === event.target.value) ?? null, '#settings')}>
-      <option value={HOME}>This instance</option>{connections.map(connection => <option key={connection.id} value={connection.id} disabled={!connection.enabled}>{connection.label}{!connection.enabled ? ' (disabled)' : ''}</option>)}
-    </select>
-  </label>{unsupported.length > 0 && <p className="px-3 py-1 text-caption text-muted">Unavailable on this instance: {unsupported.join(', ')}.</p>}</div> : null;
+  // Settings' header names the instance on screen and switches it; switching keeps Settings open.
+  const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => navigate(connections.find(connection => connection.id === id) ?? null, '#settings')} items={[
+    { value: HOME, label: homeSource.label },
+    ...connections.map(connection => ({ value: connection.id, label: connection.label, disabled: !connection.enabled, description: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
+  ]} /> : null;
   const unreadFor = (source: Source, selectedId: string | null = null) => {
     let viewed: Record<string, string> = {};
     let since = new Date().toISOString();

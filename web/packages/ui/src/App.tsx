@@ -1131,7 +1131,7 @@ export default function App() {
   const gitProjects = state.projects.filter((p) => !p.no_git);
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connections={api.owner ? undefined : federation?.connectionsSettings} />;
+    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connections={api.owner ? undefined : federation?.connectionsSettings} />;
   } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={closeView} />;
   } else if (routinesShown) {
@@ -1223,7 +1223,6 @@ export default function App() {
               </Sheet>
             )}
             <main tabIndex={-1} className="relative flex min-h-0 min-w-0 flex-col bg-canvas outline-hidden">
-              {settingsOpen && federation?.sourceControl}
               {federation?.pendingRoute && <p role="status" className="px-4 py-2 text-caption">Opening the connected instance…</p>}
               {connection !== 'connected' && (
                 <output className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>

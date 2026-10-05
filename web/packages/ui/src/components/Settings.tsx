@@ -1,4 +1,5 @@
 import { useApi } from '../ApiContext';
+import { useFederation } from '../FederationContext';
 import { LogOut, X } from 'lucide-react';
 import { useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
@@ -83,6 +84,15 @@ function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: str
       <Skeleton label={label} rows={3} />
     </section>
   );
+}
+
+/** The optional connected-instance features (Federation capabilities), named as Settings names them. */
+const OPTIONAL_FEATURES = ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'planner-v1', 'routines-v1', 'usage-v1'];
+
+/** In place of a section whose routes the connected instance on screen does not offer: why, not a form that fails. */
+function Unsupported({ what }: Readonly<{ what: string }>) {
+  const name = useApi().owner?.label;
+  return <Note role="status">{name} does not offer {what} to connected instances. Update UAM on {name} to manage it here.</Note>;
 }
 
 const UTILITY_HELP = "The model UAM uses to title new tasks, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.";
@@ -496,6 +506,10 @@ function NotifyRow() {
 
 export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connections }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; connections?: ReactNode }>) {
   const api = useApi();
+  const instanceControl = useFederation()?.sourceControl;
+  // The connected instance on screen, or this one; null without connected instances, where nothing names it.
+  const instance = instanceControl ? api.owner?.label ?? 'This instance' : null;
+  const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
@@ -590,8 +604,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
         {leading}
         <div className="flex min-w-0 flex-1 items-center gap-1">
-          <h1 className="truncate text-display-sm text-ink">Settings</h1>
-          <HelpTip label="Settings">{section === 'browser' ? 'These preferences apply only in this browser.' : 'Kept by the service and shared across browsers.'}</HelpTip>
+          <h1 className="shrink-0 text-display-sm text-ink">Settings{instance && <span className="sr-only"> · {instance}</span>}</h1>
+          {instanceControl && <><span aria-hidden="true" className="text-muted">·</span>{instanceControl}</>}
+          <HelpTip label="Settings">{section === 'browser' ? 'These preferences apply only in this browser, whichever instance is on screen.' : api.owner ? `Kept by ${api.owner.label} and shared across browsers.` : 'Kept by the service and shared across browsers.'}</HelpTip>
         </div>
         {saving && <Spinner className="shrink-0" />}
         <Tip label="Close settings">
@@ -613,10 +628,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
+          {api.owner && unsupported.length > 0 && <Note>Unavailable on {api.owner.label}: {unsupported.join(', ')}.</Note>}
           {section === 'connections' && <Section id="connections" title="Connected instances">{connections}</Section>}
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
             <Section hidden={section !== 'providers'} key={p.name} id={`account-${p.name}`} title={p.display_name}>
-              <CopilotAccount provider={p} />
+              {api.supports('provider-accounts-v1') ? <CopilotAccount provider={p} /> : <Unsupported what="provider sign-in" />}
             </Section>
           ))}
           {!loaded && (
@@ -714,18 +730,20 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               </div>;
             })}
           </Section>}
-          {loaded && section === 'models' && <Section id="token-prices" title="Token costs"><TokenPricing /></Section>}
+          {loaded && section === 'models' && <Section id="token-prices" title="Token costs">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>}
           {loaded && <Section hidden={section !== 'providers'} id="providers" title="Providers" help="Manage provider endpoints and credentials here. Choose visible models and the Utility model in Models.">
             {catalogPending && <Note role="status">Loading provider accounts…</Note>}
             {metaError && <Note tone="error" role="alert">Could not load provider accounts: {metaError} <Button size="sm" onClick={refreshMeta}>Retry</Button></Note>}
             <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
           </Section>}
           {/* A service that does not know the planner setting yet has no planner: no row at all. */}
-          {loaded && settings.planner !== undefined && <PlannerSection hidden={section !== 'general'} settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />}
+          {loaded && settings.planner !== undefined && (api.supports('planner-v1')
+            ? <PlannerSection hidden={section !== 'general'} settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />
+            : <Section hidden={section !== 'general'} id="planner" title="Planner"><Unsupported what="the planner" /></Section>)}
           {loaded && <Section hidden={section !== 'general'} id="shell" title="Shell access">
-            <Row id="terminal" label="Terminal" help="Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on this machine as the uam user, without the agent's permission prompts.">
+            {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
-            </Row>
+            </Row> : <Unsupported what="the terminal" />}
           </Section>}
           {onLogout && <Section hidden={section !== 'general'} id="session" title="Session">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -733,11 +751,12 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               <Button variant="secondary" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
             </div>
           </Section>}
-          {(['agents', 'skills', 'hooks', 'instructions'] as const).map((kind) => visited.has(kind) && <Section key={kind} hidden={section !== kind} id={kind} title={SETTINGS_SECTIONS.find((item) => item.id === kind)!.label}><ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} /></Section>)}
+          {(['agents', 'skills', 'hooks', 'instructions'] as const).map((kind) => visited.has(kind) && <Section key={kind} hidden={section !== kind} id={kind} title={SETTINGS_SECTIONS.find((item) => item.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>)}
           {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section hidden={section !== 'mcp'} id="mcp" title="MCP servers">
             <McpServersSettings terminal={!!settings.terminal} />
           </Section>}
           <Section hidden={section !== 'browser'} id="browser" title="This browser">
+            {api.owner && <Note>Kept in this browser, not on {api.owner.label}: these apply whichever instance is on screen.</Note>}
             <NotifyRow />
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented

@@ -75,8 +75,8 @@ test('owner switching restores separate drafts and keeps configuration requests 
   expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveProperty('value', 'B draft');
   expect(screen.queryByRole('combobox', { name: 'Active instance' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Active instance' }), 'b');
-  await screen.findByRole('heading', { name: 'Settings', level: 1 });
+  await chooseInstance(user, /^Workstation B/);
+  await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
   await waitFor(() => expect(calls.some(call => call.owner === 'b' && call.path.startsWith('/api/configuration'))).toBe(true));
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/configuration'))).toBe(false);
@@ -108,7 +108,52 @@ test('core-only peers render their task and name unavailable optional features i
   await screen.findByRole('region', { name: 'Conversation' });
   expect(screen.queryByRole('combobox', { name: 'Active instance' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
-  expect(screen.getByText(/Unavailable on this instance:.*files.*terminal.*configuration/)).toBeTruthy();
+  expect(await screen.findByText(/Unavailable on Core only:.*files.*terminal.*configuration/)).toBeTruthy();
+  // A section the peer cannot serve explains why instead of offering a form that fails.
+  const shell = within(await screen.findByRole('region', { name: 'Shell access' }));
+  expect(shell.getByText('Core only does not offer the terminal to connected instances. Update UAM on Core only to manage it here.')).toBeTruthy();
+  expect(shell.queryByRole('switch', { name: 'Terminal' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Skills', exact: true }));
+  expect(within(await screen.findByRole('region', { name: 'Skills' })).getByText(/does not offer agents, skills, hooks and instructions/)).toBeTruthy();
+});
+
+async function chooseInstance(user: ReturnType<typeof userEvent.setup>, name: RegExp) {
+  await user.click(await screen.findByRole('combobox', { name: 'Active instance' }));
+  await user.click(await screen.findByRole('option', { name }));
+}
+
+test('Settings of a selected peer read and write only that peer and name it in the header', async () => {
+  const { user, calls, owners } = federated();
+  await user.click(await screen.findByRole('button', { name: 'Settings', exact: true }));
+  await screen.findByRole('heading', { name: 'Settings · This instance', level: 1 });
+  expect(screen.getByRole('combobox', { name: 'Active instance' }).textContent).toContain('This instance');
+  await chooseInstance(user, /^Workstation B/);
+  await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
+  // From here only B's Settings are mounted: no read or write may reach home or C.
+  const switched = calls.length;
+  expect(screen.getByRole('combobox', { name: 'Active instance' }).textContent).toContain('Workstation B');
+  // Connections are administered by the home instance only, and its sign-in is not B's to end.
+  expect(screen.queryByRole('button', { name: 'Connected instances' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
+  const settingsCall = (call: { path: string }) => /^\/api\/(settings|mcp|configuration|providers|usage|utility)/.test(call.path);
+  const suggest = await screen.findByRole('switch', { name: 'Suggest replies' });
+  await user.click(suggest);
+  await waitFor(() => expect(calls.slice(switched).some(call => call.owner === 'b' && call.method === 'PATCH' && call.path === '/api/settings')).toBe(true));
+  // B's own settings changed; home and C kept theirs.
+  const stored = async (index: number) => (await (await owners[index].fetch('/api/settings')).json()).suggest_replies;
+  expect(await stored(1)).toBe(false);
+  expect(await stored(0)).not.toBe(false);
+  expect(await stored(2)).not.toBe(false);
+  await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+  await waitFor(() => {
+    const paths = calls.slice(switched).filter(call => call.owner === 'b').map(call => call.path);
+    for (const prefix of ['/api/mcp', '/api/configuration', '/api/usage/prices', '/api/providers/copilot/account']) expect(paths.some(path => path.startsWith(prefix))).toBe(true);
+  });
+  expect(calls.slice(switched).filter(call => call.owner !== 'b' && settingsCall(call))).toEqual([]);
+  await user.click(screen.getByRole('button', { name: 'This browser', exact: true }));
+  expect(screen.getByText('Kept in this browser, not on Workstation B: these apply whichever instance is on screen.')).toBeTruthy();
 });
 
 test.each(['', 'b'])('settle and reopen remain responsive with connected navigation for owner %s', async (owner) => {
