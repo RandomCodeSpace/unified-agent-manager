@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -226,4 +228,153 @@ func (s *Server) handleSignOut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, acct)
+}
+
+// Device sign-in states, as the UI sees them.
+const (
+	deviceIdle     = "idle"
+	deviceStarting = "starting"
+	deviceWaiting  = "waiting"
+	deviceSignedIn = "signed_in"
+	deviceFailed   = "failed"
+	deviceCanceled = "canceled"
+)
+
+// deviceCodeWait bounds how long starting a device sign-in waits for its code.
+const deviceCodeWait = 30 * time.Second
+
+// DeviceSignIn is a device sign-in's state. URL and Code are set while it
+// waits for the person to approve; Account once signed in; Error once failed.
+type DeviceSignIn struct {
+	State   string            `json:"state"`
+	URL     string            `json:"verification_uri,omitempty"`
+	Code    string            `json:"user_code,omitempty"`
+	Error   string            `json:"error,omitempty"`
+	Account *agentapi.Account `json:"account,omitempty"`
+}
+
+type deviceSignIn struct {
+	DeviceSignIn
+	cancel context.CancelFunc
+	err    error         // the failure, as the request reports it
+	ready  chan struct{} // closed once the code is shown or the sign-in ends
+	once   sync.Once
+}
+
+func (d *deviceSignIn) live() bool { return d.State == deviceStarting || d.State == deviceWaiting }
+
+type deviceSignIns struct {
+	mu sync.Mutex
+	by map[string]*deviceSignIn
+}
+
+// StartDeviceSignIn starts a device sign-in for the provider, or returns the
+// one in progress, once its code is known. It runs on the service's context,
+// so it outlives the request and ends with the service or CancelDeviceSignIn.
+// A refusal before any code is shown is returned as an error.
+func (m *Manager) StartDeviceSignIn(ctx context.Context, name string) (DeviceSignIn, error) {
+	p, _, err := m.accountManager(name)
+	if err != nil {
+		return DeviceSignIn{}, err
+	}
+	dm, ok := p.(agentapi.DeviceSignInManager)
+	if !ok || !p.Capabilities().DeviceSignIn {
+		return DeviceSignIn{}, newError(http.StatusNotFound, "%s cannot sign in with a device code", p.DisplayName())
+	}
+	m.devices.mu.Lock()
+	d := m.devices.by[name]
+	if d == nil || !d.live() {
+		dctx, cancel := context.WithCancel(m.ctx)
+		d = &deviceSignIn{DeviceSignIn: DeviceSignIn{State: deviceStarting}, cancel: cancel, ready: make(chan struct{})}
+		if m.devices.by == nil {
+			m.devices.by = map[string]*deviceSignIn{}
+		}
+		m.devices.by[name] = d
+		m.wg.Add(1)
+		go m.runDeviceSignIn(dctx, p, dm, d)
+	}
+	m.devices.mu.Unlock()
+	select {
+	case <-d.ready:
+	case <-ctx.Done():
+		return DeviceSignIn{}, ctx.Err()
+	case <-time.After(deviceCodeWait):
+	}
+	m.devices.mu.Lock()
+	defer m.devices.mu.Unlock()
+	if d.State == deviceFailed && d.Code == "" && d.err != nil {
+		if m.devices.by[name] == d {
+			delete(m.devices.by, name)
+		}
+		return DeviceSignIn{}, d.err
+	}
+	return d.DeviceSignIn, nil
+}
+
+func (m *Manager) runDeviceSignIn(ctx context.Context, p agentapi.Provider, dm agentapi.DeviceSignInManager, d *deviceSignIn) {
+	defer m.wg.Done()
+	defer d.cancel()
+	acct, err := dm.DeviceSignIn(ctx, func(c agentapi.DeviceCode) {
+		m.devices.mu.Lock()
+		if d.State == deviceStarting {
+			d.State, d.URL, d.Code = deviceWaiting, c.URL, c.Code
+		}
+		m.devices.mu.Unlock()
+		d.once.Do(func() { close(d.ready) })
+	})
+	if err == nil {
+		log.Info("web provider signed in with a device code", "provider", p.Name(), "source", acct.Source)
+		m.applyAccount(m.ctx, p, acct)
+	}
+	m.devices.mu.Lock()
+	switch {
+	case err == nil:
+		d.State, d.Account = deviceSignedIn, &acct
+	case errors.Is(err, context.Canceled):
+		d.State = deviceCanceled
+	default:
+		d.err = accountError(err)
+		_, msg := errorStatus(d.err)
+		d.State, d.Error = deviceFailed, msg
+	}
+	d.URL, d.Code = "", ""
+	m.devices.mu.Unlock()
+	d.once.Do(func() { close(d.ready) })
+}
+
+// DeviceSignIn reports the provider's device sign-in, idle when none started.
+func (m *Manager) DeviceSignIn(name string) DeviceSignIn {
+	m.devices.mu.Lock()
+	defer m.devices.mu.Unlock()
+	if d := m.devices.by[name]; d != nil {
+		return d.DeviceSignIn
+	}
+	return DeviceSignIn{State: deviceIdle}
+}
+
+// CancelDeviceSignIn stops the provider's device sign-in in progress.
+func (m *Manager) CancelDeviceSignIn(name string) {
+	m.devices.mu.Lock()
+	defer m.devices.mu.Unlock()
+	if d := m.devices.by[name]; d != nil && d.live() {
+		d.cancel()
+	}
+}
+
+func (s *Server) handleStartDeviceSignIn(w http.ResponseWriter, r *http.Request) {
+	d, err := s.m.StartDeviceSignIn(r.Context(), r.PathValue("provider"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) handleDeviceSignIn(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.m.DeviceSignIn(r.PathValue("provider")))
+}
+
+func (s *Server) handleCancelDeviceSignIn(w http.ResponseWriter, r *http.Request) {
+	s.m.CancelDeviceSignIn(r.PathValue("provider"))
+	w.WriteHeader(http.StatusNoContent)
 }

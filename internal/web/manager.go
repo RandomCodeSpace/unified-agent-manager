@@ -106,6 +106,8 @@ type Manager struct {
 	storeImageHook func()
 	// signIns holds the MCP sign-ins waiting for a pasted callback address.
 	signIns mcpSignIns
+	// devices holds each provider's device sign-in in progress, or its last outcome.
+	devices deviceSignIns
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo

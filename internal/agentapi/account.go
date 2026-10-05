@@ -58,3 +58,20 @@ type AccountManager interface {
 	// SignOut removes the stored sign-in in effect.
 	SignOut(ctx context.Context) (Account, error)
 }
+
+// DeviceCode is what a person enters at URL to approve a device sign-in.
+type DeviceCode struct {
+	URL  string `json:"verification_uri"`
+	Code string `json:"user_code"`
+}
+
+// DeviceSignInManager is implemented by a provider whose
+// Capabilities.DeviceSignIn is true: its runtime signs in through GitHub's
+// device flow, so the person approves in their own browser and no token
+// passes through here.
+type DeviceSignInManager interface {
+	// DeviceSignIn starts the flow, calls show once with the code to enter,
+	// and returns once the sign-in is approved and in effect, refused,
+	// expired, or ctx ends.
+	DeviceSignIn(ctx context.Context, show func(DeviceCode)) (Account, error)
+}

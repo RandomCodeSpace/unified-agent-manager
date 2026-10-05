@@ -215,3 +215,106 @@ func TestAccountRoutes(t *testing.T) {
 		t.Fatalf("unknown provider = %d", w.Code)
 	}
 }
+
+// deviceProvider signs in through a device code: it shows the code, then
+// waits for the test to approve, deny or cancel.
+type deviceProvider struct {
+	*accountProvider
+	result chan error
+}
+
+func newDeviceProvider() *deviceProvider {
+	caps := allCaps
+	caps.Account, caps.DeviceSignIn = true, true
+	ap := &accountProvider{Provider: agenttest.NewProvider("fake", caps)}
+	ap.SetModels([]agentapi.Model{{ID: "a", Name: "A"}}, nil)
+	return &deviceProvider{accountProvider: ap, result: make(chan error, 1)}
+}
+
+func (p *deviceProvider) DeviceSignIn(ctx context.Context, show func(agentapi.DeviceCode)) (agentapi.Account, error) {
+	if p.envVar != "" {
+		return agentapi.Account{}, fmt.Errorf("%w: %s", agentapi.ErrEnvAccount, p.envVar)
+	}
+	show(agentapi.DeviceCode{URL: "https://github.com/login/device", Code: "AB12-CD34"})
+	select {
+	case <-ctx.Done():
+		return agentapi.Account{}, ctx.Err()
+	case err := <-p.result:
+		if err != nil {
+			return agentapi.Account{}, err
+		}
+	}
+	p.set(true)
+	return p.Account(ctx)
+}
+
+func waitDevice(t *testing.T, m *Manager, state string) DeviceSignIn {
+	t.Helper()
+	var d DeviceSignIn
+	waitUntil(t, "device sign-in "+state, func() bool { d = m.DeviceSignIn("fake"); return d.State == state })
+	return d
+}
+
+// A device sign-in shows its code until approved, then the provider is
+// available with its models, without a restart.
+func TestDeviceSignInShowsTheCodeUntilApproved(t *testing.T) {
+	prov := newDeviceProvider()
+	m := startManager(t, openTestStore(t), prov)
+	if d := m.DeviceSignIn("fake"); d.State != deviceIdle {
+		t.Fatalf("before = %+v", d)
+	}
+	d, err := m.StartDeviceSignIn(context.Background(), "fake")
+	if err != nil || d.State != deviceWaiting || d.Code != "AB12-CD34" || d.URL != "https://github.com/login/device" {
+		t.Fatalf("StartDeviceSignIn = %+v, %v", d, err)
+	}
+	// Starting again joins the sign-in in progress.
+	if again, err := m.StartDeviceSignIn(context.Background(), "fake"); err != nil || again != d {
+		t.Fatalf("second StartDeviceSignIn = %+v, %v", again, err)
+	}
+	prov.result <- nil
+	d = waitDevice(t, m, deviceSignedIn)
+	if d.Account == nil || d.Account.Login != "octo" || d.Code != "" {
+		t.Fatalf("signed in = %+v", d)
+	}
+	if info := providerInfo(t, m, "fake"); !info.Available || info.SignedOut || len(info.Models) != 1 {
+		t.Fatalf("after sign-in: %+v", info)
+	}
+}
+
+func TestDeviceSignInRefusalDeniesAndCancel(t *testing.T) {
+	prov := newDeviceProvider()
+	m := startManager(t, openTestStore(t), prov)
+
+	prov.envVar = "GH_TOKEN"
+	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "GH_TOKEN") {
+		t.Fatalf("with an environment token: %v", err)
+	}
+	if d := m.DeviceSignIn("fake"); d.State != deviceIdle {
+		t.Fatalf("a refusal left %+v", d)
+	}
+	prov.envVar = ""
+
+	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	prov.result <- fmt.Errorf("%w: access_denied", agentapi.ErrSignInRejected)
+	if d := waitDevice(t, m, deviceFailed); d.Error != "access_denied" || d.Code != "" {
+		t.Fatalf("denied = %+v", d)
+	}
+
+	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	m.CancelDeviceSignIn("fake")
+	waitDevice(t, m, deviceCanceled)
+	if info := providerInfo(t, m, "fake"); info.Available {
+		t.Fatalf("available after a cancel: %+v", info)
+	}
+}
+
+func TestDeviceSignInNeedsTheCapability(t *testing.T) {
+	m := startManager(t, openTestStore(t), newAccountProvider(false))
+	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("StartDeviceSignIn without the capability = %v", err)
+	}
+}
