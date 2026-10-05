@@ -166,6 +166,17 @@ describe('Usage popover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
   });
 
+  test('without connected instances shows this instance’s tokens with no machine filter', async () => {
+    const { user } = renderApp();
+    const nav = await sidebar();
+    await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
+    const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
+    await popover.findByRole('button', { name: 'Overview' });
+    expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
+    expect(popover.queryByRole('combobox', { name: 'Machine' })).toBeNull();
+    expect(popover.queryByText(/not included/)).toBeNull();
+  });
+
   test('shows loading, failure with retry, and an honest empty period', async () => {
     let reject!: (e: Error) => void;
     const read = vi.spyOn(api, 'tokenUsage').mockReturnValueOnce(new Promise((_resolve, fail) => { reject = fail; }));
