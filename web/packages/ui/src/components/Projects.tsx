@@ -80,7 +80,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
       onClosed={onClosed}
       initialFocus={first}
       title="Add a project"
-      description={target ? `A directory on ${target.label}. Tasks run inside it.` : 'A directory on this host. Tasks run inside it.'}
+      description={target?.connection ? `A directory on ${target.label}. Tasks run inside it.` : 'A directory on this host. Tasks run inside it.'}
       // The dialog widens while the folder picker is open (DESIGN.md: 560px) and settles back once a folder is chosen.
       className={cn('transition-[opacity,transform,max-width]', browsing && 'max-w-sheet-wide')}
       footer={
