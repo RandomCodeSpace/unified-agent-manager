@@ -945,12 +945,12 @@ default scope with the first file that turn edited shown.
 In the expanded sidebar the Usage button is the footer's allowance chip (see Sidebar, Footer). On the collapsed rail it is a 40px button that stacks the share left as text ("93%", `caption` medium; `ink` when healthy, else in its tone) over a 24px meter in the pace tone, so it reads without a hover; its tip and accessible description carry the whole sentence. The number is the share of the allowance left (`remaining_percent`), never the share used. It replaces the composer account-credits control; the composer's context ring remains. Pace compares average consumption so far with the daily allowance budget. Under pace (spending slower than the budget, so allowance is left at the reset) and on pace are green, and ahead of pace is red; within 5% of the budget is on pace. An exhausted allowance stays red. When Copilot omits the reset date, use its fixed first-of-month UTC reset. Stale data, missing quota and unknown billing periods are grey. Unlimited shows ∞ and unavailable shows —. The Usage popover is a floating panel (see Floating panels):
 - **Head:** "Usage" (`display-sm`) with its help tip, and the share left at the right.
 - **Allowance** (provider and unit beside the label): the used count in `display-md` over "/ 1,500 used", plus the overage in `error`. The pace sits in a pill at the right: `success-wash` with a check, `error-wash` with a warning glyph.
-- **Month chart:** shown for Copilot's calendar month only (`quotaBurn`). The account reports only the total so far, never a daily history, so no daily line is drawn. It shows:
-  - the cap (dashed `hairline-strong`) and the even pace from nothing to the cap (`hairline-strong`);
-  - the average pace so far, a 2px line in the pace tone from the month's start to today's dot;
-  - that pace carried on, dotted, to the reset, or to the cap where it runs out first.
-  
-  Its lines keep their width as it stretches, and its labels are text beside it. Early in the month "Today" stands in for the start date; late, the reset keeps its date. The chart is an image named with what it says.
+- **Month bar:** shown for Copilot's calendar month only (`quotaBurn`). The account reports only the total so far, so it is one 8px bar, not a chart:
+  - what is used, in the pace tone;
+  - that pace carried on to the reset, the same tone at 30% (to the end when it runs out first);
+  - a 2px `ink` tick at the even pace's budget to date.
+
+  A `meta` legend line under it says "Used 101 · Budget to date 228 · At this pace" and, at the right, the cap. The bar is an image named with the same.
 - **Rows:** Resets ("Nov 1 · 26 days") and At this pace ("On track for ~602 of 1,500", or "Runs out ~Oct 24" in `error`; another provider gets "About n days left").
 - **Tokens** ("recorded by UAM"): the period tabs and the existing token and model breakdowns.
 - **Foot:** "Updated 1m ago", unpriced models with **Add prices**, and **Estimates** with its tip.

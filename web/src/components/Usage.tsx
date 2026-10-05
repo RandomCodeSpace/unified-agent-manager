@@ -185,7 +185,7 @@ const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 
 
 /**
  * One allowance (DESIGN.md Account allowance in Usage): used of the whole with its pace, the month as a
- * chart where it is known (`BurnChart`), then when it resets and where the average pace so far lands.
+ * bar where it is known (`BurnBar`), then when it resets and where the average pace so far lands.
  */
 function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now: number; stale?: boolean; provider: string }>) {
   const pace = quotaPace(quota, now, stale);
@@ -216,7 +216,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
               </span>
             )}
           </div>
-          {burn && <BurnChart burn={burn} tone={pace.tone} entitlement={quota.entitlement} />}
+          {burn && <BurnBar burn={burn} tone={pace.tone} entitlement={quota.entitlement} />}
           <dl className="flex flex-col text-ui">
             {resetAt !== null && (
               <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -241,38 +241,28 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
 }
 
 /**
- * The allowance month as a chart, from what the account reports (only the total so far, no daily
- * history): the cap, the even pace from nothing to the cap, the average pace so far up to today, and
- * that pace carried on (dotted) to the reset, or to the cap where it runs out first. Lines keep their
- * width as the chart stretches; the labels are text beside it.
+ * The allowance month as one bar, from what the account reports (only the total so far): what is
+ * used (the pace tone), that pace carried on to the reset (the same tone, faint; to the end when it
+ * runs out first), and a tick at the even pace's budget to date. A legend line under it says each in
+ * words; the bar is an image named with the same.
  */
-function BurnChart({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; entitlement: number }>) {
-  const top = 0.1;
-  const y = (share: number) => 100 * (1 - top - (1 - top) * Math.min(1, share));
-  const x = (t: number) => 100 * t;
-  const end = burn.runsOut ? (burn.runsOut - burn.start) / (burn.reset - burn.start) : 1;
-  const label = `${Math.round(burn.used * 100)}% used ${Math.round(burn.elapsed * 100)}% of the way through the month; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${Math.round(burn.projected * 100)}% by the reset`}.`;
-  // Early in the month "Today" stands for the start (the lines' origin says it); late, the reset keeps its date.
-  const early = burn.elapsed < 0.2, late = burn.elapsed > 0.8;
+function BurnBar({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; entitlement: number }>) {
+  const n = (share: number) => Math.round(share * entitlement).toLocaleString('en-US');
+  const label = `${n(burn.used)} used; ${n(burn.elapsed)} is the even budget to date; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${n(burn.projected)} by the reset`}.`;
   return (
-    <figure className="flex flex-col gap-1">
-      <div className="relative h-28">
-        <span className="absolute top-0 left-0 text-meta tabular-nums text-muted">{entitlement.toLocaleString('en-US')} cap</span>
-        <span className="absolute right-0 text-meta text-faint" style={{ top: `${y(0.8)}%` }}>even pace</span>
-        <svg role="img" aria-label={label} viewBox="0 0 100 100" preserveAspectRatio="none" className={cn('absolute inset-0 size-full overflow-visible', QUOTA_TONES[tone])} fill="none">
-          <line x1="0" y1={y(1)} x2="100" y2={y(1)} stroke="var(--color-hairline-strong)" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1="100" x2="100" y2="100" stroke="var(--color-hairline)" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1={y(0)} x2="100" y2={y(1)} stroke="var(--color-hairline-strong)" vectorEffect="non-scaling-stroke" />
-          <line x1={x(burn.elapsed)} y1={y(1)} x2={x(burn.elapsed)} y2="100" stroke="var(--color-hairline)" vectorEffect="non-scaling-stroke" />
-          <line x1="0" y1={y(0)} x2={x(burn.elapsed)} y2={y(burn.used)} stroke="currentColor" strokeWidth="2" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-          <line x1={x(burn.elapsed)} y1={y(burn.used)} x2={x(end)} y2={y(Math.min(1, burn.projected))} stroke="currentColor" strokeWidth="2" strokeDasharray="2 4" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-        </svg>
-        <span aria-hidden="true" className={cn('absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-current ring-2 ring-raised', QUOTA_TONES[tone])} style={{ left: `${x(burn.elapsed)}%`, top: `${y(burn.used)}%` }} />
+    <figure className="flex flex-col gap-1.5">
+      <div role="img" aria-label={label} className="relative h-2">
+        <span className="absolute inset-0 overflow-hidden rounded-full bg-hairline">
+          <span className={cn('absolute inset-0 origin-left opacity-30', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${Math.min(1, burn.projected)})` }} />
+          <span className={cn('absolute inset-0 origin-left rounded-full', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${Math.min(1, burn.used)})` }} />
+        </span>
+        <span aria-hidden="true" className="absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-ink" style={{ left: `${burn.elapsed * 100}%` }} />
       </div>
-      <figcaption aria-hidden="true" className="relative h-4 text-meta tabular-nums text-muted">
-        {!early && <span className="absolute left-0">{day(burn.start)}</span>}
-        {!late && <span className={cn('absolute font-medium text-body', !early && '-translate-x-1/2')} style={{ left: early ? `max(0px, calc(${x(burn.elapsed)}% - 1.25rem))` : `${x(burn.elapsed)}%` }}>Today</span>}
-        <span className="absolute right-0">{day(burn.reset)}</span>
+      <figcaption aria-hidden="true" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-meta tabular-nums text-muted">
+        <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs', QUOTA_FILLS[tone])} />Used {n(burn.used)}</span>
+        <span className="flex items-center gap-1"><span className="h-2.5 w-0.5 rounded-full bg-ink" />Budget to date {n(burn.elapsed)}</span>
+        <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs opacity-30', QUOTA_FILLS[tone])} />At this pace</span>
+        <span className="ml-auto">{entitlement.toLocaleString('en-US')}</span>
       </figcaption>
     </figure>
   );
