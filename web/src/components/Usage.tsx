@@ -99,14 +99,14 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         <Button size="icon-sm" aria-label="Close usage" className="text-muted" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
     </PanelHead>
-    {/* Wide (from 1100px), the allowance and the tokens sit side by side and only the model list scrolls; narrower, one column scrolls whole. */}
-    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4 min-[1100px]:flex min-[1100px]:flex-col min-[1100px]:overflow-y-hidden" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
-      <div className="grid grid-cols-1 gap-6 min-[1100px]:min-h-0 min-[1100px]:flex-1 min-[1100px]:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] min-[1100px]:gap-8">
-      <div className="flex min-w-0 flex-col gap-6">
+    {/* One column: the allowance above the tokens. In All models only the model list scrolls; the whole body scrolls only when the screen is too short for the rest. */}
+    <div className="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
+      <div className="flex min-h-0 flex-1 flex-col gap-5">
+      <div className="flex min-w-0 shrink-0 flex-col gap-6">
         {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
         {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
       </div>
-      <PanelSection label="Tokens" meta="recorded by UAM" className="min-w-0 min-[1100px]:min-h-0">
+      <PanelSection label="Tokens" meta="recorded by UAM" className={cn('min-w-0', all ? 'min-h-48 flex-1' : 'shrink-0')}>
       <div role="group" aria-label="Usage period" className="flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
@@ -155,7 +155,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       </>}
     {shown && <>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div className={cn('min-w-0', all && 'min-[1100px]:min-h-0 min-[1100px]:flex-1 min-[1100px]:overflow-x-hidden min-[1100px]:overflow-y-auto min-[1100px]:overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
+      <div className={cn('min-w-0', all && 'min-h-24 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
           <ModelTable models={filtered} colors={colors} names={names} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
           {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
@@ -192,10 +192,8 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
   const burn = stale ? null : quotaBurn(quota, now);
   const unit = quotaLabel(quota.type);
   const n = (v: number) => Math.round(v).toLocaleString('en-US');
-  let projection: string | null = null;
-  if (burn?.runsOut) projection = `Runs out ~${day(burn.runsOut)}`;
-  else if (burn) projection = `On track for ~${n(burn.projected * quota.entitlement)} of ${n(quota.entitlement)}`;
-  else if (pace.daysAtPace !== null) projection = `About ${daysText(pace.daysAtPace)} left`;
+  // With the bar its legend says where the pace lands; without it, a row does.
+  const projection = !burn && pace.daysAtPace !== null ? `About ${daysText(pace.daysAtPace)} left` : null;
   const resetAt = pace.daysUntilReset !== null ? now + pace.daysUntilReset * 86400000 : null;
   return (
     <PanelSection label="Allowance" meta={`${provider} · ${allowanceName(quota.type)}`}>
@@ -230,7 +228,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
                   At this pace
                   <HelpTip label="At this pace">The average spent per day so far this month, carried on to the reset. Pace allows 5% either way.</HelpTip>
                 </dt>
-                <dd className={cn('tabular-nums', burn?.runsOut ? 'text-error' : 'text-ink')}>{projection}</dd>
+                <dd className="tabular-nums text-ink">{projection}</dd>
               </div>
             )}
           </dl>
@@ -261,7 +259,7 @@ function BurnBar({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<Retur
       <figcaption aria-hidden="true" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-meta tabular-nums text-muted">
         <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs', QUOTA_FILLS[tone])} />Used {n(burn.used)}</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-0.5 rounded-full bg-ink" />Budget to date {n(burn.elapsed)}</span>
-        <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs opacity-30', QUOTA_FILLS[tone])} />At this pace</span>
+        <span className={cn('flex items-center gap-1', burn.runsOut && 'text-error')}><span className={cn('size-2 rounded-xs opacity-30', QUOTA_FILLS[tone])} />{burn.runsOut ? `Runs out ~${day(burn.runsOut)}` : `At this pace ~${n(burn.projected)}`}</span>
         <span className="ml-auto">{entitlement.toLocaleString('en-US')}</span>
       </figcaption>
     </figure>
@@ -320,12 +318,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);
   const describer = useRef<HTMLSpanElement>(null);
-  // In the drawer the popover stays inside it rather than spilling over the backdrop.
-  const [boundary, setBoundary] = useState<Element | undefined>();
-  const onOpenChange = (next: boolean) => {
-    if (next) setBoundary(describer.current?.closest('[role="dialog"]') ?? undefined);
-    setOpen(next);
-  };
+  const onOpenChange = (next: boolean) => setOpen(next);
   const meter = known && !quota.unlimited;
   // From the footer chip it opens beside the whole sidebar, on the page, rather than over the list.
   const beside = variant === 'chip' && side === 'right';
@@ -348,7 +341,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
     </Tip>
     <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
     {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} collisionBoundary={boundary} anchor={beside ? () => describer.current?.closest('nav') ?? null : undefined} className="w-[min(52rem,calc(100vw-var(--spacing-rail)-2rem))] min-w-[29rem] max-w-[calc(100vw-1rem)] h-[min(40rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 max-[959px]:w-[29rem] max-[959px]:min-w-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
+    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} anchor={beside ? () => describer.current?.closest('nav') ?? null : undefined} className="w-[36rem] max-w-[calc(100vw-1rem)] h-[min(46rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 ">
       {open && <UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;

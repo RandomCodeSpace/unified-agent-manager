@@ -950,9 +950,9 @@ In the expanded sidebar the Usage button is the footer's allowance chip (see Sid
   - that pace carried on to the reset, the same tone at 30% (to the end when it runs out first);
   - a 2px `ink` tick at the even pace's budget to date.
 
-  A `meta` legend line under it says "Used 101 · Budget to date 228 · At this pace" and, at the right, the cap. The bar is an image named with the same.
-- **Rows:** Resets ("Nov 1 · 26 days") and At this pace ("On track for ~602 of 1,500", or "Runs out ~Oct 24" in `error`; another provider gets "About n days left").
+  A `meta` legend line under it says "Used 101 · Budget to date 228 · At this pace ~602" and, at the right, the cap. The bar is an image named with the same.
+- **Rows:** Resets ("Nov 1 · 26 days"). Where the pace lands is the bar's legend ("At this pace ~602", or "Runs out ~Oct 24" in `error`). Another provider, without the bar, gets an At this pace row ("About n days left").
 - **Tokens** ("recorded by UAM"): the period tabs and the existing token and model breakdowns.
 - **Foot:** "Updated 1m ago", unpriced models with **Add prices**, and **Estimates** with its tip.
 
-From the sidebar footer's chip it opens beside the sidebar, on the page, bottom-aligned with it, up to 52rem wide and 40rem tall, rather than over the Task list. From 1100px wide, the allowance (20rem) and the tokens sit side by side. The overview's top five models and their "Other n models" row fit without scrolling. In **All models**, only the model list scrolls. Narrower (and in the phone drawer) it is one column that scrolls whole between the head and the foot. The quota comes from the provider, not UAM's token-cost estimates.
+From the sidebar footer's chip it opens beside the sidebar, on the page, bottom-aligned with it, rather than over the Task list. In the phone drawer it takes the screen's width less 8px a side, over the drawer. It is one 36rem column, at most 46rem tall: the allowance above the tokens. The overview's top five models (and their "Other n models" row) fit without scrolling. Each model is one line: its name, then "$1.87 · 1.3M · 78% cached", with the whole wording in its tip. In **All models** only the model list scrolls. The body scrolls whole only when the screen is too short. The quota comes from the provider, not UAM's token-cost estimates.

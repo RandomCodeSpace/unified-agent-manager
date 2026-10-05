@@ -103,7 +103,8 @@ export function ModelOverview({ models, colors, names }: Readonly<{ models: Usag
       {rows.map((model, i) => <div key={i === 5 ? 'other' : model.model}>
         <div className="mb-1 flex min-w-0 items-center gap-2 text-caption">
           <ModelName model={model} names={names} />
-          <span className="min-w-0 max-w-[60%] text-right tabular-nums [overflow-wrap:anywhere]" title={`Estimated cost in USD; ${compactTokens(model.total)} tokens`}>{costText(model.cost_usd)} <span className="text-muted">(<Count value={model.total} /> tokens)</span> <span className="inline-block text-muted">· {cacheHitText(model)} cache hit</span></span>
+          {/* One line: cost, tokens, cache hit; the tip says each in full. */}
+          <span className="shrink-0 whitespace-nowrap text-right tabular-nums" title={`Estimated cost ${costText(model.cost_usd)} in USD · ${compactTokens(model.total)} tokens · ${cacheHitText(model)} cache hit`}>{costText(model.cost_usd)} <span className="text-muted">· <Count value={model.total} /> · {cacheHitText(model)} cached</span></span>
         </div>
         <TokenBar model={model} names={names} color={i === 5 ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
       </div>)}

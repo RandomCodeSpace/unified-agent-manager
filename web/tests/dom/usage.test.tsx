@@ -54,7 +54,8 @@ describe('Usage popover', () => {
     expect(allowance.getByText('280')).toBeTruthy();
     expect(allowance.getByText('/ 7,000 used')).toBeTruthy();
     expect(allowance.getByText('Resets')).toBeTruthy();
-    expect(allowance.getByText(/^(On track for ~[\d,]+ of 7,000|Runs out ~.+|About .+ left)$/)).toBeTruthy();
+    // Where the pace lands: the bar's legend, or, without the bar, a row.
+    expect(allowance.getByText(/^(At this pace ~[\d,]+|Runs out ~.+|About .+ left)$/)).toBeTruthy();
   });
 
   test('stale quota keeps the number but clears the pace assessment', async () => {
@@ -336,8 +337,8 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     const overview = await screen.findByRole('figure');
-    expect(overview.textContent).toContain('$2.00 (1.5K tokens) · 17.3% cache hit');
-    expect(overview.textContent).toContain('— cache hit');
+    expect(overview.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
+    expect(overview.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: /All models/ }));
     const table = within(screen.getByRole('table'));
     expect(table.getByRole('columnheader', { name: 'Cache hit' })).toBeTruthy();
@@ -392,7 +393,7 @@ describe('Usage popover', () => {
     const info = await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' });
     expect(screen.getAllByRole('button', { name: 'About claude-sonnet-5 token split' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'About Other 2 models token split' })).toBeTruthy();
-    expect(screen.getByRole('figure').textContent).toContain('$2.87 (1.5M tokens)');
+    expect(screen.getByRole('figure').textContent).toContain('$2.87 · 1.5M');
     expect(screen.queryByRole('button', { name: 'About model-5 token split' })).toBeNull();
     await user.click(info);
     await waitFor(() => {
