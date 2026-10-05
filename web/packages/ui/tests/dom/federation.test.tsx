@@ -352,7 +352,7 @@ test('another machine’s Task, Terminal, Changes and Planner name the machine a
   await screen.findByRole('region', { name: 'Conversation' });
   const titleRow = () => within(screen.getByRole('heading', { level: 1 }).parentElement!);
   expect(titleRow().queryByText('Workstation B')).toBeNull();
-  await user.click(rows.getByRole('button', { name: /Fix re-attach redraw regression/, description: 'Workstation B' }));
+  await user.click(await (await taskRows()).findByRole('button', { name: /Fix re-attach redraw regression/, description: 'Workstation B' }));
   await waitFor(() => expect(window.location.hash).toContain('connection=b'));
   await screen.findByRole('region', { name: 'Conversation' });
   expect(titleRow().getByText('Workstation B')).toBeTruthy();
