@@ -1340,7 +1340,10 @@ shell on this host as the user running `uam web`, with that user's files and
 credentials. Anyone signed in could already have the agent run commands in
 yolo mode, so this adds no new capability, but the shell bypasses the
 agent's permission prompts and managed policy. Turn it on only if you would
-hand every holder of the access token a shell.
+hand every holder of the access token a shell. A connected instance acts with
+the access key it was paired with, so anyone who can sign in to an instance
+connected to this one can turn the setting on and open a shell here too; no
+further confirmation is asked.
 
 A terminal lives as long as its panel's connection. Closing the panel,
 reloading the page or losing the connection hangs up the shell and the
