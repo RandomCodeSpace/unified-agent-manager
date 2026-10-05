@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Info, Search, TriangleAlert, X } from 'lucide-react';
+import { Check, Info, Search, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, describeError, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
@@ -289,33 +289,24 @@ function allowanceName(type: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-/** The sidebar footer's face of the allowance: unit and share left, a meter of what is left, then pace and reset. */
-function AllowanceSummary({ quota, pace }: Readonly<{ quota: Quota | null; pace: ReturnType<typeof quotaPace> }>) {
-  const known = !!quota && (quota.unlimited || pace.remaining !== null);
-  const notes = [
-    quota && !QUIET_PACE.has(pace.label) ? <span key="pace" className={QUOTA_TONES[pace.tone]}>{pace.label}</span> : null,
-    known && !quota?.unlimited && pace.daysUntilReset !== null ? `resets in ${daysText(pace.daysUntilReset)}` : null,
-  ].filter(Boolean);
-  return <>
-    <span className="flex items-baseline justify-between gap-3 text-caption">
-      <span className="truncate text-body">{quota ? allowanceName(quota.type) : 'Usage'}</span>
-      <span className="flex shrink-0 items-center gap-1">
-        <span className={cn('tabular-nums', known ? 'font-medium text-ink' : 'text-muted')}>{known ? quotaFace(quota) : 'Not reported'}</span>
-        <ChevronRight aria-hidden="true" className="size-3.5 self-center text-muted transition-transform duration-160 group-hover/usage:translate-x-0.5" />
-      </span>
+/** Pace words worth a place on the chip: anything but the calm ones, which the tip carries. */
+const CHIP_PACE: Record<string, string> = { 'Ahead of pace': 'ahead', 'Allowance exhausted': 'used up', 'Previous quota; refresh failed': 'stale', 'Waiting for the refreshed allowance': 'resetting' };
+
+/** A short meter of what is left: `hairline` track, the fill in the pace tone, drawn with `scaleX`. */
+function Meter({ remaining, tone, className }: Readonly<{ remaining: number; tone: keyof typeof QUOTA_FILLS; className?: string }>) {
+  return (
+    <span aria-hidden="true" className={cn('relative block h-1 overflow-hidden rounded-full bg-hairline', className)}>
+      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-300', QUOTA_FILLS[tone])} style={{ transform: `scaleX(${remaining / 100})` }} />
     </span>
-    {known && !quota.unlimited && <span aria-hidden="true" className="relative block h-1 overflow-hidden rounded-full bg-hairline">
-      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-300', QUOTA_FILLS[pace.tone])} style={{ transform: `scaleX(${(pace.remaining ?? 0) / 100})` }} />
-    </span>}
-    {notes.length > 0 && <span className="truncate text-meta text-muted">{notes.map((note, i) => <span key={i}>{i > 0 && ' · '}{note}</span>)}</span>}
-  </>;
+  );
 }
 
 /**
- * Account allowance is live from SSE; recorded usage reads only while open. `ring` is the rail's
- * 28px icon button; `row` is the sidebar footer's full-width, labelled meter.
+ * Account allowance is live from SSE; recorded usage reads only while open. `chip` is the sidebar
+ * footer's small pill (a meter and the share left, the pace word when it needs saying); `rail` is
+ * the collapsed rail's stacked share and meter. Both carry the whole sentence in their tip.
  */
-export function UsageButton({ side = 'top', variant = 'ring', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; variant?: 'ring' | 'row'; className?: string; onAddPrices?: () => void }>) {
+export function UsageButton({ side = 'top', variant = 'rail', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; variant?: 'chip' | 'rail'; className?: string; onAddPrices?: () => void }>) {
   const { usage } = useApp();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -324,7 +315,9 @@ export function UsageButton({ side = 'top', variant = 'ring', className, onAddPr
   }, []);
   const quota = accountQuota(usage?.quotas);
   const pace = quotaPace(quota, now, usage?.stale);
-  const value = quota?.unlimited ? '∞' : pace.remaining === null ? '—' : String(Math.round(pace.remaining));
+  const known = !!quota && (quota.unlimited || pace.remaining !== null);
+  const share = !quota || !known ? '—' : quota.unlimited ? '∞' : `${Math.round(pace.remaining ?? 0)}%`;
+  const word = quota ? CHIP_PACE[pace.label] : undefined;
   const description = quota ? `${allowanceName(quota.type)}: ${quotaFace(quota)}. ${pace.label}${!quota.unlimited && pace.daysUntilReset !== null ? `. Resets in ${daysText(pace.daysUntilReset)}` : ''}` : 'Account usage unavailable';
   const descriptionId = useId();
   const [open, setOpen] = useState(false);
@@ -336,24 +329,24 @@ export function UsageButton({ side = 'top', variant = 'ring', className, onAddPr
     if (next) setBoundary(describer.current?.closest('[role="dialog"]') ?? undefined);
     setOpen(next);
   };
+  const meter = known && !quota.unlimited;
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
-    {variant === 'row' ? (
-      // The row says what it is, so it carries no tip. A card like the Task rows above it, lifting on hover, with a chevron: it opens something.
-      <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('group/usage lift h-auto w-full flex-col items-stretch justify-start gap-1 rounded-md bg-raised px-2.5 py-2 text-left font-normal whitespace-normal shadow-raised hover:bg-raised data-popup-open:bg-tint-selected', className)} />}>
-        <AllowanceSummary quota={quota} pace={pace} />
-      </Popover.Trigger>
-    ) : <Tip label={`Usage · ${description}`} side={side} disabled={open}>
-      <Popover.Trigger render={<Button data-account-usage size="icon" aria-label="Usage" aria-describedby={descriptionId} className={cn('[&_svg]:size-full', QUOTA_TONES[pace.tone], className)} />}>
-        <span aria-hidden="true" className={cn('relative block size-4 shrink-0', QUOTA_TONES[pace.tone])}>
-          <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90" fill="none">
-            <circle cx="18" cy="18" r="15.5" stroke="currentColor" strokeWidth="2.5" className="text-hairline-strong" />
-            <circle cx="18" cy="18" r="15.5" pathLength="100" stroke="currentColor" strokeWidth="2.5" strokeDasharray={`${pace.remaining ?? 0} 100`} />
-          </svg>
-          {/* Two characters fit the ring at 9px; 100 needs 7px. */}
-          <span className={cn('absolute inset-0 flex items-center justify-center leading-none font-semibold tabular-nums', value.length > 2 ? 'text-[7px]' : 'text-[9px]')}>{value}</span>
-        </span>
-      </Popover.Trigger>
-    </Tip>}
+    <Tip label={`Usage · ${description}`} side={side} disabled={open}>
+      {variant === 'chip' ? (
+        // A small pill like a chip: it reads as something to press, and lifts on hover.
+        <Popover.Trigger render={<Button data-account-usage size="sm" aria-label="Usage" aria-describedby={descriptionId} className={cn('lift h-7 min-w-0 gap-1.5 rounded-full bg-raised px-2.5 font-normal shadow-raised hover:bg-raised data-popup-open:bg-tint-selected', className)} />}>
+          {meter && <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-8 shrink-0" />}
+          <span className={cn('shrink-0 text-caption font-medium tabular-nums', known ? 'text-ink' : 'text-muted')}>{known ? (quota.unlimited ? 'Unlimited' : `${share} left`) : 'Usage'}</span>
+          {word && <span className={cn('min-w-0 truncate text-caption', QUOTA_TONES[pace.tone])}>{word}</span>}
+        </Popover.Trigger>
+      ) : (
+        // The rail's: the share left in words over a short meter, as wide as the rail allows.
+        <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('h-auto w-10 flex-col gap-1 px-0 py-1.5', className)} />}>
+          <span className={cn('text-caption font-medium leading-none tabular-nums', pace.tone === 'healthy' ? 'text-ink' : QUOTA_TONES[pace.tone])}>{share}</span>
+          {meter ? <Meter remaining={pace.remaining ?? 0} tone={pace.tone} className="w-6" /> : <span aria-hidden="true" className="block h-1" />}
+        </Popover.Trigger>
+      )}
+    </Tip>
     <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
     {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
     <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">

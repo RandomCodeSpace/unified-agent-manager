@@ -111,16 +111,8 @@ function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions;
   );
 }
 
-/** The rail's icon with a tip, or (`labelled`, in the sidebar footer) the icon and its word. */
-function FooterButton({ label, icon, pressed, onClick, labelled, side }: Readonly<{ label: string; icon: ReactNode; pressed: boolean; onClick: () => void; labelled?: boolean; side?: TipSide }>) {
-  if (labelled) {
-    return (
-      <Button size="sm" aria-pressed={pressed} className="text-muted" onClick={onClick}>
-        {icon}
-        {label}
-      </Button>
-    );
-  }
+/** An icon with its name in a tip: the rail's and the sidebar footer's. */
+function FooterButton({ label, icon, pressed, onClick, side }: Readonly<{ label: string; icon: ReactNode; pressed: boolean; onClick: () => void; side?: TipSide }>) {
   return (
     <Tip label={label} side={side}>
       <Button size="icon" aria-label={label} aria-pressed={pressed} className="text-muted" onClick={onClick}>
@@ -130,13 +122,13 @@ function FooterButton({ label, icon, pressed, onClick, labelled, side }: Readonl
   );
 }
 
-function SettingsButton({ actions, side, labelled }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
-  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} labelled={labelled} side={side} />;
+function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
+  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} />;
 }
 
-function PlannerButton({ actions, side, labelled }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
+function PlannerButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
   if (!actions.planner) return null;
-  return <FooterButton label="Planner" icon={<KanbanSquare />} pressed={actions.planner.open} onClick={() => actions.planner!.onOpen()} labelled={labelled} side={side} />;
+  return <FooterButton label="Planner" icon={<KanbanSquare />} pressed={actions.planner.open} onClick={() => actions.planner!.onOpen()} side={side} />;
 }
 
 /**
@@ -638,13 +630,13 @@ export const Sidebar = memo(function Sidebar({
           {CONNECTION_TEXT[connection]}
         </output>
       )}
-      {/* The foot: the account allowance as a labelled meter, then Settings, the planner and the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
+      {/* The foot, one row: Settings and the planner as icons with tips, the account allowance as a small chip, then the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
       <footer className="flex shrink-0 flex-col gap-1 px-2 pb-2">
         <div className="fade-rule mx-1 mb-1" aria-hidden="true" />
-        <UsageButton variant="row" onAddPrices={() => actions.onSettings('token-prices')} />
-        <div className="flex min-w-0 items-center gap-0.5">
-          <SettingsButton actions={actions} labelled />
-          <PlannerButton actions={actions} labelled />
+        <div className="flex min-w-0 items-center gap-1">
+          <SettingsButton actions={actions} />
+          <PlannerButton actions={actions} />
+          <UsageButton variant="chip" className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
           <span className="flex-1" />
           {version && <VersionMeta version={version} />}
           {connection === 'connected' && <output className="sr-only">{CONNECTION_TEXT.connected}</output>}

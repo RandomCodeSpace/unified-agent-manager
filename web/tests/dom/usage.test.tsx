@@ -42,8 +42,8 @@ describe('Usage popover', () => {
     const { user } = renderApp('#task=t20');
     const nav = await sidebar();
     const button = nav.getByRole('button', { name: 'Usage', exact: true });
-    // The footer row names the allowance, its share left, the pace and the reset, with a meter of what is left.
-    await waitFor(() => expect(button.textContent).toMatch(/^AI credits96% leftUnder pace · resets in \d+ days?$/));
+    // The footer chip: a meter and the share left; the tip and description carry the allowance, pace and reset.
+    await waitFor(() => expect(button.textContent).toBe('96% left'));
     expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('AI credits: 96% left');
     expect(document.getElementById('composer-usage')).toBeNull();
     expect(button.querySelector<HTMLElement>('[style]')?.style.transform).toBe('scaleX(0.96)');
@@ -64,26 +64,31 @@ describe('Usage popover', () => {
     const renderQuota = (stale: boolean) => <AppContext.Provider value={{ usage: { quotas: [quota], stale }, meta: null } as AppContextValue}><UsageButton /></AppContext.Provider>;
     const view = render(renderQuota(false));
     const button = screen.getByRole('button', { name: 'Usage', exact: true });
-    expect(button.textContent).toBe('100');
-    expect(button.className).toContain('text-success');
+    expect(button.textContent).toBe('100%');
+    // The meter's fill carries the pace tone; the share stays in words.
+    expect(button.querySelector('.bg-success')).not.toBeNull();
     view.rerender(renderQuota(true));
-    expect(button.className).toContain('text-muted');
-    expect(button.textContent).toBe('100');
+    expect(button.querySelector('.bg-faint')).not.toBeNull();
+    expect(button.querySelector('.bg-success')).toBeNull();
+    expect(button.textContent).toBe('100%');
     await user.click(button);
     expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
     expect(screen.queryByText('Under pace')).toBeNull();
   });
 
-  test('the footer row says each state in words, not colour alone', () => {
+  test('the footer chip says each state that needs saying in words, not colour alone', () => {
     const quota = { provider: 'copilot', type: 'premium_interactions', used: 1500, entitlement: 1500, remaining_percent: 0, unlimited: false, overage: 0 };
-    const row = (quotas: typeof quota[]) => <AppContext.Provider value={{ usage: { quotas, stale: false }, meta: null } as AppContextValue}><UsageButton variant="row" /></AppContext.Provider>;
+    const row = (quotas: typeof quota[]) => <AppContext.Provider value={{ usage: { quotas, stale: false }, meta: null } as AppContextValue}><UsageButton variant="chip" /></AppContext.Provider>;
     const view = render(row([quota]));
     const button = screen.getByRole('button', { name: 'Usage', exact: true });
-    expect(button.textContent).toMatch(/^Premium requests0% leftAllowance exhausted · resets in /);
+    expect(button.textContent).toBe('0% leftused up');
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toMatch(/^Premium requests: 0% left\. Allowance exhausted\. Resets in /);
+    view.rerender(row([{ ...quota, remaining_percent: 8 }]));
+    expect(button.textContent).toMatch(/^8% left(ahead)?$/);
     view.rerender(row([{ ...quota, unlimited: true, remaining_percent: 100 }]));
-    expect(button.textContent).toBe('Premium requestsUnlimited');
+    expect(button.textContent).toBe('Unlimited');
     view.rerender(row([]));
-    expect(button.textContent).toBe('UsageNot reported');
+    expect(button.textContent).toBe('Usage');
   });
 
   test.each(['top', 'right'] as const)('keeps its %s anchor on the first click and after reopening', async (side) => {
@@ -154,7 +159,7 @@ describe('Usage popover', () => {
     await user.click(nav.getByRole('button', { name: 'Hide sidebar' }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
     // The rail has room for the ring alone: the share left, without its sign.
-    expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96');
+    expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96%');
     await user.click(rail.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('dialog', { name: 'Usage' });
     await user.keyboard('{Escape}');
