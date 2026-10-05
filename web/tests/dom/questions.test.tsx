@@ -27,20 +27,20 @@ describe('answering from the composer', () => {
     expect(box().getByText('Needs answer')).toBeTruthy();
     expect(box().getByText('Pick a bound for the retry, or describe one')).toBeTruthy();
     expect(composer().placeholder).toBe('Type your answer…');
-    expect(answerButton()).toHaveProperty('disabled', true);
+    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
     const once = box().getByRole('radio', { name: 'Retry once' });
     const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
     await user.click(once);
     expect(once).toHaveProperty('checked', true);
     expect(composer().placeholder).toBe('Or type your own answer…');
-    expect(answerButton()).toHaveProperty('disabled', false);
+    expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     await user.click(thrice);
     expect(once).toHaveProperty('checked', false);
     expect(thrice).toHaveProperty('checked', true);
     await user.click(thrice);
     expect(thrice).toHaveProperty('checked', false);
     expect(composer().placeholder).toBe('Type your answer…');
-    expect(answerButton()).toHaveProperty('disabled', true);
+    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
   });
 
   test('the action row reads Stop, Decline, Answer', async () => {
@@ -69,7 +69,7 @@ describe('answering from the composer', () => {
     const { user, mock } = await openTask('t16');
     expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
     await user.type(composer(), 'Retry twice, then fail loudly');
-    expect(answerButton()).toHaveProperty('disabled', false);
+    expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Pick a bound for the retry, or describe one')).toBeNull());
     expect(mock.received.map((r) => r.route)).toEqual(['answer']);
@@ -192,7 +192,7 @@ describe('a recommended option', () => {
   test('arrives staged, sends nothing by itself, and Answer sends its label as offered', async () => {
     const { user, mock } = await openTask('t17');
     expect(recommended()).toHaveProperty('checked', true);
-    expect(answerButton()).toHaveProperty('disabled', false);
+    expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     expect(mock.received).toEqual([]);
     await user.click(answerButton());
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
@@ -215,7 +215,7 @@ describe('a recommended option', () => {
     expect(recommended()).toHaveProperty('checked', false);
     await new Promise((r) => setTimeout(r, 400));
     expect(recommended()).toHaveProperty('checked', false);
-    expect(answerButton()).toHaveProperty('disabled', true);
+    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
   });
 
   test('cleared, it is not staged again after a task switch', async () => {
@@ -225,7 +225,7 @@ describe('a recommended option', () => {
     await switchTo('t4', 'Bump GitHub Actions pins');
     await switchTo('t17');
     expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
-    expect(answerButton()).toHaveProperty('disabled', true);
+    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
   });
 
   test('another option picked stays staged after a task switch', async () => {
@@ -243,7 +243,7 @@ describe('a recommended option', () => {
   test('without one, nothing is staged', async () => {
     await openTask('t16');
     expect(box().getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([false, false, false]);
-    expect(answerButton()).toHaveProperty('disabled', true);
+    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
   });
 
   test('typing replaces it, the typed text alone is sent, and the task draft comes back', async () => {

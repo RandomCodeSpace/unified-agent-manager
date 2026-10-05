@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { AppContext, type AppContextValue } from '../../src/components/common';
+import { AppContext, dateTime, timeAgo, type AppContextValue } from '../../src/components/common';
 import { UsageButton } from '../../src/components/Usage';
 import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage';
 import { composer, renderApp, sidebar } from './render';
@@ -61,13 +61,13 @@ describe('Usage popover', () => {
     const view = render(renderQuota(false));
     const button = screen.getByRole('button', { name: 'Usage', exact: true });
     expect(button.textContent).toBe('100');
-    expect(button.className).toContain('text-warning');
+    expect(button.className).toContain('text-success');
     view.rerender(renderQuota(true));
     expect(button.className).toContain('text-muted');
     expect(button.textContent).toBe('100');
     await user.click(button);
     expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
-    expect(screen.queryByText('Behind pace')).toBeNull();
+    expect(screen.queryByText('Under pace')).toBeNull();
   });
 
   test.each(['top', 'right'] as const)('keeps its %s anchor on the first click and after reopening', async (side) => {
@@ -189,7 +189,8 @@ describe('Usage popover', () => {
     const user = userEvent.setup();
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
-    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Last fetched ${new Date(report.collection.updated_at!).toLocaleString()}.`);
+    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Last fetched ${timeAgo(report.collection.updated_at!)}.`);
+    expect(screen.getByRole('status').querySelector('time')?.getAttribute('title')).toBe(dateTime(report.collection.updated_at!));
     expect(document.querySelector('[data-popup="tooltip"]')).toBeNull();
     expect(screen.getByText(message).closest('.sr-only')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'About Usage' }));
@@ -246,10 +247,10 @@ describe('Usage popover', () => {
     expect(summaryCost('Without cache').textContent).toBe('—');
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe(`Last fetched ${new Date(report.collection.updated_at!).toLocaleString()}.`);
+    expect(screen.getByRole('status').textContent).toBe(`Last fetched ${timeAgo(report.collection.updated_at!)}.`);
     expect(screen.getByText(/UAM tracking started/).textContent).toContain('local harness records and UAM task, subagent, and Background AI usage');
     expect(screen.getByText(/External Copilot usage/).textContent).toContain('requires local telemetry files');
-    expect(screen.getByText(/External Copilot usage/).textContent).toContain(new Date(report.collection.copilot_since).toLocaleString());
+    expect(screen.getByText(/External Copilot usage/).textContent).toContain(dateTime(report.collection.copilot_since));
     expect(screen.getByText(/Costs use/).textContent).toContain('source-reported amounts');
   });
 
@@ -323,6 +324,22 @@ describe('Usage popover', () => {
     expect(missing.getByRole('cell', { name: '—' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'About claude-sonnet-5 token split' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('Cache hit: 17.3% of input tokens served by cache reads. Cache writes are not hits.'));
+  });
+
+  test('names models as the provider catalog does, keeping the ID findable', async () => {
+    vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
+    const meta = { providers: [{ name: 'copilot', models: [{ id: 'claude-sonnet-5', name: 'Claude Sonnet 5' }] }] };
+    const user = userEvent.setup();
+    render(<AppContext.Provider value={{ usage: { quotas: [] }, meta } as unknown as AppContextValue}><UsageButton /></AppContext.Provider>);
+    await user.click(screen.getByRole('button', { name: 'Usage' }));
+    const overview = within(await screen.findByRole('figure'));
+    expect(overview.getByTitle('Claude Sonnet 5 · claude-sonnet-5').textContent).toBe('Claude Sonnet 5');
+    expect(overview.getByRole('img', { name: /^Claude Sonnet 5 token split/ })).toBeTruthy();
+    // A model no catalog lists keeps its ID.
+    expect(overview.getByTitle('gpt-6-luna').textContent).toBe('gpt-6-luna');
+    await user.click(screen.getByRole('button', { name: /All models/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Find a model' }), 'sonnet 5');
+    expect(within(screen.getByRole('table')).getByRole('rowheader', { name: /Claude Sonnet 5/ })).toBeTruthy();
   });
 
   test('combines the same model across tools, limits the overview, and searches and sorts all models', async () => {

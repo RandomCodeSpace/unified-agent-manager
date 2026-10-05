@@ -1,10 +1,11 @@
-import { ArrowDownToLine, Check, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, RefreshCw, Sparkles, TriangleAlert, Upload } from 'lucide-react';
+import { ArrowDownToLine, ChevronDown, FolderGit2, GitBranch, GitCommitHorizontal, RefreshCw, Sparkles, TriangleAlert, Upload } from 'lucide-react';
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, api, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { Note } from './common';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
+import { Tip } from './ui/tooltip';
 
 /** The subject length git tooling and most hosts show whole. */
 export const SUBJECT_LIMIT = 72;
@@ -187,7 +188,14 @@ export function CommitPanel({
     );
   }
 
-  const pushTitle = !git.remote ? 'No remote to push to' : !git.has_commits ? 'Nothing to push yet' : git.upstream ? `Push to ${git.upstream}` : 'Push to origin';
+  // A reason the repository gives stays hoverable (aria-disabled with a tip); a running action or a busy Task disables outright and says why below.
+  const pushOff = !git.remote ? 'No remote to push to' : !git.has_commits ? 'Nothing to push yet' : null;
+  const pushTitle = pushOff ?? (git.upstream ? `Push to ${git.upstream}` : 'Push to origin');
+  const pullTitle = git.upstream ? `Fast-forward from ${git.upstream}` : 'No upstream to pull from';
+  const formOpen = open && files.length > 0;
+  let commitOff: string | null = null;
+  if (!blocked && selected.length === 0) commitOff = 'Check a file to commit.';
+  else if (!blocked && draft.message.trim() === '') commitOff = 'Write or generate a message to commit.';
   return (
     <section aria-label="Commit" className={cn('flex shrink-0 flex-col gap-2 px-3 py-2', className)}>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -195,7 +203,7 @@ export function CommitPanel({
           size="sm"
           variant={open ? 'ghost' : 'secondary'}
           aria-expanded={open}
-          aria-controls={formId}
+          aria-controls={`${formId} ${formId}-actions`}
           disabled={files.length === 0 && !open}
           onClick={() => setOpen(!open)}
         >
@@ -209,17 +217,22 @@ export function CommitPanel({
           {git.ahead > 0 && <span className="tabular-nums" aria-label={`${git.ahead} to push`}>↑{git.ahead}</span>}
           {git.behind > 0 && <span className="tabular-nums" aria-label={`${git.behind} to pull`}>↓{git.behind}</span>}
         </span>
-        <Button size="sm" variant="secondary" title={pushTitle} disabled={blocked || !git.remote || !git.has_commits} loading={running === 'push'} onClick={push}>
-          <Upload />
-          Push
-        </Button>
-        <Button size="sm" variant="secondary" title={git.upstream ? `Fast-forward from ${git.upstream}` : 'No upstream to pull from'} disabled={blocked || !git.upstream} loading={running === 'pull'} onClick={pull}>
-          <ArrowDownToLine />
-          Pull
-        </Button>
+        <Tip label={pushTitle}>
+          <Button size="sm" variant="secondary" aria-disabled={pushOff ? true : undefined} disabled={blocked} loading={running === 'push'} onClick={() => { if (!pushOff) push(); }}>
+            <Upload />
+            Push
+          </Button>
+        </Tip>
+        <Tip label={pullTitle}>
+          <Button size="sm" variant="secondary" aria-disabled={git.upstream ? undefined : true} disabled={blocked} loading={running === 'pull'} onClick={() => { if (git.upstream) pull(); }}>
+            <ArrowDownToLine />
+            Pull
+          </Button>
+        </Tip>
       </div>
 
-      <Collapse open={open && files.length > 0} inner="flex flex-col gap-2">
+      {/* The form is the one scroll area: it shrinks into the space the host leaves, and the actions below it stay in view. */}
+      <Collapse open={formOpen} className="min-h-0" inner="flex flex-col gap-2 overflow-y-auto overscroll-contain">
         <div id={formId} className="flex flex-col gap-2 pt-0.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <label htmlFor={`${formId}-message`} className="text-ui font-medium text-ink">Commit message</label>
@@ -250,7 +263,7 @@ export function CommitPanel({
           </p>
           <fieldset>
             <legend className="sr-only">Files to commit</legend>
-            <div className="flex max-h-60 flex-col overflow-y-auto overscroll-contain">
+            <div className="flex flex-col">
             {files.map((f) => (
               <label key={f.path} className="flex min-h-7 items-center gap-2 text-ui text-ink pointer-coarse:min-h-11">
                 <input
@@ -273,16 +286,20 @@ export function CommitPanel({
               {leftOut}
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="primary" disabled={!canCommit} loading={running === 'commit'} onClick={() => commit(false)}>
-              <GitCommitHorizontal />
-              Commit {selected.length} {selected.length === 1 ? 'file' : 'files'}
-            </Button>
-            <Button variant="secondary" disabled={!canCommit || !git.remote} title={git.remote ? undefined : 'No remote to push to'} onClick={() => commit(true)}>
+        </div>
+      </Collapse>
+      <Collapse open={formOpen} className="shrink-0">
+        <div id={`${formId}-actions`} className="flex flex-wrap items-center gap-2 pt-0.5">
+          <Button variant="primary" disabled={!canCommit} loading={running === 'commit'} onClick={() => commit(false)}>
+            <GitCommitHorizontal />
+            Commit {selected.length} {selected.length === 1 ? 'file' : 'files'}
+          </Button>
+          <Tip label={git.remote ? undefined : 'No remote to push to'}>
+            <Button variant="secondary" aria-disabled={git.remote ? undefined : true} disabled={!canCommit} onClick={() => { if (git.remote) commit(true); }}>
               <Upload />
               Commit and push
             </Button>
-          </div>
+          </Tip>
         </div>
       </Collapse>
 
@@ -292,7 +309,7 @@ export function CommitPanel({
           {busy}
         </p>
       ) : (
-        open && <p className="flex items-center gap-1 text-meta text-muted"><Check aria-hidden="true" className="size-3 text-success" /> No task is running in this repository</p>
+        formOpen && commitOff && <p className="text-meta text-muted">{commitOff}</p>
       )}
       {result && (
         <Note tone={result.tone} role={result.tone === 'error' ? 'alert' : 'status'} className="max-h-48 overflow-y-auto break-words whitespace-pre-wrap">

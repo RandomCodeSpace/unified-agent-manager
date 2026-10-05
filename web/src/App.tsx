@@ -89,6 +89,22 @@ export const popupOpen = () => !!document.querySelector('[data-popup]');
 /** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
 const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
 
+/**
+ * Task rows enter, leave and reorder with a view transition (type "sessions"), except while a menu, dialog
+ * or panel is open: the transition's snapshots paint in the top layer, above its backdrop, so the rows
+ * would flash undimmed. Then the list changes at once.
+ */
+function sessionsUpdate(update: () => void) {
+  if (keysTaken()) return update();
+  startTransition(() => {
+    addTransitionType('sessions');
+    update();
+  });
+}
+
+/** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane. */
+const conversation = () => document.querySelector<HTMLElement>('main section[aria-label="Conversation"]') ?? document.querySelector<HTMLElement>('main');
+
 function readJSON<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
@@ -131,6 +147,15 @@ export default function App() {
   const sheetInline = useMedia(SHEET_INLINE);
   const [notice, setNotice] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // What had focus when Changes opened (the header button, a turn's "View changes"); focus goes back there on
+  // close, or to the header button once that is gone.
+  const changesOpener = useRef<Element | null>(null);
+  const focusChangesOpener = () => {
+    const opener = changesOpener.current;
+    changesOpener.current = null;
+    const back = opener instanceof HTMLElement && opener.isConnected && opener !== document.body ? opener : document.getElementById('changes-link');
+    back?.focus();
+  };
   // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
   const [terminalId, setTerminalId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -294,13 +319,16 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth]);
 
-  // Esc closes the Changes sheet when no popup owns the key (popups and the drawer handle their own).
+  // Esc closes the Changes sheet when no popup owns the key (popups and the drawer handle their own), and only
+  // from inside the panel or with nothing focused: Esc in the conversation or the composer is theirs.
   useEffect(() => {
     if (!sheetOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || popupOpen()) return;
+      const at = document.activeElement;
+      if (at && at !== document.body && !at.closest('[aria-label="Changes"]')) return;
       setSheetOpen(false);
-      document.getElementById('changes-link')?.focus();
+      focusChangesOpener();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -478,13 +506,9 @@ export default function App() {
           return;
         }
         flush();
-        if (data.name === 'session' || data.name === 'session_removed') {
-          // Task rows enter, leave and reorder with a view transition (type "sessions"); everything else commits at once.
-          startTransition(() => {
-            addTransitionType('sessions');
-            dispatch({ type: 'update', data });
-          });
-        } else dispatch({ type: 'update', data });
+        // Task rows enter, leave and reorder with a view transition; everything else commits at once.
+        if (data.name === 'session' || data.name === 'session_removed') sessionsUpdate(() => dispatch({ type: 'update', data }));
+        else dispatch({ type: 'update', data });
         if (data.name === 'project_removed') {
           setFilter((current) => {
             if (current !== data.project_id) return current;
@@ -550,13 +574,16 @@ export default function App() {
     document.getElementById('terminal-link')?.focus();
   }, []);
   const onSheet = useCallback((open: boolean, restoreFocus = true) => {
+    if (open) changesOpener.current = document.activeElement;
     setSheetOpen(open);
-    if (!open && restoreFocus) document.getElementById('changes-link')?.focus();
+    if (!open && restoreFocus) focusChangesOpener();
   }, []);
   const onSessionUpdate = useCallback((s: SessionSummary) => dispatch({ type: 'upsert_session', session: s }), []);
   const onInteractionUpdate = useCallback((sessionId: string, interaction: Interaction) => dispatch({ type: 'upsert_interaction', sessionId, interaction }), []);
 
+  // The drawer closes first: a dialog's backdrop sits under the drawer's own layer.
   const openDialog = useCallback((d: Exclude<ProjectDialog, null>) => {
+    setDrawerOpen(false);
     setDialog(d);
     setDialogOpen(true);
   }, []);
@@ -565,7 +592,25 @@ export default function App() {
     setTaskDialogOpen(true);
   }, []);
 
+  // A move between views (a Task, Settings, the planner, Routines) adds a history entry, so Back and
+  // Forward retrace it; a correction the app makes on its own (a stale or unknown fragment) replaces the entry.
+  const pushView = useRef(false);
+  // What opened Settings, the planner or Routines: closing the view gives it focus back.
+  const opener = useRef<HTMLElement | null>(null);
+  const viewShown = useRef(false);
+  useLayoutEffect(() => {
+    viewShown.current = settingsOpen || plannerOpen || !!routinesFor;
+  });
+  const noteOpener = useCallback(() => {
+    pushView.current = true;
+    const el = document.activeElement;
+    // A move inside the open view (the planner opening a card) keeps the button that opened it.
+    if (viewShown.current && el?.closest('main')) return;
+    opener.current = el instanceof HTMLElement && el !== document.body ? el : null;
+  }, []);
+
   const select = useCallback((id: string | null) => {
+    pushView.current = true;
     // Choosing a Task is an invitation to type: its composer takes focus, except on a touch screen, where a keyboard would rise over the conversation.
     if (id && !window.matchMedia(COARSE).matches) {
       focusTask.current = id;
@@ -586,16 +631,18 @@ export default function App() {
 
   /** The Planner view in the main pane (like Settings, it keeps the selected Task behind it). */
   const showPlanner = useCallback(() => {
+    noteOpener();
     setPlannerOpen(true);
     setSettingsOpen(false);
     setRoutinesFor(null);
     setNewTask(null);
     setDrawerOpen(false);
     setSheetOpen(false);
-  }, []);
+  }, [noteOpener]);
   const openTask = useCallback((id: string) => select(id), [select]);
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
+    noteOpener();
     setTokenPricesRequest(0);
     setSettingsOpen(true);
     setPlannerOpen(false);
@@ -603,17 +650,28 @@ export default function App() {
     setNewTask(null);
     setDrawerOpen(false);
     setSheetOpen(false);
-  }, []);
+  }, [noteOpener]);
   // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
   const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
   /** Routines in the main pane, one Project's or `all` (like Settings, it keeps the selected Task behind it). */
   const showRoutines = useCallback((projectId: string) => {
+    noteOpener();
     setRoutinesFor(projectId);
     setSettingsOpen(false);
     setPlannerOpen(false);
     setNewTask(null);
     setDrawerOpen(false);
     setSheetOpen(false);
+  }, [noteOpener]);
+  /** Closes Settings, the planner or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
+  const closeView = useCallback(() => {
+    pushView.current = true;
+    setSettingsOpen(false);
+    setPlannerOpen(false);
+    setRoutinesFor(null);
+    const back = opener.current;
+    opener.current = null;
+    requestAnimationFrame(() => (back?.isConnected && !back.closest('[inert]') && back.getClientRects().length ? back : conversation())?.focus());
   }, []);
   // Only `true` shows the planner: `false` leaves its Settings switch, and a service that does not know the setting (undefined) shows none of it.
   const plannerOn = state.settings.planner === true && state.loaded;
@@ -632,7 +690,22 @@ export default function App() {
   });
   const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
   const plannerProject = planner.value.ui.project;
+  const plannerPanel = planner.value.ui.panel;
   const setPlannerUi = planner.value.setUi;
+
+  // Esc closes Settings, the planner (its side panel first) or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
+  const viewOpen = settingsOpen || plannerShown || !!routinesFor;
+  useEffect(() => {
+    if (!viewOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || keysTaken() || editing()) return;
+      if (e.target instanceof Element && e.target.closest('.xterm')) return;
+      if (plannerShown && !settingsOpen && plannerPanel) setPlannerUi({ panel: null });
+      else closeView();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [viewOpen, plannerShown, settingsOpen, plannerPanel, setPlannerUi, closeView]);
 
   useEffect(() => {
     if (auth === 'in') return startNotifications();
@@ -642,28 +715,49 @@ export default function App() {
     if (auth === 'in') setViewing(settingsOpen || plannerOpen || routinesFor ? null : state.selectedId);
   }, [auth, state.selectedId, settingsOpen, plannerOpen, routinesFor]);
 
-  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, else the selected task.
+  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, `#routines…`, else the selected task.
+  let viewHash = '';
+  if (settingsOpen) viewHash = SETTINGS_HASH;
+  else if (plannerOpen) viewHash = `${PLANNER_PREFIX}${encodeURIComponent(plannerProject ?? '')}`;
+  else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
+  else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}`;
+  // Written when the view changes, never over a fragment the user just navigated to (its event may come
+  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it.
+  const writtenHash = useRef<string | null>(null);
   useEffect(() => {
-    const id = state.selectedId;
-    let next = '';
-    if (settingsOpen) next = SETTINGS_HASH;
-    else if (plannerOpen) next = `${PLANNER_PREFIX}${encodeURIComponent(plannerProject ?? '')}`;
-    else if (routinesFor) next = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
-    else if (id) next = `${HASH_PREFIX}${encodeURIComponent(id)}`;
-    if (window.location.hash !== next) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
-  }, [state.selectedId, settingsOpen, plannerOpen, plannerProject, routinesFor]);
-  // A `#task=` or `#routines` fragment the user navigates to (back/forward, a pasted URL) shows that
-  // Task or those routines; the write above uses replaceState, which fires no hashchange.
+    const push = pushView.current;
+    pushView.current = false;
+    if (writtenHash.current === viewHash) return;
+    writtenHash.current = viewHash;
+    if (window.location.hash === viewHash) return;
+    const url = `${window.location.pathname}${window.location.search}${viewHash}`;
+    if (push) history.pushState(null, '', url);
+    else history.replaceState(null, '', url);
+  });
+  // A fragment the user navigates to (Back/Forward, a pasted or edited URL) shows its view; the writes
+  // above fire neither event. Traversing history fires both, so a fragment already on screen is skipped.
+  const followHash = useEffectEvent(() => {
+    const h = window.location.hash;
+    if (h === viewHash) return;
+    const routines = hashRoutines();
+    if (h === SETTINGS_HASH) showSettings();
+    else if (h.startsWith(PLANNER_PREFIX)) {
+      const board = hashPlanner();
+      if (board) setPlannerUi({ project: board, selected: null, epic: null, panel: null });
+      showPlanner();
+    } else if (routines) showRoutines(routines);
+    else select(hashSelection());
+    // The entry is already in history.
+    pushView.current = false;
+  });
   useEffect(() => {
-    const onHash = () => {
-      const routines = hashRoutines();
-      const id = hashSelection();
-      if (routines) showRoutines(routines);
-      else if (id) select(id);
+    window.addEventListener('hashchange', followHash);
+    window.addEventListener('popstate', followHash);
+    return () => {
+      window.removeEventListener('hashchange', followHash);
+      window.removeEventListener('popstate', followHash);
     };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, [select, showRoutines]);
+  }, []);
 
   /** New task: a draft for the Project on the Task defaults of Settings, with its composer focused; no request until its first Send. */
   const startTask = useCallback(
@@ -755,10 +849,7 @@ export default function App() {
         throw new Error(`Could not start the task: ${describeError(e)}`, { cause: e });
       }
       creating.current.delete(projectId);
-      startTransition(() => {
-        addTransitionType('sessions');
-        dispatch({ type: 'upsert_session', session: s });
-      });
+      sessionsUpdate(() => dispatch({ type: 'upsert_session', session: s }));
       const sent: DraftAttachment[] = [];
       let failed = '';
       try {
@@ -860,7 +951,11 @@ export default function App() {
       onEditProject: (project) => openDialog({ kind: 'edit', project }),
       onRoutines: (project) => showRoutines(project.id),
       routinesOpen: !!routinesFor && !settingsOpen,
-      onAllRoutines: () => (routinesFor && !settingsOpen ? setRoutinesFor(null) : showRoutines(ALL_ROUTINES)),
+      onAllRoutines: () => {
+        pushView.current = true;
+        if (routinesFor && !settingsOpen) setRoutinesFor(null);
+        else showRoutines(ALL_ROUTINES);
+      },
       filter,
       onFilter: (id) => {
         setFilter(id);
@@ -870,6 +965,7 @@ export default function App() {
       onToggleSidebar: () => (narrow ? setDrawerOpen((o) => !o) : toggleSidebar()),
       settingsOpen,
       onSettings: (target) => {
+        noteOpener();
         setTokenPricesRequest((request) => target ? request + 1 : 0);
         setSettingsOpen((o) => target ? true : !o);
         setPlannerOpen(false);
@@ -881,6 +977,7 @@ export default function App() {
         ? {
             open: plannerOpen && !settingsOpen,
             onOpen: (projectId) => {
+              noteOpener();
               if (projectId) setPlannerUi({ project: projectId, selected: null, epic: null, panel: null });
               if (plannerOpen && !settingsOpen && !projectId) setPlannerOpen(false);
               else showPlanner();
@@ -888,7 +985,7 @@ export default function App() {
           }
         : undefined,
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines, routinesFor],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines, routinesFor, noteOpener],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -960,10 +1057,7 @@ export default function App() {
         recentTasks.remove(id);
         forgetArchive(id);
         if (confirmedDetail.current?.id === id) confirmedDetail.current = null;
-        startTransition(() => {
-          addTransitionType('sessions');
-          dispatch({ type: 'remove_session', id });
-        });
+        sessionsUpdate(() => dispatch({ type: 'remove_session', id }));
       }
     } catch {
       // Reported on the notice line.
@@ -989,18 +1083,21 @@ export default function App() {
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
   let pane: React.ReactNode;
+  // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
+  let taskPane = false;
   // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
   const gitProjects = state.projects.filter((p) => !p.no_git);
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={() => setSettingsOpen(false)} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} />;
+    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} />;
   } else if (plannerShown) {
-    pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={() => setPlannerOpen(false)} />;
+    pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={closeView} />;
   } else if (routinesShown) {
-    pane = <RoutinesView leading={leading} projects={state.projects} scope={routinesFor === ALL_ROUTINES ? null : routinesFor} onScope={(id) => setRoutinesFor(id ?? ALL_ROUTINES)} sessions={state.sessions} onOpenTask={openTask} onClose={() => setRoutinesFor(null)} />;
+    pane = <RoutinesView leading={leading} projects={state.projects} scope={routinesFor === ALL_ROUTINES ? null : routinesFor} onScope={(id) => setRoutinesFor(id ?? ALL_ROUTINES)} sessions={state.sessions} onOpenTask={openTask} onClose={closeView} />;
   } else if (newTask && newTaskProject) {
     pane = <NewTaskPane key={newTask.projectId} project={newTaskProject} defaults={newTask.defaults} onSend={createTask} leading={leading} />;
   } else if (shown) {
+    taskPane = true;
     pane = (
       <DetailsProvider key={shown.id} session={shown} active={!stale && state.connection === 'connected'} generation={state.detailGeneration} versions={state.bodyVersions} onAuthLost={() => { recentTasks.clear(); confirmedDetail.current = null; dispatch({ type: 'reset' }); setAuth('out'); }}>
       <Task
@@ -1057,6 +1154,10 @@ export default function App() {
       <PlannerTasks.Provider value={plannerTasks}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
+          {/* The first stop for the keyboard: past the sidebar to the conversation, else the main pane (a button, not a link: the fragment holds the view). */}
+          <button type="button" className="sr-only z-60 rounded-sm bg-raised px-3 py-2 text-ui text-ink shadow-float focus-visible:not-sr-only focus-visible:fixed focus-visible:top-2 focus-visible:left-2" onClick={() => conversation()?.focus()}>
+            Skip to main content
+          </button>
           <div
             className={cn(
               SHELL,
@@ -1077,9 +1178,13 @@ export default function App() {
             {narrow && (
               <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
+                {/* On the backdrop's strip beside the drawer, a 44px target. */}
+                <Button size="icon" aria-label="Close sidebar" className="absolute top-[calc(env(safe-area-inset-top)+2px)] left-full size-11 text-on-primary hover:bg-on-primary/15 active:bg-on-primary/25" onClick={() => setDrawerOpen(false)}>
+                  <X />
+                </Button>
               </Sheet>
             )}
-            <main className="relative flex min-h-0 min-w-0 flex-col bg-canvas">
+            <main tabIndex={-1} className="relative flex min-h-0 min-w-0 flex-col bg-canvas outline-hidden">
               {connection !== 'connected' && (
                 <output className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
                   <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
@@ -1127,10 +1232,10 @@ export default function App() {
                 {/* Settings, the planner, routines and a new Task do not wait on the stream. */}
                 <LoadingVeil show={loading && !settingsOpen && !plannerShown && !routinesShown && !newTask} />
               </div>
-              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} onClose={closeTerminal} />}
+              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} onClose={closeTerminal} />}
             </main>
 
-            <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} />
+            <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} onAddProject={actions.onAddProject} />
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}
@@ -1236,12 +1341,12 @@ function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.
 /**
  * Settings → Terminal's shell, docked under the Task view as part of the layout (DESIGN.md Terminal):
  * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
- * across Task switches and ends with Close, which ends the shell.
+ * across Task switches, hides (its shell running) while another view fills the pane, and ends with Close, which ends the shell.
  */
-function TerminalDock({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
+function TerminalDock({ project, hidden, onClose }: Readonly<{ project: Project; hidden: boolean; onClose: () => void }>) {
   const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
   return (
-    <section ref={panelRef} aria-label="Terminal" className="relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas">
+    <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
       <div {...handleProps} className="absolute inset-x-0 -top-1 z-10 flex h-2 cursor-row-resize items-center outline-hidden focus-visible:outline-2 focus-visible:outline-focus" title="Drag to resize · double-click to reset">
         <div className="fade-rule w-full" />
       </div>

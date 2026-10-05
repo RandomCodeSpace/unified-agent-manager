@@ -45,6 +45,17 @@ function parseObject(input: string | undefined): Record<string, unknown> | null 
   }
 }
 
+/** The text an input that is one JSON string holds (apply_patch's patch), escapes decoded; null for any other input. */
+function parseText(input: string): string | null {
+  if (!input.startsWith('"')) return null;
+  try {
+    const v: unknown = JSON.parse(input);
+    return typeof v === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A tool's input object, parsed once per tool call: streaming re-renders the turn many times a second. */
 const parsed = new WeakMap<ToolCall, Record<string, unknown> | null>();
 function inputOf(tool: ToolCall): Record<string, unknown> | null {
@@ -59,7 +70,8 @@ function inputOf(tool: ToolCall): Record<string, unknown> | null {
 /**
  * The tool row's name and main argument. The argument is the shell command, URL, path,
  * pattern, query, skill or subagent name from the input JSON, per tool; failing a known
- * key, the input's first string value; a non-JSON input as is; else the provider's title.
+ * key, the input's first string value; for a patch, the files it names; an input that is
+ * one JSON string, decoded; a non-JSON input as is; else the provider's title.
  * Without a name the title's first word stands in, as the ledger showed it. A title that
  * repeats the name as its verb ("Edit cmd/doctor.go" for `edit`) contributes the rest.
  */
@@ -81,14 +93,32 @@ export function toolLabel(tool: ToolCall | undefined): { name: string; arg: stri
 /** The main argument from a tool's input, or '' when the input says nothing. */
 export function mainArgument(name: string, input: string | undefined): string {
   if (!input?.trim()) return '';
+  if (name.toLowerCase() === 'apply_patch') {
+    const paths = patchPaths(input);
+    if (paths.length) return oneLine(paths.join(', '));
+  }
   const obj = parseObject(input);
-  if (!obj) return oneLine(input);
+  if (!obj) return oneLine(parseText(input) ?? input);
   for (const key of [...(KEYS[name.toLowerCase()] ?? []), ...GENERIC]) {
     const v = obj[key];
     if (typeof v === 'string' && v.trim()) return oneLine(v);
   }
   for (const v of Object.values(obj)) if (typeof v === 'string' && v.trim()) return oneLine(v);
   return oneLine(input);
+}
+
+/**
+ * A tool's input as a person reads it, for its details and its copy action: a command tool's
+ * command, an input that is one JSON string decoded, else the input as it came. `kind` says
+ * which: "command" only for a command.
+ */
+export function readableInput(name: string, input: string): { kind: 'command' | 'input'; text: string } {
+  const text = parseText(input);
+  if (toolKind(name) !== 'command') return { kind: 'input', text: text ?? input };
+  const obj = parseObject(input);
+  if (!obj) return { kind: 'command', text: text ?? input };
+  const command = KEYS.bash.map((key) => obj[key]).find((v): v is string => typeof v === 'string' && !!v.trim());
+  return command ? { kind: 'command', text: command } : { kind: 'input', text: input };
 }
 
 /** Runs longer than this fold their middle. */
@@ -528,7 +558,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
     sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
     failed && `${failed} failed`,
     noResult && `${noResult} without a result`,
-    unanswered && `${noun(unanswered, 'question')} unanswered`,
+    unanswered && `${noun(unanswered, 'question')} not answered`,
     images && noun(images, 'image'),
     now,
     took,
@@ -606,8 +636,10 @@ export function subagentSummary(subagent: Subagent, items: readonly Item[] | und
     return '';
   }
   if ((subagent.status === 'completed' || subagent.status === 'idle') && subagent.summary) return firstLine(subagent.summary);
-  if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(parent?.output);
-  return firstLine(subagent.result_summary) || firstLine(parent?.output);
+  // A background launch's call output only acknowledges the launch.
+  const report = subagent.background ? undefined : parent?.output;
+  if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(report);
+  return firstLine(subagent.result_summary) || firstLine(report);
 }
 
 /** One leading heading, quote, bullet or ordered-list mark. */
@@ -713,9 +745,10 @@ export interface TurnSummary {
  * them. A subagent's `task` call is never counted, failed or not: the reply's subagent chip is.
  */
 export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSummary {
-  let count = 0, thoughts = 0, thinkMs = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
+  let count = 0, thoughts = 0, commands = 0, searches = 0, other = 0, failed = 0, noResult = 0, decided = 0, images = 0;
   const changed = new Set<string>();
   const read = new Set<string>();
+  const thinking: [number, number][] = [];
   const outcomes: AskedQuestion['outcome'][] = [];
   let waiting = false;
   for (const entry of entries) {
@@ -731,7 +764,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     if (item.kind === 'reasoning') {
       if (item.id === ctx.streamingId || (!item.text?.trim() && !item.compact?.has_reasoning)) continue;
       thoughts++;
-      if (item.ended_at) thinkMs += Math.max(0, Date.parse(item.ended_at) - Date.parse(item.time));
+      if (item.ended_at) thinking.push([Date.parse(item.time), Date.parse(item.ended_at)]);
       continue;
     }
     const t = item.tool;
@@ -771,6 +804,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
   }
   const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
   failed += asked('failed');
+  const thinkMs = spanMs(thinking);
   const thinkTime = thinkMs > 0 ? formatMs(thinkMs) : null;
   const thinkSuffix = thinkTime ? ` (${thinkTime})` : '';
   const quiet = (text: string | 0): SummaryPart | null => (text ? { text, tone: 'muted' } : null);
@@ -786,10 +820,21 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(decided && `${noun(decided, 'request')} decided`),
     failed && { text: `${failed} failed`, tone: 'error' as const },
     quiet(noResult && `${noResult} without a result`),
-    quiet(asked('none') && `${noun(asked('none'), 'question')} unanswered`),
+    quiet(asked('none') && `${noun(asked('none'), 'question')} not answered`),
     quiet(images && noun(images, 'image')),
   ].filter(Boolean) as SummaryPart[];
   return { parts, label: parts.map((p) => p.text).join(' · '), tone: activityTone(failed, waiting), count };
+}
+
+/** The time `spans` cover together: thoughts recorded in parallel (several summaries of one model call) count once. */
+function spanMs(spans: [number, number][]): number {
+  let total = 0, end = -Infinity;
+  for (const [from, to] of spans.filter(([a, b]) => b > a).sort((a, b) => a[0] - b[0])) {
+    if (to <= end) continue;
+    total += to - Math.max(from, end);
+    end = to;
+  }
+  return total;
 }
 
 export interface Step {

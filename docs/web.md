@@ -532,7 +532,7 @@ sign-outs are logged without the token.
   (Safe or Yolo, without autopilot), and each card shows its mode. The API
   takes `mode` (`safe` or `yolo`) and `autopilot`; a create that leaves
   them out is Yolo with autopilot, and one that sets only `mode: "safe"`
-  gets no autopilot. **Runs a day** (1 to 100, default 24) counts every run
+  gets no autopilot. **Daily run limit** (1 to 100, default 24) counts every run
   that started, or tried to start, a Task since local midnight, Run now
   included; a firing past it is skipped. **Stop a run after** (1 to 720
   minutes, default 30) cancels the turn still running then, a turn waiting

@@ -1,6 +1,6 @@
-import { ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
+import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, SIGNED_OUT, api, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { LIVE, SIGNED_OUT, api, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -11,8 +11,7 @@ import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ComposerUsage } from './ComposerUsage';
-import { ComposerTools } from './ComposerTools';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
+import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
@@ -25,6 +24,7 @@ import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu, type ActionItem } from './ui/menu';
+import { useTaskActions } from './taskActions';
 import { Tip } from './ui/tooltip';
 
 /** How freely the agent acts, from permissions and execution together (DESIGN.md Permissions and execution): safest to riskiest. */
@@ -112,6 +112,7 @@ function Picker({
   id,
   icon,
   label,
+  heading,
   value,
   display,
   choices,
@@ -124,6 +125,8 @@ function Picker({
   id: string;
   icon: ReactNode;
   label: string;
+  /** The menu's heading over the choices without a group (the provider's name); `label` when absent. */
+  heading?: string;
   value: string;
   display: string;
   choices: Choice[];
@@ -137,7 +140,7 @@ function Picker({
   const face = (
     <>
       {icon}
-      <span data-squeeze="" className="max-w-36 truncate max-sm:max-w-16 in-data-[fold~=model]:hidden">{display}</span>
+      <span data-squeeze="" className="max-w-36 truncate max-sm:max-w-24 in-data-[fold~=model]:hidden">{display}</span>
       <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
     </>
   );
@@ -166,7 +169,7 @@ function Picker({
       </Tip>
       <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
-          <Menu.Label>{label}</Menu.Label>
+          <Menu.Label>{heading ?? label}</Menu.Label>
           {choices.filter((c) => !c.group).map(item)}
           {[...new Set(choices.flatMap((c) => (c.group ? [c.group] : [])))].map((group) => [
             <Menu.Separator key={`separator-${group}`} />,
@@ -352,7 +355,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const noContext = contextReason(selectedModel, !!session.capabilities.context_size);
   // Neither can change (the Auto model): the picker shows one word and says why, instead of "Default · Default".
   const fixedTuning = !!noEffort && !!noContext;
-  const tuningLabel = fixedTuning ? 'Default' : [noEffort ? '' : effort || 'Default', noContext ? '' : contextLabel].filter(Boolean).join(' · ');
+  const tuningLabel = fixedTuning ? 'Default' : [noEffort ? '' : effortLabel(effort), noContext ? '' : contextLabel].filter(Boolean).join(' · ');
   const settingsLocked = !!busy || locked;
   const autopilot = session.execution?.mode === 'autopilot' || session.execution?.objective?.status === 'active';
   const mode = session.mode ?? 'safe';
@@ -901,6 +904,19 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     });
   }
 
+  // A settled Task reopens from its notice (the same action as the Task menu's Reopen); the composer then takes focus.
+  const taskActions = useTaskActions();
+  const reopening = useRef(false);
+  function reopen() {
+    reopening.current = true;
+    taskActions.reopen(session.id);
+  }
+  useEffect(() => {
+    if (locked || !reopening.current) return;
+    reopening.current = false;
+    textarea.current?.focus();
+  }, [locked]);
+
   // The reply the owner would likely send next, as ghost text in the empty composer (Assist.tsx).
   const suggestion = useSuggestion(session, !!newTask || !!answering || locked || !!busy || text !== '');
   /** Puts the suggestion in the composer, the caret at its end; nothing is sent. */
@@ -971,6 +987,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     return enter === 'steer' ? 'Steer' : 'Queue';
   }
   const sendLabel = describeSend();
+  // Send looks disabled but stays hoverable and focusable (`aria-disabled`), so its tooltip can say why.
+  const sendOff = cannotSubmit || (!answering && !cmd && enter === 'steer' && !!settingsSteerReason);
   /** The line under the picker's rows: a reason, an error; none when there is nothing to say. */
   function describePickerNote(): string | null {
     if (trigger?.kind === '/' || trigger?.kind === '$') {
@@ -1049,7 +1067,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <Menu.Label>Effort</Menu.Label>
         {noEffort ? <p className="max-w-64 px-2 py-1 text-caption text-muted">{noEffort}</p> : <Menu.RadioGroup value={effort} onValueChange={(v) => void settings({ effort: v as string })}>
           <Menu.RadioItem value="">Default</Menu.RadioItem>
-          {(selectedModel?.efforts ?? []).map((e) => <Menu.RadioItem key={e} value={e}>{e}</Menu.RadioItem>)}
+          {(selectedModel?.efforts ?? []).map((e) => <Menu.RadioItem key={e} value={e}>{effortLabel(e)}</Menu.RadioItem>)}
         </Menu.RadioGroup>}
       </Menu.Group>
       <Menu.Separator />
@@ -1080,6 +1098,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
     if (blocked) return blocked;
+    if (session.state === 'starting') return 'Wait for this task to start.';
+    if (empty) return answering ? 'Choose an option or type an answer first.' : 'Type a message or attach a file first.';
+    if (sendOff && settingsSteerReason) return settingsSteerReason;
     if (answering) {
       return (
         <>
@@ -1224,7 +1245,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
-          {locked && <Note>{session.stage === 'settled' ? 'Settled. Reopen this task to continue the same conversation.' : 'Archived. This task is read-only.'}</Note>}
+          {locked && session.stage === 'settled' && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Note>Settled. Reopen this task to continue the same conversation.</Note>
+              <Button size="sm" variant="secondary" loading={!!taskActions.busy[session.id]} onClick={reopen}>
+                <ArchiveRestore />
+                Reopen
+              </Button>
+            </div>
+          )}
+          {locked && session.stage !== 'settled' && <Note>Archived. This task is read-only.</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
               Your last submission may have changed the provider state. Check the conversation and settings before retrying; it will not be resent automatically.
@@ -1248,7 +1278,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           {commandBlocked && <Note role="status">{commandBlocked}</Note>}
           {shapedCommand && commandsError && <Note tone="error" role="alert">{commandsError} <Button size="sm" variant="subtle" onClick={() => { setCommandVersion((v) => v + 1); setDismissed(null); textarea.current?.focus(); }}>Retry commands</Button></Note>}
           {live && steerUnavailable && !cmd && !answering && <Note>{steerUnavailable}. Enter sends your message after this turn.</Note>}
-          {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {session.effort || 'Default'} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
+          {selectionChanged && <Note>Current model: {modelName(meta, session.provider, session.model)} · {effortLabel(session.effort ?? '')} effort · {sizeLabel(session.context_size || 'default')} context. Draft settings apply when its next turn starts.</Note>}
           {settingsSteerReason && !cmd && !answering && <Note>{settingsSteerReason}</Note>}
           {resendable && (
             <Tip label="Puts the last prompt back here to edit or send again. Nothing is sent until you do.">
@@ -1291,7 +1321,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <span className="mt-0.5 w-4 shrink-0 text-right text-caption tabular-nums text-muted">{i + 1}</span>
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
                   {q.text && <span className="truncate" title={q.text}>{q.text}</span>}
-                  {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {q.settings.effort || 'Default'} effort · {sizeLabel(q.settings.context_size)} context</span>}
+                  {q.settings && <span className="text-caption text-muted">{modelName(meta, session.provider, q.settings.model)} · {effortLabel(q.settings.effort)} effort · {sizeLabel(q.settings.context_size)} context</span>}
                   <QueuedExtras files={q.files} attachments={q.attachments} />
                 </span>
                 <Button size="icon-sm" variant="subtle" className="text-muted" aria-label={`Cancel waiting message: ${queuedLabel(q)}`} disabled={!!busy || locked} onClick={() => discard.ask({ kind: 'one', id: q.request_id, text: q.text, label: queuedLabel(q) })}>
@@ -1409,7 +1439,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               <Button
                 size="icon"
                 variant="subtle"
-                aria-label={`Attach files. ${attachReason || gateNote}`.trim()}
+                aria-label={['Attach files', attachReason || gateNote].filter(Boolean).join('. ')}
                 aria-disabled={attachReason ? 'true' : undefined}
                 className="text-muted"
                 onClick={() => !attachReason && fileInput.current?.click()}
@@ -1417,7 +1447,6 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <Paperclip />
               </Button>
             </Tip>
-            <ComposerTools />
           </>
         )}
         {catalogPending ? (
@@ -1428,6 +1457,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           id="composer-model"
           icon={<Cpu aria-hidden="true" className="text-faint" />}
           label="Model"
+          heading={providerLabel(meta, session.provider)}
           value={selection.model}
           display={modelLabel}
           choices={models.map((m) => {
@@ -1543,7 +1573,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {twoChoices ? (
           <span className="ml-1 flex items-center max-sm:ml-0.5">
             <Tip label={describeChoiceTip(primary)}>
-              <Button size="icon-md" variant="primary" aria-label={blocked ? `${CHOICE_LABEL[primary]}. ${blocked}` : CHOICE_LABEL[primary]} className="rounded-l-full rounded-r-none" loading={busy === primary} disabled={cannotSubmit} onClick={() => void send(primary)}>
+              <Button size="icon-md" variant="primary" aria-label={blocked ? `${CHOICE_LABEL[primary]}. ${blocked}` : CHOICE_LABEL[primary]} className="rounded-l-full rounded-r-none" loading={busy === primary} aria-disabled={cannotSubmit || undefined} onClick={() => void send(primary)}>
                 <PrimaryIcon aria-hidden="true" strokeWidth={2.25} />
               </Button>
             </Tip>
@@ -1560,7 +1590,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </span>
         ) : !locked && (
           <Tip label={describeSendTip()}>
-            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} disabled={cannotSubmit || (!answering && !cmd && enter === 'steer' && !!settingsSteerReason)}>
+            <Button type="submit" size="icon-md" variant="primary" aria-label={blocked ? `${sendLabel}. ${blocked}` : sendLabel} className="ml-1 rounded-full" loading={busy === (answering ? 'answer' : enter)} aria-disabled={sendOff || undefined} onClick={(e) => sendOff && e.preventDefault()}>
               <ArrowUp aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>

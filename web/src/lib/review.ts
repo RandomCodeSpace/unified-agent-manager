@@ -7,6 +7,20 @@ import type { ChangeFile } from '../api';
 export const REVIEW_PREFIX = 'uam.review.';
 export const reviewKey = (taskId: string): string => `${REVIEW_PREFIX}${taskId}`;
 
+/** Whether the diff wraps long lines, kept per browser: "1" or "0" once chosen, else wrapped on a phone only. */
+export const WRAP_KEY = 'uam.diff-wrap';
+export function parseWrap(raw: string | null, phone: boolean): boolean {
+  return raw === '1' || (raw !== '0' && phone);
+}
+
+/**
+ * The first listed path (repository-relative) that a turn edited. The turn names files as its tools did:
+ * absolute, or relative to the Task's folder, which may sit below the repository root.
+ */
+export function turnFile(listed: readonly string[], edited: readonly string[]): string | null {
+  return listed.find((p) => edited.some((e) => e === p || e.endsWith(`/${p}`) || (!e.startsWith('/') && p.endsWith(`/${e}`)))) ?? null;
+}
+
 /** Past this many changed lines a review misses more; the panel says so. */
 export const LARGE_CHANGE = 400;
 

@@ -20,6 +20,19 @@ func TestSubagentLogKeepsTheSpawningSubagent(t *testing.T) {
 	}
 }
 
+func TestSubagentLogMarksBackgroundLaunches(t *testing.T) {
+	l := newSubagentLog()
+	l.apply(agentEv("s1", "bg", &rpc.SubagentStartedData{ToolCallID: "call-bg", AgentName: "research", ExecutionMode: option("background")}))
+	l.apply(agentEv("s2", "fg", &rpc.SubagentStartedData{ToolCallID: "call-fg", AgentName: "research", ExecutionMode: option("sync")}))
+	sa, ok := l.apply(agentEv("s3", "bg", &rpc.SubagentCompletedData{ToolCallID: "call-bg", AgentName: "research"}))
+	if !ok || !sa.Background {
+		t.Fatalf("background = %+v", sa)
+	}
+	if l.byID["fg"].Background {
+		t.Fatalf("sync = %+v", *l.byID["fg"])
+	}
+}
+
 func TestSubagentCountsTokensAndToolCalls(t *testing.T) {
 	h := openWeb(t)
 	usage := func(id, agentID string, in, out int64) {

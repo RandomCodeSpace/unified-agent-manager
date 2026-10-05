@@ -55,6 +55,19 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
   const lists = useRef<AbortController | null>(null);
   const reading = useRef<AbortController | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const tree = useRef<HTMLUListElement>(null);
+
+  // Focus goes back to the header's Files button, as Changes and Terminal do with theirs.
+  const close = useCallback(() => {
+    onClose();
+    document.getElementById('files-link')?.focus({ preventScroll: true });
+  }, [onClose]);
+  // Esc closes the open file first, with focus on its row, then the panel.
+  const closeFile = useCallback(() => {
+    reading.current?.abort();
+    tree.current?.querySelector<HTMLElement>('[aria-current="true"]')?.focus({ preventScroll: true });
+    setShown(null);
+  }, []);
 
   const load = useCallback((dir: string) => {
     const signal = lists.current?.signal;
@@ -70,7 +83,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
     const controller = new AbortController();
     reading.current = controller;
     setShown({ path });
-    api.filePreview(api.viewFileUrl(session.id, path), controller.signal).then(
+    api.filePreview(api.viewFileUrl(session.id, path), controller.signal, undefined, true).then(
       (file) => { if (!controller.signal.aborted) setShown({ path, file }); },
       (error: unknown) => { if (!controller.signal.aborted) setShown({ path, error: describeError(error) }); },
     );
@@ -93,15 +106,21 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
     };
   }, [load]);
 
-  // Inline, the sheet is no dialog: Esc closes it unless a popup owns the key.
+  // Inline, the sheet is no dialog: Esc closes the open file, then the panel, unless a popup owns the key, and
+  // only from inside the panel or with nothing focused (Esc in the conversation or the composer is theirs).
+  // As a sheet, the dialog owns Esc; the panel's own handler below still closes the file first.
   useEffect(() => {
     if (!inline || !open) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented && !popupOpen()) onClose();
+      if (event.key !== 'Escape' || event.defaultPrevented || popupOpen()) return;
+      const at = document.activeElement;
+      if (at && at !== document.body && !closeRef.current?.closest('aside')?.contains(at)) return;
+      if (shown) closeFile();
+      else close();
     };
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
-  }, [inline, open, onClose]);
+  }, [inline, open, shown, close, closeFile]);
 
   const refresh = () => {
     lists.current?.abort();
@@ -156,7 +175,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
             type="button"
             aria-expanded={folder ? isOpen : undefined}
             aria-current={selected ? 'true' : undefined}
-            title={mark ? `${entry.path} · ${mark.label}` : entry.path}
+            title={mark ? `${entry.path} · ${mark.label}` : `${entry.path}${folder && entry.status === 'changed' ? ' · Contains changes' : ''}`}
             disabled={deleted}
             style={{ paddingLeft: `${0.25 + Math.min(depth, MAX_INDENT) * 0.875}rem` }}
             className={cn('flex min-h-7 w-full items-start gap-1 rounded-sm py-1 pr-2 text-left text-caption transition-colors focus-visible:-outline-offset-2 disabled:cursor-default pointer-coarse:min-h-11 pointer-coarse:items-center', selected ? 'bg-raised text-ink shadow-raised' : 'text-body enabled:hover:bg-tint-hover')}
@@ -167,7 +186,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
               : <span aria-hidden="true" className="size-3.5 shrink-0" />}
             <span className={cn('min-w-0 flex-1 [overflow-wrap:anywhere]', folder && 'font-medium', mark && !deleted && 'text-ink', deleted && 'text-muted line-through')}>{name}</span>
             {mark && <span className={cn('w-3 shrink-0 text-center font-mono text-code-sm font-semibold', mark.tone)} aria-label={mark.label}>{statusLetter(entry.status ?? '')}</span>}
-            {folder && entry.status === 'changed' && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning pointer-coarse:mt-0" role="img" aria-label="Holds changed files" />}
+            {folder && entry.status === 'changed' && <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning pointer-coarse:mt-0" role="img" aria-label="Contains changes" title="Contains changes" />}
           </button>
         </li>,
       );
@@ -177,27 +196,35 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
   };
 
   return (
-    <SidePanel id="files" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Files" defaultWidth={440}>
-      <PanelHeader>
-        <FolderTree aria-hidden="true" className="size-4 text-muted" />
-        <span className="text-title text-ink">Files</span>
-        <span className="flex-1" />
-        <Tip label="Refresh">
-          <Button size="icon-md" aria-label="Refresh files" className="text-muted" onClick={refresh}>
-            <RefreshCw />
+    <SidePanel id="files" inline={inline} open={open} onClose={close} onClosed={onClosed} label="Files" defaultWidth={440}>
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- every control inside is focusable; this only takes Escape from them, for the open file, before the sheet's dialog closes. */}
+      <div className="contents" onKeyDown={(e) => {
+        if (e.key !== 'Escape' || !shown || e.defaultPrevented) return;
+        e.preventDefault();
+        e.stopPropagation();
+        closeFile();
+      }}>
+        <PanelHeader>
+          <FolderTree aria-hidden="true" className="size-4 text-muted" />
+          <span className="text-title text-ink">Files</span>
+          <span className="flex-1" />
+          <Tip label="Refresh">
+            <Button size="icon-md" aria-label="Refresh files" className="text-muted" onClick={refresh}>
+              <RefreshCw />
+            </Button>
+          </Tip>
+          <Button ref={closeRef} size="icon-md" aria-label="Close files" className="text-muted" onClick={close}>
+            <X />
           </Button>
-        </Tip>
-        <Button ref={closeRef} size="icon-md" aria-label="Close files" className="text-muted" onClick={onClose}>
-          <X />
-        </Button>
-      </PanelHeader>
-      <ul aria-label="Project files" className={cn('overflow-y-auto p-1', shown ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1')}>{rows('', 0)}</ul>
-      {shown && <>
-        <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-        <PreviewContext.Provider value={openHere}>
-          <FileView key={shown.path} sessionId={session.id} workdir={session.workdir} shown={shown} />
-        </PreviewContext.Provider>
-      </>}
+        </PanelHeader>
+        <ul ref={tree} aria-label="Project files" className={cn('overflow-y-auto p-1', shown ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1')}>{rows('', 0)}</ul>
+        {shown && <>
+          <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
+          <PreviewContext.Provider value={openHere}>
+            <FileView key={shown.path} sessionId={session.id} workdir={session.workdir} shown={shown} />
+          </PreviewContext.Provider>
+        </>}
+      </div>
     </SidePanel>
   );
 }
@@ -211,7 +238,8 @@ function FileView({ sessionId, workdir, shown: { path, file, error } }: Readonly
   if (error) body = <Note tone="error" role="alert" className="[overflow-wrap:anywhere]">{error}</Note>;
   else if (!file) body = <Skeleton label="Opening the file…" rows={6} className="gap-2" rowClassName="h-4 w-full" />;
   else if (file.kind === 'image') body = <img src={url} alt={name} className="h-auto max-w-full rounded-sm" />;
-  else if (file.kind !== 'text') body = <Note>This file is not shown here. Open it in a new tab or download it.</Note>;
+  // Text, and an HTML page's source (Open in new tab shows the page itself).
+  else if (file.text === undefined) body = <Note>This file is not shown here. Open it in a new tab or download it.</Note>;
   else if (!file.text) body = <Note>This file is empty.</Note>;
   else {
     const source = (

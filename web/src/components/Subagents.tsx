@@ -5,7 +5,7 @@ import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Detail
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowLeft, Bot, Check, ChevronDown, ChevronRight, CornerDownRight, Minus, Square, X } from 'lucide-react';
-import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
+import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { api, describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -17,7 +17,7 @@ import { FILTER_OVER, IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, fam
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, WorkingMark, useApp, useMedia } from './common';
+import { Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, WorkingMark, clockTime, useApp, useMedia } from './common';
 import { AgentItems } from './Transcript';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
@@ -59,7 +59,7 @@ function useStops(sessionId: string, subagents: readonly Subagent[]): [Record<st
 /** HH:MM on the local clock; empty for a missing or unreadable time. */
 const clock = (iso?: string) => {
   const at = iso ? new Date(iso) : null;
-  return at && !Number.isNaN(at.getTime()) ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  return at && !Number.isNaN(at.getTime()) ? clockTime(at) : '';
 };
 
 /** Distance from the bottom, in px, under which the view counts as "at the bottom". */
@@ -114,7 +114,7 @@ export function SidePanel({ id, inline, open, onClose, onClosed, label, children
           className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
           title="Drag to resize · double-click to reset"
         >
-          <span aria-hidden="true" className="fade-rule-y h-full w-px flex-none transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-active/handle:bg-accent" />
+          <span aria-hidden="true" className="fade-rule-y h-full w-px flex-none transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
         </div>
         {children}
       </div>
@@ -324,13 +324,15 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   // A subagent it spawned opens in its place, with the way back.
   const child = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [...p.back, p.id], full: true } : p));
   const back = () => setPinned((p) => (p?.back.length ? { ...p, id: p.back.at(-1)!, back: p.back.slice(0, -1) } : p));
+  // One opened directly goes up to the one that spawned it.
+  const up = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [], full: true } : p));
   return (
     <SubagentContext.Provider value={value}>
       {children}
       {!phone && <SubagentPeek handle={value.peek} />}
       {pinned && (phone
-        ? <SubagentSheet pinned={pinned} onFull={() => setPinned((p) => (p ? { ...p, full: true } : p))} onClose={close} onClosed={closed} onChild={child} onBack={back} />
-        : <SubagentPanel pinned={pinned} onClose={close} onClosed={closed} onChild={child} onBack={back} />)}
+        ? <SubagentSheet pinned={pinned} onFull={() => setPinned((p) => (p ? { ...p, full: true } : p))} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />
+        : <SubagentPanel pinned={pinned} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />)}
       <AlertDialog
         {...stopConfirm.props}
         title={`Stop subagent ${stopName}?`}
@@ -479,9 +481,10 @@ const COLUMNS = 'columns-[20rem] gap-x-6';
 function Families({ list, tones, anchor, limit, onMore }: Readonly<{ list: Family[]; tones: ReadonlyMap<string, IdentityTone>; anchor: boolean; limit: number; onMore: () => void }>) {
   return (
     <>
-      <ul className={COLUMNS}>
+      {/* No more columns than families, so a few rows take the width (up to 36rem) instead of leaving empty columns. */}
+      <ul className={COLUMNS} style={{ columnCount: Math.min(list.length, limit) }}>
         {list.slice(0, limit).map((f) => (
-          <li key={f.head.id} className="break-inside-avoid">
+          <li key={f.head.id} className="max-w-xl break-inside-avoid">
             {f.rows.map(({ subagent, depth }) => (
               <SubagentRow key={subagent.id} subagent={subagent} tone={tones.get(subagent.id)} depth={depth} anchor={anchor} />
             ))}
@@ -545,6 +548,10 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const phone = useScope((d) => d.phone) ?? false;
   const open = useScope((d) => d.pinned === s.id) ?? false;
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
+  // Keyboard focus peeks too, after the same moment; the peek never takes the focus.
+  const triggerId = useId();
+  const focusTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(focusTimer.current), []);
   if (!scope) return null;
   const name = s.name || 'Subagent';
   const parentId = s.parent_tool_call_id;
@@ -578,11 +585,25 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
       ) : (
         <BasePopover.Trigger
           {...props}
+          id={triggerId}
           handle={scope.peek}
           payload={s.id}
           openOnHover
           delay={400}
           closeDelay={120}
+          onFocus={(e) => {
+            if (!e.currentTarget.matches(':focus-visible')) return;
+            window.clearTimeout(focusTimer.current);
+            focusTimer.current = window.setTimeout(() => scope.peek.open(triggerId), 400);
+          }}
+          onBlur={() => {
+            window.clearTimeout(focusTimer.current);
+            // Tab may go on into the peek (its actions, through its focus guards); anywhere else closes it.
+            focusTimer.current = window.setTimeout(() => {
+              if (document.activeElement?.closest('[data-subagent-peek]')) return;
+              if (scope.peek.isOpen && document.getElementById(triggerId)?.hasAttribute('data-popup-open')) scope.peek.close();
+            });
+          }}
           onClick={(e) => {
             e.preventBaseUIHandler();
             scope.actions.open(s.id, e.currentTarget);
@@ -614,6 +635,15 @@ function spawnedLine(s: Subagent, subagents: readonly Subagent[]): string {
 
 /** A quiet text action: the peek's and the transcript's links. */
 const LINK = 'rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11';
+
+/** A side action of the peek and the transcript (Show where it was spawned, Copy agent ID): a small filled button, 24px tall. */
+function SideAction({ onClick, children }: Readonly<{ onClick: () => void; children: ReactNode }>) {
+  return (
+    <Button size="sm" variant="secondary" className="h-6 font-normal text-caption text-body" onClick={onClick}>
+      {children}
+    </Button>
+  );
+}
 
 /** The last few steps of a running subagent: its transcript's newest items, one line each. */
 function LatestSteps({ subagent: s }: Readonly<{ subagent: Subagent }>) {
@@ -663,31 +693,27 @@ function PeekBody({ id, onFull, phone = false }: Readonly<{ id: string; onFull: 
         <span className="flex size-5 shrink-0 items-center justify-center">
           <SubagentMark status={s.status} />
         </span>
+        {/* The state word sits by the name, so the facts below take the whole width: one line, model included. */}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-ui font-medium text-ink">{s.name || 'Subagent'}</p>
+          <div className="flex items-baseline gap-2">
+            <p className="min-w-0 flex-1 truncate text-ui font-medium text-ink">{s.name || 'Subagent'}</p>
+            <span className={cn('shrink-0 text-caption', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
+          </div>
           <p className="text-caption tabular-nums text-muted">
             {s.status === 'running' ? <Took subagent={s} /> : null}
-            {s.status === 'running' && usage(s) ? ' · ' : ''}
-            {usage(s)}
+            {[usage(s), setup].filter(Boolean).map((part, i) => (
+              <Fragment key={i}>{(i > 0 || s.status === 'running') && ' · '}<span className="whitespace-nowrap">{part}</span></Fragment>
+            ))}
           </p>
-          {setup && <p className="text-caption text-muted">{setup}</p>}
         </div>
-        <span className={cn('shrink-0 text-caption', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
       </div>
       {s.status === 'failed' && <p className="rounded-md bg-error-wash px-2.5 py-1.5 font-mono text-code-sm text-error">{s.error || 'Failed.'}</p>}
       {s.status === 'running' && <LatestSteps subagent={s} />}
       {s.status !== 'running' && s.status !== 'failed' && summary && <p className="line-clamp-4 text-caption text-body">{summary}</p>}
-      <p className="text-caption text-muted">
-        {spawnedLine(s, subagents)}
-        {!phone && parentId && (
-          <>
-            {' · '}
-            <button type="button" className={LINK} onClick={() => actions.locate(parentId)}>
-              Show where it was spawned
-            </button>
-          </>
-        )}
-      </p>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-muted">
+        <span>{spawnedLine(s, subagents)}</span>
+        {!phone && parentId && <SideAction onClick={() => actions.locate(parentId)}>Show where it was spawned</SideAction>}
+      </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-hairline pt-2">
         {s.status === 'running' && (
           <Button size="sm" variant="danger" aria-label={`Stop subagent ${s.name}`} loading={stopping.busy} disabled={locked || stopping.requested} onClick={() => actions.stop(s)}>
@@ -699,11 +725,7 @@ function PeekBody({ id, onFull, phone = false }: Readonly<{ id: string; onFull: 
           Full transcript ›
         </button>
         <span className="flex-1" />
-        {!phone && (
-          <button type="button" className="rounded-xs text-caption text-muted hover:text-body" onClick={() => copy(s.id)}>
-            {copied ? 'Copied' : 'Copy agent ID'}
-          </button>
-        )}
+        {!phone && <SideAction onClick={() => copy(s.id)}>{copied ? 'Copied' : 'Copy agent ID'}</SideAction>}
       </div>
     </div>
   );
@@ -717,8 +739,9 @@ function SubagentPeek({ handle }: Readonly<{ handle: BasePopover.Handle<string> 
       {({ payload }) =>
         payload ? (
           <BasePopover.Portal>
-            <BasePopover.Positioner side="bottom" align="start" sideOffset={4} collisionPadding={8} className="z-50 outline-hidden">
-              <BasePopover.Popup data-popup="" aria-label="Subagent" className={cn(popupClass, 'w-96 max-w-(--available-width) px-3 py-2.5 text-body')}>
+            {/* Beside the row (below it only without room at either side), so the rows under it stay in reach of the pointer. */}
+            <BasePopover.Positioner side="right" align="start" sideOffset={8} collisionPadding={8} className="z-50 outline-hidden">
+              <BasePopover.Popup data-popup="" data-subagent-peek="" aria-label="Subagent" initialFocus={false} className={cn(popupClass, 'w-96 max-w-(--available-width) px-3 py-2.5 text-body')}>
                 <PeekBody
                   id={payload}
                   onFull={() => {
@@ -736,13 +759,13 @@ function SubagentPeek({ handle }: Readonly<{ handle: BasePopover.Handle<string> 
 }
 
 /**
- * An open transcript's head and body, in the desktop panel and the phone sheet: the way back to
- * the subagent it was opened through, state glyph, name, Stop while it runs and close; what it was
- * asked (two lines); how long, tokens, tool calls and model; a strip of its runs (each shows its start) and of the subagents it
- * spawned (each opens in its place), with, on desktop, "Show where it was spawned" and Copy agent
- * ID; then its transcript, which scrolls on its own.
+ * An open transcript's head and body, in the desktop panel and the phone sheet: the way up (to
+ * the subagent it was opened through, else the one that spawned it), state glyph, name, Stop while
+ * it runs and close; what it was asked (two lines); how long, tokens, tool calls and model; on
+ * desktop "Show where it was spawned" and Copy agent ID; a strip of its runs (each shows its start)
+ * and of the subagents it spawned (each opens in its place); then its transcript, which scrolls on its own.
  */
-function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pinned: Pinned; phone: boolean; onChild: (id: string) => void; onBack: () => void; close: ReactNode }>) {
+function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonly<{ pinned: Pinned; phone: boolean; onChild: (id: string) => void; onBack: () => void; /** Opens the subagent that spawned this one in its place. */ onUp: (id: string) => void; close: ReactNode }>) {
   const actions = useActions();
   const { meta } = useApp();
   const [copied, copy] = useCopied();
@@ -757,6 +780,9 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
   if (!s || !task || !actions || !subagents) return null;
   const name = s.name || 'Subagent';
   const from = pinned.back.length ? subagents.find((x) => x.id === pinned.back.at(-1)) : undefined;
+  // The way up: the one it was opened through, else (opened directly) the one that spawned it.
+  const spawner = !pinned.back.length && s.parent_agent_id ? subagents.find((x) => x.id === s.parent_agent_id) : undefined;
+  const up = from ?? spawner;
   const spawned = subagents.filter((x) => x.parent_agent_id === s.id);
   const runs = runLines(s);
   const facts = [usage(s), s.model ? modelName(meta, task.provider, s.model) : ''].filter(Boolean).join(' · ');
@@ -764,10 +790,10 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
   return (
     <>
       <div className="flex shrink-0 flex-col gap-1.5 px-4 pt-3 pb-2">
-        {from && (
-          <button type="button" className={cn(LINK, 'flex w-fit items-center gap-1')} onClick={onBack}>
+        {up && (
+          <button type="button" className={cn(LINK, 'flex w-fit items-center gap-1')} title={spawner ? `Spawned by ${spawner.name || 'Subagent'}` : undefined} onClick={from ? onBack : () => onUp(up.id)}>
             <ArrowLeft aria-hidden="true" className="size-3" />
-            {from.name || 'Subagent'}
+            {up.name || 'Subagent'}
           </button>
         )}
         <div className="flex items-center gap-2">
@@ -784,7 +810,13 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
           {s.status === 'running' && <> · <Took subagent={s} /></>}
           {facts && ` · ${facts}`}
         </p>
-        {(runs.length > 0 || spawned.length > 0 || !phone) && (
+        {!phone && (
+          <div className="flex flex-wrap items-center gap-1.5 pl-7">
+            {parentId && <SideAction onClick={() => actions.locate(parentId)}>Show where it was spawned</SideAction>}
+            <SideAction onClick={() => copy(s.id)}>{copied ? 'Copied' : 'Copy agent ID'}</SideAction>
+          </div>
+        )}
+        {(runs.length > 0 || spawned.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 pl-7">
             {runs.map((r, i) => {
               const at = clock(r.started_at);
@@ -810,21 +842,10 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
                 <span className="text-accent">Open</span>
               </button>
             ))}
-            <span className="flex-1" />
-            {!phone && parentId && (
-              <button type="button" className={LINK} onClick={() => actions.locate(parentId)}>
-                Show where it was spawned
-              </button>
-            )}
-            {!phone && (
-              <button type="button" className="rounded-xs text-caption text-muted hover:text-body" onClick={() => copy(s.id)}>
-                {copied ? 'Copied' : 'Copy agent ID'}
-              </button>
-            )}
           </div>
         )}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col bg-surface shadow-well">
+      <div className="flex min-h-0 flex-1 flex-col border-t border-hairline bg-surface shadow-well">
         <AgentTranscriptView
           key={s.id}
           name={name}
@@ -837,7 +858,7 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
           snapshotSeq={snapshotSeq}
           open
           parent={parent}
-          result={s.status === 'completed' || s.status === 'idle' ? parent?.tool?.output : undefined}
+          result={(s.status === 'completed' || s.status === 'idle') && !s.background ? parent?.tool?.output : undefined}
           seek={seek}
         />
       </div>
@@ -850,19 +871,21 @@ function TranscriptBody({ pinned, phone, onChild, onBack, close }: Readonly<{ pi
  * was opened from (right of it, else wherever it fits), at most 70vh tall, over a dimmed page; Esc,
  * the close button or a click outside closes it.
  */
-function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack }: Readonly<{ pinned: Pinned; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void }>) {
+function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack, onUp }: Readonly<{ pinned: Pinned; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void; onUp: (id: string) => void }>) {
   const anchor = pinned.anchor?.isConnected ? pinned.anchor : document.getElementById('subagents-link');
   return (
     <BasePopover.Root open={pinned.open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BasePopover.Portal>
         <BasePopover.Backdrop className={backdropClass} />
         <BasePopover.Positioner anchor={anchor} side="right" align="start" sideOffset={8} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup data-popup="" aria-label="Subagent transcript" className="flex max-h-[min(70vh,var(--available-height))] w-[640px] max-w-(--available-width) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
+          {/* Below 1024px no row leaves 640px beside it: the panel takes the width of the page. */}
+          <BasePopover.Popup data-popup="" aria-label="Subagent transcript" aria-modal="true" className="flex max-h-[min(70vh,var(--available-height))] w-[640px] max-w-(--available-width) max-lg:w-[calc(100vw-24px)] flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0">
             <TranscriptBody
               pinned={pinned}
               phone={false}
               onChild={onChild}
               onBack={onBack}
+              onUp={onUp}
               close={
                 <BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
                   <X />
@@ -881,7 +904,7 @@ function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack }: Readonly<
  * "Full transcript", 85% of the screen with its transcript. Dragging its handle down or the close
  * button closes it.
  */
-function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack }: Readonly<{ pinned: Pinned; onFull: () => void; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void }>) {
+function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack, onUp }: Readonly<{ pinned: Pinned; onFull: () => void; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void; onUp: (id: string) => void }>) {
   const popup = useRef<HTMLDivElement>(null);
   const drag = useRef<{ y: number; dy: number } | null>(null);
   const follow = (dy: number) => {
@@ -928,7 +951,7 @@ function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack }: R
             <span className="h-1 w-9 rounded-full bg-hairline-strong" />
           </div>
           {pinned.full ? (
-            <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} close={close} />
+            <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} onUp={onUp} close={close} />
           ) : (
             <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">
               <div className="flex justify-end">{close}</div>
@@ -1086,21 +1109,41 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<IndexFilter>('all');
   const [limit, setLimit] = useState(INDEX_ROWS);
+  const list = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => (outline && messages && subagents ? indexGroups(outline, messages, subagents) : []), [outline, messages, subagents]);
   if (!taskId || !subagents || !summaries) return null;
-  const all = countSubagents(subagents);
+  // The chips and the groups count what the search finds.
+  const found = query ? subagents.filter((s) => matches(s, rowSummary(summaries, s), query)) : subagents;
+  const all = countSubagents(found);
   const counts: Record<IndexFilter, number> = { all: all.total, running: all.running, failed: all.failed, done: all.done };
   // At most `limit` rows across the groups; the rest wait behind "Show more".
   let budget = limit;
   let hidden = 0;
-  const shown: (IndexGroup & { rows: Subagent[] })[] = [];
+  const shown: (IndexGroup & { rows: Family['rows']; matched: Subagent[] })[] = [];
   for (const g of groups) {
-    const rows = g.subagents.filter((s) => inFilter(s, filter) && matches(s, rowSummary(summaries, s), query));
+    const matched = g.subagents.filter((s) => inFilter(s, filter) && found.includes(s));
+    // Each under the one that spawned it, as in the conversation.
+    const rows = families(matched, false).flatMap((f) => f.rows);
     const take = rows.slice(0, Math.max(0, budget));
     hidden += rows.length - take.length;
     budget -= take.length;
-    if (take.length) shown.push({ ...g, rows: take });
+    if (take.length) shown.push({ ...g, rows: take, matched });
   }
+  // ArrowDown from the search box enters the rows; the arrows move between them, ArrowUp from the first goes back.
+  const rowButtons = () => [...(list.current?.querySelectorAll<HTMLElement>('[data-index-row]') ?? [])];
+  const onArrow = (e: ReactKeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const rows = rowButtons();
+    const at = rows.indexOf(e.target as HTMLElement);
+    if (e.target === input.current) {
+      if (e.key !== 'ArrowDown' || !rows.length) return;
+      rows[0].focus();
+    } else if (at < 0) return;
+    else if (e.key === 'ArrowDown') rows[Math.min(at + 1, rows.length - 1)].focus();
+    else if (at === 0) input.current?.focus();
+    else rows[at - 1].focus();
+    e.preventDefault();
+  };
   const reset = () => setLimit(INDEX_ROWS);
   return (
     <>
@@ -1109,21 +1152,22 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
           {error}
         </Note>
       )}
-      <Input ref={input} size="md" type="search" value={query} onChange={(e) => { setQuery(e.target.value); reset(); }} aria-label="Search subagents" placeholder={`Search ${all.total} subagents`} />
+      <Input ref={input} size="md" type="search" value={query} onChange={(e) => { setQuery(e.target.value); reset(); }} onKeyDown={onArrow} aria-label="Search subagents" placeholder={`Search ${subagents.length} subagents`} />
       <div role="group" aria-label="Show subagents by status" className="flex flex-wrap gap-1">
         {FILTERS.map((f) => (
           <button
             key={f.key}
             type="button"
             aria-pressed={filter === f.key}
-            className={cn('h-6 rounded-full px-2 text-caption tabular-nums transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11', filter === f.key ? 'bg-tint-selected text-ink' : f.tone)}
+            className={cn('h-6 rounded-full px-2 text-caption tabular-nums transition-colors duration-100 hover:bg-tint-hover pointer-coarse:min-h-11', filter === f.key ? 'bg-tint-selected text-ink' : counts[f.key] ? f.tone : 'text-muted')}
             onClick={() => { setFilter(f.key); reset(); }}
           >
             {f.label} {counts[f.key]}
           </button>
         ))}
       </div>
-      <div className="-mx-1.5 max-h-[min(60vh,480px)] overflow-y-auto overscroll-contain px-1.5">
+      {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- Arrow keys move between the row buttons inside. */}
+      <div ref={list} onKeyDown={onArrow} className="-mx-1.5 max-h-[min(60vh,480px)] overflow-y-auto overscroll-contain px-1.5">
         {shown.map((g) => {
           const title = indexTitle(g.key, g.text);
           const first = g.subagents.find((s) => s.parent_tool_call_id)?.parent_tool_call_id;
@@ -1135,7 +1179,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                 <span className="flex-1" />
                 {/* "48 · 2 failed · 15 running": what still needs a look, so the message keeps the room. */}
                 <span className="shrink-0 text-meta whitespace-nowrap tabular-nums text-muted">
-                  <Counts c={{ ...countSubagents(g.subagents), done: 0, stopped: 0 }} lead={`${g.subagents.length}`} />
+                  <Counts c={{ ...countSubagents(g.matched), done: 0, stopped: 0 }} lead={`${g.matched.length}`} />
                 </span>
                 {g.key && first && (
                   <button type="button" aria-label={`Jump to the subagents of ${title}`} className="shrink-0 rounded-xs text-caption text-accent hover:underline pointer-coarse:min-h-11" onClick={() => onPick({ call: first, expand: false })}>
@@ -1144,17 +1188,20 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
                 )}
               </div>
               <ul className="flex flex-col">
-                {g.rows.map((s) => {
+                {g.rows.map(({ subagent: s, depth }) => {
                   const summary = rowSummary(summaries, s);
                   return (
                     <li key={s.id}>
                       <button
                         type="button"
+                        data-index-row=""
                         title={[s.name || 'Subagent', summary].filter(Boolean).join('\n')}
-                        className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 pl-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
+                        className="flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-2 text-left text-caption transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11"
+                        style={{ paddingLeft: `${8 + depth * 18}px` }}
                         // Not placed in the conversation (no call, or one past the history held): it opens by the header.
                         onClick={() => onPick(g.key && s.parent_tool_call_id ? { call: s.parent_tool_call_id, expand: true } : { agent: s.id })}
                       >
+                        {depth > 0 && <CornerDownRight aria-hidden="true" className="-ml-1 size-3 shrink-0 text-faint" />}
                         <span className="flex size-4 shrink-0 items-center justify-center">
                           <SubagentMark status={s.status} />
                         </span>
@@ -1254,14 +1301,17 @@ function AgentTranscriptView({
   const { dispatch } = useApp();
   const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
   const live = subagent.status === 'running';
+  // A running one follows its output; a finished one opens at the top of what is held.
+  const atBottom = useRef(live);
   const [attempt, setAttempt] = useState(0);
   const detail = useDetailAgent(subagent.id, open);
   const transcript = detail.compact ? detail.agent : legacyTranscript;
-  const parentItem: Item = parent ?? { id: subagent.parent_tool_call_id ?? '', kind: 'tool', time: '', compact: { has_text: false, has_reasoning: false } };
-  const { item: parentFullItem, body: parentBody, attach: parentAttach, retry: parentRetry } = useItemBody(parentItem, open && !!subagent.parent_tool_call_id && (subagent.status === 'completed' || subagent.status === 'idle'));
-  const result = detail.compact ? parentFullItem?.tool?.output : legacyResult;
+  const finished = subagent.status === 'completed' || subagent.status === 'idle';
+  // One another subagent spawned has its call in that subagent's transcript.
+  const parentItem: Item = parent ?? { id: subagent.parent_tool_call_id ?? '', agent_id: subagent.parent_agent_id, kind: 'tool', time: '', compact: { has_text: false, has_reasoning: false } };
+  // A background launch's call only acknowledges the launch, so its body is not read.
+  const { item: parentFullItem, body: parentBody, attach: parentAttach, retry: parentRetry } = useItemBody(parentItem, open && !!subagent.parent_tool_call_id && finished && !subagent.background);
   const pageRead = useRef<{ token: number; controller: AbortController } | null>(null);
   const pageToken = useRef(0);
   const retryAfter = useRef(0);
@@ -1288,6 +1338,9 @@ function AgentTranscriptView({
 
   // Follow new output only while the reader is at the bottom.
   const items: Item[] = transcript?.items ?? NO_ITEMS;
+  // The result: the `task` call's output; for a background launch, its own last message (once the window reaches its end).
+  let result = detail.compact ? parentFullItem?.tool?.output : legacyResult;
+  if (subagent.background) result = finished && !detail.agent?.after ? [...items].reverse().find((item) => item.kind === 'assistant' && item.text?.trim())?.text : undefined;
   useFileHintItems(subagent.id, items, open);
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -1436,8 +1489,9 @@ function AgentTranscriptView({
   }
 
   return (
+    // Sideways it never scrolls: wide content scrolls in its own box; a touch hit area at the edge must not widen it.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
       if (event.ctrlKey) return;
       userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();

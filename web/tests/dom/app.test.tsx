@@ -68,6 +68,104 @@ describe('app shell', () => {
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
     expect(window.location.hash).toBe('');
   });
+
+  test('moving between views adds history entries, and Back and an edited fragment show their view', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const start = history.length;
+    await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#task=t3'));
+    await user.click(side.getByRole('button', { name: 'Settings' }));
+    await waitFor(() => expect(window.location.hash).toBe('#settings'));
+    expect(history.length).toBe(start + 2);
+    // Back: the browser restores the fragment and reports it.
+    history.replaceState(null, '', '/#task=t3');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
+    expect(history.length).toBe(start + 2);
+    // An edited fragment opens Settings or Routines.
+    history.pushState(null, '', '/#settings');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await waitFor(() => expect(header().textContent).toBe('Settings'));
+    history.pushState(null, '', '/#routines');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await waitFor(() => expect(header().textContent).toBe('Routines'));
+  });
+
+  test('a fragment the app does not know is replaced, not added', async () => {
+    renderApp('#nothing-here');
+    await sidebar();
+    const start = history.length;
+    await waitFor(() => expect(window.location.hash).toBe(''));
+    expect(history.length).toBe(start);
+  });
+
+  test('Esc closes Settings, the × closes Routines, and focus goes back to the button that opened them', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const gear = side.getByRole('button', { name: 'Settings' });
+    await user.click(gear);
+    await waitFor(() => expect(header().textContent).toBe('Settings'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(gear));
+    const routines = side.getByRole('button', { name: 'Routines' });
+    await user.click(routines);
+    await waitFor(() => expect(header().textContent).toBe('Routines'));
+    await user.click(screen.getByRole('button', { name: /^Close/ }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Routines' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(routines));
+  });
+});
+
+describe('sidebar list keyboard', () => {
+  const navRows = () => Array.from(document.querySelectorAll<HTMLElement>('nav[aria-label="Tasks"] [data-nav]'));
+
+  test('the list is one tab stop; arrows and End reach the Archived shelf past a closed one', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const stops = () => navRows().filter((el) => el.tabIndex === 0);
+    expect(stops()).toHaveLength(1);
+    const settles = document.querySelectorAll<HTMLElement>('nav[aria-label="Tasks"] [data-settle]');
+    expect(settles.length).toBeGreaterThan(0);
+    for (const settle of settles) expect(settle.tabIndex).toBe(-1);
+    stops()[0].focus();
+    await user.keyboard('{End}');
+    const archived = side.getByRole('button', { name: /^Archived/ });
+    expect(document.activeElement).toBe(archived);
+    await user.keyboard('{ArrowUp}');
+    expect(document.activeElement).toBe(side.getByRole('button', { name: /^Settled/ }));
+    await user.keyboard('{ArrowDown}');
+    expect(document.activeElement).toBe(archived);
+    // The stop follows focus.
+    await waitFor(() => expect(stops()).toEqual([archived]));
+  });
+
+  test('a row\'s Settle is reached with Right and left with Left', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    const settle = document.querySelector<HTMLElement>('nav[aria-label="Tasks"] [data-settle]')!;
+    const row = settle.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-nav]')!;
+    row.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(document.activeElement).toBe(settle);
+    await user.keyboard('{ArrowLeft}');
+    expect(document.activeElement).toBe(row);
+  });
+
+  test('search counts its matches in words, and a search with none offers to clear it', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const box = side.getByRole('searchbox', { name: 'Search tasks' });
+    await user.type(box, 'Doctor: add terminal');
+    expect(await side.findByText('1 matching task')).toBeTruthy();
+    await user.clear(box);
+    await user.type(box, 'zzzz-no-such-task');
+    expect(side.getByText('No matching tasks')).toBeTruthy();
+    await user.click(side.getByRole('button', { name: 'Clear search' }));
+    expect((box as HTMLInputElement).value).toBe('');
+    expect(document.activeElement).toBe(box);
+  });
 });
 
 describe('collapsed sidebar rail', () => {
@@ -152,10 +250,10 @@ describe('new task', () => {
     const palette = await screen.findByRole('dialog');
     await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
     await waitFor(() => expect(header().textContent).toBe('New task'));
-    expect(screen.getByRole('button', { name: 'Send' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBe('true');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toHaveProperty('disabled', false));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBeNull());
     await user.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(window.location.hash).toMatch(/^#task=t\d+$/));
     const log = within(await screen.findByRole('log'));
@@ -174,6 +272,23 @@ describe('new task', () => {
     expect(within(palette).getAllByRole('option').length).toBeGreaterThanOrEqual(3);
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  test('palette numbers stay with their project while searching, and no match offers Add project', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    await user.keyboard('{Alt>}n{/Alt}');
+    const palette = within(await screen.findByRole('dialog'));
+    const last = palette.getAllByRole('option').at(-1)!;
+    const name = last.querySelector('.text-ink')!.textContent!;
+    const key = within(last).getByText(/^Alt\+\d$/).textContent;
+    const search = palette.getByRole('combobox', { name: 'Search projects' });
+    await user.type(search, name);
+    expect(palette.getAllByRole('option')).toHaveLength(1);
+    expect(within(palette.getByRole('option')).getByText(/^Alt\+\d$/).textContent).toBe(key);
+    await user.type(search, 'zzzz');
+    await user.click(palette.getByRole('button', { name: 'Add project' }));
+    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
   });
 
   test('Alt+N in the terminal stays with the shell', async () => {

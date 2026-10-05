@@ -440,8 +440,17 @@ describe('owner authoring', () => {
     await waitFor(() => expect(header().textContent).toBe('Planner'));
     await pickProject(user, /^empty-plan/);
     expect(await screen.findByText('Nothing is planned for empty-plan yet.')).toBeTruthy();
-    // The header's New epic, and the empty state's.
-    await user.click(screen.getAllByRole('button', { name: 'New epic' }).at(-1)!);
+    // One way in: the empty state's New epic; no parentless subtask, no views of nothing, no menu of nothing to do.
+    expect(screen.getAllByRole('button', { name: 'New epic' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Add subtask' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Tree' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Planner actions' })).toBeNull();
+    // The form takes focus, and Esc gives it back to New epic.
+    await user.click(screen.getByRole('button', { name: 'New epic' }));
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-label')).toBe('Title'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'New epic' })));
+    await user.click(screen.getByRole('button', { name: 'New epic' }));
     const add = async (form: string, title: string, button: string) => {
       const f = within(await screen.findByRole('form', { name: form }));
       await user.type(f.getByRole('textbox', { name: 'Title' }), title);
@@ -472,6 +481,21 @@ describe('owner authoring', () => {
     await user.type(form.getByRole('textbox', { name: 'Title' }), 'Offline mode{Enter}');
     const tree = within(screen.getByRole('tree', { name: 'Plan outline' }));
     expect((await tree.findByRole('treeitem', { name: '#37 Offline mode, Planned' })).getAttribute('aria-level')).toBe('1');
+  });
+
+  test('closing an add form returns focus to what opened it', async () => {
+    const { user, tree } = await openPlanner();
+    const newEpic = screen.getByRole('button', { name: 'New epic' });
+    await user.click(newEpic);
+    await screen.findByRole('form', { name: 'New epic' });
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Title');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(document.activeElement).toBe(newEpic));
+    const add = within(tree.getByRole('treeitem', { name: /^#2 / })).getByRole('button', { name: 'Add a subtask to #2' });
+    await user.click(add);
+    const form = within(await screen.findByRole('form', { name: 'New subtask in #2' }));
+    await user.click(form.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(add));
   });
 
   test('Mark done shows what is still open, and Finish anyway closes it', async () => {
@@ -990,6 +1014,27 @@ describe('parity with the service', () => {
       expect((await screen.findByRole('alert')).textContent).toContain('Could not load the plan: the planner database could not be opened; see the service log');
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  test('beside the view, Esc closes the Inbox and Close planner keeps its place', async () => {
+    const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
+    happy.setViewport({ width: 1440, height: 900 });
+    try {
+      const { user } = await openPlanner();
+      const header = screen.getByRole('button', { name: 'Close planner' }).closest('header')!;
+      await user.click(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+      const inbox = await screen.findByRole('complementary', { name: 'Inbox' });
+      // The panel opens under the Planner's header, not beside it.
+      expect(header.contains(inbox)).toBe(false);
+      expect(header.parentElement!.contains(inbox)).toBe(true);
+      expect(inbox.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Inbox' })).toBeNull());
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Inbox, 6 pending' }));
+      expect(header.textContent).toContain('Planner');
+    } finally {
+      happy.setViewport({ width: 1024, height: 768 });
     }
   });
 

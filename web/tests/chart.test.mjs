@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chartCsv, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
+import { chartCsv, chartHeight, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
 import { init } from '../src/lib/echarts.ts';
 
@@ -184,6 +184,98 @@ test('saved range sliders never draw a second control bar and keep header zoom u
     } finally { drawing.dispose(); }
     assert.deepEqual(options, saved, 'rendering leaves saved ranges and options unchanged');
   }
+});
+
+test('a hidden slider gives its margin back to the plot unless a legend or scale sits there', () => {
+  const options = {
+    legend: { top: 0 }, grid: { left: 60, right: 20, top: 60, bottom: 110, containLabel: true },
+    xAxis: { type: 'category', name: 'Day', data: chart.labels }, yAxis: { type: 'value' }, series: [{ type: 'line', data: [3, 7, 2] }],
+    dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 10, height: 30 }],
+  };
+  const saved = structuredClone(options);
+  const rendered = chartOption({ ...chart, kind: 'echarts', options }, { width: 900, height: 320 });
+  assert.equal(rendered.grid.bottom, 8);
+  assert.equal(rendered.grid.containLabel, false);
+  assert.equal(rendered.grid.left, 60);
+  assert.deepEqual(options, saved);
+  const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 900, height: 320 });
+  try {
+    drawing.setOption(rendered);
+    const rect = drawing.getModel().getComponent('grid').coordinateSystem.getRect();
+    assert.ok(320 - (rect.y + rect.height) < 60, `${320 - (rect.y + rect.height)}px under the plot`);
+  } finally { drawing.dispose(); }
+  const vertical = chartOption({ ...chart, kind: 'echarts', options: { ...options, dataZoom: [{ type: 'inside' }, { type: 'slider', yAxisIndex: 0 }] } }, { width: 900, height: 320 });
+  assert.deepEqual([vertical.grid.right, vertical.grid.bottom], [8, 110]);
+  for (const kept of [{ legend: {} }, { legend: { bottom: 0 } }, { visualMap: { min: 0, max: 1 } }]) {
+    assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, ...kept } }, { width: 900, height: 320 }).grid.bottom, 110);
+  }
+});
+
+test('a top legend keeps one row and the grid starts below it, clear of the y axis name', () => {
+  const options = {
+    legend: { top: 0, data: ['a', 'b', 'c', 'd', 'e'] }, grid: { top: '12%' },
+    xAxis: { type: 'category', data: chart.labels }, yAxis: { type: 'value', name: 'Recorded USD' },
+    series: ['a', 'b', 'c', 'd', 'e'].map((name) => ({ type: 'line', name, data: [1, 2, 3] })),
+  };
+  const phone = chartOption({ ...chart, kind: 'echarts', options }, { width: 360, height: 260 });
+  assert.equal(phone.legend.type, 'scroll');
+  assert.equal(phone.grid.top, 56);
+  // Two equal entries fill a phone page, so none shows cut off beside the pager.
+  assert.deepEqual([phone.legend.width, phone.legend.textStyle.width, phone.legend.textStyle.overflow], [344, 80, 'truncate']);
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options }, { width: 900, height: 320 }).legend.textStyle, undefined);
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, grid: { top: 90 } } }, { width: 900, height: 320 }).grid.top, 90);
+  // ECharts puts an unplaced legend at the bottom; that layout stays the author's.
+  const bottom = chartOption({ ...chart, kind: 'echarts', options: { ...options, legend: {} } }, { width: 360, height: 260 });
+  assert.deepEqual([bottom.legend, bottom.grid], [{}, options.grid]);
+});
+
+test('a draggable scale on the right keeps its handle labels off the plot', () => {
+  const options = {
+    grid: { left: 90, right: 20 }, xAxis: { type: 'category', data: ['a', 'b'] }, yAxis: { type: 'category', data: ['x'] },
+    visualMap: { min: 0, max: 1300, calculable: true, right: 0, top: 'center' }, series: [{ type: 'heatmap', data: [[0, 0, 1300], [1, 0, 0]] }],
+  };
+  assert.ok(chartOption({ ...chart, kind: 'echarts', options }, { width: 360, height: 260 }).grid.right >= 70);
+  assert.equal(chartOption({ ...chart, kind: 'echarts', options: { ...options, visualMap: { ...options.visualMap, calculable: false } } }, { width: 360, height: 260 }).grid.right, 20);
+});
+
+test('a category y axis labels every category on a card tall enough for them', () => {
+  const names = Array.from({ length: 24 }, (_, i) => `model-${i}`);
+  const options = { grid: { left: '20%' }, xAxis: { type: 'value' }, yAxis: { type: 'category', data: names }, series: [{ type: 'bar', data: names.map((_, i) => i) }] };
+  const saved = { ...chart, kind: 'echarts', options };
+  const height = chartHeight(saved, 320);
+  assert.ok(height >= 24 * 20, `${height}px for 24 categories`);
+  assert.equal(chartHeight(saved, 900), 900);
+  assert.equal(chartHeight(chart, 264), 264);
+  const tall = chartOption(saved, { width: 840, height });
+  assert.equal(tall.yAxis.axisLabel.interval, 0);
+  assert.equal(tall.yAxis.axisLabel.overflow, 'truncate');
+  // A pinned preview stays short and lets ECharts thin the labels.
+  assert.equal(chartOption(saved, { width: 560, height: 180 }).yAxis.axisLabel.interval, undefined);
+  const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 840, height });
+  try {
+    drawing.setOption(tall);
+    const svg = drawing.renderToSVGString();
+    assert.ok(names.every((name) => svg.includes(`>${name}<`)), 'every category is labelled');
+  } finally { drawing.dispose(); }
+});
+
+test('a JSON valueFormatter becomes a template function or is dropped, so tooltips still draw', () => {
+  const options = {
+    tooltip: { trigger: 'axis', valueFormatter: '${value}' },
+    xAxis: { type: 'category', data: ['a', 'b'] }, yAxis: { type: 'value' },
+    series: [{ type: 'bar', name: 'spend', data: [613.76, 1160.1], tooltip: { valueFormatter: 'USD' } }],
+  };
+  const saved = structuredClone(options);
+  const rendered = chartOption({ ...chart, kind: 'echarts', options }, { width: 600, height: 300 });
+  assert.equal(typeof rendered.tooltip.valueFormatter, 'function');
+  assert.equal(rendered.tooltip.valueFormatter(1160.1), `$${(1160.1).toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+  assert.equal('valueFormatter' in rendered.series[0].tooltip, false);
+  assert.deepEqual(options, saved);
+  const drawing = init(null, undefined, { renderer: 'svg', ssr: true, width: 600, height: 300 });
+  try {
+    drawing.setOption(rendered);
+    assert.doesNotThrow(() => drawing.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: 1 }));
+  } finally { drawing.dispose(); }
 });
 
 test('responsive and base options cannot restore visible range sliders', () => {

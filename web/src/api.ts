@@ -873,6 +873,8 @@ export interface Subagent {
   parent_agent_id?: string;
   name: string;
   description?: string;
+  /** Launched in the background: its `task` call's output only acknowledges the launch, and its result is its own last message. */
+  background?: boolean;
   /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */
   status: SubagentStatus;
   error?: string;
@@ -1343,8 +1345,8 @@ async function download(path: string): Promise<{ blob: Blob; name: string }> {
   return { blob: await res.blob(), name };
 }
 
-/** Click-only file reads share admission and authentication handling with other UI reads. */
-async function filePreview(url: string, signal: AbortSignal, knownMetadata?: PreviewMetadata): Promise<PreviewMetadata & Partial<TextPreview>> {
+/** Click-only file reads share admission and authentication handling with other UI reads; `source` reads an HTML page's text too. */
+async function filePreview(url: string, signal: AbortSignal, knownMetadata?: PreviewMetadata, source = false): Promise<PreviewMetadata & Partial<TextPreview>> {
   return foregroundRead(async () => {
     const request = async (method: 'HEAD' | 'GET') => {
       const response = await fetch(url, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? { Range: `bytes=0-${PREVIEW_BYTES - 1}` } : undefined });
@@ -1357,9 +1359,9 @@ async function filePreview(url: string, signal: AbortSignal, knownMetadata?: Pre
       return response;
     };
     const metadata = knownMetadata ?? previewMetadata((await request('HEAD')).headers);
-    if (metadata.kind !== 'text') return metadata;
+    if (metadata.kind !== 'text' && !(source && metadata.kind === 'html')) return metadata;
     const response = await request('GET');
-    if (response.status !== 416 && previewMetadata(response.headers).kind !== 'text') {
+    if (response.status !== 416 && previewMetadata(response.headers).kind !== metadata.kind) {
       await response.body?.cancel();
       throw new Error('The file type changed. Close and open the preview again.');
     }

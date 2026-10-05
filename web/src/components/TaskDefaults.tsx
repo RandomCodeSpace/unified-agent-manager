@@ -1,6 +1,7 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { modelCatalog, provider, type TaskDefaults } from '../api';
-import { modelChoices } from '../lib/models';
+import { effortLabel, modelChoices } from '../lib/models';
 import { MODE_TEXT, contextReason, effortReason, sizeLabel } from './Composer';
 import { Note, useApp } from './common';
 import { Select } from './ui/select';
@@ -8,6 +9,92 @@ import { HelpTip } from './ui/tooltip';
 
 /** A model in a menu: its name, with the note ("hidden in Settings", "not offered now") in parentheses. */
 export const choiceLabel = (name: string, note?: string): string => (note ? `${name} (${note.toLowerCase()})` : name);
+
+/**
+ * The one column system of Settings cards: a label column capped at 28rem, the control right after it (not at the
+ * card's far edge), stacked on a phone. A card header with a control (`Section`'s `control`) uses it too.
+ */
+export const ROW_GRID = 'grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,28rem)_auto] sm:justify-start';
+
+/** A Settings row: the label and its help in the label column, the control beside it, both centred on a 32px line. */
+export function Row({ id, label, htmlFor, help, helpVisible = false, children }: Readonly<{ id: string; label: string; htmlFor?: string; help: ReactNode; helpVisible?: boolean; children: ReactNode }>) {
+  const Label = htmlFor ? 'label' : 'span';
+  return (
+    <div className={ROW_GRID}>
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-h-8 items-center gap-1">
+          <Label id={`${id}-label`} htmlFor={htmlFor} className="text-ui font-medium text-ink">
+            {label}
+          </Label>
+          {!helpVisible && <HelpTip label={label} id={`${id}-help`}>{help}</HelpTip>}
+        </div>
+        {helpVisible && <Note id={`${id}-help`}>{help}</Note>}
+      </div>
+      <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/** The header slot of the enclosing Settings card, where its Add button sits (DESIGN.md Settings view). */
+export const SectionActionSlot = createContext<HTMLElement | null | undefined>(undefined);
+
+/** Renders its children at the right of the enclosing Settings card's header (null until it mounts); in place outside a card. */
+export function SectionAction({ children }: Readonly<{ children: ReactNode }>) {
+  const slot = useContext(SectionActionSlot);
+  if (slot === undefined) return children;
+  return slot ? createPortal(children, slot) : null;
+}
+
+const FIELD = 'input, textarea, select, [role="combobox"]';
+
+// The button clicked last (a keyboard press clicks too). Chrome blurs a focused button the moment it turns disabled,
+// as a row's Edit does when its form opens, so focus alone cannot say what opened the form.
+let lastClicked: HTMLElement | null = null;
+document.addEventListener('click', (e) => { lastClicked = e.target instanceof Element ? e.target.closest('button') : null; }, true);
+
+/**
+ * An inline Add or Edit form in Settings: its first field takes focus when it opens, Escape cancels it (not while a
+ * menu or tooltip of its own is open), and when it closes focus goes back to the button that opened it, or to the
+ * card's Add button when that one was replaced. `open` is for a parent that keeps the hook while its form comes and goes.
+ */
+export function useInlineForm<T extends HTMLElement>(onCancel: () => void, open = true) {
+  const ref = useRef<T>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const opened = useRef<HTMLElement | null>(null);
+  const cancel = useRef(onCancel);
+  useEffect(() => { cancel.current = onCancel; });
+  useEffect(() => {
+    const form = ref.current;
+    if (!form) return;
+    // Taken once per form element: the second StrictMode run must not take the first field for the opener.
+    if (opened.current !== form) {
+      opened.current = form;
+      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : lastClicked;
+      opener.current = active?.isConnected && !form.contains(active) ? active : null;
+    }
+    const first = [...form.querySelectorAll<HTMLElement & { disabled?: boolean; type?: string }>(FIELD)].find((el) => !el.disabled && el.type !== 'hidden' && el.tabIndex >= 0 && el.getAttribute('aria-hidden') !== 'true');
+    first?.focus();
+    const card = form.closest('section');
+    // A native listener: a menu's popup is portalled out of the form, so its own Escape never reaches here.
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (e.key !== 'Escape' || e.defaultPrevented || target.getAttribute('aria-expanded') === 'true' || document.querySelector('[data-popup="tooltip"]')) return;
+      e.preventDefault();
+      cancel.current();
+    };
+    form.addEventListener('keydown', onKeyDown);
+    return () => {
+      form.removeEventListener('keydown', onKeyDown);
+      window.setTimeout(() => {
+        const back = opener.current;
+        const target = back?.isConnected && !back.matches(':disabled') ? back : card?.querySelector<HTMLElement>('[data-section-add]:not(:disabled)');
+        const active = document.activeElement;
+        if (target && (!active || active === document.body || !active.isConnected)) target.focus();
+      });
+    };
+  }, [open]);
+  return ref;
+}
 
 const FieldHelpContext = createContext(false);
 
@@ -73,7 +160,7 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           value={value.effort}
           disabled={disabled || !!noEffort}
           aria-describedby={noEffort ? `${prefix}-effort-hint` : undefined}
-          items={[{ value: '', label: 'Default' }, ...(model?.efforts ?? []).map((e) => ({ value: e, label: e }))]}
+          items={[{ value: '', label: 'Default' }, ...(model?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]}
           onValueChange={(effort) => onChange({ ...value, effort })}
         />
       </Field>

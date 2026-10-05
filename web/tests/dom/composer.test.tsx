@@ -9,7 +9,7 @@ describe('sending', () => {
   test('Enter sends on an idle task, which has one Send; the composer clears and the task starts working', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), 'Cover TERM=vt100 too');
-    expect(sendButton('Send')).toHaveProperty('disabled', false);
+    expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'After this turn' })).toBeNull();
     await user.keyboard('{Enter}');
@@ -269,10 +269,10 @@ describe('settings in the toolbar', () => {
 
   test('effort and context size come from the chosen model', async () => {
     const { user } = await openTask('t2');
-    await choose(user, /^Effort and context size: Default · 200K/, 'high');
-    expect(await screen.findByRole('button', { name: /^Effort and context size: high · 200K/ })).toBeTruthy();
-    await choose(user, /^Effort and context size: high/, /Long context · 1M/);
-    expect(await screen.findByRole('button', { name: /^Effort and context size: high · 1M/ })).toBeTruthy();
+    await choose(user, /^Effort and context size: Default · 200K/, 'High');
+    expect(await screen.findByRole('button', { name: /^Effort and context size: High · 200K/ })).toBeTruthy();
+    await choose(user, /^Effort and context size: High/, /Long context · 1M/);
+    expect(await screen.findByRole('button', { name: /^Effort and context size: High · 1M/ })).toBeTruthy();
   });
 
   test('Yolo with Autopilot is confirmed before it applies', async () => {
@@ -342,9 +342,9 @@ describe('attachments', () => {
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
     const remove = await screen.findByRole('button', { name: 'Remove build.log' });
     // An upload in flight, with no text yet, is not a message.
-    expect(await screen.findByRole('button', { name: 'Send. Wait for the upload to finish' })).toHaveProperty('disabled', true);
+    expect((await screen.findByRole('button', { name: 'Send. Wait for the upload to finish' })).getAttribute('aria-disabled')).toBe('true');
     await user.type(composer(), 'See the log');
-    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
     expect(remove).toBeTruthy();
     await user.keyboard('{Enter}');
     expect(await log().findByText('See the log')).toBeTruthy();
@@ -353,12 +353,12 @@ describe('attachments', () => {
 
   test('an attachment alone is a message: Enter sends it without the blanks typed, and the transcript shows its chip', async () => {
     const { user, mock } = await openTask('t3');
-    expect(sendButton('Send')).toHaveProperty('disabled', true);
+    expect(sendButton('Send').getAttribute('aria-disabled')).toBe('true');
     await user.type(composer(), '  ');
-    expect(sendButton('Send')).toHaveProperty('disabled', true);
+    expect(sendButton('Send').getAttribute('aria-disabled')).toBe('true');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
@@ -377,7 +377,7 @@ describe('attachments', () => {
     const { user, mock } = await openTask('t1');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Send now')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send now').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Enter}');
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove build.log' })).toBeNull());
@@ -392,7 +392,7 @@ describe('attachments', () => {
     const { user } = await openTask('t1');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Send now')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send now').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Control>}{Enter}{/Control}');
     expect(await screen.findByText('2 waiting')).toBeTruthy();
@@ -406,7 +406,7 @@ describe('attachments', () => {
     const { user } = await openTask('t3');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
-    await waitFor(() => expect(sendButton('Send')).toHaveProperty('disabled', false), { timeout: 3000 });
+    await waitFor(() => expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull(), { timeout: 3000 });
     await user.click(composer());
     await user.keyboard('{Enter}');
     await user.click(await screen.findByRole('button', { name: 'Stop turn' }));
@@ -414,7 +414,7 @@ describe('attachments', () => {
     await user.click(await screen.findByRole('button', { name: 'Resend last prompt' }));
     expect(await screen.findByRole('button', { name: 'Remove build.log' })).toBeTruthy();
     expect(composer().value).toBe('');
-    expect(sendButton('Send')).toHaveProperty('disabled', false);
+    expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull();
   });
 
   test('Resend puts back only the uploads still stored', async () => {
@@ -424,7 +424,7 @@ describe('attachments', () => {
     expect(await screen.findByRole('button', { name: 'Remove tmux-pane.png' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Remove old-notes.txt' })).toBeNull();
     expect(composer().value).toBe('');
-    expect(sendButton('Send')).toHaveProperty('disabled', false);
+    expect(sendButton('Send').getAttribute('aria-disabled')).toBeNull();
   });
 
   test('a message of only file references reads "No text", and Resend offers no older prompt', async () => {
@@ -457,5 +457,33 @@ describe('background tasks', () => {
     const confirm = await screen.findByRole('alertdialog');
     await user.click(within(confirm).getByRole('button', { name: /Stop/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Background tasks: 1 running' })).toBeNull());
+  });
+});
+
+describe('composer menus and notices', () => {
+  test('a menu of choices opens on the current choice, headed by the provider, so Enter keeps the setting', async () => {
+    const { user } = await openTask('t2');
+    const model = await screen.findByRole('button', { name: /^Model: Claude Haiku 4\.5/ });
+    model.focus();
+    await user.keyboard('{Enter}');
+    const menu = within(await screen.findByRole('menu'));
+    expect(menu.getByText('GitHub Copilot')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-checked')).toBe('true'));
+    expect(document.activeElement?.textContent).toMatch(/^Claude Haiku 4\.5/);
+    expect(document.activeElement?.hasAttribute('data-highlighted')).toBe(true);
+  });
+
+  test('the toolbar has no empty Tools menu and Attach has a clean name', async () => {
+    await openTask('t2');
+    expect(screen.queryByRole('button', { name: 'Tools' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Attach files/ }).getAttribute('aria-label')).not.toMatch(/\.$/);
+  });
+
+  test('a settled task reopens from the notice in its composer', async () => {
+    const { user } = renderApp('#task=t11');
+    expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Reopen' }));
+    await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(composer()));
   });
 });

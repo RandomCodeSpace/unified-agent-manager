@@ -671,13 +671,42 @@
     white-space: pre;
     vertical-align: top;
   }
+  /* The gutter stays in view while a long line scrolls sideways: both number columns are as wide as the
+     longest number (`--num`, set by the table) and the second also holds the comment glyph (12px + 6px gap),
+     so each sticks at a known offset, and the sign sticks after them. */
   .diff td.num {
-    width: 1%;
+    position: sticky;
+    left: 0;
+    box-sizing: content-box;
+    width: var(--num, 4ch);
+    min-width: var(--num, 4ch);
     padding-right: 6px;
+    background: var(--color-code-bg);
     color: var(--color-muted);
     text-align: right;
     font-variant-numeric: tabular-nums;
     user-select: none;
+  }
+  .diff td.num + td.num {
+    left: calc(var(--num, 4ch) + 14px);
+    width: calc(var(--num, 4ch) + 18px);
+    min-width: calc(var(--num, 4ch) + 18px);
+  }
+  .diff:not(.wrap) .sign {
+    position: sticky;
+    left: calc(2 * var(--num, 4ch) + 46px);
+    background: var(--color-code-bg);
+  }
+  .diff tr.add .sign {
+    background: var(--color-diff-add-bg);
+  }
+  .diff tr.del .sign {
+    background: var(--color-diff-del-bg);
+  }
+  /* Wrap lines (the diff's own switch, wrapped by default on a phone): the code breaks anywhere, so no line widens the table. */
+  .diff.wrap td.code-cell {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .diff tr.add td {
     background: var(--color-diff-add-bg);

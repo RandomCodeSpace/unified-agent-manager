@@ -2,7 +2,7 @@ import { Plus, X } from 'lucide-react';
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { api, describeError, type McpSecret, type McpServer, type McpServerInput, type McpServers, type McpType } from '../api';
 import { Note, Skeleton } from './common';
-import { Field } from './TaskDefaults';
+import { Field, SectionAction, useInlineForm } from './TaskDefaults';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -99,6 +99,7 @@ function SecretRows({ label, rows, keyHint, disabled, onChange }: Readonly<{ lab
 
 function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCancel }: Readonly<{ draft: Draft; stdioAllowed: boolean; busy: boolean; error: string | null; onChange: (d: Draft) => void; onSave: (e: SubmitEvent) => void; onCancel: () => void }>) {
   const editing = !!draft.original;
+  const formRef = useInlineForm<HTMLFormElement>(() => { if (!busy) onCancel(); });
   // An existing command server stays editable only while Terminal is on; the service refuses it too.
   const locked = editing && draft.type === 'stdio' && !stdioAllowed;
   const types = [
@@ -107,7 +108,7 @@ function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCanc
     ...(stdioAllowed || draft.type === 'stdio' ? [{ value: 'stdio', label: 'Command' }] : []),
   ];
   return (
-    <form aria-label={editing ? `Edit MCP server ${draft.original}` : 'Add an MCP server'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={onSave}>
+    <form ref={formRef} aria-label={editing ? `Edit MCP server ${draft.original}` : 'Add an MCP server'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={onSave}>
       <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,16rem)_minmax(0,22rem)]">
         <Field id="mcp-name" label="Name">
           <Input id="mcp-name" spellCheck={false} autoComplete="off" placeholder="docs" disabled={busy || editing} value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })} />
@@ -237,17 +238,17 @@ export function McpServersSettings({ terminal }: Readonly<{ /** Settings → She
   const pending = removal.target;
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-3">
-        <Note className="max-w-3xl flex-1">
-          Tools the agent can call, from a command this machine runs or a remote address. This is GitHub Copilot's own MCP configuration, shared with the copilot command here. New tasks start
-          with it; an open task keeps the servers it started with until you reconnect it (task menu → MCP servers).
-        </Note>
-        {!draft && (
-          <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => { setError(null); setDraft(draftOf()); }}>
+      <Note className="max-w-3xl">
+        Tools the agent can call, from a command this machine runs or a remote address. This is GitHub Copilot's own MCP configuration, shared with the copilot command here. New tasks start
+        with it; an open task keeps the servers it started with until you reconnect it (task menu → MCP servers).
+      </Note>
+      {!draft && (
+        <SectionAction>
+          <Button size="sm" variant="secondary" data-section-add="" disabled={!!busy} onClick={() => { setError(null); setDraft(draftOf()); }}>
             Add server
           </Button>
-        )}
-      </div>
+        </SectionAction>
+      )}
       {data.servers.length === 0 && !draft && <Note>No MCP servers yet.</Note>}
       {data.servers.length > 0 && (
         <ul aria-label="MCP servers" className="flex flex-col">

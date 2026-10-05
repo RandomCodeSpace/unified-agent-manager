@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronDown, CircleDashed, Clock, KanbanSquare, Layers, Search, Settings } from 'lucide-react';
+import { Check, ChevronDown, CircleDashed, Clock, KanbanSquare, Layers, FolderPlus, Search, Settings, X } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -81,7 +81,8 @@ export function ProjectFilterPicker({ projects, filter, onFilter, onEdit, onRout
           {chosen ? <ProjectBadge badge={chosen.badge} /> : <Layers />}
         </Popover.Trigger>
       </Tip>
-      <Popover.Content side={side} align="start" sideOffset={side === 'right' ? 8 : 4} initialFocus={input} className="w-72 max-w-(--available-width) gap-0 p-1">
+      {/* Wider than the Board pickers' list: each row also carries its Plan, Routines and Edit buttons. */}
+      <Popover.Content side={side} align="start" sideOffset={side === 'right' ? 8 : 4} initialFocus={input} className="w-88 max-w-(--available-width) gap-0 p-1">
         <FilterList
           projects={projects}
           filter={chosen?.id ?? null}
@@ -248,30 +249,35 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan, onRoutine
           const current = row.id === filter;
           const pick = () => !row.reason && onPick(row.id);
           return (
-            // Not a button: the gear inside is one. The row is reached through the search box (`aria-activedescendant`), never focused itself.
+            // The row holds the option (the Project, named by it alone) and, beside it, its buttons. The option is reached through the search box (`aria-activedescendant`), never focused itself.
             <div
               key={row.id ?? 'all'}
-              role="option"
-              tabIndex={-1}
-              id={`${id}-${i}`}
-              aria-selected={i === active}
-              aria-current={current || undefined}
-              aria-disabled={row.reason ? true : undefined}
-              aria-label={row.count === undefined ? undefined : `${row.label}, ${row.count} ${row.count === 1 ? 'card' : 'cards'}`}
+              role="none"
               data-highlighted={i === active ? '' : undefined}
               className={cn(itemClass, 'pr-1', current && 'text-ink', row.reason && 'items-start py-1.5')}
               onPointerMove={() => i !== active && setActive(i)}
-              onClick={pick}
-              onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && pick()}
             >
-              {/* A disabled row dims its badge and name; its reason stays readable in caption beneath (DESIGN.md menus). */}
-              {p ? <ProjectBadge badge={p.badge} className={cn(row.reason && 'opacity-45')} /> : row.icon}
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className={cn('truncate', row.reason && 'opacity-45')}>{row.label}</span>
-                {row.reason && <span className="text-caption text-muted">{row.reason}</span>}
-              </span>
-              {row.count !== undefined && <span className="text-caption tabular-nums text-muted">{row.count}</span>}
-              {current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
+              <div
+                role="option"
+                tabIndex={-1}
+                id={`${id}-${i}`}
+                aria-selected={i === active}
+                aria-current={current || undefined}
+                aria-disabled={row.reason ? true : undefined}
+                aria-label={row.count === undefined ? undefined : `${row.label}, ${row.count} ${row.count === 1 ? 'card' : 'cards'}`}
+                className={cn('flex min-w-0 flex-1 items-center gap-2 self-stretch outline-hidden', row.reason && 'items-start')}
+                onClick={pick}
+                onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && pick()}
+              >
+                {/* A disabled row dims its badge and name; its reason stays readable in caption beneath (DESIGN.md menus). */}
+                {p ? <ProjectBadge badge={p.badge} className={cn(row.reason && 'opacity-45')} /> : row.icon}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className={cn('truncate', row.reason && 'opacity-45')}>{row.label}</span>
+                  {row.reason && <span className="text-caption text-muted">{row.reason}</span>}
+                </span>
+                {row.count !== undefined && <span className="text-caption tabular-nums text-muted">{row.count}</span>}
+                {current && <Check aria-hidden="true" strokeWidth={2.5} className="!size-3.5 !text-accent" />}
+              </div>
               {p && onPlan && !p.no_git && (
                 <Button
                   size="icon-sm"
@@ -329,11 +335,13 @@ const DIGIT = /^Digit([1-9])$/;
 /**
  * New task: a command palette listing every Project with its directory; the filtered
  * Project (else the most recently active one) starts highlighted. Enter, a click or Alt+1…9
- * pick one; the draft opens once the palette has closed, and its composer keeps the focus.
+ * (each Project's place in the full list, kept while searching) pick one; the draft opens once
+ * the palette has closed, and its composer keeps the focus. A search that matches nothing offers Add project.
  */
-export function NewTaskPalette({ open, onOpenChange, projects, sessions, selectedId, filter, onPick }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; projects: Project[]; sessions: SessionSummary[]; selectedId: string | null; filter: string | null; onPick: (projectId: string) => void }>) {
+export function NewTaskPalette({ open, onOpenChange, projects, sessions, selectedId, filter, onPick, onAddProject }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; projects: Project[]; sessions: SessionSummary[]; selectedId: string | null; filter: string | null; onPick: (projectId: string) => void; onAddProject: () => void }>) {
   const input = useRef<HTMLInputElement>(null);
   const pending = useRef<string | null>(null);
+  const adding = useRef(false);
   // Read by Base UI when the popup unmounts; a pick leaves focus to the draft's composer.
   const leaveFocus = useRef(false);
   return (
@@ -347,6 +355,8 @@ export function NewTaskPalette({ open, onOpenChange, projects, sessions, selecte
         const id = pending.current;
         pending.current = null;
         if (id) onPick(id);
+        if (adding.current) onAddProject();
+        adding.current = false;
       }}
       initialFocus={input}
       finalFocus={() => !leaveFocus.current}
@@ -362,12 +372,17 @@ export function NewTaskPalette({ open, onOpenChange, projects, sessions, selecte
           leaveFocus.current = true;
           onOpenChange(false);
         }}
+        onAddProject={() => {
+          adding.current = true;
+          leaveFocus.current = true;
+          onOpenChange(false);
+        }}
       />
     </CommandDialog>
   );
 }
 
-function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ projects: Project[]; start: Project | undefined; input: RefObject<HTMLInputElement | null>; onClose: () => void; onPick: (id: string) => void }>) {
+function PaletteBody({ projects, start, input, onClose, onPick, onAddProject }: Readonly<{ projects: Project[]; start: Project | undefined; input: RefObject<HTMLInputElement | null>; onClose: () => void; onPick: (id: string) => void; onAddProject: () => void }>) {
   const id = useId();
   const { loaded } = useApp();
   const [query, setQuery] = useState('');
@@ -377,7 +392,7 @@ function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ pro
     <>
       <div className="flex items-center gap-1 px-2 py-1.5">
         <Button size="icon" aria-label="Close" className="text-muted" onClick={onClose}>
-          <ArrowLeft />
+          <X />
         </Button>
         <input
           ref={input}
@@ -388,7 +403,7 @@ function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ pro
           aria-expanded="true"
           aria-controls={`${id}-list`}
           aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
-          placeholder="Search…"
+          placeholder="Choose a project for the new task…"
           className={inputClass}
           value={query}
           onChange={(e) => {
@@ -397,7 +412,8 @@ function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ pro
           }}
           onKeyDown={(e) => {
             const digit = e.altKey && !e.ctrlKey && !e.metaKey ? DIGIT.exec(e.code)?.[1] : undefined;
-            const hit = digit && matches[Number(digit) - 1];
+            // A Project's number is its place in the full list; it picks the Project while the search shows it.
+            const hit = digit && matches.find((p) => p === projects[Number(digit) - 1]);
             if (hit) {
               e.preventDefault();
               onPick(hit.id);
@@ -430,15 +446,24 @@ function PaletteBody({ projects, start, input, onClose, onPick }: Readonly<{ pro
                 <span className="truncate text-ink">{p.name}</span>
                 <span className="truncate text-meta text-muted" title={p.dir}>{p.dir}</span>
               </span>
-              {i < 9 && <Key>Alt+{i + 1}</Key>}
+              {projects.indexOf(p) < 9 && <Key>Alt+{projects.indexOf(p) + 1}</Key>}
             </button>
           ))}
         </div>
         {matches.length === 0 && !loaded && <Skeleton label="Loading projects…" rows={3} className="gap-1 px-1 pb-1" rowClassName="h-10 w-full" />}
-        {matches.length === 0 && loaded && <p role="status" className="px-2 py-3 text-caption text-muted">No project matches</p>}
+        {matches.length === 0 && loaded && (
+          <div className="flex flex-col items-start gap-2 px-2 py-3">
+            <p role="status" className="text-caption text-muted">No project matches</p>
+            <Button variant="secondary" size="sm" onClick={onAddProject}>
+              <FolderPlus />
+              Add project
+            </Button>
+          </div>
+        )}
       </div>
-      <div className="fade-rule mx-3" aria-hidden="true" />
-      <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-caption text-muted">
+      {/* Keys mean nothing on a touch screen. */}
+      <div className="fade-rule mx-3 pointer-coarse:hidden" aria-hidden="true" />
+      <footer className="pointer-coarse:hidden flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-caption text-muted">
         <span className="flex items-center gap-1"><Key>↑</Key><Key>↓</Key> Navigate</span>
         <span className="flex items-center gap-1"><Key>Enter</Key> Select</span>
         <span className="flex items-center gap-1"><Key>Esc</Key> Close</span>

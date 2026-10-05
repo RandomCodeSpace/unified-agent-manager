@@ -167,5 +167,7 @@ test('a list draws families: each subagent then the ones it spawned, failed fami
     agent('orphan', 'k3', 'completed', { parent_agent_id: 'gone' }),
   ];
   assert.deepEqual(families(list).map((f) => f.rows.map((r) => `${r.subagent.id}:${r.depth}`)), [['outer:0', 'inner:1', 'deeper:2'], ['run1:0'], ['done1:0'], ['orphan:0']]);
+  // The header index nests them the same way but keeps spawn order.
+  assert.deepEqual(families(list, false).map((f) => f.head.id), ['done1', 'outer', 'run1', 'orphan']);
   assert.equal(totalTokens([agent('a', 'c', 'completed', { tokens: 1200 }), agent('b', 'c'), agent('d', 'c', 'running', { tokens: 800 })]), 2000);
 });

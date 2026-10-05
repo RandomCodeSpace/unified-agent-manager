@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { api, describeError, modelCatalog, resolveTaskDefaults, type Project, type Routine, type RoutineInput, type RoutineRun, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { modelChoices } from '../lib/models';
-import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
+import { ROUTINE_MODES, SCHEDULE_KINDS, TRIGGER_LABEL, WEEKDAYS, clockText, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, runTime, scheduleOf, untilText, type OutcomeTone, type RoutineMode, type ScheduleKind } from '../lib/routines';
 import { Note, ProjectBadge, ScrollSentinel, Skeleton, useApp, useMinuteTick, useScrolled } from './common';
 import { RoutinesProjectPicker } from './ProjectPicker';
 import { Field, choiceLabel } from './TaskDefaults';
@@ -118,7 +118,7 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
       <section className="flex flex-col items-start gap-3 rounded-lg bg-raised p-5 shadow-raised">
         <h2 className="text-title text-ink">No routines yet</h2>
         <p className="max-w-3xl text-ui text-body">
-          A routine starts a task in {project ? 'this project' : 'a project'} on a schedule, for example every weekday at 09:00 to check dependencies for updates, and each run shows in the task list like any task.
+          A routine starts a task in {project ? 'this project' : 'a project'} on a schedule, for example every weekday at {clockText('09:00')} to check dependencies for updates, and each run shows in the task list like any task.
         </p>
         <Button variant="primary" onClick={() => edit()}>
           <Plus />
@@ -339,6 +339,8 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
   const { meta, settings } = useApp();
   const [projectId, setProjectId] = useState(project?.id ?? projects[0]?.id ?? '');
   const target = projects.find((p) => p.id === projectId);
+  // With several Projects to pick from, the Project field names the target; the subtitle would only repeat it.
+  const pickProject = !routine && !project && projects.length > 1;
   const first = useRef<HTMLInputElement>(null);
   const defaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
   const providerName = routine?.provider ?? defaults?.provider ?? '';
@@ -390,7 +392,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
       initialFocus={first}
       title={routine ? 'Edit routine' : 'New routine'}
       description={
-        target && (
+        target && !pickProject && (
           <span className="flex min-w-0 items-center gap-1.5">
             <ProjectBadge badge={target.badge} />
             <span className="truncate">Each run starts a task in {target.name}.</span>
@@ -409,7 +411,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
       }
     >
       <form id="routine-form" className="flex flex-col gap-4" onSubmit={submit}>
-        {!routine && !project && projects.length > 1 && (
+        {pickProject && (
           <Field id="routine-project" label="Project">
             <Select id="routine-project" value={projectId} items={projects.map((p) => ({ value: p.id, label: p.name }))} onValueChange={setProjectId} />
           </Field>
@@ -472,7 +474,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
           )}
         </div>
         <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2">
-          <Field id="routine-per-day" label="Runs a day, at most" hint="Run now counts too.">
+          <Field id="routine-per-day" label="Daily run limit" hint={kind === 'hours' ? 'Scheduled runs and Run now both count.' : 'The schedule runs at most once a day; this caps Run now too.'}>
             <Input id="routine-per-day" type="number" inputMode="numeric" min={1} max={100} required aria-describedby="routine-per-day-hint" value={perDay} onChange={(e) => setPerDay(e.target.value)} />
           </Field>
           <Field id="routine-minutes" label="Stop a run after (minutes)" hint="A turn still running then is cancelled.">
