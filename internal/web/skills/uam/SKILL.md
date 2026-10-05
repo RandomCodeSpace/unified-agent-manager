@@ -50,10 +50,11 @@ a phone.
 
 ## Showing a file: uam_show_file
 
-Call `uam_show_file` to put a card for a file in the conversation: a report,
-a screenshot, a generated PDF or HTML page. The file is a regular file inside
-the Task's directory, or one you created under the system temp directory.
-Text previews show the first 64 KiB; an HTML page stays interactive.
+Call `uam_show_file` to record a file reference, then include its path as a
+Markdown link or inline code in your reply so the owner can open its preview.
+The file is a regular file inside the Task's directory, or one you created
+under the system temp directory. Text previews show the first 64 KiB;
+an HTML page stays interactive.
 
 ## Charts: uam_chart
 

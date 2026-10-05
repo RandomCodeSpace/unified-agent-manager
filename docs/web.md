@@ -409,16 +409,11 @@ sign-outs are logged without the token.
   app, but does not cross into the app from a focused HTML frame. Closing
   returns focus to the opening control. Opening another preview or switching
   Tasks discards the old preview and cancels its pending read.
-- **Declared files**: the agent can call `uam_show_file` with an existing
-  path and an optional title. Its completed tool call shows a file card on
-  that turn, including inside a subagent conversation: in Compact at the
-  call's place in the reply, in Detailed right after the activity row that
-  holds the call. The call itself folds into the turn's activity like any
-  other tool call. The card looks the same for every file type and survives
-  reloading the conversation. It records display metadata only. Opening it
-  still checks the current file; a temporary file requires the same
-  explicit grant as an ordinary reference. A title or file-type hint cannot
-  change those access rules.
+- **Declared files**: `uam_show_file` records a file reference and optional
+  title. Its tool call folds into the turn's activity in both layouts;
+  the conversation's inline file link opens the preview without a separate
+  card. Opening a file still checks current availability, and temporary
+  files require an explicit grant. Declaration metadata does not grant access.
 - **Tasks started by an agent**: the agent can call `uam_create_task` to
   start a new Task in an existing Project. It gives the Project's ID or
   exact name, the first message (up to 16 KiB, with no control characters
@@ -489,9 +484,9 @@ sign-outs are logged without the token.
   click or hover to open Table/Data, Copy, Pin, and available zoom/reset controls.
   Range handles live in this menu too, with the selected category/date endpoints;
   saved chart sliders no longer add a control bar beneath the drawing.
-  Full charts support zooming and panning. Pause the mouse over the chart
-  for half a second to enable wheel zoom; moving the pointer or scrolling
-  the conversation restarts that pause. Series can be toggled
+  Full charts support zooming and panning. Hold Ctrl while scrolling to zoom,
+  or use the zoom buttons in Chart tools. Plain scrolling moves the conversation;
+  tables and chart data pass scrolling to it at their edges. Series can be toggled
   through the legend. Small pinned previews keep their compact view.
   For other chart families, `uam_chart` accepts `kind: "echarts"` with an
   `options` JSON object, or a command with `format: "json"` that prints that

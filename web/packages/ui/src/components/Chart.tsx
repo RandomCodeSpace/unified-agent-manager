@@ -61,7 +61,7 @@ function RowsTable({ data, title }: Readonly<{ data: ChartTable; title: string }
 function ChartData({ chart }: Readonly<{ chart: ChartRows }>) {
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled data region accepts keyboard scrolling.
-    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto overscroll-contain px-5">
+    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto px-5">
       <pre className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{JSON.stringify(chart.options, null, 2)}</pre>
     </div>
   );

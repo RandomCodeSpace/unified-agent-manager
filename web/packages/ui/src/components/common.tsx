@@ -4,7 +4,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { LIVE,  taskName, type AccountUsage, type Badge, type BadgeColor, type FileDeclaration, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
+import { LIVE,  taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
@@ -545,48 +545,6 @@ function FileLink({ path, url }: Readonly<{ path: string; url: string }>) {
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
       <span className="min-w-0 truncate">{label.name}</span>
     </a>
-  );
-}
-
-/** Display intent only. The resolver or exact temp-file grant checks the current file. */
-export function DeclaredFileCard({ declaration }: Readonly<{ declaration: FileDeclaration }>) {
-  const api = useApi();
-  const sessionId = useContext(SessionContext);
-  const workdir = useContext(WorkdirContext);
-  const tempRoots = useContext(TempRootContext);
-  const preview = usePreview();
-  const path = declaration.path;
-  const href = path.split('/').map(encodeURIComponent).join('/');
-  const workFile = taskFile(href, workdir);
-  const temporary = tempFile(href, workdir, tempRoots);
-  const { exists } = useFileReference(workFile?.path);
-  const demand = useFileDemand(path);
-  const label = fileLabel(path);
-  const Icon = FILE_ICONS[label.format];
-  // The way to the file: a link once it is known to exist, the temp-file action, or word that neither is known.
-  let access: ReactNode;
-  if (!api.supports('files-v1')) access = <span className="text-caption text-muted">Files are unavailable on this instance.</span>;
-  else if (sessionId && workFile && exists) access = <FileLink path={path} url={api.viewFileUrl(sessionId, workFile.path)} />;
-  else if (sessionId && temporary && preview) access = <TempFileAction file={temporary} />;
-  else access = <span className="text-caption text-muted">File availability unknown or unavailable.</span>;
-  return (
-    <div ref={demand} className="rounded-md bg-raised px-3.5 py-3 shadow-raised" role="group" aria-label={`Declared file ${path}`}>
-      <div className="flex min-w-0 items-start gap-2.5">
-        <Icon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted" />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="break-all font-medium text-body">{label.name}</span>
-            <span className="text-caption text-muted">{label.format}</span>
-          </div>
-          {declaration.title && <p className="break-words text-caption text-body">{declaration.title}</p>}
-          {declaration.type_hint && <p className="break-words text-caption text-muted">Type: {declaration.type_hint}</p>}
-          <code className="block break-all text-code-sm text-muted">{path}</code>
-        </div>
-      </div>
-      <div className="mt-2 pl-6" data-file-reference={workFile?.path}>
-        {access}
-      </div>
-    </div>
   );
 }
 
