@@ -5,6 +5,7 @@ import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, UPDA
 import { FederationContext, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
+import { AlertDialog } from './components/ui/dialog';
 import { Select } from './components/ui/select';
 import { initialState, reducer, type State, type Action } from './state';
 import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
@@ -14,6 +15,7 @@ import { handleNotice, setNotificationSource, startNotifications, type Notice } 
 import { forgetArchive, readMarks } from './lib/historyArchive';
 
 interface SourceState { state: State; status: ConnectedStatus }
+interface Registry { instance_id: string; connections: ConnectedInstance[] }
 interface Source { id: string; label: string; connection: ConnectedInstance | null; client: ApiClient }
 const HOME = '';
 const homeSource: Source = { id: HOME, label: 'This instance', connection: null, client: api };
@@ -96,7 +98,7 @@ export default function Federation() {
   const authEpoch = useRef(0);
   const registrySequence = useRef(0);
   const [sources, setSources] = useState<Source[]>([homeSource]);
-  const [registry, setRegistry] = useState<{ instance_id: string; connections: ConnectedInstance[] } | null>(null);
+  const [registry, setRegistry] = useState<Registry | null>(null);
   const registryRef = useRef(registry);
   useLayoutEffect(() => { registryRef.current = registry; }, [registry]);
   const [registryError, setRegistryError] = useState<string | null>(null);
@@ -117,12 +119,17 @@ export default function Federation() {
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
   const homeId = registry?.instance_id ?? '';
   const connections = registry?.connections ?? [];
-  const refresh = useCallback(async () => {
+  /**
+   * Reads the registry (or shows `known`, a record just saved) and makes its enabled connections the machines, each keeping its state while its record is unchanged.
+   * The state updates stay in this function: the hooks lint takes a helper that sets state for a setState call made from the effect below.
+   */
+  const refresh = useCallback(async (known?: Registry) => {
     const epoch = authEpoch.current;
     const sequence = ++registrySequence.current;
     const current = () => authRef.current && epoch === authEpoch.current && sequence === registrySequence.current;
     try {
-      const next = await api.connections();
+      // Always after an await: the hooks lint reads a synchronous path to setState as a setState call made from the effect below.
+      const next = await (known ? Promise.resolve(known) : api.connections());
       if (!current()) return;
       // An older standalone server may have no registry endpoint; that never removes local UI.
       if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
@@ -130,6 +137,22 @@ export default function Federation() {
       registryRef.current = next;
       // A disabled or replaced machine's rows leave the Task list through the "sessions" view transition.
       sessionsUpdate(() => {
+      // The connection on screen: disabled or removed, its view falls back to this instance's Home in the same render that drops its rows; re-paired, its view carries on at the new generation.
+      const viewing = activeRef.current;
+      if (viewing) {
+        const match = next.connections.find(connection => connection.enabled && connection.id === viewing.id && connection.instance_id === viewing.instance_id);
+        if (match) {
+          if (match.generation !== viewing.generation) setActive(match);
+        } else {
+          routeReady.current = true;
+          setRouteError(null);
+          setTerminalOpen(false);
+          setActive(null);
+          setRoute(previous => ({ path: '', tick: previous.tick + 1 }));
+          window.dispatchEvent(new CustomEvent('uam-route', { detail: { path: '', connection: HOME, force: true } }));
+          history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+        }
+      }
       setSourceStates(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === HOME || next.connections.some(connection => connection.enabled && connection.id === id && before?.connections.some(old => old.id === id && old.generation === connection.generation && old.instance_id === connection.instance_id)))));
       setSources(previous => [homeSource, ...next.connections.filter(connection => connection.enabled).map(connection => {
         const prior = previous.find(source => source.connection?.id === connection.id && source.connection.instance_id === connection.instance_id && source.connection.generation === connection.generation);
@@ -182,8 +205,7 @@ export default function Federation() {
     return () => window.clearInterval(timer);
   }, [authenticated, active]);
 
-  const navigate = useCallback((connection: ConnectedInstance | null, path: string) => {
-    if (terminalOpen && connection?.id !== activeRef.current?.id && !window.confirm('Switch instances and close the active terminal?')) return;
+  const show = useCallback((connection: ConnectedInstance | null, path: string) => {
     routeReady.current = true;
     setRouteError(null);
     setTerminalOpen(false);
@@ -193,7 +215,18 @@ export default function Federation() {
     // Moving to another instance's view is a navigation, so Back returns to the previous one.
     const hash = identityHash(path, connection, registryRef.current?.instance_id ?? '');
     if (window.location.hash !== hash) history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
-  }, [terminalOpen]);
+  }, []);
+  // Leaving the instance whose terminal is open ends its shell (the socket's close kills it): the app's dialog confirms that first.
+  const [leaving, setLeaving] = useState<{ connection: ConnectedInstance | null; path: string } | null>(null);
+  const [leavingOpen, setLeavingOpen] = useState(false);
+  const navigate = useCallback((connection: ConnectedInstance | null, path: string) => {
+    if (terminalOpen && connection?.id !== activeRef.current?.id) {
+      setLeaving({ connection, path });
+      setLeavingOpen(true);
+      return;
+    }
+    show(connection, path);
+  }, [terminalOpen, show]);
   const resolveRoute = useCallback((force = false) => {
     // Local navigation does not depend on the optional connection registry.
     if (!registryRead && hasIdentity(window.location.hash)) return;
@@ -259,7 +292,13 @@ export default function Federation() {
   const client = selectedSource?.client ?? api;
   const statuses = Object.fromEntries(connections.map(connection => [connection.id, accountStatus(connection) ?? sourceStates[connection.id]?.status ?? { status: 'connecting' as const }]));
   const add = async (input: AddConnectionInput) => { await api.addConnection(input); await refresh(); };
-  const update = async (id: string, input: UpdateConnectionInput) => { await api.updateConnection(id, input); await refresh(); };
+  const update = async (id: string, input: UpdateConnectionInput) => {
+    const updated = await api.updateConnection(id, input);
+    // The saved record shows at once (a disabled machine's rows leave now); the registry re-read, which can wait on each machine's account check, confirms it.
+    const known = registryRef.current;
+    if (known && updated && known.connections.some(connection => connection.id === id)) await refresh({ ...known, connections: known.connections.map(connection => connection.id === id ? { ...connection, ...updated } : connection) });
+    await refresh();
+  };
   const remove = async (id: string) => {
     const connection = connections.find(entry => entry.id === id);
     await api.removeConnection(id);
@@ -327,5 +366,6 @@ export default function Federation() {
         ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, metaCache, carry }) }}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
+    <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent tasks keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
   </>;
 }

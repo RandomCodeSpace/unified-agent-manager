@@ -78,6 +78,6 @@ export function resolveIdentity(hash: string, homeId: string, connections: reado
   if (!connection) return { error: 'This connection is no longer saved on this instance.' };
   if (!connection.enabled) return { error: 'This connection is disabled. Enable it in Connected instances.' };
   if (connection.instance_id !== fields.get('instance')) return { error: 'The connected instance no longer matches this link.' };
-  if (connection.generation !== Number(generation)) return { error: 'This connection has changed. Open the task from its current instance.' };
+  // The generation only busts caches: a link from before a re-pairing still opens on the connection's current generation.
   return { connection, path };
 }

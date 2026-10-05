@@ -7,7 +7,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
 import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
-import { Note, Skeleton } from './common';
+import { InstanceName, Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -278,6 +278,7 @@ export function ChangesSheet({
       <PanelHeader>
         <FileDiff aria-hidden="true" className="size-4 text-muted" />
         <span className="text-title text-ink">Changes</span>
+        <InstanceName />
         {data?.supported && (
           <span className="min-w-0 truncate text-caption tabular-nums text-muted">
             {files.length} {files.length === 1 ? 'file' : 'files'}{adds > 0 && <> · <span className="text-success">+{adds}</span></>}{dels > 0 && <> <span className="text-error">−{dels}</span></>}

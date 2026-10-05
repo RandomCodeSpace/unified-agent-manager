@@ -6,7 +6,7 @@ import { boardOf, childIndex, epicOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
 import { popupOpen } from '../../App';
-import { Note, Skeleton, useApp } from '../common';
+import { InstanceName, Note, Skeleton, useApp } from '../common';
 import { Button } from '../ui/button';
 import { usePresence } from '../ui/collapse';
 import { AlertDialog } from '../ui/dialog';
@@ -219,6 +219,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
         {leading}
         <KanbanSquare aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
         <h1 className="shrink-0 text-display-sm text-ink">Planner</h1>
+        <InstanceName />
         <PlannerProjectPicker projects={projects} value={key} unassigned={unassigned} onPick={(v) => setUi({ project: v, selected: null, epic: null, panel: null, creating: null })} />
         <span className="flex-1" />
         {author && !empty && (

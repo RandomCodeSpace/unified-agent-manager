@@ -32,11 +32,16 @@ test('qualified links resolve only the exact saved owner and preserve route byte
   assert.equal(identityHash(hash, null, 'home-a'), '#task=same-task');
 });
 
-test('foreign home, removed, disabled, replaced and stale owners fail closed', () => {
+test('foreign home, removed, disabled and replaced owners fail closed', () => {
   for (const [home, connections] of [
     ['other-home', [b]], ['home-a', []], ['home-a', [{ ...b, enabled: false }]],
-    ['home-a', [{ ...b, instance_id: 'replacement' }]], ['home-a', [{ ...b, generation: 4 }]],
+    ['home-a', [{ ...b, instance_id: 'replacement' }]],
   ]) assert.ok('error' in resolveIdentity(hash, home, connections));
+});
+
+test('a stale generation still resolves to the connection at its current generation', () => {
+  const current = { ...b, generation: 4 };
+  assert.deepEqual(resolveIdentity(hash, 'home-a', [current]), { connection: current, path: '#task=same-task' });
 });
 
 test('partial, duplicate, malformed and unsafe generation ownership cannot become local routes', () => {

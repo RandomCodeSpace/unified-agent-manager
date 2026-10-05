@@ -28,6 +28,8 @@ const NOTICES: Record<ClipboardNotice, string> = {
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
  */
 export default function TerminalPanel({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
+  // The connected instance the shell runs on, named after the title as in the other views (plain markup: see above).
+  const owner = useApi().owner;
   const [status, setStatus] = useState<Status>('connecting');
   // Each shell is one mount of the screen: Restart and Retry remount it, which closes the old socket first.
   const [shell, setShell] = useState(0);
@@ -56,6 +58,7 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
       <div className="flex h-9 shrink-0 items-center gap-1.5 pr-1.5 pl-3">
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="text-title text-ink">Terminal</span>
+        {owner && <><span aria-hidden="true" className="text-muted">·</span><span className="max-w-40 shrink-0 truncate text-caption text-muted" title={owner.label}>{owner.label}</span></>}
         <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
         <span role="status" className="min-w-0 truncate text-meta text-muted">{notice && NOTICES[notice]}</span>
         <output className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</output>

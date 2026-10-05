@@ -1,4 +1,5 @@
 import { useApi } from './ApiContext';
+import { decodeEntity, encodeEntity } from './lib/instanceIdentity';
 import { useFederation, type Machine } from './FederationContext';
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
@@ -903,19 +904,31 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth, openNewTask]);
 
-  // Alt+J / Alt+K open the next / previous Task among the sidebar's Tasks that need the user, in list order, wrapping. Not in the terminal (its keys are the
-  // shell's), a menu or a dialog, nor in a text field where the key types a character (macOS Option+J is "∆").
-  const needsYouIds = useMemo(
-    () => sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s) && needsYouNow(s, hasNews)).map((s) => s.id),
-    [state.projects, state.sessions, filter, hasNews],
-  );
+  // Alt+J / Alt+K open the next / previous Task among the sidebar's Tasks that need the user, in list order, wrapping. With connected instances that list
+  // is every machine's (Sidebar.tsx rows: each row keyed by its machine and Task, newest first), and another machine's Task opens on that machine.
+  // Not in the terminal (its keys are the shell's), a menu or a dialog, nor in a text field where the key types a character (macOS Option+J is "∆").
+  const needsYouIds = useMemo(() => {
+    if (!machines) return sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s) && needsYouNow(s, hasNews)).map((s) => s.id);
+    // The machine filter applies while its Project still exists, as in the sidebar.
+    const chosen = machineFilter && machines.some((m) => m.id === machineFilter.machine && (m.active ? state.projects : m.state.projects).some((p) => p.id === machineFilter.project)) ? machineFilter : null;
+    return machines.flatMap((m) => {
+      if (chosen && m.id !== chosen.machine) return [];
+      const own = m.active ? { projects: state.projects, sessions: state.sessions } : m.state;
+      const unread = m.active ? hasNews : m.hasNews;
+      return sidebarTasks(own.projects, own.sessions, chosen ? chosen.project : null).filter((s) => !readOnly(s) && needsYouNow(s, unread)).map((s) => ({ key: encodeEntity(m.id || null, s.id), s }));
+    }).sort((a, b) => b.s.created_at.localeCompare(a.s.created_at)).map((entry) => entry.key);
+  }, [machines, machineFilter, state.projects, state.sessions, filter, hasNews]);
   const selectedId = state.selectedId;
   // Read at the key press, so a press right after the rows commit (before passive effects run) sees them.
   const cycleNeedsYou = useEffectEvent((e: KeyboardEvent) => {
-    const next = cycleTask(needsYouIds, selectedId, e.code === 'KeyJ' ? 1 : -1);
+    const current = selectedId && machines ? encodeEntity(here || null, selectedId) : selectedId;
+    const next = cycleTask(needsYouIds, current, e.code === 'KeyJ' ? 1 : -1);
     if (!next) return;
     e.preventDefault();
-    if (next !== selectedId) select(next);
+    if (next === current) return;
+    const target = machines ? decodeEntity(next) : null;
+    if (target && (target.connectionId ?? '') !== here) federation?.go?.(target.connectionId ?? '', `${HASH_PREFIX}${encodeURIComponent(target.entityId)}`);
+    else select(target ? target.entityId : next);
   });
   useEffect(() => {
     if (auth !== 'in') return;

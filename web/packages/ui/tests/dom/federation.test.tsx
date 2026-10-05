@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { install } from '../../src/mock/install';
 import { createApiClient, type ConnectedInstance } from '../../src/api';
@@ -42,7 +42,7 @@ function federated(hash = '', records = [record('b', 'Workstation B'), record('c
   } });
   const user = userEvent.setup();
   const view = render(<StrictMode><UamApp /></StrictMode>);
-  return { user, calls, streams, owners, ...view, expireHome() { expired = true; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, replaceRegistry(next: ConnectedInstance[]) { registry = next; act(() => document.dispatchEvent(new Event('visibilitychange'))); } };
+  return { user, calls, streams, owners, ...view, expireHome() { expired = true; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, replaceRegistry(next: ConnectedInstance[]) { registry = next; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, setRegistry(next: ConnectedInstance[]) { registry = next; } };
 }
 
 async function taskRows() {
@@ -82,23 +82,53 @@ test('owner switching restores separate drafts and keeps configuration requests 
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/configuration'))).toBe(false);
 });
 
-test('a stale remote deep link stays unavailable and never opens a colliding local task', async () => {
+test('a remote deep link with a stale generation opens the Task on the connection at its current generation', async () => {
   const { calls } = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=99');
-  expect(await screen.findByText('This connection has changed. Open the task from its current instance.')).toBeTruthy();
+  await screen.findByRole('region', { name: 'Conversation' });
+  await waitFor(() => expect(calls.some(call => call.owner === 'b' && call.path.startsWith('/api/sessions/t3'))).toBe(true));
+  expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
+  // The fragment is rewritten to the generation in use; the stale one is only a cache-buster.
+  await waitFor(() => expect(window.location.hash).toBe('#task=t3&home=home-a&instance=instance-b&connection=b&generation=1'));
+  expect(screen.queryByText(/This connection has changed/)).toBeNull();
+});
+
+test('a remote deep link to a replaced instance stays unavailable and never opens a colliding local task', async () => {
+  const { calls } = federated('#task=t3&home=home-a&instance=instance-x&connection=b&generation=1');
+  expect(await screen.findByText('The connected instance no longer matches this link.')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Conversation' })).toBeNull();
   expect(calls.some(call => call.path.startsWith('/api/sessions/t3'))).toBe(false);
 });
 
-test('disabling the selected owner closes its streams and shows an explicit unavailable view', async () => {
+test('disabling the selected owner falls back to this instance with the sidebar intact and closes its streams', async () => {
   const records = [record('b', 'Workstation B')];
   const { user, replaceRegistry, streams } = federated('', records);
   const rows = await taskRows();
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
   await screen.findByRole('region', { name: 'Conversation' });
   replaceRegistry([{ ...records[0], enabled: false, generation: 2 }]);
-  await screen.findByText(/This connection is disabled|This connection is unavailable/);
-  await waitFor(() => expect(streams.filter(entry => entry.owner === 'b').every(entry => entry.stream.readyState === 2)).toBe(true));
+  // Home, not a blank page or a full-screen notice; the Task list stays, without the disabled machine's rows.
+  await screen.findByRole('heading', { name: 'What are you working on?', level: 1 });
+  expect(screen.queryByText(/This connection is disabled|This connection is unavailable/)).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+  expect(window.location.hash).toBe('');
+  const list = await taskRows();
+  expect(list.getByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' })).toBeTruthy();
+  expect(list.queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' })).toBeNull();
+  await waitFor(() => expect(streams.filter(entry => entry.owner === 'b').every(entry => entry.stream.readyState === 2)).toBe(true));
+});
+
+test('re-pairing the selected owner keeps its Task open at the new generation', async () => {
+  const records = [record('b', 'Workstation B')];
+  const { user, replaceRegistry, calls } = federated('', records);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  replaceRegistry([{ ...records[0], generation: 2 }]);
+  await waitFor(() => expect(window.location.hash).toBe('#task=t3&home=home-a&instance=instance-b&connection=b&generation=2'));
+  // The view remounts on the connection's new generation and shows the same Task.
+  await screen.findByRole('region', { name: 'Conversation' });
+  expect(screen.queryByText(/This connection is unavailable/)).toBeNull();
+  expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
 });
 
 test('core-only peers render their task and name unavailable optional features in Settings', async () => {
@@ -186,16 +216,16 @@ test('editing an unrelated connection preserves the selected owner client and op
 });
 
 test('escaped ownership fields cannot briefly open a same-ID local task before validation', async () => {
-  const { calls, streams } = federated('#task=t3&%68ome=home-a&%69nstance=instance-b&%63onnection=b&%67eneration=99');
-  await screen.findByText('This connection has changed. Open the task from its current instance.');
+  const { calls, streams } = federated('#task=t3&%68ome=home-a&%69nstance=instance-x&%63onnection=b&%67eneration=1');
+  await screen.findByText('The connected instance no longer matches this link.');
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
   expect(streams.some(entry => entry.owner === '' && new URL(entry.path, 'https://home.test').searchParams.get('session') === 't3')).toBe(false);
 });
 
 
 test('home auth loss clears connected sources even while an invalid route has unmounted the active app', async () => {
-  const { expireHome, streams } = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=99');
-  await screen.findByText('This connection has changed. Open the task from its current instance.');
+  const { expireHome, streams } = federated('#task=t3&home=home-a&instance=instance-x&connection=b&generation=1');
+  await screen.findByText('The connected instance no longer matches this link.');
   expireHome();
   await screen.findByRole('heading', { name: 'Sign in to UAM' });
   expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
@@ -231,6 +261,112 @@ test('task navigation shows compact instance names without extra filters and rem
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' }));
   await screen.findByRole('region', { name: 'Conversation' });
   expect(window.location.hash).toBe('#task=t3');
+});
+
+test('turning a connection off removes its rows at once, before the registry is read again', async () => {
+  const records = [record('b', 'Workstation B')];
+  const { user, setRegistry } = federated('', records);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'Connected instances' }));
+  const harness = window.fetch;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let toggled = false;
+  window.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.origin);
+    if (url.pathname === '/api/connections/b' && init?.method === 'PATCH') {
+      const next = { ...records[0], enabled: false };
+      setRegistry([next]);
+      toggled = true;
+      return new Response(JSON.stringify(next));
+    }
+    // The registry re-read waits on the server's account checks; the switch's own result must not wait for it.
+    if (toggled && url.pathname === '/api/connections') await held;
+    return harness(input, init);
+  };
+  const section = within(await screen.findByRole('region', { name: 'Workstation B' }));
+  await user.click(section.getByRole('switch', { name: 'Enable Workstation B' }));
+  await waitFor(() => expect(rows.queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' })).toBeNull());
+  expect(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' })).toBeTruthy();
+  expect(section.getByRole('status').textContent).toBe('Disabled');
+  release();
+});
+
+test('leaving the instance whose terminal is open asks in the app’s dialog, never the browser’s', async () => {
+  // happy-dom has no confirm(); a browser's would block the test, so a stub stands in and must stay uncalled.
+  const native = vi.fn(() => true);
+  vi.stubGlobal('confirm', native);
+  const { user } = federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  await screen.findByRole('region', { name: 'Terminal' });
+  await user.click(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  const dialog = within(await screen.findByRole('alertdialog', { name: 'Switch instances?' }));
+  expect(native).not.toHaveBeenCalled();
+  // Cancel keeps the instance and its shell.
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  expect(window.location.hash).toBe('#task=t3');
+  expect(screen.getByRole('region', { name: 'Terminal' })).toBeTruthy();
+  await user.click(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Switch instances?' })).getByRole('button', { name: 'Switch and close terminal' }));
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Terminal' })).toBeNull());
+  expect(native).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
+});
+
+test('Alt+J and Alt+K walk the Tasks that need you across machines, in the list’s order', async () => {
+  federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText('Input')).map((el) => el.dataset.taskRow!);
+  expect(keys.length).toBeGreaterThan(2);
+  // Both machines hold the same Tasks, so the list alternates: this instance's row, then Workstation B's.
+  expect(keys[0]).not.toMatch(/^uam:/);
+  expect(keys[1]).toBe(`uam:b:${keys[0]}`);
+  expect(keys[2]).not.toMatch(/^uam:/);
+  const remote = (id: string) => `#task=${id}&home=home-a&instance=instance-b&connection=b&generation=1`;
+  const press = (code: 'KeyJ' | 'KeyK') => fireEvent.keyDown(document.body, { code, key: code === 'KeyJ' ? 'j' : 'k', altKey: true });
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(`#task=${keys[0]}`));
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
+  await screen.findByRole('region', { name: 'Conversation' });
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(`#task=${keys[2]}`));
+  await screen.findByRole('region', { name: 'Conversation' });
+  press('KeyK');
+  await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
+});
+
+test('another machine’s Task, Terminal, Changes and Planner name the machine after their title; this instance’s do not', async () => {
+  const { user } = federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Fix re-attach redraw regression/, description: 'This instance' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  const titleRow = () => within(screen.getByRole('heading', { level: 1 }).parentElement!);
+  expect(titleRow().queryByText('Workstation B')).toBeNull();
+  await user.click(rows.getByRole('button', { name: /Fix re-attach redraw regression/, description: 'Workstation B' }));
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  await screen.findByRole('region', { name: 'Conversation' });
+  expect(titleRow().getByText('Workstation B')).toBeTruthy();
+  expect(titleRow().getByText('Workstation B').classList.contains('sr-only')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  // The terminal's chunk loads lazily: its header follows the region.
+  expect(await within(await screen.findByRole('region', { name: 'Terminal' })).findByText('Workstation B')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: /^Open changes/ }));
+  const changes = await screen.findByRole('dialog', { name: 'Changes' });
+  expect(within(changes).getByText('Workstation B')).toBeTruthy();
+  await user.click(within(changes).getByRole('button', { name: 'Close changes' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
+  await user.click(screen.getByRole('button', { name: 'Planner' }));
+  await screen.findByRole('heading', { name: 'Planner', level: 1 });
+  expect(titleRow().getByText('Workstation B')).toBeTruthy();
 });
 
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
