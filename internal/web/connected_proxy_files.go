@@ -16,6 +16,9 @@ import (
 const (
 	connectedViewKeyRoute  = "GET /api/connected/{connection}/files/{id}/{key}/{path...}"
 	connectedGrantKeyRoute = "GET /api/connected/{connection}/grants/{id}/{grant_id}/{key}"
+	connectedPathPrefix    = "/api/connected/"
+	sessionsPathPrefix     = "/api/sessions/"
+	filesViewSegment       = "/files/view/"
 )
 
 // These are the only connected routes allowed through without the home owner
@@ -30,7 +33,7 @@ func connectedFileScope(target connectionTarget, task, grant string) string {
 }
 
 func (s *Server) redirectConnectedView(w http.ResponseWriter, r, local *http.Request, target connectionTarget) {
-	parts := strings.SplitN(strings.TrimPrefix(local.URL.Path, "/api/sessions/"), "/files/view/", 2)
+	parts := strings.SplitN(strings.TrimPrefix(local.URL.Path, sessionsPathPrefix), filesViewSegment, 2)
 	if len(parts) != 2 || !connectedID(parts[0]) || !connectedCleanPath("/"+parts[1]) {
 		writeError(w, http.StatusBadRequest, "invalid connected file path")
 		return
@@ -38,7 +41,7 @@ func (s *Server) redirectConnectedView(w http.ResponseWriter, r, local *http.Req
 	task, filePath := parts[0], parts[1]
 	expires := time.Now().Add(fileKeyTTL).Unix()
 	scope := connectedFileScope(target, task, "")
-	prefix := "/api/connected/" + target.ID + "/files/" + task + "/"
+	prefix := connectedPathPrefix + target.ID + "/files/" + task + "/"
 	key := fileKey(s.token, r.Host, scope, expires)
 	if secureRequest(r) {
 		setFileCookie(w, fileCookie(s.token, r.Host, scope, expires), prefix, int(fileKeyTTL/time.Second))
@@ -79,8 +82,8 @@ func (s *Server) handleConnectedViewKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	local := r.Clone(r.Context())
-	local.URL.Path = "/api/sessions/" + r.PathValue("id") + "/files/view/" + filePath
-	local.URL.RawPath = "/api/sessions/" + r.PathValue("id") + "/files/view/" + viewPath(filePath)
+	local.URL.Path = sessionsPathPrefix + r.PathValue("id") + filesViewSegment + filePath
+	local.URL.RawPath = sessionsPathPrefix + r.PathValue("id") + filesViewSegment + viewPath(filePath)
 	local.URL.RawQuery = connectedDownloadQuery(r)
 	current, lifetime, err := s.connections.Acquire(target.ID)
 	if err != nil || current.Generation != target.Generation {
@@ -107,13 +110,13 @@ func (s *Server) rewriteConnectedGrant(response *http.Response, r, local *http.R
 	if json.Unmarshal(data, &grant) != nil || !connectedID(grant.ID) || !grant.ExpiresAt.After(time.Now()) || grant.ExpiresAt.After(time.Now().Add(grantTTL+time.Second)) {
 		return errors.New("invalid remote file grant")
 	}
-	task := strings.TrimSuffix(strings.TrimPrefix(local.URL.Path, "/api/sessions/"), "/file-grants")
+	task := strings.TrimSuffix(strings.TrimPrefix(local.URL.Path, sessionsPathPrefix), "/file-grants")
 	if !connectedID(task) {
 		return errors.New("invalid remote file grant task")
 	}
 	scope := connectedFileScope(target, task, grant.ID)
 	expires := grant.ExpiresAt.Unix()
-	prefix := "/api/connected/" + target.ID + "/grants/" + task + "/" + grant.ID + "/"
+	prefix := connectedPathPrefix + target.ID + "/grants/" + task + "/" + grant.ID + "/"
 	grant.URL = prefix + fileKey(s.token, r.Host, scope, expires)
 	if secureRequest(r) {
 		cookie := &http.Cookie{ // #nosec G124 -- SameSite=None is required for opaque sandbox requests; Secure and HttpOnly are always set, with a signed URL and one grant-scoped path.
@@ -137,7 +140,7 @@ func (s *Server) handleConnectedGrantKey(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	local := r.Clone(r.Context())
-	local.URL.Path = "/api/sessions/" + r.PathValue("id") + "/file-grants/" + r.PathValue("grant_id") + "/remote"
+	local.URL.Path = sessionsPathPrefix + r.PathValue("id") + "/file-grants/" + r.PathValue("grant_id") + "/remote"
 	local.URL.RawPath = ""
 	local.URL.RawQuery = connectedDownloadQuery(r)
 	current, lifetime, err := s.connections.Acquire(target.ID)
@@ -209,7 +212,7 @@ func redactConnectedKeyURL(value string) (string, bool) {
 			}
 			decoded.WriteByte(value[i])
 		}
-		if strings.Contains(decoded.String(), "/api/connected/") {
+		if strings.Contains(decoded.String(), connectedPathPrefix) {
 			return redactedValue, true
 		}
 		return "", false

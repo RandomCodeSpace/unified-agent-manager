@@ -231,9 +231,10 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       const a = await api.unlink(name);
       setAccount(a);
       setReplacing(false);
+      const who = a.login ? ` as ${a.login}` : '';
       setDone(
         a.signed_in
-          ? `Unlinked ${was}. Copilot is still signed in${a.login ? ` as ${a.login}` : ''} in a way UAM cannot sign out, so this server links that account again.`
+          ? `Unlinked ${was}. Copilot is still signed in${who} in a way UAM cannot sign out, so this server links that account again.`
           : `Unlinked ${was} and signed out. The next sign-in links its account.`,
       );
       refresh.current();

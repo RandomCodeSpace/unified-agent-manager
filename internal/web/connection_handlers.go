@@ -10,7 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"path"
 	"slices"
 	"strings"
@@ -23,7 +22,10 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-const federationWorkloadPrefix = "/api/federation/workload/"
+const (
+	federationWorkloadPrefix = "/api/federation/workload/"
+	bearerPrefix             = "Bearer "
+)
 
 var federationCoreCapabilities = []string{"workload-grants-v1", "expected-instance-v1", "local-workload-v1", "events-v1"}
 
@@ -310,7 +312,7 @@ func (s *Server) revokeRemote(target connectionTarget) {
 	if err != nil {
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+target.Credential)
+	req.Header.Set("Authorization", bearerPrefix+target.Credential)
 	req.Header.Set(headerUAMInstance, target.InstanceID)
 	response, err := transport.RoundTrip(req)
 	if err == nil {
@@ -403,7 +405,7 @@ func (s *Server) handleRevokeWorkloadGrant(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) handleRevokeSelf(w http.ResponseWriter, r *http.Request) {
-	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
 	grant, _, err := s.connections.authenticate(token)
 	if err != nil {
 		writeFailure(w, err)
@@ -429,7 +431,7 @@ func (s *Server) serveFederation(w http.ResponseWriter, r *http.Request) bool {
 	if !workload && !source && !revoke {
 		return false
 	}
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
 	if !ok {
 		writeFailure(w, connectionError(401, "remote_auth_required", "workload authentication required"))
 		return true
@@ -464,7 +466,7 @@ func (s *Server) serveFederation(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, 400, "invalid workload path")
 		return true
 	}
-	request.URL = &url.URL{Path: localPath, RawQuery: r.URL.RawQuery}
+	request.URL.Path, request.URL.RawPath = localPath, ""
 	request.RequestURI = request.URL.RequestURI()
 	_, pattern := s.mux.Handler(request)
 	if !connectedWorkloadPatternAllowed(pattern) {

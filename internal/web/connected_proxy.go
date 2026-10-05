@@ -210,7 +210,7 @@ func (s *Server) proxyConnected(w http.ResponseWriter, r, local *http.Request, t
 				_ = response.Body.Close()
 				body := `{"error":"connected instance requires authorization","code":"remote_auth_required"}`
 				response.StatusCode = http.StatusFailedDependency
-				response.Header = http.Header{"Content-Type": {"application/json"}}
+				response.Header = http.Header{headerContentType: {"application/json"}}
 				response.Body = io.NopCloser(strings.NewReader(body))
 				response.ContentLength = int64(len(body))
 			}
@@ -291,7 +291,7 @@ func (b *connectedResponseBody) Close() error {
 func connectedRequestHeaders(in http.Header) http.Header {
 	out := make(http.Header)
 	for _, name := range []string{
-		"Accept", "Accept-Language", "Content-Type", "Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since", "Last-Event-ID",
+		"Accept", "Accept-Language", headerContentType, "Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since", "Last-Event-ID",
 		"Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions",
 	} {
 		if values := in.Values(name); len(values) != 0 {
@@ -307,7 +307,7 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 			return errors.New("unexpected remote upgrade")
 		}
 	} else if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusNotModified {
-		typeName, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		typeName, _, err := mime.ParseMediaType(response.Header.Get(headerContentType))
 		if err != nil {
 			return errors.New("invalid remote content type")
 		}
@@ -318,7 +318,7 @@ func connectedResponseHeaders(response *http.Response, pattern string) error {
 	}
 	headers := make(http.Header)
 	for _, name := range []string{
-		"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Retry-After", "X-Accel-Buffering",
+		headerContentType, "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified", "Content-Disposition", "Retry-After", "X-Accel-Buffering",
 		"Connection", "Upgrade", "Sec-WebSocket-Accept", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions",
 	} {
 		if values := response.Header.Values(name); len(values) != 0 {

@@ -1500,6 +1500,17 @@ export interface AddConnectionInput { label: string; base_url: string; token: st
 export type UpdateConnectionInput = Partial<AddConnectionInput> & { enabled?: boolean };
 export interface ConnectedStatus { status: 'connecting' | 'online' | 'offline' | 'auth-required' | 'unsupported' | 'account-mismatch'; error?: string }
 
+/** The capability a connected instance must have for a route family; the first match wins. */
+const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
+  ['configuration-v1', (path) => path.startsWith('/api/configuration')],
+  ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
+  ['planner-v1', (path) => path.startsWith('/api/board')],
+  ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
+  ['usage-v1', (path) => path.startsWith('/api/usage')],
+  ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
+  ['files-v1', (path) => /^\/api\/fs(?:[/?]|$)/.test(path) || /\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path)],
+];
+
 /** A client owns one immutable connection generation. It is never retargeted. */
 export function createApiClient(connection: ConnectedInstance | null = null, valid: () => boolean = () => true, onError?: (error: ApiError) => void) {
   const owner = connection && { ...connection };
@@ -1514,13 +1525,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
   function admit(path: string): void {
     if (!owner) return;
     if (!valid()) throw new ApiError(409, 'This connection changed. Select the instance again.', { code: 'connection_changed' });
-    const family = path.startsWith('/api/configuration') ? 'configuration-v1'
-      : /^\/api\/providers\/[^/]+\/account/.test(path) ? 'provider-accounts-v1'
-      : path.startsWith('/api/board') ? 'planner-v1'
-      : /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path) ? 'routines-v1'
-      : path.startsWith('/api/usage') ? 'usage-v1'
-      : /\/terminal(?:[?]|$)/.test(path) ? 'terminal-v1'
-      : /^\/api\/fs(?:[/?]|$)|\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path) ? 'files-v1' : null;
+    const family = CAPABILITY_FAMILIES.find(([, matches]) => matches(path))?.[0] ?? null;
     if (family && !owner.capabilities.includes(family)) throw new ApiError(412, `This instance does not support ${family.replace('-v1', '').replaceAll('-', ' ')}.`, { code: 'feature_unavailable' });
   }
   function report(error: ApiError): ApiError { onError?.(error); return error; }

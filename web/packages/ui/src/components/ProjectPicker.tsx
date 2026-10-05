@@ -262,14 +262,14 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan, onRoutine
       return [
         { rows: head },
         ...groups.map((g) => ({ label: g.label, key: g.key, rows: searchProjects(g.projects, query).map((p) => projectRow(p, p.id === g.current, g.onPick, g, `${g.key}\n${p.id}`)) })).filter((section) => section.rows.length > 0),
-        { rows: tail && tail.label.toLocaleLowerCase().includes(q) ? [{ ...tail, key: tail.id ?? 'tail', current: tail.id === filter, pick: () => onPick(tail.id) }] : [] },
+        { rows: tail?.label.toLocaleLowerCase().includes(q) ? [{ ...tail, key: tail.id ?? 'tail', current: tail.id === filter, pick: () => onPick(tail.id) }] : [] },
       ];
     }
     return [{
       rows: [
         ...head,
         ...searchProjects(projects, query).map((p) => projectRow(p, p.id === filter, (project) => onPick(project.id), { onEdit, onPlan, onRoutines, reason })),
-        ...(tail && tail.label.toLocaleLowerCase().includes(q) ? [{ ...tail, key: tail.id ?? 'tail', current: tail.id === filter, pick: () => onPick(tail.id) }] : []),
+        ...(tail?.label.toLocaleLowerCase().includes(q) ? [{ ...tail, key: tail.id ?? 'tail', current: tail.id === filter, pick: () => onPick(tail.id) }] : []),
       ],
     }];
   }, [all, q, query, groups, projects, filter, onPick, onEdit, onPlan, onRoutines, reason, tail]);
@@ -544,7 +544,7 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
                   {matches.map((m, i) => (m.group === g ? option(m, i) : null))}
                 </div>
               ))
-            : matches.map(option)}
+            : matches.map((m, i) => option(m, i))}
         </div>
         {matches.length === 0 && !loaded && <Skeleton label="Loading projects…" rows={3} className="gap-1 px-1 pb-1" rowClassName="h-10 w-full" />}
         {matches.length === 0 && loaded && (

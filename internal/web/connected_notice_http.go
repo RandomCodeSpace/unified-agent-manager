@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const noticesUnavailable = "connected notifications unavailable"
+
 func (s *Server) initConnectedNotifications() {
 	if s.connections == nil {
 		return
@@ -80,7 +82,7 @@ func noticeStreamWriter(w http.ResponseWriter) func([]byte) bool {
 
 func (s *Server) handleFederationNotices(w http.ResponseWriter, r *http.Request) {
 	if s.connections == nil {
-		writeError(w, http.StatusServiceUnavailable, "connected notifications unavailable")
+		writeError(w, http.StatusServiceUnavailable, noticesUnavailable)
 		return
 	}
 	cursor := r.URL.Query().Get("cursor")
@@ -141,7 +143,7 @@ func (s *Server) handleFederationNotices(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleConnectedNoticeEvents(w http.ResponseWriter, r *http.Request) {
 	h := s.notices
 	if h == nil {
-		writeError(w, http.StatusServiceUnavailable, "connected notifications unavailable")
+		writeError(w, http.StatusServiceUnavailable, noticesUnavailable)
 		return
 	}
 	page := r.URL.Query().Get("page")
@@ -153,7 +155,7 @@ func (s *Server) handleConnectedNoticeEvents(w http.ResponseWriter, r *http.Requ
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
-		writeError(w, http.StatusServiceUnavailable, "connected notifications unavailable")
+		writeError(w, http.StatusServiceUnavailable, noticesUnavailable)
 		return
 	}
 	h.readers[reader] = struct{}{}
@@ -202,7 +204,7 @@ func (s *Server) handleConnectedNoticeViewing(w http.ResponseWriter, r *http.Req
 	}
 	h := s.notices
 	if h == nil {
-		writeError(w, http.StatusServiceUnavailable, "connected notifications unavailable")
+		writeError(w, http.StatusServiceUnavailable, noticesUnavailable)
 		return
 	}
 	h.mu.Lock()

@@ -32,14 +32,14 @@ function splitIdentity(hash: string): { path: string; fields: Map<string, string
     const equal = part.indexOf('=');
     const rawKey = equal < 0 ? part : part.slice(0, equal);
     let key: string;
-    try { key = decodeURIComponent(rawKey.replace(/\+/g, ' ')); } catch { invalid = true; continue; }
+    try { key = decodeURIComponent(rawKey.replaceAll(/\+/g, ' ')); } catch { invalid = true; continue; }
     if (!identityKeySet.has(key)) {
       route.push(part);
       continue;
     }
     if (fields.has(key)) invalid = true;
     try {
-      fields.set(key, decodeURIComponent((equal < 0 ? '' : part.slice(equal + 1)).replace(/\+/g, ' ')));
+      fields.set(key, decodeURIComponent((equal < 0 ? '' : part.slice(equal + 1)).replaceAll(/\+/g, ' ')));
     } catch { invalid = true; }
   }
   return { path: hash === '' ? '' : `#${route.join('&')}`, fields, invalid };

@@ -34,7 +34,10 @@ function accountStatus(connection: ConnectedInstance | undefined): ConnectedStat
 
 function connectionFailure(error: unknown): ConnectedStatus {
   const code = errorCode(error);
-  return { status: code === 'remote_auth_required' ? 'auth-required' : code === 'unsupported_remote' ? 'unsupported' : 'offline', error: describeError(error) };
+  let status: ConnectedStatus['status'] = 'offline';
+  if (code === 'remote_auth_required') status = 'auth-required';
+  else if (code === 'unsupported_remote') status = 'unsupported';
+  return { status, error: describeError(error) };
 }
 
 /** One independent reducer/sequence space per source. */
@@ -245,7 +248,9 @@ export default function Federation() {
       const before = previous[activeID];
       const state = reducer(before?.state ?? initialState, action);
       if (before?.state === state) return previous;
-      const status: ConnectedStatus = state.connection === 'connected' ? { status: 'online' } : before?.status.status === 'auth-required' ? before.status : { status: 'offline' };
+      let status: ConnectedStatus = { status: 'offline' };
+      if (state.connection === 'connected') status = { status: 'online' };
+      else if (before?.status.status === 'auth-required') status = before.status;
       return { ...previous, [activeID]: { state, status } };
     });
   }, [activeID, activeGeneration, activeInstanceID]);

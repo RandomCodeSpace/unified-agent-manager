@@ -144,6 +144,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
       {connections.length === 0 && !adding && <Note>No connected instances yet. Your local tasks are available as usual.</Note>}
       {connections.map((connection) => {
         const status = statuses[connection.id];
+        const statusNote = status ? statusText[status.status] : 'Waiting for connection status';
         return (
           <section key={connection.id} aria-label={connection.label} className="flex flex-col gap-3 rounded-md bg-tint-well p-3">
             <div className="flex flex-wrap items-start gap-3">
@@ -155,7 +156,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
               <Switch checked={connection.enabled} disabled={busy} onCheckedChange={(enabled) => toggle(connection, enabled)} aria-label={`Enable ${connection.label}`} />
             </div>
             <Note role="status" tone={connection.enabled && status && status.status !== 'online' && status.status !== 'connecting' ? 'warn' : 'muted'}>
-              {!connection.enabled ? 'Disabled' : status ? statusText[status.status] : 'Waiting for connection status'}
+              {connection.enabled ? statusNote : 'Disabled'}
               {connection.enabled && status?.error ? ` — ${status.error}` : ''}
             </Note>
             <div className="flex flex-wrap gap-2">

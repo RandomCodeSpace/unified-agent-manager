@@ -198,7 +198,8 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
   openWithoutStyle(term, host);
   fit.fit();
 
-  const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${api.url(`/api/projects/${encodeURIComponent(projectId)}/terminal?cols=${term.cols}&rows=${term.rows}`)}`);
+  const path = api.url(`/api/projects/${encodeURIComponent(projectId)}/terminal?cols=${term.cols}&rows=${term.rows}`);
+  const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${path}`);
   ws.binaryType = 'arraybuffer';
   let sent = { cols: term.cols, rows: term.rows };
   let opened = false;

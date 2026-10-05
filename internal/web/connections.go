@@ -83,6 +83,10 @@ type connectionRegistry struct {
 	changed chan struct{}
 }
 
+func errConnectionNotFound() *Error {
+	return connectionError(404, "connection_not_found", "connected instance not found")
+}
+
 func connectionError(status int, code, message string) *Error {
 	err := newError(status, "%s", message)
 	err.Code = code
@@ -232,7 +236,7 @@ func (r *connectionRegistry) lookup(id string) (connectionTarget, error) {
 	defer r.mu.Unlock()
 	c, ok := r.data.Connections[id]
 	if !ok {
-		return connectionTarget{}, connectionError(404, "connection_not_found", "connected instance not found")
+		return connectionTarget{}, errConnectionNotFound()
 	}
 	return cloneTarget(c), nil
 }
@@ -241,7 +245,7 @@ func (r *connectionRegistry) Acquire(id string) (connectionTarget, context.Conte
 	defer r.mu.Unlock()
 	c, ok := r.data.Connections[id]
 	if !ok {
-		return connectionTarget{}, nil, connectionError(404, "connection_not_found", "connected instance not found")
+		return connectionTarget{}, nil, errConnectionNotFound()
 	}
 	if !c.Enabled || r.ctx.Err() != nil {
 		return connectionTarget{}, nil, connectionError(409, "connection_disabled", "connected instance is disabled")
@@ -311,7 +315,7 @@ func (r *connectionRegistry) remove(id string, expected uint64) error {
 	defer r.mu.Unlock()
 	c, ok := r.data.Connections[id]
 	if !ok {
-		return connectionError(404, "connection_not_found", "connected instance not found")
+		return errConnectionNotFound()
 	}
 	if c.Generation != expected {
 		return connectionError(409, "connection_changed", "connection changed; reload before removing")
