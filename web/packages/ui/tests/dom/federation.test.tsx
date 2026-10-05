@@ -42,7 +42,7 @@ function federated(hash = '', records = [record('b', 'Workstation B'), record('c
   } });
   const user = userEvent.setup();
   const view = render(<StrictMode><UamApp /></StrictMode>);
-  return { user, calls, streams, owners, ...view, expireHome() { expired = true; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, replaceRegistry(next: ConnectedInstance[]) { registry = next; act(() => document.dispatchEvent(new Event('visibilitychange'))); } };
+  return { user, calls, streams, owners, ...view, expireHome() { expired = true; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, replaceRegistry(next: ConnectedInstance[]) { registry = next; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, setRegistry(next: ConnectedInstance[]) { registry = next; } };
 }
 
 async function taskRows() {
@@ -261,6 +261,37 @@ test('task navigation shows compact instance names without extra filters and rem
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' }));
   await screen.findByRole('region', { name: 'Conversation' });
   expect(window.location.hash).toBe('#task=t3');
+});
+
+test('turning a connection off removes its rows at once, before the registry is read again', async () => {
+  const records = [record('b', 'Workstation B')];
+  const { user, setRegistry } = federated('', records);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'Connected instances' }));
+  const harness = window.fetch;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let toggled = false;
+  window.fetch = async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.origin);
+    if (url.pathname === '/api/connections/b' && init?.method === 'PATCH') {
+      const next = { ...records[0], enabled: false };
+      setRegistry([next]);
+      toggled = true;
+      return new Response(JSON.stringify(next));
+    }
+    // The registry re-read waits on the server's account checks; the switch's own result must not wait for it.
+    if (toggled && url.pathname === '/api/connections') await held;
+    return harness(input, init);
+  };
+  const section = within(await screen.findByRole('region', { name: 'Workstation B' }));
+  await user.click(section.getByRole('switch', { name: 'Enable Workstation B' }));
+  await waitFor(() => expect(rows.queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' })).toBeNull());
+  expect(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' })).toBeTruthy();
+  expect(section.getByRole('status').textContent).toBe('Disabled');
+  release();
 });
 
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
