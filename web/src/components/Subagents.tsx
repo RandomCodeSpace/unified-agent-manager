@@ -866,6 +866,12 @@ function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonl
   );
 }
 
+/** Whether two messages say the same once spacing is ignored. */
+function sameText(a: string, b: string): boolean {
+  const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
+  return flat(a) === flat(b);
+}
+
 /**
  * The open transcript on desktop (DESIGN.md subagent transcript): a 640px panel beside the row it
  * was opened from (right of it, else wherever it fits), at most 70vh tall, over a dimmed page; Esc,
@@ -1341,6 +1347,9 @@ function AgentTranscriptView({
   // The result: the `task` call's output; for a background launch, its own last message (once the window reaches its end).
   let result = detail.compact ? parentFullItem?.tool?.output : legacyResult;
   if (subagent.background) result = finished && !detail.agent?.after ? [...items].reverse().find((item) => item.kind === 'assistant' && item.text?.trim())?.text : undefined;
+  // A result that repeats the last message above it is not drawn twice: a line under that message says where it went.
+  const lastText = detail.agent?.after ? undefined : [...items].reverse().find((item) => item.kind === 'assistant' && item.text?.trim())?.text;
+  const resultRepeats = !!result && !!lastText && sameText(result, lastText);
   useFileHintItems(subagent.id, items, open);
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -1505,7 +1514,8 @@ function AgentTranscriptView({
       {subagent.status === 'failed' && <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>}
       {subagent.status === 'cancelled' && <Note>Stopped before it finished.</Note>}
       {detail.compact && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>}
-      {result && (
+      {resultRepeats && <p className="text-caption text-muted">↑ Sent to the main agent as the result.</p>}
+      {result && !resultRepeats && (
         <div className="rounded-md bg-raised px-3.5 py-2.5 text-ui shadow-raised">
           <div className="mb-1 text-caption text-muted">Result sent to the main agent</div>
           <Markdown text={result} />

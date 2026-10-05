@@ -501,7 +501,7 @@ export const Sidebar = memo(function Sidebar({
   version?: string;
 }) {
   useMinuteTick();
-  const { hasNews } = useApp();
+  const { placeNews } = useApp();
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
@@ -510,7 +510,7 @@ export const Sidebar = memo(function Sidebar({
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const tasks = useMemo(() => sidebarTasks(projects, sessions, actions.filter, query), [projects, sessions, actions.filter, query]);
   const { active, settled, archived } = groupTasks(tasks);
-  const groups = commandGroups(active, hasNews);
+  const groups = commandGroups(active, placeNews);
   const unsettled = [...groups.you, ...groups.review, ...groups.working, ...groups.idle];
   const shelfScope = chosen?.id ?? 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];

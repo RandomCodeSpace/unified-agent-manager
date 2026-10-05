@@ -9,6 +9,14 @@ export function newsReader(selectedId: string | null, viewed: Readonly<Record<st
 }
 
 /**
+ * Where a Task sits in the list: as `news` says, except that the open Task keeps the place it had when it was
+ * opened (`before`, its last look before this visit), so reading it does not move it from under the pointer.
+ */
+export function placeReader(news: (s: SessionSummary) => boolean, openId: string | null, before: string | undefined, loadedAt: string) {
+  return (session: SessionSummary) => (session.id === openId ? session.updated_at > (before ?? loadedAt) : news(session));
+}
+
+/**
  * The state a Task shows on its card and header chip: Working while a subagent still runs after its turn completed (Copilot
  * lets background subagents outlive the turn that started them), and while the conversation compacts, unless it waits for the user.
  */

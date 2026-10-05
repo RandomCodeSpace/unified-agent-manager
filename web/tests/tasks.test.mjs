@@ -162,6 +162,20 @@ test('the Task list groups: Needs you, Ready for review, Working, Idle', async (
   assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
 });
 
+test('the open Task keeps the group it had when it was opened', async () => {
+  const { commandGroups, newsReader, placeReader } = await import('../src/lib/tasks.ts');
+  const done = s('done', 'p1', '1', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' });
+  const other = s('other', 'p1', '2', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' });
+  const before = '2026-10-05T09:00:00Z';
+  // Opening it marks it read: by news alone it would drop from Ready for review to Idle under the pointer.
+  const news = newsReader('done', { done: '2026-10-05T10:00:01Z', other: '2026-10-05T10:00:01Z' }, before);
+  assert.deepEqual(commandGroups([done, other], news).review.map((t) => t.id), []);
+  const place = placeReader(news, 'done', before, before);
+  assert.deepEqual(commandGroups([done, other], place).review.map((t) => t.id), ['done']);
+  // Once another Task is open, it is placed by news again.
+  assert.equal(placeReader(news, 'other', undefined, before)(done), false);
+});
+
 test('a Task row says in plain words what it needs or how it stands', async () => {
   const { taskStatus } = await import('../src/lib/tasks.ts');
   const now = Date.parse('2026-10-01T12:00:00Z');
