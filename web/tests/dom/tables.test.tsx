@@ -20,7 +20,9 @@ test.each([false, true])('Markdown preserves native table semantics and keyboard
   expect(region.tabIndex).toBe(0);
   await user.tab();
   expect(document.activeElement).toBe(region);
-  expect(region.classList.contains('overflow-auto')).toBe(true);
+  // It scrolls down, never sideways: long cells wrap.
+  expect(region.classList.contains('overflow-y-auto')).toBe(true);
+  expect(region.classList.contains('overflow-x-hidden')).toBe(true);
   expect(table.tagName).toBe('TABLE');
   expect(table.getAttribute('role')).toBeNull();
   expect(table.style.display).not.toBe('block');

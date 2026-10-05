@@ -29,7 +29,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
   else if (!recent.length) introduction = 'Start a new task.';
 
   return (
-    <section aria-label="Home" className="min-h-0 flex-1 overflow-y-auto">
+    <section aria-label="Home" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
       {/* Fills the pane (no centred column); the launcher's heading stays centred above the full-width list. */}
       <div className={cn('w-full px-5 pb-12 min-[960px]:px-10', hasProjects ? 'pt-10 min-[960px]:pt-16' : 'pt-20 min-[960px]:pt-32')}>
         <div className="text-center">

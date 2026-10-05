@@ -420,7 +420,7 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
           </Button>
         </div>
         {body ?? (
-          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink">
+          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-x-hidden overflow-y-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
             {children}
           </pre>
         )}

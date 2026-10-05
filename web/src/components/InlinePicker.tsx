@@ -74,7 +74,7 @@ export function InlinePicker({
           <Key>esc</Key>
         </span>
       </div>
-      <div ref={list} id={id} role="listbox" aria-label={title} className="max-h-[min(300px,40dvh)] overflow-y-auto p-1 pt-0">
+      <div ref={list} id={id} role="listbox" aria-label={title} className="max-h-[min(300px,40dvh)] overflow-y-auto overflow-x-hidden p-1 pt-0">
         {loading && items.length === 0 && <Loading className="px-2" />}
         {!loading && items.length === 0 && empty && <div className="px-2 py-2 text-caption text-muted">{empty}</div>}
         {rows.map(({ item, label }, i) => {

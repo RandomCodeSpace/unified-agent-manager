@@ -232,7 +232,7 @@ export function CommitPanel({
       </div>
 
       {/* The form is the one scroll area: it shrinks into the space the host leaves, and the actions below it stay in view. */}
-      <Collapse open={formOpen} className="min-h-0" inner="flex flex-col gap-2 overflow-y-auto overscroll-contain">
+      <Collapse open={formOpen} className="min-h-0" inner="flex flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div id={formId} className="flex flex-col gap-2 pt-0.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <label htmlFor={`${formId}-message`} className="text-ui font-medium text-ink">Commit message</label>
@@ -312,7 +312,7 @@ export function CommitPanel({
         formOpen && commitOff && <p className="text-meta text-muted">{commitOff}</p>
       )}
       {result && (
-        <Note tone={result.tone} role={result.tone === 'error' ? 'alert' : 'status'} className="max-h-48 overflow-y-auto break-words whitespace-pre-wrap">
+        <Note tone={result.tone} role={result.tone === 'error' ? 'alert' : 'status'} className="max-h-48 overflow-y-auto overflow-x-hidden break-words whitespace-pre-wrap">
           {result.text}
         </Note>
       )}

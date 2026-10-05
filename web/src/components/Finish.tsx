@@ -125,7 +125,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
     read({ id: c.item_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setOutputError(describeError(e)));
   }
   return (
-    <section aria-label="Finished — check the evidence" className="max-h-[35%] shrink-0 overflow-y-auto overscroll-contain border-b border-hairline px-3 py-2">
+    <section aria-label="Finished — check the evidence" className="max-h-[35%] shrink-0 overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
       <details open>
         <summary className="cursor-pointer text-ui font-medium text-ink">Finished — check the evidence</summary>
         <div className="flex flex-col gap-3 pt-2">
@@ -164,7 +164,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
           {files.length > 0 && (
             <div className="flex flex-col gap-1">
               <h3 className="text-eyebrow text-muted uppercase">Changed in this turn</h3>
-              <ul className="flex max-h-60 flex-col overflow-y-auto overscroll-contain">
+              <ul className="flex max-h-60 flex-col overflow-y-auto overflow-x-hidden overscroll-contain">
                 {files.map((f) => {
                   const row = (
                     <>

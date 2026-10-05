@@ -105,7 +105,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose }: 
       language="text"
       text={file.text}
       className="my-0 flex min-h-64 flex-1 flex-col"
-      body={<pre translate="no" className="flex-1 overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
+      body={<pre translate="no" className="flex-1 overflow-x-hidden overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] px-3 pt-0.5 pb-2.5 font-mono text-code text-ink"><code>{file.text}</code></pre>}
     >
       {null}
     </CodeBlock> : <Note>This file is empty.</Note>;
@@ -129,7 +129,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose }: 
         <h2 className="min-w-0 flex-1 truncate text-title text-ink" title={target.name}>{target.name}</h2>
         <Button ref={closeButton} size="icon" className="text-muted" aria-label="Close preview" onClick={onClose}><X /></Button>
       </PanelHeader>
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-3">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden p-3">
         <p className="break-all text-caption text-muted">{target.description ?? target.name}{file?.size !== undefined ? ` · ${formatSize(file.size)}` : ''}</p>
         {temporary && <Note>{limitation}</Note>}
         {body}

@@ -923,7 +923,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
         <ProjectBadge badge={project.badge} className="mr-0.5" />
         <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>

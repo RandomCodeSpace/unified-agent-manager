@@ -1055,7 +1055,7 @@ function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack, onU
           {pinned.full ? (
             <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} onUp={onUp} close={close} />
           ) : (
-            <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">
+            <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden px-4 pb-4">
               <div className="flex justify-end">{close}</div>
               <PeekBody id={pinned.id} phone onFull={onFull} />
             </div>
@@ -1269,7 +1269,7 @@ function IndexBody({ input, error, onPick }: Readonly<{ input: RefObject<HTMLInp
         ))}
       </div>
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- Arrow keys move between the row buttons inside. */}
-      <div ref={list} onKeyDown={onArrow} className="-mx-1.5 max-h-[min(60vh,480px)] overflow-y-auto overscroll-contain px-1.5">
+      <div ref={list} onKeyDown={onArrow} className="-mx-1.5 max-h-[min(60vh,480px)] overflow-y-auto overflow-x-hidden overscroll-contain px-1.5">
         {shown.map((g) => {
           const title = indexTitle(g.key, g.text);
           const first = g.subagents.find((s) => s.parent_tool_call_id)?.parent_tool_call_id;

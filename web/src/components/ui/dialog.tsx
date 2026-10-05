@@ -15,7 +15,7 @@ import { PanelHead } from './panel';
 
 export const backdropClass = 'fixed inset-0 z-40 bg-backdrop transition-opacity duration-240 data-starting-style:opacity-0 data-ending-style:opacity-0';
 
-const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto p-4 max-sm:items-end max-sm:p-0';
+const viewportClass = 'fixed inset-0 z-50 grid place-items-center overflow-y-auto overflow-x-hidden p-4 max-sm:items-end max-sm:p-0';
 
 // Capped at the viewport less its 16px gutters: the title row stays and the body scrolls (Dialog) when the content is taller.
 const popupClass =
@@ -57,7 +57,7 @@ export function Dialog({ open, onOpenChange, onClosed, initialFocus, title, desc
               </div>
             </PanelHead>
             {/* The body scrolls between the head and the foot; its padding keeps focus rings at the edges whole. */}
-            <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-1', footer ? 'pb-4' : 'pb-5 max-sm:pb-[max(20px,env(safe-area-inset-bottom))]')} onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
+            <div className={cn('min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-1', footer ? 'pb-4' : 'pb-5 max-sm:pb-[max(20px,env(safe-area-inset-bottom))]')} onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
               {children}
             </div>
             {footer && <div className="panel-foot flex shrink-0 flex-wrap justify-end gap-2 px-5 pt-4 pb-5 max-sm:pb-[max(20px,env(safe-area-inset-bottom))] max-sm:[&>button]:flex-1">{footer}</div>}

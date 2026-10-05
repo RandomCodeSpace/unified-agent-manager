@@ -22,7 +22,7 @@ export const separatorClass = 'my-1 fade-rule';
 export const labelClass = 'px-2 pt-2 pb-1 text-caption text-muted';
 
 /** A menu taller than the room beside its trigger (a phone) scrolls within that room instead of leaving the screen. */
-const menuClass = cn(popupClass, 'max-h-(--available-height) overflow-y-auto');
+const menuClass = cn(popupClass, 'max-h-(--available-height) overflow-y-auto overflow-x-hidden');
 
 /** One action row shared by dropdown, context and header menus. */
 export interface ActionItem {

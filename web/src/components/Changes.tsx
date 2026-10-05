@@ -5,7 +5,7 @@ import { LIVE, api, describeError, newRequestId, readOnly, type ChangeFile, type
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
-import { LARGE_CHANGE, WRAP_KEY, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, parseWrap, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
+import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
 import { Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -49,14 +49,6 @@ function writeReview(id: string, r: Review) {
     else localStorage.removeItem(reviewKey(id));
   } catch {
     // Storage full or unavailable: the review lasts until reload.
-  }
-}
-
-function readWrap(): boolean {
-  try {
-    return parseWrap(localStorage.getItem(WRAP_KEY), !!globalThis.matchMedia?.('(max-width: 480px)').matches);
-  } catch {
-    return false;
   }
 }
 
@@ -194,15 +186,6 @@ export function ChangesSheet({
     updateReview((r) => ({ ...r, comments: [...r.comments, { ...c, id: newRequestId() }] }));
   };
   const removeComment = (id: string) => updateReview((r) => ({ ...r, comments: r.comments.filter((c) => c.id !== id) }));
-  const [wrap, setWrap] = useState(readWrap);
-  const changeWrap = (next: boolean) => {
-    setWrap(next);
-    try {
-      localStorage.setItem(WRAP_KEY, next ? '1' : '0');
-    } catch {
-      // Storage unavailable: the choice lasts until reload.
-    }
-  };
   const shownFile = files.find((f) => f.path === shownPath);
 
   const stop = useEffectEvent(() => {
@@ -334,7 +317,7 @@ export function ChangesSheet({
       {adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}
-      <ul className="max-h-[40%] shrink-0 overflow-y-auto p-1" aria-busy={!data && !error ? true : undefined}>
+      <ul className="max-h-[40%] shrink-0 overflow-y-auto overflow-x-hidden p-1" aria-busy={!data && !error ? true : undefined}>
         {error && (
           <li className="px-2 py-1">
             <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
@@ -366,7 +349,7 @@ export function ChangesSheet({
       </ul>
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
       {/* The diff keeps some height while the commit form is open. */}
-      <div className="@container min-h-40 flex-1 overflow-auto">
+      <div className="@container min-h-40 flex-1 overflow-y-auto overflow-x-hidden">
         {shownPath && (
           <FileView
             key={shownPath}
@@ -378,8 +361,6 @@ export function ChangesSheet({
             comments={comments.filter((c) => c.path === shownPath)}
             onComment={commentable ? addComment : undefined}
             onRemoveComment={removeComment}
-            wrap={wrap}
-            onWrap={changeWrap}
           />
         )}
       </div>
@@ -408,7 +389,7 @@ function CommentBatch({ comments, working, sending, note, onOpen, onRemove, onSe
     <section aria-label="Review comments" className="shrink-0">
       <div className="fade-rule mx-3" aria-hidden="true" />
       {n > 0 && (
-        <ul className="max-h-32 overflow-y-auto px-1 pt-1">
+        <ul className="max-h-32 overflow-y-auto overflow-x-hidden px-1 pt-1">
           {comments.map((c) => (
             <li key={c.id} className="flex items-center gap-1 text-caption">
               <button type="button" className="min-w-0 flex-1 truncate rounded-xs px-2 py-1 text-left text-body hover:bg-tint-hover pointer-coarse:min-h-11" title={c.body} onClick={() => onOpen(c.path)}>
@@ -492,7 +473,7 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
 /** Where a comment goes: one line on one side of the diff, with its text when the comment was started. */
 type Anchor = Pick<ReviewComment, 'line' | 'side' | 'code'>;
 
-function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment, wrap, onWrap }: Readonly<{
+function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment }: Readonly<{
   path: string;
   file: FileDiffData | null;
   error: string | null;
@@ -502,8 +483,6 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
   /** Absent where comments cannot be sent (a settled or archived Task). */
   onComment?: (comment: Omit<ReviewComment, 'id'>) => void;
   onRemoveComment?: (id: string) => void;
-  wrap: boolean;
-  onWrap: (wrap: boolean) => void;
 }>) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
     if (!file) return null;
@@ -541,14 +520,10 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
   return (
     <>
       {warning}
-      <table className={cn('diff animate-fade-in', wrap && 'wrap')} translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
+      <table className="diff animate-fade-in" translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
         <caption>
-          <span className="sticky left-3 flex w-[calc(100cqw-24px)] items-center gap-2">
+          <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{file.path}</span>
-            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
-              <input type="checkbox" className="size-3.5 cursor-pointer accent-accent" checked={wrap} onChange={(e) => onWrap(e.target.checked)} />
-              Wrap lines
-            </label>
             {onViewed && (
               <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
                 <input type="checkbox" className="size-3.5 cursor-pointer accent-success" checked={!!viewed} onChange={(e) => onViewed(e.target.checked)} />
@@ -556,7 +531,7 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
               </label>
             )}
           </span>
-          {onComment && <span className="sticky left-3 block font-sans text-meta">Select a line to comment on it.</span>}
+          {onComment && <span className="block font-sans text-meta">Select a line to comment on it.</span>}
         </caption>
         <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi, lines))}</tbody>
       </table>
@@ -625,7 +600,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
       rows.push(
         <tr key={`c-${c.id}`} className="note">
           <td colSpan={3} className="px-2 py-1 font-sans whitespace-normal">
-            <div className="sticky left-2 ml-6 w-[calc(100cqw-40px)] rounded-md bg-raised px-3 py-2 text-caption shadow-raised">
+            <div className="ml-6 mr-2 rounded-md bg-raised px-3 py-2 text-caption shadow-raised">
               <p className="whitespace-pre-wrap text-ink">{c.body}</p>
               <p className="mt-1 flex items-center gap-2 text-meta text-muted">
                 <span className="flex-1">Your comment · goes out with the batch</span>
@@ -660,7 +635,7 @@ function CommentBox({ label, onSave, onCancel }: Readonly<{ label: string; onSav
   };
   return (
     <form
-      className="sticky left-2 ml-6 flex w-[calc(100cqw-40px)] flex-col gap-1.5 rounded-md bg-raised p-2 shadow-raised"
+      className="ml-6 mr-2 flex flex-col gap-1.5 rounded-md bg-raised p-2 shadow-raised"
       onSubmit={(e) => { e.preventDefault(); save(); }}
     >
       <textarea

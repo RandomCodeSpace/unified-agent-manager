@@ -55,7 +55,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
         <Popover.Content className="w-96 max-w-[calc(100vw-16px)] gap-2">
           <Popover.Title>Background tasks</Popover.Title>
           <Popover.Description>{shown.known ? status : 'Last reported tasks. Their current status is unavailable.'}</Popover.Description>
-          <ul className="max-h-64 space-y-2 overflow-y-auto overscroll-contain text-caption text-muted">
+          <ul className="max-h-64 space-y-2 overflow-y-auto overflow-x-hidden overscroll-contain text-caption text-muted">
             {shown.tasks.map((task) => (
               <li key={task.id} className="min-w-0">
                 <div className="flex items-center gap-2">

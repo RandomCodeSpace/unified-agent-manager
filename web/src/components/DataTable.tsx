@@ -79,7 +79,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
   return (
     <div ref={named} className="my-2.5 min-w-0 max-w-full">
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled scroll region accepts keyboard scrolling. */}
-      <div role="region" aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal] pointer-coarse:max-h-none">
+      <div role="region" aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} tabIndex={0} className="max-h-[32rem] max-w-full overflow-y-auto overflow-x-hidden [overflow-wrap:normal] pointer-coarse:max-h-none">
         <table className="data-table w-full">
           <thead><tr onKeyDown={roving.onKeyDown}>{columns.map((column, index) => {
             const selected = sort?.column === index;
@@ -150,5 +150,5 @@ export function MarkdownTable({ children, streaming }: Readonly<{ children?: Rea
   if (data) return <DataTable {...data} />;
   // While streaming, skip indexing, controls and sorting entirely.
   // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard-accessible overflow, as for completed tables.
-  return <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-auto"><table className="!my-0 w-full">{children}</table></div>;
+  return <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-y-auto overflow-x-hidden"><table className="!my-0 w-full">{children}</table></div>;
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { byRisk, commentsMessage, parseReview, parseWrap, riskOf, turnFile, serializeReview, staleReviewKeys, statusLetter, viewState } from '../src/lib/review.ts';
+import { byRisk, commentsMessage, parseReview, riskOf, turnFile, serializeReview, staleReviewKeys, statusLetter, viewState } from '../src/lib/review.ts';
 
 test('risky paths get a short reason; ordinary ones none', () => {
   const label = p => riskOf(p)?.label ?? null;
@@ -52,13 +52,6 @@ test('one comment reads in the singular', () => {
   assert.equal(commentsMessage([{ id: 'c', path: 'a.go', line: 4, side: 'new', code: '', body: 'Add a test.' }]), 'I reviewed your changes and have 1 comment. Please address it.\n\n1. a.go, line 4:\n   Add a test.');
 });
 
-test('the diff wraps on a phone until the owner chooses, then as chosen everywhere', () => {
-  assert.equal(parseWrap(null, true), true);
-  assert.equal(parseWrap(null, false), false);
-  assert.equal(parseWrap('garbage', false), false);
-  assert.equal(parseWrap('1', false), true);
-  assert.equal(parseWrap('0', true), false);
-});
 
 test('a turn\'s edits find their row in Changes, absolute or relative to a folder below the repository root', () => {
   const listed = ['.github/workflows/ci.yml', 'web/src/a.ts', 'docs/terminal.md'];

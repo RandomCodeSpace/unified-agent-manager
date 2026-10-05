@@ -93,7 +93,7 @@ export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>)
         <p className="mb-1 text-caption text-muted">
           At {a.head}{a.dirty ? ', with uncommitted changes' : ', clean'}, {timeAgo(a.ran_at)} · {a.cmd_hash}
         </p>
-        {a.tail && <pre className="max-h-48 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{a.tail}</pre>}
+        {a.tail && <pre className="max-h-48 overflow-x-hidden overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{a.tail}</pre>}
       </Row>,
     );
   }

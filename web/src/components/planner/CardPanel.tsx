@@ -106,7 +106,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   const actions = cardActions.actionsOf(c);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-2 pb-6">
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-4 pt-2 pb-6">
       <div className="flex flex-col gap-5">
         <div className="flex flex-col gap-2">
           {path.length > 0 && (
@@ -179,7 +179,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             <Note tone={check.exit === 0 ? 'muted' : 'error'}>
               <span className="font-mono text-code-sm">{check.cmd}</span> exited {check.exit} at {check.head}.
             </Note>
-            {check.tail && <pre className="max-h-40 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{check.tail}</pre>}
+            {check.tail && <pre className="max-h-40 overflow-x-hidden overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{check.tail}</pre>}
           </div>
         )}
         {triage && (

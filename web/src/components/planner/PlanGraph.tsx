@@ -150,7 +150,7 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
         aria-describedby={help}
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The viewport itself supports keyboard pan and zoom.
         tabIndex={cards.length ? 0 : undefined}
-        className="max-h-[60dvh] min-w-0 cursor-grab touch-none overflow-auto overscroll-contain select-none focus-visible:-outline-offset-2 active:cursor-grabbing"
+        className="max-h-[60dvh] min-w-0 cursor-grab touch-none overflow-y-auto overflow-x-hidden overscroll-contain select-none focus-visible:-outline-offset-2 active:cursor-grabbing"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={() => { drag.current = null; }}
