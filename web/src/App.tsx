@@ -1179,10 +1179,6 @@ export default function App() {
             {narrow && (
               <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
-                {/* On the backdrop's strip beside the drawer, a 44px target. */}
-                <Button size="icon" aria-label="Close sidebar" className="absolute top-[calc(env(safe-area-inset-top)+2px)] left-full size-11 text-on-primary hover:bg-on-primary/15 active:bg-on-primary/25" onClick={() => setDrawerOpen(false)}>
-                  <X />
-                </Button>
               </Sheet>
             )}
             <main tabIndex={-1} className="relative flex min-h-0 min-w-0 flex-col bg-canvas outline-hidden">

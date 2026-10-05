@@ -99,10 +99,14 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         <Button size="icon-sm" aria-label="Close usage" className="text-muted" onClick={onClose}><X aria-hidden="true" /></Button>
       </div>
     </PanelHead>
-    <div className="@container flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
-      {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
-      {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
-      <PanelSection label="Tokens" meta="recorded by UAM">
+    {/* Wide (from 1100px), the allowance and the tokens sit side by side and only the model list scrolls; narrower, one column scrolls whole. */}
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4 min-[1100px]:flex min-[1100px]:flex-col min-[1100px]:overflow-y-hidden" onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 4)}>
+      <div className="grid grid-cols-1 gap-6 min-[1100px]:min-h-0 min-[1100px]:flex-1 min-[1100px]:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] min-[1100px]:gap-8">
+      <div className="flex min-w-0 flex-col gap-6">
+        {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
+        {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
+      </div>
+      <PanelSection label="Tokens" meta="recorded by UAM" className="min-w-0 min-[1100px]:min-h-0">
       <div role="group" aria-label="Usage period" className="flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
@@ -150,7 +154,8 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         </label>}
       </>}
     {shown && <>
-      <div className="min-w-0" role="region" aria-label="Model usage">
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
+      <div className={cn('min-w-0', all && 'min-[1100px]:min-h-0 min-[1100px]:flex-1 min-[1100px]:overflow-x-hidden min-[1100px]:overflow-y-auto min-[1100px]:overscroll-contain')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
           <ModelTable models={filtered} colors={colors} names={names} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
           {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
@@ -159,6 +164,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       {all && <p className="text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models`} · Token splits in the info tooltips.</p>}
     </>}
       </PanelSection>
+      </div>
     </div>
     <PanelFoot className="gap-3">
       {report?.collection?.updated_at && <p role="status" className="min-w-0 truncate">Updated <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time></p>}
@@ -330,6 +336,8 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
     setOpen(next);
   };
   const meter = known && !quota.unlimited;
+  // From the footer chip it opens beside the whole sidebar, on the page, rather than over the list.
+  const beside = variant === 'chip' && side === 'right';
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
     <Tip label={`Usage · ${description}`} side={side} disabled={open}>
       {variant === 'chip' ? (
@@ -349,7 +357,7 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
     </Tip>
     <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
     {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
-    <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
+    <Popover.Content ref={popup} initialFocus={popup} side={side} align={side === 'right' ? 'end' : 'start'} sideOffset={side === 'right' ? 12 : 6} collisionBoundary={boundary} anchor={beside ? () => describer.current?.closest('nav') ?? null : undefined} className="w-[min(52rem,calc(100vw-var(--spacing-rail)-2rem))] min-w-[29rem] max-w-[calc(100vw-1rem)] h-[min(40rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-hidden p-0 max-[959px]:w-[29rem] max-[959px]:min-w-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
       {open && <UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;
