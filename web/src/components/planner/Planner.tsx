@@ -4,6 +4,7 @@ import { api, plannerErrorText, type BoardJob, type Project } from '../../api';
 import { boardOf, childIndex, epicOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
+import { popupOpen } from '../../App';
 import { Note, Skeleton, useApp } from '../common';
 import { Button } from '../ui/button';
 import { usePresence } from '../ui/collapse';
@@ -167,6 +168,8 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const closePanel = () => setUi({ panel: null });
   // Owner authoring (§3) happens in the Tree: a new card's form opens there, under its parent.
   const author = !!key && key !== 'unassigned' && !project?.no_git && !!board?.data;
+  // An empty plan has one way in, its own New epic, and nothing for the views to show.
+  const empty = author && !board?.data?.cards.length;
   const create = (kind: 'epic' | 'subtask') => setUi({ view: 'tree', creating: { parent: '', kind } });
 
   let body: ReactNode;
@@ -184,20 +187,14 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
     );
   } else if (!board?.data) {
     body = <Skeleton label="Loading the plan…" rows={8} className="px-4 py-4" rowClassName="h-6" />;
-  } else if (author && !board.data.cards.length && !ui.creating) {
+  } else if (empty && !ui.creating) {
     body = (
       <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
         <p className="text-ui text-muted">Nothing is planned for {project?.name ?? 'this project'} yet.</p>
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button size="md" variant="primary" onClick={() => create('epic')}>
-            <Plus />
-            New epic
-          </Button>
-          <Button size="md" variant="secondary" onClick={() => create('subtask')}>
-            <Plus />
-            Add subtask
-          </Button>
-        </div>
+        <Button size="md" variant="primary" data-add-root="epic" onClick={() => create('epic')}>
+          <Plus />
+          New epic
+        </Button>
       </div>
     );
   } else if (ui.view === 'tree') {
@@ -212,31 +209,33 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
     { key: 'purge', label: `Purge cancelled${cancelled ? ` (${cancelled})` : ''}`, icon: <Trash2 />, danger: true, disabled: !cancelled || key === 'unassigned', reason: !cancelled ? 'No cancelled cards on this board.' : undefined, onSelect: () => setPurging(true) },
   ];
 
+  // The header spans the side panels, so Close planner keeps its place while one is open.
   return (
-    <div className="flex min-h-0 flex-1">
-      <div className="flex min-w-0 flex-1 flex-col animate-rise">
-        <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
-          {leading}
-          <KanbanSquare aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
-          <h1 className="shrink-0 text-display-sm text-ink max-sm:sr-only">Planner</h1>
-          <PlannerProjectPicker projects={projects} value={key} unassigned={unassigned} onPick={(v) => setUi({ project: v, selected: null, epic: null, panel: null, creating: null })} />
-          <span className="flex-1" />
-          {author && (
-            <Tip label="New epic">
-              <Button size="md" aria-label="New epic" className="px-2 text-muted" onClick={() => create('epic')}>
-                <Plus />
-                <span className="max-sm:hidden">New epic</span>
-              </Button>
-            </Tip>
-          )}
-          {!narrow && <Segmented size="sm" aria-label="View" value={ui.view} onValueChange={(v) => setUi({ view: v as PlannerViewKind })} items={VIEW_ITEMS} />}
-          <Tip label="Inbox">
-            <Button id="planner-inbox" size="md" aria-pressed={ui.panel === 'inbox'} aria-label={`Inbox, ${pending} pending`} className="px-2 text-muted" onClick={() => setUi({ panel: ui.panel === 'inbox' ? null : 'inbox' })}>
-              <Inbox />
-              <span className="max-sm:hidden">Inbox</span>
-              {pending > 0 && <span className="rounded-xs bg-attention-wash px-1 text-caption tabular-nums text-attention">{pending}</span>}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col animate-rise">
+      <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
+        {leading}
+        <KanbanSquare aria-hidden="true" className="size-4 shrink-0 text-muted max-sm:hidden" />
+        <h1 className="shrink-0 text-display-sm text-ink">Planner</h1>
+        <PlannerProjectPicker projects={projects} value={key} unassigned={unassigned} onPick={(v) => setUi({ project: v, selected: null, epic: null, panel: null, creating: null })} />
+        <span className="flex-1" />
+        {author && !empty && (
+          <Tip label="New epic">
+            <Button size="md" aria-label="New epic" data-add-root="epic" className="px-2 text-muted" onClick={() => create('epic')}>
+              <Plus />
+              <span className="max-sm:hidden">New epic</span>
             </Button>
           </Tip>
+        )}
+        {!narrow && !empty && <Segmented size="sm" aria-label="View" value={ui.view} onValueChange={(v) => setUi({ view: v as PlannerViewKind })} items={VIEW_ITEMS} />}
+        <Tip label="Inbox">
+          <Button id="planner-inbox" size="md" aria-pressed={ui.panel === 'inbox'} aria-label={`Inbox, ${pending} pending`} className="px-2 text-muted" onClick={() => setUi({ panel: ui.panel === 'inbox' ? null : 'inbox' })}>
+            <Inbox />
+            <span className="max-sm:hidden">Inbox</span>
+            {pending > 0 && <span className="rounded-xs bg-attention-wash px-1 text-caption tabular-nums text-attention">{pending}</span>}
+          </Button>
+        </Tip>
+        {/* Only while it holds something to do: a menu of one disabled item says nothing. */}
+        {menuItems.some((item) => !item.disabled) && (
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-md" aria-label="Planner actions" className="text-muted" />}>
               <Ellipsis />
@@ -245,38 +244,42 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
               <Menu.Actions items={menuItems} />
             </Menu.Content>
           </Menu.Root>
-          <Tip label="Close planner">
-            <Button size="icon-md" aria-label="Close planner" className="text-muted" onClick={onClose}>
-              <X />
-            </Button>
-          </Tip>
-        </header>
-        <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-1.5">
-          {narrow && <Segmented size="sm" aria-label="View" className="w-full" value={ui.view} onValueChange={(v) => setUi({ view: v as PlannerViewKind })} items={VIEW_ITEMS} />}
-          {epics.length > 0 && (
-            <Select
-              aria-label="Epic"
-              // A quiet filter like Show cancelled beside it: caption text, no well, the tint on hover.
-              className="h-7 w-auto max-w-64 min-w-0 gap-1 bg-transparent px-1.5 text-caption text-body shadow-none"
-              value={ui.epic ?? ''}
-              onValueChange={(v) => setUi({ epic: v || null })}
-              items={[{ value: '', label: 'All epics' }, ...epics.map((e) => ({ value: e.id, label: `#${e.seq} ${e.title}` }))]}
-            />
-          )}
-          <span className="flex items-center gap-2 text-caption text-muted">
-            <Switch aria-label="Show cancelled" checked={ui.showCancelled} onCheckedChange={(v) => setUi({ showCancelled: v })} />
-            <span aria-hidden="true">Show cancelled</span>
-          </span>
-          {stale > 0 && <span className="text-caption text-warning">{stale} stale</span>}
-          {board?.loading && board.data && <span className="text-caption text-muted">Refreshing…</span>}
+        )}
+        <Tip label="Close planner">
+          <Button size="icon-md" aria-label="Close planner" className="text-muted" onClick={onClose}>
+            <X />
+          </Button>
+        </Tip>
+      </header>
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 pb-1.5">
+            {narrow && !empty && <Segmented size="sm" aria-label="View" className="w-full" value={ui.view} onValueChange={(v) => setUi({ view: v as PlannerViewKind })} items={VIEW_ITEMS} />}
+            {epics.length > 0 && (
+              <Select
+                aria-label="Epic"
+                // A quiet filter like Show cancelled beside it: caption text, no well, the tint on hover.
+                className="h-7 w-auto max-w-64 min-w-0 gap-1 bg-transparent px-1.5 text-caption text-body shadow-none"
+                value={ui.epic ?? ''}
+                onValueChange={(v) => setUi({ epic: v || null })}
+                items={[{ value: '', label: 'All epics' }, ...epics.map((e) => ({ value: e.id, label: `#${e.seq} ${e.title}` }))]}
+              />
+            )}
+            <span className="flex items-center gap-2 text-caption text-muted">
+              <Switch aria-label="Show cancelled" checked={ui.showCancelled} onCheckedChange={(v) => setUi({ showCancelled: v })} />
+              <span aria-hidden="true">Show cancelled</span>
+            </span>
+            {stale > 0 && <span className="text-caption text-warning">{stale} stale</span>}
+            {board?.loading && board.data && <span className="text-caption text-muted">Refreshing…</span>}
+          </div>
+          <NoticeBar className="mx-3 mb-1" />
+          <div className={cn('flex min-h-0 flex-1 flex-col', ui.view === 'map' && 'relative')} aria-busy={!board?.data || undefined}>
+            {body}
+          </div>
         </div>
-        <NoticeBar className="mx-3 mb-1" />
-        <div className={cn('flex min-h-0 flex-1 flex-col', ui.view === 'map' && 'relative')} aria-busy={!board?.data || undefined}>
-          {body}
-        </div>
+        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
+        {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       </div>
-      {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
-      {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       <AlertDialog
         open={purging}
         onOpenChange={(o) => !o && setPurging(false)}
@@ -310,8 +313,21 @@ function InboxPanel({ inline, open, onClose, onClosed }: Readonly<{ inline: bool
   const p = usePlanner();
   const { narrow } = useApp();
   const pending = p.ui.project ? (p.boards[p.ui.project]?.data?.requests.length ?? 0) : 0;
+  // Inline, the panel is no dialog: Esc closes it and returns to the Inbox button, unless a popup or a field owns the key.
+  useEffect(() => {
+    if (!inline || !open) return;
+    const escape = (event: KeyboardEvent) => {
+      const editing = (event.target as Element | null)?.closest?.('input, textarea, select, [contenteditable="true"]');
+      if (event.key !== 'Escape' || event.defaultPrevented || editing || popupOpen()) return;
+      onClose();
+      document.getElementById('planner-inbox')?.focus();
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [inline, open, onClose]);
   return (
-    <SidePanel id="planner-inbox" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Inbox">
+    // Nothing pending needs no more than the narrowest panel.
+    <SidePanel id="planner-inbox" inline={inline} open={open} onClose={onClose} onClosed={onClosed} label="Inbox" className={inline && !pending ? 'w-80' : undefined}>
       <PanelHeader>
         <Inbox aria-hidden="true" className="size-4 text-muted" />
         <span className="text-title text-ink">Inbox</span>

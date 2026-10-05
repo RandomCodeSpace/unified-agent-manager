@@ -597,6 +597,53 @@ describe('native configuration', () => {
     } finally { read.mockRestore(); }
   });
 
+  test('skills filter with a count, group by source, name the source of a duplicate and word system errors', async () => {
+    const original = api.configuration;
+    const raw = 'Skill cannot be read: lstat /home/demo/.agents/skills/gone: no such file or directory';
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      const skill = (name: string, root: string): ConfigurationFile => ({ name, path: `/home/demo/${root}/skills/${name}/SKILL.md`, content: `---\nname: ${name}\n---\n`, revision: '7', editable: false, read_only_reason: 'Shared skill.' });
+      result.skills.push(skill('web-design', '.agents'), skill('adhd', '.claude'), skill('web-design', '.claude'));
+      result.conflict_details = [{ kind: 'skills', path: '/home/demo/.claude/skills/gone/SKILL.md', message: raw }];
+      return result;
+    });
+    try {
+      const { user, card } = await open('Skills');
+      const list = within(card.getByRole('list', { name: 'skills in this scope' }));
+      expect(list.getAllByRole('heading').map((h) => h.textContent)).toEqual(['.copilot · 1', '.agents · 1', '.claude · 2']);
+      expect(list.getAllByText(/^in \.(agents|claude)$/).map((s) => s.textContent)).toEqual(['in .agents', 'in .claude']);
+      expect(card.getByText('4 skills')).toBeTruthy();
+      await user.type(card.getByRole('searchbox', { name: 'Filter skills' }), 'web');
+      expect(list.getAllByRole('listitem')).toHaveLength(2);
+      expect(card.getByText('2 of 4 skills')).toBeTruthy();
+      await user.type(card.getByRole('searchbox', { name: 'Filter skills' }), '-nothing');
+      expect(card.getByText('No skills match “web-nothing”.')).toBeTruthy();
+      const notice = card.getAllByRole('status').find((entry) => entry.textContent?.startsWith('Skill cannot be read: a file or link target is missing.'))!;
+      expect(within(notice).getByText('/home/demo/.claude/skills/gone/SKILL.md')).toBeTruthy();
+      expect(within(notice).getByText(raw)).toBeTruthy();
+    } finally { read.mockRestore(); }
+  });
+
+  test('a missing instructions file reads as missing in its viewer, titled once', async () => {
+    const { user, card } = await open('Instructions');
+    expect(card.getByText('No saved file at this path.')).toBeTruthy();
+    await user.click(card.getByRole('button', { name: 'View copilot-instructions.md' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { level: 2 }).textContent).toBe('copilot-instructions.md');
+    expect(within(dialog).getByText('No saved file at this path.')).toBeTruthy();
+    expect(within(dialog).queryByText(/This file is empty|unsaved editor changes/)).toBeNull();
+  });
+
+  test('the inline Add form takes focus and Escape returns focus to the card Add button', async () => {
+    const { user, card } = await open('Agents');
+    await user.click(card.getByRole('button', { name: 'Add agent' }));
+    const form = within(card.getByRole('form', { name: 'Add agent' }));
+    await waitFor(() => expect(document.activeElement).toBe(form.getByRole('textbox', { name: 'Name' })));
+    await user.keyboard('{Escape}');
+    expect(card.queryByRole('form', { name: 'Add agent' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(card.getByRole('button', { name: 'Add agent' })));
+  });
+
   test('same-name skills retain exact file identity when reloading, saving and removing', async () => {
     const original = api.configuration;
     let shared: ConfigurationFile | undefined;

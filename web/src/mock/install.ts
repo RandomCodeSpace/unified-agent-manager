@@ -1014,6 +1014,12 @@ export function install(): { received: Received[] } {
       const path = r[2].split('/').map(decodeURIComponent).join('/');
       if (!t || !(st.files[t.project_id] ?? []).includes(path)) return fail(404, 'file not found');
       if (/\.png$/i.test(path)) return new Response(method === 'HEAD' ? null : screenshotPng(path).slice(), { status: 200, headers: { 'Content-Type': 'image/png' } });
+      // As the service types them (internal/web/files.go viewTypes): an HTML page as text/html; Markdown with headings.
+      if (/\.(html?|md)$/i.test(path)) {
+        const html = /\.html?$/i.test(path);
+        const page = new TextEncoder().encode(html ? `<!doctype html>\n<title>${path}</title>\n<h1>${path}</h1>\n<p>A page of the mock project.</p>\n` : `# ${path}\n\nIntro.\n\n## Section\n\nText.\n\n### Detail\n\nMore text.\n`);
+        return new Response(method === 'HEAD' ? null : page, { status: 200, headers: { 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8', 'Content-Length': String(page.length) } });
+      }
       const text = `// ${path}\n${Array.from({ length: 40 }, (_, i) => `const line${i + 1} = ${JSON.stringify(`${path} `.repeat(i % 7 === 3 ? 12 : 1).trim())};`).join('\n')}\n`;
       const body = new TextEncoder().encode(text);
       return new Response(method === 'HEAD' ? null : body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': String(body.length) } });

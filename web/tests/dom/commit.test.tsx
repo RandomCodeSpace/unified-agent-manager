@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { defaultSelection } from '../../src/components/CommitPanel';
 import { composer, openTask, renderApp } from './render';
 
@@ -26,7 +27,8 @@ describe('commit panel', () => {
     expect((own as HTMLInputElement).checked).toBe(true);
     expect((panel.getByRole('checkbox', { name: /internal\/vterm\/redraw\.go/ }) as HTMLInputElement).checked).toBe(false);
     expect(panel.getByText('4 files from other tasks are not included')).toBeTruthy();
-    expect(panel.getByText('No task is running in this repository')).toBeTruthy();
+    // The commit buttons say why they are off, under them.
+    expect(panel.getByText('Write or generate a message to commit.')).toBeTruthy();
 
     await user.click(panel.getByRole('button', { name: 'Generate' }));
     const message = panel.getByRole('textbox', { name: 'Commit message' }) as HTMLTextAreaElement;
@@ -41,6 +43,7 @@ describe('commit panel', () => {
     await user.type(message, 'docs: describe the terminal line');
     expect(panel.queryByText('Generated from this task’s changes')).toBeNull();
     expect(panel.getByText(/32\/72 characters in the subject/)).toBeTruthy();
+    expect(panel.queryByText('Write or generate a message to commit.')).toBeNull();
     await user.click(panel.getByRole('button', { name: 'Commit 2 files' }));
     expect(await panel.findByText('Committed 2 files as 3f9c2e1.')).toBeTruthy();
     await waitFor(() => expect(panel.queryByRole('checkbox', { name: /docs\/terminal\.md/ })).toBeNull());
@@ -78,16 +81,47 @@ describe('commit panel', () => {
   });
 
   // The Changes column has a fixed height and does not scroll; expanded, the form is taller
-  // than what a short window leaves it. It must shrink into that space and scroll itself, with
-  // the actions inside, or they sit below the window (jsdom has no layout: this pins the classes).
-  test('in Changes, the expanded form scrolls inside its own region so the actions stay reachable', async () => {
+  // than what a short window leaves it. The region shrinks into that space, the form inside it is
+  // the one scroll area, and the actions sit below the form, outside it, so they stay in view
+  // (jsdom has no layout: this pins the classes and the structure).
+  test('in Changes, the expanded form scrolls by itself and the actions stay below it', async () => {
     const { user } = await openIdle('t3');
     const panel = await commitPanel(user);
     await user.click(panel.getByRole('button', { name: /^Commit/ }));
     const region = screen.getByRole('dialog', { name: 'Changes' }).querySelector('section[aria-label="Commit"]')!;
-    expect([...region.classList]).toEqual(expect.arrayContaining(['min-h-0', 'shrink', 'overflow-y-auto']));
+    expect([...region.classList]).toEqual(expect.arrayContaining(['min-h-0', 'shrink']));
     expect(region.classList.contains('shrink-0')).toBe(false);
-    for (const name of [/^Commit \d+ files?$/, 'Commit and push']) expect(region.contains(await panel.findByRole('button', { name }))).toBe(true);
+    expect(region.classList.contains('overflow-y-auto')).toBe(false);
+    const form = (await panel.findByRole('textbox', { name: 'Commit message' })).closest('.overflow-y-auto')!;
+    expect(region.contains(form)).toBe(true);
+    expect(form.querySelectorAll('.overflow-y-auto')).toHaveLength(0);
+    for (const name of [/^Commit \d+ files?$/, 'Commit and push']) {
+      const button = await panel.findByRole('button', { name });
+      expect(region.contains(button) && !form.contains(button)).toBe(true);
+    }
+  });
+
+  // A reason the repository gives keeps the button hoverable, so its tip can say why.
+  test('Push and Pull with nowhere to go stay hoverable, say why, and do nothing', async () => {
+    const read = api.git.bind(api);
+    const spy = vi.spyOn(api, 'git').mockImplementation(async (...args: Parameters<typeof api.git>) => ({ ...(await read(...args)), remote: false, upstream: undefined }));
+    try {
+      const { user } = await openIdle('t3');
+      const panel = await commitPanel(user);
+      const push = panel.getByRole('button', { name: 'Push' }) as HTMLButtonElement;
+      const pull = panel.getByRole('button', { name: 'Pull' }) as HTMLButtonElement;
+      for (const button of [push, pull]) {
+        expect(button.disabled).toBe(false);
+        expect(button.getAttribute('aria-disabled')).toBe('true');
+      }
+      await user.hover(pull);
+      expect(await screen.findByText('No upstream to pull from')).toBeTruthy();
+      await user.click(push);
+      expect(panel.queryByRole('alert')).toBeNull();
+      expect(panel.queryByRole('status')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('sets up git in a project that has none', async () => {

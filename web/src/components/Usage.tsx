@@ -3,9 +3,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { api, describeError, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaFace, quotaPace, quotaText } from '../lib/cost';
-import { useApp } from './common';
+import { dateTime, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateWithoutCache, groupUsageModels } from '../lib/token-usage';
-import { Count, costText, MODEL_COLORS, ModelOverview, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
+import { Count, costText, MODEL_COLORS, ModelOverview, modelNames, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { HelpTip, Tip } from './ui/tooltip';
@@ -77,17 +77,18 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
   const combined = aggregateUsageModels(models, 'All models');
   const noCache = estimateWithoutCache(shown?.models ?? [], prices);
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
-  const filtered = models.filter((model) => (model.model || 'Unspecified model').toLowerCase().includes(query.toLowerCase()));
+  const names = modelNames(meta);
+  const filtered = models.filter((model) => `${model.model || 'Unspecified model'} ${names.get(model.model) ?? ''}`.toLowerCase().includes(query.toLowerCase()));
   return <>
-    <div className="shrink-0 px-4 pt-3">
+    <div className="@container shrink-0 px-4 pt-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1">
           <Popover.Title className="text-title">Usage</Popover.Title>
           <HelpTip label="Usage">
             <span className="block">Input, Output, and Cache are separate parts of the recorded token split. Cache includes reads and writes. Bars show proportions within each model; totals retain the source-reported count.</span>
-            {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
+            {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
             {report?.collection && <>
-              <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {new Date(report.collection.copilot_since).toLocaleString()}. Other harness history may start earlier.</span>
+              <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {dateTime(report.collection.copilot_since)}. Other harness history may start earlier.</span>
               {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
             </>}
           </HelpTip>
@@ -103,12 +104,12 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
             <div className="flex items-baseline justify-between gap-3"><span className="font-medium text-ink">{provider} allowance</span><span className="font-medium tabular-nums text-ink">{quotaFace(quota)}</span></div>
             <p className="mt-1 text-muted">{quotaText(quota)}</p>
             <p className={cn('mt-1', QUOTA_TONES[pace.tone])}>{pace.label}</p>
-            {pace.daysUntilReset !== null && <p className="text-muted" title={new Date(now + pace.daysUntilReset * 86400000).toLocaleString()}>{daysText(pace.daysUntilReset)} until reset{pace.daysAtPace !== null ? ` · about ${daysText(pace.daysAtPace)} left at this pace` : ''}</p>}
+            {pace.daysUntilReset !== null && <p className="text-muted" title={dateTime(new Date(now + pace.daysUntilReset * 86400000))}>{daysText(pace.daysUntilReset)} until reset{pace.daysAtPace !== null ? ` · about ${daysText(pace.daysAtPace)} left at this pace` : ''}</p>}
           </div>;
         })}
         {quotas.some((q) => quotaPace(q, now, usage?.stale).daysAtPace !== null) && <p className="text-meta text-muted">Pace uses average allowance spent per day this month.</p>}
       </section>
-      {report?.collection?.updated_at && <p role="status" className="mt-1 text-meta text-muted">Last fetched {new Date(report.collection.updated_at).toLocaleString()}.</p>}
+      {report?.collection?.updated_at && <p role="status" className="mt-1 text-meta text-muted">Last fetched <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time>.</p>}
       <div role="group" aria-label="Usage period" className="mt-2 flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
@@ -122,8 +123,8 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       </div>}
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
-        <div className="grid grid-cols-3 gap-3 py-2 max-[360px]:grid-cols-2">
-          <div className="max-[360px]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p><p className="mt-1 text-meta text-muted">Across {models.length} {models.length === 1 ? 'model' : 'models'}</p></div>
+        <div className="grid grid-cols-3 gap-3 py-2 @max-[22rem]:grid-cols-2">
+          <div className="@max-[22rem]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p><p className="mt-1 text-meta text-muted">Across {models.length} {models.length === 1 ? 'model' : 'models'}</p></div>
           <div>
             <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Estimated cost</span>
               <HelpTip label="Estimated cost">
@@ -141,10 +142,10 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
                 <span className="mt-2 block">Uses current configured prices and available token counts. Records without prices or token counts are excluded. Source-only charges cannot be reconstructed. This is an alternative total estimate, not an extra charge.</span>
               </HelpTip>
             </div>
-            <p className={cn('mt-1 text-ink tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-display-md')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(noCache.cost)}</p>
+            <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-title')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(noCache.cost)}</p>
           </div>
         </div>
-        <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} /></div>
+        <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>
         <div role="group" aria-label="Usage view" className="mb-2 flex gap-1">
           <Button size="sm" aria-pressed={!all} onClick={() => { setAll(false); setQuery(''); }}>Overview</Button>
           <Button size="sm" aria-pressed={all} onClick={() => setAll(true)}>All models · {models.length}</Button>
@@ -158,11 +159,11 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
     </div>
     {shown && <>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div className={cn('min-w-0 px-4 pb-1', all ? 'min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible' : 'shrink-0 overflow-x-clip')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
+      <div className={cn('min-w-0 px-4 pb-1', all ? 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [@media(max-height:600px)]:shrink-0 [@media(max-height:600px)]:overflow-x-clip [@media(max-height:600px)]:overflow-y-visible' : 'grow shrink-0 overflow-x-clip')} role="region" aria-label="Model usage" tabIndex={all ? 0 : undefined}>
         {models.length === 0 ? <p className="py-4 text-caption text-muted">No usage recorded for this period.</p> : all ? <>
-          <ModelTable models={filtered} colors={colors} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
+          <ModelTable models={filtered} colors={colors} names={names} period={PERIODS.find((p) => p.key === period)!.label} sort={sort} onSort={setSort} />
           {filtered.length === 0 && <p className="py-8 text-center text-muted">No matching models.</p>}
-        </> : <ModelOverview models={models} colors={colors} />}
+        </> : <ModelOverview models={models} colors={colors} names={names} />}
       </div>
       <div className="shrink-0 bg-surface px-4 py-2">
         {all && <p className="mb-2 text-meta text-muted">{query ? `${filtered.length} of ${models.length} models` : `${models.length} models · Scroll for more`} · Token splits in the info tooltips.</p>}
@@ -199,7 +200,14 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
   const descriptionId = useId();
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);
-  return <Popover.Root open={open} onOpenChange={setOpen}>
+  const describer = useRef<HTMLSpanElement>(null);
+  // In the drawer the popover stays inside it rather than spilling over the backdrop.
+  const [boundary, setBoundary] = useState<Element | undefined>();
+  const onOpenChange = (next: boolean) => {
+    if (next) setBoundary(describer.current?.closest('[role="dialog"]') ?? undefined);
+    setOpen(next);
+  };
+  return <Popover.Root open={open} onOpenChange={onOpenChange}>
     <Tip label={`Usage · ${description}`} side={side} disabled={open}>
       <Popover.Trigger render={<Button data-account-usage size="icon" aria-label="Usage" aria-describedby={descriptionId} className={cn('[&_svg]:size-full', QUOTA_TONES[pace.tone], className)} />}>
         <span aria-hidden="true" className={cn('relative block size-4 shrink-0', QUOTA_TONES[pace.tone])}>
@@ -207,12 +215,14 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
             <circle cx="18" cy="18" r="15.5" stroke="currentColor" strokeWidth="2.5" className="text-hairline-strong" />
             <circle cx="18" cy="18" r="15.5" pathLength="100" stroke="currentColor" strokeWidth="2.5" strokeDasharray={`${pace.remaining ?? 0} 100`} />
           </svg>
-          <span className="absolute inset-0 flex items-center justify-center text-[7px] leading-none font-semibold tabular-nums">{value}</span>
+          {/* Two characters fit the ring at 9px; 100 needs 7px. */}
+          <span className={cn('absolute inset-0 flex items-center justify-center leading-none font-semibold tabular-nums', value.length > 2 ? 'text-[7px]' : 'text-[9px]')}>{value}</span>
         </span>
       </Popover.Trigger>
     </Tip>
-    <span id={descriptionId} className="sr-only">{description}</span>
-    <Popover.Content ref={popup} initialFocus={popup} side={side} className="w-[29rem] max-w-[calc(100vw-1rem)] max-h-[min(calc(100dvh-2rem),var(--available-height))] gap-0 overflow-x-hidden overflow-y-auto p-0">
+    <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
+    {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
+    <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-x-hidden overflow-y-auto p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">
       {open && <UsageContent now={now} onClose={() => setOpen(false)} onAddPrices={onAddPrices} />}
     </Popover.Content>
   </Popover.Root>;

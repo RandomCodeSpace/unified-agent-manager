@@ -32,7 +32,8 @@ export function MarkdownFile({ sessionId, workdir, path, text, children }: Reado
         <SessionContext.Provider value={sessionId}>
           <WorkdirContext.Provider value={workdir}>
             <MdBaseContext.Provider value={base}>
-              <Markdown text={text} className="shrink-0 text-chat text-ink" />
+              {/* A document, not a reply: its headings step down in size (a reply's stay at the body size). */}
+              <Markdown text={text} className="shrink-0 text-chat text-ink [&_h1]:text-display-md [&_h2]:text-display-sm [&_h3]:text-chat-lg" />
             </MdBaseContext.Provider>
           </WorkdirContext.Provider>
         </SessionContext.Provider>

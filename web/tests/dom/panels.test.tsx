@@ -33,10 +33,17 @@ describe('changes', () => {
     expect(await sheet.findByText('--muted: #6b6560;')).toBeTruthy();
   });
 
-  test('the transcript\'s changed-files line opens the same sheet', async () => {
+  test('the transcript\'s changed-files line opens the same sheet on that turn, and focus comes back to it', async () => {
     const { user } = await openTask('t1');
-    await user.click(screen.getAllByRole('button', { name: 'View changes' })[0]);
-    expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
+    const links = screen.getAllByRole('button', { name: 'View changes' });
+    const latest = links.at(-1)!;
+    await user.click(latest);
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    const lastTurn = sheet.getByRole('radio', { name: /^Last turn/ });
+    expect(lastTurn.getAttribute('aria-checked') ?? String((lastTurn as HTMLInputElement).checked)).toBe('true');
+    await user.click(sheet.getByRole('button', { name: 'Close changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(latest));
   });
 
   test('a Viewed mark made while comments send survives the send', async () => {
@@ -83,6 +90,25 @@ describe('files', () => {
     await user.click(tree.getByRole('button', { name: 'cmd' }));
     await waitFor(() => expect(tree.queryByRole('button', { name: 'doctor.go' })).toBeNull());
     await user.click(sheet.getByRole('button', { name: 'Close files' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Files' })).toBeNull());
+    await waitFor(() => expect(document.activeElement?.id).toBe('files-link'));
+  });
+
+  test('Esc closes the open file before the panel; an HTML page shows its source', async () => {
+    const { user } = await openTask('t8');
+    await user.click(screen.getByRole('button', { name: 'Browse files' }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Files' }));
+    const tree = within(await sheet.findByRole('list', { name: 'Project files' }));
+    await user.click(await tree.findByRole('button', { name: /^templates/ }));
+    const html = await tree.findByRole('button', { name: /^post\.html/ });
+    await user.click(html);
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Files' }).textContent).toContain('<!doctype html>'));
+    expect(sheet.queryByText(/This file is not shown here/)).toBeNull();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(sheet.queryByText(/<!doctype html>/)).toBeNull());
+    expect(screen.getByRole('dialog', { name: 'Files' })).toBeTruthy();
+    expect(document.activeElement).toBe(html);
+    await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Files' })).toBeNull());
   });
 });

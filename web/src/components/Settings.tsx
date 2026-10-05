@@ -8,11 +8,11 @@ import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { byCodeUnit } from '../lib/order';
-import { Field, FieldHelpProvider, TaskDefaultsFields, choiceLabel } from './TaskDefaults';
+import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSlot, TaskDefaultsFields, choiceLabel, useInlineForm } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
-import { cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
+import { byModelName, cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
 import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
@@ -39,17 +39,34 @@ const SETTINGS_SECTIONS = [
 ] as const;
 type SettingsSection = typeof SETTINGS_SECTIONS[number]['id'];
 
-/** One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last. */
-function Section({ id, title, help, hidden = false, children }: Readonly<{ id: string; title: string; help?: ReactNode; hidden?: boolean; children: ReactNode }>) {
-  return (
-    <section hidden={hidden} aria-labelledby={`${id}-title`} className="not-hidden:flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
-      <div className="flex items-center gap-1">
+/**
+ * One titled group of settings, a floating card (DESIGN.md Settings view); a new group is another `Section` below the last.
+ * A card that is one switch or one select takes it as `control`: the title labels it, in the rows' column system. Its
+ * Add button reaches the header's right through `SectionAction`.
+ */
+function Section({ id, title, subtitle, help, control, hidden = false, children }: Readonly<{ id: string; title: string; subtitle?: string; help?: ReactNode; control?: ReactNode; hidden?: boolean; children?: ReactNode }>) {
+  const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+  const heading = (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <div className={control ? 'flex min-h-8 items-center gap-1' : 'flex items-center gap-1'}>
         <h2 id={`${id}-title`} tabIndex={id === 'token-prices' ? -1 : undefined} className="text-title text-ink">
           {title}
         </h2>
-        {help && <HelpTip label={title}>{help}</HelpTip>}
+        {help && <HelpTip label={title} id={`${id}-help`}>{help}</HelpTip>}
       </div>
-      {children}
+      {subtitle && <p className="text-caption text-muted">{subtitle}</p>}
+    </div>
+  );
+  return (
+    // Plain `flex`: `not-hidden:flex` never applied (the cards stayed display block and lost their gaps); preflight keeps `[hidden]` at display none.
+    <section hidden={hidden} aria-labelledby={`${id}-title`} className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          {control ? <div className={ROW_GRID}>{heading}<div className="flex min-h-8 items-center">{control}</div></div> : heading}
+        </div>
+        <div ref={setSlot} className="flex shrink-0 items-center gap-2 empty:hidden" />
+      </div>
+      <SectionActionSlot value={slot}>{children}</SectionActionSlot>
     </section>
   );
 }
@@ -57,7 +74,7 @@ function Section({ id, title, help, hidden = false, children }: Readonly<{ id: s
 /** A section whose content is still on its way (the first snapshot, the catalogs): the card with its title over a skeleton. */
 function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: string; title: string; label: string; hidden?: boolean }>) {
   return (
-    <section hidden={hidden} aria-labelledby={`${id}-title`} aria-busy="true" className="not-hidden:flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
+    <section hidden={hidden} aria-labelledby={`${id}-title`} aria-busy="true" className="flex flex-col gap-4 rounded-lg bg-raised p-5 shadow-raised">
       <h2 id={`${id}-title`} className="text-title text-ink">
         {title}
       </h2>
@@ -66,26 +83,23 @@ function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: str
   );
 }
 
+const UTILITY_HELP = "The model UAM uses to title new tasks, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.";
+
+/** The Utility model menu of one provider: Cheapest (the default), None, then its visible models with their prices. */
+function UtilitySelect({ provider: p, settings, saving, describedBy, onSave }: Readonly<{ provider: ProviderInfo; settings: Settings; saving: boolean; describedBy: string; onSave: (patch: Partial<Settings>) => void }>) {
+  const current = settings.title_model?.[p.name] ?? '';
+  const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
+  const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
+  const cheapest = p.models.find((m) => m.id === p.cheapest_model);
+  return <Select aria-label={`${p.display_name} utility model`} aria-describedby={describedBy} value={current} disabled={saving} className="sm:w-72" items={[
+    { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
+    { value: UTILITY_NONE, label: 'None (no utility AI)' },
+    ...choices.map(({ model, note }) => ({ value: model.id, label: choiceLabel(model.name, note), description: cost(model), hidden: !!note })),
+  ]} onValueChange={(id) => onSave({ title_model: { ...settings.title_model, [p.name]: id } })} />;
+}
+
 /** The compaction thresholds Settings offers, in percent. */
 const COMPACT_THRESHOLDS = [50, 55, 60, 65, 70, 75, 80, 85, 90];
-
-/** A label and its help on the left, the control on the right; stacked on a phone. */
-function Row({ id, label, help, helpVisible = false, children }: Readonly<{ id: string; label: string; help: ReactNode; helpVisible?: boolean; children: ReactNode }>) {
-  return (
-    <div className="grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-      <div className="flex min-w-0 max-w-3xl flex-col gap-1">
-        <div className="flex items-center gap-1">
-          <span id={`${id}-label`} className="text-ui font-medium text-ink">
-            {label}
-          </span>
-          {!helpVisible && <HelpTip label={label} id={`${id}-help`}>{help}</HelpTip>}
-        </div>
-        {helpVisible && <Note id={`${id}-help`}>{help}</Note>}
-      </div>
-      {children}
-    </div>
-  );
-}
 
 /** The provider being added or edited; `original` is its saved name, none for a new one. */
 interface ProviderDraft {
@@ -178,6 +192,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
     if (removed.length) replacement.ask({ next, removed });
     else if (await onSave(next)) setDraft(null);
   }
+  const formRef = useInlineForm<HTMLFormElement>(() => { if (!loading) setDraft(null); }, !!draft);
   const field = (d: ProviderDraft, key: 'name' | 'base_url' | 'api_key_env', label: string, placeholder: string) => (
     <Field id={`custom-${key}`} label={label}>
       <Input
@@ -196,17 +211,17 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
-        <div className="flex flex-1 items-center gap-1">
-          <h3 className="text-ui font-medium">Custom models</h3>
-          <HelpTip label="Custom models">OpenAI-compatible endpoints, offered with GitHub Copilot's models. Enter an API key here, or use a UAM_BYOM_&lt;NAME&gt; environment variable from the service.</HelpTip>
-        </div>
-        {!draft && (
-          <Button size="sm" variant="secondary" disabled={disabled} onClick={() => edit()}>
+      <div className="flex items-center gap-1">
+        <h3 className="text-ui font-medium">Custom models</h3>
+        <HelpTip label="Custom models">OpenAI-compatible endpoints, offered with GitHub Copilot's models. Enter an API key here, or use a UAM_BYOM_&lt;NAME&gt; environment variable from the service.</HelpTip>
+      </div>
+      {!draft && (
+        <SectionAction>
+          <Button size="sm" variant="secondary" data-section-add="" disabled={disabled} onClick={() => edit()}>
             Add provider
           </Button>
-        )}
-      </div>
+        </SectionAction>
+      )}
       {providers.map((p) => (
         <section key={p.name} aria-label={`${p.name} models`} className="flex flex-col rounded-md bg-tint-well px-3 py-2">
           <div className="flex min-h-8 items-center gap-2">
@@ -247,14 +262,14 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
         if (next) void onSave(next).then((saved) => { if (saved) setDraft(null); replacement.close(); });
       }} />
       {draft && (
-        <form aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
+        <form ref={formRef} aria-label={draft.original ? `Edit provider ${draft.original}` : 'Add a provider'} className="flex flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={(e) => void save(e, draft)}>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2">
-            {field(draft, 'name', 'Provider name', 'ollama')}
-            {field(draft, 'base_url', 'Base URL', 'https://ollama.com/v1')}
+            {field(draft, 'name', 'Provider name', 'my-provider')}
+            {field(draft, 'base_url', 'Base URL', 'https://api.example.com/v1')}
           </div>
           <Segmented aria-label="API key source" value={draft.key_source} disabled={busy} items={[{ value: 'direct', label: 'API key' }, { value: 'env', label: 'Environment variable' }]} onValueChange={(value) => { setDraft({ ...draft, key_source: value as ProviderDraft['key_source'], api_key: '' }); setLoadError(null); }} />
           {draft.key_source === 'env' ? <>
-            {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_OLLAMA')}
+            {field(draft, 'api_key_env', 'API key variable', 'UAM_BYOM_MY_PROVIDER')}
             <Note>Export this variable where the service starts, then restart the service.</Note>
           </> : <Field id="custom-api-key" label="API key">
             <Input id="custom-api-key" type="password" autoComplete="new-password" spellCheck={false} disabled={busy} required={!keepsKey(draft)} value={draft.api_key} placeholder={keepsKey(draft) ? 'Leave blank to keep the saved key' : 'Enter API key'} onChange={(e) => setDraft({ ...draft, api_key: e.target.value })} />
@@ -336,13 +351,14 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
               Add ID
             </Button>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button type="submit" variant="primary" size="lg" disabled={busy}>
               Save provider
             </Button>
             <Button size="lg" disabled={loading} onClick={() => setDraft(null)}>
               Cancel
             </Button>
+            {providers.some((p) => p.name !== draft.original) && <Note>Save or cancel this form to edit another provider.</Note>}
           </div>
         </form>
       )}
@@ -384,23 +400,23 @@ function PlannerSection({ settings, saving, projects, providers, onSave, hidden 
     }
   };
   return (
-    <Section hidden={hidden} id="planner" title="Planner">
-      <Row id="planner-switch" label="Planner" helpVisible={noGit} help={noGit ? 'Git is not installed on the server, so the planner cannot turn on.' : 'Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows.'}>
-        <Switch aria-label="Planner" aria-describedby="planner-switch-help" checked={!!settings.planner} disabled={saving || (noGit && !settings.planner)} onCheckedChange={(planner) => onSave({ planner })} />
-      </Row>
+    <Section
+      hidden={hidden}
+      id="planner"
+      title="Planner"
+      help="Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows."
+      control={<Switch aria-label="Planner" aria-describedby={noGit ? 'planner-switch-help' : undefined} checked={!!settings.planner} disabled={saving || (noGit && !settings.planner)} onCheckedChange={(planner) => onSave({ planner })} />}
+    >
+      {noGit && <Note id="planner-switch-help">Git is not installed on the server, so the planner cannot turn on.</Note>}
       {settings.planner && utility.length > 0 && <Note>Suggestions and triage use the Utility model: {utility.join('; ')}.</Note>}
       {settings.planner && (
         <form aria-label="Import from kb" className="flex flex-col gap-2" onSubmit={(e) => void run(e)}>
-          <div className="flex items-center gap-1">
-            <span id="planner-import-label" className="text-ui font-medium text-ink">Import from kb</span>
-            <HelpTip label="Import from kb" id="planner-import-help">Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.</HelpTip>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input aria-labelledby="planner-import-label" aria-describedby="planner-import-help" className="max-w-md flex-1 text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
+          <Row id="planner-import" label="Import from kb" htmlFor="planner-import-dir" help="Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.">
+            <Input id="planner-import-dir" aria-describedby="planner-import-help" className="w-72 max-w-full text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
             <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim() || importMissing}>
               Import
             </Button>
-          </div>
+          </Row>
           {importMissing && <Note role="status">This service cannot import yet; an update adds it.</Note>}
           {importError && <Note tone="error" role="alert">Could not import: {importError}</Note>}
           {report && (
@@ -455,15 +471,15 @@ function NotifyRow() {
       setBusy(false);
     }
   }
-  let help = 'When a Task asks you something, needs your permission, fails or finishes, unless you are looking at it.';
+  let help = 'When a task asks you something, needs your permission, fails or finishes, unless you are looking at it.';
   if (support === 'home-screen') help = 'On iPhone and iPad this works in the Home Screen app only: tap Share, then Add to Home Screen, open UAM from there and turn this on.';
   else if (support === 'none') help = 'This browser cannot show notifications.';
   else if (mode === 'push') help += ' They arrive even with UAM closed.';
   else if (mode === 'page') help += ' This browser shows them only while UAM is open in a tab.';
   return (
     <>
-      <Row id="notify" label="Notify me when a Task needs me or finishes" help={help} helpVisible={support !== 'ok'}>
-        <Switch aria-label="Notify me when a Task needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
+      <Row id="notify" label="Notify me when a task needs me or finishes" help={help} helpVisible={support !== 'ok'}>
+        <Switch aria-label="Notify me when a task needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
       </Row>
       {problem && (
         <Note tone="error" role="alert">
@@ -579,14 +595,17 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Button>
         </Tip>
       </header>
-      <nav aria-label="Settings sections" className="flex min-w-0 shrink-0 gap-1 overflow-x-auto px-4 py-2 md:flex-wrap md:overflow-visible md:px-6">
-        {SETTINGS_SECTIONS.map((item) => (
-          <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
-            {item.label}
-          </Button>
-        ))}
-      </nav>
-      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {/* Below md the tabs scroll sideways: a gradient over the trailing edge (a pseudo-element, no mask) says there is more. */}
+      <div className="relative min-w-0 shrink-0 after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-10 after:bg-linear-to-l after:from-canvas after:to-transparent after:content-[''] md:after:hidden">
+        <nav aria-label="Settings sections" className="flex min-w-0 gap-1 overflow-x-auto py-2 pr-10 pl-4 md:flex-wrap md:overflow-visible md:px-6">
+          {SETTINGS_SECTIONS.map((item) => (
+            <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
+              {item.label}
+            </Button>
+          ))}
+        </nav>
+      </div>
+      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
@@ -605,7 +624,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           {loaded && <Section hidden={section !== 'general'} id="composer" title="Composer">
             <Row
               id="send-default"
-              label="While a task is running, Enter…"
+              label="Enter while a task is running"
               help={
                 <>
                   Send now adds the message to the running turn; After this turn holds it until the turn ends. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and in the menu beside the send button.
@@ -633,28 +652,22 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           {loaded && catalogPending && <PendingSection hidden={section !== 'models'} id="models" title="Models" label="" />}
           {loaded && taskDefaults && (
             <Section hidden={section !== 'general'} id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
-              <div className="max-w-xl">
+              {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
+              <div className="flex max-w-xl flex-col gap-3">
                 <TaskDefaultsFields prefix="new-tasks" value={taskDefaults} disabled={saving} onChange={(next) => void save({ task_defaults: next })} />
+                <Field id="compact-threshold" label="Compact the conversation when its context reaches" hint="Compacting earlier keeps answers faster and cheaper but drops older detail sooner. A task already open picks up a change the next time it reopens.">
+                  <Select id="compact-threshold" aria-describedby="compact-threshold-hint" value={String(settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD)} disabled={saving} items={COMPACT_THRESHOLDS.map((n) => ({ value: String(n), label: n === DEFAULT_COMPACT_THRESHOLD ? `${n}% (default)` : `${n}%` }))} onValueChange={(v) => void save({ compact_threshold: Number(v) === DEFAULT_COMPACT_THRESHOLD ? null : Number(v) })} />
+                </Field>
               </div>
-              <Row id="compact-threshold" label="Compact the conversation when its context reaches" help="Compacting earlier keeps answers faster and cheaper but drops older detail sooner. A task already open picks up a change the next time it reopens.">
-                <Select aria-label="Compact the conversation when its context reaches" aria-describedby="compact-threshold-help" value={String(settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD)} disabled={saving} className="sm:w-44" items={COMPACT_THRESHOLDS.map((n) => ({ value: String(n), label: n === DEFAULT_COMPACT_THRESHOLD ? `${n}% (default)` : `${n}%` }))} onValueChange={(v) => void save({ compact_threshold: Number(v) === DEFAULT_COMPACT_THRESHOLD ? null : Number(v) })} />
-              </Row>
             </Section>
           )}
-          {loaded && titled.length > 0 && <Section hidden={section !== 'models'} id="utility" title="Utility model">
-            {titled.map((p) => {
-              const current = settings.title_model?.[p.name] ?? '';
-              const choices = modelChoices(p.models, settings.hidden_models?.[p.name], current === UTILITY_NONE ? '' : current);
-              const cost = (m: Model) => (p.capabilities.usage ? modelCostLine(m) : '');
-              const cheapest = p.models.find((m) => m.id === p.cheapest_model);
-              return <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help="The model UAM uses to title new tasks, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.">
-                <Select aria-label={`${p.display_name} utility model`} aria-describedby={`utility-${p.name}-help`} value={current} disabled={saving} className="sm:w-72" items={[
-                  { value: '', label: cheapestLabel(p), description: cheapest && cost(cheapest) },
-                  { value: UTILITY_NONE, label: 'None (no utility AI)' },
-                  ...choices.map(({ model, note }) => ({ value: model.id, label: choiceLabel(model.name, note), description: cost(model), hidden: !!note })),
-                ]} onValueChange={(id) => void save({ title_model: { ...settings.title_model, [p.name]: id } })} />
-              </Row>;
-            })}
+          {/* One provider (the usual case): the card's title labels its select and the provider is the secondary line; several get a row each, named by provider. */}
+          {loaded && titled.length > 0 && <Section hidden={section !== 'models'} id="utility" title="Utility model" help={titled.length === 1 ? UTILITY_HELP : undefined} subtitle={titled.length === 1 ? titled[0].display_name : undefined} control={titled.length === 1 ? <UtilitySelect provider={titled[0]} settings={settings} saving={saving} describedBy="utility-help" onSave={(patch) => void save(patch)} /> : undefined}>
+            {titled.length > 1 && titled.map((p) => (
+              <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help={UTILITY_HELP}>
+                <UtilitySelect provider={p} settings={settings} saving={saving} describedBy={`utility-${p.name}-help`} onSave={(patch) => void save(patch)} />
+              </Row>
+            ))}
           </Section>}
           {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
             <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
@@ -671,17 +684,19 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             {modelGroups.map((p) => {
               const hidden = settings.hidden_models?.[p.owner] ?? [];
               return <div key={p.key} role="group" aria-label={`${p.label} models`} className="flex flex-col gap-1">
-                <h3 className="mb-1 flex items-center gap-2 text-ui font-medium">{p.label}{p.custom && <Chip>Custom provider</Chip>}</h3>
+                <h3 className="mb-1 flex items-baseline gap-2 text-ui font-medium">{p.label}{p.custom && <span className="text-meta font-normal text-muted">Custom provider</span>}</h3>
                 {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env ? `${p.custom.api_key_env} is not set in the service's environment.` : 'The API key is missing.'} Check this provider in Providers.</Note>}
                 <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
-                {p.models.map((m) => {
+                {[...p.models].sort(byModelName).map((m) => {
                   const shown = !hidden.includes(m.id);
                   const offered = p.offered.some((v) => v.id === m.id);
+                  // A hidden ID the catalog no longer lists has no display name: its ID is the name, said once.
+                  const idLine = m.name === m.id ? '' : m.id;
                   return <div key={m.id} className="flex min-h-12 items-center gap-3 py-2">
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="text-ui font-medium text-ink">{m.name}</span>
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
-                        <span className="min-w-0 break-all">{m.id}{!offered ? ' · not offered now' : ''}</span>
+                        <span className="min-w-0 break-all">{[idLine, !offered && (idLine ? 'not offered now' : 'Not offered now')].filter(Boolean).join(' · ')}</span>
                         {p.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
                       </div>
                     </div>

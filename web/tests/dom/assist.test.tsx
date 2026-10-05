@@ -80,12 +80,12 @@ describe('assist', () => {
     expect(mock.received.filter((r) => r.route === 'prompt')).toHaveLength(0);
   });
 
-  test('on a touch screen the arrow button at the end of the ghost text uses the suggestion', async () => {
+  test('the visible Use button at the end of the ghost text uses the suggestion', async () => {
     const { user, mock } = await openTask('t3');
     const use = await screen.findByRole('button', { name: 'Use suggestion' });
-    // Shown only for a coarse pointer, whose keyboard has no Right Arrow; its target grows to 44px there (Button `icon`).
-    expect(use.classList.contains('hidden')).toBe(true);
-    expect(use.classList.contains('pointer-coarse:inline-flex')).toBe(true);
+    // Shown on every pointer, so the ghost is never only a keyboard affordance; its text says what it does.
+    expect(use.classList.contains('hidden')).toBe(false);
+    expect(use.textContent).toBe('Use');
     await user.click(use);
     expect(composer().value).toBe('Run the whole test suite');
     expect(document.activeElement).toBe(composer());

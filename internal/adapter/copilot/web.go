@@ -3691,6 +3691,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		if d.ParentID != nil {
 			sa.ParentAgentID = *d.ParentID
 		}
+		sa.Background = d.ExecutionMode != nil && *d.ExecutionMode == "background"
 		sa.Status, sa.StartedAt = agentapi.SubagentRunning, ev.Timestamp
 		if d.Model != nil && sa.Model == "" {
 			sa.Model = *d.Model

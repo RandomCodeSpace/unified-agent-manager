@@ -266,15 +266,16 @@ const RANK: Partial<Record<SubagentStatus, number>> = { failed: 0, running: 1 };
 
 /**
  * A list's rows, each subagent followed by the ones it spawned: the families with a failed
- * member first, then those with a running one, then the rest, each in spawn order.
+ * member first, then those with a running one, then the rest, each in spawn order. Without
+ * `ranked` (the header index) the families stay in spawn order.
  */
-export function families(subagents: readonly Subagent[]): Family[] {
+export function families(subagents: readonly Subagent[], ranked = true): Family[] {
   const ids = new Set(subagents.map((s) => s.id));
   const children = new Map<string, Subagent[]>();
   for (const s of subagents) {
     if (s.parent_agent_id && ids.has(s.parent_agent_id)) children.set(s.parent_agent_id, [...(children.get(s.parent_agent_id) ?? []), s]);
   }
-  const ranked = subagents.filter((s) => !s.parent_agent_id || !ids.has(s.parent_agent_id)).map((head, at) => {
+  const list = subagents.filter((s) => !s.parent_agent_id || !ids.has(s.parent_agent_id)).map((head, at) => {
     const rows: Family['rows'] = [];
     const walk = (subagent: Subagent, depth: number) => {
       if (rows.some((r) => r.subagent === subagent)) return;
@@ -284,7 +285,8 @@ export function families(subagents: readonly Subagent[]): Family[] {
     walk(head, 0);
     return { head, rows, at, rank: Math.min(...rows.map((r) => RANK[r.subagent.status] ?? 2)) };
   });
-  return ranked.sort((a, b) => a.rank - b.rank || a.at - b.at).map(({ head, rows }) => ({ head, rows }));
+  if (ranked) list.sort((a, b) => a.rank - b.rank || a.at - b.at);
+  return list.map(({ head, rows }) => ({ head, rows }));
 }
 
 /** The tokens the subagents used, as far as they are known. */

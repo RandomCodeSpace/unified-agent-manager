@@ -28,7 +28,7 @@ export const STATE_LABELS: Record<SessionState, string> = {
   working: 'Working',
   awaiting_permission: 'Needs permission',
   awaiting_answer: 'Needs answer',
-  completed: 'Completed',
+  completed: 'Finished',
   cancelled: 'Cancelled',
   failed: 'Failed',
   interrupted: 'Interrupted',
@@ -238,6 +238,16 @@ export function relTime(iso: string, now = Date.now()): string {
   const h = Math.round(m / 60);
   if (h < 24) return `${h}h`;
   return `${Math.round(h / 24)}d`;
+}
+
+/** A clock time in the browser's locale ("2:05 PM" or "14:05"); `seconds` adds them for step timelines. */
+export function clockTime(at: Date | string, seconds = false): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', ...(seconds && { second: '2-digit' }) });
+}
+
+/** A full date and time in the browser's locale ("Oct 5, 2026, 2:05 PM"): tooltips and records. */
+export function dateTime(at: Date | string): string {
+  return new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** A past time in words: "just now", else "5m ago". */

@@ -1,11 +1,11 @@
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, api, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
-import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, viewState, type Review, type ReviewComment } from '../lib/review';
+import { LARGE_CHANGE, WRAP_KEY, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, parseWrap, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
 import { Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
@@ -16,6 +16,13 @@ import { Tip } from './ui/tooltip';
 /** Scope the header counts: the provider's own diff when it has one, else the files this Task's agent edited. */
 export function defaultScope(s: SessionSummary): Scope {
   return s.capabilities.session_diff ? 'session' : 'task';
+}
+
+/** A turn's "View changes": the files it edited, and whether it is the Task's latest turn; `at` tells two asks apart. */
+export interface ChangesTurn {
+  files: string[];
+  latest: boolean;
+  at: number;
 }
 
 const STATUS_TONE: Record<string, string> = { A: 'text-success', U: 'text-success', D: 'text-error', '!': 'text-error' };
@@ -45,11 +52,20 @@ function writeReview(id: string, r: Review) {
   }
 }
 
+function readWrap(): boolean {
+  try {
+    return parseWrap(localStorage.getItem(WRAP_KEY), !!globalThis.matchMedia?.('(max-width: 480px)').matches);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The sheet owns one visible list/detail refresh cycle. The Task's event-driven default
  * list seeds it and receives refreshed counts. Polling reads only the selected scope.
  */
 export function ChangesSheet({
+  turn = null,
   evidence,
   session,
   projectName,
@@ -63,6 +79,8 @@ export function ChangesSheet({
   onClose,
   onClosed,
 }: Readonly<{
+  /** Open on this turn's edits: the Last turn scope for the latest turn, else the default scope with its first file shown. */
+  turn?: ChangesTurn | null;
   evidence?: ReactNode;
   session: SessionSummary;
   projectName: string;
@@ -80,7 +98,11 @@ export function ChangesSheet({
   onClosed: () => void;
 }>) {
   const canSession = session.capabilities.session_diff;
-  const [scope, setScope] = useState<Scope>(defaultScope(session));
+  // Only the latest turn has a scope of its own ("Last turn"); providers with their own diff have none.
+  const turnScope = (t: ChangesTurn | null): Scope => (t?.latest && !canSession ? 'turn' : defaultScope(session));
+  const [scope, setScope] = useState<Scope>(() => turnScope(turn));
+  const [turnPaths, setTurnPaths] = useState(turn?.files ?? []);
+  const [askedTurn, setAskedTurn] = useState(turn);
   const [view, setView] = useState<{
     sessionId: string; scope: Scope; list: ChangesData | null; path: string | null;
     file: FileDiffData | null; error: string | null; fileError: string | null;
@@ -103,7 +125,17 @@ export function ChangesSheet({
   else if (isDefault) error = changesError;
   // Risky files first, so the default selection is the one most worth a look.
   const files = useMemo(() => byRisk(data?.supported ? data.files : []), [data]);
-  const shownPath = path && files.some((f) => f.path === path) ? path : (files[0]?.path ?? null);
+  if (turn !== askedTurn) {
+    setAskedTurn(turn);
+    if (turn) {
+      const next = turnScope(turn);
+      setScope(next);
+      setTurnPaths(turn.files);
+      // Same scope: its list is here, so the turn's file can be chosen now (and read); a new scope picks it on arrival.
+      setPath(next === scope ? turnFile(files.map((f) => f.path), turn.files) : null);
+    }
+  }
+  const shownPath = path && files.some((f) => f.path === path) ? path : (turnFile(files.map((f) => f.path), turnPaths) ?? files[0]?.path ?? null);
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
   const label = data ? data.label : `${projectName} vs HEAD`;
@@ -162,6 +194,15 @@ export function ChangesSheet({
     updateReview((r) => ({ ...r, comments: [...r.comments, { ...c, id: newRequestId() }] }));
   };
   const removeComment = (id: string) => updateReview((r) => ({ ...r, comments: r.comments.filter((c) => c.id !== id) }));
+  const [wrap, setWrap] = useState(readWrap);
+  const changeWrap = (next: boolean) => {
+    setWrap(next);
+    try {
+      localStorage.setItem(WRAP_KEY, next ? '1' : '0');
+    } catch {
+      // Storage unavailable: the choice lasts until reload.
+    }
+  };
   const shownFile = files.find((f) => f.path === shownPath);
 
   const stop = useEffectEvent(() => {
@@ -184,7 +225,8 @@ export function ChangesSheet({
       if (controller.signal.aborted) return null;
       listing = accepted;
       const entries = listing.supported ? listing.files : [];
-      selected = path && entries.some(file => file.path === path) ? path : (byRisk(entries)[0]?.path ?? null);
+      const ordered = byRisk(entries).map(file => file.path);
+      selected = path && entries.some(file => file.path === path) ? path : (turnFile(ordered, turnPaths) ?? ordered[0] ?? null);
       readingFile = !!selected;
       const next = { sessionId: session.id, scope, list: listing, path: selected,
         file: current?.path === selected ? current.file : null, error: null,
@@ -323,7 +365,8 @@ export function ChangesSheet({
         ))}
       </ul>
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      <div className="@container min-h-0 flex-1 overflow-auto">
+      {/* The diff keeps some height while the commit form is open. */}
+      <div className="@container min-h-40 flex-1 overflow-auto">
         {shownPath && (
           <FileView
             key={shownPath}
@@ -335,6 +378,8 @@ export function ChangesSheet({
             comments={comments.filter((c) => c.path === shownPath)}
             onComment={commentable ? addComment : undefined}
             onRemoveComment={removeComment}
+            wrap={wrap}
+            onWrap={changeWrap}
           />
         )}
       </div>
@@ -342,8 +387,8 @@ export function ChangesSheet({
         <CommentBatch comments={comments} working={working} sending={sending} note={sendNote} onOpen={setPath} onRemove={removeComment} onSend={sendComments} />
       )}
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
-      {/* Expanded, the form outgrows a short column: it shrinks into the space left and scrolls, so its actions stay reachable. */}
-      <CommitPanel session={session} className="min-h-0 shrink overflow-y-auto overscroll-contain" onChanged={() => setTick(t => t + 1)} />
+      {/* Expanded, the form outgrows a short column: it shrinks into the space the diff leaves and scrolls, with its actions in view below it. */}
+      <CommitPanel session={session} className="min-h-0 shrink" onChanged={() => setTick(t => t + 1)} />
     </SidePanel>
   );
 }
@@ -447,7 +492,7 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
 /** Where a comment goes: one line on one side of the diff, with its text when the comment was started. */
 type Anchor = Pick<ReviewComment, 'line' | 'side' | 'code'>;
 
-function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment }: Readonly<{
+function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment, wrap, onWrap }: Readonly<{
   path: string;
   file: FileDiffData | null;
   error: string | null;
@@ -457,6 +502,8 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
   /** Absent where comments cannot be sent (a settled or archived Task). */
   onComment?: (comment: Omit<ReviewComment, 'id'>) => void;
   onRemoveComment?: (id: string) => void;
+  wrap: boolean;
+  onWrap: (wrap: boolean) => void;
 }>) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
     if (!file) return null;
@@ -489,13 +536,19 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
     cancel: () => setDraft(null),
     remove: onRemoveComment,
   };
+  // The gutter is as wide as the longest line number, so its columns can stay put while a long line scrolls (index.css .diff).
+  const digits = Math.max(2, ...patch.hunks.map((h) => String(Math.max(h.oldStart + h.oldLines, h.newStart + h.newLines)).length));
   return (
     <>
       {warning}
-      <table className="diff animate-fade-in" translate="no">
+      <table className={cn('diff animate-fade-in', wrap && 'wrap')} translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
         <caption>
           <span className="sticky left-3 flex w-[calc(100cqw-24px)] items-center gap-2">
             <span className="min-w-0 flex-1 truncate">{file.path}</span>
+            <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
+              <input type="checkbox" className="size-3.5 cursor-pointer accent-accent" checked={wrap} onChange={(e) => onWrap(e.target.checked)} />
+              Wrap lines
+            </label>
             {onViewed && (
               <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
                 <input type="checkbox" className="size-3.5 cursor-pointer accent-success" checked={!!viewed} onChange={(e) => onViewed(e.target.checked)} />
@@ -525,7 +578,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
   let newNo = h.newStart;
   const rows = [
     <tr key={`h${hi}`} className="hunk">
-      <td colSpan={3}>{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</td>
+      <td colSpan={3}><span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span></td>
     </tr>,
   ];
   h.lines.forEach((line, li) => {
@@ -554,7 +607,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
         <td className="num">{left}</td>
         <td className="num">
           {open ? (
-            <button type="button" aria-label={label ?? undefined} className="group/line inline-flex w-full items-center justify-end gap-0.5 text-inherit focus-visible:-outline-offset-2" onClick={(e) => { e.stopPropagation(); open(anchor); }}>
+            <button type="button" aria-label={label ?? undefined} className="group/line inline-flex w-full items-center justify-end gap-1.5 text-inherit focus-visible:-outline-offset-2" onClick={(e) => { e.stopPropagation(); open(anchor); }}>
               <MessageSquarePlus aria-hidden="true" className="size-3 text-accent opacity-0 group-hover/row:opacity-100 group-focus-visible/line:opacity-100" />
               {right}
             </button>

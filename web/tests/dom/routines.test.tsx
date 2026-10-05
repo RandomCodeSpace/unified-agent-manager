@@ -136,6 +136,8 @@ describe('routines', () => {
     await user.click(screen.getByRole('button', { name: 'New routine' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
     expect(dialog.getByRole('combobox', { name: 'Project' })).toBeTruthy();
+    // The Project field names where runs start; the subtitle does not repeat it.
+    expect(dialog.queryByText(/^Each run starts a task in/)).toBeNull();
   });
 
   test('a #routines link opened while the page is open shows the routines', async () => {

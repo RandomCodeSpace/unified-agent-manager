@@ -98,6 +98,32 @@ func TestSubagentSummaryCompletesOnceInEitherEventOrder(t *testing.T) {
 	}
 }
 
+func TestSubagentSummaryOfBackgroundLaunchReadsItsOwnReply(t *testing.T) {
+	m, p, _ := summaryManager(t)
+	sum, c := createSession(t, m, p.Provider)
+	child := func(status agentapi.SubagentStatus) {
+		c.EmitSubagent(agentapi.Subagent{ID: "bg", ParentToolCallID: "task-bg", Description: "Research benchmarks", Background: true, Status: status})
+	}
+	child(agentapi.SubagentRunning)
+	emitSummaryResult(c, "bg", "Agent started in background with agent_id: bg.")
+	c.EmitItem(agentapi.Item{ID: "final", AgentID: "bg", Kind: agentapi.ItemAssistant, Text: "Found the Java benchmark pages."})
+	child(agentapi.SubagentCompleted)
+	waitUntil(t, "generated background summary", func() bool { return generatedSummary(t, m, sum.ID, "bg") != "" })
+	calls := p.calls()
+	if len(calls) != 1 || calls[0].Result != "Found the Java benchmark pages." {
+		t.Fatalf("requests = %+v", calls)
+	}
+	// A line saved from the launch acknowledgement is never shown.
+	m.mu.Lock()
+	s := m.sessions[sum.ID]
+	s.subagentSummaries["bg"] = store.SubagentSummary{AgentID: "bg", ItemID: "task-bg", Digest: summaryDigest(s.subagentResult("task-bg", "")), LastAssistantID: "final", Text: "Still running."}
+	got := s.compactSubagent(*s.subIdx["bg"]).Summary
+	m.mu.Unlock()
+	if got != "" {
+		t.Fatalf("stale launch summary = %q", got)
+	}
+}
+
 func TestSubagentSummaryFollowupRejectsOldReplyAndUsesNewResult(t *testing.T) {
 	m, p, _ := summaryManager(t)
 	started, cancelled := make(chan struct{}), make(chan struct{})

@@ -6,7 +6,7 @@ import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
 import { Note, Skeleton } from './common';
 import { PlannerContext, usePlannerTasks } from './planner/context';
-import { Field } from './TaskDefaults';
+import { Row } from './TaskDefaults';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse } from './ui/collapse';
@@ -164,27 +164,27 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
           </Note>
         )}
       </div>
-      <form aria-label="Daily limit" className="flex flex-wrap items-end gap-2" onSubmit={(e) => void save(e)}>
-        <div className="w-40">
-          <Field id="utility-limit" label="Daily limit (calls)" hintId="utility-limit-help" hint={`At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.`}>
-            <Input
-              id="utility-limit"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={MAX_LIMIT}
-              step={1}
-              aria-describedby="utility-limit-help"
-              aria-invalid={!valid || undefined}
-              disabled={saving}
-              value={value}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-          </Field>
-        </div>
-        <Button type="submit" variant="secondary" size="lg" disabled={saving || !valid || parsed === limit}>
-          Save
-        </Button>
+      {/* A Settings row like the others: the label in the label column, the field and its Save together beside it. */}
+      <form aria-label="Daily limit" onSubmit={(e) => void save(e)}>
+        <Row id="utility-limit" label="Daily limit (calls)" htmlFor="utility-limit-input" help={`At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.`}>
+          <Input
+            id="utility-limit-input"
+            className="w-28"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_LIMIT}
+            step={1}
+            aria-describedby="utility-limit-help"
+            aria-invalid={!valid || undefined}
+            disabled={saving}
+            value={value}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button type="submit" variant="secondary" size="lg" disabled={saving || !valid || parsed === limit}>
+            Save
+          </Button>
+        </Row>
       </form>
       <div className="flex flex-col gap-1">
         {error && (

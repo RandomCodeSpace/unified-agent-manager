@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import type { Project, SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { taskStatus, type Unread } from '../lib/tasks';
-import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, relTime, useMinuteTick } from './common';
+import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, relTime, useMinuteTick } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
 
@@ -30,7 +30,8 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
 
   return (
     <section aria-label="Home" className="min-h-0 flex-1 overflow-y-auto">
-      <div className={cn('mx-auto w-full max-w-[790px] px-5 pb-12 min-[960px]:px-8', hasProjects ? 'pt-10 min-[960px]:pt-16' : 'pt-20 min-[960px]:pt-32')}>
+      {/* Fills the pane (no centred column); the launcher's heading stays centred above the full-width list. */}
+      <div className={cn('w-full px-5 pb-12 min-[960px]:px-10', hasProjects ? 'pt-10 min-[960px]:pt-16' : 'pt-20 min-[960px]:pt-32')}>
         <div className="text-center">
           <Brand className="mb-6 gap-2.5 min-[960px]:mb-7 [&>svg]:size-[34px] [&>span]:text-lg" />
           <h1 className="text-[25px] leading-tight font-semibold tracking-[-0.5px] text-ink min-[960px]:text-[28px]">
@@ -50,7 +51,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
           <section aria-label="Recent tasks" className="mt-11 min-[960px]:mt-14">
             <div className="mb-3.5 flex items-center justify-between px-1 min-[960px]:px-2.5">
               <h2 className="text-title font-semibold text-ink">Recent tasks</h2>
-              <span className="text-caption text-muted">All projects</span>
+              <p className="text-caption text-muted">Across all projects</p>
             </div>
             <ul>
               {recent.map((session) => {
@@ -73,7 +74,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
                       <span className={cn('col-span-2 col-start-2 row-start-2 min-w-0 break-words text-meta min-[960px]:col-span-1 min-[960px]:col-start-3 min-[960px]:row-start-1', TONE_TEXT[status.tone])}>
                         <Sep />{status.text}
                       </span>
-                      <time dateTime={session.updated_at} title={new Date(session.updated_at).toLocaleString()} className="col-start-3 row-start-1 text-right text-meta text-muted tabular-nums min-[960px]:col-start-4">
+                      <time dateTime={session.updated_at} title={dateTime(session.updated_at)} className="col-start-3 row-start-1 text-right text-meta text-muted tabular-nums min-[960px]:col-start-4">
                         <Sep />{updated === 'now' ? 'now' : `${updated} ago`}
                       </time>
                     </button>

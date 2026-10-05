@@ -19,7 +19,7 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: `bg-primary text-on-primary hover:bg-body active:bg-ink ${press}`,
+        primary: `bg-primary text-on-primary not-aria-disabled:hover:bg-body not-aria-disabled:active:bg-ink ${press}`,
         secondary: `bg-sunken text-ink hover:bg-tint-hover active:bg-hairline ${press}`,
         ghost:
           'text-body not-aria-disabled:hover:bg-tint-hover not-aria-disabled:hover:text-ink active:bg-hairline data-open:bg-tint-hover data-open:text-ink aria-pressed:bg-tint-hover aria-pressed:text-ink',

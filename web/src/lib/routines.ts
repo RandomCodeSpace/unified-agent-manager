@@ -13,15 +13,22 @@ export const SCHEDULE_KINDS: { value: ScheduleKind; label: string }[] = [
   { value: 'weekly', label: 'Once a week' },
 ];
 
-/** The schedule in words: "Every weekday at 09:00", "Every 6 hours", "Every Monday at 08:30". */
-export function describeSchedule(s: RoutineSchedule): string {
+/** A schedule's "HH:MM" as this browser's locale writes a time, like the form's time field: "09:00", or "09:00 AM". */
+export function clockText(time: string, locale?: string): string {
+  const [h, m] = time.split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return time;
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+}
+
+/** The schedule in words: "Every weekday at 09:00", "Every 6 hours", "Every Monday at 08:30" (the time in the browser's locale). */
+export function describeSchedule(s: RoutineSchedule, locale?: string): string {
   switch (s.kind) {
     case 'daily':
-      return `Every day at ${s.time}`;
+      return `Every day at ${clockText(s.time, locale)}`;
     case 'weekdays':
-      return `Every weekday at ${s.time}`;
+      return `Every weekday at ${clockText(s.time, locale)}`;
     case 'weekly':
-      return `Every ${WEEKDAYS[s.weekday] ?? 'week'} at ${s.time}`;
+      return `Every ${WEEKDAYS[s.weekday] ?? 'week'} at ${clockText(s.time, locale)}`;
     case 'hours':
       return s.hours === 1 ? 'Every hour' : `Every ${s.hours} hours`;
   }

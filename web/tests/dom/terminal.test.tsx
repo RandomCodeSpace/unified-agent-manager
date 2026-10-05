@@ -35,3 +35,15 @@ test('the dock keeps its height across tasks and resizes from the keyboard', asy
   await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Bump GitHub Actions pins'));
   expect(screen.getByRole('region', { name: 'Terminal' })).toBeTruthy();
 });
+
+test('the dock shows with the Task only: Settings hides it and keeps its shell', async () => {
+  const { user } = await openTask('t3');
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  const dock = await screen.findByRole('region', { name: 'Terminal' });
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Settings'));
+  expect(dock.isConnected).toBe(true);
+  expect(dock.classList.contains('hidden')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Close settings' }));
+  await waitFor(() => expect(dock.classList.contains('hidden')).toBe(false));
+});

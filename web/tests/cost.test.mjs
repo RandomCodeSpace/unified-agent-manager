@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { estimateTurnCost, priceTier, providerQuota, ringFraction, ringTone, quotaPace, accountQuota } from '../src/lib/cost.ts';
+import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, accountQuota } from '../src/lib/cost.ts';
 
 test('cost is unknown without reported input prices or context', () => {
   assert.equal(estimateTurnCost({}, { used: 31000, limit: 200000 }), null);
@@ -48,7 +48,7 @@ test('quota pace compares average consumption with the daily allowance budget', 
   assert.equal(onPace.daysAtPace, 15.5);
   assert.equal(onPace.daysUntilReset, 15.5);
   assert.deepEqual(quotaPace({ ...quota, reset_at: undefined }, now), onPace);
-  for (const [remaining, label, tone] of [[70, 'Behind pace', 'attention'], [52.5, 'On pace', 'healthy'], [47.5, 'On pace', 'healthy'], [45, 'Ahead of pace', 'danger'], [30, 'Ahead of pace', 'danger']]) {
+  for (const [remaining, label, tone] of [[70, 'Under pace', 'healthy'], [52.5, 'On pace', 'healthy'], [47.5, 'On pace', 'healthy'], [45, 'Ahead of pace', 'danger'], [30, 'Ahead of pace', 'danger']]) {
     const pace = quotaPace({ ...quota, remaining_percent: remaining }, now);
     assert.equal(pace.label, label);
     assert.equal(pace.tone, tone);
@@ -63,8 +63,8 @@ test('quota pace handles empty, unlimited, stale, expired and unknown billing pe
   assert.equal(quotaPace(null, now).remaining, null);
   assert.equal(quotaPace({ ...quota, remaining_percent: NaN }, now).remaining, null);
   assert.equal(quotaPace({ ...quota, remaining_percent: 100 }, now).daysAtPace, null);
-  assert.equal(quotaPace({ ...quota, remaining_percent: 100 }, now).label, 'Behind pace');
-  assert.equal(quotaPace({ ...quota, remaining_percent: 100 }, now).tone, 'attention');
+  assert.equal(quotaPace({ ...quota, remaining_percent: 100 }, now).label, 'Under pace');
+  assert.equal(quotaPace({ ...quota, remaining_percent: 100 }, now).tone, 'healthy');
   assert.equal(quotaPace({ ...quota, remaining_percent: 0 }, now).tone, 'danger');
   assert.equal(quotaPace({ ...quota, remaining_percent: -10 }, now).remaining, 0);
   assert.equal(quotaPace({ ...quota, unlimited: true }, now).tone, 'healthy');
@@ -73,4 +73,10 @@ test('quota pace handles empty, unlimited, stale, expired and unknown billing pe
   assert.equal(quotaPace({ ...quota, provider: 'other', reset_at: undefined }, now).daysAtPace, null);
   assert.equal(quotaPace({ ...quota, provider: 'other' }, now).daysAtPace, null);
   assert.equal(accountQuota([{ ...quota, unlimited: true }, quota]), quota);
+});
+
+test('the model cost line names its unit and what its discount applies to', () => {
+  assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }), 'High cost · 10 in, 50 out credits per 1M tokens');
+  assert.equal(modelCostLine({ discount_percent: 10 }), '10% off usage');
+  assert.equal(modelCostLine({}), '');
 });

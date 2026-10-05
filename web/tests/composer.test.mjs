@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
-import { applyPick, argumentTrigger, commandPending, commandReason, enterActions, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
+import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../src/lib/composer.ts';
 
 test('the active composer permits draft settings and retains settings in prompt identity and payload', async () => {
   const source = ts.createSourceFile('Composer.tsx', await readFile(new URL('../src/components/Composer.tsx', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -190,4 +190,9 @@ test('a typed command that ends in Yolo with autopilot is caught before it is se
   assert.equal(entersRiskiest('allow-all', 'on', { yolo: false, autopilot: false }), false);
   // Already there: nothing to switch into.
   assert.equal(entersRiskiest('autopilot', 'on', { yolo: true, autopilot: true }), false);
+});
+
+test('effort levels read as words; the value is unchanged and none chosen is Default', () => {
+  assert.deepEqual(['', 'none', 'low', 'medium', 'high', 'xhigh', 'max', 'turbo'].map(effortLabel), ['Default', 'None', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Turbo']);
+  assert.equal(effortLabel(undefined), 'Default');
 });
