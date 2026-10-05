@@ -85,4 +85,13 @@ describe('Connected instances settings', () => {
     expect(onRemove).toHaveBeenCalledWith('connection-b');
     expect(screen.getByRole('region', { name: 'Work server' })).toBeTruthy();
   });
+
+  test('a connection on another Copilot account warns with the reason and opens its account settings', async () => {
+    const reason = 'Work server is linked to Copilot account mallory; this instance is linked to octo. Both must use the same account.';
+    const onOpenAccount = vi.fn();
+    const { user } = setup({ onOpenAccount, statuses: { [connection.id]: { status: 'account-mismatch', error: reason } } });
+    expect(screen.getByRole('status').textContent).toBe(`Linked to a different Copilot account — ${reason}`);
+    await user.click(screen.getByRole('button', { name: 'Open its GitHub Copilot settings' }));
+    expect(onOpenAccount).toHaveBeenCalledWith('connection-b');
+  });
 });

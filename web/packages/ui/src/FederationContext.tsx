@@ -32,10 +32,10 @@ export interface MachineFilter {
   project: string;
 }
 
-/** Work that waits for another machine's view to mount: its New task draft or its Edit project dialog. */
+/** Work that waits for another machine's view to mount: its New task draft, its Edit project dialog or its Copilot account in Settings. */
 export interface MachineIntent {
   machine: string;
-  kind: 'new-task' | 'edit-project';
+  kind: 'new-task' | 'edit-project' | 'account';
   projectId: string;
 }
 
@@ -67,6 +67,8 @@ export interface FederationView {
   homeLoadedVersion?: string;
   homeVersion?: string;
   pendingRoute: boolean;
+  /** Why the connection on screen is blocked: it is linked to another Copilot account than this instance. */
+  accountMismatch?: string;
   /** Present only with connected instances: every enabled machine, the active one included. */
   machines?: Machine[];
   choices?: MachineChoice[];

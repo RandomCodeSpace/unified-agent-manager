@@ -351,3 +351,22 @@ test('the Planner button opens another machine’s Planner when this one has it 
   expect(list.getByRole('group', { name: 'Workstation C' })).toBeTruthy();
   expect(list.queryByRole('group', { name: 'This instance' })).toBeNull();
 });
+
+test('a connection on another Copilot account keeps its rows, blocks its Tasks and opens its account from Connected instances', async () => {
+  const reason = 'Workstation B is linked to Copilot account mallory; this instance is linked to octo. Both must use the same account.';
+  const { user } = federated('', [{ ...record('b', 'Workstation B'), status: 'account_mismatch', reason }]);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B, unavailable: linked to a different Copilot account' }));
+  expect(await screen.findByRole('heading', { name: 'Copilot is signed in to another account' })).toBeTruthy();
+  expect(screen.getByText(reason)).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Conversation' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+  await chooseInstance(user, /^This instance/);
+  await screen.findByRole('heading', { name: 'Settings · This instance', level: 1 });
+  await user.click(await screen.findByRole('button', { name: 'Connected instances' }));
+  const section = within(await screen.findByRole('region', { name: 'Workstation B' }));
+  expect(section.getByRole('status').textContent).toBe(`Linked to a different Copilot account — ${reason}`);
+  await user.click(section.getByRole('button', { name: 'Open its GitHub Copilot settings' }));
+  await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
+  await waitFor(() => expect(document.activeElement?.id).toBe('account-copilot-title'));
+});

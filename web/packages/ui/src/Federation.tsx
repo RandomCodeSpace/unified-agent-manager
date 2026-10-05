@@ -25,7 +25,12 @@ function readFilter(): MachineFilter | null {
     return value && typeof value.machine === 'string' && typeof value.project === 'string' ? value : null;
   } catch { return null; }
 }
-const STATUS_NOTE: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'Offline', 'auth-required': 'Needs a new access key', unsupported: 'Needs an update' };
+const STATUS_NOTE: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'Offline', 'auth-required': 'Needs a new access key', unsupported: 'Needs an update', 'account-mismatch': 'Different Copilot account' };
+
+/** The registry's verdict on a connection's Copilot account; it outranks what its stream reports. */
+function accountStatus(connection: ConnectedInstance | undefined): ConnectedStatus | undefined {
+  return connection?.status === 'account_mismatch' ? { status: 'account-mismatch', error: connection.reason } : undefined;
+}
 
 function connectionFailure(error: unknown): ConnectedStatus {
   const code = errorCode(error);
@@ -246,7 +251,7 @@ export default function Federation() {
   }, [activeID, activeGeneration, activeInstanceID]);
   const selectedSource = sources.find(source => source.id === (active?.id ?? HOME) && source.connection?.generation === active?.generation && source.connection?.instance_id === active?.instance_id);
   const client = selectedSource?.client ?? api;
-  const statuses = Object.fromEntries(connections.map(connection => [connection.id, sourceStates[connection.id]?.status ?? { status: 'connecting' as const }]));
+  const statuses = Object.fromEntries(connections.map(connection => [connection.id, accountStatus(connection) ?? sourceStates[connection.id]?.status ?? { status: 'connecting' as const }]));
   const add = async (input: AddConnectionInput) => { await api.addConnection(input); await refresh(); };
   const update = async (id: string, input: UpdateConnectionInput) => { await api.updateConnection(id, input); await refresh(); };
   const remove = async (id: string) => {
@@ -264,7 +269,6 @@ export default function Federation() {
     }
     await refresh();
   };
-  const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
   // Settings' header names the instance on screen and switches it; switching keeps Settings open.
   const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => { carry.write({ nextSection: carry.read().section }); navigate(connections.find(connection => connection.id === id) ?? null, '#settings'); }} items={[
     { value: HOME, label: homeSource.label },
@@ -287,10 +291,11 @@ export default function Federation() {
   // Every enabled machine with what it last streamed; the one on screen is App's live state, this its lagging copy.
   const machines = useMemo<Machine[] | undefined>(() => federated ? sources.map(source => {
     const value = sourceStates[source.id];
-    return { id: source.id, label: source.label, short: source.connection?.label ?? 'Local', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status: value?.status ?? { status: 'connecting' }, hasNews: unreadFor(source) };
+    const status = (source.connection && accountStatus(registry?.connections.find(connection => connection.id === source.id))) ?? value?.status ?? { status: 'connecting' };
+    return { id: source.id, label: source.label, short: source.connection?.label ?? 'Local', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status, hasNews: unreadFor(source) };
   }) : undefined,
   // unreadFor reads this browser's marks, which change only while their machine is on screen.
-  [federated, sources, sourceStates, activeID]);
+  [federated, sources, sourceStates, activeID, registry]);
   const choices: MachineChoice[] | undefined = federated ? [
     { id: HOME, label: homeSource.label },
     ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
@@ -304,12 +309,15 @@ export default function Federation() {
   const [intent, setIntent] = useState<MachineIntent | null>(null);
   const request = useCallback((value: MachineIntent) => { setIntent(value); go(value.machine, ''); }, [go]);
   const consumeIntent = useCallback(() => setIntent(null), []);
+  // A connection on another Copilot account opens on its Settings, at the account.
+  const openAccount = useCallback((id: string) => request({ machine: id, kind: 'account', projectId: '' }), [request]);
+  const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
   const pendingRoute = authenticated && !registryRead && hasIdentity(window.location.hash);
   const unavailable = routeError || (active && !selectedSource ? 'This connection is unavailable. Open an enabled instance to continue.' : null);
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :
-      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent: connections.length ? onActiveEvent : undefined, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute,
+      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent: connections.length ? onActiveEvent : undefined, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
         ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, metaCache, carry }) }}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
