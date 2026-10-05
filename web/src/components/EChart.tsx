@@ -104,41 +104,13 @@ export function EChart({ option, width, height, className, label, zoomControls =
   useEffect(() => {
     const element = host.current;
     if (!element || !label) return;
-    let hovering = false;
-    let ready = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const pause = () => {
-      ready = false;
-      clearTimeout(timer);
-      if (hovering) timer = setTimeout(() => { ready = true; }, 500);
-    };
-    const enter = (event: PointerEvent) => {
-      if (event.pointerType !== 'mouse') return;
-      hovering = true;
-      pause();
-      document.addEventListener('scroll', pause, true);
-    };
-    const leave = () => {
-      hovering = false;
-      pause();
-      document.removeEventListener('scroll', pause, true);
-    };
     const wheel = (event: WheelEvent) => {
-      // Passing through a chart must keep scrolling the conversation. Only a
-      // stationary mouse, after scrolling settles, hands the wheel to ECharts.
-      if (!ready) { event.stopImmediatePropagation(); pause(); }
+      // ECharts also captures wheels for graph/tree roaming, outside dataZoom.
+      // Keep native scrolling unless the user explicitly asks to zoom.
+      if (!event.ctrlKey) event.stopImmediatePropagation();
     };
-    element.addEventListener('pointerenter', enter);
-    element.addEventListener('pointermove', pause);
-    element.addEventListener('pointerleave', leave);
     element.addEventListener('wheel', wheel, { capture: true, passive: true });
-    return () => {
-      leave();
-      element.removeEventListener('pointerenter', enter);
-      element.removeEventListener('pointermove', pause);
-      element.removeEventListener('pointerleave', leave);
-      element.removeEventListener('wheel', wheel, true);
-    };
+    return () => element.removeEventListener('wheel', wheel, true);
   }, [label]);
 
   const zoom = (scale: number | 'reset') => {
@@ -156,9 +128,9 @@ export function EChart({ option, width, height, className, label, zoomControls =
   const navigation = controls && (
     <>
     <div role="group" aria-label="Chart zoom" className={cn('z-10 flex items-center gap-1 rounded-sm bg-raised', externalControls ? '' : narrowControls ? 'self-start' : 'pointer-events-none absolute top-1 right-1 shadow-raised opacity-0 transition-opacity group-hover/chart:pointer-events-auto group-hover/chart:opacity-100 group-focus-within/chart:pointer-events-auto group-focus-within/chart:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 motion-reduce:transition-none')}>
-      {externalControls && <span className="mr-auto text-caption text-muted" title="Pause over the chart, then scroll to zoom">Zoom</span>}
-      <Button size="icon-md" aria-label="Zoom in on chart" title="Zoom in (scroll up)" disabled={!ready || error} onClick={() => zoom(0.5)}><Plus /></Button>
-      <Button size="icon-md" aria-label="Zoom out on chart" title="Zoom out (scroll down)" disabled={!ready || error} onClick={() => zoom(2)}><Minus /></Button>
+      {externalControls && <span className="mr-auto text-caption text-muted" title="Hold Ctrl while scrolling to zoom">Zoom</span>}
+      <Button size="icon-md" aria-label="Zoom in on chart" title="Zoom in (Ctrl+scroll up)" disabled={!ready || error} onClick={() => zoom(0.5)}><Plus /></Button>
+      <Button size="icon-md" aria-label="Zoom out on chart" title="Zoom out (Ctrl+scroll down)" disabled={!ready || error} onClick={() => zoom(2)}><Minus /></Button>
       <Button size="icon-md" aria-label="Reset chart zoom" title="Reset zoom" disabled={!ready || error} onClick={() => zoom('reset')}><RotateCcw /></Button>
     </div>
     {externalControls && menuRanges.map((range, i) => (
