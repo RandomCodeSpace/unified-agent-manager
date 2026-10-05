@@ -166,8 +166,9 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       </PanelSection>
       </div>
     </div>
-    <PanelFoot className="gap-3">
-      {report?.collection?.updated_at && <p role="status" className="min-w-0 truncate">Updated <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time></p>}
+    {/* Narrow, the foot wraps rather than cutting "Updated" short. */}
+    <PanelFoot className="gap-x-3 gap-y-1 max-[959px]:h-auto max-[959px]:flex-wrap max-[959px]:py-2">
+      {report?.collection?.updated_at && <p role="status" className="shrink-0">Updated <time dateTime={report.collection.updated_at} title={dateTime(report.collection.updated_at)}>{timeAgo(report.collection.updated_at)}</time></p>}
       <span className="flex-1" />
       {shown && unpriced > 0 && <p className="shrink-0">{unpriced} {unpriced === 1 ? 'model' : 'models'} unpriced · <a href="#settings" className="text-ink underline underline-offset-2" onClick={(event) => { if (onAddPrices) { event.preventDefault(); onAddPrices(); } onClose(); }}>Add prices</a></p>}
       <Tip label="Estimates include known costs only. They are not provider bills.">
