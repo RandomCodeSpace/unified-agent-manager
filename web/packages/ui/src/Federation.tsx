@@ -5,6 +5,7 @@ import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, UPDA
 import { FederationContext, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
+import { AlertDialog } from './components/ui/dialog';
 import { Select } from './components/ui/select';
 import { initialState, reducer, type State, type Action } from './state';
 import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
@@ -200,8 +201,7 @@ export default function Federation() {
     return () => window.clearInterval(timer);
   }, [authenticated, active]);
 
-  const navigate = useCallback((connection: ConnectedInstance | null, path: string) => {
-    if (terminalOpen && connection?.id !== activeRef.current?.id && !window.confirm('Switch instances and close the active terminal?')) return;
+  const show = useCallback((connection: ConnectedInstance | null, path: string) => {
     routeReady.current = true;
     setRouteError(null);
     setTerminalOpen(false);
@@ -211,7 +211,18 @@ export default function Federation() {
     // Moving to another instance's view is a navigation, so Back returns to the previous one.
     const hash = identityHash(path, connection, registryRef.current?.instance_id ?? '');
     if (window.location.hash !== hash) history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
-  }, [terminalOpen]);
+  }, []);
+  // Leaving the instance whose terminal is open ends its shell (the socket's close kills it): the app's dialog confirms that first.
+  const [leaving, setLeaving] = useState<{ connection: ConnectedInstance | null; path: string } | null>(null);
+  const [leavingOpen, setLeavingOpen] = useState(false);
+  const navigate = useCallback((connection: ConnectedInstance | null, path: string) => {
+    if (terminalOpen && connection?.id !== activeRef.current?.id) {
+      setLeaving({ connection, path });
+      setLeavingOpen(true);
+      return;
+    }
+    show(connection, path);
+  }, [terminalOpen, show]);
   const resolveRoute = useCallback((force = false) => {
     // Local navigation does not depend on the optional connection registry.
     if (!registryRead && hasIdentity(window.location.hash)) return;
@@ -349,5 +360,6 @@ export default function Federation() {
         ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, metaCache, carry }) }}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
+    <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent tasks keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
   </>;
 }

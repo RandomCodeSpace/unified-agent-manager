@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { install } from '../../src/mock/install';
 import { createApiClient, type ConnectedInstance } from '../../src/api';
@@ -292,6 +292,32 @@ test('turning a connection off removes its rows at once, before the registry is 
   expect(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' })).toBeTruthy();
   expect(section.getByRole('status').textContent).toBe('Disabled');
   release();
+});
+
+test('leaving the instance whose terminal is open asks in the app’s dialog, never the browser’s', async () => {
+  // happy-dom has no confirm(); a browser's would block the test, so a stub stands in and must stay uncalled.
+  const native = vi.fn(() => true);
+  vi.stubGlobal('confirm', native);
+  const { user } = federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  await screen.findByRole('region', { name: 'Terminal' });
+  await user.click(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  const dialog = within(await screen.findByRole('alertdialog', { name: 'Switch instances?' }));
+  expect(native).not.toHaveBeenCalled();
+  // Cancel keeps the instance and its shell.
+  await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  expect(window.location.hash).toBe('#task=t3');
+  expect(screen.getByRole('region', { name: 'Terminal' })).toBeTruthy();
+  await user.click(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Switch instances?' })).getByRole('button', { name: 'Switch and close terminal' }));
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Terminal' })).toBeNull());
+  expect(native).not.toHaveBeenCalled();
+  vi.unstubAllGlobals();
 });
 
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
