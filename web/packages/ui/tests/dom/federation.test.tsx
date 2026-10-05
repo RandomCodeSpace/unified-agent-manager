@@ -99,16 +99,36 @@ test('a remote deep link to a replaced instance stays unavailable and never open
   expect(calls.some(call => call.path.startsWith('/api/sessions/t3'))).toBe(false);
 });
 
-test('disabling the selected owner closes its streams and shows an explicit unavailable view', async () => {
+test('disabling the selected owner falls back to this instance with the sidebar intact and closes its streams', async () => {
   const records = [record('b', 'Workstation B')];
   const { user, replaceRegistry, streams } = federated('', records);
   const rows = await taskRows();
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
   await screen.findByRole('region', { name: 'Conversation' });
   replaceRegistry([{ ...records[0], enabled: false, generation: 2 }]);
-  await screen.findByText(/This connection is disabled|This connection is unavailable/);
-  await waitFor(() => expect(streams.filter(entry => entry.owner === 'b').every(entry => entry.stream.readyState === 2)).toBe(true));
+  // Home, not a blank page or a full-screen notice; the Task list stays, without the disabled machine's rows.
+  await screen.findByRole('heading', { name: 'What are you working on?', level: 1 });
+  expect(screen.queryByText(/This connection is disabled|This connection is unavailable/)).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
+  expect(window.location.hash).toBe('');
+  const list = await taskRows();
+  expect(list.getByRole('button', { name: /Doctor: add terminal line/, description: 'This instance' })).toBeTruthy();
+  expect(list.queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' })).toBeNull();
+  await waitFor(() => expect(streams.filter(entry => entry.owner === 'b').every(entry => entry.stream.readyState === 2)).toBe(true));
+});
+
+test('re-pairing the selected owner keeps its Task open at the new generation', async () => {
+  const records = [record('b', 'Workstation B')];
+  const { user, replaceRegistry, calls } = federated('', records);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  replaceRegistry([{ ...records[0], generation: 2 }]);
+  await waitFor(() => expect(window.location.hash).toBe('#task=t3&home=home-a&instance=instance-b&connection=b&generation=2'));
+  // The view remounts on the connection's new generation and shows the same Task.
+  await screen.findByRole('region', { name: 'Conversation' });
+  expect(screen.queryByText(/This connection is unavailable/)).toBeNull();
+  expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
 });
 
 test('core-only peers render their task and name unavailable optional features in Settings', async () => {

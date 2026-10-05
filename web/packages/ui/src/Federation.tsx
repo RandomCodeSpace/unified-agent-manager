@@ -117,6 +117,16 @@ export default function Federation() {
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
   const homeId = registry?.instance_id ?? '';
   const connections = registry?.connections ?? [];
+  /** This instance's own view: where a view falls back to once its connection is gone. */
+  const showHome = useCallback(() => {
+    routeReady.current = true;
+    setRouteError(null);
+    setTerminalOpen(false);
+    setActive(null);
+    setRoute(previous => ({ path: '', tick: previous.tick + 1 }));
+    window.dispatchEvent(new CustomEvent('uam-route', { detail: { path: '', connection: HOME, force: true } }));
+    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }, []);
   const refresh = useCallback(async () => {
     const epoch = authEpoch.current;
     const sequence = ++registrySequence.current;
@@ -128,6 +138,13 @@ export default function Federation() {
       if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
       const before = registryRef.current;
       registryRef.current = next;
+      // The connection on screen: disabled or removed, its view falls back to this instance (in the same render that drops its rows); re-paired, its view carries on at the new generation.
+      const viewing = activeRef.current;
+      if (viewing) {
+        const match = next.connections.find(connection => connection.enabled && connection.id === viewing.id && connection.instance_id === viewing.instance_id);
+        if (!match) showHome();
+        else if (match.generation !== viewing.generation) setActive(match);
+      }
       setSourceStates(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === HOME || next.connections.some(connection => connection.enabled && connection.id === id && before?.connections.some(old => old.id === id && old.generation === connection.generation && old.instance_id === connection.instance_id)))));
       setSources(previous => [homeSource, ...next.connections.filter(connection => connection.enabled).map(connection => {
         const prior = previous.find(source => source.connection?.id === connection.id && source.connection.instance_id === connection.instance_id && source.connection.generation === connection.generation);
@@ -147,7 +164,7 @@ export default function Federation() {
       setRegistryError(null);
     } catch (error) { if (current()) setRegistryError(describeError(error)); }
     finally { if (current()) setRegistryRead(true); }
-  }, []);
+  }, [showHome]);
   const onAuth = useCallback((value: boolean) => {
     if (authRef.current !== value) authEpoch.current++;
     authRef.current = value;
