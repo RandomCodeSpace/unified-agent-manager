@@ -722,12 +722,13 @@ export default function App() {
   else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
   else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}`;
   // Written when the view changes, never over a fragment the user just navigated to (its event may come
-  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it.
+  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it:
+  // an earlier render's effect that lands after the click (a blur the press caused) leaves it alone.
   const writtenHash = useRef<string | null>(null);
   useEffect(() => {
+    if (writtenHash.current === viewHash) return;
     const push = pushView.current;
     pushView.current = false;
-    if (writtenHash.current === viewHash) return;
     writtenHash.current = viewHash;
     if (window.location.hash === viewHash) return;
     const url = `${window.location.pathname}${window.location.search}${viewHash}`;

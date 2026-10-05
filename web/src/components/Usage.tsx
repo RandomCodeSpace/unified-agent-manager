@@ -1,8 +1,8 @@
 import { Info, Search, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { api, describeError, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
+import { api, describeError, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
 import { cn } from '../lib/cn';
-import { accountQuota, quotaFace, quotaPace, quotaText } from '../lib/cost';
+import { accountQuota, quotaFace, quotaLabel, quotaPace, quotaText } from '../lib/cost';
 import { dateTime, timeAgo, useApp } from './common';
 import { aggregateUsageModels, estimateWithoutCache, groupUsageModels } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, ModelOverview, modelNames, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
@@ -185,8 +185,40 @@ function daysText(days: number): string {
   return `${count} ${count === 1 ? 'day' : 'days'}`;
 }
 
-/** Account allowance is live from SSE; recorded usage reads only while open. */
-export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; className?: string; onAddPrices?: () => void }>) {
+const QUOTA_FILLS = { healthy: 'bg-success', attention: 'bg-warning', danger: 'bg-error', muted: 'bg-faint' };
+/** Pace labels that say nothing the face does not: left out of the footer's line. */
+const QUIET_PACE = new Set(['Account usage unavailable', 'Usage pace unavailable', 'Unlimited allowance']);
+
+/** "Premium requests", "AI credits": the allowance's unit, as a label. */
+function allowanceName(type: string): string {
+  const label = quotaLabel(type).replace(/\bai\b/, 'AI');
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** The sidebar footer's face of the allowance: unit and share left, a meter of what is left, then pace and reset. */
+function AllowanceSummary({ quota, pace }: Readonly<{ quota: Quota | null; pace: ReturnType<typeof quotaPace> }>) {
+  const known = !!quota && (quota.unlimited || pace.remaining !== null);
+  const notes = [
+    quota && !QUIET_PACE.has(pace.label) ? <span key="pace" className={QUOTA_TONES[pace.tone]}>{pace.label}</span> : null,
+    known && !quota?.unlimited && pace.daysUntilReset !== null ? `resets in ${daysText(pace.daysUntilReset)}` : null,
+  ].filter(Boolean);
+  return <>
+    <span className="flex items-baseline justify-between gap-3 text-caption">
+      <span className="truncate text-body">{quota ? allowanceName(quota.type) : 'Usage'}</span>
+      <span className={cn('shrink-0 tabular-nums', known ? 'font-medium text-ink' : 'text-muted')}>{known ? quotaFace(quota) : 'Not reported'}</span>
+    </span>
+    {known && !quota.unlimited && <span aria-hidden="true" className="relative block h-1 overflow-hidden rounded-full bg-hairline">
+      <span className={cn('absolute inset-0 origin-left rounded-full transition-transform duration-300', QUOTA_FILLS[pace.tone])} style={{ transform: `scaleX(${(pace.remaining ?? 0) / 100})` }} />
+    </span>}
+    {notes.length > 0 && <span className="truncate text-meta text-muted">{notes.map((note, i) => <span key={i}>{i > 0 && ' · '}{note}</span>)}</span>}
+  </>;
+}
+
+/**
+ * Account allowance is live from SSE; recorded usage reads only while open. `ring` is the rail's
+ * 28px icon button; `row` is the sidebar footer's full-width, labelled meter.
+ */
+export function UsageButton({ side = 'top', variant = 'ring', className, onAddPrices }: Readonly<{ side?: 'top' | 'right'; variant?: 'ring' | 'row'; className?: string; onAddPrices?: () => void }>) {
   const { usage } = useApp();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -196,7 +228,7 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
   const quota = accountQuota(usage?.quotas);
   const pace = quotaPace(quota, now, usage?.stale);
   const value = quota?.unlimited ? '∞' : pace.remaining === null ? '—' : String(Math.round(pace.remaining));
-  const description = `${quota ? quotaFace(quota) : 'Account usage unavailable'}. ${pace.label}`;
+  const description = quota ? `${allowanceName(quota.type)}: ${quotaFace(quota)}. ${pace.label}${!quota.unlimited && pace.daysUntilReset !== null ? `. Resets in ${daysText(pace.daysUntilReset)}` : ''}` : 'Account usage unavailable';
   const descriptionId = useId();
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);
@@ -208,7 +240,12 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
     setOpen(next);
   };
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
-    <Tip label={`Usage · ${description}`} side={side} disabled={open}>
+    {variant === 'row' ? (
+      // The row says what it is, so it carries no tip.
+      <Popover.Trigger render={<Button data-account-usage aria-label="Usage" aria-describedby={descriptionId} className={cn('h-auto w-full flex-col items-stretch justify-start gap-1 px-2 py-1.5 text-left font-normal whitespace-normal', className)} />}>
+        <AllowanceSummary quota={quota} pace={pace} />
+      </Popover.Trigger>
+    ) : <Tip label={`Usage · ${description}`} side={side} disabled={open}>
       <Popover.Trigger render={<Button data-account-usage size="icon" aria-label="Usage" aria-describedby={descriptionId} className={cn('[&_svg]:size-full', QUOTA_TONES[pace.tone], className)} />}>
         <span aria-hidden="true" className={cn('relative block size-4 shrink-0', QUOTA_TONES[pace.tone])}>
           <svg viewBox="0 0 36 36" className="absolute inset-0 -rotate-90" fill="none">
@@ -219,7 +256,7 @@ export function UsageButton({ side = 'top', className, onAddPrices }: Readonly<{
           <span className={cn('absolute inset-0 flex items-center justify-center leading-none font-semibold tabular-nums', value.length > 2 ? 'text-[7px]' : 'text-[9px]')}>{value}</span>
         </span>
       </Popover.Trigger>
-    </Tip>
+    </Tip>}
     <span ref={describer} id={descriptionId} className="sr-only">{description}</span>
     {/* A fixed height, so a period or view with more rows scrolls inside and the tabs stay under the pointer. Below 960px it fits the drawer (min(360px, 100vw - 44px)) less 8px a side. */}
     <Popover.Content ref={popup} initialFocus={popup} side={side} collisionBoundary={boundary} className="w-[29rem] max-w-[calc(100vw-1rem)] h-[min(44rem,calc(100dvh-2rem),var(--available-height))] gap-0 overflow-x-hidden overflow-y-auto p-0 max-[959px]:max-w-[min(344px,calc(100vw-60px))]">

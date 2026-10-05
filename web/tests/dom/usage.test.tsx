@@ -42,10 +42,11 @@ describe('Usage popover', () => {
     const { user } = renderApp('#task=t20');
     const nav = await sidebar();
     const button = nav.getByRole('button', { name: 'Usage', exact: true });
-    await waitFor(() => expect(button.textContent).toBe('96'));
-    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('96% left');
+    // The footer row names the allowance, its share left, the pace and the reset, with a meter of what is left.
+    await waitFor(() => expect(button.textContent).toMatch(/^AI credits96% leftUnder pace · resets in \d+ days?$/));
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('AI credits: 96% left');
     expect(document.getElementById('composer-usage')).toBeNull();
-    expect(button.querySelector('circle[pathLength]')?.getAttribute('stroke-dasharray')).toBe('96 100');
+    expect(button.querySelector<HTMLElement>('[style]')?.style.transform).toBe('scaleX(0.96)');
     await user.click(button);
     const allowance = within(await screen.findByRole('region', { name: 'AI allowance' }));
     expect(allowance.getByText('96% left')).toBeTruthy();
@@ -68,6 +69,18 @@ describe('Usage popover', () => {
     await user.click(button);
     expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
     expect(screen.queryByText('Under pace')).toBeNull();
+  });
+
+  test('the footer row says each state in words, not colour alone', () => {
+    const quota = { provider: 'copilot', type: 'premium_interactions', used: 1500, entitlement: 1500, remaining_percent: 0, unlimited: false, overage: 0 };
+    const row = (quotas: typeof quota[]) => <AppContext.Provider value={{ usage: { quotas, stale: false }, meta: null } as AppContextValue}><UsageButton variant="row" /></AppContext.Provider>;
+    const view = render(row([quota]));
+    const button = screen.getByRole('button', { name: 'Usage', exact: true });
+    expect(button.textContent).toMatch(/^Premium requests0% leftAllowance exhausted · resets in /);
+    view.rerender(row([{ ...quota, unlimited: true, remaining_percent: 100 }]));
+    expect(button.textContent).toBe('Premium requestsUnlimited');
+    view.rerender(row([]));
+    expect(button.textContent).toBe('UsageNot reported');
   });
 
   test.each(['top', 'right'] as const)('keeps its %s anchor on the first click and after reopening', async (side) => {
@@ -137,6 +150,8 @@ describe('Usage popover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
     await user.click(nav.getByRole('button', { name: 'Hide sidebar' }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
+    // The rail has room for the ring alone: the share left, without its sign.
+    expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96');
     await user.click(rail.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('dialog', { name: 'Usage' });
     await user.keyboard('{Escape}');

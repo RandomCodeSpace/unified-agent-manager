@@ -1,4 +1,4 @@
-import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -111,34 +111,67 @@ function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions;
   );
 }
 
-function SettingsButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
+/** The rail's icon with a tip, or (`labelled`, in the sidebar footer) the icon and its word. */
+function FooterButton({ label, icon, pressed, onClick, labelled, side }: Readonly<{ label: string; icon: ReactNode; pressed: boolean; onClick: () => void; labelled?: boolean; side?: TipSide }>) {
+  if (labelled) {
+    return (
+      <Button size="sm" aria-pressed={pressed} className="text-muted" onClick={onClick}>
+        {icon}
+        {label}
+      </Button>
+    );
+  }
   return (
-    <Tip label="Settings" side={side}>
-      <Button size="icon" aria-label="Settings" aria-pressed={actions.settingsOpen} className={cn('text-muted', className)} onClick={() => actions.onSettings()}>
-        <SettingsIcon />
+    <Tip label={label} side={side}>
+      <Button size="icon" aria-label={label} aria-pressed={pressed} className="text-muted" onClick={onClick}>
+        {icon}
       </Button>
     </Tip>
   );
 }
 
-function PlannerButton({ actions, side, className }: Readonly<{ actions: WorkspaceActions; side?: TipSide; className?: string }>) {
+function SettingsButton({ actions, side, labelled }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
+  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} labelled={labelled} side={side} />;
+}
+
+function PlannerButton({ actions, side, labelled }: Readonly<{ actions: WorkspaceActions; side?: TipSide; labelled?: boolean }>) {
   if (!actions.planner) return null;
-  return (
-    <Tip label="Planner" side={side}>
-      <Button size="icon" aria-label="Planner" aria-pressed={actions.planner.open} className={cn('text-muted', className)} onClick={() => actions.planner!.onOpen()}>
-        <KanbanSquare />
-      </Button>
-    </Tip>
-  );
+  return <FooterButton label="Planner" icon={<KanbanSquare />} pressed={actions.planner.open} onClick={() => actions.planner!.onOpen()} labelled={labelled} side={side} />;
 }
 
-function ConnectionDot({ connection, side }: Readonly<{ connection: Connection; side?: TipSide }>) {
+/**
+ * The rail's connection: silent while connected (the status is for screen readers), a warning or
+ * error glyph with its sentence in a tip once the stream is lost. Colour is never the only sign.
+ */
+function ConnectionMark({ connection, side }: Readonly<{ connection: Connection; side?: TipSide }>) {
+  if (connection === 'connected' || connection === 'connecting') return <output className="sr-only">{CONNECTION_TEXT[connection]}</output>;
+  const Icon = connection === 'offline' ? CloudOff : RefreshCw;
   return (
-    <Tip label={connection === 'connected' ? 'Connected' : CONNECTION_TEXT[connection]} side={side}>
-      <output className="flex size-7 items-center justify-center">
-        <Dot tone={CONNECTION_TONE[connection]} pulse={connection !== 'connected'} />
+    <Tip label={CONNECTION_TEXT[connection]} side={side}>
+      <output className={cn('flex size-7 items-center justify-center', connection === 'offline' ? 'text-error' : 'text-warning')}>
+        <Icon aria-hidden="true" className="size-4" />
         <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
       </output>
+    </Tip>
+  );
+}
+
+/** "v0.7.1-161-g228dbee0" reads as "v0.7.1+161"; the tip keeps the whole build. Release versions read as they are. */
+function VersionMeta({ version }: Readonly<{ version: string }>) {
+  const build = /^(.+)-(\d+)-g([0-9a-f]{7,})(-dirty)?$/.exec(version);
+  const short = build ? `${build[1]}+${build[2]}` : version;
+  return (
+    <Tip
+      label={
+        <>
+          UAM {version}
+          {build && <span className="block text-on-primary/70">{`${build[2]} ${build[2] === '1' ? 'commit' : 'commits'} after ${build[1]}, build ${build[3]}${build[4] ? ', with local changes' : ''}`}</span>}
+        </>
+      }
+    >
+      <span data-version className="min-w-0 truncate text-meta text-faint tabular-nums">
+        {short}
+      </span>
     </Tip>
   );
 }
@@ -166,7 +199,7 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
         <SettingsButton actions={actions} side="right" />
         <PlannerButton actions={actions} side="right" />
         <UsageButton side="right" onAddPrices={() => actions.onSettings('token-prices')} />
-        <ConnectionDot connection={connection} side="right" />
+        <ConnectionMark connection={connection} side="right" />
       </div>
     </nav>
   );
@@ -595,7 +628,7 @@ export const Sidebar = memo(function Sidebar({
       </header>
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
-      <div ref={list} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
+      <div ref={list} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
         {body}
       </div>
 
@@ -605,12 +638,17 @@ export const Sidebar = memo(function Sidebar({
           {CONNECTION_TEXT[connection]}
         </output>
       )}
-      <footer className="flex min-h-9 shrink-0 items-center gap-2 px-3 text-caption text-muted">
-        <SettingsButton actions={actions} className="-ml-1.5" />
-        <PlannerButton actions={actions} className="-ml-1" />
-        <UsageButton className="-ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
-        <ConnectionDot connection={connection} />
-        {version && <span className="truncate text-meta" title={version}>{version}</span>}
+      {/* The foot: the account allowance as a labelled meter, then Settings, the planner and the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
+      <footer className="flex shrink-0 flex-col gap-1 px-2 pb-2">
+        <div className="fade-rule mx-1 mb-1" aria-hidden="true" />
+        <UsageButton variant="row" onAddPrices={() => actions.onSettings('token-prices')} />
+        <div className="flex min-w-0 items-center gap-0.5">
+          <SettingsButton actions={actions} labelled />
+          <PlannerButton actions={actions} labelled />
+          <span className="flex-1" />
+          {version && <VersionMeta version={version} />}
+          {connection === 'connected' && <output className="sr-only">{CONNECTION_TEXT.connected}</output>}
+        </div>
       </footer>
     </nav>
   );
