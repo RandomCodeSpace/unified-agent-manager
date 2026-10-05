@@ -2,7 +2,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { SIGNED_OUT, UPDATE_EVENTS, api, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, api, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer } from './state';
 import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -179,6 +179,8 @@ export default function App() {
   const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
   const [settingsOpen, setSettingsOpen] = useState(() => window.location.hash === SETTINGS_HASH);
   const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
+  // The provider whose account Settings opens on (the blocked app's Open Settings), or null.
+  const [accountFocus, setAccountFocus] = useState<string | null>(null);
   const [plannerOpen, setPlannerOpen] = useState(() => window.location.hash.startsWith(PLANNER_PREFIX));
   const [routinesFor, setRoutinesFor] = useState<string | null>(hashRoutines);
   // Settle found subtasks the Task holds: the dialog decides each (ADR 0005 §5).
@@ -644,6 +646,7 @@ export default function App() {
   const showSettings = useCallback(() => {
     noteOpener();
     setTokenPricesRequest(0);
+    setAccountFocus(null);
     setSettingsOpen(true);
     setPlannerOpen(false);
     setRoutinesFor(null);
@@ -653,6 +656,13 @@ export default function App() {
   }, [noteOpener]);
   // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
   const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
+  // A provider signed in as another account than the one this server is linked to blocks the app: only Settings stays open.
+  const mismatched = useMemo(() => (meta?.providers ?? []).find((p) => p.account_mismatch) ?? null, [meta]);
+  /** Settings on the provider's account section, its title focused. */
+  const openAccount = useCallback((name: string) => {
+    showSettings();
+    setAccountFocus(name);
+  }, [showSettings]);
   /** Routines in the main pane, one Project's or `all` (like Settings, it keeps the selected Task behind it). */
   const showRoutines = useCallback((projectId: string) => {
     noteOpener();
@@ -712,8 +722,8 @@ export default function App() {
   }, [auth]);
   // The Task on screen is not announced while this page is visible; Settings, the planner and Routines cover it.
   useEffect(() => {
-    if (auth === 'in') setViewing(settingsOpen || plannerOpen || routinesFor ? null : state.selectedId);
-  }, [auth, state.selectedId, settingsOpen, plannerOpen, routinesFor]);
+    if (auth === 'in') setViewing(settingsOpen || plannerOpen || routinesFor || mismatched ? null : state.selectedId);
+  }, [auth, state.selectedId, settingsOpen, plannerOpen, routinesFor, mismatched]);
 
   // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, `#routines…`, else the selected task.
   let viewHash = '';
@@ -783,9 +793,11 @@ export default function App() {
   const projectCount = state.projects.length;
   const onlyProject = projectCount === 1 ? state.projects[0].id : null;
   const openNewTask = useCallback(() => {
-    if (onlyProject) startTask(onlyProject);
+    // Blocked: no draft, no palette; leaving Settings shows the block.
+    if (mismatched) select(null);
+    else if (onlyProject) startTask(onlyProject);
     else if (projectCount > 0) setPaletteOpen(true);
-  }, [onlyProject, projectCount, startTask]);
+  }, [mismatched, select, onlyProject, projectCount, startTask]);
   // Alt+N opens it from anywhere but a menu, a dialog or the terminal (Ctrl+N is the browser's); the pen's own tooltip, which names the shortcut, does not stand in the way.
   // The terminal's keys are the shell's: on macOS, Option+N is a dead key xterm.js lets through.
   useEffect(() => {
@@ -846,7 +858,7 @@ export default function App() {
         s = await api.createSession(createRequest(projectId, first.settings, entry.id));
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
-        if (errorCode(e) === SIGNED_OUT) refreshMeta();
+        if (errorCode(e) === SIGNED_OUT || errorCode(e) === ACCOUNT_NOT_LINKED) refreshMeta();
         throw new Error(`Could not start the task: ${describeError(e)}`, { cause: e });
       }
       creating.current.delete(projectId);
@@ -968,6 +980,7 @@ export default function App() {
       onSettings: (target) => {
         noteOpener();
         setTokenPricesRequest((request) => target ? request + 1 : 0);
+        setAccountFocus(null);
         setSettingsOpen((o) => target ? true : !o);
         setPlannerOpen(false);
         setRoutinesFor(null);
@@ -998,6 +1011,7 @@ export default function App() {
   // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
   let shownName: string | null = null;
   if (settingsOpen) shownName = 'Settings';
+  else if (mismatched) shownName = null;
   else if (plannerShown) shownName = 'Planner';
   else if (routinesFor) shownName = 'Routines';
   else if (newTask) shownName = '';
@@ -1028,7 +1042,7 @@ export default function App() {
   let shown: SessionDetail | null = null;
   if (state.detail && selected) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
-  const stale = !settingsOpen && !plannerShown && !routinesFor && !newTask && !!shown && shown !== state.detail;
+  const stale = !settingsOpen && !mismatched && !plannerShown && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal ? state.projects.find((p) => p.id === terminalId) : undefined;
@@ -1090,7 +1104,18 @@ export default function App() {
   const gitProjects = state.projects.filter((p) => !p.no_git);
   const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} />;
+    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired ? logout : undefined} tokenPricesRequest={tokenPricesRequest} focusAccount={accountFocus ?? undefined} />;
+  } else if (mismatched) {
+    // Every view but Settings lands here until the account is fixed there; the next meta read lifts it.
+    pane = (
+      <EmptyPane leading={leading} connection={connection}>
+        <h1 className="text-display-md">Copilot is signed in to another account</h1>
+        <p className="text-ui text-muted [overflow-wrap:anywhere]">{mismatched.reason}</p>
+        <Button variant="primary" onClick={() => openAccount(mismatched.name)}>
+          Open Settings
+        </Button>
+      </EmptyPane>
+    );
   } else if (plannerShown) {
     pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={closeView} />;
   } else if (routinesShown) {
@@ -1227,12 +1252,12 @@ export default function App() {
                   {pane}
                 </div>
                 {/* Settings, the planner, routines and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !plannerShown && !routinesShown && !newTask} />
+                <LoadingVeil show={loading && !settingsOpen && !mismatched && !plannerShown && !routinesShown && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} onClose={closeTerminal} />}
             </main>
 
-            <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} onAddProject={actions.onAddProject} />
+            <NewTaskPalette open={paletteOpen && !mismatched} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} onAddProject={actions.onAddProject} />
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}

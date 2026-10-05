@@ -241,6 +241,8 @@ export interface ProviderInfo {
   reason?: string;
   /** Unavailable because the provider's runtime is signed out; `reason` then says to sign in in Settings. */
   signed_out?: boolean;
+  /** Unavailable because the runtime is signed in as another account than the one this server is linked to; `reason` names both. */
+  account_mismatch?: boolean;
   capabilities: Capabilities;
   /** Selectable models; empty means "provider default only". */
   models: Model[];
@@ -260,6 +262,8 @@ export interface ProviderAccount {
   message?: string;
   /** False after a sign-in the runtime could not store: it lasts until the service restarts. */
   stored?: boolean;
+  /** The one account this server is linked to; absent until the first sign-in links one. */
+  linked?: { login: string; host: string; linked_at: string };
 }
 
 /**
@@ -276,6 +280,9 @@ export interface DeviceSignIn {
 
 /** Refusal code of a create or send while the Task's provider is signed out. */
 export const SIGNED_OUT = 'provider_signed_out';
+
+/** Refusal code of a sign-in as another account than the linked one, and of a create or send while the runtime is signed in as one. */
+export const ACCOUNT_NOT_LINKED = 'account_not_linked';
 
 export interface Meta {
   version: string;
@@ -1483,6 +1490,8 @@ export const api = {
   startDeviceSignIn: (provider: string) => call<DeviceSignIn>('POST', `/api/providers/${enc(provider)}/account/device`),
   deviceSignIn: (provider: string) => call<DeviceSignIn>('GET', `/api/providers/${enc(provider)}/account/device`),
   cancelDeviceSignIn: (provider: string) => call<void>('DELETE', `/api/providers/${enc(provider)}/account/device`),
+  /** Clears the linked account and signs out a sign-in the runtime stored; the next sign-in links its account. */
+  unlink: (provider: string) => call<ProviderAccount>('DELETE', `/api/providers/${enc(provider)}/account/link`),
 
   session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
   history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),

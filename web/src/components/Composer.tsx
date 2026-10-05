@@ -1,6 +1,6 @@
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { LIVE, SIGNED_OUT, api, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, api, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -852,8 +852,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         setError('This agent cannot take a message during a turn. Your message is still here; Enter sends it after this turn.');
         return;
       }
-      if (errorCode(e) === SIGNED_OUT) {
-        // The plain reason, and the banner above the pane says it too.
+      if (errorCode(e) === SIGNED_OUT || errorCode(e) === ACCOUNT_NOT_LINKED) {
+        // The plain reason; the banner above the pane, or the block over the app, says it too.
         setError(`${describeError(e)} Your message is still here.`);
         refreshMeta();
         return;

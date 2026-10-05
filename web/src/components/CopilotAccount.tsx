@@ -1,6 +1,6 @@
 import { Check, Copy, ExternalLink } from 'lucide-react';
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, type DeviceSignIn, type ProviderAccount, type ProviderInfo } from '../api';
+import { ACCOUNT_NOT_LINKED, api, describeError, errorCode, type DeviceSignIn, type ProviderAccount, type ProviderInfo } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { Dot, Note, Skeleton, useApp, WorkingMark } from './common';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -38,6 +38,11 @@ function signedInText(a: ProviderAccount): string {
     : `Signed in${who}. Every task on this server uses this account from its next message.`;
 }
 
+const GITHUB = 'https://github.com';
+
+/** ` on <host>` for an account on another GitHub host than github.com, else nothing. */
+const onHost = (host?: string) => (host && host !== GITHUB ? ` on ${host.replace(/^https?:\/\//, '')}` : '');
+
 const inProgress = (d: DeviceSignIn | null) => d?.state === 'starting' || d?.state === 'waiting';
 
 /**
@@ -45,7 +50,8 @@ const inProgress = (d: DeviceSignIn | null) => d?.state === 'starting' || d?.sta
  * section opens; sign in with GitHub (a device code approved on GitHub) or with a token (sent straight to Copilot,
  * never kept here), and sign out of a stored sign-in. Each applies to every Task on this server, so a replaced or
  * removed sign-in is confirmed first. Device sign-in is offered only while signed out: its restart would cut open
- * conversations.
+ * conversations. The server is linked to one account, the first one signed in: a sign-in as another is refused, and
+ * Unlink (confirmed) clears the link and signs out a stored sign-in.
  */
 export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }>) {
   const { refreshMeta } = useApp();
@@ -59,6 +65,8 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   const [replacing, setReplacing] = useState(false);
   const replace = useConfirm<true>();
   const signOut = useConfirm<true>();
+  // The login being unlinked: the dialog keeps its title while it closes, after the link is gone.
+  const unlink = useConfirm<string>();
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
   const [starting, setStarting] = useState(false);
   const [copied, copy] = useCopied();
@@ -106,6 +114,12 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       refresh.current();
     } catch (e) {
       setFormError(`Could not sign in: ${describeError(e)}`);
+      // The server removed a sign-in as another account than the linked one: read what is left.
+      if (errorCode(e) === ACCOUNT_NOT_LINKED) {
+        setReplacing(false);
+        setReads((n) => n + 1);
+        refresh.current();
+      }
     } finally {
       // The field never keeps a token, accepted or not.
       setToken('');
@@ -205,6 +219,29 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
     }
   }
 
+  async function confirmUnlink() {
+    const was = unlink.target ?? 'the account';
+    unlink.close();
+    setBusy(true);
+    setFormError(null);
+    setDone(null);
+    try {
+      const a = await api.unlink(name);
+      setAccount(a);
+      setReplacing(false);
+      setDone(
+        a.signed_in
+          ? `Unlinked ${was}. Copilot is still signed in${a.login ? ` as ${a.login}` : ''} in a way UAM cannot sign out, so this server links that account again.`
+          : `Unlinked ${was} and signed out. The next sign-in links its account.`,
+      );
+      refresh.current();
+    } catch (e) {
+      setFormError(`Could not unlink: ${describeError(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function submit(e: SubmitEvent) {
     e.preventDefault();
     if (!token.trim() || busy) return;
@@ -228,7 +265,10 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   const env = account.env_var;
   const offerDevice = deviceCapable && !env && !account.signed_in;
   const showForm = !env && (!account.signed_in || replacing) && !(offerDevice && waiting);
-  const host = account.host && account.host !== 'https://github.com' ? ` on ${account.host.replace(/^https?:\/\//, '')}` : '';
+  const host = onHost(account.host);
+  const linked = account.linked;
+  // Signed in as another account than the one this server is linked to: Copilot is unavailable until that is fixed.
+  const mismatch = account.signed_in && !!linked && (account.login?.toLowerCase() !== linked.login.toLowerCase() || (account.host || GITHUB) !== (linked.host || GITHUB));
 
   return (
     <>
@@ -259,6 +299,22 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
           )}
         </div>
       </div>
+      {mismatch && linked && (
+        <Note tone="warn" className="[overflow-wrap:anywhere]">
+          GitHub Copilot is signed in as {account.login}{host}, but this server is linked to {linked.login}{onHost(linked.host)}. Sign in as {linked.login}, or unlink the account in Settings.
+        </Note>
+      )}
+      {linked && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Note className="min-w-0 [overflow-wrap:anywhere]">
+            Linked account: {linked.login}
+            {onHost(linked.host)}
+          </Note>
+          <Button size="sm" variant="danger" disabled={busy} onClick={() => unlink.ask(linked.login)}>
+            Unlink
+          </Button>
+        </div>
+      )}
       {env && (
         <Note tone="warn">
           The token in <Code>{env}</Code>, set in the service environment, takes precedence over any sign-in made here, so signing in and out here is off. Change or remove it where the service starts, then restart the service.
@@ -307,12 +363,15 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
               </div>
             </>
           ) : (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <Button size="lg" variant="primary" loading={starting} disabled={busy} onClick={() => void startDevice()}>
-                Sign in with GitHub
-              </Button>
-              <Note className="min-w-0 flex-1 basis-60">Get a code here, enter it on GitHub and approve Copilot CLI. Every task on this server then uses that account.</Note>
-            </div>
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <Button size="lg" variant="primary" loading={starting} disabled={busy} onClick={() => void startDevice()}>
+                  Sign in with GitHub
+                </Button>
+                <Note className="min-w-0 flex-1 basis-60">Get a code here, enter it on GitHub and approve Copilot CLI. Every task on this server then uses that account.</Note>
+              </div>
+              {linked && <Note className="[overflow-wrap:anywhere]">Use the GitHub account {linked.login}; this server is linked to it.</Note>}
+            </>
           )}
         </div>
       )}
@@ -383,6 +442,13 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
         description="Every task on this server stops working until Copilot is signed in again, and the copilot command run as the same user here is signed out too."
         confirmLabel="Sign out"
         onConfirm={() => void confirmSignOut()}
+      />
+      <AlertDialog
+        {...unlink.props}
+        title={`Unlink ${unlink.target ?? 'the account'}?`}
+        description="Copilot signs out on this server, and the next sign-in links its account. Every task on this server uses that account."
+        confirmLabel="Unlink"
+        onConfirm={() => void confirmUnlink()}
       />
     </>
   );

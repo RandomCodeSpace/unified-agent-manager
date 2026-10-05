@@ -49,7 +49,7 @@ function Section({ id, title, subtitle, help, control, hidden = false, children 
   const heading = (
     <div className="flex min-w-0 flex-col gap-0.5">
       <div className={control ? 'flex min-h-8 items-center gap-1' : 'flex items-center gap-1'}>
-        <h2 id={`${id}-title`} tabIndex={id === 'token-prices' ? -1 : undefined} className="text-title text-ink">
+        <h2 id={`${id}-title`} tabIndex={id === 'token-prices' || id.startsWith('account-') ? -1 : undefined} className="text-title text-ink">
           {title}
         </h2>
         {help && <HelpTip label={title} id={`${id}-help`}>{help}</HelpTip>}
@@ -490,13 +490,14 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0 }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number }>) {
+export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; focusAccount?: string }>) {
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
-  const [section, setSection] = useState<SettingsSection>(tokenPricesRequest ? 'models' : 'general');
-  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([tokenPricesRequest ? 'models' : 'general']));
+  // Opened for Token costs, or on a provider's account (`focusAccount`, the blocked app's Open Settings).
+  const [section, setSection] = useState<SettingsSection>(tokenPricesRequest ? 'models' : focusAccount ? 'providers' : 'general');
+  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([section]));
   const [handledPriceRequest, setHandledPriceRequest] = useState(tokenPricesRequest);
   if (handledPriceRequest !== tokenPricesRequest) {
     setHandledPriceRequest(tokenPricesRequest);
@@ -512,6 +513,14 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     title?.focus({ preventScroll: true });
     title?.scrollIntoView({ block: 'start' });
   }, [tokenPricesRequest, loaded]);
+  // The account's card title takes focus once the catalogs list the provider.
+  const accountTitle = focusAccount && meta ? `account-${focusAccount}-title` : null;
+  useEffect(() => {
+    if (!accountTitle) return;
+    const title = document.getElementById(accountTitle);
+    title?.focus({ preventScroll: true });
+    title?.scrollIntoView({ block: 'start' });
+  }, [accountTitle]);
   const saveSequence = useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
