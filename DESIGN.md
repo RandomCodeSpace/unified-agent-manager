@@ -951,8 +951,8 @@ In the expanded sidebar the Usage button is the footer's allowance chip (see Sid
   - a 2px `ink` tick at the even pace's budget to date.
 
   A `meta` legend line under it says "Used 101 · Budget to date 228 · At this pace ~602" and, at the right, the cap. The bar is an image named with the same.
-- **Rows:** Resets ("Nov 1 · 26 days"). Where the pace lands is the bar's legend ("At this pace ~602", or "Runs out ~Oct 24" in `error`). Another provider, without the bar, gets an At this pace row ("About n days left").
-- **Tokens** ("recorded by UAM"): the period tabs and the existing token and model breakdowns.
+- **Reset:** on the used line, "101 / 1,500 used · Resets Nov 1"; its title gives the date, time and days left. Where the pace lands is the bar's legend ("At this pace ~602", or "Runs out ~Oct 24" in `error`). Another provider, without the bar, gets an At this pace row ("About n days left").
+- **Tokens** ("recorded by UAM"): the period tabs and the existing token and model breakdowns. Total tokens has no model count under it; the All models tab carries it.
 - **Foot:** "Updated 1m ago", unpriced models with **Add prices**, and **Estimates** with its tip.
 
 From the sidebar footer's chip it opens above the chip, over the sidebar and the page. In the phone drawer it takes the screen's width less 8px a side, over the drawer. It is one 36rem column, at most 46rem tall: the allowance above the tokens. The overview's top five models (and their "Other n models" row) fit without scrolling. Each model is one line: its name, then "$1.87 · 1.3M · 78% cached", with the whole wording in its tip. In **All models** only the model list scrolls. The body scrolls whole only when the screen is too short. The quota comes from the provider, not UAM's token-cost estimates.

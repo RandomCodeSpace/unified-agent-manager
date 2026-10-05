@@ -121,7 +121,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
         <div className="grid grid-cols-3 gap-3 py-2 @max-[22rem]:grid-cols-2">
-          <div className="@max-[22rem]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p><p className="mt-1 text-meta text-muted">Across {models.length} {models.length === 1 ? 'model' : 'models'}</p></div>
+          <div className="@max-[22rem]:col-span-2"><p className="flex min-h-6 items-center text-caption text-muted">Total tokens</p><p className="mt-1 text-display-md text-ink tabular-nums"><Count value={shown.total.total} /></p></div>
           <div>
             <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Estimated cost</span>
               <HelpTip label="Estimated cost">
@@ -206,6 +206,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
               <span className="text-display-md text-ink">{n(quota.used)}</span>
               <span className="text-ui text-muted"> / {n(quota.entitlement)} used</span>
               {quota.overage > 0 && <span className="text-ui text-error"> · {n(quota.overage)} over</span>}
+              {resetAt !== null && <span className="text-ui text-muted" title={`${dateTime(new Date(resetAt))} · ${daysText(pace.daysUntilReset!)}`}> · Resets {day(resetAt)}</span>}
             </p>
             {!QUIET_PACE.has(pace.label) && (
               <span className={cn('flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-caption font-medium', PACE_CHIPS[pace.tone])}>
@@ -215,14 +216,8 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
             )}
           </div>
           {burn && <BurnBar burn={burn} tone={pace.tone} entitlement={quota.entitlement} />}
-          <dl className="flex flex-col text-ui">
-            {resetAt !== null && (
-              <div className="flex items-baseline justify-between gap-3 py-1.5">
-                <dt className="text-muted">Resets</dt>
-                <dd className="tabular-nums text-ink" title={dateTime(new Date(resetAt))}>{day(resetAt)} · {daysText(pace.daysUntilReset!)}</dd>
-              </div>
-            )}
-            {projection && (
+          {projection && (
+            <dl className="flex flex-col text-ui">
               <div className="flex items-baseline justify-between gap-3 py-1.5">
                 <dt className="flex items-center gap-1 text-muted">
                   At this pace
@@ -230,8 +225,8 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
                 </dt>
                 <dd className="tabular-nums text-ink">{projection}</dd>
               </div>
-            )}
-          </dl>
+            </dl>
+          )}
         </>
       )}
     </PanelSection>

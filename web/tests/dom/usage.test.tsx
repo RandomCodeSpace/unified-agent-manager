@@ -53,7 +53,7 @@ describe('Usage popover', () => {
     expect(within(screen.getByRole('dialog', { name: 'Usage' })).getByText('96% left')).toBeTruthy();
     expect(allowance.getByText('280')).toBeTruthy();
     expect(allowance.getByText('/ 7,000 used')).toBeTruthy();
-    expect(allowance.getByText('Resets')).toBeTruthy();
+    expect(allowance.getByText(/^· Resets \w+ \d+$/)).toBeTruthy();
     // Where the pace lands: the bar's legend, or, without the bar, a row.
     expect(allowance.getByText(/^(At this pace ~[\d,]+|Runs out ~.+|About .+ left)$/)).toBeTruthy();
   });
