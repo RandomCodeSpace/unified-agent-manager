@@ -1,4 +1,5 @@
-import { useApi } from '../ApiContext';
+import { ApiContext, useApi } from '../ApiContext';
+import type { Machine, MachineChoice } from '../FederationContext';
 import { Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
 import { useRef, useState, type SubmitEvent } from 'react';
 import { describeError, isStatus, type Project, type SessionSummary } from '../api';
@@ -21,10 +22,24 @@ export interface DialogLifecycle {
   onClosed: () => void;
 }
 
-export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting }: DialogLifecycle & { onAdded: (p: Project) => void; onExisting: (projectId: string) => void }) {
-  const api = useApi();
+export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting, machines, choices }: DialogLifecycle & {
+  /** `machine`: the machine it was added on, with connected instances. */
+  onAdded: (p: Project, machine?: string) => void;
+  onExisting: (projectId: string, machine?: string) => void;
+  /** With connected instances: the machines a Project can be added on (the one on screen first chosen), and every instance with why it cannot be chosen. */
+  machines?: Machine[];
+  choices?: MachineChoice[];
+}) {
+  const shown = useApi();
+  const [machine, setMachine] = useState(() => shown.owner?.id ?? '');
+  // The folder picker and the request go to the chosen machine.
+  const target = machines?.find((m) => m.id === machine);
+  const api = target?.client ?? shown;
+  const elsewhere = api !== shown;
   const { meta } = useApp();
-  const recent = meta?.recent_workdirs ?? [];
+  // Recent folders are the machine on screen's.
+  const recent = elsewhere ? [] : meta?.recent_workdirs ?? [];
+  const browsable = api.supports('files-v1');
   const first = useRef<HTMLInputElement>(null);
   const browse = useRef<HTMLButtonElement>(null);
   const [dir, setDir] = useState('');
@@ -40,12 +55,15 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
     setBusy(true);
     setError(null);
     try {
-      onAdded(await api.createProject({ dir: dir.trim(), name: name.trim() || undefined }));
+      const added = await api.createProject({ dir: dir.trim(), name: name.trim() || undefined });
+      if (target) onAdded(added, target.id);
+      else onAdded(added);
       onClose();
     } catch (err) {
       const existing = isStatus(err, 409) ? err.body.project_id : undefined;
       if (typeof existing === 'string' && existing) {
-        onExisting(existing);
+        if (target) onExisting(existing, target.id);
+        else onExisting(existing);
         onClose();
         return;
       }
@@ -62,7 +80,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
       onClosed={onClosed}
       initialFocus={first}
       title="Add a project"
-      description="A directory on this host. Tasks run inside it."
+      description={target?.connection ? `A directory on ${target.label}. Tasks run inside it.` : 'A directory on this host. Tasks run inside it.'}
       // The dialog widens while the folder picker is open (DESIGN.md: 560px) and settles back once a folder is chosen.
       className={cn('transition-[opacity,transform,max-width]', browsing && 'max-w-sheet-wide')}
       footer={
@@ -77,6 +95,23 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
       }
     >
       <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
+        {machines && choices && (
+          <Field id="add-machine" label="Machine">
+            <Select
+              id="add-machine"
+              value={machine}
+              onValueChange={(id) => {
+                setMachine(id);
+                setBrowsing(false);
+                setError(null);
+              }}
+              items={choices.map((c) => {
+                const enabled = machines.some((m) => m.id === c.id);
+                return { value: c.id, label: c.label, disabled: !enabled || !!c.reason, description: c.reason ?? (enabled ? undefined : 'Unavailable') };
+              })}
+            />
+          </Field>
+        )}
         <Field id="add-dir" label="Directory on the host">
           <div className="flex gap-2">
             <Input
@@ -89,11 +124,12 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
               value={dir}
               onChange={(e) => setDir(e.target.value)}
             />
-            <Button ref={browse} variant="secondary" size="lg" aria-expanded={browsing} aria-controls={browsing ? 'add-dir-picker' : undefined} onClick={() => setBrowsing(!browsing)}>
+            <Button ref={browse} variant="secondary" size="lg" disabled={!browsable} aria-describedby={browsable ? undefined : 'add-dir-browse-note'} aria-expanded={browsing} aria-controls={browsing ? 'add-dir-picker' : undefined} onClick={() => setBrowsing(!browsing)}>
               <FolderOpen />
               Browse
             </Button>
           </div>
+          {!browsable && <Note id="add-dir-browse-note" className="mt-2">{`${target?.label ?? 'This instance'} does not offer folder browsing to connected instances. Type the folder's path, or update UAM there.`}</Note>}
           {recent.length > 0 && (
             <Select
               aria-label="Recent folders"
@@ -106,19 +142,22 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting 
         </Field>
         {picker.mounted && (
           <Collapse open={browsing} appear onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
-            <FolderPicker
-              id="add-dir-picker"
-              start={dir}
-              onUse={(p) => {
-                setDir(p);
-                setBrowsing(false);
-                first.current?.focus();
-              }}
-              onClose={() => {
-                setBrowsing(false);
-                browse.current?.focus();
-              }}
-            />
+            <ApiContext.Provider value={api}>
+              <FolderPicker
+                key={machine}
+                id="add-dir-picker"
+                start={dir}
+                onUse={(p) => {
+                  setDir(p);
+                  setBrowsing(false);
+                  first.current?.focus();
+                }}
+                onClose={() => {
+                  setBrowsing(false);
+                  browse.current?.focus();
+                }}
+              />
+            </ApiContext.Provider>
           </Collapse>
         )}
         <Field id="add-name" label="Name" hint="The project gets a two-letter badge from this name, on a colour of its own.">

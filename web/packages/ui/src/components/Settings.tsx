@@ -506,7 +506,10 @@ function NotifyRow() {
 
 export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connections, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; connections?: ReactNode; focusAccount?: string }>) {
   const api = useApi();
-  const instanceControl = useFederation()?.sourceControl;
+  const federation = useFederation();
+  const instanceControl = federation?.sourceControl;
+  // Switching the instance on screen keeps the section open (connected instances only).
+  const carry = federation?.carry;
   // The connected instance on screen, or this one; null without connected instances, where nothing names it.
   const instance = instanceControl ? api.owner?.label ?? 'This instance' : null;
   const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
@@ -515,8 +518,17 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
   // Opened for Token costs, or on a provider's account (`focusAccount`, the blocked app's Open Settings).
-  const [section, setSection] = useState<SettingsSection>(tokenPricesRequest ? 'models' : focusAccount ? 'providers' : 'general');
-  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([section]));
+  const [first] = useState<SettingsSection>(() => {
+    if (tokenPricesRequest) return 'models';
+    if (focusAccount) return 'providers';
+    const next = carry?.read().nextSection;
+    const carried = SETTINGS_SECTIONS.find((item) => item.id === next && (item.id !== 'connections' || connections));
+    return carried?.id ?? 'general';
+  });
+  const [section, setSection] = useState<SettingsSection>(first);
+  const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([first]));
+  useEffect(() => carry?.write({ nextSection: null }), [carry]);
+  useEffect(() => carry?.write({ section }), [carry, section]);
   const [handledPriceRequest, setHandledPriceRequest] = useState(tokenPricesRequest);
   if (handledPriceRequest !== tokenPricesRequest) {
     setHandledPriceRequest(tokenPricesRequest);

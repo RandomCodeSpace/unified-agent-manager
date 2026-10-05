@@ -1,13 +1,14 @@
-import { useFederation } from '../FederationContext';
+import { useFederation, type Machine } from '../FederationContext';
 import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ViewTransition, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
+import { encodeEntity } from '../lib/instanceIdentity';
 import { filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
-import { ProjectFilterPicker } from './ProjectPicker';
-import { canRename, taskMenuItems, useTaskActions } from './taskActions';
+import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
+import { TaskActionsContext, canRename, taskMenuItems, useTaskActions, type TaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
 import { ContextMenu } from './ui/menu';
@@ -99,7 +100,34 @@ function AddProjectButton({ actions, side }: Readonly<{ actions: WorkspaceAction
 }
 
 function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[]; actions: WorkspaceActions; side?: TipSide }>) {
+  const federation = useFederation();
+  const machines = federation?.machines;
+  if (machines) {
+    // Each machine's Projects under its name; a Project's buttons act on its own machine, opening it where the view lives.
+    const filter = federation.filter;
+    const groups: ProjectGroup[] = machines.map((m) => {
+      const planner = m.state.settings.planner === true && m.client.supports('planner-v1');
+      return {
+        key: m.id,
+        label: m.label,
+        projects: m.active ? projects : m.state.projects,
+        current: filter?.machine === m.id ? filter.project : null,
+        onPick: (p) => federation.onFilter?.({ machine: m.id, project: p.id }),
+        onEdit: m.active ? actions.onEditProject : (p) => federation.request?.({ machine: m.id, kind: 'edit-project', projectId: p.id }),
+        onRoutines: m.active ? actions.onRoutines : m.client.supports('routines-v1') ? (p) => federation.go?.(m.id, `#routines=${encodeURIComponent(p.id)}`) : undefined,
+        onPlan: !planner ? undefined : m.active && actions.planner ? (p) => actions.planner!.onOpen(p.id) : (p) => federation.go?.(m.id, `#planner=${encodeURIComponent(p.id)}`),
+      };
+    });
+    const chosen = groups.find((g) => g.current && g.projects.some((p) => p.id === g.current));
+    return <ProjectFilterPicker projects={chosen?.projects ?? []} filter={chosen?.current ?? null} groups={groups} onFilter={() => federation.onFilter?.(null)} onEdit={actions.onEditProject} side={side === 'right' ? 'right' : undefined} />;
+  }
   return <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} side={side === 'right' ? 'right' : undefined} />;
+}
+
+/** Whether any machine on screen has a Project: the rail and the header offer their Project buttons then. */
+function useAnyProject(projects: Project[]): boolean {
+  const machines = useFederation()?.machines;
+  return projects.length > 0 || !!machines?.some((m) => !m.active && m.state.projects.length > 0);
 }
 
 function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
@@ -176,16 +204,17 @@ function VersionMeta({ version }: Readonly<{ version: string }>) {
  * sidebar's own control, so it opens the same thing; tips open to the right.
  */
 export function SidebarRail({ projects, actions, connection, count }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number }>) {
+  const anyProject = useAnyProject(projects);
   return (
     <nav aria-label="Sidebar" className="flex h-full w-rail-collapsed flex-col items-center bg-rail pb-2 text-body">
       <div className="flex h-header shrink-0 items-center">
         <SidebarToggle id="sidebar-show" open={false} count={count} onToggle={actions.onToggleSidebar} side="right" />
       </div>
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
-        {projects.length > 0 && <FilterButton projects={projects} actions={actions} side="right" />}
+        {anyProject && <FilterButton projects={projects} actions={actions} side="right" />}
         {projects.length > 0 && <RoutinesButton actions={actions} side="right" />}
         <AddProjectButton actions={actions} side="right" />
-        {projects.length > 0 && <NewTaskButton actions={actions} side="right" />}
+        {anyProject && <NewTaskButton actions={actions} side="right" />}
       </div>
       <span className="flex-1" />
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
@@ -359,8 +388,10 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
-function TaskRow({ session: s, project, selected, compact = false, tabStop }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean; tabStop: boolean }>) {
-  const { hasNews } = useApp();
+function TaskRow({ session: s, project, selected, compact = false, tabStop, rowKey = s.id, machine }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine }>) {
+  const app = useApp();
+  // Another machine's rows read its own marks; the machine on screen reads App's, which follow the open Task.
+  const hasNews = machine && !machine.active ? machine.hasNews : app.hasNews;
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
@@ -394,7 +425,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop }: Re
 
   const row = (
     <div
-      data-task-row={s.id}
+      data-task-row={rowKey}
       className={compact ? undefined : 'lift group/row rounded-md'}
     >
       {renaming ? (
@@ -407,7 +438,8 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop }: Re
         <Tip label={compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)} side="right">
           <button
             type="button"
-            data-nav={s.id}
+            data-nav={rowKey}
+            aria-describedby={machine ? machineLabelId(machine) : undefined}
             tabIndex={tabStop ? 0 : -1}
             aria-current={selected ? 'true' : undefined}
             className={rowClass}
@@ -428,9 +460,10 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop }: Re
                 <ProjectBadge badge={project.badge} />
                 <span className="sr-only">{project.name}, </span>
                 <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate', selected && 'font-semibold')} />
+                {machine && <span className="max-w-20 shrink-0 truncate text-meta font-normal text-muted">{machine.short}</span>}
               </>
             ) : (
-              <TaskRowContent session={s} project={project} selected={selected} unread={unread} reserveActionSpace={!!settle} />
+              <TaskRowContent session={s} project={project} selected={selected} unread={unread} reserveActionSpace={!!settle} instanceName={machine?.short} />
             )}
           </button>
         </Tip>
@@ -458,7 +491,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop }: Re
   );
 
   return (
-    <ViewTransition name={`task-${s.id}`} update={ROW_TRANSITION} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
+    <ViewTransition name={machine && !machine.active ? `task-${machine.id}-${s.id}` : `task-${s.id}`} update={ROW_TRANSITION} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
       <li>
         <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
           <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
@@ -474,14 +507,14 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop }: Re
 /* ---------- Shelf (Settled / Archived) ---------- */
 
 /** The keys of a shelf's rows on screen, in order: its header (`shelf:<label>`), then its Tasks while open, else the selected one pinned below it. */
-function shelfKeys(label: string, tasks: SessionSummary[], open: boolean, selectedId: string | null): string[] {
-  if (tasks.length === 0) return [];
-  return [`shelf:${label}`, ...tasks.filter((t) => open || t.id === selectedId).map((t) => t.id)];
+function shelfKeys(label: string, rows: ListRow[], open: boolean, selectedKey: string | null): string[] {
+  if (rows.length === 0) return [];
+  return [`shelf:${label}`, ...rows.filter((r) => open || r.key === selectedKey).map((r) => r.key)];
 }
 
-function Shelf({ projects, label, tasks, selectedId, open, onToggle, tabStop }: Readonly<{ projects: ReadonlyMap<string, Project>; label: string; tasks: SessionSummary[]; selectedId: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string }>) {
-  if (tasks.length === 0) return null;
-  const pinned = !open ? tasks.find((t) => t.id === selectedId) : undefined;
+function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render }: Readonly<{ label: string; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; render: (row: ListRow, compact: boolean) => ReactNode }>) {
+  if (rows.length === 0) return null;
+  const pinned = !open ? rows.find((r) => r.key === selectedKey) : undefined;
   return (
     <div className="mt-1">
       <button
@@ -493,7 +526,7 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle, tabStop }: 
         onClick={onToggle}
       >
         <span className="whitespace-nowrap">
-          {label} <span className="tabular-nums text-muted">{tasks.length}</span>
+          {label} <span className="tabular-nums text-muted">{rows.length}</span>
         </span>
         <span className="fade-rule flex-1" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
@@ -501,19 +534,27 @@ function Shelf({ projects, label, tasks, selectedId, open, onToggle, tabStop }: 
       <Collapse open={open}>
         <ul className="flex flex-col gap-px pt-px">
           {/* The pinned copy below owns the selected row while the shelf is closed: one view-transition name each. */}
-          {tasks.filter((t) => t !== pinned).map((t) => (
-            <TaskRow project={projects.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} compact tabStop={t.id === tabStop} />
-          ))}
+          {rows.filter((r) => r !== pinned).map((r) => render(r, true))}
         </ul>
       </Collapse>
       {pinned && (
         <ul className="flex flex-col gap-px">
-          <TaskRow project={projects.get(pinned.project_id)!} session={pinned} selected compact tabStop={pinned.id === tabStop} />
+          {render(pinned, true)}
         </ul>
       )}
     </div>
   );
 }
+
+/** A Task in the list: keyed by its ID, or under federation by its machine and ID (IDs collide across machines). */
+interface ListRow {
+  key: string;
+  task: SessionSummary;
+  project: Project;
+  machine?: Machine;
+}
+
+const machineLabelId = (machine: Machine) => `uam-task-source-${machine.id || 'home'}`;
 
 /* ---------- Sidebar ---------- */
 
@@ -525,6 +566,7 @@ export const Sidebar = memo(function Sidebar({
   actions,
   connection,
   version,
+  machineActions,
 }: {
   /** False until the first snapshot: the list is a skeleton, never "No projects yet". */
   loaded: boolean;
@@ -534,27 +576,60 @@ export const Sidebar = memo(function Sidebar({
   actions: WorkspaceActions;
   connection: Connection;
   version?: string;
+  /** Under federation, the row actions of each machine not on screen, which run against that machine. */
+  machineActions?: ReadonlyMap<string, TaskActions>;
 }) {
   const federation = useFederation();
+  // With connected instances, every machine's Tasks in one list; the machine on screen is this App's own state.
+  const machines = federation?.machines;
+  const carry = machines ? federation.carry : undefined;
   useMinuteTick();
-  const [query, setQuery] = useState('');
+  const [query, setQueryState] = useState(() => carry?.read().query ?? '');
+  const setQuery = (value: string) => {
+    setQueryState(value);
+    carry?.write({ query: value });
+  };
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
-  const chosen = filteredProject(projects, actions.filter);
-  const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
-  const tasks = useMemo(() => sidebarTasks(projects, sessions, actions.filter, query), [projects, sessions, actions.filter, query]);
-  const { active, settled, archived } = groupTasks(tasks);
+  // Under federation the filter names a Project on a machine; one that no longer exists counts as none.
+  const machineFilter = machines ? federation.filter ?? null : null;
+  const filterMachine = machineFilter ? machines?.find((m) => m.id === machineFilter.machine) : undefined;
+  const chosen = machines ? filteredProject(filterMachine ? (filterMachine.active ? projects : filterMachine.state.projects) : [], machineFilter?.project ?? null) : filteredProject(projects, actions.filter);
+  const rows = useMemo<ListRow[]>(() => {
+    if (!machines) {
+      const projectMap = new Map(projects.map((project) => [project.id, project]));
+      return sidebarTasks(projects, sessions, actions.filter, query).map((task) => ({ key: task.id, task, project: projectMap.get(task.project_id)! }));
+    }
+    return machines.flatMap((m) => {
+      if (chosen && filterMachine !== m) return [];
+      const own = m.active ? { projects, sessions } : m.state;
+      const projectMap = new Map(own.projects.map((project) => [project.id, project]));
+      return sidebarTasks(own.projects, own.sessions, chosen ? chosen.id : null, query).map((task) => ({ key: encodeEntity(m.id || null, task.id), task, project: projectMap.get(task.project_id)!, machine: m }));
+    }).sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
+  }, [machines, projects, sessions, actions.filter, query, chosen, filterMachine]);
+  const grouped = groupTasks(rows.map((r) => r.task));
+  const rowOf = new Map(rows.map((r) => [r.task, r]));
+  const [active, settled, archived] = [grouped.active, grouped.settled, grouped.archived].map((tasks) => tasks.map((t) => rowOf.get(t)!));
   // Newest first, whatever their state: a row never moves because its Task changed.
   const unsettled = active;
-  const shelfScope = chosen?.id ?? 'all';
+  const here = machines?.find((m) => m.active);
+  const selectedKey = selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId;
+  const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const archivedOpen = !!shelves[`${shelfScope}:archived`];
   // The row holding the list's one tab stop: the last focused while it is on screen, else the open Task's, else the first.
   const [focused, setFocused] = useState<string | null>(null);
   const searching = !!query.trim();
-  const keys = searching ? tasks.map((t) => t.id) : [...unsettled.map((t) => t.id), ...shelfKeys('Settled', settled, settledOpen, selectedId), ...shelfKeys('Archived', archived, archivedOpen, selectedId)];
-  const tabStop = [focused, selectedId].find((key) => key && keys.includes(key)) ?? keys[0];
+  const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Settled', settled, settledOpen, selectedKey), ...shelfKeys('Archived', archived, archivedOpen, selectedKey)];
+  const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
+  const anyProject = useAnyProject(projects);
+  const renderRow = (r: ListRow, compact = false) => {
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} session={r.task} selected={r.key === selectedKey} compact={compact} tabStop={r.key === tabStop} />;
+    // Another machine's row runs its menu, Settle and rename against that machine.
+    const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
+    return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
+  };
   const toggleShelf = (key: string) =>
     setShelves((s) => {
       const next = { ...s, [key]: !s[key] };
@@ -564,9 +639,13 @@ export const Sidebar = memo(function Sidebar({
 
   // Keep the selected row in view when the selection changes from outside the list.
   useEffect(() => {
-    if (!selectedId) return;
-    list.current?.querySelector<HTMLElement>(`[data-task-row="${CSS.escape(selectedId)}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [selectedId]);
+    if (!selectedKey) return;
+    list.current?.querySelector<HTMLElement>(`[data-task-row="${CSS.escape(selectedKey)}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [selectedKey]);
+  // Switching the machine on screen keeps the list where it was.
+  useLayoutEffect(() => {
+    if (carry && list.current) list.current.scrollTop = carry.read().scroll;
+  }, [carry]);
 
   const conn = CONNECTION_TONE[connection];
 
@@ -574,7 +653,7 @@ export const Sidebar = memo(function Sidebar({
   let body: ReactNode;
   if (!loaded) {
     body = <Skeleton label="Loading tasks…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />;
-  } else if (projects.length === 0) {
+  } else if (!anyProject) {
     body = (
       <div className="flex flex-col items-start gap-3 px-2 pt-6">
         <p className="text-ui text-muted">No projects yet. A project is a directory on this host.</p>
@@ -587,8 +666,8 @@ export const Sidebar = memo(function Sidebar({
   } else if (searching) {
     body = (
       <>
-        <p className="px-2 py-2 text-caption text-muted" role="status">{tasks.length === 0 ? 'No matching tasks' : `${tasks.length} matching ${tasks.length === 1 ? 'task' : 'tasks'}`}</p>
-        {tasks.length === 0 && (
+        <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No matching tasks' : `${rows.length} matching ${rows.length === 1 ? 'task' : 'tasks'}`}</p>
+        {rows.length === 0 && (
           <div className="flex flex-col items-start gap-2 px-2">
             <p className="text-caption text-muted">{`Search looks at task names, project names, folders and branches${chosen ? ` in ${chosen.name}` : ''}.`}</p>
             <Button variant="secondary" size="sm" onClick={() => { setQuery(''); search.current?.focus(); }}>
@@ -596,7 +675,7 @@ export const Sidebar = memo(function Sidebar({
             </Button>
           </div>
         )}
-        <ul className="flex flex-col gap-1 animate-fade-in">{tasks.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} tabStop={t.id === tabStop} />)}</ul>
+        <ul className="flex flex-col gap-1 animate-fade-in">{rows.map((r) => renderRow(r))}</ul>
       </>
     );
   } else {
@@ -604,12 +683,12 @@ export const Sidebar = memo(function Sidebar({
       // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
       <div className="flex min-h-full flex-col">
         <ul aria-label="Unsettled tasks" className="flex flex-col gap-1 animate-fade-in">
-          {unsettled.map((t) => <TaskRow project={projectMap.get(t.project_id)!} key={t.id} session={t} selected={t.id === selectedId} tabStop={t.id === tabStop} />)}
+          {unsettled.map((r) => renderRow(r))}
         </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
         <div className="mt-auto">
-          <Shelf projects={projectMap} label="Settled" tasks={settled} selectedId={selectedId} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} />
-          <Shelf projects={projectMap} label="Archived" tasks={archived} selectedId={selectedId} open={archivedOpen} onToggle={() => toggleShelf(`${shelfScope}:archived`)} tabStop={tabStop} />
+          <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} render={renderRow} />
+          <Shelf label="Archived" rows={archived} selectedKey={selectedKey} open={archivedOpen} onToggle={() => toggleShelf(`${shelfScope}:archived`)} tabStop={tabStop} render={renderRow} />
         </div>
       </div>
     );
@@ -624,15 +703,17 @@ export const Sidebar = memo(function Sidebar({
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input ref={search} type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
-        {!federation?.navigation && projects.length > 0 && <FilterButton projects={projects} actions={actions} />}
+        {anyProject && <FilterButton projects={projects} actions={actions} />}
         {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />
-        {projects.length > 0 && <NewTaskButton actions={actions} id="new-task" />}
+        {anyProject && <NewTaskButton actions={actions} id="new-task" />}
       </header>
 
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
-      <div ref={list} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
-        {federation?.navigation ? federation.navigation(query) : body}
+      <div ref={list} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }} onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
+        {/* Each row names its machine to assistive technology by reference. */}
+        {machines?.map((m) => <span key={m.id} id={machineLabelId(m)} className="sr-only">{m.label}</span>)}
+        {body}
       </div>
 
       {connection !== 'connected' && (
