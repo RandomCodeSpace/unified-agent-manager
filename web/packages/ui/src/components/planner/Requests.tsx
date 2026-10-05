@@ -40,7 +40,7 @@ function Row({ icon, label, children }: Readonly<{ icon: ReactNode; label: React
         {icon}
         {label}
       </button>
-      <Collapse open={open}>
+      <Collapse open={open} soft>
         <div className="pt-1 pb-2 pl-6">{children}</div>
       </Collapse>
     </div>

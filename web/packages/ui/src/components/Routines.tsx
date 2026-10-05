@@ -296,7 +296,7 @@ function RoutineCard({ routine: r, heading: Heading, sessions, onChange, onEdit,
             </Button>
           )}
         </div>
-        <Collapse open={history} inner="pt-3">
+        <Collapse open={history} soft inner="pt-3">
           <ol id={`routine-${r.id}-history`} aria-label={`${r.name} runs`} className="flex flex-col rounded-md bg-sunken p-1">
             {r.runs.map((run) => (
               // A phone stacks the outcome under the time and the trigger.

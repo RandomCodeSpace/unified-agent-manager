@@ -234,7 +234,7 @@ export function CommitPanel({
       </div>
 
       {/* The form is the one scroll area: it shrinks into the space the host leaves, and the actions below it stay in view. */}
-      <Collapse open={formOpen} className="min-h-0" inner="flex flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-contain">
+      <Collapse open={formOpen} soft className="min-h-0" inner="flex flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div id={formId} className="flex flex-col gap-2 pt-0.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <label htmlFor={`${formId}-message`} className="text-ui font-medium text-ink">Commit message</label>
@@ -290,7 +290,7 @@ export function CommitPanel({
           )}
         </div>
       </Collapse>
-      <Collapse open={formOpen} className="shrink-0">
+      <Collapse open={formOpen} soft className="shrink-0">
         <div id={`${formId}-actions`} className="flex flex-wrap items-center gap-2 pt-0.5">
           <Button variant="primary" disabled={!canCommit} loading={running === 'commit'} onClick={() => commit(false)}>
             <GitCommitHorizontal />

@@ -534,7 +534,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render }: Re
         <span className="fade-rule flex-1" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
-      <Collapse open={open}>
+      <Collapse open={open} soft>
         <ul className="flex flex-col gap-px pt-px">
           {/* The pinned copy below owns the selected row while the shelf is closed: one view-transition name each. */}
           {rows.filter((r) => r !== pinned).map((r) => render(r, true))}

@@ -141,7 +141,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
           )}
         </Field>
         {picker.mounted && (
-          <Collapse open={browsing} appear onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
+          <Collapse open={browsing} appear soft onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
             <ApiContext.Provider value={api}>
               <FolderPicker
                 key={machine}

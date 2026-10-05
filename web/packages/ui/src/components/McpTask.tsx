@@ -116,7 +116,7 @@ function ServerRow({ s, busy, signingIn, onToggle, onRestart, onSignIn, children
       </div>
       {s.error && <p className="text-caption break-words text-error">{s.error}</p>}
       {children}
-      <Collapse open={toolsOpen && tools.length > 0}>
+      <Collapse open={toolsOpen && tools.length > 0} soft>
         <ul aria-label={`${s.name} tools`} className="mt-1 flex flex-col gap-1 rounded-md bg-tint-well px-3 py-2">
           {tools.map((t) => (
             <li key={t.name} className="flex min-w-0 flex-col">

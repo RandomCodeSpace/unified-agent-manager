@@ -1300,7 +1300,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
       {queueStrip.mounted && (
-        <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
+        <Collapse open={queue.length > 0} appear={!queueAtMount} soft onClosed={queueStrip.onClosed}>
         <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
