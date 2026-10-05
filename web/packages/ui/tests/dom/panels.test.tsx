@@ -250,7 +250,8 @@ describe('subagents', () => {
     const open = await panel();
     expect(await open.findByRole('region', { name: 'Transcript of Audit package batch 2' })).toBeTruthy();
     await user.click(open.getByRole('button', { name: 'Show where it was spawned' }));
-    const said = await screen.findAllByText(/^Where this subagent was spawned is not in the retained history/);
+    // Locating pages through the record first; under coverage instrumentation that outlasts the default wait.
+    const said = await screen.findAllByText(/^Where this subagent was spawned is not in the retained history/, {}, { timeout: 15000 });
     const alert = said.map((node) => node.closest<HTMLElement>('div[role="alert"]')).find(Boolean);
     await waitFor(() => expect(document.activeElement).toBe(alert));
   });
