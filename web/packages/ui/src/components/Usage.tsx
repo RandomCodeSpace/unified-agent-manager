@@ -34,7 +34,7 @@ const UNREAD: Reading = { report: null, error: null, prices: null, priceError: f
 interface Source { id: string; label: string; client: ApiClient; down?: string }
 
 const ALL_MACHINES = '*';
-const DOWN: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'offline', 'auth-required': 'needs a new access key', unsupported: 'needs an update' };
+const DOWN: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'offline', 'auth-required': 'needs a new access key', unsupported: 'needs an update', 'account-mismatch': 'linked to a different Copilot account' };
 
 /** Why a connected machine cannot report usage now, said after "not included:". */
 function cannotReport(machine: Machine): string | undefined {

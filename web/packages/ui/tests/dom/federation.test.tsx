@@ -403,6 +403,17 @@ test('Usage names each machine that cannot report and totals the others', async 
   expect(calls.some((call) => call.owner === 'c' && call.path.startsWith('/api/usage'))).toBe(false);
 });
 
+test('Usage leaves out a machine on another Copilot account', async () => {
+  const { user, calls } = federated('', [{ ...record('b', 'Workstation B'), status: 'account_mismatch', reason: 'Workstation B is linked to Copilot account mallory.' }]);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B, unavailable: linked to a different Copilot account' });
+  await user.click(rows.getByRole('button', { name: 'Usage', exact: true }));
+  const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
+  expect(await popover.findByText('Workstation B not included: linked to a different Copilot account')).toBeTruthy();
+  await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.87'));
+  expect(calls.some((call) => call.owner === 'b' && call.path.startsWith('/api/usage'))).toBe(false);
+});
+
 test('a connection on another Copilot account keeps its rows, blocks its Tasks and opens its account from Connected instances', async () => {
   const reason = 'Workstation B is linked to Copilot account mallory; this instance is linked to octo. Both must use the same account.';
   const { user } = federated('', [{ ...record('b', 'Workstation B'), status: 'account_mismatch', reason }]);
