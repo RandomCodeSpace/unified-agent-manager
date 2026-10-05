@@ -82,9 +82,19 @@ test('owner switching restores separate drafts and keeps configuration requests 
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/configuration'))).toBe(false);
 });
 
-test('a stale remote deep link stays unavailable and never opens a colliding local task', async () => {
+test('a remote deep link with a stale generation opens the Task on the connection at its current generation', async () => {
   const { calls } = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=99');
-  expect(await screen.findByText('This connection has changed. Open the task from its current instance.')).toBeTruthy();
+  await screen.findByRole('region', { name: 'Conversation' });
+  await waitFor(() => expect(calls.some(call => call.owner === 'b' && call.path.startsWith('/api/sessions/t3'))).toBe(true));
+  expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
+  // The fragment is rewritten to the generation in use; the stale one is only a cache-buster.
+  await waitFor(() => expect(window.location.hash).toBe('#task=t3&home=home-a&instance=instance-b&connection=b&generation=1'));
+  expect(screen.queryByText(/This connection has changed/)).toBeNull();
+});
+
+test('a remote deep link to a replaced instance stays unavailable and never opens a colliding local task', async () => {
+  const { calls } = federated('#task=t3&home=home-a&instance=instance-x&connection=b&generation=1');
+  expect(await screen.findByText('The connected instance no longer matches this link.')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Conversation' })).toBeNull();
   expect(calls.some(call => call.path.startsWith('/api/sessions/t3'))).toBe(false);
 });
@@ -186,16 +196,16 @@ test('editing an unrelated connection preserves the selected owner client and op
 });
 
 test('escaped ownership fields cannot briefly open a same-ID local task before validation', async () => {
-  const { calls, streams } = federated('#task=t3&%68ome=home-a&%69nstance=instance-b&%63onnection=b&%67eneration=99');
-  await screen.findByText('This connection has changed. Open the task from its current instance.');
+  const { calls, streams } = federated('#task=t3&%68ome=home-a&%69nstance=instance-x&%63onnection=b&%67eneration=1');
+  await screen.findByText('The connected instance no longer matches this link.');
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/sessions/t3'))).toBe(false);
   expect(streams.some(entry => entry.owner === '' && new URL(entry.path, 'https://home.test').searchParams.get('session') === 't3')).toBe(false);
 });
 
 
 test('home auth loss clears connected sources even while an invalid route has unmounted the active app', async () => {
-  const { expireHome, streams } = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=99');
-  await screen.findByText('This connection has changed. Open the task from its current instance.');
+  const { expireHome, streams } = federated('#task=t3&home=home-a&instance=instance-x&connection=b&generation=1');
+  await screen.findByText('The connected instance no longer matches this link.');
   expireHome();
   await screen.findByRole('heading', { name: 'Sign in to UAM' });
   expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
