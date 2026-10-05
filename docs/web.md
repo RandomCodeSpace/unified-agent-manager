@@ -162,7 +162,8 @@ time Settings opens or **Check again** is chosen:
 **Sign in with GitHub.** Offered while Copilot is signed out and no
 environment token is set. Choose **Sign in with GitHub**: Settings shows a
 short code, with **Copy code**, and **Open GitHub**, which opens GitHub's
-device page in a new tab. Enter the code there and approve Copilot CLI.
+device page in a new tab. Enter the code there and approve Copilot CLI; no
+token passes through UAM.
 Settings checks every 2 seconds and shows the sign-in once GitHub approves it;
 **Cancel** stops it. A code not approved within about 15 minutes expires and
 the sign-in fails with **Try again**. A sign-in started in another tab or
@@ -205,8 +206,8 @@ sign-in, or returns the one in progress; `GET` on the same path reads it and
 ("idle", "starting", "waiting", "signed_in", "failed" or "canceled"),
 "verification_uri"?, "user_code"?, "error"?, "account"?}`: `waiting` carries
 the page and the code, `signed_in` the account, `failed` the reason. `POST`
-answers 409 while an environment token takes precedence or Copilot Tasks have
-open conversations. The provider's `capabilities.device_sign_in` in
+answers 409 while an environment token takes precedence and 400 while Copilot
+Tasks have open conversations. The provider's `capabilities.device_sign_in` in
 `GET /api/meta` says whether it is offered. All need sign-in like other
 protected API routes. Sign-ins and sign-outs are logged without the token.
 
