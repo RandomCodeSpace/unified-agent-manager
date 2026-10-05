@@ -34,7 +34,7 @@ async function components(api, environment = {}) {
   };
   const exports = {};
   const client = { cacheKey: id => id, ...api };
-  const names = ['Copy', 'Ellipsis', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'X', 'CommitPanel', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
+  const names = ['Copy', 'Ellipsis', 'FileDiff', 'MessageSquarePlus', 'RefreshCw', 'ShieldAlert', 'X', 'CommitPanel', 'InstanceName', 'Note', 'Skeleton', 'PanelHeader', 'SidePanel', 'Button', 'ContextMenu', 'Menu', 'Segmented', 'Tip'];
   const review = await import('../src/lib/review.ts');
   runInNewContext(ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, jsxFactory: 'jsxNode', jsxFragmentFactory: 'Fragment' } }).outputText, {
     exports, ...hooks, api: client, useApi: () => client, AbortController, ...review, LIVE: ['starting', 'working'], readOnly: () => false, newRequestId: () => 'request', cn: (...c) => c.filter(Boolean).join(' '), ...environment, ...Object.fromEntries(names.map(name => [name, name])), Fragment: 'fragment',

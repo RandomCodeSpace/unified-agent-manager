@@ -822,3 +822,15 @@ export function Note({ tone = 'muted', className, children, role, id }: Readonly
     </p>
   );
 }
+
+/** The connected instance a view belongs to, after its title in the header (DESIGN.md Connected instances); nothing on this instance. */
+export function InstanceName() {
+  const owner = useApi().owner;
+  if (!owner) return null;
+  return (
+    <>
+      <span aria-hidden="true" className="text-muted">·</span>
+      <span className="max-w-40 shrink-0 truncate text-caption text-muted" title={owner.label}>{owner.label}</span>
+    </>
+  );
+}

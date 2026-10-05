@@ -12,7 +12,7 @@ import { showsFinish, shownState } from '../lib/tasks';
 import { ChangesSheet, defaultScope, type ChangesTurn } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
-import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
+import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
@@ -693,6 +693,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 <TaskTitle session={session} />
               </h1>
             )}
+            <InstanceName />
             {readOnly(session) ? (
               <Chip fill="outline">{stageLabel(session)}</Chip>
             ) : (

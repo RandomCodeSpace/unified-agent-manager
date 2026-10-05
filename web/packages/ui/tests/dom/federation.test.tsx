@@ -344,6 +344,31 @@ test('Alt+J and Alt+K walk the Tasks that need you across machines, in the list�
   await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
 });
 
+test('another machine’s Task, Terminal, Changes and Planner name the machine after their title; this instance’s do not', async () => {
+  const { user } = federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await user.click(await rows.findByRole('button', { name: /Fix re-attach redraw regression/, description: 'This instance' }));
+  await screen.findByRole('region', { name: 'Conversation' });
+  const titleRow = () => within(screen.getByRole('heading', { level: 1 }).parentElement!);
+  expect(titleRow().queryByText('Workstation B')).toBeNull();
+  await user.click(rows.getByRole('button', { name: /Fix re-attach redraw regression/, description: 'Workstation B' }));
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  await screen.findByRole('region', { name: 'Conversation' });
+  expect(titleRow().getByText('Workstation B')).toBeTruthy();
+  expect(titleRow().getByText('Workstation B').classList.contains('sr-only')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  // The terminal's chunk loads lazily: its header follows the region.
+  expect(await within(await screen.findByRole('region', { name: 'Terminal' })).findByText('Workstation B')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: /^Open changes/ }));
+  const changes = await screen.findByRole('dialog', { name: 'Changes' });
+  expect(within(changes).getByText('Workstation B')).toBeTruthy();
+  await user.click(within(changes).getByRole('button', { name: 'Close changes' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
+  await user.click(screen.getByRole('button', { name: 'Planner' }));
+  await screen.findByRole('heading', { name: 'Planner', level: 1 });
+  expect(titleRow().getByText('Workstation B')).toBeTruthy();
+});
+
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
   const { user } = federated();
   const rows = await taskRows();
