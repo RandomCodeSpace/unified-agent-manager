@@ -100,6 +100,24 @@ test('visible overflow drains once without starvation or eviction retry loops', 
   assert.equal(owner.cache.size, 256);
 });
 
+for (const exists of [true, false]) test(`an expired ${exists ? 'available' : 'missing'} reference resolves again without leaving the conversation`, async t => {
+  const root = dom(t, 1); let calls = 0;
+  const owner = new FileReferences('/repo', async paths => {
+    calls++;
+    return calls === 1 && !exists ? { files: paths.map(path => ({ path, exists: false, kind: 'unavailable' })) } : answer(paths);
+  });
+  t.after(() => owner.stop());
+  owner.observe(root); owner.start();
+  await tick(); await tick();
+  assert.equal(owner.cache.get('src/0.ts'), exists);
+  // A later React snapshot reads the same path after its positive or negative TTL.
+  assert.equal(owner.cache.get('src/0.ts', Date.now() + (exists ? 30_001 : 5_001)), undefined);
+  owner.demand();
+  await tick(); await tick();
+  assert.equal(calls, 2);
+  assert.equal(owner.cache.get('src/0.ts'), true);
+});
+
 test('errors remain unknown and wait for new demand; disposal rejects a late response', async t => {
   const root = dom(t, 1); let calls = 0, finish, signal;
   const owner = new FileReferences('/repo', async (paths, controllerSignal) => {

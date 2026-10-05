@@ -98,7 +98,7 @@ func containsControl(s string) bool {
 
 func (d *declarationTool) tool() copilot.Tool {
 	tool := copilot.DefineTool(declarationToolName,
-		"Declare one existing file for the owner's display. Returns metadata only; never reads file bytes or grants access.", d.declare)
+		"Declare one existing file, then include its path as a Markdown link or inline code in your reply so the owner can open it. Returns metadata only; never reads file bytes or grants access.", d.declare)
 	tool.SkipPermission, tool.Defer = true, copilot.ToolDeferNever
 	tool.IsTerminal, tool.OverridesBuiltInTool = false, false
 	tool.Parameters["additionalProperties"] = false

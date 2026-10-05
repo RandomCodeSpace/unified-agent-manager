@@ -806,7 +806,7 @@ export interface Step {
  * What the live foot line names while a turn runs: thinking that still streams, or the last
  * call still open (by name and argument), waiting for the user when its request does. Null
  * when the agent is between steps or prose streams, so the line falls back to its verb. A
- * call `own` claims (a declared file's card) and a subagent's call (the live subagent card
+ * call `own` claims (a chart) and a subagent's call (the live subagent card
  * shows it) are never a step. A streaming thought and a running call carry their item, which
  * the foot shows unfolded until it folds into the counts.
  */
@@ -833,7 +833,7 @@ export function isSubagentCall(item: Item | undefined): boolean {
  * Whether an entry stands in the answer at its place (DESIGN.md promotion) rather than folding
  * into the turn line: prose, notices and steer bubbles always; a question that no longer waits;
  * a call whose result returned images (the images do, while the call folds, see `callProduct`);
- * a call `own` takes over (a declared file's card); a question request.
+ * a call `own` takes over (a chart); a question request.
  * Thoughts, calls (failed ones too: the turn line counts them) and decided permissions never do.
  */
 export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) => boolean): boolean {
@@ -847,7 +847,7 @@ export function promoted(entry: Entry, ctx: ActivityContext, own?: (item: Item) 
   return !!asked && asked.outcome !== 'pending';
 }
 
-/** Only a completed local declaration has a file card; its tool row folds like any call. */
+/** Only a completed local declaration can hint an inline file reference. */
 export function isFileDeclaration(item: Item): boolean {
   const tool = item.tool;
   const declaration = tool?.declaration;
@@ -856,37 +856,10 @@ export function isFileDeclaration(item: Item): boolean {
     && typeof declaration.path === 'string' && declaration.path.startsWith('/');
 }
 
-export const FILE_DECLARATION_LIMIT = 128;
-
-/** Call IDs are agent-local; the latest copy of each call decides whether it has a card. */
-export function declarationIdentity(item: Pick<Item, 'id' | 'agent_id'>): string {
-  return JSON.stringify([item.agent_id ?? '', item.id]);
-}
-
-/** A window keeps only its newest declaration cards; older calls keep only their tool rows. */
-export function newestFileDeclarations(items: readonly Item[]): Set<string> {
-  const seen = new Set<string>();
-  const cards = new Set<string>();
-  for (let index = items.length - 1; index >= 0 && cards.size < FILE_DECLARATION_LIMIT; index--) {
-    const item = items[index];
-    const key = declarationIdentity(item);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (isFileDeclaration(item)) cards.add(key);
-  }
-  return cards;
-}
-
-/**
- * What a tool call produced for the person, which stands in the answer at the call's place
- * while the call itself folds into the turn's activity (DESIGN.md promotion): `card` for a
- * declaration among the window's newest (`cards`, from `newestFileDeclarations`), `images`
- * for a call whose result returned images or a note on them; null for anything else.
- */
-export function callProduct(item: Item, cards: ReadonlySet<string>): 'card' | 'chart' | 'images' | null {
+/** Charts and returned images stand in the answer; file declarations stay in activity. */
+export function callProduct(item: Item): 'chart' | 'images' | null {
   if (item.kind !== 'tool') return null;
   if (isChartCall(item)) return 'chart';
-  if (isFileDeclaration(item) && cards.has(declarationIdentity(item))) return 'card';
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 

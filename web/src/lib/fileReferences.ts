@@ -29,12 +29,14 @@ export function localHints(item: Item, workdir: string): string[] {
 /** Only resolver answers enter this cache. Errors remain unknown. */
 export class FileCache {
   private readonly entries = new Map<string, { exists: boolean; until: number; bytes: number }>();
+  private readonly expired?: (path: string) => void;
+  constructor(expired?: (path: string) => void) { this.expired = expired; }
   bytes = 0;
   get size() { return this.entries.size; }
   get(path: string, now = Date.now()): boolean | undefined {
     const entry = this.entries.get(path);
     if (!entry) return undefined;
-    if (entry.until <= now) { this.delete(path); return undefined; }
+    if (entry.until <= now) { this.delete(path); this.expired?.(path); return undefined; }
     this.entries.delete(path);
     this.entries.set(path, entry);
     return entry.exists;
@@ -64,7 +66,13 @@ interface Root { visible: boolean }
 
 /** One selected task. Candidate text stays in the rendered DOM, never an unbounded request queue. */
 export class FileReferences {
-  readonly cache = new FileCache();
+  readonly cache = new FileCache(path => {
+    // Expiry permits a fresh lookup of this path, without retrying evictions or errors.
+    for (const element of this.roots.keys()) this.forCandidates(element, candidate => {
+      if (candidate.dataset.fileReference === path) this.attempted.delete(candidate);
+    });
+    this.demand();
+  });
   private readonly sources = new Map<string, { items: readonly Item[]; hints: Set<string> }>();
   private readonly roots = new Map<Element, Root>();
   private attempted = new WeakSet<Element>();

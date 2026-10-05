@@ -32,41 +32,39 @@ test('the actual SVG renderer draws chart data, replaces refreshed rows, resizes
   expect(drawing.isDisposed()).toBe(true);
 });
 
-test('wheel zoom waits for a stationary mouse and yields to ongoing conversation scrolling', async () => {
+test('plain wheel scrolling never activates chart zoom; Ctrl+wheel remains available', async () => {
   const chart = { title: 'Trend', kind: 'line' as const, labels: ['a', 'b'], series: [{ name: 'commits', values: [2, 8] }] };
   const { unmount } = render(<EChart option={chartOption(chart, { width: 480, height: 240 })} width={480} height={240} label="Trend chart" />);
   const host = screen.getByRole('img');
   await waitFor(() => expect(getInstanceByDom(host)).toBeTruthy());
   const wheel = vi.fn();
   host.addEventListener('wheel', wheel);
-  const scroll = () => {
-    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100 });
+  const scroll = (ctrlKey = false) => {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 100, ctrlKey });
+    // Happy DOM's WheelEvent currently omits MouseEvent modifier fields.
+    Object.defineProperty(event, 'ctrlKey', { value: ctrlKey });
     host.dispatchEvent(event);
     return event;
   };
   vi.useFakeTimers();
   try {
     fireEvent.pointerEnter(host, { pointerType: 'mouse' });
-    act(() => vi.advanceTimersByTime(400));
+    act(() => vi.advanceTimersByTime(1000));
     expect(scroll().defaultPrevented).toBe(false);
     expect(wheel).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(400));
     fireEvent.scroll(document);
-    act(() => vi.advanceTimersByTime(400));
+    act(() => vi.advanceTimersByTime(1000));
     expect(scroll().defaultPrevented).toBe(false);
     expect(wheel).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(500));
-    scroll();
+    scroll(true);
     expect(wheel).toHaveBeenCalledTimes(1);
     fireEvent.pointerMove(host, { pointerType: 'mouse' });
     expect(scroll().defaultPrevented).toBe(false);
     expect(wheel).toHaveBeenCalledTimes(1);
-    act(() => vi.advanceTimersByTime(500));
     fireEvent.pointerLeave(host, { pointerType: 'mouse' });
     scroll();
     expect(wheel).toHaveBeenCalledTimes(1);
     fireEvent.pointerEnter(host, { pointerType: 'touch' });
-    act(() => vi.advanceTimersByTime(500));
     scroll();
     expect(wheel).toHaveBeenCalledTimes(1);
     fireEvent.pointerEnter(host, { pointerType: 'mouse' });

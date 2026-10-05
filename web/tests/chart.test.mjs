@@ -97,8 +97,8 @@ test('horizontal bars use the available width, contain labels and zoom categorie
 test('a completed uam_chart call stands in the answer as a chart card; a refused one folds', () => {
   const call = { id: 'call-1', kind: 'tool', time: '2026-10-01T10:00:00Z', tool: { name: 'uam_chart', status: 'completed' } };
   assert.equal(isChartCall(call), true);
-  assert.equal(callProduct(call, new Set()), 'chart');
-  for (const status of ['running', 'failed']) assert.equal(callProduct({ ...call, tool: { ...call.tool, status } }, new Set()), null);
+  assert.equal(callProduct(call), 'chart');
+  for (const status of ['running', 'failed']) assert.equal(callProduct({ ...call, tool: { ...call.tool, status } }), null);
 });
 
 test('ECharts draws data directly, with zero-based axes, mixed series, and axes-free sparklines', () => {
