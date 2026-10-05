@@ -268,7 +268,7 @@ export const PlanPanel = memo(function PlanPanel({ plan, taskId, taskName, focus
         </Button>
       </PanelHeader>
       <PlannerContext.Provider value={value}>
-        <div id="plan-panel" ref={scroller} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 pt-1 pb-6">
+        <div id="plan-panel" ref={scroller} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pt-1 pb-6">
           <NoticeBar />
           {plan.status === 'loading' && <p className="px-1 text-caption text-muted">Loading the plan…</p>}
           {plan.status === 'error' && (

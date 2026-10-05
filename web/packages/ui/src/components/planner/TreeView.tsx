@@ -193,7 +193,16 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
           <CreateForm
             kind={row.kind}
             parent={row.parent ? byId.get(row.parent) : undefined}
-            onCancel={() => setUi({ creating: null })}
+            onCancel={(opener) => {
+              setUi({ creating: null });
+              // Back to what opened the form; one that left with it gives way to the parent row or the root's own Add.
+              const doc = tree.current?.ownerDocument ?? document;
+              (doc.defaultView ?? window).requestAnimationFrame(() => {
+                if (opener?.isConnected) opener.focus();
+                else if (row.parent) move(row.parent);
+                else doc.querySelector<HTMLElement>(`[data-add-root="${row.kind}"]`)?.focus();
+              });
+            }}
             onCreate={async (fields) => {
               try {
                 const card = await api.planner.create({ project_id: project, kind: row.kind, parent_id: row.parent || null, ...fields });
@@ -250,7 +259,7 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
       {cardActions.dialogs}
       {addRoot && (
         <div className="flex pt-1 pl-2">
-          <Button size="sm" className="text-muted" aria-label="Add a subtask at the root" onClick={() => actions.add('', 'subtask')}>
+          <Button size="sm" className="text-muted" aria-label="Add a subtask at the root" data-add-root="subtask" onClick={() => actions.add('', 'subtask')}>
             <Plus />
             Add subtask
           </Button>
@@ -420,7 +429,10 @@ function SuggestionActions({ busy, title, onConfirm, onDismiss }: Readonly<{ bus
 }
 
 /** A new card in place: its title and win condition; Enter adds it, Esc leaves. The owner's card is confirmed, except under a suggestion, where it is one too. */
-function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardKind; parent: Card | undefined; onCreate: (fields: { title: string; win_condition: string }) => Promise<void>; onCancel: () => void }>) {
+function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardKind; parent: Card | undefined; onCreate: (fields: { title: string; win_condition: string }) => Promise<void>; onCancel: (opener: HTMLElement | null) => void }>) {
+  // What had focus as the form opened (the Add or New epic pressed), read before the title takes it.
+  const [opener] = useState(() => (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null));
+  const cancel = () => onCancel(opener);
   const [title, setTitle] = useState('');
   const [win, setWin] = useState('');
   const [busy, setBusy] = useState(false);
@@ -436,13 +448,13 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
     // The browser's own context menu for its inputs (paste), not the view's card menu.
     <form aria-label={parent ? `New ${noun} in #${parent.seq}` : `New ${noun}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={(e) => void submit(e)} onContextMenu={(e) => e.stopPropagation()}>
       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Add opens this form to type the new card's title into. */}
-      <Input size="md" aria-label="Title" placeholder={`New ${noun}`} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
-      <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
+      <Input size="md" aria-label="Title" placeholder={`New ${noun}`} value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && cancel()} />
+      <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && cancel()} />
       <span className="flex items-center gap-2">
         <Button type="submit" size="sm" variant="primary" loading={busy} disabled={!title.trim()}>
           Add {noun}
         </Button>
-        <Button size="sm" onClick={onCancel}>
+        <Button size="sm" onClick={cancel}>
           Cancel
         </Button>
       </span>

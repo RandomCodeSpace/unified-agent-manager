@@ -77,8 +77,11 @@ export function TokenPricing() {
     api.tokenPrices().then((result) => { if (current) { setCatalog(result); setError(null); } }).catch((e: unknown) => { if (current) setError(describeError(e)); });
     return () => { current = false; };
   }, [api, revision]);
+  const { meta } = useApp();
   const models = catalog?.models.filter((model) => showAll || !model.rates) ?? [];
-  const row = models.find((model) => rowKey(model) === selected) ?? models[0];
+  // The catalog also holds models seen only in usage records; start on one the Models list offers.
+  const listed = (row: { provider: string; model: string }) => !!meta?.providers.some((p) => p.name === row.provider && p.models.some((m) => m.id === row.model));
+  const row = models.find((model) => rowKey(model) === selected) ?? models.find(listed) ?? models[0];
   return <div className="flex flex-col gap-3">
     <p className="text-caption text-muted">USD per million tokens. Usage estimates use these current base rates for every period, not provider bills or Copilot credits.</p>
     <label className="flex min-h-8 items-center gap-2 self-start text-ui text-ink">

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, Ellipsis, FolderTree, ListTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
@@ -9,7 +9,7 @@ import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { showsFinish, shownState } from '../lib/tasks';
-import { ChangesSheet, defaultScope } from './Changes';
+import { ChangesSheet, defaultScope, type ChangesTurn } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
@@ -313,6 +313,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     atBottom.current = true;
     setJump(false);
   }, [dispatch, session.id, session.history_after]);
+  // The button leaves once pressed: focus moves to the conversation it scrolled, not to the page.
+  const jumpToBottom = (e: MouseEvent<HTMLButtonElement>) => {
+    const focused = e.currentTarget === e.currentTarget.ownerDocument.activeElement;
+    scrollToBottom();
+    if (focused) scroller.current?.focus({ preventScroll: true });
+  };
 
   // Follow new content only while the reader is at the bottom; otherwise offer a way back.
   useLayoutEffect(() => {
@@ -351,7 +357,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
   const outputView = output ?? lastOutput;
+  // A turn's "View changes" opens Changes on that turn's edits; the header's button opens it on the default scope.
+  const [changesTurn, setChangesTurn] = useState<ChangesTurn | null>(null);
   const openChanges = useCallback(() => {
+    setChangesTurn(null);
     closePreview(false);
     setFilesOpen(false);
     setChartsOpen(false);
@@ -359,6 +368,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
+  const openTurnChanges = useCallback((turn: { files: string[]; latest: boolean }) => {
+    openChanges();
+    setChangesTurn({ ...turn, at: Date.now() });
+  }, [openChanges]);
   const toggleFiles = useCallback(() => {
     closePreview(false);
     setChartsOpen(false);
@@ -468,10 +481,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }
 
   /** Scroll the conversation only (scrollIntoView also scrolls clipped ancestors, sliding the app) so `el` starts just under its top, and flash it. */
-  function land(el: HTMLElement) {
+  function land(el: HTMLElement, margin = LAND_MARGIN) {
     atBottom.current = false;
     const view = scroller.current;
-    if (view) view.scrollTo({ top: view.scrollTop + el.getBoundingClientRect().top - view.getBoundingClientRect().top - LAND_MARGIN });
+    if (view) view.scrollTo({ top: view.scrollTop + el.getBoundingClientRect().top - view.getBoundingClientRect().top - margin });
     el.classList.add('animate-flash');
     window.setTimeout(() => el.classList.remove('animate-flash'), 1400);
   }
@@ -502,9 +515,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     await settle(EXIT_MS);
     const el = document.getElementById(`item-${toolCallId}`);
     if (!el) return;
-    land(el);
-    // Its transcript opens beside the row it landed on.
-    if (expand) el.querySelector<HTMLElement>('[data-subagent-toggle]')?.click();
+    // A quarter of the view down, so the rows above it (the one that spawned it) stay in sight.
+    land(el, Math.max(LAND_MARGIN, Math.round((scroller.current?.clientHeight ?? 0) / 4)));
+    const toggle = el.querySelector<HTMLElement>('[data-subagent-toggle]');
+    // Its transcript opens beside the row it landed on; else the row takes the focus.
+    if (expand) toggle?.click();
+    else toggle?.focus({ preventScroll: true });
   }
 
   /** Scroll to the reply a user message started ("start": the one before any) and flash its turn line. */
@@ -616,7 +632,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
-  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
+  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files, Plan and Terminal move into the actions menu.
   // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
   const phone = useMedia(PHONE);
   const header = useRef<HTMLElement>(null);
@@ -644,6 +660,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [planBoard, planner, openPlan]);
   const folded: ActionItem[] = [];
   if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: toggleFiles });
+  if (fold && hasPlan) folded.push({ key: 'plan', label: planOpen ? 'Close plan' : 'Open plan', icon: <ListTree />, onSelect: togglePlan });
   const pinned = project?.charts ?? 0;
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: toggleCharts });
   if (fold && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
@@ -651,7 +668,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
+  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -681,17 +698,17 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             ) : (
               <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
             )}
-            {/* The last completed turn in one line, beside its state (phones show it in the list). */}
-            {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
             {busy && <Spinner className="shrink-0" />}
-            {/* The pencil takes no room until the title is hovered or it is focused, so the state chip sits by the title. */}
+            {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
             {renamable && !renaming && (
               <Tip label="Rename">
-                <Button size="icon" aria-label="Rename task" className="-ml-1.5 w-0 min-w-0 overflow-hidden px-0 text-muted opacity-0 transition-[width,opacity,margin] duration-100 group-hover/title:ml-0 group-hover/title:w-7 group-hover/title:opacity-100 focus-visible:ml-0 focus-visible:w-7 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+                <Button size="icon" aria-label="Rename task" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
                   <Pencil />
                 </Button>
               </Tip>
             )}
+            {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
+            {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
           </div>
           {/* The branch-named Changes control and its evidence cue, beside the title. */}
           {noGit ? (
@@ -726,7 +743,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               )}
             </>
           )}
-          {hasPlan && <PlanButton open={planOpen} label={labels} onToggle={togglePlan} />}
+          {hasPlan && !fold && <PlanButton open={planOpen} label={labels} onToggle={togglePlan} />}
           {pinned > 0 && !fold && (
             <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
               <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={toggleCharts}>
@@ -762,8 +779,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             <SinceYouLeft away={away(sinceMark, Date.parse(opened))} text={sinceSummary.text} onJump={() => void jumpTo(sinceSummary.ids)} onDismiss={() => setSinceMark(undefined)} />
           </div>
         )}
+        {/* Its scroll padding clears the dock's 40px overlap, so a row focused near the foot scrolls out from under the composer's fade. */}
         {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling, including paging at its upper edge. */}
-        <section aria-label="Conversation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
+        <section aria-label="Conversation" className="min-h-0 flex-1 scroll-pb-12 overflow-x-hidden overflow-y-auto overscroll-contain" ref={scroller} onScroll={onScroll} tabIndex={0} onPointerDownCapture={e => { toward(null); onConversationPointerDown(e); }} onClickCapture={onConversationClick}
           onKeyDown={e => {
             if (e.defaultPrevented) return;
             if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }
@@ -804,7 +822,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               footVerb={false}
               compacting={compacting}
               density={density}
-              onOpenChanges={openChanges}
+              onOpenChanges={openTurnChanges}
               changedLine={!noGit}
             />
             </HistoryAnchor>
@@ -832,14 +850,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               <WorkingLabel working={labelled} compacting={compacting} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
               <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
                 <Tip label="Jump to bottom">
-                  <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={scrollToBottom}>
+                  <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
                     <ArrowDown />
                   </Button>
                 </Tip>
               </Appear>
             </div>
             <Appear show={jump && !labelled} className="shrink-0">
-              <Button variant="secondary" size="sm" className="shadow-float" onClick={scrollToBottom}>
+              <Button variant="secondary" size="sm" className="shadow-float" onClick={jumpToBottom}>
                 <ArrowDown />
                 Jump to bottom
               </Button>
@@ -857,7 +875,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <ChangesSheet evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {sheetPresence.mounted && <ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
       {/* The Task's name only seeds "Add to a story": a Task with a card passes none, so its title arriving does not render the panel. */}
       {planPresence.mounted && plan && <PlanPanel plan={plan} taskId={session.id} taskName={plan.mine ? '' : name} focus={planFocus ?? lastPlanFocus} inline={sidePanelInline} open={planOpen} onClose={closePlan} onClosed={onPlanClosed} />}
@@ -907,7 +925,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
         <ProjectBadge badge={project.badge} className="mr-0.5" />
         <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>

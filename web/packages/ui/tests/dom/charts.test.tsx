@@ -84,7 +84,8 @@ describe('charts', () => {
       expect(table.getByRole('columnheader', { name: /Day/ })).toBeTruthy();
       expect(table.getByRole('rowheader', { name: 'Mon' })).toBeTruthy();
       expect(table.getByText('0')).toBeTruthy();
-      await user.click(table.getByRole('button', { name: 'Sort by Count' }));
+      await user.click(table.getByRole('button', { name: 'Sort or filter Count' }));
+      await user.click(screen.getByRole('button', { name: 'Sort ascending' }));
       expect(table.getAllByRole('rowheader')[0].textContent).toBe('Tue');
       await user.click(figure.getByRole('button', { name: 'Chart tools' }));
       await user.click(within(await screen.findByRole('dialog', { name: 'Chart tools' })).getByRole('button', { name: 'Chart', exact: true }));
@@ -153,6 +154,37 @@ describe('charts', () => {
     await waitFor(() => expect((getInstanceByDom(host)!.getOption().legend as { selected: Record<string, boolean> }[])[0].selected.web).toBe(false));
     await user.click(control);
     await waitFor(() => expect((getInstanceByDom(host)!.getOption().legend as { selected: Record<string, boolean> }[])[0].selected.web).toBe(true));
+    // One tab stop; arrow keys move between the series.
+    expect(figure.getAllByRole('button', { name: /^Show .* series$/ }).map((button) => button.tabIndex)).toEqual([0, -1, -1, -1]);
+    control.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(document.activeElement).toBe(figure.getByRole('button', { name: 'Show go series' }));
+    // The legend belongs to the drawing: Table view has none.
+    await user.click(figure.getByRole('button', { name: 'Chart tools' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Chart tools' })).getByRole('button', { name: 'Table', exact: true }));
+    expect(figure.queryByRole('list', { name: 'Series' })).toBeNull();
+  });
+
+  test('an ECharts legend is repeated as keyboard toggles in the chart tools', async () => {
+    const chart: Chart = {
+      title: 'Spend by model', kind: 'echarts', x: '', y: [], labels: [], series: [], at: '2026-10-03T12:00:00Z',
+      options: { legend: { top: 0 }, xAxis: { type: 'category', data: ['a', 'b'] }, yAxis: { type: 'value' }, series: [{ type: 'line', name: 'opus', data: [1, 2] }, { type: 'line', name: 'astra', data: [2, 1] }] },
+    };
+    const read = vi.spyOn(api, 'chart').mockResolvedValue(chart);
+    const user = userEvent.setup();
+    try {
+      render(<ChartCard sessionId="chart-task" callId="legend" />);
+      const figure = within(await screen.findByRole('figure', { name: 'Chart: Spend by model' }));
+      const host = figure.getByRole('img');
+      await waitFor(() => expect(getInstanceByDom(host)).toBeTruthy());
+      await user.click(figure.getByRole('button', { name: 'Chart tools' }));
+      const tools = within(await screen.findByRole('dialog', { name: 'Chart tools' }));
+      const astra = await tools.findByRole('button', { name: 'Show astra series' });
+      expect(astra.getAttribute('aria-pressed')).toBe('true');
+      await user.click(astra);
+      await waitFor(() => expect(astra.getAttribute('aria-pressed')).toBe('false'));
+      expect((getInstanceByDom(host)!.getOption().legend as { selected: Record<string, boolean> }[])[0].selected.astra).toBe(false);
+    } finally { read.mockRestore(); }
   });
 
   test('a chart call shows its card; pinning asks with the command, then the header counts it', async () => {

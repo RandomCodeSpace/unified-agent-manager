@@ -5,7 +5,7 @@ import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { PlannerContext, type PlannerContextValue } from '../../src/components/planner/context';
-import { ToolRow } from '../../src/components/Transcript';
+import { ToolRow, Transcript } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
 import { composer, log, openMenu, openTask } from './render';
 
@@ -127,15 +127,50 @@ describe('activity', () => {
     expect(conversation().textContent).not.toContain('a small, safe change');
   }, 20000);
 
-  test('a tool row menu expands it and copies its command', async () => {
+  test('a tool row menu expands it and copies its command, not the JSON around it', async () => {
     const { user } = await openTask('t14');
+    // After `openTask`: its user-event setup puts its own clipboard in place.
+    const copy = vi.spyOn(navigator.clipboard, 'writeText');
     const head = log().getAllByRole('button', { name: /activity of this turn/ })[0];
     await user.click(head);
     const menu = await openMenu(user, 'Actions for bash ls ~/projects/sky-dodge');
     await user.click(menu.getByRole('menuitem', { name: 'Copy command' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('ls ~/projects/sky-dodge'));
+    copy.mockRestore();
     const again = await openMenu(user, 'Actions for bash ls ~/projects/sky-dodge');
     await user.click(again.getByRole('menuitem', { name: 'Expand' }));
+    // The input reads as the command; Raw shows it as recorded.
+    const raw = await log().findByRole('button', { name: 'Raw' });
+    expect(raw.closest('.group\\/code')?.textContent).toContain('commandRawls ~/projects/sky-dodge');
+    await user.click(raw);
     await waitFor(() => expect(conversation().textContent).toContain('{"command":"ls ~/projects/sky-dodge"}'));
+  });
+
+  test('a turn that ended with nothing in it says there was no reply', () => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const items: Item[] = [
+      { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
+      { id: 'a1', kind: 'assistant', time: at(3), text: 'Hi.' },
+      { id: 'u2', kind: 'user', time: at(10), text: '/skil' },
+    ];
+    const turnTimings = [
+      { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(4), state: 'completed' as const },
+      { id: 't2', user_item_id: 'u2', started_at: at(10), ended_at: at(13), state: 'completed' as const },
+    ];
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />);
+    expect(view.getByText('Took 4s')).toBeTruthy();
+    expect(view.getByText('Took 3s · No reply')).toBeTruthy();
+  });
+
+  test('a tool row that runs no command offers its input to copy, decoded', async () => {
+    const copy = vi.spyOn(navigator.clipboard, 'writeText');
+    const item: Item = { id: 'p1', kind: 'tool', time: new Date().toISOString(), tool: { name: 'apply_patch', status: 'completed', input: JSON.stringify('*** Begin Patch\n*** Add File: web/a.html\n+<!doctype html>\n*** End Patch\n') } };
+    const { getByRole } = render(<ToolRow item={item} live={false} />);
+    expect(getByRole('button', { name: /^apply_patch.*web\/a\.html.*done$/ })).toBeTruthy();
+    fireEvent.click(getByRole('button', { name: 'Actions for apply_patch web/a.html' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy input' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('*** Begin Patch\n*** Add File: web/a.html\n+<!doctype html>\n*** End Patch\n'));
+    copy.mockRestore();
   });
 
   test('detailed density keeps one row per run of tool calls', async () => {

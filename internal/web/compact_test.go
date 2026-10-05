@@ -50,6 +50,19 @@ func TestCompactProjectionPreservesDisplayAndSemanticContent(t *testing.T) {
 	}
 }
 
+// An input that is one JSON string shows decoded: a patch as the files it
+// names, any other text without its quotes and escapes.
+func TestCompactArgumentDecodesAStringInput(t *testing.T) {
+	patch, _ := json.Marshal("*** Begin Patch\n*** Add File: web/report.html\n+<!doctype html>\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch\n")
+	if arg, _ := compactArgument(&agentapi.ToolCall{Name: "apply_patch", Input: string(patch)}); arg != "web/report.html, README.md" {
+		t.Fatalf("patch argument = %q", arg)
+	}
+	text, _ := json.Marshal("first line\n\"quoted\"")
+	if arg, _ := compactArgument(&agentapi.ToolCall{Name: "note", Input: string(text)}); arg != `first line "quoted"` {
+		t.Fatalf("string argument = %q", arg)
+	}
+}
+
 // A completed board_* call's result names its card for the transcript's
 // chip, also as read back from the provider's record; a failed call,
 // another tool or a result without a card names none.
@@ -547,6 +560,24 @@ func TestCompactSubagentResultSummaryKeepsMarkdownLines(t *testing.T) {
 	}
 	if boundedResultSummary(prefix) != prefix {
 		t.Fatal("short report was changed")
+	}
+}
+
+func TestCompactBackgroundSubagentReportsItsOwnLastMessage(t *testing.T) {
+	ack := "Agent started in background with agent_id: bg. You'll be notified when it completes."
+	parent := agentapi.Item{ID: "parent", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolCompleted, Output: ack}}
+	interim := agentapi.Item{ID: "a1", AgentID: "bg", Kind: agentapi.ItemAssistant, Text: "Looking into it."}
+	final := agentapi.Item{ID: "a2", AgentID: "bg", Kind: agentapi.ItemAssistant, Text: "Found the benchmarks."}
+	s := &webSession{items: []agentapi.Item{parent, interim, final}, itemIdx: map[string]int{"parent": 0, itemKey("bg", "a1"): 1, itemKey("bg", "a2"): 2}}
+	got := s.compactSubagent(agentapi.Subagent{ID: "bg", ParentToolCallID: "parent", Background: true, Status: agentapi.SubagentCompleted, Result: ack})
+	if got.ResultSummary != "Found the benchmarks." || got.Preview != "Found the benchmarks." {
+		t.Fatalf("background result = %q, preview = %q", got.ResultSummary, got.Preview)
+	}
+	if got := s.compactSubagent(agentapi.Subagent{ID: "bg", ParentToolCallID: "parent", Background: true, Status: agentapi.SubagentRunning, Result: ack}); got.ResultSummary != "" || strings.Contains(got.Preview, "background") {
+		t.Fatalf("running background result = %q, preview = %q", got.ResultSummary, got.Preview)
+	}
+	if got := s.compactSubagent(agentapi.Subagent{ID: "bg", ParentToolCallID: "parent", Status: agentapi.SubagentCompleted}); got.ResultSummary != ack {
+		t.Fatalf("sync result = %q", got.ResultSummary)
 	}
 }
 

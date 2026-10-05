@@ -1,7 +1,7 @@
 import { ContextMenu as BaseContextMenu } from '@base-ui/react/context-menu';
 import { Menu as BaseMenu } from '@base-ui/react/menu';
 import { Check } from 'lucide-react';
-import { createContext, useCallback, useContext, useMemo, useRef, type ComponentProps, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, type ComponentProps, type FocusEvent, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 
 /**
@@ -20,6 +20,9 @@ export const dangerItemClass = 'text-error data-highlighted:bg-error-wash data-h
 export const separatorClass = 'my-1 fade-rule';
 
 export const labelClass = 'px-2 pt-2 pb-1 text-caption text-muted';
+
+/** A menu taller than the room beside its trigger (a phone) scrolls within that room instead of leaving the screen. */
+const menuClass = cn(popupClass, 'max-h-(--available-height) overflow-y-auto overflow-x-hidden');
 
 /** One action row shared by dropdown, context and header menus. */
 export interface ActionItem {
@@ -127,10 +130,19 @@ export const Menu = {
     ...props
   }: ComponentProps<typeof BaseMenu.Popup> & Pick<ComponentProps<typeof BaseMenu.Positioner>, 'side' | 'align' | 'sideOffset'>) {
     const { finalFocus } = useContext(DeferContext);
+    // A menu of choices opens on the current one (as a select does), not on its first row, so Enter right
+    // after opening keeps the setting. The first focus into each newly mounted popup moves to its checked radio.
+    const seeded = useRef<Element | null>(null);
+    const onFocus = (e: FocusEvent<HTMLDivElement>) => {
+      if (seeded.current === e.currentTarget) return;
+      seeded.current = e.currentTarget;
+      const checked = e.currentTarget.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="true"]:not([data-disabled])');
+      if (checked && checked !== e.target) checked.focus();
+    };
     return (
       <BaseMenu.Portal>
         <BaseMenu.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={8} className="z-50 outline-hidden">
-          <BaseMenu.Popup data-popup="" className={cn(popupClass, className)} finalFocus={finalFocus} {...props}>
+          <BaseMenu.Popup data-popup="" className={cn(menuClass, className)} finalFocus={finalFocus} onFocus={onFocus} {...props}>
             {children}
           </BaseMenu.Popup>
         </BaseMenu.Positioner>
@@ -182,7 +194,7 @@ export const ContextMenu = {
     return (
       <BaseContextMenu.Portal>
         <BaseContextMenu.Positioner collisionPadding={8} className="z-50 outline-hidden">
-          <BaseContextMenu.Popup data-popup="" className={cn(popupClass, className)} finalFocus={finalFocus} {...props}>
+          <BaseContextMenu.Popup data-popup="" className={cn(menuClass, className)} finalFocus={finalFocus} {...props}>
             {children}
           </BaseContextMenu.Popup>
         </BaseContextMenu.Positioner>

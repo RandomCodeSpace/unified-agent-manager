@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { byRisk, commentsMessage, parseReview, riskOf, serializeReview, staleReviewKeys, statusLetter, viewState } from '../src/lib/review.ts';
+import { byRisk, commentsMessage, parseReview, riskOf, turnFile, serializeReview, staleReviewKeys, statusLetter, viewState } from '../src/lib/review.ts';
 
 test('risky paths get a short reason; ordinary ones none', () => {
   const label = p => riskOf(p)?.label ?? null;
@@ -50,4 +50,14 @@ test('viewed follows the digest, or status and counts without one', () => {
 
 test('one comment reads in the singular', () => {
   assert.equal(commentsMessage([{ id: 'c', path: 'a.go', line: 4, side: 'new', code: '', body: 'Add a test.' }]), 'I reviewed your changes and have 1 comment. Please address it.\n\n1. a.go, line 4:\n   Add a test.');
+});
+
+
+test('a turn\'s edits find their row in Changes, absolute or relative to a folder below the repository root', () => {
+  const listed = ['.github/workflows/ci.yml', 'web/src/a.ts', 'docs/terminal.md'];
+  assert.equal(turnFile(listed, ['/home/u/p/docs/terminal.md']), 'docs/terminal.md');
+  assert.equal(turnFile(listed, ['src/a.ts']), 'web/src/a.ts');
+  assert.equal(turnFile(listed, ['docs/terminal.md', 'web/src/a.ts']), 'web/src/a.ts');
+  assert.equal(turnFile(listed, ['/elsewhere/other.go']), null);
+  assert.equal(turnFile(listed, ['/a.ts']), null);
 });

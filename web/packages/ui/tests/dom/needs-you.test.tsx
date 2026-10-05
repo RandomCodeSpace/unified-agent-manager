@@ -2,9 +2,23 @@
 // Alt+J / Alt+K still visit only Tasks needing attention.
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { renderApp, sidebar } from './render';
+import { renderApp, sidebar, type User } from './render';
 
 const row = (id: string) => within(document.querySelector<HTMLElement>(`[data-task-row="${id}"]`)!);
+
+/** The text of a row's tip (a styled tooltip, like the shelf rows', not a native title). */
+async function tipOf(user: User, el: HTMLElement) {
+  expect(el.hasAttribute('title')).toBe(false);
+  await user.hover(el);
+  const text = await waitFor(() => {
+    const tip = document.querySelector('[data-popup="tooltip"]');
+    expect(tip?.textContent).toBeTruthy();
+    return tip!.textContent!;
+  });
+  await user.unhover(el);
+  await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
+  return text;
+}
 const header = () => screen.getByRole('heading', { level: 1 });
 
 describe('the Task list', () => {
@@ -13,14 +27,14 @@ describe('the Task list', () => {
     // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which works on a planner subtask;
     // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
-    renderApp('?planner=unset');
+    const { user } = renderApp('?planner=unset');
     const side = await sidebar();
     expect(side.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
     expect(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
     const you = within(side.getByRole('list', { name: 'Unsettled tasks' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
-    expect(you.getByRole('button', { name: /Input.*Tidy zsh startup/ }).title).toContain('Wants your OK to run a shell command outside the project');
-    expect(you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }).title).toContain('Ready for review: Explained how a dumb terminal');
+    expect(await tipOf(user, you.getByRole('button', { name: /Input.*Tidy zsh startup/ }))).toContain('Wants your OK to run a shell command outside the project');
+    expect(await tipOf(user, you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
     // The title and app badge still count only Tasks needing attention.
     await waitFor(() => expect(document.title).toBe('(9) UAM'));
   });
@@ -37,7 +51,7 @@ describe('the Task list', () => {
   });
 
   test('a Task row keeps project and state above title, muted branch and time', async () => {
-    renderApp();
+    const { user } = renderApp();
     const side = await sidebar();
     const rows = side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]');
     expect(rows.length).toBeGreaterThan(2);
@@ -49,13 +63,13 @@ describe('the Task list', () => {
       const second = button.children[1] as HTMLElement;
       const status = first.lastElementChild as HTMLElement;
       expect(first.querySelector('[aria-hidden="true"]')).toBeTruthy();
-      expect(first.querySelector('[title]')?.classList.contains('sr-only')).toBe(false);
+      expect(first.querySelector('.truncate')?.classList.contains('sr-only')).toBe(false);
       expect(first.querySelector('time')).toBeNull();
       expect(second.querySelector('time')?.getAttribute('dateTime')).toBeTruthy();
       expect(status.textContent!.replace(/^, /, '')).toMatch(/^(Input|Starting|Working|Compacting|Review|Finished|Error|Interrupted|Stopped|Closed|Idle)$/);
       expect(status.querySelector('svg[aria-hidden="true"], span[aria-hidden="true"]')).toBeTruthy();
       expect(el.querySelector('[class*="line-clamp"]')).toBeNull();
-      expect(button.title.split('\n')[1]).toBeTruthy();
+      expect(button.hasAttribute('title')).toBe(false);
     }
     const example = row('t1').getByRole('button', { name: /Fix re-attach redraw regression/ });
     const [projectLine, taskLine] = Array.from(example.children) as HTMLElement[];
@@ -64,14 +78,14 @@ describe('the Task list', () => {
     const branch = within(taskLine).getByText('feat/web-project-defaults-and-sidebar-revamp').parentElement!;
     expect(branch.classList.contains('text-muted')).toBe(true);
     expect(branch.classList.contains('font-normal')).toBe(true);
-    expect(branch.title).toBe('Project branch: feat/web-project-defaults-and-sidebar-revamp');
+    expect(await tipOf(user, example)).toContain('Project branch: feat/web-project-defaults-and-sidebar-revamp');
     // A project without a branch omits it, without adding a placeholder or third line.
     const noBranch = row('t6').getByRole('button', { name: /Tidy zsh startup/ });
     expect(noBranch.querySelector('[title^="Project branch:"]')).toBeNull();
-    // Only Input appears on the row; the title holds the complete request.
+    // Only Input appears on the row; its tip holds the complete request.
     expect(row('t19').getByText('Input')).toBeTruthy();
     expect(row('t19').queryByText(/Pick every platform/)).toBeNull();
-    expect(row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }).title).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
+    expect(await tipOf(user, row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }))).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
   });
 
   test('every Task row in every group is a card; the open one is tinted instead', async () => {
@@ -94,7 +108,7 @@ describe('the Task list', () => {
     expect(document.querySelector('[data-task-row="t17"] button[data-nav]')!.getAttribute('aria-current')).toBe('true');
   });
 
-  test('Alt+J and Alt+K walk the Needs you group and wrap; a key that types in a field is left alone', async () => {
+  test('Alt+J and Alt+K walk the Tasks that need you, in list order, and wrap; a key that types in a field is left alone', async () => {
     renderApp();
     const side = await sidebar();
     const ids = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]'))
@@ -118,7 +132,7 @@ describe('the Task list', () => {
   test('Alt+J, Alt+K and Alt+N still work while a tooltip is open', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const first = side.getByRole('list', { name: 'Unsettled tasks' }).querySelector('[data-task-row]')!.getAttribute('data-task-row');
+    const first = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'))!.getAttribute('data-task-row');
     // Base UI opens a tip on hover or keyboard focus; it is no menu or dialog.
     await user.hover(side.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
@@ -133,7 +147,7 @@ describe('the Task list', () => {
   test('Alt+J pressed the moment the Needs you rows appear opens the first of them', async () => {
     renderApp();
     // Pressed from the commit that adds the rows, before React's passive effects run.
-    const firstRow = () => document.querySelector('[aria-label="Unsettled tasks"] [data-task-row]');
+    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled tasks"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'));
     let first: string | null = null;
     const seen = new MutationObserver(() => {
       const row = first === null && firstRow();

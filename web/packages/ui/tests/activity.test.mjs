@@ -68,7 +68,7 @@ test('the turn line keeps what needs attention explicit: failures, calls without
   const declined = asked('a2', 'Which?', at(4), { output: `User responded: ${DECLINED_OUTPUT}` });
   const none = asked('a3', 'Which?', at(5), { status: 'running', output: undefined });
   const mixed = [...entries(asked('a1', 'Which?', at(3)), declined, none, { ...read('c4', 'x.png', at(6)), images: [{ id: 'i1' }, { id: 'i2' }] }), { interaction: perm('p2') }, { interaction: q('q1', 'Then?') }];
-  assert.deepEqual(summarizeTurn(mixed, { live: false }).parts.map((p) => p.text), ['1 file read', '2 questions answered', '1 question declined', '1 request decided', '1 question unanswered', '2 images']);
+  assert.deepEqual(summarizeTurn(mixed, { live: false }).parts.map((p) => p.text), ['1 file read', '2 questions answered', '1 question declined', '1 request decided', '1 question not answered', '2 images']);
   // A failed question counts with the failures.
   assert.deepEqual(summarizeTurn(entries(asked('a4', 'Which?', at(3), { status: 'failed', output: 'boom' })), { live: false }), { parts: [{ text: '1 failed', tone: 'error' }], label: '1 failed', tone: 'error', count: 1 });
 });
@@ -124,6 +124,12 @@ test('a turn changed the distinct paths its completed edit, write and create cal
   assert.deepEqual(changedFiles(entries(prose('m1', at(1)))), []);
   // Without a recorded end a thought counts but adds no time: nothing is inferred from what followed.
   assert.deepEqual(summarizeTurn(entries(thought('r1', at(0)), prose('m1', at(9))), { live: false }).parts.map((p) => p.text), ['1 thought']);
+});
+
+test('thoughts recorded in parallel count their shared time once', () => {
+  // Three summaries of one 13s model call, then a 2s thought that overlaps its last second and one of its own.
+  const turn = entries(thought('r1', at(0), 'A', at(13)), thought('r2', at(0), 'B', at(13)), thought('r3', at(0), 'C', at(13)), thought('r4', at(12), 'D', at(14)), thought('r5', at(20), 'E', at(25)));
+  assert.deepEqual(summarizeTurn(turn, { live: false }).parts.map((p) => p.text), ['5 thoughts (19s)']);
 });
 
 test('a step took the span from its recorded start to its recorded end; nothing is inferred without an end', () => {

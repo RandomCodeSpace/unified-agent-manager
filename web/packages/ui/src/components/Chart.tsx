@@ -3,9 +3,9 @@ import { BarChart3, Check, ChevronDown, Copy, Ellipsis, LineChart, Pin, RefreshC
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { describeError, isStatus, type Chart, type PinnedChart, type Project } from '../api';
 import { popupOpen } from '../App';
-import { chartCsv, chartOption, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
+import { chartCsv, chartHeight, chartOption, formatNumber, headline, seriesColorIndexes, type ChartLook } from '../lib/chart';
 import { chartTable, type ChartTable } from '../lib/chart-table';
-import { DataTable } from './DataTable';
+import { DataTable, useRovingFocus } from './DataTable';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { EChart } from './EChart';
@@ -35,13 +35,15 @@ export function ChartImage({ chart, look: { width, height, spark }, className, h
 
 /** Each series' colour and name, when there is more than one; a bar chart's first series is its bars. */
 function Legend({ chart, hidden, onToggle }: Readonly<{ chart: ChartRows; hidden: ReadonlySet<string>; onToggle: (name: string) => void }>) {
+  const roving = useRovingFocus(chart.series.length);
   if (chart.series.length < 2) return null;
   const colors = seriesColorIndexes(chart.series);
   return (
-    <ul className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1 text-caption text-body" aria-label="Series">
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Arrow keys move focus between the list's toggles.
+    <ul className="flex min-w-0 flex-1 flex-wrap gap-x-3 gap-y-1 text-caption text-body" aria-label="Series" onKeyDown={roving.onKeyDown}>
       {chart.series.map((s, i) => (
         <li key={s.name} className="min-w-0 max-w-full">
-          <button type="button" aria-pressed={!hidden.has(s.name)} aria-label={`Show ${s.name} series`} className={cn('flex min-h-7 max-w-full items-center gap-1.5 rounded-xs px-1 text-left pointer-coarse:min-h-11', hidden.has(s.name) && 'text-muted line-through')} onClick={() => onToggle(s.name)}>
+          <button type="button" {...roving.item(i)} aria-pressed={!hidden.has(s.name)} aria-label={`Show ${s.name} series`} className={cn('flex min-h-7 max-w-full items-center gap-1.5 rounded-xs px-1 text-left pointer-coarse:min-h-11', hidden.has(s.name) && 'text-muted line-through')} onClick={() => onToggle(s.name)}>
             <span aria-hidden="true" className={cn('inline-block shrink-0 rounded-full', chart.kind === 'bar' && i === 0 ? 'h-2.5 w-2.5 rounded-xs' : 'h-0.5 w-3', SWATCHES[colors[i]])} />
             <span className="[overflow-wrap:anywhere]">{s.name}</span>
           </button>
@@ -61,7 +63,7 @@ function RowsTable({ data, title }: Readonly<{ data: ChartTable; title: string }
 function ChartData({ chart }: Readonly<{ chart: ChartRows }>) {
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled data region accepts keyboard scrolling.
-    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto px-5">
+    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-y-auto overflow-x-hidden px-5">
       <pre className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{JSON.stringify(chart.options, null, 2)}</pre>
     </div>
   );
@@ -95,7 +97,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
   };
   return (
     <Popover.Root open={open} onOpenChange={(o) => { setOpen(o); setError(''); }}>
-      <Popover.Trigger render={<Button size="md" className="w-full justify-start bg-accent-wash px-2 text-accent not-aria-disabled:hover:bg-selection" />}>
+      <Popover.Trigger render={<Button size="md" className="w-full justify-start px-2 text-muted" />}>
         <Pin />
         <span>Pin to project</span>
       </Popover.Trigger>
@@ -104,7 +106,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
         {chart.command ? (
           <>
             <Popover.Description>Refresh runs this command again in the project folder, with no agent and no model call:</Popover.Description>
-            <pre translate="no" className="max-h-60 overflow-auto rounded-xs bg-code-bg px-2 py-1 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{chart.command}</pre>
+            <pre translate="no" className="max-h-60 overflow-y-auto overflow-x-hidden rounded-xs bg-code-bg px-2 py-1 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{chart.command}</pre>
           </>
         ) : (
           <Popover.Description>{chart.kind === 'echarts' ? 'The agent supplied this chart’s data' : `The agent gave these ${chart.labels.length} rows itself`}, so the pinned chart is a snapshot: it has no command and does not refresh.</Popover.Description>
@@ -165,7 +167,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
   const Icon = chart.kind === 'line' ? LineChart : BarChart3;
   const rows = chart.labels.length;
   // Keep the plotted area after removing the toolbar row and excess axis padding.
-  const height = (phone ? 260 : 320) - (advanced ? 0 : 56);
+  const height = chartHeight(chart, (phone ? 260 : 320) - (advanced ? 0 : 56));
   const legend = advanced ? undefined : <Legend chart={chart} hidden={hidden} onToggle={(name) => setHidden((previous) => { const next = new Set(previous); if (next.has(name)) next.delete(name); else next.add(name); return next; })} />;
   return (
     <figure aria-label={`Chart: ${chart.title}`} className="flex flex-col gap-2 rounded-lg bg-raised pt-2 shadow-raised">
@@ -192,8 +194,7 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
         </Popover.Root>
       </header>
       {table ? data ? <RowsTable data={data} title={chart.title} /> : <ChartData chart={chart} /> : <div ref={box} className="px-3"><ChartImage chart={chart} look={{ width, height }} hidden={hidden} legend={legend} controlsContainer={controlsContainer} /></div>}
-      {table && legend && <div className="px-5">{legend}</div>}
-      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
+      <p className="flex flex-wrap items-center gap-x-1 gap-y-1 border-t border-hairline px-5 py-2.5 text-meta text-muted">
         <span>{chart.command ? 'From a command' : advanced ? 'From data the agent gave' : 'From rows the agent gave'}, {timeAgo(chart.at)}</span>
         {!advanced && <span>· Drawn from {rows} {rows === 1 ? 'row' : 'rows'}</span>}
       </p>
@@ -336,7 +337,7 @@ export function PinnedChartsPanel({ project, inline, open, onClose, onClosed }: 
         </Button>
       </PanelHeader>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div role="region" aria-label={`Charts pinned to ${project.name}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 pt-1 pb-4">
+      <div role="region" aria-label={`Charts pinned to ${project.name}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pt-1 pb-4">
         {error && <Note tone="error" role="alert">Could not load the pinned charts: {error}</Note>}
         {!charts && !error && <Skeleton label="Loading the pinned charts…" rows={4} />}
         {charts?.length === 0 && <Note>No charts are pinned to {project.name}. Pin one from a chart an agent drew in a task.</Note>}

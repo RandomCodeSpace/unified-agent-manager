@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, subagentSummary, summarizeTools, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTools, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -83,6 +83,20 @@ test('non-JSON input shows as is, on one line, clipped', () => {
   assert.equal(mainArgument('bash', ''), '');
   assert.equal(mainArgument('bash', '{"command":"' + 'x'.repeat(400) + '"}').length, 300);
   assert.equal(mainArgument('bash', '{not json'), '{not json');
+});
+
+test('an input that is one JSON string shows decoded; a patch shows the files it names', () => {
+  const patch = JSON.stringify('*** Begin Patch\n*** Add File: web/report.html\n+<!doctype html>\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch\n');
+  assert.equal(mainArgument('apply_patch', patch), 'web/report.html, README.md');
+  assert.equal(mainArgument('note', JSON.stringify('first line\n"quoted"')), 'first line "quoted"');
+});
+
+test('the details and the copy action read the input as its command, or decoded', () => {
+  assert.deepEqual(readableInput('bash', '{"command":"rtk pwd && rtk ls","description":"Look"}'), { kind: 'command', text: 'rtk pwd && rtk ls' });
+  assert.deepEqual(readableInput('bash', 'go test ./...'), { kind: 'command', text: 'go test ./...' });
+  assert.deepEqual(readableInput('bash', '{"timeout":5}'), { kind: 'input', text: '{"timeout":5}' });
+  assert.deepEqual(readableInput('apply_patch', JSON.stringify('*** Begin Patch\n+<a>\n')), { kind: 'input', text: '*** Begin Patch\n+<a>\n' });
+  assert.deepEqual(readableInput('view', '{"path":"a.go"}'), { kind: 'input', text: '{"path":"a.go"}' });
 });
 
 test('the row label is the tool name and its argument, with the title as the fallback', () => {
@@ -448,7 +462,7 @@ test('the activity label counts questions by outcome, never as tool calls', asyn
   assert.equal(summarizeActivity([{ item: asked('a1', 'Which?', at(3)) }, { item: declined }, { interaction: q('q1', 'Then?', { state: 'rejected' }) }], { live: false }).label, 'Answered 1 question and declined 2 questions');
   // A call left open by a stopped turn got no answer; an expired request neither.
   const open = asked('a3', 'Which?', at(3), { status: 'running', output: undefined });
-  assert.equal(summarizeActivity([{ item: open }, { interaction: q('q1', 'Then?', { state: 'expired' }) }], { live: false }).label, '2 questions unanswered');
+  assert.equal(summarizeActivity([{ item: open }, { interaction: q('q1', 'Then?', { state: 'expired' }) }], { live: false }).label, '2 questions not answered');
   // A failed question counts with the failures and turns the row to error.
   const failed = asked('a4', 'Which?', at(3), { status: 'failed', output: 'boom' });
   assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: failed }], { live: false }), { label: 'Ran 1 command · 1 failed', tone: 'error', active: false });
@@ -496,6 +510,10 @@ test('a subagent row summarises its current step, its error, or the first line o
   assert.equal(subagentSummary({ ...running, status: 'cancelled' }, [shell], { ...report, output: 'Stopped after step 2.' }), 'Stopped after step 2.');
   assert.equal(subagentSummary({ ...running, status: 'failed', error: 'axe-core is not installed.' }, [shell], { ...report, status: 'failed', output: 'other' }), 'axe-core is not installed.');
   assert.equal(subagentSummary({ ...running, status: 'failed' }, [shell], { ...report, status: 'failed', output: 'npm ERR! could not determine executable to run\nstack…' }), 'npm ERR! could not determine executable to run');
+  // A background launch's call output only acknowledges the launch: never its line.
+  const ack = { ...report, output: 'Agent started in background with agent_id: a1.' };
+  assert.equal(subagentSummary({ ...running, status: 'completed', background: true }, [shell], ack), '');
+  assert.equal(subagentSummary({ ...running, status: 'completed', background: true, result_summary: 'Found the pages.' }, [shell], ack), 'Found the pages.');
 });
 
 test('compact tool labels and exact semantic paths preserve summaries without deferred input', () => {

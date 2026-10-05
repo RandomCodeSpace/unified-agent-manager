@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, scheduleOf, untilText } from '../src/lib/routines.ts';
+import { clockText, describeSchedule, outcomeLabel, outcomeTone, routineMode, routineModeInput, routineModeLabel, scheduleOf, untilText } from '../src/lib/routines.ts';
 
 test('a schedule reads in plain words', () => {
-  assert.equal(describeSchedule({ kind: 'weekdays', time: '09:00' }), 'Every weekday at 09:00');
-  assert.equal(describeSchedule({ kind: 'daily', time: '18:30' }), 'Every day at 18:30');
-  assert.equal(describeSchedule({ kind: 'weekly', time: '08:00', weekday: 1 }), 'Every Monday at 08:00');
+  assert.equal(describeSchedule({ kind: 'weekdays', time: '09:00' }, 'en-GB'), 'Every weekday at 09:00');
+  assert.equal(describeSchedule({ kind: 'daily', time: '18:30' }, 'en-GB'), 'Every day at 18:30');
+  assert.equal(describeSchedule({ kind: 'weekly', time: '08:00', weekday: 1 }, 'en-GB'), 'Every Monday at 08:00');
+  // The time reads as the form's time field shows it in that locale.
+  assert.match(describeSchedule({ kind: 'daily', time: '18:30' }, 'en-US'), /^Every day at 06:30\sPM$/);
+  assert.match(clockText('09:00', 'en-US'), /^09:00\sAM$/);
+  assert.equal(clockText('bad', 'en-GB'), 'bad');
   assert.equal(describeSchedule({ kind: 'hours', hours: 1 }), 'Every hour');
   assert.equal(describeSchedule({ kind: 'hours', hours: 6 }), 'Every 6 hours');
 });

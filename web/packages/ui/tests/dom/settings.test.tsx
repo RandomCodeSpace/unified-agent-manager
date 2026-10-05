@@ -128,6 +128,32 @@ describe('settings', () => {
     expect((models.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement).value).toBe('draft-provider');
   });
 
+  test('the inline provider form takes focus, cancels on Escape and returns focus to what opened it', async () => {
+    const { user } = await openSettings('Providers');
+    const providers = await section('Providers');
+    const add = providers.getByRole('button', { name: 'Add provider' });
+    await user.click(add);
+    const name = providers.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement;
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    expect(name.placeholder).toBe('my-provider');
+    expect((providers.getByRole('textbox', { name: 'Base URL' }) as HTMLInputElement).placeholder).toBe('https://api.example.com/v1');
+    expect(providers.getByText('Save or cancel this form to edit another provider.')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    expect(providers.queryByRole('form', { name: 'Add a provider' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(providers.getByRole('button', { name: 'Add provider' })));
+    const edit = providers.getAllByRole('button', { name: 'Edit', exact: true })[0];
+    await user.click(edit);
+    await user.click(providers.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(document.activeElement).toBe(edit));
+  });
+
+  test('models read in name order within each provider', async () => {
+    await openSettings('Models');
+    const copilot = within((await section('Models')).getByRole('group', { name: 'GitHub Copilot models' }));
+    const names = copilot.getAllByRole('switch').map((s) => s.getAttribute('aria-label')!.replace(/^Show /, ''));
+    expect(names).toEqual([...names].sort(new Intl.Collator('en', { numeric: true, sensitivity: 'base' }).compare));
+  });
+
   test('the Enter default switches between steer and queue, saved on the service', async () => {
     const { user } = await openSettings();
     const composer = await section('Composer');

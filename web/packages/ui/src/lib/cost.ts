@@ -45,13 +45,33 @@ export function quotaPace(quota: Quota | null, now: number, stale = false): {
   if (quota.provider !== 'copilot' || reset !== next || now <= start) return result;
   const elapsed = (now - start) / 86400000;
   const used = 100 - remaining;
-  if (used === 0) return { ...result, tone: 'attention', label: 'Behind pace' };
+  // Spending slower than the budget leaves allowance at the reset: a good state, not a warning.
+  if (used === 0) return { ...result, tone: 'healthy', label: 'Under pace' };
   const daysAtPace = remaining * elapsed / used;
   // Compare average consumption with the daily allowance budget; allow 5% either way.
   const relativePace = (used / 100) / ((now - start) / (next - start));
-  if (relativePace < 0.95) return { ...result, daysAtPace, tone: 'attention', label: 'Behind pace' };
+  if (relativePace < 0.95) return { ...result, daysAtPace, tone: 'healthy', label: 'Under pace' };
   if (relativePace > 1.05) return { ...result, daysAtPace, tone: 'danger', label: 'Ahead of pace' };
   return { ...result, daysAtPace, tone: 'healthy', label: 'On pace' };
+}
+
+/**
+ * Copilot's calendar-month allowance as the Usage chart draws it, in shares of the allowance (0…1):
+ * how far through the month it is (`elapsed`), how much is used, and, at the average pace so far,
+ * how much will be by the reset (`projected`, may pass 1) and when it runs out first (`runsOut`,
+ * ms). Null where the month is not known: other providers, a reset off the month's first day, the
+ * unlimited and the unreported.
+ */
+export function quotaBurn(quota: Quota | null, now: number): { start: number; reset: number; elapsed: number; used: number; projected: number; runsOut: number | null } | null {
+  if (!quota || quota.unlimited || quota.provider !== 'copilot' || !Number.isFinite(quota.remaining_percent)) return null;
+  const date = new Date(now);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+  if ((quota.reset_at ? Date.parse(quota.reset_at) : next) !== next || now <= start) return null;
+  const elapsed = (now - start) / (next - start);
+  const used = (100 - Math.max(0, Math.min(100, quota.remaining_percent))) / 100;
+  const projected = used / elapsed;
+  return { start, reset: next, elapsed, used, projected, runsOut: projected > 1 ? start + (next - start) * (elapsed / used) : null };
 }
 
 /** First limited account allowance, otherwise the first reported allowance. */
@@ -107,16 +127,16 @@ export function formatCredits(n: number): string {
 
 export const COST_TIER_LABEL: Record<CostTier, string> = { low: 'Low cost', medium: 'Medium cost', high: 'High cost', very_high: 'Very high cost' };
 
-/** "Low cost · 0.25 in, 2 out per 1M tokens", "10% off", or "" when the model reports no cost. */
+/** "Low cost · 0.25 in, 2 out credits per 1M tokens", "10% off usage", or "" when the model reports no cost. Prices are in AI Credits. */
 export function modelCostLine(model: Pick<Model, 'cost_tier' | 'discount_percent' | 'prices'>): string {
   const parts: string[] = [];
   if (model.cost_tier) parts.push(COST_TIER_LABEL[model.cost_tier]);
-  if (model.discount_percent) parts.push(`${model.discount_percent}% off`);
+  if (model.discount_percent) parts.push(`${model.discount_percent}% off usage`);
   const p = model.prices;
   if (p && (p.input !== undefined || p.output !== undefined)) {
     const per = compactTokens(p.batch_size || BATCH);
     const io = [p.input !== undefined ? `${p.input} in` : '', p.output !== undefined ? `${p.output} out` : ''].filter(Boolean).join(', ');
-    parts.push(`${io} per ${per} tokens`);
+    parts.push(`${io} credits per ${per} tokens`);
   }
   return parts.join(' · ');
 }

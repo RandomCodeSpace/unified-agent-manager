@@ -175,6 +175,15 @@ var toolArgumentKeys = map[string][]string{
 var genericArgumentKeys = []string{"command", "cmd", "url", "path", "file_path", "filePath", "pattern", "query", "skill", "name", "description", "question", "prompt", "fact", "intent"}
 
 func compactArgument(tool *agentapi.ToolCall) (arg, path string) {
+	// An input that is one JSON string (apply_patch's patch): the files a
+	// patch names, else the text decoded, never its quoted escapes.
+	var text string
+	if strings.HasPrefix(tool.Input, `"`) && json.Unmarshal([]byte(tool.Input), &text) == nil {
+		if paths := patchFilePaths(text); len(paths) > 0 {
+			return boundedPreview(strings.Join(paths, ", "), 512), ""
+		}
+		return boundedPreview(text, 512), ""
+	}
 	var obj map[string]json.RawMessage
 	if json.Unmarshal([]byte(tool.Input), &obj) == nil && obj != nil {
 		value := func(key string) string { var s string; _ = json.Unmarshal(obj[key], &s); return s }
@@ -295,17 +304,22 @@ func compactForwardPage(items []agentapi.Item, start int) compactHistoryPage {
 }
 
 func (s *webSession) compactSubagent(sa agentapi.Subagent) compactSubagent {
-	preview := sa.Error
-	result := sa.Error
-	if i, ok := s.itemIdx[itemKey("", sa.ParentToolCallID)]; ok && s.items[i].Tool != nil && result == "" {
-		result = s.items[i].Tool.Output
+	report := sa.Result
+	if i, ok := s.itemIdx[itemKey("", sa.ParentToolCallID)]; ok && s.items[i].Tool != nil {
+		report = cmp.Or(s.items[i].Tool.Output, report)
 	}
-	result = cmp.Or(result, sa.Result)
-	if preview == "" && sa.Status != agentapi.SubagentRunning {
-		if i, ok := s.itemIdx[itemKey("", sa.ParentToolCallID)]; ok && s.items[i].Tool != nil {
-			preview = s.items[i].Tool.Output
+	// A background launch's call only acknowledges the launch: the result is
+	// the subagent's own last message, once it has stopped.
+	if sa.Background {
+		report = ""
+		if sa.Status != agentapi.SubagentRunning {
+			report = s.subagentResult(s.lastSubagentAssistant(sa.ID), sa.ID)
 		}
-		preview = cmp.Or(preview, sa.Result)
+	}
+	result := cmp.Or(sa.Error, report)
+	preview := sa.Error
+	if preview == "" && sa.Status != agentapi.SubagentRunning {
+		preview = report
 	}
 	if preview == "" {
 		for i := len(s.items) - 1; i >= 0 && preview == ""; i-- {

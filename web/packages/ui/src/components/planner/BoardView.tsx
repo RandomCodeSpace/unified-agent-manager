@@ -80,7 +80,7 @@ export function BoardView() {
 
   if (!lanes.length) return <p className="px-4 py-6 text-ui text-muted">No subtasks match the filters.</p>;
   // A labelled scroll region, which must accept keyboard scrolling.
-  const region = { role: 'region', 'aria-label': 'Board', tabIndex: 0, className: '@container min-h-0 flex-1 overflow-auto overscroll-contain' };
+  const region = { role: 'region', 'aria-label': 'Board', tabIndex: 0, className: '@container min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain' };
   const lanesGrid = (
     <div className={cn('grid grid-cols-1 gap-x-2 px-3 pb-6', grid)}>
       {/* Column heads stay in view while the lanes scroll under them; stacked, each lane names its own. */}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cheapestLabel, modelChoices, visibleModels } from '../src/lib/models.ts';
+import { byModelName, cheapestLabel, effortLabel, modelChoices, visibleModels } from '../src/lib/models.ts';
 
 const models = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'new', name: 'New' }];
 test('hidden models leave choices and new models stay visible', () => {
@@ -20,4 +20,11 @@ test('the unset utility model names the cheapest model the service picked, or sa
   assert.equal(cheapestLabel({ ...provider, cheapest_model: 'raw' }), 'Cheapest (currently raw)');
   assert.equal(cheapestLabel({ ...provider, cheapest_model: 'unlisted' }), 'Cheapest (currently unlisted)');
   assert.equal(cheapestLabel(provider), 'Cheapest (none priced)');
+});
+test('models sort by display name with numbers compared as numbers, so versions sit together', () => {
+  const list = [{ id: 'c55', name: 'Claude Sonnet 5.5' }, { id: 'g', name: 'GPT-6 Luna' }, { id: 'c5', name: 'Claude Sonnet 5' }, { id: 'raw-id', name: '' }, { id: 'a', name: 'auto' }];
+  assert.deepEqual([...list].sort(byModelName).map((m) => m.id), ['a', 'c5', 'c55', 'g', 'raw-id']);
+});
+test('efforts read as words in menus while the stored value stays the provider one', () => {
+  assert.deepEqual(['none', 'low', 'medium', 'high', 'xhigh', 'max', 'turbo'].map(effortLabel), ['None', 'Low', 'Medium', 'High', 'Extra high', 'Max', 'Turbo']);
 });

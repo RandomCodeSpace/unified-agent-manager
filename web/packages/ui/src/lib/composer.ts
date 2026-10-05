@@ -1,6 +1,7 @@
 // Pure text rules for the composer's `/` and `@` pickers. No DOM, so the unit tests run in node.
 
 import type { Command, PromptMode, SendDefault } from '../api';
+import { effortLabel as modelEffortLabel } from './models.ts';
 
 /**
  * What Enter and Ctrl/Cmd+Enter submit. With no turn running both send. While a turn runs,
@@ -11,6 +12,11 @@ export function enterActions(live: boolean, sendDefault: SendDefault, steerBlock
   if (!live) return { enter: 'send', modified: 'send' };
   if (steerBlocked) return { enter: 'queue', modified: 'queue' };
   return sendDefault === 'queue' ? { enter: 'queue', modified: 'steer' } : { enter: 'steer', modified: 'queue' };
+}
+
+/** A reasoning effort as the composer shows it ("xhigh" reads "Extra high", none chosen "Default"); the value sent stays the provider's. */
+export function effortLabel(effort: string | undefined): string {
+  return effort ? modelEffortLabel(effort) : 'Default';
 }
 
 /** `/` commands, `@` files, and `$` skills: a second way into the `/` list, filtered to skills (issue #186). */

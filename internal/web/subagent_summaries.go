@@ -126,7 +126,8 @@ func (m *Manager) subagentSummaryItemLocked(s *webSession, it agentapi.Item) {
 		if it.ID == s.lastSubagentAssistant(it.AgentID) {
 			run.lastAssistantID = it.ID
 		}
-		if run.followup || sa.ParentToolCallID == "" {
+		// A background launch's call only acknowledges it: its own reply is the result.
+		if run.followup || sa.ParentToolCallID == "" || sa.Background {
 			run.resultID, run.resultAgentID = it.ID, it.AgentID
 		} else if record, ok := s.subagentSummaries[sa.ID]; ok && completedResult(sa) {
 			// The initial parent result is authoritative. A late child item only
@@ -147,7 +148,7 @@ func (m *Manager) subagentSummaryItemLocked(s *webSession, it agentapi.Item) {
 	}
 	for _, sa := range s.subagents {
 		run := s.summaryRuns[sa.ID]
-		if run != nil && !run.followup && sa.ParentToolCallID == it.ID {
+		if run != nil && !run.followup && !sa.Background && sa.ParentToolCallID == it.ID {
 			run.resultID, run.resultAgentID = it.ID, ""
 			m.queueSubagentSummaryLocked(s, sa)
 		}
@@ -342,7 +343,8 @@ func (s *webSession) generatedSubagentSummary(sa agentapi.Subagent) string {
 		return ""
 	}
 	record, ok := s.subagentSummaries[sa.ID]
-	if !ok || !s.matchesSubagentSummary(record) {
+	// One read from a background launch's acknowledgement never described a result.
+	if !ok || sa.Background && record.ItemAgentID == "" || !s.matchesSubagentSummary(record) {
 		return ""
 	}
 	return record.Text

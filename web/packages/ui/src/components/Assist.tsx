@@ -8,6 +8,7 @@ import { Note, useApp } from './common';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
 import { Select } from './ui/select';
+import { Tip } from './ui/tooltip';
 
 /* ---------- Suggested replies ---------- */
 
@@ -46,23 +47,26 @@ export function useSuggestion(session: SessionDetail, hidden: boolean): string {
 export const SUGGESTION_ID = 'composer-suggestion';
 
 /**
- * The suggestion as ghost text in the empty composer, where its placeholder would be: muted, in the
- * textarea's font and padding, over the textarea and out of its flow, so it never changes the composer's
- * height (two lines, then an ellipsis). Right Arrow or End in the empty composer uses it (Composer.tsx);
- * on a touch screen, which has neither key, the arrow button at its end does. Typed text replaces it.
+ * The suggestion as ghost text in the empty composer, where its placeholder would be: muted and italic, so
+ * it never reads as typed text, in the textarea's font and padding, over the textarea and out of its flow,
+ * so it never changes the composer's height (two lines, then an ellipsis). Right Arrow or End in the empty
+ * composer uses it (Composer.tsx), as does the visible Use button at its end. Typed text replaces it.
  */
 export function SuggestionGhost({ text, onUse }: Readonly<{ text: string; onUse: () => void }>) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-1 px-3.5 pt-3 animate-fade-in pointer-coarse:pr-1.5">
-      <span aria-hidden="true" className="line-clamp-2 min-w-0 flex-1 text-chat text-muted max-sm:text-chat-lg">
+      <span aria-hidden="true" className="line-clamp-2 min-w-0 flex-1 text-chat text-muted italic max-sm:text-chat-lg">
         {text}
       </span>
       <span id={SUGGESTION_ID} className="sr-only">
         Suggestion: {text}, press Right Arrow to use it
       </span>
-      <Button size="icon" variant="subtle" aria-label="Use suggestion" className="pointer-events-auto -mt-0.5 hidden shrink-0 text-muted pointer-coarse:inline-flex" onClick={onUse}>
-        <ArrowRight />
-      </Button>
+      <Tip label="Use suggestion (Right Arrow)">
+        <Button size="sm" variant="subtle" aria-label="Use suggestion" className="pointer-events-auto -mt-0.5 shrink-0 text-muted" onClick={onUse}>
+          Use
+          <ArrowRight />
+        </Button>
+      </Tip>
     </div>
   );
 }

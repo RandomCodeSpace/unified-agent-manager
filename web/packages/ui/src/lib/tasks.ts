@@ -39,7 +39,7 @@ export type Unread = (s: SessionSummary) => boolean;
 const never: Unread = () => false;
 
 /**
- * The Task list's Needs you group: a request waits (`needsYou` in api.ts), or the Task failed
+ * Whether a Task needs the user (the Needs you count, Alt+J/K): a request waits (`needsYou` in api.ts), or the Task failed
  * or was interrupted and has not been opened since. Never the shelves.
  */
 export function needsYouNow(s: SessionSummary, unread: Unread = never): boolean {
@@ -47,39 +47,9 @@ export function needsYouNow(s: SessionSummary, unread: Unread = never): boolean 
   return s.state === 'awaiting_permission' || s.state === 'awaiting_answer' || hasPending(s) || ((s.state === 'failed' || s.state === 'interrupted') && unread(s));
 }
 
-/** The Needs you group's size: the count the tab title, the app badge and the drawer button carry. */
+/** How many Tasks need the user: the count the tab title, the app badge and the drawer button carry. */
 export function needsYouCount(sessions: readonly SessionSummary[], unread: Unread = never): number {
   return sessions.filter((s) => needsYouNow(s, unread)).length;
-}
-
-/** The Task list's groups, in order; the Settled and Archived shelves follow them. */
-export type GroupKey = 'you' | 'review' | 'working' | 'idle';
-export const GROUP_TITLES: Record<GroupKey, string> = { you: 'Needs you', review: 'Ready for review', working: 'Working', idle: 'Idle' };
-
-/** The group an active Task belongs to: Needs you, then finished and not opened since (Ready for review), then Working, else Idle. */
-export function groupOf(s: SessionSummary, unread: Unread): GroupKey {
-  if (needsYouNow(s, unread)) return 'you';
-  const state = shownState(s);
-  if (state === 'completed' && unread(s)) return 'review';
-  if (state === 'starting' || state === 'working') return 'working';
-  return 'idle';
-}
-
-const byUpdated = (a: SessionSummary, b: SessionSummary) => b.updated_at.localeCompare(a.updated_at) || b.created_at.localeCompare(a.created_at);
-const byCreated = (a: SessionSummary, b: SessionSummary) => b.created_at.localeCompare(a.created_at);
-
-/**
- * Active Tasks by group. Each group lists its latest change first, except Working, which keeps
- * creation order so rows that are busy do not trade places.
- */
-export function commandGroups(active: readonly SessionSummary[], unread: Unread): Record<GroupKey, SessionSummary[]> {
-  const groups: Record<GroupKey, SessionSummary[]> = { you: [], review: [], working: [], idle: [] };
-  for (const s of active) groups[groupOf(s, unread)].push(s);
-  groups.you.sort(byUpdated);
-  groups.review.sort(byUpdated);
-  groups.working.sort(byCreated);
-  groups.idle.sort(byUpdated);
-  return groups;
 }
 
 /** Alt+J / Alt+K: the next (or previous) Task in `ids` after the open one, wrapping; the first (or last) when the open one is not among them. */

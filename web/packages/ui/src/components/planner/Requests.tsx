@@ -3,7 +3,7 @@ import { Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, 
 import { useMemo, useState, type ReactNode, type SubmitEvent } from 'react';
 import { plannerErrorText, type BoardRequest, type Card, type Evidence, type Rejection, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
 import { cn } from '../../lib/cn';
-import { relTime, timeAgo } from '../common';
+import { dateTime, relTime, timeAgo } from '../common';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Collapse } from '../ui/collapse';
@@ -94,7 +94,7 @@ export function EvidenceRows({ evidence: ev }: Readonly<{ evidence: Evidence }>)
         <p className="mb-1 text-caption text-muted">
           At {a.head}{a.dirty ? ', with uncommitted changes' : ', clean'}, {timeAgo(a.ran_at)} · {a.cmd_hash}
         </p>
-        {a.tail && <pre className="max-h-48 overflow-auto rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{a.tail}</pre>}
+        {a.tail && <pre className="max-h-48 overflow-x-hidden overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-code-bg px-2 py-1.5 font-mono text-code-sm text-ink shadow-well">{a.tail}</pre>}
       </Row>,
     );
   }
@@ -244,7 +244,7 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
         {!pending && <span className={cn('text-caption text-muted', !auto && 'capitalize')}>{auto ? 'Accepted automatically' : r.status}</span>}
         <span className="flex-1" />
         <TaskChip taskId={r.task_id} />
-        <time className="shrink-0 text-caption tabular-nums text-muted" dateTime={r.created_at} title={new Date(r.created_at).toLocaleString()}>{relTime(r.created_at)}</time>
+        <time className="shrink-0 text-caption tabular-nums text-muted" dateTime={r.created_at} title={dateTime(r.created_at)}>{relTime(r.created_at)}</time>
       </header>
       {r.comment && <p className="text-ui text-body [overflow-wrap:anywhere]">{r.comment}</p>}
       {r.flags.length > 0 && (

@@ -1,5 +1,5 @@
 import { ChevronDown } from 'lucide-react';
-import type { TokenCounts } from '../api';
+import type { Meta, TokenCounts } from '../api';
 import { cn } from '../lib/cn';
 import { compactTokens } from '../lib/cost';
 import { aggregateUsageModels, cacheHitRate, splitTokens, type UsageModel } from '../lib/token-usage';
@@ -14,7 +14,15 @@ const PARTS = [
 ] as const;
 export type UsageSort = 'tokens' | 'cost';
 type Colors = ReadonlyMap<string, string>;
-const modelName = (model: UsageModel) => model.model || 'Unspecified model';
+type Names = ReadonlyMap<string, string>;
+const modelName = (model: UsageModel, names?: Names) => names?.get(model.model) || model.model || 'Unspecified model';
+
+/** Model IDs to the names the providers' catalogs give them, as Settings shows them. */
+export function modelNames(meta: Meta | null | undefined): Names {
+  const names = new Map<string, string>();
+  for (const provider of meta?.providers ?? []) for (const model of provider.models) if (model.name && !names.has(model.id)) names.set(model.id, model.name);
+  return names;
+}
 
 function cacheHitText(model: UsageModel): string {
   return cacheHitRate(model)?.toLocaleString('en-US', { style: 'percent', maximumFractionDigits: 1 }) ?? '—';
@@ -33,29 +41,33 @@ export function Count({ value }: Readonly<{ value: number }>) {
   return <span title={`${compactTokens(value)} tokens`}>{compactTokens(value)}</span>;
 }
 
-export function TokenSplitValues({ value }: Readonly<{ value: TokenCounts }>) {
+/** The totals with a key to the bars: each part's swatch is that part's shade of the leading models' colours. */
+export function TokenSplitValues({ value, colors = [] }: Readonly<{ value: TokenCounts; colors?: readonly string[] }>) {
   const split = splitTokens(value);
+  const swatches = colors.length ? colors : ['bg-muted'];
   return <dl className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-meta">
     {PARTS.map(({ key, label, shade }) => <div key={key} className="flex items-baseline gap-1.5">
-      <dt className="flex items-center gap-1.5 text-muted"><span aria-hidden="true" className={cn('size-2 shrink-0 rounded-xs bg-muted', shade)} />{label}</dt>
+      <dt className="flex items-center gap-1.5 text-muted"><span aria-hidden="true" className="flex shrink-0 overflow-hidden rounded-xs">{swatches.map((color, i) => <span key={i} className={cn('h-2 w-1.5', color, shade)} />)}</span>{label}</dt>
       <dd className="text-caption text-ink tabular-nums"><Count value={split[key]} /></dd>
     </div>)}
   </dl>;
 }
 
-function TokenBar({ model, color }: Readonly<{ model: UsageModel; color: string }>) {
+function TokenBar({ model, color, names }: Readonly<{ model: UsageModel; color: string; names?: Names }>) {
   const split = splitTokens(model);
   const total = split.input + split.output + split.cache;
-  return <div role="img" aria-label={`${modelName(model)} token split: ${PARTS.map(({ key, label }) => `${label} ${split[key].toLocaleString('en-US')}`).join('; ')}`} className="flex h-2 w-full overflow-hidden rounded-xs bg-sunken">
+  return <div role="img" aria-label={`${modelName(model, names)} token split: ${PARTS.map(({ key, label }) => `${label} ${split[key].toLocaleString('en-US')}`).join('; ')}`} className="flex h-2 w-full overflow-hidden rounded-xs bg-sunken">
     {PARTS.map(({ key, shade }) => <span key={key} className={cn('h-full', color, shade)} style={{ width: `${split[key] / Math.max(1, total) * 100}%` }} />)}
   </div>;
 }
 
-function TokenSplitTip({ model }: Readonly<{ model: UsageModel }>) {
+function TokenSplitTip({ model, names }: Readonly<{ model: UsageModel; names?: Names }>) {
   const split = splitTokens(model);
   const total = split.input + split.output + split.cache;
-  return <HelpTip label={`${modelName(model)} token split`}>
-    <span className="block font-medium [overflow-wrap:anywhere]">{modelName(model)}</span>
+  const name = modelName(model, names);
+  return <HelpTip label={`${name} token split`}>
+    <span className="block font-medium [overflow-wrap:anywhere]">{name}</span>
+    {name !== model.model && model.model && <span className="block text-meta opacity-70 [overflow-wrap:anywhere]">{model.model}</span>}
     <span className="mt-2 block space-y-1 tabular-nums">
       {PARTS.map(({ key, label }) => <span key={key} className="flex justify-between gap-4">
         <span>{label}</span><span>{compactTokens(split[key])} <span className="opacity-70">({Math.round(split[key] / Math.max(1, total) * 100)}%)</span></span>
@@ -74,14 +86,15 @@ function TokenSplitTip({ model }: Readonly<{ model: UsageModel }>) {
   </HelpTip>;
 }
 
-function ModelName({ model }: Readonly<{ model: UsageModel }>) {
+function ModelName({ model, names }: Readonly<{ model: UsageModel; names?: Names }>) {
+  const name = modelName(model, names);
   return <div className="flex min-w-0 flex-1 items-center gap-1">
-    <span className="min-w-0 truncate text-ink" title={modelName(model)}>{modelName(model)}</span>
-    <TokenSplitTip model={model} />
+    <span className="min-w-0 truncate text-ink" title={model.model && name !== model.model ? `${name} · ${model.model}` : name}>{name}</span>
+    <TokenSplitTip model={model} names={names} />
   </div>;
 }
 
-export function ModelOverview({ models, colors }: Readonly<{ models: UsageModel[]; colors: Colors }>) {
+export function ModelOverview({ models, colors, names }: Readonly<{ models: UsageModel[]; colors: Colors; names?: Names }>) {
   const remainder = models.slice(5);
   const rows = models.slice(0, 5);
   if (remainder.length) rows.push(aggregateUsageModels(remainder, `Other ${remainder.length} models`));
@@ -89,17 +102,18 @@ export function ModelOverview({ models, colors }: Readonly<{ models: UsageModel[
     <div className="space-y-1">
       {rows.map((model, i) => <div key={i === 5 ? 'other' : model.model}>
         <div className="mb-1 flex min-w-0 items-center gap-2 text-caption">
-          <ModelName model={model} />
-          <span className="min-w-0 max-w-[60%] text-right tabular-nums [overflow-wrap:anywhere]" title={`Estimated cost in USD; ${compactTokens(model.total)} tokens`}>{costText(model.cost_usd)} <span className="text-muted">(<Count value={model.total} /> tokens)</span><span className="inline-block text-muted"> · {cacheHitText(model)} cache hit</span></span>
+          <ModelName model={model} names={names} />
+          {/* One line: cost, tokens, cache hit; the tip says each in full. */}
+          <span className="shrink-0 whitespace-nowrap text-right tabular-nums" title={`Estimated cost ${costText(model.cost_usd)} in USD · ${compactTokens(model.total)} tokens · ${cacheHitText(model)} cache hit`}>{costText(model.cost_usd)} <span className="text-muted">· <Count value={model.total} /> · {cacheHitText(model)} cached</span></span>
         </div>
-        <TokenBar model={model} color={i === 5 ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
+        <TokenBar model={model} names={names} color={i === 5 ? 'bg-faint' : colors.get(model.model) ?? MODEL_COLORS[0]} />
       </div>)}
     </div>
     <figcaption className="sr-only">Each full-width bar shows the model's recorded Input, Output, and Cache proportions.</figcaption>
   </figure>;
 }
 
-export function ModelTable({ models, colors, period, sort, onSort }: Readonly<{ models: UsageModel[]; colors: Colors; period: string; sort: UsageSort; onSort: (sort: UsageSort) => void }>) {
+export function ModelTable({ models, colors, names, period, sort, onSort }: Readonly<{ models: UsageModel[]; colors: Colors; names?: Names; period: string; sort: UsageSort; onSort: (sort: UsageSort) => void }>) {
   const sorted = [...models].sort((a, b) => (sort === 'tokens' ? b.total - a.total : (b.cost_usd ?? -1) - (a.cost_usd ?? -1)) || a.model.localeCompare(b.model));
   return <table className="w-full table-fixed text-caption">
     <caption className="sr-only">{period} token usage by model</caption>
@@ -114,12 +128,12 @@ export function ModelTable({ models, colors, period, sort, onSort }: Readonly<{ 
     </thead>
     {sorted.map((model) => <tbody key={model.model}>
       <tr className="hover:bg-surface">
-        <th scope="row" className="py-1.5 pr-2 text-left font-normal"><ModelName model={model} /></th>
+        <th scope="row" className="py-1.5 pr-2 text-left font-normal"><ModelName model={model} names={names} /></th>
         <td className="py-1.5 pl-1 text-right tabular-nums"><Count value={model.total} /></td>
         <td className="py-1.5 pl-1 text-right tabular-nums [overflow-wrap:anywhere]">{costText(model.cost_usd)}</td>
         <td className="py-1.5 pl-1 text-right tabular-nums">{cacheHitText(model)}</td>
       </tr>
-      <tr><td colSpan={4} className="pb-3"><TokenBar model={model} color={colors.get(model.model) ?? MODEL_COLORS[0]} /></td></tr>
+      <tr><td colSpan={4} className="pb-3"><TokenBar model={model} names={names} color={colors.get(model.model) ?? MODEL_COLORS[0]} /></td></tr>
     </tbody>)}
   </table>;
 }

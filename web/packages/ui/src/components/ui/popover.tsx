@@ -17,12 +17,14 @@ export const Popover = {
     side = 'top',
     align = 'start',
     sideOffset = 6,
+    collisionBoundary,
+    anchor,
     children,
     ...props
-  }: ComponentProps<typeof BasePopover.Popup> & Pick<ComponentProps<typeof BasePopover.Positioner>, 'side' | 'align' | 'sideOffset'>) {
+  }: ComponentProps<typeof BasePopover.Popup> & Pick<ComponentProps<typeof BasePopover.Positioner>, 'side' | 'align' | 'sideOffset' | 'collisionBoundary' | 'anchor'>) {
     return (
       <BasePopover.Portal>
-        <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionPadding={8} className="z-50 outline-hidden">
+        <BasePopover.Positioner side={side} align={align} sideOffset={sideOffset} collisionBoundary={collisionBoundary} anchor={anchor} collisionPadding={8} className="z-50 outline-hidden">
           <BasePopover.Popup data-popup="" className={cn(popupClass, 'flex max-w-72 flex-col gap-1 px-3 py-2 text-ui text-body', className)} {...props}>
             {children}
           </BasePopover.Popup>

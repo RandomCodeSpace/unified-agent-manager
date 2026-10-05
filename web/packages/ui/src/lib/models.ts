@@ -27,6 +27,20 @@ export function modelChoices(catalog: readonly Model[], hidden: readonly string[
   return [{ model: listed ?? { id: current, name: current }, note: listed ? 'Hidden in Settings' : 'Not offered now' }, ...visible];
 }
 
+const NAMES = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** Models in reading order: by display name, numbers compared as numbers ("Claude Sonnet 5" before "Claude Sonnet 5.5"). */
+export function byModelName(a: Pick<Model, 'id' | 'name'>, b: Pick<Model, 'id' | 'name'>): number {
+  return NAMES.compare(a.name || a.id, b.name || b.id) || NAMES.compare(a.id, b.id);
+}
+
+const EFFORTS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+
+/** A reasoning effort as a menu shows it; the stored value stays the provider's own ("xhigh" reads "Extra high"). */
+export function effortLabel(effort: string): string {
+  return EFFORTS[effort] ?? (effort.charAt(0).toUpperCase() + effort.slice(1));
+}
+
 /** The Utility model's opt-out (`title_model` value `none`): the provider keeps its own title and UAM makes no AI call. */
 export const UTILITY_NONE = 'none';
 

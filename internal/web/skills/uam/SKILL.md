@@ -79,6 +79,11 @@ the Project and refresh it later without you.
   first), `y` one to 4 numeric fields, one series each. `line` for a trend
   over ordered x such as days, `bar` to compare categories. At most 500
   rows: aggregate, or keep the last ones.
+- With `kind: "echarts"`, the chart's ⋯ menu holds zoom, the date range
+  and series toggles, and uam hides any `dataZoom` slider you add, so do not
+  write "drag the slider" in a title or reply. Options are JSON, so
+  formatters are string templates (`"{b}: {c}"`); a `valueFormatter` may
+  only be a `"{value}"` template such as `"${value}"`.
 - A refused call says what to fix. After the chart, write the takeaway in
   your reply (the peak, the trend, anything odd), not the rows: the owner
   sees them in the chart.

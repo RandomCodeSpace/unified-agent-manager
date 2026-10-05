@@ -57,7 +57,7 @@ export function Select({
       <BaseSelect.Portal>
         <BaseSelect.Positioner sideOffset={4} align="start" alignItemWithTrigger={false} collisionPadding={8} className="z-60 outline-hidden select-none">
           <BaseSelect.Popup data-popup="" className={cn(popupClass, 'max-h-(--available-height) min-w-(--anchor-width) overflow-hidden')}>
-            <BaseSelect.List className="max-h-[min(320px,var(--available-height))] overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <BaseSelect.List className="max-h-[min(320px,var(--available-height))] overflow-y-auto overflow-x-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {items.map((it) => (
                 <BaseSelect.Item
                   key={it.value}

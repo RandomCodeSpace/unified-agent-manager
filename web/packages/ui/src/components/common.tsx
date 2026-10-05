@@ -4,7 +4,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { LIVE,  taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
+import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
@@ -29,7 +29,7 @@ export const STATE_LABELS: Record<SessionState, string> = {
   working: 'Working',
   awaiting_permission: 'Needs permission',
   awaiting_answer: 'Needs answer',
-  completed: 'Completed',
+  completed: 'Finished',
   cancelled: 'Cancelled',
   failed: 'Failed',
   interrupted: 'Interrupted',
@@ -241,6 +241,16 @@ export function relTime(iso: string, now = Date.now()): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/** A clock time in the browser's locale ("2:05 PM" or "14:05"); `seconds` adds them for step timelines. */
+export function clockTime(at: Date | string, seconds = false): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', ...(seconds && { second: '2-digit' }) });
+}
+
+/** A full date and time in the browser's locale ("Oct 5, 2026, 2:05 PM"): tooltips and records. */
+export function dateTime(at: Date | string): string {
+  return new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 /** A past time in words: "just now", else "5m ago". */
 export function timeAgo(iso: string, now = Date.now()): string {
   const t = relTime(iso, now);
@@ -411,7 +421,7 @@ export function CodeBlock({ language, className, text, head, body, foot, childre
           </Button>
         </div>
         {body ?? (
-          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink">
+          <pre ref={pre} translate="no" className="!my-0 !rounded-none !shadow-none max-h-[480px] overflow-x-hidden overflow-y-auto px-3 pt-0.5 pb-2.5 font-mono text-code text-ink whitespace-pre-wrap [overflow-wrap:anywhere]">
             {children}
           </pre>
         )}

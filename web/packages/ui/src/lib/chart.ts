@@ -112,6 +112,32 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
   };
 }
 
+/** Each category of a category y axis (horizontal bars) needs this many pixels for its label. */
+const CATEGORY_ROW = 20;
+const categoryHeight = (count: number) => count * CATEGORY_ROW + 80;
+/**
+ * A phone legend page: the pager and padding plus two entries' marks and gaps at itemGap 24
+ * (measured). What remains is two names' text, with about 6px to spare either way.
+ */
+const LEGEND_CHROME = 184;
+const firstOf = <T,>(value: T | T[] | undefined) => (Array.isArray(value) ? value[0] : value);
+
+/**
+ * The height a chart card draws at: a chart with a category y axis grows until every
+ * category has a labelled row, so ECharts need not skip every other label.
+ */
+export function chartHeight(chart: Pick<Chart, 'kind' | 'options'>, height: number): number {
+  const axis = chart.kind === 'echarts' ? firstOf(chart.options?.yAxis) : undefined;
+  return axis?.type === 'category' && Array.isArray(axis.data) ? Math.max(height, categoryHeight(axis.data.length)) : height;
+}
+
+/** A pixel length from a number or a percentage of `total`; undefined for anything else. */
+function pixels(value: unknown, total: number): number | undefined {
+  if (typeof value === 'number') return value;
+  const match = typeof value === 'string' ? /^(\d+(?:\.\d+)?)(%|px)?$/.exec(value) : null;
+  return match ? Number(match[1]) * (match[2] === '%' ? total / 100 : 1) : undefined;
+}
+
 /** Saved specifications are validated JSON; text tooltips and static rendering apply at every scope. */
 function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
   const zoomOptions = (value: unknown) => {
@@ -123,6 +149,13 @@ function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
       ? { ...z, type: 'inside', zoomOnMouseWheel: true, moveOnMouseWheel: false }
       : { ...z, show: false });
   };
+  const objects = (value: unknown) => (Array.isArray(value) ? value : [value]).filter((v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v));
+  // The margin a grid kept for the slider it no longer shows: the edge the slider sat on.
+  const sliderEdges = (value: unknown) => new Set(objects(value).filter((z) => z.type !== 'inside' && z.show !== false)
+    .map((z) => z.orient === 'vertical' || (z.yAxisIndex !== undefined && z.xAxisIndex === undefined) ? 'right' : 'bottom'));
+  // A legend or visual map sits at the bottom unless placed elsewhere.
+  const placed = (component: unknown, edge: string) => objects(component).some((c) => c.show !== false
+    && (c[edge] !== undefined || c.top === edge || c.left === edge || (edge === 'bottom' && c.top === undefined)));
   const safe = (value: unknown, dataset = false): unknown => {
     if (Array.isArray(value)) return value.map((item) => safe(item, dataset));
     if (!value || typeof value !== 'object') return value;
@@ -131,7 +164,25 @@ function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
       dataset && key === 'source' ? structuredClone(v) : safe(v, key === 'dataset'),
     ]));
     if ('animation' in object) object.animation = false;
-    if ('dataZoom' in object) object.dataZoom = zoomOptions(object.dataZoom);
+    if ('dataZoom' in object) {
+      const edges = sliderEdges(object.dataZoom);
+      object.dataZoom = zoomOptions(object.dataZoom);
+      // Reclaim the hidden slider's band. ECharts keeps the axis labels and names inside the
+      // drawing, so the grid can reach the edge; a legend or scale placed there keeps its room.
+      for (const edge of edges) {
+        if (!object.grid || placed(object.legend, edge) || placed(object.visualMap, edge)) continue;
+        const reclaim = (grid: unknown) => grid && typeof grid === 'object' ? { ...grid, [edge]: 8, containLabel: false } : grid;
+        object.grid = Array.isArray(object.grid) ? object.grid.map(reclaim) : reclaim(object.grid);
+      }
+    }
+    // JSON cannot hold the function ECharts calls here: a "{value}" template becomes one,
+    // anything else is dropped so the default formatting applies.
+    if ('valueFormatter' in object) {
+      const template = object.valueFormatter;
+      if (typeof template === 'string' && template.includes('{value}')) {
+        object.valueFormatter = (v: unknown) => template.replaceAll('{value}', typeof v === 'number' ? formatNumber(v) : String(v ?? '-'));
+      } else delete object.valueFormatter;
+    }
     // Some saved model-authored templates escaped the JSON newline twice.
     // Decode label templates only; names, values and dataset source stay literal.
     const label = object.label as { formatter?: unknown } | undefined;
@@ -161,14 +212,36 @@ function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
   const fitBar = !look.spark && horizontalBar;
   const zoom = option.dataZoom ? Array.isArray(option.dataZoom) ? option.dataZoom : [option.dataZoom]
     : option.xAxis ? [{ type: 'inside' as const, ...(horizontalBar ? { yAxisIndex: 0 } : { xAxisIndex: 0 }), filterMode: 'none' as const, moveOnMouseMove: true, zoomOnMouseWheel: true, moveOnMouseWheel: false }] : [];
+  // Label every category once the card has grown to fit them (chartHeight); long names truncate.
+  const labelWidth = Math.min(look.width < 480 ? 140 : 200, Math.floor(look.width * 0.38));
+  const categoryLabels = <T extends { type?: unknown; data?: unknown; axisLabel?: object }>(axis: T): T => axis.type !== 'category' ? axis : {
+    ...axis, axisLabel: { ...(Array.isArray(axis.data) && look.height >= categoryHeight(axis.data.length) ? { interval: 0 } : {}), ...axis.axisLabel, width: labelWidth, overflow: 'truncate' },
+  };
+  // A legend placed along the top (ECharts puts it at the bottom by default) keeps to one row,
+  // paged when it overflows, and the grid starts below it with room for a y axis name.
+  const legendTop = legends.length === 1 && legends[0].show !== false && legends[0].orient !== 'vertical' && legends[0].bottom === undefined
+    ? legends[0].top === 'top' ? 0 : pixels(legends[0].top, look.height) : undefined;
+  const topLegend = !look.spark && !option.media && !option.baseOption && grids.length <= 1 && xAxes.length > 0 && legendTop !== undefined && legendTop < look.height / 4;
+  const gridTop = topLegend ? Math.max(pixels(grids[0]?.top, look.height) ?? 65, legendTop + 24 + (yAxes.some((axis) => axis.name) ? 32 : 8)) : undefined;
+  // On a phone each legend page holds two equal entries, so the pager never shows a cut-off one:
+  // the third starts past the clip, with a wide gap to absorb the pager's text width.
+  const legendWidth = look.width - 16;
+  const legendText = topLegend && look.width < 480 ? Math.max(24, Math.floor((legendWidth - LEGEND_CHROME) / 2)) : undefined;
+  // A draggable scale on the right labels its handles on the plot's side: keep the grid clear of them.
+  const scale = !look.spark && grids.length <= 1 && xAxes.length > 0 ? objects(option.visualMap).find((map) => map.calculable && map.show !== false
+    && map.orient !== 'horizontal' && (map.right !== undefined || map.left === 'right')) : undefined;
+  const scaleRoom = scale ? (pixels(scale.right, look.width) ?? 0) + (pixels(scale.itemWidth, look.width) ?? 20) + 26
+    + 7 * Math.max(String(scale.max ?? 100).length, String(scale.min ?? 0).length) : 0;
   return {
     ...option,
     // Authored percentage margins plus containLabel can leave only a few pixels
     // for bars. Bound the whole drawing and give labels a limited share.
-    grid: fitBar ? { ...grids[0], left: 8, right: 8, top: 8, bottom: 8, width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' } : option.grid,
+    grid: fitBar ? { ...grids[0], left: 8, right: 8, top: 8, bottom: 8, width: 'auto', height: 'auto', containLabel: false, outerBoundsMode: 'same', outerBoundsContain: 'all' }
+      : topLegend || scale ? { ...grids[0], ...(topLegend && { top: gridTop }), ...(scale && { right: Math.max(pixels(grids[0]?.right, look.width) ?? 0, scaleRoom) }) } : option.grid,
     xAxis: fitBar && valueAxis ? { ...valueAxis, nameLocation: 'middle', nameGap: 28, splitNumber: look.width < 480 ? 2 : valueAxis.splitNumber ?? 5, axisLabel: { ...valueAxis.axisLabel, hideOverlap: true } } : option.xAxis,
-    yAxis: fitBar && categoryAxis ? { ...categoryAxis, axisLabel: { ...categoryAxis.axisLabel, width: Math.min(look.width < 480 ? 140 : 200, Math.floor(look.width * 0.38)), overflow: 'truncate' } } : option.yAxis,
-    legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto' })) : option.legend,
+    yAxis: look.spark || !option.yAxis ? option.yAxis : Array.isArray(option.yAxis) ? option.yAxis.map(categoryLabels) : categoryLabels(option.yAxis),
+    legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto' }))
+      : topLegend ? { ...legends[0], type: 'scroll', ...(legendText && { left: 'center', width: legendWidth, itemGap: 24, textStyle: { ...legends[0].textStyle, width: legendText, overflow: 'truncate' } }) } : option.legend,
     animation: false,
     textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', color: token('body', '#494b53'), ...option.textStyle },
     tooltip: { ...(Array.isArray(option.tooltip) ? option.tooltip[0] : option.tooltip), renderMode: 'richText', confine: true },

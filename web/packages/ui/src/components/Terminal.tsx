@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient, Project } from '../api';
 import { exitCode, mouseClipboard, type ClipboardNotice } from '../lib/terminal';
 import { Button } from './ui/button';
+import { AlertDialog, useConfirm } from './ui/dialog';
 
 /** Where the shell's socket stands, or the shell's exit code once it has exited. */
 type Status = 'connecting' | 'connected' | 'disconnected' | 'failed' | 'webgl' | number;
@@ -34,6 +35,13 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
     setStatus('connecting');
     setShell((n) => n + 1);
   };
+  // A connected shell may be running something, and Restart and Close both kill it: they confirm first.
+  const ending = useConfirm<'restart' | 'close'>();
+  const end = (action: 'restart' | 'close') => {
+    if (status === 'connected') ending.ask(action);
+    else if (action === 'restart') restart();
+    else onClose();
+  };
   const [notice, setNotice] = useState<ClipboardNotice | null>(null);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -51,14 +59,26 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
         <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
         <span role="status" className="min-w-0 truncate text-meta text-muted">{notice && NOTICES[notice]}</span>
         <output className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</output>
-        <Button size="sm" className="text-muted" onClick={restart}>
+        <Button size="sm" className="text-muted" onClick={() => end('restart')}>
           <RotateCcw />
           <span className="max-sm:sr-only">Restart</span>
         </Button>
-        <Button size="icon" aria-label="Close terminal" className="text-muted" onClick={onClose}>
+        <span aria-hidden="true" className="fade-rule-y mx-1 h-5 w-px shrink-0" />
+        <Button size="icon" aria-label="Close terminal" className="text-muted" onClick={() => end('close')}>
           <X />
         </Button>
       </div>
+      <AlertDialog
+        {...ending.props}
+        title={ending.target === 'close' ? 'Close the terminal?' : 'Restart the terminal?'}
+        description={`This ends the shell and whatever runs in it${ending.target === 'close' ? '' : ', then starts a new shell'}.`}
+        confirmLabel={ending.target === 'close' ? 'Close terminal' : 'Restart'}
+        onConfirm={() => {
+          ending.close();
+          if (ending.target === 'close') onClose();
+          else restart();
+        }}
+      />
       {status === 'failed' && (
         <p role="alert" className="mx-3 mb-2 flex animate-fade-in flex-wrap items-center gap-2 text-caption text-error">
           <span className="min-w-0 flex-1">Could not open a terminal.</span>
@@ -133,6 +153,22 @@ async function openTerminal(api: ApiClient, host: HTMLElement, projectId: string
   return signal.aborted ? () => {} : connect(api, host, projectId, onStatus, onNotice);
 }
 
+/**
+ * `term.open`, minus the one `<style>` element xterm.js's viewport appends as it opens (its scrollbar
+ * slider colours). The CSP blocks it (DESIGN.md CSP constraints) and index.css carries the same rules,
+ * so for the length of the call a `style` element is created as an inert `<template>`: nothing is blocked
+ * and nothing is reported.
+ */
+function openWithoutStyle(term: Terminal, host: HTMLElement) {
+  const create = document.createElement.bind(document);
+  document.createElement = ((tag: string, options?: ElementCreationOptions) => create(tag.toLowerCase() === 'style' ? 'template' : tag, options)) as typeof document.createElement;
+  try {
+    term.open(host);
+  } finally {
+    Reflect.deleteProperty(document, 'createElement');
+  }
+}
+
 function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void): () => void {
   // WebGL only, never the DOM renderer: its <style> elements are blocked by the CSP (DESIGN.md CSP
   // constraints). The addon loads before `open`, so the DOM renderer is never created; but a WebGL
@@ -159,7 +195,7 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
     onStatus('webgl');
     return () => {};
   }
-  term.open(host);
+  openWithoutStyle(term, host);
   fit.fit();
 
   const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${api.url(`/api/projects/${encodeURIComponent(projectId)}/terminal?cols=${term.cols}&rows=${term.rows}`)}`);

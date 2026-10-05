@@ -7,13 +7,13 @@ import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
-import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark } from './common';
+import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -50,8 +50,8 @@ interface Props {
   liveCard?: boolean;
   /** Compact folds a turn's work into its head row (DESIGN.md turn line); detailed draws one activity row per run. */
   density?: Density;
-  /** Open the Changes sheet from a turn's "Changed n files" line. */
-  onOpenChanges?: () => void;
+  /** Open the Changes sheet on a turn's edits, from its "Changed n files" line; `latest` when it is the Task's latest turn. */
+  onOpenChanges?: (turn: { files: string[]; latest: boolean }) => void;
   /** Keep a compact turn's "Changed n files" line; off where the Task's folder has no Changes view (no Git). */
   changedLine?: boolean;
   /** Name the turn's verb on the foot line between steps; the main pane's floating `WorkingLabel` carries it instead, and its foot line names only the current step (Compact). */
@@ -137,11 +137,13 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   let userItemId: string | undefined = identityItems.slice(0, Math.max(0, firstIndex)).reverse().find(item => item.kind === 'user' && !item.delivery)?.id;
   // A turn is keyed by the user message before it, so it keeps its rows when its first entry changes.
   let after = userItemId ?? 'start';
+  // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
+  let ownMessage = false;
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
     if (!group.length) {
-      if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} />);
+      if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
@@ -158,13 +160,14 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
       const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
       const spawned = reply?.subagents ?? NO_SUBAGENTS;
-      // The live card shows every one of them: its chip waits until the card leaves.
-      const covered = !!(liveCard && liveIds && reply && reply.calls.length === spawned.length && spawned.every((s) => liveIds.has(s.id)));
+      // The live card shows every one of them: its chip waits until the card leaves. Every call has spawned one
+      // the card shows (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
+      const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
       out.push(
         <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
           {(last && working) || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
           {renderCompact(group, gctx, product, own)}
-          {changedLine && changed.length > 0 && <ChangedLine files={changed} onOpen={onOpenChanges} />}
+          {changedLine && changed.length > 0 && <ChangedLine files={changed} latest={last && liveCard} onOpen={onOpenChanges} />}
         </div>,
       );
     } else {
@@ -185,7 +188,10 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     }
     flush(false, !entry.item.delivery);
     after = entry.item.id;
-    if (!entry.item.delivery) userItemId = entry.item.id;
+    if (!entry.item.delivery) {
+      userItemId = entry.item.id;
+      ownMessage = true;
+    }
     out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
   });
   flush(true);
@@ -371,19 +377,19 @@ function Timeline({ id, entries, ctx }: Readonly<{ id: string; entries: Entry[];
   );
 }
 
-/** A timeline step's start (to the second, 24-hour) and its recorded duration, blank while it runs or when unrecorded. */
+/** A timeline step's start (to the second, 24-hour) and its recorded duration, blank while it runs or when unrecorded. A phone keeps the duration alone, so the step's details keep the width; the start stays in the tooltip. */
 function StepTime({ time, took }: Readonly<{ time: string; took: string | null }>) {
   const at = new Date(time);
   return (
-    <span className="flex h-6 shrink-0 items-center gap-2 text-caption tabular-nums text-faint pointer-coarse:h-11" title={at.toLocaleString()}>
-      <span>{at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })}</span>
+    <span className="flex h-6 shrink-0 items-center gap-2 text-caption tabular-nums text-faint pointer-coarse:h-11" title={dateTime(at)}>
+      <span className="max-sm:hidden">{clockTime(at, true)}</span>
       <span className="w-10 text-right text-muted">{took}</span>
     </span>
   );
 }
 
 /** The one line a compact turn keeps for its edits: "Changed 2 files", with the paths in its tooltip, and the way to the Changes sheet. */
-function ChangedLine({ files, onOpen }: Readonly<{ files: string[]; onOpen?: () => void }>) {
+function ChangedLine({ files, latest, onOpen }: Readonly<{ files: string[]; latest: boolean; onOpen?: (turn: { files: string[]; latest: boolean }) => void }>) {
   return (
     <div className="flex h-6 items-center gap-2 text-caption text-muted" title={files.join('\n')}>
       <FileDiff aria-hidden="true" className="size-3.5 shrink-0 text-faint" />
@@ -391,7 +397,8 @@ function ChangedLine({ files, onOpen }: Readonly<{ files: string[]; onOpen?: () 
         Changed {files.length} {files.length === 1 ? 'file' : 'files'}
       </span>
       {onOpen && (
-        <button type="button" className="rounded-xs text-accent hover:underline" onClick={onOpen}>
+        // Focused first (Safari does not focus a clicked button), so closing Changes brings focus back here.
+        <button type="button" className="rounded-xs text-accent hover:underline" onClick={(e) => { e.currentTarget.focus(); onOpen({ files, latest }); }}>
           View changes
         </button>
       )}
@@ -691,11 +698,11 @@ function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNo
  * the turn runs (the working label says so), then "Took 12s" once it ended. Without a recorded
  * duration the row keeps its slot, with no label and no rule.
  */
-function TurnStatus({ working = false, timing }: Readonly<{ working?: boolean; timing?: TurnTiming }>) {
+function TurnStatus({ working = false, timing, empty = false }: Readonly<{ working?: boolean; timing?: TurnTiming; /** The turn ended without a reply, a thought or a call: say so after its duration. */ empty?: boolean }>) {
   const elapsed = working ? null : completedDuration(timing);
   return (
     <div className="flex min-h-[34px] items-center gap-2 py-2 text-caption tabular-nums text-muted" title={working ? undefined : durationTitle(elapsed)}>
-      {elapsed && <span className="animate-fade-in">Took {elapsed}</span>}
+      {elapsed && <span className="animate-fade-in">Took {elapsed}{empty && ' · No reply'}</span>}
     </div>
   );
 }
@@ -889,13 +896,26 @@ export function ToolMark({ tone }: Readonly<{ tone: string }>) {
   return <Minus aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2.5} />;
 }
 
-/** A tool call's details: its text, then the input and output as code blocks; "No details yet." with none of them. */
+/**
+ * A tool call's details: its text, then the input and output as code blocks; "No details yet."
+ * with none of them. The input reads as its command, or decoded; "Raw" shows it as recorded.
+ */
 export function ToolDetails({ item, className }: Readonly<{ item: Item; className?: string }>) {
   const t = item.tool;
+  const [raw, setRaw] = useState(false);
+  const input = t?.input ? readableInput(t.name, t.input) : null;
+  const rawToggle = input && input.text !== t?.input && (
+    <>
+      <span className="flex-1" />
+      <button type="button" aria-pressed={raw} className={cn('rounded-xs font-mono transition-colors duration-100 hover:text-body', raw && 'text-body')} onClick={() => setRaw((r) => !r)}>
+        Raw
+      </button>
+    </>
+  );
   return (
     <div className={cn('my-1 flex flex-col gap-1 text-ui', className)}>
       {item.text && <Markdown text={item.text} />}
-      {t?.input && <CodeBlock language="input">{t.input}</CodeBlock>}
+      {t?.input && input && <CodeBlock language={raw ? 'input' : input.kind} head={rawToggle || undefined}>{raw ? t.input : input.text}</CodeBlock>}
       {t?.output && <CodeBlock language="output">{t.output}</CodeBlock>}
       {!item.text && !t?.input && !t?.output && <p className="text-caption text-muted">No details yet.</p>}
     </div>
@@ -956,8 +976,11 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   };
   const [, copy] = useCopied();
   const { item: fullItem, body, attach, retry } = useItemBody(item, open);
-  const { copyBody, copyError } = useBodyCopy(item, copy);
   const t = item.tool;
+  // The input copies as its details read it: the command, or the input decoded.
+  const inputCopy = useBodyCopy(item, (input) => copy(readableInput(t?.name ?? '', input).text));
+  const outputCopy = useBodyCopy(item, copy);
+  const copyError = inputCopy.copyError || outputCopy.copyError;
   const status = t?.status ?? 'pending';
   // Display only: a tool still pending/running after the turn ended never reported a result.
   const ended = !live && isActive(status);
@@ -969,8 +992,8 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
   const decided = approvals?.filter((ix) => ix.state !== 'pending') ?? [];
   const items: ActionItem[] = [
     { key: 'toggle', label: open ? 'Collapse' : 'Expand', icon: <ChevronRight />, onSelect: toggle },
-    { key: 'cmd', label: 'Copy command', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => copyBody('input'), separator: true },
-    { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => copyBody('output') },
+    { key: 'cmd', label: toolKind(name) === 'command' ? 'Copy command' : 'Copy input', icon: <Copy />, disabled: !t?.input && !t?.has_input, onSelect: () => inputCopy.copyBody('input'), separator: true },
+    { key: 'out', label: 'Copy output', icon: <Copy />, disabled: !t?.output && !t?.has_output, onSelect: () => outputCopy.copyBody('output') },
   ];
   return (
     <ContextMenu.Root>

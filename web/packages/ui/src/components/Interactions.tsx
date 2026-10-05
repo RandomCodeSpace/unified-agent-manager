@@ -94,7 +94,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
         {interaction.title}
       </h3>
       {interaction.detail && (
-        <pre translate="no" className="mt-2 overflow-x-auto rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">
+        <pre translate="no" className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] rounded-sm bg-sunken px-3 py-2 font-mono text-code-sm text-ink">
           {interaction.detail}
         </pre>
       )}
@@ -159,7 +159,7 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
           Needs answer
         </Chip>
       </div>
-      <div className="max-h-[min(240px,30dvh)] overflow-y-auto">
+      <div className="max-h-[min(240px,30dvh)] overflow-y-auto overflow-x-hidden">
         <div id={labelId} className="text-ui text-ink">
           {question.header && <span className="mb-0.5 block text-caption text-muted">{question.header}</span>}
           <Markdown text={question.text} />

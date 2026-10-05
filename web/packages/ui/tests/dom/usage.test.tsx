@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
-import { AppContext, type AppContextValue } from '../../src/components/common';
+import { AppContext, dateTime, timeAgo, type AppContextValue } from '../../src/components/common';
 import { UsageButton } from '../../src/components/Usage';
 import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage';
 import { composer, renderApp, sidebar } from './render';
@@ -10,12 +10,12 @@ import { composer, renderApp, sidebar } from './render';
 beforeEach(() => { vi.spyOn(api, 'tokenPrices').mockResolvedValue(tokenPriceFixture()); });
 afterEach(() => vi.restoreAllMocks());
 
-function summaryCost(label: 'Estimated cost' | 'Without cache') {
+function summaryCost(label: 'Estimated cost' | 'Cache saving') {
   return screen.getByText(label, { exact: true }).parentElement!.nextElementSibling!;
 }
 
 function expectPricingCaveatsHidden() {
-  for (const container of [screen.getByRole('region', { name: 'Model usage' }), summaryCost('Estimated cost'), summaryCost('Without cache')]) {
+  for (const container of [screen.getByRole('region', { name: 'Model usage' }), summaryCost('Estimated cost'), summaryCost('Cache saving')]) {
     for (const detail of within(container as HTMLElement).queryAllByText(/partial|unpriced|missing prices/i)) {
       expect(detail.closest('.sr-only')).toBeTruthy();
     }
@@ -32,7 +32,7 @@ describe('Usage popover', () => {
     await user.type(composer(), '/usage');
     await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/usage/ });
     await user.keyboard('{Enter}{Enter}');
-    expect(await screen.findByRole('region', { name: 'AI allowance' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Allowance' })).toBeTruthy();
     const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Tasks' }));
     expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('composer-usage')).toBeNull();
@@ -42,15 +42,20 @@ describe('Usage popover', () => {
     const { user } = renderApp('#task=t20');
     const nav = await sidebar();
     const button = nav.getByRole('button', { name: 'Usage', exact: true });
-    await waitFor(() => expect(button.textContent).toBe('96'));
-    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('96% left');
+    // The footer chip: a meter and the share left; the tip and description carry the allowance, pace and reset.
+    await waitFor(() => expect(button.textContent).toBe('96% left'));
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toContain('AI credits: 96% left');
     expect(document.getElementById('composer-usage')).toBeNull();
-    expect(button.querySelector('circle[pathLength]')?.getAttribute('stroke-dasharray')).toBe('96 100');
+    expect(button.querySelector<HTMLElement>('[style]')?.style.transform).toBe('scaleX(0.96)');
     await user.click(button);
-    const allowance = within(await screen.findByRole('region', { name: 'AI allowance' }));
-    expect(allowance.getByText('96% left')).toBeTruthy();
-    expect(allowance.getByText('280 of 7,000 ai credits used')).toBeTruthy();
-    expect(allowance.getByText(/until reset.*left at this pace/)).toBeTruthy();
+    const allowance = within(await screen.findByRole('region', { name: 'Allowance' }));
+    // The head carries what is left; the section, used of the whole, the month as a chart, the reset and the projection.
+    expect(within(screen.getByRole('dialog', { name: 'Usage' })).getByText('96% left')).toBeTruthy();
+    expect(allowance.getByText('280')).toBeTruthy();
+    expect(allowance.getByText('/ 7,000 used')).toBeTruthy();
+    expect(allowance.getByText(/^· Resets \w+ \d+$/)).toBeTruthy();
+    // Where the pace lands: the bar's legend, or, without the bar, a row.
+    expect(allowance.getByText(/^(At this pace ~[\d,]+|Runs out ~.+|About .+ left)$/)).toBeTruthy();
   });
 
   test('stale quota keeps the number but clears the pace assessment', async () => {
@@ -60,14 +65,31 @@ describe('Usage popover', () => {
     const renderQuota = (stale: boolean) => <AppContext.Provider value={{ usage: { quotas: [quota], stale }, meta: null } as AppContextValue}><UsageButton /></AppContext.Provider>;
     const view = render(renderQuota(false));
     const button = screen.getByRole('button', { name: 'Usage', exact: true });
-    expect(button.textContent).toBe('100');
-    expect(button.className).toContain('text-warning');
+    expect(button.textContent).toBe('100%');
+    // The meter's fill carries the pace tone; the share stays in words.
+    expect(button.querySelector('.bg-success')).not.toBeNull();
     view.rerender(renderQuota(true));
-    expect(button.className).toContain('text-muted');
-    expect(button.textContent).toBe('100');
+    expect(button.querySelector('.bg-faint')).not.toBeNull();
+    expect(button.querySelector('.bg-success')).toBeNull();
+    expect(button.textContent).toBe('100%');
     await user.click(button);
     expect(await screen.findByText('Previous quota; refresh failed')).toBeTruthy();
-    expect(screen.queryByText('Behind pace')).toBeNull();
+    expect(screen.queryByText('Under pace')).toBeNull();
+  });
+
+  test('the footer chip says each state that needs saying in words, not colour alone', () => {
+    const quota = { provider: 'copilot', type: 'premium_interactions', used: 1500, entitlement: 1500, remaining_percent: 0, unlimited: false, overage: 0 };
+    const row = (quotas: typeof quota[]) => <AppContext.Provider value={{ usage: { quotas, stale: false }, meta: null } as AppContextValue}><UsageButton variant="chip" /></AppContext.Provider>;
+    const view = render(row([quota]));
+    const button = screen.getByRole('button', { name: 'Usage', exact: true });
+    expect(button.textContent).toBe('0% leftused up');
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toMatch(/^Premium requests: 0% left\. Allowance exhausted\. Resets in /);
+    view.rerender(row([{ ...quota, remaining_percent: 8 }]));
+    expect(button.textContent).toMatch(/^8% left(ahead)?$/);
+    view.rerender(row([{ ...quota, unlimited: true, remaining_percent: 100 }]));
+    expect(button.textContent).toBe('Unlimited');
+    view.rerender(row([]));
+    expect(button.textContent).toBe('Usage');
   });
 
   test.each(['top', 'right'] as const)('keeps its %s anchor on the first click and after reopening', async (side) => {
@@ -105,7 +127,7 @@ describe('Usage popover', () => {
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByRole('button', { name: 'Overview' });
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
-    await waitFor(() => expect(summaryCost('Without cache').textContent).toBe('$4.38'));
+    await waitFor(() => expect(summaryCost('Cache saving').textContent).toBe('$2.51'));
     expectPricingCaveatsHidden();
     const total = within(popover.getByRole('group', { name: 'Total token split' }));
     for (const label of ['Input', 'Output', 'Cache']) expect(total.getByText(label)).toBeTruthy();
@@ -137,6 +159,8 @@ describe('Usage popover', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
     await user.click(nav.getByRole('button', { name: 'Hide sidebar' }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
+    // The rail has room for the ring alone: the share left, without its sign.
+    expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96%');
     await user.click(rail.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('dialog', { name: 'Usage' });
     await user.keyboard('{Escape}');
@@ -166,7 +190,7 @@ describe('Usage popover', () => {
     if (settingsOpen) await user.click(screen.getByRole('button', { name: 'General', exact: true }));
     await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
-    const notice = await popover.findByText('Prices missing for 1 model.');
+    const notice = await popover.findByText(/1 model unpriced/);
     expect(notice.closest('.sr-only')).toBeNull();
     const addPrices = popover.getByRole('link', { name: 'Add prices' });
     expect(addPrices.getAttribute('href')).toBe('#settings');
@@ -189,7 +213,8 @@ describe('Usage popover', () => {
     const user = userEvent.setup();
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
-    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Last fetched ${new Date(report.collection.updated_at!).toLocaleString()}.`);
+    expect(await screen.findByRole('status')).toHaveProperty('textContent', `Updated ${timeAgo(report.collection.updated_at!)}`);
+    expect(screen.getByRole('status').querySelector('time')?.getAttribute('title')).toBe(dateTime(report.collection.updated_at!));
     expect(document.querySelector('[data-popup="tooltip"]')).toBeNull();
     expect(screen.getByText(message).closest('.sr-only')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'About Usage' }));
@@ -218,7 +243,7 @@ describe('Usage popover', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Usage' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'About Cost without cache' }));
+    await user.click(screen.getByRole('button', { name: 'About Cache saving' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toMatch(/partial|excluded|missing|without prices/i));
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
@@ -243,13 +268,13 @@ describe('Usage popover', () => {
     const row = within(screen.getByRole('rowheader', { name: /Unspecified model/ }).closest('tr')!);
     expect(row.queryByText('crush', { exact: true })).toBeNull();
     expect(row.getByText('$2.50')).toBeTruthy();
-    expect(summaryCost('Without cache').textContent).toBe('—');
+    expect(summaryCost('Cache saving').textContent).toBe('—');
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe(`Last fetched ${new Date(report.collection.updated_at!).toLocaleString()}.`);
+    expect(screen.getByRole('status').textContent).toBe(`Updated ${timeAgo(report.collection.updated_at!)}`);
     expect(screen.getByText(/UAM tracking started/).textContent).toContain('local harness records and UAM task, subagent, and Background AI usage');
     expect(screen.getByText(/External Copilot usage/).textContent).toContain('requires local telemetry files');
-    expect(screen.getByText(/External Copilot usage/).textContent).toContain(new Date(report.collection.copilot_since).toLocaleString());
+    expect(screen.getByText(/External Copilot usage/).textContent).toContain(dateTime(report.collection.copilot_since));
     expect(screen.getByText(/Costs use/).textContent).toContain('source-reported amounts');
   });
 
@@ -312,8 +337,8 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     const overview = await screen.findByRole('figure');
-    expect(overview.textContent).toContain('$2.00 (1.5K tokens) · 17.3% cache hit');
-    expect(overview.textContent).toContain('— cache hit');
+    expect(overview.textContent).toContain('$2.00 · 1.5K · 17.3% cached');
+    expect(overview.textContent).toContain('— cached');
     await user.click(screen.getByRole('button', { name: /All models/ }));
     const table = within(screen.getByRole('table'));
     expect(table.getByRole('columnheader', { name: 'Cache hit' })).toBeTruthy();
@@ -323,6 +348,22 @@ describe('Usage popover', () => {
     expect(missing.getByRole('cell', { name: '—' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'About claude-sonnet-5 token split' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('Cache hit: 17.3% of input tokens served by cache reads. Cache writes are not hits.'));
+  });
+
+  test('names models as the provider catalog does, keeping the ID findable', async () => {
+    vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
+    const meta = { providers: [{ name: 'copilot', models: [{ id: 'claude-sonnet-5', name: 'Claude Sonnet 5' }] }] };
+    const user = userEvent.setup();
+    render(<AppContext.Provider value={{ usage: { quotas: [] }, meta } as unknown as AppContextValue}><UsageButton /></AppContext.Provider>);
+    await user.click(screen.getByRole('button', { name: 'Usage' }));
+    const overview = within(await screen.findByRole('figure'));
+    expect(overview.getByTitle('Claude Sonnet 5 · claude-sonnet-5').textContent).toBe('Claude Sonnet 5');
+    expect(overview.getByRole('img', { name: /^Claude Sonnet 5 token split/ })).toBeTruthy();
+    // A model no catalog lists keeps its ID.
+    expect(overview.getByTitle('gpt-6-luna').textContent).toBe('gpt-6-luna');
+    await user.click(screen.getByRole('button', { name: /All models/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Find a model' }), 'sonnet 5');
+    expect(within(screen.getByRole('table')).getByRole('rowheader', { name: /Claude Sonnet 5/ })).toBeTruthy();
   });
 
   test('combines the same model across tools, limits the overview, and searches and sorts all models', async () => {
@@ -352,7 +393,7 @@ describe('Usage popover', () => {
     const info = await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' });
     expect(screen.getAllByRole('button', { name: 'About claude-sonnet-5 token split' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'About Other 2 models token split' })).toBeTruthy();
-    expect(screen.getByRole('figure').textContent).toContain('$2.87 (1.5M tokens)');
+    expect(screen.getByRole('figure').textContent).toContain('$2.87 · 1.5M');
     expect(screen.queryByRole('button', { name: 'About model-5 token split' })).toBeNull();
     await user.click(info);
     await waitFor(() => {
@@ -396,7 +437,7 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     expect(await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' })).toBeTruthy();
-    await waitFor(() => expect(summaryCost('Without cache').textContent).toBe('—'));
+    await waitFor(() => expect(summaryCost('Cache saving').textContent).toBe('—'));
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('group', { name: 'Total token split' })).toBeTruthy();
@@ -417,7 +458,7 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' });
-    expect(summaryCost('Without cache').textContent).toBe('Loading…');
+    expect(summaryCost('Cache saving').textContent).toBe('Loading…');
     refresh();
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('Total tokens').nextElementSibling!.textContent).toBe('9.2M'));

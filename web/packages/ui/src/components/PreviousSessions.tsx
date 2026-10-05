@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { useEffect, useRef, useState } from 'react';
 import { describeError, providerLabel, type Meta, type PreviousSession, type Project, type SessionDetail } from '../api';
-import { Note, Skeleton, Spinner, useApp } from './common';
+import { Note, Skeleton, Spinner, dateTime, useApp } from './common';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Dialog } from './ui/dialog';
@@ -98,12 +98,12 @@ export function PreviousSessionsDialog({ project, onClose }: Readonly<{ project:
       {sessions === null && !error && <Skeleton label="Loading previous sessions…" rows={3} className="gap-1" rowClassName="h-12 w-full rounded-md" />}
       {sessions?.length === 0 && <Note>No previous sessions are available to import in this project.</Note>}
       {sessions && sessions.length > 0 && (
-        <ul className="flex max-h-[60dvh] flex-col gap-1 overflow-y-auto">
+        <ul className="flex max-h-[60dvh] flex-col gap-1 overflow-y-auto overflow-x-hidden">
           {sessions.map((s) => (
             <li key={`${s.provider}:${s.conversation_id}`} className="flex items-center gap-3 rounded-md bg-tint-well px-3 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="break-words text-ui text-ink">{s.title || 'Untitled session'}</p>
-                <p className="mt-1 text-caption text-muted">{providerLabel(meta, s.provider)} · <time dateTime={s.updated_at}>{new Date(s.updated_at).toLocaleString()}</time></p>
+                <p className="mt-1 text-caption text-muted">{providerLabel(meta, s.provider)} · <time dateTime={s.updated_at}>{dateTime(s.updated_at)}</time></p>
                 {s.in_use && <Note>In use by another client. Close it there, then refresh.</Note>}
               </div>
               <Button size="sm" variant="secondary" disabled={s.in_use || !!busy} aria-label={`Import ${s.title || 'untitled session'}`} onClick={() => void importSession(s)}>

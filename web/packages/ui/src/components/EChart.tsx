@@ -13,6 +13,9 @@ type MenuRange = { index: number; start: number; end: number; first: string; las
 const adjustable = (range: ZoomRange) => (range.type === 'inside' || range.type === 'slider') && !range.disabled && !range.zoomLock;
 const axisIndexes = (indexes: number | number[] | undefined) => indexes === undefined ? [] : (Array.isArray(indexes) ? [...indexes] : [indexes]).sort((a, b) => a - b);
 const axesKey = (range: ZoomRange) => JSON.stringify([axisIndexes(range.xAxisIndex ?? (range.yAxisIndex === undefined ? 0 : undefined)), axisIndexes(range.yAxisIndex)]);
+// ECharts keeps a legend's resolved entries (series or data names) only on its model.
+type LegendModel = { get(key: 'show' | 'selectedMode'): unknown; getData(): { get(key: 'name'): unknown }[]; isSelected(name: string): boolean };
+const legendModel = (drawing: EChartsType) => (drawing as unknown as { getModel(): { getComponent(type: string): LegendModel | undefined } }).getModel().getComponent('legend');
 
 /** A locally bundled SVG drawing. The owner supplies accessible controls for planner nodes. */
 export function EChart({ option, width, height, className, label, zoomControls = false, controlsContainer, legend }: Readonly<{
@@ -32,6 +35,8 @@ export function EChart({ option, width, height, className, label, zoomControls =
   const [ready, setReady] = useState(false);
   const [hasControls, setHasControls] = useState(false);
   const [menuRanges, setMenuRanges] = useState<MenuRange[]>([]);
+  const [entries, setEntries] = useState<{ name: string; shown: boolean }[]>([]);
+  const ownLegend = legend !== undefined;
   const controls = zoomControls && hasControls;
   const externalControls = controlsContainer !== undefined;
   const narrowControls = controls && width < 480 && !externalControls;
@@ -94,12 +99,43 @@ export function EChart({ option, width, height, className, label, zoomControls =
         };
         return [{ index, start: range.start, end: range.end, first: endpoint(range.start), last: endpoint(range.end) }];
       }));
+      // The drawing's own legend takes no keyboard focus; the menu repeats its toggles.
+      const model = ownLegend ? undefined : legendModel(drawing);
+      setEntries(model && model.get('show') !== false && model.get('selectedMode') !== false
+        ? model.getData().map((item) => { const name = String(item.get('name')); return { name, shown: model.isSelected(name) }; }) : []);
     };
     sync();
     drawing.on('datazoom', sync);
     drawing.on('finished', sync);
-    return () => { drawing.off('datazoom', sync); drawing.off('finished', sync); };
-  }, [controlsContainer, ready, option]);
+    drawing.on('legendselectchanged', sync);
+    return () => {
+      if (drawing.isDisposed()) return;
+      drawing.off('datazoom', sync);
+      drawing.off('finished', sync);
+      drawing.off('legendselectchanged', sync);
+    };
+  }, [controlsContainer, ready, option, ownLegend]);
+
+  useEffect(() => {
+    const drawing = chart.current;
+    if (!drawing || !ready) return;
+    let shown = false;
+    const show = () => { shown = true; };
+    // Content scrolling under a still pointer moves no pointer, so ECharts would keep its tip
+    // and axis pointer drawn over whatever arrives there.
+    const hide = () => {
+      if (!shown) return;
+      shown = false;
+      drawing.dispatchAction({ type: 'hideTip' });
+      drawing.dispatchAction({ type: 'updateAxisPointer', currTrigger: 'leave' });
+    };
+    drawing.on('showtip', show);
+    document.addEventListener('scroll', hide, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener('scroll', hide, true);
+      if (!drawing.isDisposed()) drawing.off('showtip', show);
+    };
+  }, [ready]);
 
   useEffect(() => {
     const element = host.current;
@@ -145,11 +181,20 @@ export function EChart({ option, width, height, className, label, zoomControls =
     ))}
     </>
   );
+  const series = externalControls && entries.length > 0 && (
+    <ul aria-label="Series" className="flex max-h-48 flex-col overflow-y-auto overflow-x-hidden pt-1 text-caption text-body before:pb-1 before:text-muted before:content-['Series']">
+      {entries.map((entry) => (
+        <li key={entry.name}>
+          <button type="button" aria-pressed={entry.shown} aria-label={`Show ${entry.name} series`} className={cn('flex min-h-7 w-full items-center rounded-xs px-2 text-left [overflow-wrap:anywhere] pointer-coarse:min-h-11', !entry.shown && 'text-muted line-through')} onClick={() => chart.current?.dispatchAction({ type: 'legendToggleSelect', name: entry.name })}>{entry.name}</button>
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
     <div className={cn('group/chart relative flex w-full flex-col', className)} style={{ height: footer ? undefined : height }}>
       <div ref={host} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} className={cn('min-h-0 w-full', !footer && 'flex-1')} style={footer ? { height } : undefined} />
-      {externalControls ? controlsContainer && createPortal(navigation, controlsContainer) : navigation}
+      {externalControls ? controlsContainer && createPortal(<>{navigation}{series}</>, controlsContainer) : navigation}
       {legend !== undefined && <div className="pt-1 pl-2">{legend}</div>}
       {error && <Note role="status" className="absolute inset-0 bg-raised px-1 py-2">The chart could not be drawn. Try reopening it.</Note>}
     </div>

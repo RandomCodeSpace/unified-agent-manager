@@ -3,7 +3,8 @@ import { createContext, useContext, type ReactNode } from 'react';
 
 export interface FederationView {
   initialPath: string;
-  onRoute: (path: string) => void;
+  /** Writes this instance's view into the fragment (`push` adds a history entry); false while the route is unresolved. */
+  onRoute: (path: string, push: boolean) => boolean;
   onAuth: (authenticated: boolean) => void;
   onEvent?: (action: Action) => void;
   onTerminal: (open: boolean) => void;

@@ -876,6 +876,8 @@ export interface Subagent {
   parent_agent_id?: string;
   name: string;
   description?: string;
+  /** Launched in the background: its `task` call's output only acknowledges the launch, and its result is its own last message. */
+  background?: boolean;
   /** Failed and cancelled are final; completed turns idle only on the provider's report. Close, runtime exit and service stop mark running ones cancelled and idle ones completed. */
   status: SubagentStatus;
   error?: string;
@@ -1548,7 +1550,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
   }
 
 
-  async function filePreview(path: string, signal: AbortSignal, knownMetadata?: PreviewMetadata): Promise<PreviewMetadata & Partial<TextPreview>> {
+  /** `source` reads an HTML page's text too. */
+  async function filePreview(path: string, signal: AbortSignal, knownMetadata?: PreviewMetadata, source = false): Promise<PreviewMetadata & Partial<TextPreview>> {
     return foregroundRead(async () => {
       const request = async (method: 'HEAD' | 'GET') => {
         admit(path);
@@ -1562,9 +1565,9 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
         return response;
       };
       const metadata = knownMetadata ?? previewMetadata((await request('HEAD')).headers);
-      if (metadata.kind !== 'text') return metadata;
+      if (metadata.kind !== 'text' && !(source && metadata.kind === 'html')) return metadata;
       const response = await request('GET');
-      if (response.status !== 416 && previewMetadata(response.headers).kind !== 'text') {
+      if (response.status !== 416 && previewMetadata(response.headers).kind !== metadata.kind) {
         await response.body?.cancel();
         throw new Error('The file type changed. Close and open the preview again.');
       }

@@ -171,8 +171,9 @@ export default function Federation() {
     setActive(connection);
     setRoute(previous => ({ path, tick: previous.tick + 1 }));
     window.dispatchEvent(new CustomEvent('uam-route', { detail: { path, connection: connection?.id ?? HOME } }));
+    // Moving to another instance's view is a navigation, so Back returns to the previous one.
     const hash = identityHash(path, connection, registryRef.current?.instance_id ?? '');
-    history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+    if (window.location.hash !== hash) history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
   }, [terminalOpen]);
   const resolveRoute = useCallback((force = false) => {
     // Local navigation does not depend on the optional connection registry.
@@ -189,12 +190,25 @@ export default function Federation() {
     window.dispatchEvent(new CustomEvent('uam-route', { detail: { path: found.path, connection: found.connection?.id ?? HOME } }));
   }, [registryRead]);
   useEffect(() => { if (authenticated) resolveRoute(); }, [authenticated, registry, resolveRoute]);
-  useEffect(() => { const onHash = () => resolveRoute(true); window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash); }, [resolveRoute]);
-  const onRoute = useCallback((path: string) => {
-    if (!routeReady.current || routeError || (!registryRead && hasIdentity(window.location.hash))) return;
+  // Back/Forward fires popstate (and hashchange when the fragment differs); an edited fragment fires hashchange.
+  useEffect(() => {
+    const onHash = () => resolveRoute(true);
+    window.addEventListener('hashchange', onHash);
+    window.addEventListener('popstate', onHash);
+    return () => {
+      window.removeEventListener('hashchange', onHash);
+      window.removeEventListener('popstate', onHash);
+    };
+  }, [resolveRoute]);
+  const onRoute = useCallback((path: string, push: boolean) => {
+    if (!routeReady.current || routeError || (!registryRead && hasIdentity(window.location.hash))) return false;
     const owner = activeRef.current;
     const hash = identityHash(path, owner, registryRef.current?.instance_id ?? '');
-    if (window.location.hash !== hash) history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+    if (window.location.hash === hash) return true;
+    const url = `${window.location.pathname}${window.location.search}${hash}`;
+    if (push) history.pushState(null, '', url);
+    else history.replaceState(null, '', url);
+    return true;
   }, [registryRead, routeError]);
   const onState = useCallback((id: string, owner: ConnectedInstance | null, value: SourceState) => {
     if (!authRef.current || (owner && !registryRef.current?.connections.some(connection => connection.enabled && connection.id === owner.id && connection.instance_id === owner.instance_id && connection.generation === owner.generation))) return;
@@ -268,7 +282,8 @@ export default function Federation() {
       const hasNews = unreadFor(source, source.id === activeID ? selectedId : null);
       return value.state.sessions.map(task => ({ source, task, hasNews, project: value.state.projects.find(project => project.id === task.project_id) }));
     }).filter(row => !terms || `${taskName(row.task)} ${row.project?.name ?? ''}`.toLocaleLowerCase().includes(terms))
-      .sort((a, b) => b.task.updated_at.localeCompare(a.task.updated_at));
+      // Creation order, like the local list: reading or updating a Task never moves a row.
+      .sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
     return <>
       {sources.map(source => <span key={source.id} id={`uam-task-source-${source.id || 'home'}`} className="sr-only">{source.label}</span>)}
       <ul aria-label="Tasks across instances" className="flex flex-col gap-1">{tasks.map(({ source, task, project, hasNews }) => {

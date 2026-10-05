@@ -567,6 +567,7 @@ func (m *Manager) upsertSubagentLocked(s *webSession, in agentapi.Subagent, publ
 		in.Description = cmp.Or(in.Description, cur.Description)
 		in.Model = cmp.Or(in.Model, cur.Model)
 		in.Result = cmp.Or(in.Result, cur.Result)
+		in.Background = in.Background || cur.Background
 		// The provider's totals replace the live counts; a record rebuilt
 		// from recorded events may not know them.
 		in.Tokens, in.ToolCalls = cmp.Or(in.Tokens, cur.Tokens), cmp.Or(in.ToolCalls, cur.ToolCalls)
