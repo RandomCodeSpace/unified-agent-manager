@@ -189,6 +189,8 @@ func (s *Server) checkFleetAccounts(ctx context.Context, list []Connection) {
 			continue
 		}
 		wg.Go(func() { s.refreshFleetAccount(ctx, target, 0) })
+		// The same check re-reads what the instance reports of itself: an upgrade changes its version and capabilities.
+		wg.Go(func() { s.refreshDescriptor(ctx, target) })
 	}
 	wg.Wait()
 	s.fleet.mu.Lock()

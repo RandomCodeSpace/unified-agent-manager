@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -128,4 +129,32 @@ func TestFleetRegistryMarksMismatchAndProxyRefusesWork(t *testing.T) {
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/providers/copilot/account"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/settings"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/sessions"), nil, http.StatusOK)
+}
+
+// A connection's stored version and capabilities come from pairing; an
+// upgraded instance reports new ones, which the next registry read records
+// under the same generation.
+func TestFleetRegistryRefreshesVersionAndCapabilities(t *testing.T) {
+	f := newConnectedTestFleet(t)
+	a, b := f.nodes[0], f.nodes[1]
+	ab := a.connect(t, b)
+	want := b.srv.federationDescriptor()
+	if ab.Version != want.Version || !slices.Equal(ab.Capabilities, want.Capabilities) {
+		t.Fatalf("pairing recorded %+v, want %+v", ab, want)
+	}
+	// The record falls behind what B reports (B was upgraded after pairing).
+	registry := a.srv.connections
+	registry.mu.Lock()
+	stale := registry.data.Connections[ab.ID]
+	stale.Version, stale.Capabilities = "v0.0.0-stale", slices.Clone(want.Capabilities[:len(want.Capabilities)-1])
+	registry.data.Connections[ab.ID] = stale
+	registry.mu.Unlock()
+	got := fleetConnections(t, a)
+	if len(got) != 1 || got[0].Version != want.Version || !slices.Equal(got[0].Capabilities, want.Capabilities) || got[0].Generation != ab.Generation {
+		t.Fatalf("registry read did not refresh the descriptor: %+v, want version %q, capabilities %v, generation %d", got, want.Version, want.Capabilities, ab.Generation)
+	}
+	saved, err := registry.lookup(ab.ID)
+	if err != nil || saved.Version != want.Version || saved.Credential != stale.Credential {
+		t.Fatalf("refresh not kept, or credential lost: %+v (%v)", saved, err)
+	}
 }

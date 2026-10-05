@@ -87,6 +87,8 @@ type connectionView struct {
 func (s *Server) handleConnections(w http.ResponseWriter, r *http.Request) {
 	list := s.connections.List()
 	s.checkFleetAccounts(r.Context(), list)
+	// The check may have recorded what an upgraded instance now reports.
+	list = s.connections.List()
 	views := make([]connectionView, len(list))
 	for i, c := range list {
 		views[i].Connection = c
@@ -294,6 +296,45 @@ func (s *Server) pairConnection(parent context.Context, target connectionTarget,
 	target.ProtocolMajor = paired.ProtocolMajor
 	target.Capabilities = slices.Clone(paired.Capabilities)
 	return target, paired.Account, nil
+}
+
+// refreshDescriptor re-reads what the connection reports of itself through
+// its workload grant and records it under the same generation, so an
+// upgraded instance's version and capabilities show without re-pairing.
+// A read that fails or reports another instance keeps what was known.
+func (s *Server) refreshDescriptor(ctx context.Context, target connectionTarget) {
+	transport, err := s.connectionTransport(target)
+	if err != nil {
+		return
+	}
+	if idle, ok := transport.(interface{ CloseIdleConnections() }); ok {
+		defer idle.CloseIdleConnections()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.BaseURL+federationWorkloadPrefix+"api/meta", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+target.Credential)
+	req.Header.Set(headerUAMInstance, target.InstanceID)
+	response, err := transport.RoundTrip(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	var d federationDescriptor
+	if err != nil || len(raw) > 1<<20 || json.Unmarshal(raw, &d) != nil || d.InstanceID != target.InstanceID || d.ProtocolMajor != 1 || len(d.Version) > 256 || len(d.Capabilities) > 64 {
+		return
+	}
+	for _, capability := range federationCoreCapabilities {
+		if !slices.Contains(d.Capabilities, capability) {
+			return
+		}
+	}
+	_ = s.connections.describe(target.ID, target.Generation, d)
 }
 
 func (s *Server) revokeRemote(target connectionTarget) {

@@ -306,6 +306,27 @@ func (r *connectionRegistry) put(target connectionTarget, expected uint64) (Conn
 	r.active[target.ID] = newConnectionLifetime(r.ctx)
 	return cloneTarget(target).Connection, nil
 }
+
+// describe records what the connection now reports of itself (its version,
+// protocol and capabilities change when it is upgraded). The pairing is the
+// same, so the generation is kept; a record that changed meanwhile is left alone.
+func (r *connectionRegistry) describe(id string, generation uint64, d federationDescriptor) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	c, ok := r.data.Connections[id]
+	if !ok || c.Generation != generation || r.ctx.Err() != nil {
+		return nil
+	}
+	if c.Version == d.Version && c.ProtocolMajor == d.ProtocolMajor && slices.Equal(c.Capabilities, d.Capabilities) {
+		return nil
+	}
+	c = cloneTarget(c)
+	c.Version, c.ProtocolMajor, c.Capabilities = d.Version, d.ProtocolMajor, slices.Clone(d.Capabilities)
+	data := r.data
+	data.Connections = maps.Clone(data.Connections)
+	data.Connections[id] = c
+	return r.saveLocked(data)
+}
 func (r *connectionRegistry) remove(id string, expected uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
