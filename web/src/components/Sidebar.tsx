@@ -526,7 +526,6 @@ export const Sidebar = memo(function Sidebar({
   version?: string;
 }) {
   useMinuteTick();
-  const { narrow } = useApp();
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
@@ -637,7 +636,7 @@ export const Sidebar = memo(function Sidebar({
         <div className="flex min-w-0 items-center gap-1">
           <SettingsButton actions={actions} />
           <PlannerButton actions={actions} />
-          <UsageButton variant="chip" side={narrow ? 'top' : 'right'} className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
+          <UsageButton variant="chip" side="top" className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
           <span className="flex-1" />
           {version && <VersionMeta version={version} />}
           {connection === 'connected' && <output className="sr-only">{CONNECTION_TEXT.connected}</output>}
