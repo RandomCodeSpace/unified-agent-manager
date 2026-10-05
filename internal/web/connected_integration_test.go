@@ -372,8 +372,10 @@ func TestConnectedIntegrationDisableIsolatesChannelsAndPreservesTasks(t *testing
 		}
 	}
 	waitGone(t, pid)
-	send(t, cterm, websocket.MessageBinary, "echo C-still-connected\n")
-	readOutput(t, cterm, regexp.MustCompile(`\r?\nC-still-connected\r?\n`))
+	// The output differs from the typed command, so it is told apart from the
+	// echoed input even when the prompt and the output share a line.
+	send(t, cterm, websocket.MessageBinary, "echo C-still-$((40+2))\n")
+	readOutput(t, cterm, regexp.MustCompile(`C-still-42\r?\n`))
 	c.prov.Last().EmitDelta("after-disable", agentapi.ItemAssistant, "C continues after B disable")
 	cstream.waitFor(t, "C continues after B disable")
 	for _, n := range []*connectedTestNode{b, c} {
