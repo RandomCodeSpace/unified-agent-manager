@@ -39,12 +39,8 @@ func trustedConnectedClient(server *httptest.Server) *http.Client {
 func newConnectedProxyFixture(t *testing.T, handler http.HandlerFunc) *connectedProxyFixture {
 	t.Helper()
 	f := &connectedProxyFixture{home: newTestServer(t, ServerConfig{Assets: fstest.MapFS{"index.html": {Data: []byte("test")}}})}
-	registry, err := openConnectionRegistry(context.Background(), t.TempDir(), testToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(registry.close)
-	f.home.srv.connections = registry
+	// The server's own registry: replacing it here would race with the notifications goroutine NewServer started.
+	registry := f.home.srv.connections
 	// Initial proxy tests also run before the separately owned Server wiring
 	// is copied in. Avoid duplicate registrations when that wiring is present.
 	probe := httptest.NewRequest("GET", "/api/connected/check/api/meta", nil)
