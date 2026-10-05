@@ -170,7 +170,7 @@ export default function Federation() {
     setTerminalOpen(false);
     setActive(connection);
     setRoute(previous => ({ path, tick: previous.tick + 1 }));
-    window.dispatchEvent(new CustomEvent('uam-route', { detail: { path, connection: connection?.id ?? HOME } }));
+    window.dispatchEvent(new CustomEvent('uam-route', { detail: { path, connection: connection?.id ?? HOME, force: true } }));
     // Moving to another instance's view is a navigation, so Back returns to the previous one.
     const hash = identityHash(path, connection, registryRef.current?.instance_id ?? '');
     if (window.location.hash !== hash) history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);

@@ -768,8 +768,9 @@ export default function App() {
   // A fragment the user navigates to (Back/Forward, a pasted or edited URL) shows its view; the writes
   // above fire neither event. Traversing history fires both, so a fragment already on screen is skipped.
   // Under federation the owner resolves the fragment and announces this instance's part of it.
-  const followHash = useEffectEvent((h: string) => {
-    if (h === viewHash) return;
+  // `force`: a click on the view already shown still runs its navigation (it closes the drawer).
+  const followHash = useEffectEvent((h: string, force = false) => {
+    if (!force && h === viewHash) return;
     const routines = hashRoutines(h);
     if (h === SETTINGS_HASH) showSettings();
     else if (h.startsWith(PLANNER_PREFIX)) {
@@ -784,8 +785,8 @@ export default function App() {
   useEffect(() => {
     if (federated) {
       const navigate = (event: Event) => {
-        const detail = (event as CustomEvent<{path: string; connection: string}>).detail;
-        if (detail.connection === (api.owner?.id ?? '')) followHash(detail.path);
+        const detail = (event as CustomEvent<{path: string; connection: string; force?: boolean}>).detail;
+        if (detail.connection === (api.owner?.id ?? '')) followHash(detail.path, detail.force);
       };
       window.addEventListener('uam-route', navigate);
       return () => window.removeEventListener('uam-route', navigate);

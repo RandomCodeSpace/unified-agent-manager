@@ -187,3 +187,20 @@ test('task navigation shows compact instance names without extra filters and rem
   await screen.findByRole('region', { name: 'Conversation' });
   expect(window.location.hash).toBe('#task=t3');
 });
+
+test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
+  const { user } = federated();
+  const rows = await taskRows();
+  const remote = await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(remote);
+  const box = await screen.findByRole('textbox', { name: 'Message' });
+  await waitFor(() => expect(box).toHaveProperty('disabled', false));
+  const again = (await taskRows()).getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  again.focus();
+  const hash = window.location.hash;
+  const length = history.length;
+  await user.click(again);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' })));
+  expect(window.location.hash).toBe(hash);
+  expect(history.length).toBe(length);
+});
