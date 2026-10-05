@@ -1,15 +1,17 @@
 import { useApi } from '../ApiContext';
 import { Check, Info, TriangleAlert, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
-import { describeError, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { describeError, type ApiClient, type ConnectedStatus, type Quota, type TokenPeriodKey, type TokenPriceCatalog, type TokenUsageReport } from '../api';
+import { useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
 import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { dateTime, timeAgo, useApp } from './common';
-import { aggregateUsageModels, estimateCacheSaving, groupUsageModels } from '../lib/token-usage';
+import { aggregateUsageModels, estimateCacheSaving, groupUsageModels, mergeTokenReports, sumCacheSavings } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, modelNames, ModelRows, TokenSplitValues } from './UsageModels';
 import { Button } from './ui/button';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Popover } from './ui/popover';
+import { Select } from './ui/select';
 import { HelpTip, Tip } from './ui/tooltip';
 
 const PERIODS: { key: TokenPeriodKey; label: string }[] = [
@@ -24,18 +26,25 @@ const COLLECTION_STATUS = {
   unavailable: 'Local harness usage is unavailable. Showing available usage.',
 };
 
-function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => void; onAddPrices?: () => void; now: number }>) {
-  const api = useApi();
-  const { usage, meta } = useApp();
-  const quotas = (usage?.quotas ?? []).filter((q, _i, all) => !q.unlimited || !all.some((other) => other.provider === q.provider && !other.unlimited));
-  const [period, setPeriod] = useState<TokenPeriodKey>('today');
-  const [report, setReport] = useState<TokenUsageReport | null>(null);
-  const [prices, setPrices] = useState<TokenPriceCatalog | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [priceError, setPriceError] = useState(false);
-  const [retry, setRetry] = useState(0);
-  const [all, setAll] = useState(false);
-  const [colors, setColors] = useState<Map<string, string>>(() => new Map());
+/** One machine's last reads: its recorded usage and its price catalog. */
+interface Reading { report: TokenUsageReport | null; error: string | null; prices: TokenPriceCatalog | null; priceError: boolean }
+const UNREAD: Reading = { report: null, error: null, prices: null, priceError: false };
+
+/** A machine the Tokens section reads; `down` says why it cannot report, without asking it. */
+interface Source { id: string; label: string; client: ApiClient; down?: string }
+
+const ALL_MACHINES = '*';
+const DOWN: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'offline', 'auth-required': 'needs a new access key', unsupported: 'needs an update' };
+
+/** Why a connected machine cannot report usage now, said after "not included:". */
+function cannotReport(machine: Machine): string | undefined {
+  if (!machine.connection) return undefined;
+  if (!machine.connection.capabilities.includes('usage-v1')) return 'needs an update';
+  return DOWN[machine.status.status];
+}
+
+/** Reads one machine's recorded usage and prices while the popover is open, every 15 seconds. */
+function UsageReader({ id, client, retry, onRead }: Readonly<{ id: string; client: ApiClient; retry: number; onRead: (id: string, patch: Partial<Reading>) => void }>) {
   useEffect(() => {
     let current = true;
     let usagePending = false;
@@ -44,27 +53,18 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
       if (usagePending) return;
       usagePending = true;
       try {
-        const result = await api.tokenUsage();
-        if (current) {
-          setReport(result);
-          setError(null);
-          setColors((previous) => {
-            const next = new Map(previous);
-            const models = groupUsageModels(result.periods.lifetime.models);
-            for (const model of models) if (!next.has(model.model)) next.set(model.model, MODEL_COLORS[next.size % MODEL_COLORS.length]);
-            return next;
-          });
-        }
-      } catch (e) { if (current) setError(describeError(e)); }
+        const result = await client.tokenUsage();
+        if (current) onRead(id, { report: result, error: null });
+      } catch (e) { if (current) onRead(id, { error: describeError(e) }); }
       finally { usagePending = false; }
     };
     const readPrices = async () => {
       if (pricesPending) return;
       pricesPending = true;
       try {
-        const result = await api.tokenPrices();
-        if (current) { setPrices(result); setPriceError(false); }
-      } catch { if (current) { setPrices(null); setPriceError(true); } }
+        const result = await client.tokenPrices();
+        if (current) onRead(id, { prices: result, priceError: false });
+      } catch { if (current) onRead(id, { prices: null, priceError: true }); }
       finally { pricesPending = false; }
     };
     // A slow price request must not delay usage or its subsequent refreshes.
@@ -72,16 +72,56 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
     read();
     const timer = window.setInterval(read, 15000);
     return () => { current = false; window.clearInterval(timer); };
-  }, [api, retry]);
+  }, [id, client, retry, onRead]);
+  return null;
+}
+
+function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => void; onAddPrices?: () => void; now: number }>) {
+  const api = useApi();
+  const federation = useFederation();
+  const { usage, meta } = useApp();
+  const quotas = (usage?.quotas ?? []).filter((q, _i, all) => !q.unlimited || !all.some((other) => other.provider === q.provider && !other.unlimited));
+  const [period, setPeriod] = useState<TokenPeriodKey>('today');
+  const [readings, setReadings] = useState<Record<string, Reading>>({});
+  const [retry, setRetry] = useState(0);
+  const [all, setAll] = useState(false);
+  const [colors, setColors] = useState<Map<string, string>>(() => new Map());
+  const onRead = useCallback((id: string, patch: Partial<Reading>) => {
+    setReadings((previous) => ({ ...previous, [id]: { ...(previous[id] ?? UNREAD), ...patch } }));
+    const report = patch.report;
+    if (report) setColors((previous) => {
+      const next = new Map(previous);
+      const models = groupUsageModels(report.periods.lifetime.models);
+      for (const model of models) if (!next.has(model.model)) next.set(model.model, MODEL_COLORS[next.size % MODEL_COLORS.length]);
+      return next;
+    });
+  }, []);
+  // With an enabled connection, tokens are every machine's (they never overlap); the allowance is the account's, so it is not.
+  const machines = federation?.machines && federation.machines.length > 1 ? federation.machines : null;
+  const sources: Source[] = machines ? machines.map((m) => ({ id: m.id, label: m.label, client: m.client, down: cannotReport(m) })) : [{ id: '', label: 'This instance', client: api }];
+  const [scope, setScope] = useState(ALL_MACHINES);
+  const one = machines ? sources.find((source) => source.id === scope) : sources[0];
+  const states = sources.map((source) => {
+    const reading = readings[source.id] ?? UNREAD;
+    return { source, reading, reason: source.down ?? (reading.error ? 'could not read usage' : reading.report ? undefined : 'still loading') };
+  });
+  const included = states.filter((state) => !state.reason);
+  const excluded = one ? [] : states.filter((state) => state.reason);
+  const reading = one ? readings[one.id] ?? UNREAD : null;
+  const report = reading ? reading.report : included.length ? mergeTokenReports(included.map((state) => state.reading.report!)) : null;
+  const error = one ? (one.down ? `${one.label}: ${one.down}.` : reading!.error) : !included.length && excluded.every((state) => state.reason !== 'still loading') ? 'No machine is available.' : null;
+  const priceFailures = one ? (reading!.priceError ? [one] : []) : included.filter((state) => state.reading.priceError).map((state) => state.source);
+  const pricesLoading = (one ? [reading!] : included.map((state) => state.reading)).some((r) => r.prices === null && !r.priceError);
   const shown = report?.periods[period];
   const models = groupUsageModels(shown?.models ?? []);
   const combined = aggregateUsageModels(models, 'All models');
-  const saved = estimateCacheSaving(shown?.models ?? [], prices);
+  const saved = one ? estimateCacheSaving(shown?.models ?? [], reading!.prices) : sumCacheSavings(included.map((state) => estimateCacheSaving(state.reading.report!.periods[period].models, state.reading.prices)));
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
   const names = modelNames(meta);
   const account = accountQuota(quotas);
   const [scrolled, setScrolled] = useState(false);
   return <>
+    {sources.map((source) => !source.down && <UsageReader key={source.id} id={source.id} client={source.client} retry={retry} onRead={onRead} />)}
     <PanelHead scrolled={scrolled} className="px-4 pt-3 pb-2">
       <div className="flex items-center gap-1">
         <Popover.Title className="text-display-sm text-ink">Usage</Popover.Title>
@@ -105,7 +145,13 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
         {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
       </div>
-      <PanelSection label="Tokens" meta="recorded by UAM" className={cn('min-w-0', all ? 'min-h-48 flex-1' : 'shrink-0')}>
+      <PanelSection label="Tokens" meta="recorded by UAM" className={cn('min-w-0', all ? 'min-h-48 flex-1' : 'shrink-0')} action={machines && (
+        // Compact like the period tabs: 24px, with a hit area grown as a small button's.
+        <Select aria-label="Machine" value={one ? scope : ALL_MACHINES} onValueChange={setScope} className="relative h-6 w-auto max-w-40 gap-1 px-2 text-caption after:absolute after:-inset-y-1 after:inset-x-0 after:content-[''] pointer-coarse:min-h-6 pointer-coarse:after:-inset-y-2.5" items={[
+          { value: ALL_MACHINES, label: 'All machines' },
+          ...sources.map((source) => ({ value: source.id, label: source.label })),
+        ]} />
+      )}>
       <div role="group" aria-label="Usage period" className="flex rounded-sm bg-sunken p-0.5">
         {PERIODS.map(({ key, label }) => <Button key={key} size="sm" className={cn('flex-1 px-1', period === key && 'bg-raised text-ink shadow-raised')} aria-pressed={key === period} onClick={() => setPeriod(key)}>{label}</Button>)}
       </div>
@@ -113,10 +159,12 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
         <span className="min-w-0 flex-1">{report ? 'Could not refresh usage. Showing the last read. ' : 'Could not load usage. '}{error}</span>
         <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry</Button>
       </div>}
-      {priceError && shown && <div className="mt-3 flex items-center gap-2 text-caption text-muted">
-        <span className="min-w-0 flex-1">Could not load token prices.</span>
+      {priceFailures.length > 0 && shown && <div className="mt-3 flex items-center gap-2 text-caption text-muted">
+        <span className="min-w-0 flex-1">Could not load token prices{one ? '' : ` for ${priceFailures.map((source) => source.label).join(', ')}`}.</span>
         <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry prices</Button>
       </div>}
+      {/* A machine left out of All machines is named, never silently skipped. */}
+      {shown && excluded.map(({ source, reason }) => <p key={source.id} className="mt-2 text-caption text-muted [overflow-wrap:anywhere]">{source.label} not included: {reason}</p>)}
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
         <div className="grid grid-cols-3 gap-3 py-2 @max-[22rem]:grid-cols-2">
@@ -138,7 +186,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
                 <span className="mt-2 block">Uses current configured prices. Records without prices, token counts or a cost are left out. An estimate, not a refund.</span>
               </HelpTip>
             </div>
-            <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-title')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(saved.saving)}</p>
+            <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', pricesLoading && models.length ? 'text-caption' : 'text-title')}>{pricesLoading && models.length ? 'Loading…' : costText(saved.saving)}</p>
           </div>
         </div>
         <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>

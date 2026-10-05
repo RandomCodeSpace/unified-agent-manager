@@ -88,3 +88,47 @@ export function estimateCacheSaving(rows: readonly UsageRow[], catalog: TokenPri
   }
   return { saving, partial };
 }
+
+const PERIOD_KEYS = ['today', '7d', '30d', 'lifetime'] as const;
+const COLLECTION_RANK = ['unavailable', 'partial', 'starting', 'ready'] as const;
+const addCounts = (a: TokenCounts, b: TokenCounts): TokenCounts => ({ input: a.input + b.input, output: a.output + b.output, cache_read: a.cache_read + b.cache_read, cache_write: a.cache_write + b.cache_write, total: a.total + b.total });
+const byTime = (a: string, b: string) => Date.parse(a) - Date.parse(b);
+
+/**
+ * Several machines' reports as one (DESIGN.md Usage popover, All machines). Their recordings never
+ * overlap, so rows sit side by side (grouped by model on display) and totals, known costs and
+ * unpriced counts add up; each cost was priced by its own machine. It starts at the earliest start,
+ * carries the least ready collection status, and is as fresh as its stalest collection.
+ */
+export function mergeTokenReports(reports: readonly TokenUsageReport[]): TokenUsageReport {
+  const periods = {} as TokenUsageReport['periods'];
+  for (const key of PERIOD_KEYS) {
+    const parts = reports.map((report) => report.periods[key]);
+    // As the server prices a period: null only when it has models and none is priced.
+    const priced = parts.filter((part) => part.cost_usd !== null && part.models.length);
+    periods[key] = {
+      models: parts.flatMap((part) => part.models),
+      total: parts.reduce((sum, part) => addCounts(sum, part.total), { input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0 }),
+      cost_usd: priced.length || !parts.some((part) => part.models.length) ? priced.reduce((sum, part) => sum + part.cost_usd!, 0) : null,
+      unpriced_models: parts.reduce((sum, part) => sum + part.unpriced_models, 0),
+    };
+  }
+  const collections = reports.flatMap((report) => report.collection ? [report.collection] : []);
+  const updated = collections.flatMap((c) => c.updated_at ? [c.updated_at] : []).sort(byTime)[0];
+  return {
+    since: reports.map((report) => report.since).sort(byTime)[0] ?? '',
+    today: reports[0]?.today ?? '',
+    periods,
+    ...(collections.length && { collection: {
+      status: COLLECTION_RANK.find((status) => collections.some((c) => c.status === status))!,
+      ...(updated && { updated_at: updated }),
+      copilot_since: collections.map((c) => c.copilot_since).sort(byTime).at(-1)!,
+    } }),
+  };
+}
+
+/** Each machine's cache saving at its own prices, summed; a machine without an estimate makes the sum partial. */
+export function sumCacheSavings(parts: readonly { saving: number | null; partial: boolean }[]): { saving: number | null; partial: boolean } {
+  const known = parts.filter((part) => part.saving !== null);
+  return { saving: known.length || !parts.length ? known.reduce((sum, part) => sum + part.saving!, 0) : null, partial: parts.some((part) => part.partial || part.saving === null) };
+}

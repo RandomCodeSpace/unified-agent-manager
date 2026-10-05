@@ -351,3 +351,54 @@ test('the Planner button opens another machine’s Planner when this one has it 
   expect(list.getByRole('group', { name: 'Workstation C' })).toBeTruthy();
   expect(list.queryByRole('group', { name: 'This instance' })).toBeNull();
 });
+
+/** The Usage popover's summary value under `label`. */
+function usageSummary(label: 'Estimated cost' | 'Cache saving' | 'Total tokens') {
+  const name = within(screen.getByRole('region', { name: 'Tokens' })).getByText(label, { exact: true });
+  return (label === 'Total tokens' ? name : name.parentElement!).nextElementSibling!.textContent;
+}
+
+async function openUsage(user: ReturnType<typeof userEvent.setup>) {
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(rows.getByRole('button', { name: 'Usage', exact: true }));
+  return within(await screen.findByRole('dialog', { name: 'Usage' }));
+}
+
+test('Usage sums every machine’s tokens, each priced by its own catalog, and filters to one machine', async () => {
+  const { user, owners } = federated('', [record('b', 'Workstation B')]);
+  // Only B prices gpt-6-luna: its cost counts in All machines and on B, never on this instance.
+  await act(async () => { await owners[1].fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token_prices: { copilot: { 'gpt-6-luna': { input: 1, output: 2 } } } }) }); });
+  const popover = await openUsage(user);
+  const machine = popover.getByRole('combobox', { name: 'Machine' });
+  expect(machine.textContent).toBe('All machines');
+  await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$3.77'));
+  await waitFor(() => expect(usageSummary('Cache saving')).toBe('$5.02'));
+  expect(usageSummary('Total tokens')).toBe('2.6M');
+  expect(popover.queryByText(/not included/)).toBeNull();
+  await user.click(machine);
+  expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['All machines', 'This instance', 'Workstation B']);
+  await user.click(screen.getByRole('option', { name: 'Workstation B' }));
+  await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.90'));
+  expect(usageSummary('Total tokens')).toBe('1.3M');
+  expect(screen.getByRole('dialog', { name: 'Usage' })).toBeTruthy();
+  await user.click(popover.getByRole('combobox', { name: 'Machine' }));
+  await user.click(await screen.findByRole('option', { name: 'This instance' }));
+  await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.87'));
+  expect(usageSummary('Cache saving')).toBe('$2.51');
+});
+
+test('Usage names each machine that cannot report and totals the others', async () => {
+  const { user, calls } = federated('', [record('b', 'Workstation B'), { ...record('c', 'Workstation C'), capabilities: capabilities.filter((family) => family !== 'usage-v1') }]);
+  const harness = window.fetch;
+  window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    return url.startsWith('/api/connected/b/api/usage/tokens') ? new Response(JSON.stringify({ error: 'Usage is unavailable' }), { status: 500 }) : harness(input, init);
+  };
+  const popover = await openUsage(user);
+  expect(await popover.findByText('Workstation B not included: could not read usage')).toBeTruthy();
+  expect(popover.getByText('Workstation C not included: needs an update')).toBeTruthy();
+  await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.87'));
+  expect(usageSummary('Total tokens')).toBe('1.3M');
+  expect(calls.some((call) => call.owner === 'c' && call.path.startsWith('/api/usage'))).toBe(false);
+});

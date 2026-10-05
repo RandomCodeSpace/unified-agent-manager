@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aggregateUsageModels, cacheHitRate, estimateCacheSaving, groupUsageModels, splitTokens } from '../src/lib/token-usage.ts';
+import { aggregateUsageModels, cacheHitRate, estimateCacheSaving, groupUsageModels, mergeTokenReports, splitTokens, sumCacheSavings } from '../src/lib/token-usage.ts';
 
 function row(values = {}) {
   return { provider: 'copilot', model: 'model-a', input: 100, output: 20, cache_read: 30, cache_write: 10, total: 120, cost_usd: 1, ...values };
@@ -132,4 +132,25 @@ test('empty usage costs zero and missing catalogs remain unknown', () => {
   assert.deepEqual(estimateCacheSaving([row()], null), { saving: null, partial: true });
   assert.deepEqual(estimateCacheSaving([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: null })], catalog({})), { saving: null, partial: true });
   assert.deepEqual(estimateCacheSaving([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: 0 })], catalog({})), { saving: 0, partial: false });
+});
+
+test('machine reports merge by summing totals and known costs, as fresh as the stalest collection', () => {
+  const report = (since, updated, status, models, cost) => ({
+    since, today: '2026-10-05', collection: { status, updated_at: updated, copilot_since: since },
+    periods: Object.fromEntries(['today', '7d', '30d', 'lifetime'].map((key) => [key, { models, total: { input: 100, output: 20, cache_read: 30, cache_write: 10, total: 120 }, cost_usd: cost, unpriced_models: cost === null ? models.length : 0 }])),
+  });
+  const merged = mergeTokenReports([
+    report('2026-02-01T00:00:00Z', '2026-10-05T10:00:00Z', 'ready', [row()], 1),
+    report('2026-01-01T00:00:00Z', '2026-10-05T09:00:00Z', 'partial', [row({ cost_usd: null })], null),
+  ]);
+  assert.equal(merged.since, '2026-01-01T00:00:00Z');
+  assert.deepEqual(merged.collection, { status: 'partial', updated_at: '2026-10-05T09:00:00Z', copilot_since: '2026-02-01T00:00:00Z' });
+  assert.deepEqual(merged.periods.today.total, { input: 200, output: 40, cache_read: 60, cache_write: 20, total: 240 });
+  assert.equal(merged.periods.today.cost_usd, 1);
+  assert.equal(merged.periods.today.unpriced_models, 1);
+  assert.equal(merged.periods.today.models.length, 2);
+  // No machine priced anything: no cost, rather than $0.
+  assert.equal(mergeTokenReports([report('2026-01-01T00:00:00Z', undefined, 'ready', [row({ cost_usd: null })], null)]).periods.today.cost_usd, null);
+  assert.deepEqual(sumCacheSavings([{ saving: 2, partial: false }, { saving: null, partial: false }]), { saving: 2, partial: true });
+  assert.deepEqual(sumCacheSavings([{ saving: null, partial: true }]), { saving: null, partial: true });
 });
