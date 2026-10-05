@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { api, describeError, type ProviderAccount, type ProviderInfo } from '../api';
-import { Dot, Note, Skeleton, useApp } from './common';
+import { Check, Copy, ExternalLink } from 'lucide-react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { api, describeError, type DeviceSignIn, type ProviderAccount, type ProviderInfo } from '../api';
+import { useCopied } from '../lib/clipboard';
+import { Dot, Note, Skeleton, useApp, WorkingMark } from './common';
 import { AlertDialog, useConfirm } from './ui/dialog';
-import { Button } from './ui/button';
+import { Button, buttonVariants } from './ui/button';
 import { Input } from './ui/input';
 
 /** GitHub's page for a new fine-grained personal access token. */
@@ -28,10 +30,22 @@ export function sourceText(a: ProviderAccount): ReactNode {
   }
 }
 
+/** The notice after a sign-in, by token or by device code. */
+function signedInText(a: ProviderAccount): string {
+  const who = a.login ? ` as ${a.login}` : '';
+  return a.stored === false
+    ? `Signed in${who} until the service restarts: Copilot could not store the sign-in on this server. Every task on this server uses this account.`
+    : `Signed in${who}. Every task on this server uses this account from its next message.`;
+}
+
+const inProgress = (d: DeviceSignIn | null) => d?.state === 'starting' || d?.state === 'waiting';
+
 /**
  * Settings → GitHub Copilot: whether the server's Copilot is signed in, as whom and how, read again each time the
- * section opens; sign in with a token (sent straight to Copilot, never kept here) and sign out of a stored sign-in.
- * Either applies to every Task on this server, so a replaced or removed sign-in is confirmed first.
+ * section opens; sign in with GitHub (a device code approved on GitHub) or with a token (sent straight to Copilot,
+ * never kept here), and sign out of a stored sign-in. Each applies to every Task on this server, so a replaced or
+ * removed sign-in is confirmed first. Device sign-in is offered only while signed out: its restart would cut open
+ * conversations.
  */
 export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }>) {
   const { refreshMeta } = useApp();
@@ -45,7 +59,14 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   const [replacing, setReplacing] = useState(false);
   const replace = useConfirm<true>();
   const signOut = useConfirm<true>();
+  const [device, setDevice] = useState<DeviceSignIn | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [copied, copy] = useCopied();
+  const copyButton = useRef<HTMLButtonElement>(null);
+  // Set by a click on Sign in with GitHub, so focus moves to Copy code once the code shows; never on a resumed one.
+  const focusCopy = useRef(false);
   const name = provider.name;
+  const deviceCapable = provider.capabilities.device_sign_in === true;
   const refresh = useRef(refreshMeta);
   useEffect(() => {
     refresh.current = refreshMeta;
@@ -81,10 +102,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       const a = await api.signIn(name, token.trim());
       setAccount(a);
       setReplacing(false);
-      const who = a.login ? ` as ${a.login}` : '';
-      setDone(a.stored === false
-        ? `Signed in${who} until the service restarts: Copilot could not store the sign-in on this server. Every task on this server uses this account.`
-        : `Signed in${who}. Every task on this server uses this account from its next message.`);
+      setDone(signedInText(a));
       refresh.current();
     } catch (e) {
       setFormError(`Could not sign in: ${describeError(e)}`);
@@ -92,6 +110,82 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       // The field never keeps a token, accepted or not.
       setToken('');
       setBusy(false);
+    }
+  }
+
+  // A device sign-in already waiting (started in another tab, or before a reload) shows its code again.
+  useEffect(() => {
+    if (!deviceCapable) return;
+    let current = true;
+    api
+      .deviceSignIn(name)
+      .then((d) => current && inProgress(d) && setDevice(d))
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [name, deviceCapable]);
+
+  function follow(d: DeviceSignIn) {
+    if (d.state === 'signed_in') {
+      setDevice(null);
+      if (d.account) setAccount(d.account);
+      else setReads((n) => n + 1);
+      setDone(signedInText(d.account ?? { signed_in: true }));
+      refresh.current();
+    } else if (d.state === 'idle' || d.state === 'canceled') setDevice(null);
+    else setDevice(d);
+  }
+  const polled = useEffectEvent(follow);
+
+  // Poll while GitHub waits for the code; a hidden page skips its turns.
+  const waiting = inProgress(device);
+  useEffect(() => {
+    if (!waiting) return;
+    let current = true;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      api
+        .deviceSignIn(name)
+        .then((d) => current && polled(d))
+        .catch(() => {});
+    }, 2000);
+    return () => {
+      current = false;
+      window.clearInterval(timer);
+    };
+  }, [name, waiting]);
+
+  const code = device?.user_code;
+  useEffect(() => {
+    if (!code || !focusCopy.current) return;
+    focusCopy.current = false;
+    copyButton.current?.focus();
+  }, [code]);
+
+  async function startDevice() {
+    setStarting(true);
+    setFormError(null);
+    setDone(null);
+    focusCopy.current = true;
+    try {
+      follow(await api.startDeviceSignIn(name));
+    } catch (e) {
+      focusCopy.current = false;
+      setDevice(null);
+      setFormError(`Could not sign in: ${describeError(e)}`);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function cancelDevice() {
+    setFormError(null);
+    try {
+      await api.cancelDeviceSignIn(name);
+      setDevice(null);
+    } catch (e) {
+      setFormError(`Could not cancel the sign-in: ${describeError(e)}`);
     }
   }
 
@@ -132,7 +226,8 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   }
 
   const env = account.env_var;
-  const showForm = !env && (!account.signed_in || replacing);
+  const offerDevice = deviceCapable && !env && !account.signed_in;
+  const showForm = !env && (!account.signed_in || replacing) && !(offerDevice && waiting);
   const host = account.host && account.host !== 'https://github.com' ? ` on ${account.host.replace(/^https?:\/\//, '')}` : '';
 
   return (
@@ -174,11 +269,58 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
           To sign this account out, run <Code>gh auth logout</Code> on the server.
         </Note>
       )}
+      {offerDevice && (
+        <div className="flex max-w-xl flex-col gap-3">
+          {device?.state === 'failed' ? (
+            <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
+              <span className="min-w-0 flex-1">Could not sign in: {device.error || 'GitHub did not confirm the sign-in.'}</span>
+              <Button size="sm" variant="secondary" loading={starting} onClick={() => void startDevice()}>
+                Try again
+              </Button>
+            </Note>
+          ) : waiting ? (
+            <>
+              {code && (
+                <div role="group" aria-label="Device code" className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <span className="min-w-0 select-all font-mono text-display-md text-ink [overflow-wrap:anywhere]">{code}</span>
+                  <Button ref={copyButton} size="md" variant="secondary" onClick={() => copy(code)}>
+                    {copied ? <Check /> : <Copy />}
+                    {copied ? 'Copied' : 'Copy code'}
+                  </Button>
+                </div>
+              )}
+              {code && <Note>Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.</Note>}
+              <div className="flex flex-wrap items-center gap-2">
+                {code && device?.verification_uri && (
+                  <a href={device.verification_uri} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: 'primary', size: 'md' })}>
+                    Open GitHub
+                    <ExternalLink aria-hidden="true" />
+                  </a>
+                )}
+                <Button size="md" variant="secondary" onClick={() => void cancelDevice()}>
+                  Cancel
+                </Button>
+                <span role="status" className="flex items-center gap-2 text-caption text-muted">
+                  <WorkingMark />
+                  {code ? 'Waiting for approval on GitHub…' : 'Getting a code from GitHub…'}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <Button size="lg" variant="primary" loading={starting} disabled={busy} onClick={() => void startDevice()}>
+                Sign in with GitHub
+              </Button>
+              <Note className="min-w-0 flex-1 basis-60">Get a code here, enter it on GitHub and approve Copilot CLI. Every task on this server then uses that account.</Note>
+            </div>
+          )}
+        </div>
+      )}
       {showForm && (
         <form className="flex max-w-xl flex-col gap-3" onSubmit={submit}>
           <div className="flex min-w-0 flex-col gap-1">
             <label htmlFor={`${name}-token`} className="text-ui font-medium text-ink">
-              Sign in with a token
+              {offerDevice ? 'Or sign in with a token' : 'Sign in with a token'}
             </label>
             <Note id={`${name}-token-help`}>
               Use a fine-grained personal access token with the <strong className="font-medium text-body">Copilot Requests</strong> permission; classic tokens (<Code>ghp_…</Code>) do not work.{' '}
@@ -202,7 +344,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
               disabled={busy}
               onChange={(e) => setToken(e.target.value)}
             />
-            <Button type="submit" size="lg" variant="primary" loading={busy} disabled={!token.trim()} className="min-w-24">
+            <Button type="submit" size="lg" variant={offerDevice ? 'secondary' : 'primary'} loading={busy} disabled={!token.trim()} className="min-w-24">
               Sign in
             </Button>
             {replacing && (
@@ -222,9 +364,11 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
         </Note>
       )}
       {done && <Note role="status">{done}</Note>}
-      <Note>
-        Signing in with a code shown in the browser is not supported here. To use it, run <Code>copilot login</Code> on the server as the user that runs UAM, then choose Check again.
-      </Note>
+      {!deviceCapable && (
+        <Note>
+          Signing in with a code shown in the browser is not supported here. To use it, run <Code>copilot login</Code> on the server as the user that runs UAM, then choose Check again.
+        </Note>
+      )}
       <AlertDialog
         {...replace.props}
         title="Replace the Copilot sign-in?"

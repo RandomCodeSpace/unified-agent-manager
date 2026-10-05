@@ -41,6 +41,8 @@ export interface Capabilities {
   import?: boolean;
   /** The provider's runtime sign-in is shown and changed in Settings (`api.account`). */
   account?: boolean;
+  /** The runtime can sign in with a GitHub device code (`api.startDeviceSignIn`). */
+  device_sign_in?: boolean;
   /** The provider's MCP servers can be listed and managed (Settings → MCP servers, a Task's MCP servers). */
   mcp?: boolean;
 }
@@ -258,6 +260,18 @@ export interface ProviderAccount {
   message?: string;
   /** False after a sign-in the runtime could not store: it lasts until the service restarts. */
   stored?: boolean;
+}
+
+/**
+ * A device-code sign-in, one per server: `waiting` carries the page and the code to enter there, `signed_in` the
+ * account, `failed` the reason. `idle` means none has started.
+ */
+export interface DeviceSignIn {
+  state: 'idle' | 'starting' | 'waiting' | 'signed_in' | 'failed' | 'canceled';
+  verification_uri?: string;
+  user_code?: string;
+  error?: string;
+  account?: ProviderAccount;
 }
 
 /** Refusal code of a create or send while the Task's provider is signed out. */
@@ -1465,6 +1479,10 @@ export const api = {
   /** The token goes to the provider's runtime only; nothing here keeps it. */
   signIn: (provider: string, token: string) => call<ProviderAccount>('POST', `/api/providers/${enc(provider)}/account/sign-in`, { token }),
   signOut: (provider: string) => call<ProviderAccount>('POST', `/api/providers/${enc(provider)}/account/sign-out`),
+  /** Starts a device-code sign-in, or returns the one in progress. */
+  startDeviceSignIn: (provider: string) => call<DeviceSignIn>('POST', `/api/providers/${enc(provider)}/account/device`),
+  deviceSignIn: (provider: string) => call<DeviceSignIn>('GET', `/api/providers/${enc(provider)}/account/device`),
+  cancelDeviceSignIn: (provider: string) => call<void>('DELETE', `/api/providers/${enc(provider)}/account/device`),
 
   session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
   history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),

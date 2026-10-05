@@ -159,7 +159,21 @@ time Settings opens or **Check again** is chosen:
   so in place of that error. `GET /api/meta` lists the provider as
   `available: false` with `signed_out: true`.
 
-**Sign in with a token.** Paste a fine-grained personal access token with the
+**Sign in with GitHub.** Offered while Copilot is signed out and no
+environment token is set. Choose **Sign in with GitHub**: Settings shows a
+short code, with **Copy code**, and **Open GitHub**, which opens GitHub's
+device page in a new tab. Enter the code there and approve Copilot CLI.
+Settings checks every 2 seconds and shows the sign-in once GitHub approves it;
+**Cancel** stops it. A code not approved within about 15 minutes expires and
+the sign-in fails with **Try again**. A sign-in started in another tab or
+before a reload shows its code again when Settings opens. It signs in the
+whole server: every Task uses the account. To store the sign-in, the server
+needs a system keychain, or Copilot's `storeTokenPlaintext` setting in
+`~/.copilot/settings.json`. Signing in restarts Copilot, so it is refused while
+Copilot Tasks have open conversations; close them first. While signed in,
+**Use another token** replaces the sign-in.
+
+**Or sign in with a token.** Paste a fine-grained personal access token with the
 **Copilot Requests** permission (create one on GitHub under Settings →
 Developer settings → Personal access tokens → Fine-grained tokens); classic
 `ghp_` tokens are not accepted. The field is a password field. The token goes
@@ -180,17 +194,21 @@ over any stored sign-in, so while one is set Settings names the variable and
 turns signing in and out off. Change or remove it where the service starts,
 then restart the service.
 
-**Device code sign-in is not supported** in the browser: Copilot offers no
-supported way for UAM to run it. Run `copilot login` on the server as the user
-that runs UAM, then choose **Check again**.
-
 The API: `GET /api/providers/copilot/account` returns `{"signed_in", "login"?,
 "host"?, "source"? ("stored", "env", "gh-cli" or "other"), "env_var"?,
 "message"?}`; `POST /api/providers/copilot/account/sign-in` with `{"token"}`
 and `POST /api/providers/copilot/account/sign-out` return the same shape, or
 400 with the reason for a refused token, 409 while an environment token takes
-precedence. All need sign-in like other protected API routes. Sign-ins and
-sign-outs are logged without the token.
+precedence. `POST /api/providers/copilot/account/device` starts a device
+sign-in, or returns the one in progress; `GET` on the same path reads it and
+`DELETE` cancels it (204). Both `POST` and `GET` return `{"state"
+("idle", "starting", "waiting", "signed_in", "failed" or "canceled"),
+"verification_uri"?, "user_code"?, "error"?, "account"?}`: `waiting` carries
+the page and the code, `signed_in` the account, `failed` the reason. `POST`
+answers 409 while an environment token takes precedence or Copilot Tasks have
+open conversations. The provider's `capabilities.device_sign_in` in
+`GET /api/meta` says whether it is offered. All need sign-in like other
+protected API routes. Sign-ins and sign-outs are logged without the token.
 
 ## Use it
 
