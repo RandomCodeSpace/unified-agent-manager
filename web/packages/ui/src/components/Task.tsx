@@ -769,7 +769,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); }
             if (['ArrowDown', 'PageDown', 'End'].includes(e.key)) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); }
           }}
-          onWheel={e => { if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
+          onWheelCapture={e => { if (e.ctrlKey) return; if (e.deltaY < 0) { toward('older'); if (nearEarlier(e.currentTarget)) void loadEarlier(); } if (e.deltaY > 0) { toward('newer'); if (nearEdge(e.currentTarget, 'newer')) void loadNewer(); } }}
           onTouchStart={e => { touching.current = true; touchY.current = e.touches[0]?.clientY ?? 0; }}
           onTouchEnd={e => { touching.current = e.touches.length > 0; }}
           onTouchCancel={e => { touching.current = e.touches.length > 0; }}
