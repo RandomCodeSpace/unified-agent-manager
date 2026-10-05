@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
@@ -318,6 +318,30 @@ test('leaving the instance whose terminal is open asks in the app’s dialog, ne
   await waitFor(() => expect(screen.queryByRole('region', { name: 'Terminal' })).toBeNull());
   expect(native).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
+});
+
+test('Alt+J and Alt+K walk the Tasks that need you across machines, in the list’s order', async () => {
+  federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText('Input')).map((el) => el.dataset.taskRow!);
+  expect(keys.length).toBeGreaterThan(2);
+  // Both machines hold the same Tasks, so the list alternates: this instance's row, then Workstation B's.
+  expect(keys[0]).not.toMatch(/^uam:/);
+  expect(keys[1]).toBe(`uam:b:${keys[0]}`);
+  expect(keys[2]).not.toMatch(/^uam:/);
+  const remote = (id: string) => `#task=${id}&home=home-a&instance=instance-b&connection=b&generation=1`;
+  const press = (code: 'KeyJ' | 'KeyK') => fireEvent.keyDown(document.body, { code, key: code === 'KeyJ' ? 'j' : 'k', altKey: true });
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(`#task=${keys[0]}`));
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
+  await screen.findByRole('region', { name: 'Conversation' });
+  press('KeyJ');
+  await waitFor(() => expect(window.location.hash).toBe(`#task=${keys[2]}`));
+  await screen.findByRole('region', { name: 'Conversation' });
+  press('KeyK');
+  await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
 });
 
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
