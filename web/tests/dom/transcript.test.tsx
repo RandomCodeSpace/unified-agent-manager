@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import type { Item } from '../../src/api';
+import { api, type Item } from '../../src/api';
 import { Markdown } from '../../src/components/common';
+import { EChart } from '../../src/components/EChart';
+import { chartOption } from '../../src/lib/chart';
 import { PlannerContext, type PlannerContextValue } from '../../src/components/planner/context';
 import { ToolRow } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
@@ -208,11 +210,28 @@ describe('requests', () => {
 });
 
 describe('history', () => {
-  test('scrolling up a long compact task reads earlier pages', async () => {
+  test.each([false, true])('scrolling up a long compact task reads earlier pages (over chart: %s)', async overChart => {
     await openTask('t15');
     expect(await screen.findByText('Scroll up for earlier messages')).toBeTruthy();
     expect(log().queryByText('Turn 138: check pkg138 for unused exports.')).toBeNull();
-    fireEvent.wheel(conversation(), { deltaY: -120 });
+    let target = conversation();
+    if (overChart) {
+      // A real chart's native wheel guard must not hide input from the history loader.
+      const container = conversation().appendChild(document.createElement('div'));
+      const chart = { title: 'History chart', kind: 'line' as const, labels: ['a', 'b'], series: [{ name: 'values', values: [2, 8] }] };
+      render(<EChart option={chartOption(chart, { width: 480, height: 240 })} width={480} height={240} label="History chart" />, { container });
+      target = screen.getByRole('img', { name: 'History chart' });
+      await waitFor(() => expect(target.querySelector('svg')).toBeTruthy());
+      const historyRead = vi.spyOn(api, 'history');
+      try {
+        const zoom = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120 });
+        // Happy DOM omits wheel modifier fields, so set the actual browser field explicitly.
+        Object.defineProperty(zoom, 'ctrlKey', { value: true });
+        fireEvent(target, zoom);
+        expect(historyRead).not.toHaveBeenCalled();
+      } finally { historyRead.mockRestore(); }
+    }
+    fireEvent.wheel(target, { deltaY: -120 });
     expect(await log().findByText('Turn 138: check pkg138 for unused exports.')).toBeTruthy();
     fireEvent.keyDown(conversation(), { key: 'PageUp' });
     expect(await log().findByText('Turn 126: check pkg126 for unused exports.')).toBeTruthy();

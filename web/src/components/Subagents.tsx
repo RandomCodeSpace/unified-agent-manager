@@ -1437,7 +1437,8 @@ function AgentTranscriptView({
 
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The transcript scroll region accepts keyboard paging at both boundaries.
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheel={event => {
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 py-3 [overflow-wrap:anywhere]" ref={scroller} onScroll={onScroll} role="region" aria-label={`Transcript of ${name}`} tabIndex={0} aria-busy={(!transcript || transcript.loading) && items.length === 0 ? true : undefined} onWheelCapture={event => {
+      if (event.ctrlKey) return;
       userAt.current = performance.now();
       if (event.deltaY < 0 && nearEdge(event.currentTarget, 'older')) loadOlder();
       if (event.deltaY > 0 && nearEdge(event.currentTarget, 'newer')) loadOlder('newer');
