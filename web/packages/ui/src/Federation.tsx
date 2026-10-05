@@ -119,26 +119,37 @@ export default function Federation() {
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
   const homeId = registry?.instance_id ?? '';
   const connections = registry?.connections ?? [];
-  /** This instance's own view: where a view falls back to once its connection is gone. */
-  const showHome = useCallback(() => {
-    routeReady.current = true;
-    setRouteError(null);
-    setTerminalOpen(false);
-    setActive(null);
-    setRoute(previous => ({ path: '', tick: previous.tick + 1 }));
-    window.dispatchEvent(new CustomEvent('uam-route', { detail: { path: '', connection: HOME, force: true } }));
-    history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-  }, []);
-  /** Shows the registry `next`: its enabled connections are the machines, each keeping its state while its record is unchanged. */
-  const applyRegistry = useCallback((next: Registry) => {
+  /**
+   * Reads the registry (or shows `known`, a record just saved) and makes its enabled connections the machines, each keeping its state while its record is unchanged.
+   * The state updates stay in this function: the hooks lint takes a helper that sets state for a setState call made from the effect below.
+   */
+  const refresh = useCallback(async (known?: Registry) => {
+    const epoch = authEpoch.current;
+    const sequence = ++registrySequence.current;
+    const current = () => authRef.current && epoch === authEpoch.current && sequence === registrySequence.current;
+    try {
+      // Always after an await: the hooks lint reads a synchronous path to setState as a setState call made from the effect below.
+      const next = await (known ? Promise.resolve(known) : api.connections());
+      if (!current()) return;
+      // An older standalone server may have no registry endpoint; that never removes local UI.
+      if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
       const before = registryRef.current;
       registryRef.current = next;
-      // The connection on screen: disabled or removed, its view falls back to this instance (in the same render that drops its rows); re-paired, its view carries on at the new generation.
+      // The connection on screen: disabled or removed, its view falls back to this instance's Home in the same render that drops its rows; re-paired, its view carries on at the new generation.
       const viewing = activeRef.current;
       if (viewing) {
         const match = next.connections.find(connection => connection.enabled && connection.id === viewing.id && connection.instance_id === viewing.instance_id);
-        if (!match) showHome();
-        else if (match.generation !== viewing.generation) setActive(match);
+        if (match) {
+          if (match.generation !== viewing.generation) setActive(match);
+        } else {
+          routeReady.current = true;
+          setRouteError(null);
+          setTerminalOpen(false);
+          setActive(null);
+          setRoute(previous => ({ path: '', tick: previous.tick + 1 }));
+          window.dispatchEvent(new CustomEvent('uam-route', { detail: { path: '', connection: HOME, force: true } }));
+          history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+        }
       }
       setSourceStates(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id === HOME || next.connections.some(connection => connection.enabled && connection.id === id && before?.connections.some(old => old.id === id && old.generation === connection.generation && old.instance_id === connection.instance_id)))));
       setSources(previous => [homeSource, ...next.connections.filter(connection => connection.enabled).map(connection => {
@@ -156,21 +167,10 @@ export default function Federation() {
         return { id: connection.id, label: connection.label, connection, client };
       })]);
       setRegistry(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
-  }, [showHome]);
-  const refresh = useCallback(async () => {
-    const epoch = authEpoch.current;
-    const sequence = ++registrySequence.current;
-    const current = () => authRef.current && epoch === authEpoch.current && sequence === registrySequence.current;
-    try {
-      const next = await api.connections();
-      if (!current()) return;
-      // An older standalone server may have no registry endpoint; that never removes local UI.
-      if (!next || !Array.isArray(next.connections)) throw new Error('Connected instances are unavailable on this server.');
-      applyRegistry(next);
       setRegistryError(null);
     } catch (error) { if (current()) setRegistryError(describeError(error)); }
     finally { if (current()) setRegistryRead(true); }
-  }, [applyRegistry]);
+  }, []);
   const onAuth = useCallback((value: boolean) => {
     if (authRef.current !== value) authEpoch.current++;
     authRef.current = value;
@@ -290,7 +290,7 @@ export default function Federation() {
     const updated = await api.updateConnection(id, input);
     // The saved record shows at once (a disabled machine's rows leave now); the registry re-read, which can wait on each machine's account check, confirms it.
     const known = registryRef.current;
-    if (known && updated && known.connections.some(connection => connection.id === id)) applyRegistry({ ...known, connections: known.connections.map(connection => connection.id === id ? { ...connection, ...updated } : connection) });
+    if (known && updated && known.connections.some(connection => connection.id === id)) await refresh({ ...known, connections: known.connections.map(connection => connection.id === id ? { ...connection, ...updated } : connection) });
     await refresh();
   };
   const remove = async (id: string) => {
