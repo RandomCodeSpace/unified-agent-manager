@@ -138,8 +138,8 @@ test('a compacting Task shows Working and its row says Compacting', async () => 
   assert.equal(taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { state: 'awaiting_permission', compacting: true })).text, 'Wants your OK to continue');
 });
 
-test('the Task list groups: Needs you, Ready for review, Working, Idle', async () => {
-  const { commandGroups, groupOf, needsYouCount } = await import('../src/lib/tasks.ts');
+test('the Tasks that need the user: a waiting request, or a failure not opened since', async () => {
+  const { needsYouNow, needsYouCount } = await import('../src/lib/tasks.ts');
   const unread = (t) => t.id.endsWith('*');
   const list = [
     s('ask', 'p1', '1', { state: 'awaiting_answer' }),
@@ -148,18 +148,22 @@ test('the Task list groups: Needs you, Ready for review, Working, Idle', async (
     s('failed-read', 'p1', '4', { state: 'failed' }),
     s('broke*', 'p1', '5', { state: 'interrupted' }),
     s('done*', 'p1', '6', { state: 'completed' }),
-    s('done-read', 'p1', '7', { state: 'completed' }),
-    s('helpers*', 'p1', '8', { state: 'completed', subagents_running: 1 }),
     s('work', 'p1', '9', { state: 'working' }),
-    s('stopped*', 'p1', '10', { state: 'cancelled' }),
   ];
-  assert.deepEqual(list.map((t) => groupOf(t, unread)), ['you', 'you', 'you', 'idle', 'you', 'review', 'idle', 'working', 'working', 'idle']);
-  const g = commandGroups(list, unread);
-  // Latest change first; Working keeps creation order so busy rows hold still.
-  assert.deepEqual(g.you.map((t) => t.id), ['broke*', 'failed*', 'pending', 'ask']);
-  assert.deepEqual(g.working.map((t) => t.id), ['work', 'helpers*']);
+  assert.deepEqual(list.filter((t) => needsYouNow(t, unread)).map((t) => t.id), ['ask', 'pending', 'failed*', 'broke*']);
   assert.equal(needsYouCount(list, unread), 4);
   assert.equal(needsYouCount([s('x*', 'p1', '1', { state: 'failed', stage: 'settled' })], unread), 0);
+});
+
+test('the Task list keeps creation order whatever the state', async () => {
+  const { sidebarTasks } = await import('../src/lib/tasks.ts');
+  const projects = [{ id: 'p1', name: 'P', dir: '/p' }];
+  const list = [
+    s('old-asks', 'p1', '2026-10-05T08:00:00Z', { state: 'awaiting_answer', updated_at: '2026-10-05T12:00:00Z' }),
+    s('new-idle', 'p1', '2026-10-05T10:00:00Z', { state: 'completed', updated_at: '2026-10-05T10:00:00Z' }),
+    s('mid-works', 'p1', '2026-10-05T09:00:00Z', { state: 'working', updated_at: '2026-10-05T11:00:00Z' }),
+  ];
+  assert.deepEqual(sidebarTasks(projects, list, null).map((t) => t.id), ['new-idle', 'mid-works', 'old-asks']);
 });
 
 test('a Task row says in plain words what it needs or how it stands', async () => {

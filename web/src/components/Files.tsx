@@ -217,7 +217,7 @@ export default function FilesSheet({ session, inline, open, onClose, onClosed }:
             <X />
           </Button>
         </PanelHeader>
-        <ul ref={tree} aria-label="Project files" className={cn('overflow-y-auto p-1', shown ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1')}>{rows('', 0)}</ul>
+        <ul ref={tree} aria-label="Project files" className={cn('overflow-y-auto overflow-x-hidden p-1', shown ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1')}>{rows('', 0)}</ul>
         {shown && <>
           <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
           <PreviewContext.Provider value={openHere}>
@@ -258,7 +258,7 @@ function FileView({ sessionId, workdir, shown: { path, file, error } }: Readonly
     </>;
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-3">
       <div className="flex items-start gap-1">
         <p className="min-w-0 flex-1 pt-1 text-caption text-body [overflow-wrap:anywhere]">
           {path}{file?.size !== undefined && <span className="text-muted"> · {formatSize(file.size)}</span>}

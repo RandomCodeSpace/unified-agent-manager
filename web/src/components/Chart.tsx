@@ -62,7 +62,7 @@ function RowsTable({ data, title }: Readonly<{ data: ChartTable; title: string }
 function ChartData({ chart }: Readonly<{ chart: ChartRows }>) {
   return (
     // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled data region accepts keyboard scrolling.
-    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-auto px-5">
+    <div role="region" aria-label={`Data for ${chart.title}`} tabIndex={0} className="max-h-80 overflow-y-auto overflow-x-hidden px-5">
       <pre className="font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{JSON.stringify(chart.options, null, 2)}</pre>
     </div>
   );
@@ -104,7 +104,7 @@ function PinButton({ sessionId, callId, chart, onPinned }: Readonly<{ sessionId:
         {chart.command ? (
           <>
             <Popover.Description>Refresh runs this command again in the project folder, with no agent and no model call:</Popover.Description>
-            <pre translate="no" className="max-h-60 overflow-auto rounded-xs bg-code-bg px-2 py-1 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{chart.command}</pre>
+            <pre translate="no" className="max-h-60 overflow-y-auto overflow-x-hidden rounded-xs bg-code-bg px-2 py-1 font-mono text-code-sm whitespace-pre-wrap text-ink [overflow-wrap:anywhere]">{chart.command}</pre>
           </>
         ) : (
           <Popover.Description>{chart.kind === 'echarts' ? 'The agent supplied this chart’s data' : `The agent gave these ${chart.labels.length} rows itself`}, so the pinned chart is a snapshot: it has no command and does not refresh.</Popover.Description>
@@ -333,7 +333,7 @@ export function PinnedChartsPanel({ project, inline, open, onClose, onClosed }: 
         </Button>
       </PanelHeader>
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      <div role="region" aria-label={`Charts pinned to ${project.name}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain px-3 pt-1 pb-4">
+      <div role="region" aria-label={`Charts pinned to ${project.name}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pt-1 pb-4">
         {error && <Note tone="error" role="alert">Could not load the pinned charts: {error}</Note>}
         {!charts && !error && <Skeleton label="Loading the pinned charts…" rows={4} />}
         {charts?.length === 0 && <Note>No charts are pinned to {project.name}. Pin one from a chart an agent drew in a task.</Note>}

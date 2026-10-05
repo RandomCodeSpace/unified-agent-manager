@@ -309,7 +309,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
           aria-busy={loading || undefined}
           aria-activedescendant={selIndex >= 0 ? `${id}-opt-${selIndex}` : undefined}
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto p-1 focus-visible:-outline-offset-2"
+          className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-1 focus-visible:-outline-offset-2"
           onKeyDown={onListKey}
         >
           {entries.map((e, i) => {

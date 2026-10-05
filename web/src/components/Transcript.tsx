@@ -160,8 +160,9 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
       const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
       const spawned = reply?.subagents ?? NO_SUBAGENTS;
-      // The live card shows every one of them: its chip waits until the card leaves.
-      const covered = !!(liveCard && liveIds && reply && reply.calls.length === spawned.length && spawned.every((s) => liveIds.has(s.id)));
+      // The live card shows every one of them: its chip waits until the card leaves. Every call has spawned one
+      // the card shows (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
+      const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
       out.push(
         <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
           {(last && working) || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}

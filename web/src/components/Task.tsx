@@ -666,7 +666,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
+  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -923,7 +923,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
         <ProjectBadge badge={project.badge} className="mr-0.5" />
         <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">
           <NewTaskIntro project={project} />
         </div>

@@ -15,7 +15,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type Works
 import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
@@ -722,12 +722,13 @@ export default function App() {
   else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
   else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}`;
   // Written when the view changes, never over a fragment the user just navigated to (its event may come
-  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it.
+  // after another render). Checked after every render, so the flag a navigation set is spent on the render that shows it:
+  // an earlier render's effect that lands after the click (a blur the press caused) leaves it alone.
   const writtenHash = useRef<string | null>(null);
   useEffect(() => {
+    if (writtenHash.current === viewHash) return;
     const push = pushView.current;
     pushView.current = false;
-    if (writtenHash.current === viewHash) return;
     writtenHash.current = viewHash;
     if (window.location.hash === viewHash) return;
     const url = `${window.location.pathname}${window.location.search}${viewHash}`;
@@ -799,10 +800,10 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth, openNewTask]);
 
-  // Alt+J / Alt+K open the next / previous Task in the sidebar's Needs you group, wrapping. Not in the terminal (its keys are the
+  // Alt+J / Alt+K open the next / previous Task among the sidebar's Tasks that need the user, in list order, wrapping. Not in the terminal (its keys are the
   // shell's), a menu or a dialog, nor in a text field where the key types a character (macOS Option+J is "∆").
   const needsYouIds = useMemo(
-    () => commandGroups(sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s)), hasNews).you.map((s) => s.id),
+    () => sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s) && needsYouNow(s, hasNews)).map((s) => s.id),
     [state.projects, state.sessions, filter, hasNews],
   );
   const selectedId = state.selectedId;
@@ -1178,10 +1179,6 @@ export default function App() {
             {narrow && (
               <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
-                {/* On the backdrop's strip beside the drawer, a 44px target. */}
-                <Button size="icon" aria-label="Close sidebar" className="absolute top-[calc(env(safe-area-inset-top)+2px)] left-full size-11 text-on-primary hover:bg-on-primary/15 active:bg-on-primary/25" onClick={() => setDrawerOpen(false)}>
-                  <X />
-                </Button>
               </Sheet>
             )}
             <main tabIndex={-1} className="relative flex min-h-0 min-w-0 flex-col bg-canvas outline-hidden">

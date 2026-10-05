@@ -80,9 +80,11 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
 }
 
 /** One branch-named button always opens Changes, with its evidence in the same panel. */
-export function ChangesButton({ branch, label, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
+export function ChangesButton({ branch, label, compact, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
   branch?: string;
   label: boolean;
+  /** A narrower header: the branch truncates sooner. */
+  compact?: boolean;
   sheetOpen: boolean;
   changes: Changes | null;
   evidenceAvailable: boolean;
@@ -93,7 +95,7 @@ export function ChangesButton({ branch, label, sheetOpen, changes, evidenceAvail
   return (
     <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${branch ? ` on branch ${branch}` : ''}${fileCount === null ? '' : `, ${fileCount} files`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} title={`Changes${branch ? ` · ${branch}` : ''}`} onClick={onOpen}>
       <GitBranch aria-hidden="true" />
-      {label && <span className="max-w-40 truncate">{branch ?? 'Changes'}</span>}
+      {label && <span className={cn('truncate', compact ? 'max-w-24' : 'max-w-40')}>{branch ?? 'Changes'}</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
       <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', needsReview ? 'bg-warning animate-pulse-dot' : 'bg-faint')} />
     </Button>
@@ -123,7 +125,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
     read({ id: c.item_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setOutputError(describeError(e)));
   }
   return (
-    <section aria-label="Finished — check the evidence" className="max-h-[35%] shrink-0 overflow-y-auto overscroll-contain border-b border-hairline px-3 py-2">
+    <section aria-label="Finished — check the evidence" className="max-h-[35%] shrink-0 overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
       <details open>
         <summary className="cursor-pointer text-ui font-medium text-ink">Finished — check the evidence</summary>
         <div className="flex flex-col gap-3 pt-2">
@@ -162,7 +164,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
           {files.length > 0 && (
             <div className="flex flex-col gap-1">
               <h3 className="text-eyebrow text-muted uppercase">Changed in this turn</h3>
-              <ul className="flex max-h-60 flex-col overflow-y-auto overscroll-contain">
+              <ul className="flex max-h-60 flex-col overflow-y-auto overflow-x-hidden overscroll-contain">
                 {files.map((f) => {
                   const row = (
                     <>

@@ -289,30 +289,39 @@
     color: var(--color-muted);
     opacity: 1;
   }
-  /* Scrollbars: thin, overlay-style (no track), the thumb tinted from the ladder. Chromium and WebKit
-     take the pseudo-elements; the standard properties would switch those off, so they are Firefox's only. */
+  /* Scrollbars: thin, with no track or buttons; a faint thumb (`hairline`) that darkens to `hairline-strong`
+     while the pointer is over the scroller or focus is in it (where the browser repaints for it), and over the
+     thumb itself. Only the colour changes, so nothing moves. Chromium and
+     WebKit take the pseudo-elements (the standard properties would switch those off and draw arrow buttons), so
+     those are Firefox's only. iOS draws its own overlay bars while scrolling. Nothing scrolls sideways
+     (DESIGN.md Scrolling). */
   @supports not selector(::-webkit-scrollbar) {
     * {
       scrollbar-width: thin;
+      scrollbar-color: var(--color-hairline) transparent;
+    }
+    :where(*:hover, *:focus-within) {
       scrollbar-color: var(--color-hairline-strong) transparent;
     }
   }
   ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
   }
   ::-webkit-scrollbar-track,
   ::-webkit-scrollbar-corner {
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
+    border: 2px solid transparent;
     border-radius: var(--radius-full);
-    background: var(--color-hairline-strong);
+    background: var(--color-hairline);
     background-clip: content-box;
   }
+  :hover::-webkit-scrollbar-thumb,
+  :focus-within::-webkit-scrollbar-thumb,
   ::-webkit-scrollbar-thumb:hover {
-    background-color: var(--color-faint);
+    background-color: var(--color-hairline-strong);
   }
   summary::-webkit-details-marker {
     display: none;
@@ -431,6 +440,54 @@
   .pane-header[data-scrolled]::after {
     opacity: 1;
   }
+  /* Floating panels (components/ui/panel.tsx): the head sits on the panel's surface with no rule; once the
+     body scrolls beneath it, `data-scrolled` fades in (opacity) a short fade below its edge. */
+  .panel-head {
+    position: relative;
+    z-index: 10;
+    background: var(--color-raised);
+  }
+  .panel-head::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 20px;
+    pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(20, 28, 45, 0.05), transparent 60%),
+      linear-gradient(to bottom, var(--color-raised), transparent);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+  }
+  .panel-head[data-scrolled]::after {
+    opacity: 1;
+  }
+  /* A panel's foot: a fading rule above it. */
+  .panel-foot {
+    position: relative;
+  }
+  .panel-foot::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+  /* A collapsed long text: the last lines fade into the surface beneath (an overlay, not a mask). */
+  .clamp-fade::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 32px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--clamp-surface, var(--color-raised)));
+  }
   /* The composer's dock overlaps the transcript's foot: one gradient (canvas from the composer up to
      transparent) lets the conversation fade out beneath the floating control plane. */
   .transcript-dock {
@@ -526,7 +583,10 @@
     margin: 10px 0;
     padding: 10px 12px;
     max-height: 480px;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     border-radius: var(--radius-md);
     background: var(--color-code-bg);
     box-shadow: var(--shadow-well);
@@ -576,7 +636,6 @@
     overflow-wrap: anywhere;
   }
   .data-table thead th {
-    white-space: nowrap;
     position: sticky;
     top: 0;
     z-index: 1;
@@ -671,12 +730,9 @@
     white-space: pre;
     vertical-align: top;
   }
-  /* The gutter stays in view while a long line scrolls sideways: both number columns are as wide as the
-     longest number (`--num`, set by the table) and the second also holds the comment glyph (12px + 6px gap),
-     so each sticks at a known offset, and the sign sticks after them. */
+  /* Both number columns are as wide as the longest number (`--num`, set by the table); the second also
+     holds the comment glyph (12px + 6px gap). */
   .diff td.num {
-    position: sticky;
-    left: 0;
     box-sizing: content-box;
     width: var(--num, 4ch);
     min-width: var(--num, 4ch);
@@ -688,23 +744,11 @@
     user-select: none;
   }
   .diff td.num + td.num {
-    left: calc(var(--num, 4ch) + 14px);
     width: calc(var(--num, 4ch) + 18px);
     min-width: calc(var(--num, 4ch) + 18px);
   }
-  .diff:not(.wrap) .sign {
-    position: sticky;
-    left: calc(2 * var(--num, 4ch) + 46px);
-    background: var(--color-code-bg);
-  }
-  .diff tr.add .sign {
-    background: var(--color-diff-add-bg);
-  }
-  .diff tr.del .sign {
-    background: var(--color-diff-del-bg);
-  }
-  /* Wrap lines (the diff's own switch, wrapped by default on a phone): the code breaks anywhere, so no line widens the table. */
-  .diff.wrap td.code-cell {
+  /* Code wraps and breaks anywhere, so no line widens the table: nothing on screen scrolls sideways. */
+  .diff td.code-cell {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

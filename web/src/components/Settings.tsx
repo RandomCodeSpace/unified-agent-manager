@@ -299,7 +299,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
           </div>
           {loadError && <Note tone="warn" role="alert">{loadError}</Note>}
           {draft.ids.length > 0 && (
-            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto rounded-sm bg-raised px-2 py-1 shadow-well">
+            <fieldset aria-label="Models to offer" className="flex max-h-64 flex-col overflow-y-auto overflow-x-hidden rounded-sm bg-raised px-2 py-1 shadow-well">
               {matchingIds(draft.ids, draft.query).map((id) => (
                 <div key={id} className="flex min-h-7 items-center gap-3 text-ui text-ink">
                   <label className="flex min-w-0 flex-1 items-center gap-2">
@@ -595,9 +595,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Button>
         </Tip>
       </header>
-      {/* Below md the tabs scroll sideways: a gradient over the trailing edge (a pseudo-element, no mask) says there is more. */}
-      <div className="relative min-w-0 shrink-0 after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-10 after:bg-linear-to-l after:from-canvas after:to-transparent after:content-[''] md:after:hidden">
-        <nav aria-label="Settings sections" className="flex min-w-0 gap-1 overflow-x-auto py-2 pr-10 pl-4 md:flex-wrap md:overflow-visible md:px-6">
+      {/* The tabs wrap onto more rows when narrow; nothing scrolls sideways. */}
+      <div className="relative min-w-0 shrink-0">
+        <nav aria-label="Settings sections" className="flex min-w-0 flex-wrap gap-1 py-2 pl-4 pr-4 md:px-6">
           {SETTINGS_SECTIONS.map((item) => (
             <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
               {item.label}
@@ -605,7 +605,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           ))}
         </nav>
       </div>
-      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (

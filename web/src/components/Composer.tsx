@@ -1155,7 +1155,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     resultBody = (
       <>
         <p className="text-caption text-muted">{commandResult.title}</p>
-        <div className="max-h-40 overflow-y-auto">
+        <div className="max-h-40 overflow-y-auto overflow-x-hidden">
           {commandResult.options.map((choice) => <Button key={choice.name} size="sm" variant="subtle" disabled={!!busy || locked} className="h-auto min-h-8 w-full justify-start whitespace-normal text-left pointer-coarse:min-h-11" onClick={() => {
             const next = `/${commandResult.command} ${choice.name} `;
             updateText(next, next.length); pendingCaret.current = next.length; dismissResult(); textarea.current?.focus();

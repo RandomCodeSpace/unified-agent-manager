@@ -198,7 +198,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
       </div>
     );
   } else if (ui.view === 'tree') {
-    body = <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><TreeView readOnly={key === 'unassigned'} /></div>;
+    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} /></div>;
   } else if (ui.view === 'board') {
     body = <BoardView />;
   } else {
@@ -337,7 +337,7 @@ function InboxPanel({ inline, open, onClose, onClosed }: Readonly<{ inline: bool
           <X />
         </Button>
       </PanelHeader>
-      <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4', narrow && 'pt-1')}>
+      <div className={cn('min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pb-4', narrow && 'pt-1')}>
         <InboxList />
       </div>
     </SidePanel>

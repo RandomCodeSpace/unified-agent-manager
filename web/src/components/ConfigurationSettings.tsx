@@ -135,11 +135,11 @@ function ConfigurationViewer({ file, kind, draftOpen, onClose }: Readonly<{ file
       {!file.content && <Note>{emptyText}</Note>}
       {view === 'source' || kind === 'hooks' ?
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
-        <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-auto whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{file.content}</pre> : <>
+        <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{file.content}</pre> : <>
           {frontmatter && <div className="min-w-0">
             <p className="mb-1 text-ui font-medium">Configuration</p>
             {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-            <pre role="region" aria-label={`${file.name} configuration`} tabIndex={0} className="max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{frontmatter[1]}</pre>
+            <pre role="region" aria-label={`${file.name} configuration`} tabIndex={0} className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{frontmatter[1]}</pre>
           </div>}
           {body.trim() && <Markdown text={body} className="min-w-0 text-chat text-ink" />}
         </>}
@@ -339,7 +339,7 @@ function SkillInstaller({ projectId, allowed, locked, onInstalled, onBusy }: Rea
       {busy && <Note role="status">Running npx skills on the server…</Note>}
       {error && <Note tone="error" role="alert">{error}</Note>}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-      {output && <pre role="region" aria-label="Skill installer output" aria-live="polite" tabIndex={0} className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-code-sm">{output}</pre>}
+      {output && <pre role="region" aria-label="Skill installer output" aria-live="polite" tabIndex={0} className="max-h-64 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-words text-code-sm">{output}</pre>}
     </div>
   </details>;
 }

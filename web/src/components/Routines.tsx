@@ -173,7 +173,7 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
           </Button>
         </Tip>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
           <p className="text-caption text-muted">Times follow the clock of the host uam runs on. A run is skipped while the previous one is still running.</p>

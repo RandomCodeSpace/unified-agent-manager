@@ -55,6 +55,25 @@ export function quotaPace(quota: Quota | null, now: number, stale = false): {
   return { ...result, daysAtPace, tone: 'healthy', label: 'On pace' };
 }
 
+/**
+ * Copilot's calendar-month allowance as the Usage chart draws it, in shares of the allowance (0…1):
+ * how far through the month it is (`elapsed`), how much is used, and, at the average pace so far,
+ * how much will be by the reset (`projected`, may pass 1) and when it runs out first (`runsOut`,
+ * ms). Null where the month is not known: other providers, a reset off the month's first day, the
+ * unlimited and the unreported.
+ */
+export function quotaBurn(quota: Quota | null, now: number): { start: number; reset: number; elapsed: number; used: number; projected: number; runsOut: number | null } | null {
+  if (!quota || quota.unlimited || quota.provider !== 'copilot' || !Number.isFinite(quota.remaining_percent)) return null;
+  const date = new Date(now);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+  if ((quota.reset_at ? Date.parse(quota.reset_at) : next) !== next || now <= start) return null;
+  const elapsed = (now - start) / (next - start);
+  const used = (100 - Math.max(0, Math.min(100, quota.remaining_percent))) / 100;
+  const projected = used / elapsed;
+  return { start, reset: next, elapsed, used, projected, runsOut: projected > 1 ? start + (next - start) * (elapsed / used) : null };
+}
+
 /** First limited account allowance, otherwise the first reported allowance. */
 export function accountQuota(quotas: readonly Quota[] | undefined): Quota | null {
   return quotas?.find((q) => !q.unlimited) ?? quotas?.[0] ?? null;

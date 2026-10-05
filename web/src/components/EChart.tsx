@@ -182,7 +182,7 @@ export function EChart({ option, width, height, className, label, zoomControls =
     </>
   );
   const series = externalControls && entries.length > 0 && (
-    <ul aria-label="Series" className="flex max-h-48 flex-col overflow-y-auto pt-1 text-caption text-body before:pb-1 before:text-muted before:content-['Series']">
+    <ul aria-label="Series" className="flex max-h-48 flex-col overflow-y-auto overflow-x-hidden pt-1 text-caption text-body before:pb-1 before:text-muted before:content-['Series']">
       {entries.map((entry) => (
         <li key={entry.name}>
           <button type="button" aria-pressed={entry.shown} aria-label={`Show ${entry.name} series`} className={cn('flex min-h-7 w-full items-center rounded-xs px-2 text-left [overflow-wrap:anywhere] pointer-coarse:min-h-11', !entry.shown && 'text-muted line-through')} onClick={() => chart.current?.dispatchAction({ type: 'legendToggleSelect', name: entry.name })}>{entry.name}</button>

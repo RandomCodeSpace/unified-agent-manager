@@ -243,7 +243,7 @@ function FilterList({ projects, filter, input, onPick, onEdit, onPlan, onRoutine
           onKeyDown={onKeyDown}
         />
       </label>
-      <div ref={list} role="listbox" id={`${id}-list`} aria-label="Projects" className="max-h-[min(60dvh,360px)] overflow-y-auto overscroll-contain pt-1">
+      <div ref={list} role="listbox" id={`${id}-list`} aria-label="Projects" className="max-h-[min(60dvh,360px)] overflow-y-auto overflow-x-hidden overscroll-contain pt-1">
         {rows.map((row, i) => {
           const p = row.project;
           const current = row.id === filter;
@@ -423,7 +423,7 @@ function PaletteBody({ projects, start, input, onClose, onPick, onAddProject }: 
           }}
         />
       </div>
-      <div className="max-h-[min(60dvh,420px)] overflow-y-auto overscroll-contain p-1">
+      <div className="max-h-[min(60dvh,420px)] overflow-y-auto overflow-x-hidden overscroll-contain p-1">
         <p id={`${id}-label`} className={labelClass}>
           Projects
         </p>

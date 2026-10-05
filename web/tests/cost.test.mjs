@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, accountQuota } from '../src/lib/cost.ts';
+import { estimateTurnCost, modelCostLine, priceTier, providerQuota, ringFraction, ringTone, quotaPace, quotaBurn, accountQuota } from '../src/lib/cost.ts';
 
 test('cost is unknown without reported input prices or context', () => {
   assert.equal(estimateTurnCost({}, { used: 31000, limit: 200000 }), null);
@@ -79,4 +79,26 @@ test('the model cost line names its unit and what its discount applies to', () =
   assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }), 'High cost · 10 in, 50 out credits per 1M tokens');
   assert.equal(modelCostLine({ discount_percent: 10 }), '10% off usage');
   assert.equal(modelCostLine({}), '');
+});
+
+test('the allowance month: used so far, projected to the reset at the average pace, and when it runs out', () => {
+  const quota = { provider: 'copilot', type: 'premium_interactions', used: 300, entitlement: 1500, unlimited: false, remaining_percent: 80, overage: 0, reset_at: '2026-11-01T00:00:00Z' };
+  // A third through October (31 days): 20% used projects to about 60%.
+  const now = Date.parse('2026-10-11T08:00:00Z');
+  const burn = quotaBurn(quota, now);
+  assert.equal(burn.start, Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(burn.reset, Date.parse('2026-11-01T00:00:00Z'));
+  assert.ok(Math.abs(burn.elapsed - 1 / 3) < 0.01);
+  assert.equal(burn.used, 0.2);
+  assert.ok(Math.abs(burn.projected - 0.6) < 0.02);
+  assert.equal(burn.runsOut, null);
+  // Spending fast runs out before the reset: half used a fifth of the way in runs out 40% of the way.
+  const fast = quotaBurn({ ...quota, remaining_percent: 50 }, Date.parse('2026-10-07T04:48:00Z'));
+  assert.ok(fast.projected > 1);
+  assert.ok(Math.abs((fast.runsOut - fast.start) / (fast.reset - fast.start) - 0.4) < 0.01);
+  // Nothing to draw without a known calendar month.
+  assert.equal(quotaBurn({ ...quota, provider: 'claude' }, now), null);
+  assert.equal(quotaBurn({ ...quota, unlimited: true }, now), null);
+  assert.equal(quotaBurn({ ...quota, reset_at: '2026-10-20T00:00:00Z' }, now), null);
+  assert.equal(quotaBurn(null, now), null);
 });
