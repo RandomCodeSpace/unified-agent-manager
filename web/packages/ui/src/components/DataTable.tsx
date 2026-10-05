@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
-import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -125,7 +125,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
 });
 
 type ElementProps = { children?: ReactNode; style?: CSSProperties; alt?: string };
-const elements = (children: ReactNode) => Children.toArray(children).filter(isValidElement<ElementProps>);
+const elements = (children: ReactNode) => Children.toArray(children).filter((child): child is ReactElement<ElementProps> => isValidElement<ElementProps>(child));
 function cellText(node: ReactNode): string {
   return Children.toArray(node).map(child => isValidElement<ElementProps>(child) ? child.props.alt ?? cellText(child.props.children) : String(child)).join('');
 }
