@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -21,6 +23,8 @@ type accountProvider struct {
 	signedIn bool
 	envVar   string
 	tokens   []string
+	// login and source are the account signed in; "octo" and stored when empty.
+	login, source string
 }
 
 func newAccountProvider(signedIn bool) *accountProvider {
@@ -51,7 +55,7 @@ func (p *accountProvider) account() agentapi.Account {
 	if !p.signedIn {
 		return agentapi.Account{EnvVar: p.envVar, Message: "Not authenticated"}
 	}
-	return agentapi.Account{SignedIn: true, Login: "octo", Host: "https://github.com", Source: agentapi.AccountStored, EnvVar: p.envVar}
+	return agentapi.Account{SignedIn: true, Login: cmp.Or(p.login, "octo"), Host: "https://github.com", Source: cmp.Or(p.source, agentapi.AccountStored), EnvVar: p.envVar}
 }
 
 func (p *accountProvider) Account(context.Context) (agentapi.Account, error) {
@@ -67,10 +71,15 @@ func (p *accountProvider) SignIn(_ context.Context, token string) (agentapi.Acco
 	if p.envVar != "" {
 		return agentapi.Account{}, fmt.Errorf("%w: %s", agentapi.ErrEnvAccount, p.envVar)
 	}
-	if token != "good" {
+	switch token {
+	case "good":
+		p.login = "octo"
+	case "other":
+		p.login = "mallory"
+	default:
 		return agentapi.Account{}, fmt.Errorf("%w: Failed to fetch Copilot user info: 401 Unauthorized", agentapi.ErrSignInRejected)
 	}
-	p.signedIn = true
+	p.signedIn, p.source = true, agentapi.AccountStored
 	return p.account(), nil
 }
 
@@ -316,5 +325,136 @@ func TestDeviceSignInNeedsTheCapability(t *testing.T) {
 	m := startManager(t, openTestStore(t), newAccountProvider(false))
 	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); statusOf(err) != http.StatusNotFound {
 		t.Fatalf("StartDeviceSignIn without the capability = %v", err)
+	}
+}
+
+// switchAccount signs the fake in as login from source, as a sign-in made
+// around uam would (a terminal `copilot login`, an environment token).
+func (p *accountProvider) switchAccount(login, source string) {
+	p.mu.Lock()
+	p.signedIn, p.login, p.source = true, login, source
+	p.mu.Unlock()
+}
+
+func linkedLogin(t *testing.T, m *Manager) string {
+	t.Helper()
+	cfg, err := m.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.WebAccountLinks["fake"].Login
+}
+
+// The first sign-in links its account; a sign-in as another account is
+// refused and undone, so it never takes effect.
+func TestFirstSignInLinksAndAnotherAccountIsRefused(t *testing.T) {
+	prov := newAccountProvider(false)
+	m := startManager(t, openTestStore(t), prov)
+	if _, err := m.SignIn(context.Background(), "fake", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if got := linkedLogin(t, m); got != "octo" {
+		t.Fatalf("linked %q after the first sign-in", got)
+	}
+	_, err := m.SignIn(context.Background(), "fake", "other")
+	if statusOf(err) != http.StatusConflict || errCode(err) != codeAccountNotLinked || !strings.Contains(err.Error(), "linked to Fake fake account octo") {
+		t.Fatalf("SignIn as another account = %v (code %q)", err, errCode(err))
+	}
+	if acct, _ := prov.Account(context.Background()); acct.SignedIn {
+		t.Fatalf("the refused sign-in stayed: %+v", acct)
+	}
+	if got := linkedLogin(t, m); got != "octo" {
+		t.Fatalf("linked %q after a refused sign-in", got)
+	}
+	// Signed out but linked, only the linked account may sign in.
+	if _, err := m.SignIn(context.Background(), "fake", "other"); errCode(err) != codeAccountNotLinked {
+		t.Fatalf("SignIn as another account while signed out = %v", err)
+	}
+	if _, err := m.SignIn(context.Background(), "fake", "good"); err != nil {
+		t.Fatalf("SignIn as the linked account = %v", err)
+	}
+}
+
+// A sign-in made around uam is caught before the next Task: a stored one is
+// signed out again; one uam cannot sign out blocks the provider until fixed.
+func TestAnotherAccountSignedInAroundUAMIsUndoneOrBlocks(t *testing.T) {
+	prov := newAccountProvider(true)
+	m := startManager(t, openTestStore(t), prov)
+	if got := linkedLogin(t, m); got != "octo" {
+		t.Fatalf("a server signed in at start linked %q", got)
+	}
+	project := addProject(t, m, t.TempDir())
+	later := time.Now()
+	advance := func() { later = later.Add(time.Minute); m.now = func() time.Time { return later } }
+
+	prov.switchAccount("mallory", agentapi.AccountStored)
+	advance()
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "a"}); errCode(err) != codeSignedOut {
+		t.Fatalf("Create after a stored sign-in as another account = %v (code %q)", err, errCode(err))
+	}
+	if acct, _ := prov.Account(context.Background()); acct.SignedIn {
+		t.Fatalf("the other account's stored sign-in stayed: %+v", acct)
+	}
+
+	prov.switchAccount("mallory", agentapi.AccountEnv)
+	advance()
+	_, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "a"})
+	if errCode(err) != codeAccountNotLinked || !strings.Contains(err.Error(), "signed in as mallory, but this server is linked to octo") {
+		t.Fatalf("Create with another account from the environment = %v (code %q)", err, errCode(err))
+	}
+	if info := providerInfo(t, m, "fake"); info.Available || !info.AccountMismatch || info.SignedOut {
+		t.Fatalf("provider with another account: %+v", info)
+	}
+
+	prov.switchAccount("octo", agentapi.AccountStored)
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "a"}); err != nil {
+		t.Fatalf("Create once back on the linked account = %v", err)
+	}
+	if info := providerInfo(t, m, "fake"); !info.Available || info.AccountMismatch {
+		t.Fatalf("provider back on the linked account: %+v", info)
+	}
+}
+
+// Unlinking signs out a stored sign-in and lets the next sign-in link its
+// account.
+func TestUnlinkLetsAnotherAccountSignIn(t *testing.T) {
+	prov := newAccountProvider(true)
+	m := startManager(t, openTestStore(t), prov)
+	acct, err := m.UnlinkAccount(context.Background(), "fake")
+	if err != nil || acct.SignedIn {
+		t.Fatalf("UnlinkAccount = %+v, %v", acct, err)
+	}
+	if got := linkedLogin(t, m); got != "" {
+		t.Fatalf("still linked to %q", got)
+	}
+	if _, err := m.SignIn(context.Background(), "fake", "other"); err != nil {
+		t.Fatalf("SignIn after unlinking = %v", err)
+	}
+	if got := linkedLogin(t, m); got != "mallory" {
+		t.Fatalf("linked %q after signing in again", got)
+	}
+}
+
+func TestDeviceSignInAsAnotherAccountFails(t *testing.T) {
+	prov := newDeviceProvider()
+	m := startManager(t, openTestStore(t), prov)
+	if _, err := m.SignIn(context.Background(), "fake", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SignOut(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	prov.mu.Lock()
+	prov.login = "mallory"
+	prov.mu.Unlock()
+	if _, err := m.StartDeviceSignIn(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	prov.result <- nil
+	if d := waitDevice(t, m, deviceFailed); !strings.Contains(d.Error, "linked to Fake fake account octo") {
+		t.Fatalf("device sign-in as another account = %+v", d)
+	}
+	if acct, _ := prov.Account(context.Background()); acct.SignedIn {
+		t.Fatalf("the refused device sign-in stayed: %+v", acct)
 	}
 }

@@ -184,6 +184,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/providers/{provider}/account/device", s.handleStartDeviceSignIn)
 	mux.HandleFunc("GET /api/providers/{provider}/account/device", s.handleDeviceSignIn)
 	mux.HandleFunc("DELETE /api/providers/{provider}/account/device", s.handleCancelDeviceSignIn)
+	mux.HandleFunc("DELETE /api/providers/{provider}/account/link", s.handleUnlinkAccount)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
 	mux.HandleFunc("GET /api/utility", s.handleUtility)
 	mux.HandleFunc("GET /api/push", s.handlePushKey)

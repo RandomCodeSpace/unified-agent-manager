@@ -76,6 +76,9 @@ type Config struct {
 	WebSettings WebSettings `json:"web_settings,omitzero"`
 	// WebRoutines holds the web interface's routines, keyed by routine ID.
 	WebRoutines map[string]WebRoutine `json:"web_routines,omitempty"`
+	// WebAccountLinks holds the one account each provider is linked to,
+	// keyed by provider name. Only the service sets it; no settings PATCH.
+	WebAccountLinks map[string]AccountLink `json:"web_account_links,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -88,6 +91,15 @@ type Config struct {
 	ReadOnly bool
 }
 
+// AccountLink is the account a provider's runtime must be signed in as: the
+// first sign-in links it, and a sign-in as another account is refused until
+// it is unlinked.
+type AccountLink struct {
+	Login    string    `json:"login"`
+	Host     string    `json:"host,omitempty"`
+	LinkedAt time.Time `json:"linked_at"`
+}
+
 // ErrReadOnly is returned by Save/Update when asked to write a config loaded
 // from a newer on-disk schema. Refusing the write prevents an older binary
 // from clobbering fields it does not understand (F33).
@@ -97,15 +109,16 @@ var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-o
 // in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
 // without recursing.
 type configAlias struct {
-	SchemaVersion  int                      `json:"schema_version"`
-	DefaultAgent   string                   `json:"default_agent"`
-	DefaultProfile string                   `json:"default_profile"`
-	Profiles       map[string]Profile       `json:"profiles"`
-	Sessions       map[string]SessionRecord `json:"sessions"`
-	UI             UISettings               `json:"ui"`
-	WebProjects    map[string]WebProject    `json:"web_projects,omitempty"`
-	WebSettings    WebSettings              `json:"web_settings,omitzero"`
-	WebRoutines    map[string]WebRoutine    `json:"web_routines,omitempty"`
+	SchemaVersion   int                      `json:"schema_version"`
+	DefaultAgent    string                   `json:"default_agent"`
+	DefaultProfile  string                   `json:"default_profile"`
+	Profiles        map[string]Profile       `json:"profiles"`
+	Sessions        map[string]SessionRecord `json:"sessions"`
+	UI              UISettings               `json:"ui"`
+	WebProjects     map[string]WebProject    `json:"web_projects,omitempty"`
+	WebSettings     WebSettings              `json:"web_settings,omitzero"`
+	WebRoutines     map[string]WebRoutine    `json:"web_routines,omitempty"`
+	WebAccountLinks map[string]AccountLink   `json:"web_account_links,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -120,6 +133,7 @@ var knownConfigFields = map[string]struct{}{
 	"web_projects":                {},
 	"web_settings":                {},
 	"web_routines":                {},
+	"web_account_links":           {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -146,15 +160,16 @@ var knownConfigFields = map[string]struct{}{
 
 func (c Config) MarshalJSON() ([]byte, error) {
 	return marshalUnknownJSON(configAlias{
-		SchemaVersion:  c.SchemaVersion,
-		DefaultAgent:   c.DefaultAgent,
-		DefaultProfile: c.DefaultProfile,
-		Profiles:       c.Profiles,
-		Sessions:       c.Sessions,
-		UI:             c.UI,
-		WebProjects:    c.WebProjects,
-		WebSettings:    c.WebSettings,
-		WebRoutines:    c.WebRoutines,
+		SchemaVersion:   c.SchemaVersion,
+		DefaultAgent:    c.DefaultAgent,
+		DefaultProfile:  c.DefaultProfile,
+		Profiles:        c.Profiles,
+		Sessions:        c.Sessions,
+		UI:              c.UI,
+		WebProjects:     c.WebProjects,
+		WebSettings:     c.WebSettings,
+		WebRoutines:     c.WebRoutines,
+		WebAccountLinks: c.WebAccountLinks,
 	}, c.unknown, knownConfigFields)
 }
 
@@ -172,6 +187,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.WebProjects = alias.WebProjects
 	c.WebSettings = alias.WebSettings
 	c.WebRoutines = alias.WebRoutines
+	c.WebAccountLinks = alias.WebAccountLinks
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err

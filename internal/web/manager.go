@@ -115,14 +115,18 @@ type Manager struct {
 	fetching map[string]bool
 	projects map[string]*Project
 	settings Settings
-	sessions map[string]*webSession
-	dirty    map[string]struct{}
-	creating map[string]chan struct{}
-	epoch    string
-	seq      uint64
-	subs     map[*Subscriber]struct{}
-	closed   bool
-	now      func() time.Time
+	// links holds the account each provider is linked to (store
+	// WebAccountLinks); accountAt when each provider's account was last read.
+	links     map[string]store.AccountLink
+	accountAt map[string]time.Time
+	sessions  map[string]*webSession
+	dirty     map[string]struct{}
+	creating  map[string]chan struct{}
+	epoch     string
+	seq       uint64
+	subs      map[*Subscriber]struct{}
+	closed    bool
+	now       func() time.Time
 	// pick returns a random int in [0, n) for badge choices; tests replace
 	// it before Start.
 	pick func(n int) int
@@ -218,6 +222,8 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		store:     st,
 		epoch:     rand.Text(),
 		providers: map[string]agentapi.Provider{},
+		links:     map[string]store.AccountLink{},
+		accountAt: map[string]time.Time{},
 		ctx:       ctx,
 		cancel:    cancel,
 		wake:      make(chan struct{}, 1),
@@ -587,6 +593,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	}()
 	// The catalogs include the custom models, so providers get them first.
 	m.setCustomModels(cfg.WebSettings.CustomModels)
+	m.mu.Lock()
+	maps.Copy(m.links, cfg.WebAccountLinks)
+	m.mu.Unlock()
 	infos := m.checkProviders(ctx)
 	if needsProject(cfg) || len(badgeless(cfg.WebProjects)) > 0 {
 		now := m.now()
@@ -674,6 +683,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.wg.Add(1)
 		go m.harnessUsageLoop(usageLedger)
 		startedUsage = true
+	}
+	// A runtime signed in as another account than the linked one is caught
+	// before routines or anything else can run on it.
+	for name, info := range infos {
+		if info.Available && info.Capabilities.Account {
+			_ = m.verifyAccount(name, true)
+		}
 	}
 	m.wg.Add(4)
 	go m.persistLoop()
@@ -2406,7 +2422,11 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	if prov == nil {
 		return nil, newError(http.StatusBadRequest, msgUnknownProvider, name)
 	}
-	if info.Available {
+	if info.Available || info.AccountMismatch {
+		// The runtime may have been signed in to another account since.
+		if err := m.verifyAccount(name, info.AccountMismatch); err != nil {
+			return nil, err
+		}
 		return prov, nil
 	}
 	// Re-check so installing or signing in to a provider does not need a
@@ -2427,6 +2447,9 @@ func (m *Manager) availableProvider(name string) (agentapi.Provider, error) {
 	}
 	if err != nil {
 		return nil, newError(http.StatusConflict, "%s is unavailable: %s", prov.DisplayName(), info.Reason)
+	}
+	if err := m.verifyAccount(name, true); err != nil {
+		return nil, err
 	}
 	return prov, nil
 }
