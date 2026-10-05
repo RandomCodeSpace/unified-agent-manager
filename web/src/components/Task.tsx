@@ -666,7 +666,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
+  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>

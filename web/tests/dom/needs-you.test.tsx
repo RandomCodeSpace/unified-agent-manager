@@ -108,7 +108,7 @@ describe('the Task list', () => {
     expect(document.querySelector('[data-task-row="t17"] button[data-nav]')!.getAttribute('aria-current')).toBe('true');
   });
 
-  test('Alt+J and Alt+K walk the Needs you group and wrap; a key that types in a field is left alone', async () => {
+  test('Alt+J and Alt+K walk the Tasks that need you, in list order, and wrap; a key that types in a field is left alone', async () => {
     renderApp();
     const side = await sidebar();
     const ids = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]'))
@@ -132,7 +132,7 @@ describe('the Task list', () => {
   test('Alt+J, Alt+K and Alt+N still work while a tooltip is open', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const first = side.getByRole('list', { name: 'Unsettled tasks' }).querySelector('[data-task-row]')!.getAttribute('data-task-row');
+    const first = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'))!.getAttribute('data-task-row');
     // Base UI opens a tip on hover or keyboard focus; it is no menu or dialog.
     await user.hover(side.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
@@ -147,7 +147,7 @@ describe('the Task list', () => {
   test('Alt+J pressed the moment the Needs you rows appear opens the first of them', async () => {
     renderApp();
     // Pressed from the commit that adds the rows, before React's passive effects run.
-    const firstRow = () => document.querySelector('[aria-label="Unsettled tasks"] [data-task-row]');
+    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled tasks"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'));
     let first: string | null = null;
     const seen = new MutationObserver(() => {
       const row = first === null && firstRow();

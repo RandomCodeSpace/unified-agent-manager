@@ -80,9 +80,11 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
 }
 
 /** One branch-named button always opens Changes, with its evidence in the same panel. */
-export function ChangesButton({ branch, label, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
+export function ChangesButton({ branch, label, compact, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
   branch?: string;
   label: boolean;
+  /** A narrower header: the branch truncates sooner. */
+  compact?: boolean;
   sheetOpen: boolean;
   changes: Changes | null;
   evidenceAvailable: boolean;
@@ -93,7 +95,7 @@ export function ChangesButton({ branch, label, sheetOpen, changes, evidenceAvail
   return (
     <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${branch ? ` on branch ${branch}` : ''}${fileCount === null ? '' : `, ${fileCount} files`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} title={`Changes${branch ? ` · ${branch}` : ''}`} onClick={onOpen}>
       <GitBranch aria-hidden="true" />
-      {label && <span className="max-w-40 truncate">{branch ?? 'Changes'}</span>}
+      {label && <span className={cn('truncate', compact ? 'max-w-24' : 'max-w-40')}>{branch ?? 'Changes'}</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
       <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', needsReview ? 'bg-warning animate-pulse-dot' : 'bg-faint')} />
     </Button>

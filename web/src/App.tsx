@@ -15,7 +15,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type Works
 import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { commandGroups, cycleTask, mostRecentProject, needsYouCount, newsReader, pageTitle, placeReader, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
@@ -530,10 +530,8 @@ export default function App() {
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
   // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.
-  // `seen` is its read mark before this visit: the list keeps the open Task where that put it.
-  const [opened, setOpened] = useState<{ id: string | null; mark?: string; seen?: string }>({ id: null });
-  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined, seen: state.selectedId ? viewed[state.selectedId] : undefined });
-  const placeNews = useMemo(() => placeReader(hasNews, opened.id, opened.seen, loadedAt), [hasNews, opened.id, opened.seen, loadedAt]);
+  const [opened, setOpened] = useState<{ id: string | null; mark?: string }>({ id: null });
+  if (opened.id !== state.selectedId) setOpened({ id: state.selectedId, mark: state.selectedId ? readJSON<Record<string, string>>(LOOKED_KEY, {})[state.selectedId] ?? viewed[state.selectedId] : undefined });
 
   // Opening a Task reopens the stream: a load that lasts veils the pane with a spinner; only a disconnect that lasts is shown as one.
   const late = useLate(state.connection !== 'connected', QUIET_MS);
@@ -552,8 +550,8 @@ export default function App() {
     });
   }, [narrow]);
   const ctx = useMemo(
-    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, placeNews, settings: state.settings, usage: state.usage, refreshMeta, openUsage }),
-    [meta, metaError, state.loaded, narrow, hasNews, placeNews, state.settings, state.usage, refreshMeta, openUsage],
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: state.settings, usage: state.usage, refreshMeta, openUsage }),
+    [meta, metaError, state.loaded, narrow, hasNews, state.settings, state.usage, refreshMeta, openUsage],
   );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
@@ -801,11 +799,11 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [auth, openNewTask]);
 
-  // Alt+J / Alt+K open the next / previous Task in the sidebar's Needs you group, wrapping. Not in the terminal (its keys are the
+  // Alt+J / Alt+K open the next / previous Task among the sidebar's Tasks that need the user, in list order, wrapping. Not in the terminal (its keys are the
   // shell's), a menu or a dialog, nor in a text field where the key types a character (macOS Option+J is "∆").
   const needsYouIds = useMemo(
-    () => commandGroups(sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s)), placeNews).you.map((s) => s.id),
-    [state.projects, state.sessions, filter, placeNews],
+    () => sidebarTasks(state.projects, state.sessions, filter).filter((s) => !readOnly(s) && needsYouNow(s, hasNews)).map((s) => s.id),
+    [state.projects, state.sessions, filter, hasNews],
   );
   const selectedId = state.selectedId;
   // Read at the key press, so a press right after the rows commit (before passive effects run) sees them.

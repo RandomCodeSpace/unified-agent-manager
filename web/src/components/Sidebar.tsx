@@ -2,7 +2,7 @@ import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, Eye, FolderPlus
 import { ViewTransition, memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { commandGroups, filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus } from '../lib/tasks';
+import { filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker } from './ProjectPicker';
@@ -501,7 +501,6 @@ export const Sidebar = memo(function Sidebar({
   version?: string;
 }) {
   useMinuteTick();
-  const { placeNews } = useApp();
   const [query, setQuery] = useState('');
   const [shelves, setShelves] = useState<Record<string, boolean>>(readShelves);
   const list = useRef<HTMLDivElement>(null);
@@ -510,8 +509,8 @@ export const Sidebar = memo(function Sidebar({
   const projectMap = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const tasks = useMemo(() => sidebarTasks(projects, sessions, actions.filter, query), [projects, sessions, actions.filter, query]);
   const { active, settled, archived } = groupTasks(tasks);
-  const groups = commandGroups(active, placeNews);
-  const unsettled = [...groups.you, ...groups.review, ...groups.working, ...groups.idle];
+  // Newest first, whatever their state: a row never moves because its Task changed.
+  const unsettled = active;
   const shelfScope = chosen?.id ?? 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const archivedOpen = !!shelves[`${shelfScope}:archived`];

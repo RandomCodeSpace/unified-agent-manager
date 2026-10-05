@@ -85,8 +85,6 @@ export interface AppContextValue {
   narrow: boolean;
   /** Tasks with activity the user has not looked at yet (UI-local). */
   hasNews: (s: SessionSummary) => boolean;
-  /** `hasNews` for the list's grouping: the open Task counts as it did when it was opened, so it keeps its place. */
-  placeNews: (s: SessionSummary) => boolean;
   /** The service's settings (the send default the composer follows). */
   settings: Settings;
   usage: AccountUsage | null;
@@ -103,7 +101,6 @@ export const AppContext = createContext<AppContextValue>({
   dispatch: () => {},
   narrow: false,
   hasNews: () => false,
-  placeNews: () => false,
   settings: DEFAULT_SETTINGS,
   usage: null,
   refreshMeta: () => {},
