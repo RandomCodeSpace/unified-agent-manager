@@ -4,7 +4,7 @@ import { api, describeError, type Quota, type TokenPeriodKey, type TokenPriceCat
 import { cn } from '../lib/cn';
 import { accountQuota, quotaBurn, quotaFace, quotaLabel, quotaPace } from '../lib/cost';
 import { dateTime, timeAgo, useApp } from './common';
-import { aggregateUsageModels, estimateWithoutCache, groupUsageModels } from '../lib/token-usage';
+import { aggregateUsageModels, estimateCacheSaving, groupUsageModels } from '../lib/token-usage';
 import { Count, costText, MODEL_COLORS, ModelOverview, modelNames, ModelTable, TokenSplitValues, type UsageSort } from './UsageModels';
 import { Button } from './ui/button';
 import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
@@ -76,7 +76,7 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
   const shown = report?.periods[period];
   const models = groupUsageModels(shown?.models ?? []);
   const combined = aggregateUsageModels(models, 'All models');
-  const noCache = estimateWithoutCache(shown?.models ?? [], prices);
+  const saved = estimateCacheSaving(shown?.models ?? [], prices);
   const unpriced = models.filter((model) => model.cost_usd === null || model.cost_partial).length;
   const names = modelNames(meta);
   const filtered = models.filter((model) => `${model.model || 'Unspecified model'} ${names.get(model.model) ?? ''}`.toLowerCase().includes(query.toLowerCase()));
@@ -132,14 +132,14 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
             <p className="mt-1 text-display-md text-ink tabular-nums [overflow-wrap:anywhere]">{costText(shown.cost_usd)}</p>
           </div>
           <div>
-            <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Without cache</span>
-              <HelpTip label="Cost without cache">
-                <span className="block">Input and cache tokens charged once at each tool's standard input rate. Output keeps its standard output rate.</span>
-                {noCache.cost === null ? <span className="mt-2 block">Estimate unavailable: prices or token counts are missing.</span> : noCache.partial && <span className="mt-2 block">Partial estimate: some usage has missing prices or token counts.</span>}
-                <span className="mt-2 block">Uses current configured prices and available token counts. Records without prices or token counts are excluded. Source-only charges cannot be reconstructed. This is an alternative total estimate, not an extra charge.</span>
+            <div className="flex min-h-6 items-center gap-0.5 text-caption text-muted"><span>Cache saving</span>
+              <HelpTip label="Cache saving">
+                <span className="block">What prompt caching saved: the same tokens with every cached token charged at the standard input rate, less the estimated cost.</span>
+                {saved.saving === null ? <span className="mt-2 block">Estimate unavailable: prices or token counts are missing.</span> : saved.partial && <span className="mt-2 block">Partial estimate: some usage has missing prices, token counts or costs.</span>}
+                <span className="mt-2 block">Uses current configured prices. Records without prices, token counts or a cost are left out. An estimate, not a refund.</span>
               </HelpTip>
             </div>
-            <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-title')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(noCache.cost)}</p>
+            <p className={cn('mt-1 text-muted tabular-nums [overflow-wrap:anywhere]', prices === null && !priceError && models.length ? 'text-caption' : 'text-title')}>{prices === null && !priceError && models.length ? 'Loading…' : costText(saved.saving)}</p>
           </div>
         </div>
         <div className="mb-2 rounded-sm bg-surface px-3 py-1.5" role="group" aria-label="Total token split"><TokenSplitValues value={combined} colors={models.slice(0, 3).map((model) => colors.get(model.model) ?? MODEL_COLORS[0])} /></div>

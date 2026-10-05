@@ -67,21 +67,24 @@ export function aggregateUsageModels(models: readonly UsageModel[], label: strin
   return { model: label, ...sumUsage(models), tools: groupTools(models.flatMap((model) => model.tools)) };
 }
 
-/** Current input/output rates applied to available counts, with all cache billed as input. */
-export function estimateWithoutCache(rows: readonly UsageRow[], catalog: TokenPriceCatalog | null): { cost: number | null; partial: boolean } {
-  if (rows.length === 0) return { cost: 0, partial: false };
+/**
+ * What cache saved: each row's current input/output rates applied to its counts, with all cache
+ * billed as input, less the cost it records. Rows without rates, counts or a cost are left out.
+ */
+export function estimateCacheSaving(rows: readonly UsageRow[], catalog: TokenPriceCatalog | null): { saving: number | null; partial: boolean } {
+  if (rows.length === 0) return { saving: 0, partial: false };
   const prices = new Map(catalog?.models.map((row) => [JSON.stringify([row.provider, row.model]), row.rates]));
-  let cost: number | null = null;
+  let saving: number | null = null;
   let partial = false;
   for (const row of rows) {
     const rates = prices.get(JSON.stringify([row.provider, row.model]));
     const missingCounts = row.input === 0 && row.output === 0 && (row.total > 0 || row.cost_usd !== 0);
-    if (!rates || missingCounts) {
+    if (!rates || missingCounts || row.cost_usd === null) {
       partial = true;
       continue;
     }
-    cost = (cost ?? 0) + (row.input * rates.input + row.output * rates.output) / 1e6;
+    saving = (saving ?? 0) + (row.input * rates.input + row.output * rates.output) / 1e6 - row.cost_usd;
     partial ||= !!row.cost_partial;
   }
-  return { cost, partial };
+  return { saving, partial };
 }

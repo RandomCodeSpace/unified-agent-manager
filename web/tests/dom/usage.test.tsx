@@ -10,12 +10,12 @@ import { composer, renderApp, sidebar } from './render';
 beforeEach(() => { vi.spyOn(api, 'tokenPrices').mockResolvedValue(tokenPriceFixture()); });
 afterEach(() => vi.restoreAllMocks());
 
-function summaryCost(label: 'Estimated cost' | 'Without cache') {
+function summaryCost(label: 'Estimated cost' | 'Cache saving') {
   return screen.getByText(label, { exact: true }).parentElement!.nextElementSibling!;
 }
 
 function expectPricingCaveatsHidden() {
-  for (const container of [screen.getByRole('region', { name: 'Model usage' }), summaryCost('Estimated cost'), summaryCost('Without cache')]) {
+  for (const container of [screen.getByRole('region', { name: 'Model usage' }), summaryCost('Estimated cost'), summaryCost('Cache saving')]) {
     for (const detail of within(container as HTMLElement).queryAllByText(/partial|unpriced|missing prices/i)) {
       expect(detail.closest('.sr-only')).toBeTruthy();
     }
@@ -127,7 +127,7 @@ describe('Usage popover', () => {
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByRole('button', { name: 'Overview' });
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
-    await waitFor(() => expect(summaryCost('Without cache').textContent).toBe('$4.38'));
+    await waitFor(() => expect(summaryCost('Cache saving').textContent).toBe('$2.51'));
     expectPricingCaveatsHidden();
     const total = within(popover.getByRole('group', { name: 'Total token split' }));
     for (const label of ['Input', 'Output', 'Cache']) expect(total.getByText(label)).toBeTruthy();
@@ -243,7 +243,7 @@ describe('Usage popover', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
     expect(screen.getByRole('dialog', { name: 'Usage' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'About Cost without cache' }));
+    await user.click(screen.getByRole('button', { name: 'About Cache saving' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toMatch(/partial|excluded|missing|without prices/i));
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
@@ -268,7 +268,7 @@ describe('Usage popover', () => {
     const row = within(screen.getByRole('rowheader', { name: /Unspecified model/ }).closest('tr')!);
     expect(row.queryByText('crush', { exact: true })).toBeNull();
     expect(row.getByText('$2.50')).toBeTruthy();
-    expect(summaryCost('Without cache').textContent).toBe('—');
+    expect(summaryCost('Cache saving').textContent).toBe('—');
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe(`Updated ${timeAgo(report.collection.updated_at!)}`);
@@ -437,7 +437,7 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     expect(await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' })).toBeTruthy();
-    await waitFor(() => expect(summaryCost('Without cache').textContent).toBe('—'));
+    await waitFor(() => expect(summaryCost('Cache saving').textContent).toBe('—'));
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('group', { name: 'Total token split' })).toBeTruthy();
@@ -458,7 +458,7 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('button', { name: 'About claude-sonnet-5 token split' });
-    expect(summaryCost('Without cache').textContent).toBe('Loading…');
+    expect(summaryCost('Cache saving').textContent).toBe('Loading…');
     refresh();
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByText('Total tokens').nextElementSibling!.textContent).toBe('9.2M'));

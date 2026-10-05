@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aggregateUsageModels, cacheHitRate, estimateWithoutCache, groupUsageModels, splitTokens } from '../src/lib/token-usage.ts';
+import { aggregateUsageModels, cacheHitRate, estimateCacheSaving, groupUsageModels, splitTokens } from '../src/lib/token-usage.ts';
 
 function row(values = {}) {
   return { provider: 'copilot', model: 'model-a', input: 100, output: 20, cache_read: 30, cache_write: 10, total: 120, cost_usd: 1, ...values };
@@ -94,32 +94,33 @@ test('Other sums remaining models and combines their tool breakdowns', () => {
   assert.deepEqual(splitTokens(other), { input: 180, output: 60, cache: 120 });
 });
 
-test('without-cache estimate uses each tool rate and never adds cache to input twice', () => {
+test('cache saving uses each tool rate, never adds cache to input twice, and subtracts each recorded cost', () => {
   const rows = [
-    row({ input: 1_000_000, output: 50_000, cache_read: 600_000, cache_write: 200_000, total: 1_050_000 }),
-    row({ provider: 'codex', input: 1_000_000, output: 50_000, cache_read: 900_000, total: 1_050_000 }),
+    row({ input: 1_000_000, output: 50_000, cache_read: 600_000, cache_write: 200_000, total: 1_050_000, cost_usd: 1 }),
+    row({ provider: 'codex', input: 1_000_000, output: 50_000, cache_read: 900_000, total: 1_050_000, cost_usd: 2 }),
   ];
-  assert.deepEqual(estimateWithoutCache(rows, catalog({}, { provider: 'codex', rates: { input: 5, output: 20 } })), { cost: 8.5, partial: false });
+  assert.deepEqual(estimateCacheSaving(rows, catalog({}, { provider: 'codex', rates: { input: 5, output: 20 } })), { saving: 5.5, partial: false });
 });
 
-test('without-cache prices require exact provider and model, while explicit zero rates count', () => {
-  const rows = [row({ model: 'free' }), row({ provider: 'codex' }), row({ model: 'unpriced' })];
+test('cache saving prices require exact provider and model, while explicit zero rates count', () => {
+  const rows = [row({ model: 'free', cost_usd: 0 }), row({ provider: 'codex' }), row({ model: 'unpriced' })];
   const prices = catalog({}, { model: 'free', rates: { input: 0, output: 0 } }, { model: 'unpriced', rates: null, source: 'unpriced' });
-  assert.deepEqual(estimateWithoutCache(rows, prices), { cost: 0, partial: true });
-  assert.deepEqual(estimateWithoutCache([row({ provider: 'codex' })], prices), { cost: null, partial: true });
-  assert.deepEqual(estimateWithoutCache([row({ model: 'provider/model-a' })], prices), { cost: null, partial: true });
+  assert.deepEqual(estimateCacheSaving(rows, prices), { saving: 0, partial: true });
+  assert.deepEqual(estimateCacheSaving([row({ provider: 'codex' })], prices), { saving: null, partial: true });
+  assert.deepEqual(estimateCacheSaving([row({ model: 'provider/model-a' })], prices), { saving: null, partial: true });
 });
 
-test('without-cache estimate excludes source-only costs and unknown token components', () => {
+test('cache saving excludes source-only costs, unknown token components and unknown costs', () => {
   const costOnly = row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: 5 });
   const totalOnly = row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 100, cost_usd: null });
-  assert.deepEqual(estimateWithoutCache([costOnly, totalOnly], catalog({})), { cost: null, partial: true });
-  assert.deepEqual(estimateWithoutCache([costOnly, row({ input: 1_000_000, output: 0 })], catalog({})), { cost: 2, partial: true });
+  assert.deepEqual(estimateCacheSaving([costOnly, totalOnly], catalog({})), { saving: null, partial: true });
+  assert.deepEqual(estimateCacheSaving([costOnly, row({ input: 1_000_000, output: 0, cost_usd: 0.5 })], catalog({})), { saving: 1.5, partial: true });
+  assert.deepEqual(estimateCacheSaving([row({ input: 1_000_000, output: 0, cost_usd: null })], catalog({})), { saving: null, partial: true });
 });
 
-test('without-cache estimate preserves partial flags and can be below reported costs', () => {
+test('cache saving preserves partial flags and can be below zero', () => {
   const counts = row({ input: 1_000_000, output: 0, cost_usd: 10, cost_partial: true });
-  assert.deepEqual(estimateWithoutCache([counts], catalog({})), { cost: 2, partial: true });
+  assert.deepEqual(estimateCacheSaving([counts], catalog({})), { saving: -8, partial: true });
 });
 
 test('empty usage costs zero and missing catalogs remain unknown', () => {
@@ -127,8 +128,8 @@ test('empty usage costs zero and missing catalogs remain unknown', () => {
   assert.deepEqual(aggregateUsageModels([], 'Other'), {
     model: 'Other', input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: 0, cost_partial: false, tools: [],
   });
-  assert.deepEqual(estimateWithoutCache([], null), { cost: 0, partial: false });
-  assert.deepEqual(estimateWithoutCache([row()], null), { cost: null, partial: true });
-  assert.deepEqual(estimateWithoutCache([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: null })], catalog({})), { cost: null, partial: true });
-  assert.deepEqual(estimateWithoutCache([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: 0 })], catalog({})), { cost: 0, partial: false });
+  assert.deepEqual(estimateCacheSaving([], null), { saving: 0, partial: false });
+  assert.deepEqual(estimateCacheSaving([row()], null), { saving: null, partial: true });
+  assert.deepEqual(estimateCacheSaving([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: null })], catalog({})), { saving: null, partial: true });
+  assert.deepEqual(estimateCacheSaving([row({ input: 0, output: 0, cache_read: 0, cache_write: 0, total: 0, cost_usd: 0 })], catalog({})), { saving: 0, partial: false });
 });
