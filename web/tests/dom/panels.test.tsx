@@ -152,7 +152,13 @@ describe('subagents', () => {
     expect(rows[0].getAttribute('aria-label')).toMatch(/^Audit package internal\/store, running/);
     await user.click(list.getByRole('button', { name: /^Audit package internal\/web, completed/ }));
     const open = await panel();
-    expect(await open.findByText('Result sent to the main agent')).toBeTruthy();
+    // Read result first: what went back to the main agent leads the panel.
+    const result = await open.findByRole('region', { name: 'Result' });
+    // Its last message is that result: drawn once, not again under Work.
+    const said = result.querySelector('p')!.textContent!;
+    expect(said.length).toBeGreaterThan(10);
+    await waitFor(() => expect(open.getByRole('region', { name: 'Work' }).textContent).not.toContain('Loading'));
+    expect(open.getByRole('region', { name: 'Work' }).textContent).not.toContain(said);
     expect(open.queryByRole('textbox')).toBeNull();
     await user.click(open.getByRole('button', { name: 'Show where it was spawned' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagent transcript' })).toBeNull());
@@ -212,7 +218,7 @@ describe('subagents', () => {
     expect(names.indexOf('Verify store callers')).toBe(names.indexOf('Check contrast of the theme tokens') + 1);
     await user.click(live.getByRole('button', { name: /^Check contrast of the theme tokens, running/ }));
     let open = await panel();
-    await user.click(open.getByRole('button', { name: /^Verify store callers\s*Open$/ }));
+    await user.click(open.getByRole('button', { name: /^Verify store callers$/ }));
     open = await panel();
     expect(await open.findByRole('region', { name: 'Transcript of Verify store callers' })).toBeTruthy();
     await user.click(open.getByRole('button', { name: 'Check contrast of the theme tokens' }));
@@ -278,8 +284,9 @@ describe('subagents', () => {
     await user.hover(live.getByRole('button', { name: /^Run the accessibility linter, failed/ }));
     const peek = within(await screen.findByRole('dialog', { name: 'Subagent' }, { timeout: 3000 }));
     expect(peek.getByText('Failed')).toBeTruthy();
-    expect(peek.getByText(/41\.8K tokens · 3 tool calls/)).toBeTruthy();
-    await user.click(peek.getByRole('button', { name: 'Full transcript ›' }));
+    expect(peek.getByText('41.8K tokens')).toBeTruthy();
+    expect(peek.getByText('3 tool calls')).toBeTruthy();
+    await user.click(peek.getByRole('button', { name: 'Full transcript' }));
     expect(await (await panel()).findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
   });
 });

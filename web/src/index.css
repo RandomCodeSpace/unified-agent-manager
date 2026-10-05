@@ -431,6 +431,54 @@
   .pane-header[data-scrolled]::after {
     opacity: 1;
   }
+  /* Floating panels (components/ui/panel.tsx): the head sits on the panel's surface with no rule; once the
+     body scrolls beneath it, `data-scrolled` fades in (opacity) a short fade below its edge. */
+  .panel-head {
+    position: relative;
+    z-index: 10;
+    background: var(--color-raised);
+  }
+  .panel-head::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    height: 20px;
+    pointer-events: none;
+    background:
+      linear-gradient(to bottom, rgba(20, 28, 45, 0.05), transparent 60%),
+      linear-gradient(to bottom, var(--color-raised), transparent);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-app);
+  }
+  .panel-head[data-scrolled]::after {
+    opacity: 1;
+  }
+  /* A panel's foot: a fading rule above it. */
+  .panel-foot {
+    position: relative;
+  }
+  .panel-foot::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+  /* A collapsed long text: the last lines fade into the surface beneath (an overlay, not a mask). */
+  .clamp-fade::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 32px;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--clamp-surface, var(--color-raised)));
+  }
   /* The composer's dock overlaps the transcript's foot: one gradient (canvas from the composer up to
      transparent) lets the conversation fade out beneath the floating control plane. */
   .transcript-dock {
