@@ -81,6 +81,8 @@ type Capabilities struct {
 	HostTools bool `json:"host_tools,omitempty"`
 	// Account is true when the provider implements AccountManager.
 	Account bool `json:"account,omitempty"`
+	// DeviceSignIn is true when the provider implements DeviceSignInManager.
+	DeviceSignIn bool `json:"device_sign_in,omitempty"`
 	// MCP is true when the provider implements MCPConfigurer and its
 	// conversations implement MCPController.
 	MCP bool `json:"mcp,omitempty"`

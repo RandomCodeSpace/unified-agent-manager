@@ -159,7 +159,22 @@ time Settings opens or **Check again** is chosen:
   so in place of that error. `GET /api/meta` lists the provider as
   `available: false` with `signed_out: true`.
 
-**Sign in with a token.** Paste a fine-grained personal access token with the
+**Sign in with GitHub.** Offered while Copilot is signed out and no
+environment token is set. Choose **Sign in with GitHub**: Settings shows a
+short code, with **Copy code**, and **Open GitHub**, which opens GitHub's
+device page in a new tab. Enter the code there and approve Copilot CLI; no
+token passes through UAM.
+Settings checks every 2 seconds and shows the sign-in once GitHub approves it;
+**Cancel** stops it. A code not approved within about 15 minutes expires and
+the sign-in fails with **Try again**. A sign-in started in another tab or
+before a reload shows its code again when Settings opens. It signs in the
+whole server: every Task uses the account. To store the sign-in, the server
+needs a system keychain, or Copilot's `storeTokenPlaintext` setting in
+`~/.copilot/settings.json`. Signing in restarts Copilot, so it is refused while
+Copilot Tasks have open conversations; close them first. While signed in,
+**Use another token** replaces the sign-in.
+
+**Or sign in with a token.** Paste a fine-grained personal access token with the
 **Copilot Requests** permission (create one on GitHub under Settings →
 Developer settings → Personal access tokens → Fine-grained tokens); classic
 `ghp_` tokens are not accepted. The field is a password field. The token goes
@@ -180,17 +195,46 @@ over any stored sign-in, so while one is set Settings names the variable and
 turns signing in and out off. Change or remove it where the service starts,
 then restart the service.
 
-**Device code sign-in is not supported** in the browser: Copilot offers no
-supported way for UAM to run it. Run `copilot login` on the server as the user
-that runs UAM, then choose **Check again**.
+**One linked account.** A server uses one Copilot account. The first sign-in
+links the server to its account; a server already signed in when it is
+upgraded links to that account the first time it reads it. Settings shows
+"Linked account: <login>" and, while signed out, says which GitHub account to
+use. A sign-in as another account, by token or with GitHub, is refused ("This
+server is linked to Copilot account <login>. Sign in with that account.") and
+removed again. If Copilot is signed in as another account some other way (an
+environment token, `copilot login` or `gh` on the server), Copilot is
+unavailable and every Task, send, routine and planner run that needs it is
+refused until that is fixed: the app shows "Copilot is signed in to another
+account" with **Open Settings** in place of every view but Settings, and lifts
+it once the account is fixed. **Unlink** in Settings, after a confirmation,
+signs out a sign-in Copilot stored and clears the link; the next sign-in links
+its account. An environment token or a `gh` sign-in cannot be signed out here,
+so its account is linked again at once.
 
 The API: `GET /api/providers/copilot/account` returns `{"signed_in", "login"?,
 "host"?, "source"? ("stored", "env", "gh-cli" or "other"), "env_var"?,
-"message"?}`; `POST /api/providers/copilot/account/sign-in` with `{"token"}`
+"message"?, "linked"? {"login", "host", "linked_at"}}`, `linked` being the
+account the server is linked to, absent until one is;
+`POST /api/providers/copilot/account/sign-in` with `{"token"}`
 and `POST /api/providers/copilot/account/sign-out` return the same shape, or
 400 with the reason for a refused token, 409 while an environment token takes
-precedence. All need sign-in like other protected API routes. Sign-ins and
-sign-outs are logged without the token.
+precedence, and 409 with code `account_not_linked` for a token of another
+account than the linked one. `DELETE /api/providers/copilot/account/link`
+clears the link, signs out a stored sign-in and returns the account. While
+Copilot is signed in as another account, `GET /api/meta` lists it
+`available: false` with `account_mismatch: true` and the reason, and requests
+that need it answer 409 with code `account_not_linked`. `POST /api/providers/copilot/account/device` starts a device
+sign-in, or returns the one in progress; `GET` on the same path reads it and
+`DELETE` cancels it (204). Both `POST` and `GET` return `{"state"
+("idle", "starting", "waiting", "signed_in", "failed" or "canceled"),
+"verification_uri"?, "user_code"?, "error"?, "account"?}`: `waiting` carries
+the page and the code, `signed_in` the account, `failed` the reason (a
+sign-in as another account than the linked one fails with the same text as the
+token refusal). `POST`
+answers 409 while an environment token takes precedence and 400 while Copilot
+Tasks have open conversations. The provider's `capabilities.device_sign_in` in
+`GET /api/meta` says whether it is offered. All need sign-in like other
+protected API routes. Sign-ins and sign-outs are logged without the token.
 
 ## Use it
 
