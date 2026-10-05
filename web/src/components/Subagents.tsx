@@ -150,6 +150,8 @@ interface Pinned {
   back: string[];
   full: boolean;
   open: boolean;
+  /** It was in the live set when it was opened: the set keeps it while open, even once it stops. */
+  live: boolean;
 }
 
 /** A run picked in the transcript's run strip: the transcript shows the run's first item. `n` counts the picks. */
@@ -280,8 +282,9 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   const summaries = useMemo<Summaries>(() => ({ agents, agentSteps, calls: callMap }), [agents, agentSteps, callMap]);
   const { id, provider, workdir, interactions, stage, state } = session;
   const task = useMemo<TaskInfo>(() => ({ id, provider, workdir, interactions, stage, state }), [id, provider, workdir, interactions, stage, state]);
-  // The open transcript keeps its subagent in the live set, so its row stays.
-  const keep = pinned?.id;
+  // An open transcript opened from the live set keeps its subagent there, so its row stays; one opened
+  // from an earlier reply does not bring the set back (that would grow the conversation under the panel).
+  const keep = pinned?.live ? pinned.id : undefined;
   const live = useMemo(() => liveSet(replies.list.at(-1), session.subagents, keep), [replies, session.subagents, keep]);
   const liveIds = useMemo(() => new Set(live.map((x) => x.subagent.id)), [live]);
   // A transcript whose subagent is gone closes.
@@ -312,7 +315,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
         stop: (s: Subagent) => handlers.current.ask(s),
         open: (to: string, anchor: Element | null) => {
           peek.close();
-          setPinned({ id: to, anchor, back: [], full: false, open: true });
+          setPinned({ id: to, anchor, back: [], full: false, open: true, live: store.data.liveIds.has(to) });
         },
       } satisfies ScopeActions,
     };
@@ -324,10 +327,10 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   };
   const closed = () => setPinned((p) => (p?.open ? p : null));
   // A subagent it spawned opens in its place, with the way back.
-  const child = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [...p.back, p.id], full: true } : p));
-  const back = () => setPinned((p) => (p?.back.length ? { ...p, id: p.back.at(-1)!, back: p.back.slice(0, -1) } : p));
+  const child = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [...p.back, p.id], full: true, live: store.data.liveIds.has(to) } : p));
+  const back = () => setPinned((p) => (p?.back.length ? { ...p, id: p.back.at(-1)!, back: p.back.slice(0, -1), live: store.data.liveIds.has(p.back.at(-1)!) } : p));
   // One opened directly goes up to the one that spawned it.
-  const up = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [], full: true } : p));
+  const up = (to: string) => setPinned((p) => (p ? { ...p, id: to, back: [], full: true, live: store.data.liveIds.has(to) } : p));
   return (
     <SubagentContext.Provider value={value}>
       {children}
