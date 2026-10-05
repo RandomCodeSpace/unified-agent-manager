@@ -46,7 +46,7 @@ function federated(hash = '', records = [record('b', 'Workstation B'), record('c
 }
 
 async function taskRows() {
-  return within(await screen.findByRole('list', { name: 'Tasks across instances' }));
+  return within(await screen.findByRole('navigation', { name: 'Tasks' }));
 }
 
 test('combines colliding task IDs and sends a selected task reply only to its owning instance', async () => {
@@ -127,10 +127,10 @@ test('Settings of a selected peer read and write only that peer and name it in t
   await user.click(await screen.findByRole('button', { name: 'Settings', exact: true }));
   await screen.findByRole('heading', { name: 'Settings · This instance', level: 1 });
   expect(screen.getByRole('combobox', { name: 'Active instance' }).textContent).toContain('This instance');
+  // From the switch on only B's Settings are mounted: no read or write may reach home or C.
+  const switched = calls.length;
   await chooseInstance(user, /^Workstation B/);
   await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
-  // From here only B's Settings are mounted: no read or write may reach home or C.
-  const switched = calls.length;
   expect(screen.getByRole('combobox', { name: 'Active instance' }).textContent).toContain('Workstation B');
   // Connections are administered by the home instance only, and its sign-in is not B's to end.
   expect(screen.queryByRole('button', { name: 'Connected instances' })).toBeNull();
@@ -180,7 +180,7 @@ test('editing an unrelated connection preserves the selected owner client and op
   const before = streams.filter(entry => entry.owner === 'b' && entry.stream.readyState !== 2);
   expect(before.length).toBeGreaterThan(0);
   replaceRegistry([records[0], { ...records[1], enabled: false, generation: 2 }]);
-  await waitFor(() => expect(within(screen.getByRole('list', { name: 'Tasks across instances' })).queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation C' })).toBeNull());
+  await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Tasks' })).queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation C' })).toBeNull());
   expect(before.every(entry => entry.stream.readyState !== 2)).toBe(true);
   expect(streams.filter(entry => entry.owner === 'b' && entry.stream.readyState !== 2)).toEqual(before);
 });
@@ -198,7 +198,7 @@ test('home auth loss clears connected sources even while an invalid route has un
   await screen.findByText('This connection has changed. Open the task from its current instance.');
   expireHome();
   await screen.findByRole('heading', { name: 'Sign in to UAM' });
-  expect(screen.queryByRole('list', { name: 'Tasks across instances' })).toBeNull();
+  expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
   await waitFor(() => expect(streams.every(entry => entry.stream.readyState === 2)).toBe(true));
 });
 
@@ -248,4 +248,106 @@ test('choosing the open remote task again still selects it (the composer takes f
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Message' })));
   expect(window.location.hash).toBe(hash);
   expect(history.length).toBe(length);
+});
+
+test('the Project filter lists every machine’s Projects under its name and filters to one on that machine', async () => {
+  const { user } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(screen.getByRole('button', { name: 'Project filter: all projects' }));
+  const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
+  const groups = list.getAllByRole('group');
+  expect(groups.map((group) => group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent)).toEqual(['This instance', 'Workstation B', 'Workstation C']);
+  const b = within(list.getByRole('group', { name: 'Workstation B' }));
+  const project = b.getAllByRole('option')[0];
+  const name = project.querySelector('.truncate')?.textContent ?? '';
+  await user.click(project);
+  await waitFor(() => expect(screen.getByRole('button', { name: `Project filter: ${name}` })).toBeTruthy());
+  // Only B's Tasks of that Project remain.
+  await waitFor(() => expect(rows.queryAllByRole('button', { description: 'This instance' })).toHaveLength(0));
+  expect(rows.queryAllByRole('button', { description: 'Workstation C' })).toHaveLength(0);
+  expect(rows.getAllByRole('button', { description: 'Workstation B' }).length).toBeGreaterThan(0);
+});
+
+test('Add project on another machine browses and adds there, and the Project shows under that machine', async () => {
+  const { user, calls } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(screen.getAllByRole('button', { name: 'Add project' })[0]);
+  const dialog = within(await screen.findByRole('dialog', { name: 'Add a project' }));
+  await user.click(dialog.getByRole('combobox', { name: 'Machine' }));
+  await user.click(await screen.findByRole('option', { name: /^Workstation B/ }));
+  const before = calls.length;
+  await user.click(dialog.getByRole('button', { name: 'Browse' }));
+  const folders = within(await dialog.findByRole('listbox', { name: 'Folders' }));
+  await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
+  await user.click(await folders.findByRole('option', { name: /^archive/ }));
+  await user.click(dialog.getByRole('button', { name: 'Use this folder' }));
+  await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Remote archive');
+  await user.click(dialog.getByRole('button', { name: 'Add project' }));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull());
+  const made = calls.slice(before).filter((call) => call.path.startsWith('/api/fs') || (call.path === '/api/projects' && call.method === 'POST'));
+  expect(made.length).toBeGreaterThan(1);
+  expect(made.every((call) => call.owner === 'b')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Project filter: all projects' }));
+  const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
+  await waitFor(() => expect(within(list.getByRole('group', { name: 'Workstation B' })).getByRole('option', { name: /Remote archive/ })).toBeTruthy());
+  expect(within(list.getByRole('group', { name: 'This instance' })).queryByRole('option', { name: /Remote archive/ })).toBeNull();
+});
+
+test('the New task palette lists every machine and another machine’s Project opens its draft there', async () => {
+  const { user } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(document.getElementById('new-task')!);
+  const palette = within(await screen.findByRole('dialog', { name: 'New task' }));
+  const b = within(palette.getByRole('group', { name: 'Workstation B' }));
+  expect(palette.getByRole('group', { name: 'This instance' })).toBeTruthy();
+  await user.click(b.getAllByRole('option')[0]);
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  expect(await screen.findByRole('heading', { name: 'New task', level: 1 })).toBeTruthy();
+  expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
+});
+
+test('Settle on another machine’s row runs on that machine only, and its shelf counts it', async () => {
+  const { user, calls } = federated();
+  const nav = await taskRows();
+  const row = await nav.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  const shelf = () => Number(/(\d+)/.exec(nav.getByRole('button', { name: /^Settled/ }).textContent ?? '')?.[1] ?? 0);
+  const settled = shelf();
+  expect(nav.getByRole('button', { name: /^Archived/ })).toBeTruthy();
+  const settle = row.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!;
+  await user.click(settle);
+  await waitFor(() => expect(shelf()).toBe(settled + 1));
+  expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b']);
+  expect(window.location.hash).not.toContain('connection=b');
+});
+
+test('switching the instance in Settings keeps the section and shows the known state at once', async () => {
+  const { user } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'Agents', exact: true }));
+  await chooseInstance(user, /^Workstation B/);
+  await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
+  expect(screen.getByRole('button', { name: 'Agents', exact: true }).getAttribute('aria-current')).toBe('page');
+  expect(screen.queryByText('Loading tasks…')).toBeNull();
+  expect(screen.queryByRole('main', { busy: true })).toBeNull();
+  for (const machine of ['This instance', 'Workstation B', 'Workstation C']) expect((await taskRows()).getByRole('button', { name: /Doctor: add terminal line/, description: machine })).toBeTruthy();
+});
+
+test('the Planner button opens another machine’s Planner when this one has it off', async () => {
+  const { user, owners } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await act(async () => { await owners[0].fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planner: false }) }); });
+  await user.click(await screen.findByRole('button', { name: 'Planner' }));
+  await waitFor(() => expect(window.location.hash).toMatch(/^#planner=.*connection=b/));
+  // Its Board picker offers the machines with the planner on, by machine; this one is not among them.
+  await user.click(await screen.findByRole('button', { name: /^Project: / }));
+  const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
+  expect(list.getByRole('group', { name: 'Workstation B' })).toBeTruthy();
+  expect(list.getByRole('group', { name: 'Workstation C' })).toBeTruthy();
+  expect(list.queryByRole('group', { name: 'This instance' })).toBeNull();
 });

@@ -1,5 +1,5 @@
 import { useApi } from './ApiContext';
-import { useFederation } from './FederationContext';
+import { useFederation, type Machine } from './FederationContext';
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
@@ -17,7 +17,7 @@ import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type Works
 import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { pendingRequests } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
@@ -42,7 +42,9 @@ const TerminalPanel = lazy(() => import('./components/Terminal'));
 
 type Auth = 'checking' | 'in' | 'out';
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
-type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string } | null;
+/** `owner`: another machine's Task (connected instances), confirmed here and run against that machine. */
+type TaskDialog = { kind: 'archive' | 'delete' | 'close'; id: string; owner?: string } | null;
+const NO_BUSY: Readonly<Record<string, boolean>> = {};
 
 /** Below this the sidebar is a drawer (DESIGN.md breakpoints). */
 const NARROW = '(max-width: 959px)';
@@ -147,15 +149,23 @@ export default function App() {
   const onHomeVersion = federation?.onHomeVersion;
   const initialPath = federation?.initialPath;
   const federated = !!federation;
-  const [auth, setAuth] = useState<Auth>('checking');
+  // With connected instances, every machine; switching the one on screen starts its view from what is known of it, without a blank page.
+  const machines = federation?.machines;
+  const here = api.owner?.id ?? '';
+  const [auth, setAuth] = useState<Auth>(() => (federation?.authenticated ? 'in' : 'checking'));
   const [authRequired, setAuthRequired] = useState(true);
-  const [state, dispatch] = useReducer(reducer, initialState, (s) => ({ ...s, selectedId: hashSelection(initialPath) }));
+  const [state, dispatch] = useReducer(reducer, initialState, (s) => {
+    const seed = federation?.seed;
+    const known = seed?.loaded ? { loaded: true, projects: seed.projects, sessions: seed.sessions, settings: seed.settings, usage: seed.usage } : {};
+    return { ...s, ...known, selectedId: hashSelection(initialPath) };
+  });
   const [recentTasks] = useState(() => new RecentTasks());
   const confirmedDetail = useRef<SessionDetail | null>(null);
   useLayoutEffect(() => {
     confirmedDetail.current = auth === 'in' && state.connection === 'connected' ? state.detail && recentProjection(state.detail) : null;
   }, [auth, state.connection, state.detail]);
-  const [meta, setMeta] = useState<Meta | null>(null);
+  const metaCache = federation?.metaCache;
+  const [meta, setMeta] = useState<Meta | null>(() => metaCache?.get(here) ?? null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [streamKey, setStreamKey] = useState(0);
   const narrow = useMedia(NARROW);
@@ -178,7 +188,8 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
-  const [renaming, setRenaming] = useState<Renaming | null>(null);
+  // `owner`: a rename on another machine's row (connected instances).
+  const [renaming, setRenaming] = useState<(Renaming & { owner?: string }) | null>(null);
   // The New task palette (the pen, or Alt+N); it chooses the draft's Project.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [busyTasks, setBusyTasks] = useState<Readonly<Record<string, boolean>>>({});
@@ -191,7 +202,16 @@ export default function App() {
     setSidebarState({ emptyWorkspace, open: emptyWorkspace ? false : readJSON<boolean>(SIDEBAR_KEY, true) });
   }
   const sidebarOpen = sidebarState.open;
-  const [filter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
+  const [ownFilter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
+  // Under federation the filter is a Project on a machine, kept by the owner; here it is that Project while its machine is on screen.
+  const machineFilter = machines ? federation?.filter ?? null : undefined;
+  const filter = machineFilter === undefined ? ownFilter : machineFilter?.machine === here ? machineFilter.project : null;
+  const onMachineFilter = federation?.onFilter;
+  const applyFilter = useCallback((id: string | null) => {
+    if (machines && onMachineFilter) return onMachineFilter(id === null ? null : { machine: here, project: id });
+    setFilter(id);
+    localStorage.setItem(FILTER_KEY, JSON.stringify(id));
+  }, [machines, onMachineFilter, here, FILTER_KEY]);
   const [settingsOpen, setSettingsOpen] = useState(() => (initialPath ?? window.location.hash) === SETTINGS_HASH);
   const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
   const [plannerOpen, setPlannerOpen] = useState(() => (initialPath ?? window.location.hash).startsWith(PLANNER_PREFIX));
@@ -259,12 +279,13 @@ export default function App() {
       .then((m) => {
         setMeta(m);
         setMetaError(null);
+        metaCache?.set(api.owner?.id ?? '', m);
       })
       .catch((e: unknown) => {
         setMeta(null);
         setMetaError(describeError(e));
       });
-  }, [api, auth, customModels, metaAttempt]);
+  }, [api, auth, customModels, metaAttempt, metaCache]);
 
   /**
    * A redeploy shows as the stream reconnecting, so the version is read again once the stream
@@ -819,13 +840,39 @@ export default function App() {
     if (draftTick !== undefined && !window.matchMedia(COARSE).matches) document.getElementById('composer-text')?.focus();
   }, [draftTick]);
 
-  /** New task: the palette chooses the Project, unless there is only one. */
-  const projectCount = state.projects.length;
-  const onlyProject = projectCount === 1 ? state.projects[0].id : null;
+  /** With connected instances: a Project on another machine opens that machine, and its draft there once it has loaded. */
+  const requestMachine = federation?.request;
+  const pickProject = useCallback((projectId: string, machine = here) => {
+    if (machine === here) startTask(projectId);
+    else requestMachine?.({ machine, kind: 'new-task', projectId });
+  }, [here, startTask, requestMachine]);
+  const intent = federation?.intent;
+  const consumeIntent = federation?.consumeIntent;
+  const intentReady = !!intent && intent.machine === here && state.loaded && (intent.kind !== 'new-task' || !!meta || !!metaError);
+  const runIntent = useEffectEvent(() => {
+    if (!intent) return;
+    consumeIntent?.();
+    if (intent.kind === 'new-task') startTask(intent.projectId);
+    else {
+      const project = state.projects.find((p) => p.id === intent.projectId);
+      if (project) openDialog({ kind: 'edit', project });
+    }
+  });
+  // After the view has mounted, as if the owner had picked it here.
+  useEffect(() => {
+    if (!intentReady) return;
+    const timer = window.setTimeout(runIntent);
+    return () => window.clearTimeout(timer);
+  }, [intentReady, intent]);
+
+  /** New task: the palette chooses the Project, unless there is only one (on any machine, with connected instances). */
+  const everyProject = useMemo(() => machines ? machines.flatMap((m) => (m.active ? state.projects : m.state.projects).map((p) => ({ machine: m.id, id: p.id }))) : state.projects.map((p) => ({ machine: here, id: p.id })), [machines, state.projects, here]);
+  const projectCount = everyProject.length;
+  const onlyProject = projectCount === 1 ? everyProject[0] : null;
   const openNewTask = useCallback(() => {
-    if (onlyProject) startTask(onlyProject);
+    if (onlyProject) pickProject(onlyProject.id, onlyProject.machine);
     else if (projectCount > 0) setPaletteOpen(true);
-  }, [onlyProject, projectCount, startTask]);
+  }, [onlyProject, projectCount, pickProject]);
   // Alt+N opens it from anywhere but a menu, a dialog or the terminal (Ctrl+N is the browser's); the pen's own tooltip, which names the shortcut, does not stand in the way.
   // The terminal's keys are the shell's: on macOS, Option+N is a dead key xterm.js lets through.
   useEffect(() => {
@@ -945,7 +992,7 @@ export default function App() {
     () => ({
       select: (id) => select(id),
       startRename: (id, place) => setRenaming({ id, place }),
-      renaming,
+      renaming: renaming && !renaming.owner ? renaming : null,
       cancelRename: () => setRenaming(null),
       rename: async (id, name) => {
         setRenaming(null);
@@ -985,6 +1032,63 @@ export default function App() {
     [renaming, busyTasks, select, state.sessions, runTask, api, plannerOn, openTaskDialog, rerun],
   );
 
+  /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
+  const [remoteBusy, setRemoteBusy] = useState<Readonly<Record<string, Readonly<Record<string, boolean>>>>>({});
+  const runRemote = useCallback(async (m: Machine, id: string, op: () => Promise<unknown>, verb: string) => {
+    setRemoteBusy((b) => ({ ...b, [m.id]: { ...b[m.id], [id]: true } }));
+    setNotice(null);
+    try {
+      await op();
+    } catch (e) {
+      setNotice(`Could not ${verb} on ${m.label}: ${describeError(e)}`);
+      throw e;
+    } finally {
+      setRemoteBusy(({ [m.id]: mine = {}, ...rest }) => {
+        const { [id]: _, ...left } = mine;
+        return { ...rest, [m.id]: left };
+      });
+    }
+  }, []);
+  const go = federation?.go;
+  /** The row actions of each machine not on screen: the same verbs, run against that machine's own client. */
+  const machineActions = useMemo(() => new Map((machines ?? []).filter((m) => !m.active).map((m): [string, TaskActions] => {
+    const c = m.client;
+    const run = (id: string, op: () => Promise<unknown>, verb: string) => void runRemote(m, id, op, verb).catch(() => {});
+    const open = (id: string) => go?.(m.id, `${HASH_PREFIX}${encodeURIComponent(id)}`);
+    return [m.id, {
+      select: open,
+      startRename: (id, place) => setRenaming({ id, place, owner: m.id }),
+      renaming: renaming?.owner === m.id ? renaming : null,
+      cancelRename: () => setRenaming(null),
+      rename: async (id, name) => {
+        setRenaming(null);
+        const current = m.state.sessions.find((s) => s.id === id);
+        if (!current || current.name === name) return;
+        await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
+      },
+      settle: (id) => run(id, async () => {
+        if (!(m.state.settings.planner === true && c.supports('planner-v1'))) return c.stage(id, 'settle');
+        try {
+          await c.settle(id);
+        } catch (e) {
+          const held = undecidedHolds(e);
+          if (!held) throw e;
+          const task = m.state.sessions.find((s) => s.id === id);
+          setSettleAsk({ taskName: task ? `“${taskName(task) || 'New task'}”` : 'this task', cards: held as Card[], settle: async (holds) => { await c.settle(id, holds); } });
+        }
+      }, 'settle the task'),
+      reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
+      archive: (id) => openTaskDialog({ kind: 'archive', id, owner: m.id }),
+      remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
+      close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
+      busy: remoteBusy[m.id] ?? NO_BUSY,
+      runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
+      exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
+    }];
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog]);
+  // The planner button with it off here: the first machine that has it on opens there.
+  const plannerElsewhere = plannerOn ? undefined : machines?.find((m) => !m.active && m.state.settings.planner === true && m.client.supports('planner-v1'))?.id;
+
   const actions: WorkspaceActions = useMemo(
     () => ({
       onNewTask: openNewTask,
@@ -998,10 +1102,7 @@ export default function App() {
         else showRoutines(ALL_ROUTINES);
       },
       filter,
-      onFilter: (id) => {
-        setFilter(id);
-        localStorage.setItem(FILTER_KEY, JSON.stringify(id));
-      },
+      onFilter: applyFilter,
       sidebarOpen: narrow ? drawerOpen : sidebarOpen,
       onToggleSidebar: () => (narrow ? setDrawerOpen((o) => !o) : toggleSidebar()),
       settingsOpen,
@@ -1024,9 +1125,11 @@ export default function App() {
               else showPlanner();
             },
           }
-        : undefined,
+        : plannerElsewhere !== undefined
+          ? { open: false, onOpen: (projectId) => go?.(plannerElsewhere, `${PLANNER_PREFIX}${encodeURIComponent(projectId ?? '')}`) }
+          : undefined,
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines, routinesFor, noteOpener, FILTER_KEY],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines, routinesFor, noteOpener, applyFilter, plannerElsewhere, go],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
@@ -1074,7 +1177,9 @@ export default function App() {
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
   if (terminalId && !terminalProject) setTerminalId(null);
-  const dialogTask = taskDialog ? state.sessions.find((s) => s.id === taskDialog.id) : undefined;
+  const dialogMachine = taskDialog?.owner !== undefined ? machines?.find((m) => m.id === taskDialog.owner) : undefined;
+  const dialogTask = taskDialog ? (dialogMachine ? dialogMachine.state.sessions : state.sessions).find((s) => s.id === taskDialog.id) : undefined;
+  const dialogBusy = !!taskDialog && !!(dialogMachine ? remoteBusy[dialogMachine.id]?.[taskDialog.id] : busyTasks[taskDialog.id]);
   const dialogTaskName = dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task';
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
   // A removed Project, or a `#routines=` link to none, lands on the usual view.
@@ -1083,14 +1188,28 @@ export default function App() {
   if (routinesFor && state.loaded && !routinesKnown) setRoutinesFor(null);
 
   function showProject(id: string) {
-    setFilter(id);
-    localStorage.setItem(FILTER_KEY, JSON.stringify(id));
+    applyFilter(id);
     select(null);
   }
 
   async function confirmTaskDialog() {
     if (!taskDialog) return;
     const { kind, id } = taskDialog;
+    if (dialogMachine) {
+      const c = dialogMachine.client;
+      try {
+        if (kind === 'archive') await runRemote(dialogMachine, id, () => c.stage(id, 'archive'), 'archive the task');
+        else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
+        else {
+          await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the task');
+          forgetArchive(c.cacheKey(id));
+        }
+      } catch {
+        // Reported on the notice line.
+      }
+      setTaskDialogOpen(false);
+      return;
+    }
     try {
       if (kind === 'archive') await runTask(id, () => api.stage(id, 'archive'), 'archive the task');
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
@@ -1116,6 +1235,7 @@ export default function App() {
       actions={actions}
       connection={connection}
       version={meta?.version}
+      machineActions={machines ? machineActions : undefined}
     />
   );
 
@@ -1185,7 +1305,17 @@ export default function App() {
     pane = (
       <div className="flex min-h-0 flex-1 flex-col">
         {leading && <PaneHeader leading={leading} connection={connection} />}
-        <Home projects={state.projects} sessions={state.sessions} hasNews={hasNews} newTaskReady={meta !== null} onNewTask={openNewTask} onAddProject={actions.onAddProject} onSelect={select} />
+        <Home
+          projects={state.projects}
+          sessions={state.sessions}
+          hasNews={hasNews}
+          newTaskReady={meta !== null}
+          onNewTask={openNewTask}
+          onAddProject={actions.onAddProject}
+          onSelect={select}
+          machines={machines?.map((m) => (m.active ? { ...m, state: { ...m.state, projects: state.projects, sessions: state.sessions }, hasNews } : m))}
+          onOpen={(machine, id) => (machine === here ? select(id) : go?.(machine, `${HASH_PREFIX}${encodeURIComponent(id)}`))}
+        />
       </div>
     );
   }
@@ -1274,17 +1404,32 @@ export default function App() {
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} onClose={closeTerminal} />}
             </main>
 
-            <NewTaskPalette open={paletteOpen} onOpenChange={setPaletteOpen} projects={state.projects} sessions={state.sessions} selectedId={state.selectedId} filter={filter} onPick={startTask} onAddProject={actions.onAddProject} />
+            <NewTaskPalette
+              open={paletteOpen}
+              onOpenChange={setPaletteOpen}
+              projects={state.projects}
+              sessions={state.sessions}
+              selectedId={state.selectedId}
+              filter={filter}
+              onPick={pickProject}
+              onAddProject={actions.onAddProject}
+              groups={machines?.map((m) => ({ key: m.id, label: m.label, projects: m.active ? state.projects : m.state.projects }))}
+              start={machines && (federation?.filter && federation.filter.machine !== here ? { group: federation.filter.machine, project: federation.filter.project } : { group: here, project: paletteStart(state.projects, state.sessions, filter, state.selectedId)?.id })}
+            />
             {dialog?.kind === 'add' && (
               <AddProjectDialog
                 open={dialogOpen}
                 onClose={() => setDialogOpen(false)}
                 onClosed={() => setDialog(null)}
-                onAdded={(p) => {
+                machines={machines}
+                choices={federation?.choices}
+                onAdded={(p, machine = here) => {
+                  // Another machine's stream brings its new Project to the lists.
+                  if (machine !== here) return;
                   dispatch({ type: 'upsert_project', project: p });
                   select(null);
                 }}
-                onExisting={showProject}
+                onExisting={(id, machine = here) => (machine === here ? showProject(id) : onMachineFilter?.({ machine, project: id }))}
               />
             )}
             {dialog?.kind === 'edit' && (
@@ -1312,7 +1457,7 @@ export default function App() {
               description="Archiving makes the task permanently read-only. It stays in the sidebar's Archived shelf with its full conversation. It cannot be reopened."
               confirmLabel="Archive task"
               danger={false}
-              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
+              busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -1322,7 +1467,7 @@ export default function App() {
               title={`Delete ${dialogTaskName}?`}
               description="This removes the task record from UAM. The provider conversation on the host is untouched."
               confirmLabel="Delete task"
-              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
+              busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
             <AlertDialog
@@ -1333,7 +1478,7 @@ export default function App() {
               description="Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted; sending another prompt reopens the same conversation. To interrupt the current turn without closing, use Stop instead."
               confirmLabel="Close conversation"
               danger={false}
-              busy={!!taskDialog && !!busyTasks[taskDialog.id]}
+              busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
             <SettleDialog ask={settleAsk} onClose={() => setSettleAsk(null)} />

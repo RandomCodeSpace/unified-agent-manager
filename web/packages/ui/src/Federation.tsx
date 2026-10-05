@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import App from './App';
 import { ApiContext } from './ApiContext';
-import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, taskName, UPDATE_EVENTS, type ApiClient, type AddConnectionInput, type ConnectedInstance, type ConnectedStatus, type SnapshotData, type UpdateConnectionInput, type UpdateData } from './api';
-import { FederationContext } from './FederationContext';
+import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, UPDATE_EVENTS, type ApiClient, type AddConnectionInput, type ConnectedInstance, type ConnectedStatus, type Meta, type SnapshotData, type UpdateConnectionInput, type UpdateData } from './api';
+import { FederationContext, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
 import { Select } from './components/ui/select';
-import { TaskRowContent } from './components/Sidebar';
-import { cn } from './lib/cn';
 import { initialState, reducer, type State, type Action } from './state';
-import { encodeEntity, hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
-import { needsYouCount, needsYouNow, newsReader } from './lib/tasks';
+import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
+import { needsYouCount, newsReader } from './lib/tasks';
 import { pendingRequests } from './lib/board';
 import { handleNotice, setNotificationSource, startNotifications, type Notice } from './lib/notify';
 import { forgetArchive, readMarks } from './lib/historyArchive';
@@ -19,7 +17,14 @@ interface SourceState { state: State; status: ConnectedStatus }
 interface Source { id: string; label: string; connection: ConnectedInstance | null; client: ApiClient }
 const HOME = '';
 const homeSource: Source = { id: HOME, label: 'This instance', connection: null, client: api };
-const emptySource = (): SourceState => ({ state: initialState, status: { status: 'connecting' } });
+const FILTER_KEY = 'uam.machineFilter';
+
+function readFilter(): MachineFilter | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(FILTER_KEY) ?? 'null') as MachineFilter | null;
+    return value && typeof value.machine === 'string' && typeof value.project === 'string' ? value : null;
+  } catch { return null; }
+}
 const STATUS_NOTE: Partial<Record<ConnectedStatus['status'], string>> = { offline: 'Offline', 'auth-required': 'Needs a new access key', unsupported: 'Needs an update' };
 
 function connectionFailure(error: unknown): ConnectedStatus {
@@ -99,6 +104,9 @@ export default function Federation() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [sourceStates, setSourceStates] = useState<Record<string, SourceState>>({});
+  const [metaCache] = useState(() => new Map<string, Meta>());
+  const carried = useRef<CarriedShell>({ query: '', scroll: 0, section: 'general', nextSection: null });
+  const [carry] = useState<ShellCarry>(() => ({ read: () => carried.current, write: (patch) => { carried.current = { ...carried.current, ...patch }; } }));
   const [homeVersion, setHomeVersion] = useState<string>();
   const [homeLoadedVersion, setHomeLoadedVersion] = useState<string>();
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
@@ -258,7 +266,7 @@ export default function Federation() {
   };
   const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
   // Settings' header names the instance on screen and switches it; switching keeps Settings open.
-  const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => navigate(connections.find(connection => connection.id === id) ?? null, '#settings')} items={[
+  const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => { carry.write({ nextSection: carry.read().section }); navigate(connections.find(connection => connection.id === id) ?? null, '#settings'); }} items={[
     { value: HOME, label: homeSource.label },
     ...connections.map(connection => ({ value: connection.id, label: connection.label, disabled: !connection.enabled, description: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
   ]} /> : null;
@@ -275,37 +283,34 @@ export default function Federation() {
     const state = sourceStates[source.id]?.state;
     return state ? count + needsYouCount(state.sessions, unreadFor(source)) + pendingRequests(state.boards) : count;
   }, 0);
-  const navigation = connections.length > 0 ? (query: string) => {
-    const terms = query.trim().toLocaleLowerCase();
-    const selectedId = new URLSearchParams(window.location.hash.slice(1)).get('task');
-    const tasks = sources.flatMap(source => {
-      const value = sourceStates[source.id] ?? emptySource();
-      const hasNews = unreadFor(source, source.id === activeID ? selectedId : null);
-      return value.state.sessions.map(task => ({ source, task, hasNews, project: value.state.projects.find(project => project.id === task.project_id) }));
-    }).filter(row => !terms || `${taskName(row.task)} ${row.project?.name ?? ''}`.toLocaleLowerCase().includes(terms))
-      // Creation order, like the local list: reading or updating a Task never moves a row.
-      .sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
-    return <>
-      {sources.map(source => <span key={source.id} id={`uam-task-source-${source.id || 'home'}`} className="sr-only">{source.label}</span>)}
-      <ul aria-label="Tasks across instances" className="flex flex-col gap-1">{tasks.map(({ source, task, project, hasNews }) => {
-        const selected = source.id === activeID && task.id === selectedId;
-        return <li key={encodeEntity(source.id || null, task.id)} className="lift rounded-md">
-          <button type="button" data-nav="" aria-describedby={`uam-task-source-${source.id || 'home'}`} aria-current={selected ? 'true' : undefined}
-            className={cn('flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color] duration-100 focus-visible:-outline-offset-2', selected ? 'bg-tint-selected' : 'bg-raised', selected || hasNews(task) || needsYouNow(task, hasNews) ? 'font-medium text-ink' : 'text-body')}
-            onClick={() => navigate(source.connection, `#task=${encodeURIComponent(task.id)}`)}>
-            <TaskRowContent session={task} project={project} selected={selected} unread={hasNews(task)} instanceName={source.connection?.label ?? 'Local'} />
-          </button>
-        </li>;
-      })}</ul>
-      {!tasks.length && <p className="px-2 py-3 text-caption text-muted">No matching tasks.</p>}
-    </>;
-  } : undefined;
+  const federated = connections.length > 0;
+  // Every enabled machine with what it last streamed; the one on screen is App's live state, this its lagging copy.
+  const machines = useMemo<Machine[] | undefined>(() => federated ? sources.map(source => {
+    const value = sourceStates[source.id];
+    return { id: source.id, label: source.label, short: source.connection?.label ?? 'Local', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status: value?.status ?? { status: 'connecting' }, hasNews: unreadFor(source) };
+  }) : undefined,
+  // unreadFor reads this browser's marks, which change only while their machine is on screen.
+  [federated, sources, sourceStates, activeID]);
+  const choices: MachineChoice[] | undefined = federated ? [
+    { id: HOME, label: homeSource.label },
+    ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
+  ] : undefined;
+  const go = useCallback((id: string, path: string) => navigate(registryRef.current?.connections.find(connection => connection.id === id && connection.enabled) ?? null, path), [navigate]);
+  const [filter, setFilter] = useState<MachineFilter | null>(readFilter);
+  const onFilter = useCallback((value: MachineFilter | null) => {
+    setFilter(value);
+    try { localStorage.setItem(FILTER_KEY, JSON.stringify(value)); } catch { /* Kept for this page only. */ }
+  }, []);
+  const [intent, setIntent] = useState<MachineIntent | null>(null);
+  const request = useCallback((value: MachineIntent) => { setIntent(value); go(value.machine, ''); }, [go]);
+  const consumeIntent = useCallback(() => setIntent(null), []);
   const pendingRoute = authenticated && !registryRead && hasIdentity(window.location.hash);
   const unavailable = routeError || (active && !selectedSource ? 'This connection is unavailable. Open an enabled instance to continue.' : null);
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :
-      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent: connections.length ? onActiveEvent : undefined, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, navigation, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute }}>
+      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent: connections.length ? onActiveEvent : undefined, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute,
+        ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, metaCache, carry }) }}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
   </>;
