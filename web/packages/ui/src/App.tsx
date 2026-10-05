@@ -705,7 +705,9 @@ export default function App() {
   // Providers whose runtime is signed out: a banner over the pane says so until one signs in.
   const signedOut = useMemo(() => (meta?.providers ?? []).filter((p) => p.signed_out), [meta]);
   // A provider signed in as another account than the one this server is linked to blocks the app: only Settings stays open.
-  const mismatched = useMemo(() => (meta?.providers ?? []).find((p) => p.account_mismatch) ?? null, [meta]);
+  // Under federation, a connection linked to another Copilot account than the hosting instance is blocked the same way.
+  const fleetMismatch = federation?.accountMismatch;
+  const mismatched = useMemo(() => (meta?.providers ?? []).find((p) => p.account_mismatch) ?? (fleetMismatch ? { name: 'copilot', reason: fleetMismatch } : null), [meta, fleetMismatch]);
   /** Settings on the provider's account section, its title focused. */
   const openAccount = useCallback((name: string) => {
     showSettings();
@@ -863,6 +865,7 @@ export default function App() {
     if (!intent) return;
     consumeIntent?.();
     if (intent.kind === 'new-task') startTask(intent.projectId);
+    else if (intent.kind === 'account') openAccount('copilot');
     else {
       const project = state.projects.find((p) => p.id === intent.projectId);
       if (project) openDialog({ kind: 'edit', project });

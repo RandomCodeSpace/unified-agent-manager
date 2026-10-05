@@ -32,6 +32,7 @@ type connectedTestNode struct {
 	name, token string
 	m           *Manager
 	prov        *agenttest.Provider
+	acct        *accountProvider
 	srv         *Server
 	http        *httptest.Server
 	client      *http.Client
@@ -47,7 +48,20 @@ type connectedTestFleet struct {
 
 func newConnectedTestFleet(t *testing.T) *connectedTestFleet {
 	t.Helper()
+	return newConnectedAccountFleet(t, nil)
+}
+
+// newConnectedAccountFleet gives each node, when logins is set, a Copilot
+// provider signed in as its login there, or signed out for "".
+func newConnectedAccountFleet(t *testing.T, logins []string) *connectedTestFleet {
+	t.Helper()
 	f := &connectedTestFleet{taskID: mustUUID(t), project: mustUUID(t)}
+	// The directories outlive the nodes: cleanups run last-registered first.
+	var stores [3]*store.Store
+	var dirs [3]string
+	for i := range stores {
+		stores[i], dirs[i] = openTestStore(t), t.TempDir()
+	}
 	t.Cleanup(func() {
 		// Cancel every outbound reader before closing any source HTTP server.
 		for _, n := range f.nodes {
@@ -65,7 +79,7 @@ func newConnectedTestFleet(t *testing.T) *connectedTestFleet {
 	})
 	pool := x509.NewCertPool()
 	for i, name := range []string{"A", "B", "C"} {
-		st, dir := openTestStore(t), t.TempDir()
+		st, dir := stores[i], dirs[i]
 		now := time.Now().UTC()
 		if err := st.Update(func(cfg *store.Config) error {
 			cfg.WebProjects = map[string]store.WebProject{f.project: {ID: f.project, Name: name + " project", Dir: dir, CreatedAt: now}}
@@ -80,7 +94,16 @@ func newConnectedTestFleet(t *testing.T) *connectedTestFleet {
 		}
 		prov := agenttest.NewProvider("fake", allCaps)
 		prov.AddConversation(name+"-conversation", nil)
-		n := &connectedTestNode{name: name, token: fmt.Sprintf("%064x", i+1), prov: prov, m: NewManager(st, []agentapi.Provider{prov})}
+		providers := []agentapi.Provider{prov}
+		var acct *accountProvider
+		if logins != nil {
+			caps := allCaps
+			caps.Account = true
+			acct = &accountProvider{Provider: agenttest.NewProvider(fleetProvider, caps), signedIn: logins[i] != "", login: logins[i]}
+			acct.SetModels([]agentapi.Model{{ID: "a", Name: "A"}}, nil)
+			providers = append(providers, acct)
+		}
+		n := &connectedTestNode{name: name, token: fmt.Sprintf("%064x", i+1), prov: prov, acct: acct, m: NewManager(st, providers)}
 		if err := n.m.Start(context.Background()); err != nil {
 			t.Fatal(err)
 		}

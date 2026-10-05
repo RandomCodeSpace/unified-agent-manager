@@ -211,6 +211,24 @@ signs out a sign-in Copilot stored and clears the link; the next sign-in links
 its account. An environment token or a `gh` sign-in cannot be signed out here,
 so its account is linked again at once.
 
+**One account across connected instances.** Every instance connected to this
+one must use the same Copilot account. Pairing sends this instance's linked
+account and the target answers with its own: two instances linked to
+different accounts never pair (the target answers 409 with code
+`account_mismatch`, and adding the connection reports "<label> is linked to
+Copilot account <login>; this instance is linked to <login>. Both must use the
+same account."); when only one is linked, the other adopts its link, and is
+then unavailable if it is signed in as another account; when neither is, or
+the other instance predates this rule and sends no account, they pair as
+before. Each read of `GET /api/connections` reads every enabled connection's
+`/api/providers/copilot/account` and marks one linked to another account than
+this instance, or signed in as another account than its link, with `"status":
+"account_mismatch"` and a `"reason"`. Through such a connection this instance
+refuses creating, prompting or resuming Tasks, routine runs, drafts, the
+planner's writes and the terminal with 409 `account_not_linked` and the
+reason (reading the account again at most every 15 seconds); its reads,
+Settings and account stay open so the account can be fixed there.
+
 The API: `GET /api/providers/copilot/account` returns `{"signed_in", "login"?,
 "host"?, "source"? ("stored", "env", "gh-cli" or "other"), "env_var"?,
 "message"?, "linked"? {"login", "host", "linked_at"}}`, `linked` being the

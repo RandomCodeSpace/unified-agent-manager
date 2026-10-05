@@ -1492,10 +1492,13 @@ export interface ConnectedInstance {
   protocol_major: number;
   capabilities: string[];
   allow_private: boolean;
+  /** Set while the instance breaks the one-Copilot-account rule; its workload routes are refused. */
+  status?: 'account_mismatch';
+  reason?: string;
 }
 export interface AddConnectionInput { label: string; base_url: string; token: string; allow_private?: boolean }
 export type UpdateConnectionInput = Partial<AddConnectionInput> & { enabled?: boolean };
-export interface ConnectedStatus { status: 'connecting' | 'online' | 'offline' | 'auth-required' | 'unsupported'; error?: string }
+export interface ConnectedStatus { status: 'connecting' | 'online' | 'offline' | 'auth-required' | 'unsupported' | 'account-mismatch'; error?: string }
 
 /** A client owns one immutable connection generation. It is never retargeted. */
 export function createApiClient(connection: ConnectedInstance | null = null, valid: () => boolean = () => true, onError?: (error: ApiError) => void) {

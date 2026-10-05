@@ -15,6 +15,8 @@ export interface ConnectedInstancesSettingsProps {
   onUpdate: (id: string, patch: UpdateConnectionInput) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
   onRefresh: () => Promise<void>;
+  /** Opens that instance's Settings at its GitHub Copilot account. */
+  onOpenAccount?: (id: string) => void;
 }
 
 const statusText: Record<ConnectedStatus['status'], string> = {
@@ -23,6 +25,7 @@ const statusText: Record<ConnectedStatus['status'], string> = {
   offline: 'Unavailable',
   'auth-required': 'Access needs renewal',
   unsupported: 'Update required',
+  'account-mismatch': 'Linked to a different Copilot account',
 };
 
 /** Credentials live only in the form until submitted; the server returns redacted records. */
@@ -84,7 +87,7 @@ function ConnectionForm({ initial, busy, onSubmit, onCancel }: Readonly<{
 }
 
 /** Home-owned registry controls. Changing a connection never changes its remote task data. */
-export function ConnectedInstancesSettings({ homeInstanceID, connections, statuses = {}, activeTerminalConnectionID, onAdd, onUpdate, onRemove, onRefresh }: Readonly<ConnectedInstancesSettingsProps>) {
+export function ConnectedInstancesSettings({ homeInstanceID, connections, statuses = {}, activeTerminalConnectionID, onAdd, onUpdate, onRemove, onRefresh, onOpenAccount }: Readonly<ConnectedInstancesSettingsProps>) {
   const [editor, setEditor] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -156,6 +159,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
               {connection.enabled && status?.error ? ` — ${status.error}` : ''}
             </Note>
             <div className="flex flex-wrap gap-2">
+              {connection.enabled && status?.status === 'account-mismatch' && onOpenAccount && <Button variant="primary" onClick={() => onOpenAccount(connection.id)}>Open its GitHub Copilot settings</Button>}
               <Button variant="secondary" disabled={busy} onClick={() => { setEditor(connection.id); setAdding(false); setError(null); }}>Edit connection</Button>
               <Button variant="danger" disabled={busy} onClick={() => confirm.ask({ connection, action: 'remove' })}>Remove connection</Button>
             </div>

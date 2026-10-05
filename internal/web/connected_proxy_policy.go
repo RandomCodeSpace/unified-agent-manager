@@ -1,5 +1,7 @@
 package web
 
+import "strings"
+
 // connectedWorkloadPatternAllowed is deliberately an exact list of local mux
 // patterns. Adding an owner-only route cannot silently expose it to attached
 // instances. Both ends check this list; aliases, unknown methods and nested
@@ -136,6 +138,35 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"PUT /api/configuration/{kind}/{name}",
 		"PUT /api/mcp/servers/{name}",
 		grantKeyRoute:
+		return true
+	default:
+		return false
+	}
+}
+
+// connectedAccountGated lists the workload routes refused to a connection
+// whose Copilot account breaks the one-account rule: work that runs an agent
+// (creating, prompting or resuming Tasks, routine runs, drafts), the
+// planner's writes and the terminal. Reads, Settings and the account routes
+// stay open, so the account can be fixed there.
+func connectedAccountGated(pattern string) bool {
+	if method, route, _ := strings.Cut(pattern, " "); method != "GET" && strings.HasPrefix(route, "/api/board") {
+		return true
+	}
+	switch pattern {
+	case "GET /api/projects/{id}/terminal",
+		"POST /api/configuration/{kind}/draft",
+		"POST /api/projects/{id}/previous/{conversation_id}/import",
+		"POST /api/routines/{id}/run",
+		"POST /api/sessions",
+		"POST /api/sessions/{id}/command",
+		"POST /api/sessions/{id}/git/message",
+		"POST /api/sessions/{id}/interactions/{iid}",
+		"POST /api/sessions/{id}/prompt",
+		"POST /api/sessions/{id}/queue/resume",
+		"POST /api/sessions/{id}/rerun",
+		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
+		"POST /api/sessions/{id}/suggestions":
 		return true
 	default:
 		return false

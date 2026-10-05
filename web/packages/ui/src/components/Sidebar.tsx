@@ -404,6 +404,8 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop, rowK
   const renaming = a.renaming?.id === s.id && a.renaming.place === 'row';
   const status = taskStatus(s, unread);
   const diff = (s as SessionSummary & { diff?: DiffStat }).diff;
+  // A machine linked to another Copilot account keeps its rows, faded; opening one shows why it is blocked.
+  const unavailable = machine?.status.status === 'account-mismatch';
   // One class string for the button and for the plain container that replaces it while renaming, so the swap never shifts layout.
   // A Task card on the rail: `raised` with the soft ring, the open one `tint-selected`; the wrapper lifts it on hover (`lift`: transform and a pre-drawn shadow's opacity).
   const weight = strong ? 'font-medium text-ink' : 'text-body';
@@ -419,6 +421,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop, rowK
       'flex min-h-14 w-full flex-col justify-center gap-0.5 rounded-md px-2.5 py-2 text-left text-caption shadow-raised transition-[background-color] duration-100 focus-visible:-outline-offset-2',
       selected ? 'bg-tint-selected' : 'bg-raised',
       readOnly(s) && !selected && 'text-muted',
+      unavailable && !selected && 'opacity-60',
       weight,
     );
   }
@@ -435,7 +438,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop, rowK
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
-        <Tip label={compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)} side="right">
+        <Tip label={<>{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
           <button
             type="button"
             data-nav={rowKey}
@@ -712,7 +715,7 @@ export const Sidebar = memo(function Sidebar({
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }} onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>
         {/* Each row names its machine to assistive technology by reference. */}
-        {machines?.map((m) => <span key={m.id} id={machineLabelId(m)} className="sr-only">{m.label}</span>)}
+        {machines?.map((m) => <span key={m.id} id={machineLabelId(m)} className="sr-only">{m.label}{m.status.status === 'account-mismatch' ? ', unavailable: linked to a different Copilot account' : ''}</span>)}
         {body}
       </div>
 
