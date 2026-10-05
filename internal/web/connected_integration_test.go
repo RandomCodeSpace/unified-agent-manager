@@ -439,3 +439,38 @@ func TestConnectedIntegrationRemoteRevocationPreservesHomeAndOtherOwner(t *testi
 	connectedTestSubmit(t, a, "/api/sessions/"+f.taskID+"/prompt")
 	connectedTestSubmit(t, a, connectedTestPath(ac, "/api/sessions/"+f.taskID+"/prompt"))
 }
+
+// Settings written through a connection change only that instance, keep its
+// safeguards, and never carry a saved secret back through the proxy.
+func TestConnectedIntegrationSettingsStayWithOwnerAndRedactSecrets(t *testing.T) {
+	f := newConnectedTestFleet(t)
+	a, b, c := f.nodes[0], f.nodes[1], f.nodes[2]
+	ab := a.connect(t, b)
+	const secret = "fixture-connected-byom-key"
+	// The Terminal safeguard holds on B: off there, a command change is refused.
+	if _, refused := a.request(t, http.MethodPut, connectedTestPath(ab, "/api/configuration/agents/reviewer"), map[string]string{"content": "---\nname: reviewer\n---\n", "revision": ""}, http.StatusForbidden); !bytes.Contains(refused, []byte("Terminal on")) {
+		t.Fatalf("refused for another reason: %s", refused)
+	}
+	before := f.counts()
+	_, data := a.request(t, http.MethodPatch, connectedTestPath(ab, "/api/settings"), map[string]any{
+		"terminal":      true,
+		"custom_models": []map[string]string{{"name": "direct", "base_url": "https://llm.example/v1", "model_id": "m", "api_key": secret}},
+	}, http.StatusOK)
+	if got := f.counts(); got != [3]int{before[0], before[1] + 1, before[2]} {
+		t.Fatalf("settings write crossed owners: %v -> %v", before, got)
+	}
+	_, read := a.request(t, http.MethodGet, connectedTestPath(ab, "/api/settings"), nil, http.StatusOK)
+	for _, body := range [][]byte{data, read} {
+		if bytes.Contains(body, []byte(secret)) || bytes.Contains(body, []byte(`"api_key":`)) || !bytes.Contains(body, []byte(`"key_present":true`)) {
+			t.Fatalf("connected settings exposed or lost the key: %s", body)
+		}
+	}
+	if !b.m.Settings().Terminal || len(b.m.Settings().CustomModels) != 1 {
+		t.Fatalf("B did not keep its settings: %+v", b.m.Settings())
+	}
+	for _, n := range []*connectedTestNode{a, c} {
+		if got := n.m.Settings(); got.Terminal || len(got.CustomModels) != 0 {
+			t.Fatalf("%s settings changed by a write to B: %+v", n.name, got)
+		}
+	}
+}
