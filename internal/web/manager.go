@@ -1549,6 +1549,12 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	titles := p.TitleModel
 	if p.CustomModels != nil {
 		titles = withoutRemovedCustom(current, *p.CustomModels, hidden, subagents, titles)
+		// Removing the last allowed models must not lift the limit unasked.
+		for provider, ids := range subagents {
+			if _, asked := p.SubagentModels[provider]; !asked && len(ids) == 0 {
+				return Settings{}, newError(http.StatusBadRequest, "removing these custom models leaves %s subagents no allowed model; change Subagent models first", m.providers[provider].DisplayName())
+			}
+		}
 	}
 	next := current
 	if p.TokenPrices != nil {

@@ -117,6 +117,20 @@ func TestSubagentModelsValidatedStoredAndPushed(t *testing.T) {
 		t.Fatalf("after restart provider got %v, settings %v", list, m.Settings().SubagentModels)
 	}
 
+	// Removing the last allowed models is refused rather than lifting the limit.
+	if _, err := limit(map[string][]string{"fake": {"acme/other"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{CustomModels: customModels()}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("removing the only allowed model = %v, want 400", err)
+	}
+	if list := m.Settings().SubagentModels["fake"]; !slices.Equal(list, []string{"acme/other"}) {
+		t.Fatalf("after refused removal = %v", list)
+	}
+	if _, err := limit(map[string][]string{"fake": want}); err != nil {
+		t.Fatal(err)
+	}
+
 	// An empty list lifts the limit.
 	got, err = limit(map[string][]string{"fake": {}})
 	if err != nil || got.SubagentModels != nil {
