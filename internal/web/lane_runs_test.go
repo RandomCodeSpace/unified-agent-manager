@@ -858,7 +858,11 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	gitIn(t, r.repo, "status", "--porcelain")
 	out, _ := os.ReadFile(ran)
 	for _, label := range []string{"hooks-dir", "fsmonitor", "plain", "a=b", "unnamed"} {
-		if !strings.Contains("\n"+string(out), "\n"+label) {
+		switch {
+		case strings.Contains("\n"+string(out), "\n"+label):
+		case label == "unnamed": // git 2.54 runs the hook with no name, 2.55 does not
+			t.Logf("this git runs no hook with no name, so the planted %s proves nothing here", label)
+		default:
 			t.Errorf("the planted %s does not run for the owner's git either, so this test proves nothing for it", label)
 		}
 	}
