@@ -22,7 +22,7 @@ Today's code stands in the way in six places:
 - A launched Task is scoped to its subtask's parent, and the done reply tells it to claim the next pending subtask.
 - Agents only dismiss proposals. They never cancel a confirmed card.
 
-Three designs were scored: minimal on the shared tree, isolation first, and executor first. This ADR builds on the executor-first design. From isolation first it takes one integration branch per Project, landing that re-tests when the tip moved, the git preflight and the owner's Merge. From the minimal design it takes approval of listed ids, later additions staying proposals, no new request kind, and manual starts outside approved epics left as they are. The scores are under Rejected.
+Three designs were scored: minimal on the shared tree, isolation first, and executor first. This ADR builds on the executor-first design. From isolation first it takes one integration branch per Project, landing that re-tests when the tip moved, the git preflight and the merge into the owner's branch. From the minimal design it takes approval of listed ids, later additions staying proposals, no new request kind, and manual starts outside approved epics left as they are. The scores are under Rejected.
 
 Naming follows ADR 0005: a **Task** is a uam conversation, and the planner's leaf is a **subtask**.
 
@@ -34,17 +34,17 @@ Naming follows ADR 0005: a **Task** is a uam conversation, and the planner's lea
 - Outside approved epics nothing changes. Manual Launch, Do whole story, Attach, Claim and Confirm work as ADR 0005 describes.
 - uam runs approved work. The executor is a goroutine in the server, not a Task, so ADR 0005's rejection of a steward Task stands.
 - One attempt is one Task, one worktree and one subtask. An accepted subtask lands as one commit, and a revert removes exactly that commit and the ones started on top of it.
-- The owner's checked-out branch changes only when the owner clicks Merge.
+- Approving an epic also authorizes merging its landed work into the owner's base branch (§5.8). uam merges when an approved epic finishes and after the owner reverts merged work, and it never pushes or force-moves that branch.
 - Store first, then the ref. Every write to the integration branch records its intent in board.db, moves the ref with compare-and-swap, then finalizes the store. The ref never moves backwards, and recovery finishes what a crash interrupted.
 - Started is still the line (ADR 0005 decision 8). No agent write, and no owner write under an approved epic, may give running work a new open blocker.
 - Kept from ADR 0005: derived container status, `expires_at NULL` as confirmed, the layered DAG, the started lock, `held_by` with its single `releaseHold` path, pure reconcile, evidence-backed done with the owner's `accept_cmd`, agents never writing done or blocked, agent reach (decision 9), agent-proposed epics, no card per Task, in-process tools, and an explicit model on every run launch. Changing any of these needs the owner.
 
 ## 1. Scope
 
-The owner asks an ordinary Task for a plan and approves the epic once. From there uam runs it. Ready subtasks start in parallel, each in its own Task and its own git worktree, and any landed subtask can be reverted on its own.
+The owner asks an ordinary Task for a plan and approves the epic once. From there uam runs it. Ready subtasks start in parallel, each in its own Task and its own git worktree, and any landed subtask can be reverted on its own. When an approved epic finishes, uam merges the integration branch into the owner's base branch; the epic approval covers that merge (§5.8).
 
 How each requirement is met:
-- **R1.** A Task with no scope already proposes epics and builds them out (ADR 0005 decisions 4 and 9). The real blocker is the cap, which becomes 50 live cards (§6.3). `board_create` and SKILL.md add the hand-off: when the plan is complete, ask the owner to approve #E, and end the turn.
+- **R1.** A Task with no scope already proposes epics and builds them out (ADR 0005 decisions 4 and 9). The real blocker is the cap, which becomes 50 live cards under a lifetime ceiling of 200 (§6.3). `board_create` and SKILL.md add the hand-off: when the plan is complete, ask the owner to approve #E, and end the turn.
 - **R2.** A new owner action, **Approve and run**, on an epic (§6.2). It confirms downward exactly the proposals the dialog showed, at the revisions it showed, and writes a `runs` row with the model, mode and parallel limit. Under an approved epic nobody confirms or launches per card, and the store refuses both with `run_owned`.
 - **R3.** An owner flag, `paused`, on any card under an approved epic, shown as Pause / Resume with the hint "Block execution" (§4.6). It holds back the card and everything under it. Stop on a running subtask is the owner's Release: it ends the attempt and pauses the card.
 - **R4.** A server-side executor (§4) starts ready subtasks up to the epic's parallel limit and a global lane cap. A subtask is ready when it and its ancestors are confirmed, nothing at or above it is paused, it is not flagged blocked, and it has no open blocker, own or inherited.
@@ -54,7 +54,7 @@ How each requirement is met:
 
 ## 2. What this supersedes in ADR 0005
 
-Each item names the ADR 0005 rule it replaces and the requirement that forces the change. A bare "decision N" in this list is one of ADR 0005's decisions; "§9 decision N" is one of this ADR's.
+Each item names the ADR 0005 rule it replaces and the requirement that forces the change. Item 20 is the exception: it replaces a non-goal of this design's first draft, not an ADR 0005 rule. A bare "decision N" in this list is one of ADR 0005's decisions; "§9 decision N" is one of this ADR's.
 
 1. **Decision 6, "Blockers never stop a launch or a claim".** Under an approved epic nothing starts while the subtask has an open blocker (its own or inherited), the blocked flag, or a pause at or above it. Manual Launch (with or without confirm), Do whole story, Attach and Claim there are refused `run_owned` (§10 has the order in which this lands). Manual starts outside approved epics keep decision 6. Forced by R4.
 2. **Per-card confirmation as the gate on execution**, as stated in ADR 0005's `expires_at` row (§1), the confirm step on Launch (§5), decision 6's confirm step, decision 10's "confirmation happens only at execution", and Confirm walking only up. Approve confirms the listed subtree downward, at the listed revisions, and authorizes the run. Under an approved epic the store refuses per-card Confirm and Launch with confirm (`run_owned`), and the UI doesn't offer them. Outside approved epics nothing changes. Forced by R2 and R3.
@@ -67,7 +67,7 @@ Each item names the ADR 0005 rule it replaces and the requirement that forces th
    - For the owner, only under approved epics, Approve, Restore, link, move, the blocked flag and status changes are refused `in_progress` with refs when they would give a running lane subtask a new open blocker or the blocked flag. The owner Stops that subtask first, or waits for it to land. Owner writes outside approved epics are unchanged.
 
    Forced by R4 and R7: a reopened blocker makes the running lane's done claim fail the finishing guard.
-8. **The cap of 20 created cards per Task, counted over its lifetime** (ADR 0005 §4 and decision 9). It becomes 50 non-cancelled cards, so deleted and expired cards give their slot back. The cap of 10 unconfirmed children per container, the 20-comment cap and the 14-day proposal expiry are unchanged. Forced by R1 (one epic with four stories of four subtasks is 21 cards) and R7 (re-planning after deletes).
+8. **The cap of 20 created cards per Task, counted over its lifetime** (ADR 0005 §4 and decision 9). It becomes 50 non-cancelled cards, so deleted and expired cards give their slot back, under a lifetime ceiling of 200 created cards, cancelled ones included. The cap of 10 unconfirmed children per container, the 20-comment cap and the 14-day proposal expiry are unchanged. Forced by R1 (one epic with four stories of four subtasks is 21 cards) and R7 (re-planning after deletes).
 9. **Decision 5, automatic acceptance**, for run subtasks.
    - Done means accepted and landed, in one step.
    - The `overlap` flag is not computed in worktrees, since there is nothing to overlap with.
@@ -78,14 +78,15 @@ Each item names the ADR 0005 rule it replaces and the requirement that forces th
    Forced by R2. Otherwise nearly every test-first subtask would wait for an approval of its own.
 10. **Reconcile releases an ended hold to todo and does nothing more** (ADR 0005 §5's release table). For a lane hold, `releaseHold` also sets `paused` by reason. `ended` and `rejected` set `paused='uam'`: an attempt ended without landing. `released` and `settled` set `paused='owner'`: the owner stopped it. `accepted`, `aborted`, `blocked` and `cancelled` set nothing. Forced by R4, so the executor never relaunches in a loop an attempt that failed or that the owner ended.
 11. **The owner's "Back to To do" on a done subtask** (decision 5). On a landed subtask it is replaced by Revert, so the code and the card move together, and by "Reopen without reverting code" for when Revert cannot apply. Forced by R6.
-12. **uam never commits for a Task.** Today uam commits only the files and message the owner picks. Inside lanes uam now commits what the Task left uncommitted, merges the integration tip into the lane, writes squash and revert commits with `commit-tree`, and moves `uam/*` refs. It touches the owner's checked-out branch only through the owner's Merge. Forced by R6.
+12. **uam never commits for a Task.** Today uam commits only the files and message the owner picks. Inside lanes uam now commits what the Task left uncommitted, merges the integration tip into the lane, writes squash and revert commits with `commit-tree`, and moves `uam-plan-*` branches. It touches the owner's base branch only through the merge job of §5.8, which the epic approval authorizes. Forced by R6 and the owner's merge decision of 2026-10-06 (item 20).
 13. **Decision 8's "Still allowed: the owner's Release, cancel, done and back to To do"** on started cards, for lane holds. Release becomes Stop: it ends the attempt and pauses the card (`paused='owner'`). Mark done is refused with "accept its done request or Stop it", because it would bypass landing. Back to To do is item 11. Cancel is unchanged. Forced by R4 and R6.
 14. **ADR 0005 §6, "one runner per Project, guarded by a mutex", running in the Project directory, and its test 4, "at most one acceptance run per Project".** A lane runs its acceptance command in its own worktree. All runs of a Project, manual and lane, share a per-Project limit `accept_parallel`, default 1, so test 4 still holds by default. Raising the limit supersedes it for that Project. Forced by R4 and R5.
 15. **ADR 0005 test 7, "A restart changes no holds of Active or Settled Tasks and writes no comments".** Boot recovery finishes landings and reverts that a crash interrupted, which ends holds and writes comments, and aborts uam's own merges left in lanes. The executor may then nudge and start. Forced by R4 and R6.
 16. **ADR 0005 §5's Settle row, "keep held, release to todo, or cancel"**, for lane holds. Settle cannot keep a lane hold. Release stops the attempt (`paused='owner'`) and cancel cancels the card. Forced by R4: a settled holder would keep a slot with nobody working on it.
 17. **ADR 0005 §5's "A hold persists while the Task is Active"**, for lane holds. Besides landing and Stop, accepting a blocked request on a lane hold ends the attempt with reason `blocked`. The flag or link it sets holds the subtask back without a pause, so clearing the flag or finishing the blocker restarts it. Forced by R4: the idle holder would otherwise be nudged against the owner's decision and then retired.
-18. **Decision 1, split under a story.** The original's links are copied to every part, both ways, so its dependents keep waiting and its parts keep waiting on its blockers. A link to a dependent that has started is not copied, and the reply names it. Forced by R4: the cancelled original releases its dependents at once, and the executor would start them before the split-off work exists.
+18. **Decision 1, split under a story.** The original's links are copied to every part, both ways, so its dependents keep waiting and its parts keep waiting on its blockers. A link to a dependent that has started is not copied, and the reply names it. An agent's split that would close a container is refused, as Delete is (§6.3 rule 3). Forced by R4: the cancelled original releases its dependents at once, and the executor would start them before the split-off work exists.
 19. **Decision 2 and ADR 0005 §8, "Restore confirms"**, under an approved epic. Restore there brings every card under the epic back as a proposal with a fresh expiry, so it shows as "N to approve" instead of running at once. Forced by R2.
+20. **This design's first-draft non-goal "automatic merge into the owner's branch".** Approving an epic now also authorizes merging into `base_ref` (§5.8). The merge runs on its own when an approved epic finishes and after an owner Revert of merged work; Retry merge stays for blocked merges and early merges. Forced by the owner's decision of 2026-10-06: "Merge also needs to be approval based only. I approve epic for approval."
 
 ## 3. Model
 
@@ -145,7 +146,7 @@ Nothing is stored beyond the columns above.
 | Running k of n | A `runs` row, k open lane holds without a pending done, blocked or split request (§4.1), n the parallel limit |
 | Waiting for provider | A `runs` row, and the provider's breaker is open (executor memory, §4.5) |
 | Idle | A `runs` row, and nothing ready: everything waits, is paused or is done |
-| Finished | The epic derives done. Settle adds "Run finished on uam/plan-x" |
+| Finished | The epic derives done, and uam merges the integration branch into `base_ref` (§5.8). Settle adds "Run finished on uam-plan-x" |
 
 **A subtask's state under an approved epic:**
 
@@ -220,6 +221,7 @@ type Step struct {
 	Nudge, Cancel, Retire, Abort []Act
 	Land                         []string
 	ProviderFailed               []string
+	Merge                        []string // project IDs (§5.8)
 }
 func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 ```
@@ -257,7 +259,7 @@ Retire archives the Task. Archive's reconcile releases any hold left, which for 
 `internal/web/executor.go` runs a loop shaped like the routine loop: the Manager's wait group, a 30-second ticker, and a kick channel with a buffer of one. Kicks come after every committed board write, when a lane Task's turn leaves Working, after reconcile on Task stage moves, at the end of opening the board, and at the end of every land, revert and merge job.
 
 Each pass:
-1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
+1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. Also after the lock is released, each Project with a `runs` row gets the merge fact of §5.8: whether `base_ref` already has everything the integration branch carries. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
 2. Call `RunFacts`, then `Next`.
 3. Apply the step:
    - **Start** runs in a goroutine with a `Starting` reservation, under the Project land mutex (§5.3).
@@ -267,12 +269,13 @@ Each pass:
    - **Abort** calls `AbortRun`, discards the Task and removes the lane.
    - **Land** runs `landAndAccept` (§5.4) in a goroutine, with the card in `Landing` until it returns.
    - **ProviderFailed** updates the provider's breaker (§4.5).
+   - **Merge** runs the merge job (§5.8) in a goroutine.
 
 The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their card in `Landing` before they start, so `Next` never lands a request that another call is already landing.
 
 ### 4.4 Concurrency
 
-- **Project land mutex.** One in-memory mutex per Project serializes every read-then-write of the integration branch: a lane start, from the tip read through `worktree add`, Task creation and `StartRun`; landing, both preparation and commit phase; and revert, sync and Merge. Because lane starts read the tip under the same mutex, no lane forks from a ref state a later step could change.
+- **Project land mutex.** One in-memory mutex per Project serializes every read-then-write of the integration branch: a lane start, from the tip read through `worktree add`, Task creation and `StartRun`; landing, both preparation and commit phase; and revert, sync and merge. Because lane starts read the tip under the same mutex, no lane forks from a ref state a later step could change.
 - **Lock order.** Land mutex, then the Project's acceptance limit, then the store write. The Manager lock is never held while waiting on either. Steers and nudges go out after the mutex is released.
 - **Roll forward.** Every write to the integration branch records its intent in the store, moves the ref with compare-and-swap (`git update-ref <ref> <new> <old>`), then finalizes the store. The intent is `landed_sha` on the open hold, or for a revert the cards already marked with `reverted_sha`. A failed compare-and-swap is compensated in the store only: the landing intent is cleared, or the revert undone. Recovery finishes an intent commit X with one rule:
   - the integration branch is an ancestor of X: fast-forward it to X with compare-and-swap, then finalize the store;
@@ -282,8 +285,8 @@ The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their 
 - **Sticky intent.** While an open hold carries a landing intent, the store refuses every write that would change that card's status or end its hold, with code `landing` ("landing in progress, retry"). Only `AcceptLanded` and `ClearLanding` pass, and reconcile leaves such holds for recovery. A status change withdraws pending requests, so without this a hold release could withdraw a request whose commit is already on the integration branch.
 - **Start re-check.** `StartRun` re-checks ready and both slot counts inside its own write, with the function `RunFacts` uses. It then scopes the Task to the subtask itself, records `waited_on` (§5.3) and starts the hold through the existing single start path. A link, edit, pause or delete that commits between `RunFacts` and `StartRun` makes it refuse `not_ready`; the driver discards the Task and the worktree and counts nothing toward backoff. A run start does not re-pin, and an automatic comment "started by the run of #E" tells it apart from a manual start.
 - **Duplicate starts** are impossible, restarts included: the unique index on open holds and the in-transaction re-check both refuse them.
-- **Owner git actions.** Lanes sit outside the Project directory, and the owner's Commit, Pull and Push count only Tasks whose workdir is inside the repo, so run Tasks never block them. The owner's git writes never block run Tasks either. Merge takes the land mutex, then the owner's git write path.
-- **Jobs.** The owner's Accept of a lane done, Revert and Merge answer 202 `{job_id}` and report through `board_job` frames. No HTTP request waits on the land mutex, which an acceptance re-run can hold for up to 10 minutes.
+- **Owner git actions.** Lanes sit outside the Project directory, and the owner's Commit, Pull and Push count only Tasks whose workdir is inside the repo, so run Tasks never block them. The owner's git writes never block run Tasks either. The merge job takes the land mutex, then, when `base_ref` is checked out, the owner's git write path.
+- **Jobs.** The owner's Accept of a lane done, Revert and Retry merge answer 202 `{job_id}` and report through `board_job` frames, and the automatic merge runs as the same job. No HTTP request waits on the land mutex, which an acceptance re-run can hold for up to 10 minutes.
 - **Load.** Parallel per epic 1 to 4, a global cap of 4 open lane holds, and the per-Project acceptance limit, default 1.
 
 ### 4.5 Failure handling
@@ -331,8 +334,8 @@ The git operations live in `internal/web/lanes.go`. They run git through the exi
 
 | Thing | Name or place |
 |---|---|
-| Integration branch | `uam/plan-<p8>`, where p8 is the first 8 hex digits of the Project ID. One per Project, so cross-epic blockers and reverts stay on one line |
-| Attempt branch | `uam/plan-<p8>-<seq>-<id8>`, where id8 is the first 8 hex digits of a new UUID for each start. A sibling ref, so no ref directory and file clash, and never reused, so a branch a crash left can't block the next start |
+| Integration branch | `uam-plan-<p8>`, where p8 is the first 8 hex digits of the Project ID. One per Project, so cross-epic blockers and reverts stay on one line. The prefix has no slash: a repo with a local branch named `uam`, as uam's own repo has, cannot hold `uam/...` refs |
+| Attempt branch | `uam-plan-<p8>-<seq>-<id8>`, where id8 is the first 8 hex digits of a new UUID for each start. A sibling ref, so no ref directory and file clash, and never reused, so a branch a crash left can't block the next start |
 | Worktree | `<directory of sessions.json>/lanes/<project-id>/<seq>-<id8>`, derived from the branch, not stored. That directory is private to the owner |
 | Task workdir | The worktree plus the Project's path relative to the repo top, since a Project may be a subdirectory |
 | After landing | The attempt branch is deleted. The squash commit carries the work, and its trailers name the card and the request. Attempt branches that did not land stay |
@@ -349,7 +352,9 @@ The git operations live in `internal/web/lanes.go`. They run git through the exi
 
 **Creation.** The integration branch is created on first need at the `base_ref` tip, with a create-only `update-ref`.
 
-**Sync**, under the land mutex, when the `base_ref` tip is not an ancestor of the integration branch: `merge-tree --write-tree integ base`, and if that is clean, `commit-tree -p integ -p base` followed by a compare-and-swap. Sync runs at Approve and Resume, where a conflict refuses with the files, and before each lane start, where a conflict skips the sync and adds one comment on the epic per base sha. This is how work the owner committed to `base_ref` reaches later lanes, including an unapproved blocker epic done by hand.
+**`hasAll(a, b)`** holds when merging b into a would bring nothing: b is a or an ancestor of a, or a is an ancestor of b with the same tree. Sync and merge test it instead of plain ancestry. With ancestry alone, the merge commit one side gets makes it look ahead of the other even when its tree adds nothing, so sync and merge would keep answering each other with empty merge commits.
+
+**Sync**, under the land mutex, when `base_ref` brings something the integration branch lacks (`!hasAll(integ, base)`): `merge-tree --write-tree integ base`, and if that is clean, `commit-tree -p integ -p base` followed by a compare-and-swap. Sync runs at Approve and Resume, where a conflict refuses with the files, and before each lane start, where a conflict skips the sync and adds one comment on the epic per base sha. This is how work the owner committed to `base_ref` reaches later lanes, including an unapproved blocker epic done by hand.
 
 Uncommitted changes in the owner's directory are never in a lane, and the Approve dialog says so.
 
@@ -375,15 +380,15 @@ A run Task gets only `board_get`, `board_list`, `board_checklist`, `board_commen
 
 A `board_request` done on a lane hold works in the Task's workdir:
 1. The finishing guard runs.
-2. Refuse `land_conflict` while the lane has a merge in progress (`MERGE_HEAD`) or unmerged paths (`ls-files -u`), naming the files: "finish your merge of uam/plan-x and commit, then file done again". Leftovers are never committed with conflict markers in them.
+2. Refuse `land_conflict` while the lane has a merge in progress (`MERGE_HEAD`) or unmerged paths (`ls-files -u`), naming the files: "finish your merge of uam-plan-x and commit, then file done again". Leftovers are never committed with conflict markers in them.
 3. Commit leftovers in the lane: `add -A`, then `commit --no-verify -m "#seq: work in progress"`.
 4. Read the integration tip. Refuse `land_stale` when `rev-list <tip>..HEAD` holds a commit with a `Uam-Request` or `Uam-Revert` trailer: the lane carries integration commits the branch no longer has. The reply tells the agent to end its turn, the nudge-then-retire rows end the attempt, and Resume starts fresh. With roll-forward only a hand edit of the integration branch causes this.
-5. If the tip is not an ancestor of the lane's HEAD, run `git merge --no-edit --no-verify -m "Merge uam/plan-x\n\nUam-Merge: <tip>" <tip>` in the lane. On a conflict, collect the conflicted files and the landed cards that touched them (from the `Uam-Card` trailers on `base..tip`), run `merge --abort`, and refuse `land_conflict` with "run `git merge uam/plan-x` in your directory, resolve a.go, commit, file done again".
+5. If the tip is not an ancestor of the lane's HEAD, run `git merge --no-edit --no-verify -m "Merge uam-plan-x\n\nUam-Merge: <tip>" <tip>` in the lane. On a conflict, collect the conflicted files and the landed cards that touched them (from the `Uam-Card` trailers on `base..tip`), run `merge --abort`, and refuse `land_conflict` with "run `git merge uam-plan-x` in your directory, resolve a.go, commit, file done again".
 6. Collect evidence against the baseline `{Head: tip}`: the diff and commits are exactly this subtask on top of the current tip. No overlap is computed.
 7. Run the acceptance command in the lane, first under the Project's acceptance limit (shared with manual runs in the Project directory), then under the directory's runner slot. A non-zero exit refuses, as before. A run the timeout kills is filed with `acceptance_could_not_run`, so it waits for the owner instead of counting as red.
 8. Mark the card in `Landing`, then file the request. When it would otherwise be accepted automatically, a lane done stays pending with the wait `landing` and `payload.landing = true`. Every other wait reason still applies.
 9. `landAndAccept`.
-10. Reply with one of: "#31 is done and landed on uam/plan-x as 9f3e2a1. You are finished; end your turn."; the content failure and what to do; or "landing is queued: `<reason>`. uam lands it when that clears. End your turn."
+10. Reply with one of: "#31 is done and landed on uam-plan-x as 9f3e2a1. You are finished; end your turn."; the content failure and what to do; or "landing is queued: `<reason>`. uam lands it when that clears. End your turn."
 
 **`landAndAccept(id, by)`**, under the Project land mutex.
 
@@ -398,7 +403,7 @@ Commit phase, on `context.WithoutCancel` with its own timeout:
 
 6. `MarkLanding(id, S)` sets `landed_sha = S` on the open hold. This is the intent, and it is sticky (§4.4).
 7. `update-ref refs/heads/<integ> S <tip>`. If the integration branch is checked out in any worktree, or the compare-and-swap fails, `ClearLanding(id)` and treat it as transient.
-8. `AcceptLanded(id, S, by)` takes the existing accept-and-done path and adds the comment "Landed on uam/plan-x as `<short>`". If this store write fails, the intent stays and recovery finishes it. The ref never moves back.
+8. `AcceptLanded(id, S, by)` takes the existing accept-and-done path and adds the comment "Landed on uam-plan-x as `<short>`". If this store write fails, the intent stays and recovery finishes it. The ref never moves back.
 
 On a content failure, `LandFailed(id, reason, holderActive)` (§4.5); the ref was not touched.
 
@@ -427,7 +432,7 @@ The transcript stays readable after the worktree is gone, because reading a Copi
 - A running attempt whose open hold lists a closure card in `waited_on` refuses with `revert_running`: "Stop #d first".
 - Unstarted dependents wait again through their live links, because the seed returns to todo, paused.
 
-**Preview** (`GET`) returns the closure, each landed sha, the files (`diff-tree --name-only`), a dry-run result, and whether the integration branch is already merged into `base_ref`.
+**Preview** (`GET`) returns the closure, each landed sha, the files (`diff-tree --name-only`), a dry-run result, and whether `base_ref` already has any of those landed commits.
 
 **Apply.** `POST` checks the closure against `expect` (409 `stale` on a difference) and running dependents (409 `revert_running`) at once, then answers 202 `{job_id}` with job kind `revert`. The job, under the land mutex:
 1. Order the closure newest first, by position in the integration branch's first-parent history.
@@ -441,19 +446,34 @@ Commit phase, on `context.WithoutCancel`:
 
 Between the store write and the ref move nothing can start those cards: they are paused, and lane starts wait on the mutex. Recovery finishes a revert whose `reverted_sha` is not on the integration branch with the rule of §4.4: a fast-forward when the branch is an ancestor of C, `UndoRevert` otherwise.
 
-**Reopen without reverting code.** The way out when Revert cannot apply, for example on a conflict with commits no card owns (sync merges, the owner's own commits) or after a hand edit of the integration branch. On a landed subtask, `POST /cards/{ref}/status {status: "todo", keep_code: true, comment}` sets todo and `paused='owner'`, leaves `reverted_sha` empty, and adds the comment "reopened without reverting `<landed sha>`; the code stays on uam/plan-x". It moves no ref and runs the owner integrity check (§6.3 rule 2). Its landed dependents stay landed, and the dialog lists them. The owner fixes the code by hand, in Terminal or on their own branch after Merge, or leaves it to the next attempt.
+**Reopen without reverting code.** The way out when Revert cannot apply, for example on a conflict with commits no card owns (sync merges, the owner's own commits) or after a hand edit of the integration branch. On a landed subtask, `POST /cards/{ref}/status {status: "todo", keep_code: true, comment}` sets todo and `paused='owner'`, leaves `reverted_sha` empty, and adds the comment "reopened without reverting `<landed sha>`; the code stays on uam-plan-x". It moves no ref and runs the owner integrity check (§6.3 rule 2). Its landed dependents stay landed, and the dialog lists them. The owner fixes the code by hand, in Terminal or on their own branch once the work is merged, or leaves it to the next attempt.
 
-**After Merge.** If the integration branch was already merged into `base_ref`, the revert still lands on the integration branch, and the next Merge carries it. A running subtask is never reverted; it is Stopped. The owner's "Back to To do" on a landed subtask without `keep_code` is refused with "Revert #n instead".
+**After a merge.** If `base_ref` already has a reverted landing, the revert still lands on the integration branch, and when the revert job ends uam merges it into `base_ref` (§5.8). The owner's Revert is the approval for that merge. A running subtask is never reverted; it is Stopped. The owner's "Back to To do" on a landed subtask without `keep_code` is refused with "Revert #n instead".
 
-### 5.8 Merge into the owner's branch (owner only)
+### 5.8 Merge into the owner's branch (covered by the epic approval)
 
-`POST /projects/{id}/merge` answers 202 `{job_id}` with job kind `merge`, which carries the Project instead of a card. The job, under the land mutex:
-1. Begin a git write in the Project directory, as the owner's Commit does. Lane Tasks never count as busy.
-2. Stop with nothing to do when the integration branch is an ancestor of HEAD.
-3. `merge-tree --write-tree HEAD integ`. A conflict fails the job with `merge_conflict` and the files.
-4. `git merge --no-ff --no-edit <integ>` through the owner's git write path, so hooks run and git refuses to overwrite local changes.
+On 2026-10-06 the owner decided: "Merge also needs to be approval based only. I approve epic for approval." Approving an epic also authorizes merging its landed work into `base_ref`. There is no separate merge approval, and the normal flow needs no Merge click.
 
-The preview lists the landed subtasks since the last merge and marks those that changed tests or build files, which is the owner's review point (§9 decision 3).
+**Triggers.** `Next` returns `Merge` with the Projects to merge. It stays pure: besides `RunFacts` it takes one git fact per Project, read by the driver, whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2). A merge fires when:
+- an approved epic derives done and `!hasAll(base, integ)`;
+- an owner Revert job ended and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it.
+
+The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plain ancestry is not used, because after a sync merge brings an owner commit into the integration branch, that branch is not an ancestor of base even when nothing is left to merge. The Planner header's "N ahead" count and the revert preview's "already merged" flag use the same fact, counting landed commits that `base_ref` lacks rather than integration commits. A merge carries everything on the integration branch, including the landed subtasks of other approved epics in the Project. Each of those was approved under its own epic and passed acceptance. Proposals never land, so nothing unapproved reaches `base_ref` through uam.
+
+**The merge job** has job kind `merge` and carries the Project instead of a card. It runs under the land mutex, with the commit phase on `context.WithoutCancel`, and first stops with nothing to do when `hasAll(base, integ)` holds.
+1. **`base_ref` checked out** in the Project directory or another worktree that is not a lane:
+   1. Begin a git write there, as the owner's Commit does. Lane Tasks never count as busy; any other busy Task in the repo answers `git_busy`.
+   2. `merge-tree --write-tree HEAD integ`. A conflict answers `merge_conflict` with the files.
+   3. `git merge --no-ff --no-edit -m "Merge uam-plan-x: <epic title> (#seq)" <integ>` through the owner's git write path, so hooks run and git refuses to overwrite local changes (`local_changes`, with the files).
+2. **`base_ref` not checked out anywhere:** `merge-tree --write-tree base integ`, `commit-tree -p base -p integ`, then a compare-and-swap `update-ref refs/heads/<base_ref>`. No working tree changes.
+3. uam never pushes and never force-moves `base_ref`.
+
+**Outcomes.**
+- Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).
+- `git_busy` and `local_changes` retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
+- `merge_conflict` is not retried on its own for the same pair of integration and base tips. The executor keeps that pair in memory, so after a restart it is tried once more. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
+
+**Retry merge.** `POST /projects/{id}/merge` stays as an owner action: Retry merge after a blocked or waiting merge, and an early merge of an unfinished epic's landed work. It answers 202 `{job_id}` and runs the same job.
 
 ### 5.9 Limits that remain
 
@@ -506,12 +526,14 @@ From S2 the store refuses, under an approved epic, per-card Confirm and every ma
      - under an approved epic, when it would leave a confirmed container with no live confirmed subtask, which derives planned forever.
 
      A cancelled blocker releases its dependents, and the reply names them. SKILL.md tells planners to link the replacement before deleting a blocker.
+
+     The container-closing refusal also covers an **agent split into siblings**. Splitting a story's last unfinished confirmed subtask cancels the original and leaves only proposals, which derivation ignores, so the story would derive done and release its dependents before the parts are approved. An agent split that would close a container is refused with the same code and refs as Delete. The owner may still split it.
   4. **Links on started work.** An agent link or unlink is refused `in_progress` when the blocked side is a container with a started or done subtask under it. Containers never start, so checking only the two endpoints misses this.
   5. **Moves across approved epics.** An agent move that changes a card's epic (the root counts as no epic) while either epic has a `runs` row is filed as a change request, the path a move under a proposal already takes. Otherwise a confirmed card could move into an approved epic, or from a safe-mode epic into a yolo one, and run under settings the owner never approved for it. Moves inside an approved epic are covered by the approval, subject to rule 2 and rule 3's emptying check.
   6. **Split copies links.** A split into siblings inserts the original's links on every part, both ways. They stay on one level because the parts share the story, and they cannot close a cycle because the parts are new. A link to a started dependent is not copied, and the reply names it. This applies to owner and agent splits alike.
   7. **The layered DAG and no cycles**, as in ADR 0005 decision 7.
 - **Restore under an approved epic** brings every card under the epic, other than the epic itself, back as a proposal with a fresh expiry. The cards show as "N to approve" and run only after the owner approves them. Restore also runs rule 2's owner check.
-- **Caps.** `CapCreated = 50`, counted over the Task's non-cancelled cards, so delete and expiry give slots back. The cap of 10 unconfirmed children per container, root included, is unchanged; it counts proposals only, so it binds before approval, not after. The 20-comment cap is unchanged.
+- **Caps.** `CapCreated = 50`, counted over the Task's non-cancelled cards, so delete and expiry give slots back. A lifetime ceiling, `CapCreatedTotal = 200`, counts every card the Task created, cancelled ones included, so the cards one Task creates over its lifetime stay bounded while deletes keep freeing live slots. Purge deletes rows and so frees lifetime slots too; Purge is the owner's. The cap of 10 unconfirmed children per container, root included, is unchanged; it counts proposals only, so it binds before approval, not after. The 20-comment cap is unchanged.
 - **Expiry** is unchanged. Unapproved plans and additions made after approval expire 14 days after creation or the last owner write. Approved cards never expire.
 - **Under an approved epic**, an agent edit, link, unlink or delete of an existing unstarted card, and a move inside the epic, is covered by the approval, within the rules above. A move into or out of the epic is a change request. A new card is a proposal: the executor skips it, the epic shows "N to approve", and approving again picks it up. A proposal left under an approved story surfaces before it can be cancelled silently, because the story's closing done waits with `closes_with_proposals` and names it.
 
@@ -524,7 +546,7 @@ From S2 the store refuses, under an approved epic, per-card Confirm and every ma
 | `board_edit` moving into or out of an approved epic | Answers that it was filed as a change request for the owner | S2 |
 | `board_get` | Shows the epic's run state and any pause on the path | S2 |
 | `board_claim` | Under an approved epic: refused `run_owned` | S2 |
-| Run preamble | "You work only on #31, in your own git worktree on branch uam/plan-x-31-1a2b3c4d, made from uam/plan-x at `<sha>`. Other subtasks run in parallel in their own worktrees. Stay in this directory; do not switch branches, push, or merge unless a done reply tells you to, and finish any merge you start before filing done. Tick the checklist and file board_request done; uam commits what is left, merges the integration tip, runs the acceptance command and lands your work as one commit. When it lands, or when the reply says landing is queued, end your turn." | S4 |
+| Run preamble | "You work only on #31, in your own git worktree on branch uam-plan-x-31-1a2b3c4d, made from uam-plan-x at `<sha>`. Other subtasks run in parallel in their own worktrees. Stay in this directory; do not switch branches, push, or merge unless a done reply tells you to, and finish any merge you start before filing done. Tick the checklist and file board_request done; uam commits what is left, merges the integration tip, runs the acceptance command and lands your work as one commit. When it lands, or when the reply says landing is queued, end your turn." | S4 |
 | Run Task tool set | `board_get`, `board_list`, `board_checklist`, `board_comment` and `board_request` only. No `uam_create_task` | S4 |
 | `board_request` done reply for run Tasks | "landed ... end your turn"; "landing is queued ... end your turn"; `land_conflict` with the merge steps or "finish your merge"; `land_stale`; acceptance timed out, waiting for the owner | S4 |
 
@@ -532,7 +554,7 @@ The built-in `uam` skill (SKILL.md) changes in the same slice as the behaviour i
 
 | Slice | SKILL.md change |
 |---|---|
-| S1 | `board_delete` and its refusals; no new blockers for started work; no link changes on containers with started work; link the replacement before deleting a blocker; splits keep links; caps of 50 live cards and 10 unconfirmed per card |
+| S1 | `board_delete` and its refusals; no new blockers for started work; no link changes on containers with started work; link the replacement before deleting a blocker; splits keep links, and a split that would close a container is refused like a delete; caps of 50 live cards, 200 cards over a Task's lifetime and 10 unconfirmed per card |
 | S2 | The hand-off: build the epic, link it, tell the owner to approve #E, stop. After approval new cards wait for approval again, edits apply, moving a card into or out of an approved epic goes to the owner, and restored cards come back as proposals. Paused cards don't run. Nothing under an approved epic is claimed |
 | S4 | Working on an approved epic: the worktree, landing, the conflict merge, finishing merges before filing done, no claims, ending the turn after landing or when landing is queued |
 | S5 | uam starts an approved epic's subtasks; never claim there |
@@ -556,9 +578,9 @@ Owner-only unless noted, behind the existing sign-in, cross-origin and JSON chec
 | `GET /api/board/cards/{ref}/revert` | S6 | The preview |
 | `POST /api/board/cards/{ref}/revert` `{include: [ref], expect: [ref], comment}` | S6 | 202 `{job_id}`, job kind `revert`. 409 `stale` (the closure differs from `expect`) or `revert_running` at once. The job fails with `revert_conflict` |
 | `POST /api/board/cards/{ref}/status` `{status: "todo", keep_code: true, comment}` on a landed subtask | S6 | Reopen without reverting code. Without `keep_code`: 409 `invalid`, "Revert #n instead" |
-| `POST /api/board/projects/{id}/merge` | S6 | 202 `{job_id}`, job kind `merge`. The job fails with `merge_conflict` or `git_busy` |
+| `POST /api/board/projects/{id}/merge` | S6 | Retry merge, or an early merge; the normal merge is automatic (§5.8). 202 `{job_id}`, job kind `merge`. The job fails with `merge_conflict`, `local_changes` or `git_busy` |
 
-New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `land_conflict`, `land_stale`, `merge_conflict`, `revert_conflict`, `revert_running`, `git_too_old` and `no_git_identity`.
+New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `land_conflict`, `land_stale`, `merge_conflict`, `local_changes`, `revert_conflict`, `revert_running`, `git_too_old` and `no_git_identity`.
 
 ## 8. UI
 
@@ -586,8 +608,8 @@ The dialog posts the listed ids with the revisions it rendered. On `stale` it na
 - The Settle dialog offers release (labelled Stop) and cancel for a lane hold, not keep (S4).
 - Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs.
 - A card's Attempts list adds the branch, the landed sha and the reverted sha.
-- The Planner header shows "uam/plan-x · 5 ahead of main · Merge..." (S6), and the Merge job shows progress.
-- Revert, Stop and the Merge preview use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.
+- The Planner header shows "uam-plan-x · 5 ahead of main" and the merge state: "Merge waiting: `<reason>`", or "Merge blocked" with Retry merge (S6). The merge job shows progress.
+- Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.
 - Under an approved epic the Tree's "+N suggested" fold loses its per-row Confirm; Dismiss stays.
 
 ## 9. Decisions (2026-10-06)
@@ -596,7 +618,7 @@ The owner accepted each of these on 2026-10-06.
 
 1. **Agent reach is unchanged.** R7 works within ADR 0005 decision 9's reach, and the owner grants more with Plan with agent. Not chosen: Project-wide reach, which with deletes would let any unrelated Task cancel or rewrite approved work that runs unattended.
 2. **Agent edits under an approved epic need no re-approval.** Edits, links, deletes and moves inside the epic are covered by the approval, consistent with "started is the line". New cards stay proposals until the owner approves again. A move into or out of an approved epic is a change request, and Approve checks each listed card's revision. Not chosen: pausing the epic for re-approval on any agent write, which needs a revision counter and brings back the per-change approval R2 removes.
-3. **`tests_or_build_changed` does not hold a run subtask.** It is recorded, shown on the card and listed in the Merge preview, and Merge is the owner's review point. Not chosen: holding the request, which turns R2 back into per-subtask approval, since most subtasks touch tests.
+3. **`tests_or_build_changed` does not hold a run subtask.** It is recorded, shown on the card and listed in the epic's merge comment. Since the merge became automatic (decision 11) there is no review point before the base branch: the flag is information, and Revert is the remedy. Not chosen: holding the request, which turns R2 back into per-subtask approval, since most subtasks touch tests.
 4. **Approve requires every unstarted subtask to resolve to an acceptance command**, with the Project default editable in the dialog. Without one every done waits for the owner, and the DAG never moves on its own.
 5. **Plans to approve is a derived list**, not an `approve` request kind. It needs no rebuild of the requests table and no new kind in every switch over kinds. Feedback goes through the planning Task's chat. Revisit if the owner wants Reject-to-steer from the Inbox.
 6. **Parallel limits.** Per epic 1 to 4, default 2. A global cap of 4 open lane holds across the server, as a constant. A per-Project acceptance limit, default 1, editable 1 to 4. Each lane is a Copilot session plus an acceptance run, and commands written for one tree collide on fixed ports, temp files and databases, or slow past the timeout, when run side by side. Two lanes keep land conflicts and quota use low. Raise the acceptance limit only for a Project whose command is known to be safe in parallel.
@@ -604,7 +626,7 @@ The owner accepted each of these on 2026-10-06.
 8. **Lanes live in `<config dir>/lanes/`**, outside the repo, so run Tasks never block the owner's git actions. If Copilot refuses that directory, the fallback is `<repo>/.uam/lanes`, excluded through `.git/info/exclude`, and run Tasks then count as busy for the owner's Commit.
 9. **No setup-command setting for now.** Acceptance commands set up what they need (for example `npm ci && npm test`), and the Approve dialog's "Check in a clean checkout" runs the acceptance command once in a temporary worktree at the tip (S4). A per-Project setup command comes only if runs show agents failing on a missing environment.
 10. **One integration branch per Project**, following `base_ref`, synced at Approve, at Resume and before each lane start. Not chosen: per-epic branches, which break cross-epic blockers, because one epic's lanes would lack the other's code, and spread reverts across branches.
-11. **A Merge action** (S6), run as a job through the owner's git write path. Not chosen: a copyable `git merge` command. The owner often reads uam on a phone, where Terminal is awkward.
+11. **Landed work reaches the owner's branch automatically, covered by the epic approval** (§5.8, S6). The owner decided it on 2026-10-06: "Merge also needs to be approval based only. I approve epic for approval." The merge job runs when an approved epic finishes and after an owner Revert of merged work, through the owner's git write path when `base_ref` is checked out. Retry merge stays for blocked merges and early merges. Not chosen: a Merge click as the only way in, which this design's first draft had (§2 item 20), and a copyable `git merge` command, since the owner often reads uam on a phone, where Terminal is awkward.
 12. **R3 is called Pause / Resume**, with the hint "Block execution: uam won't start this or anything under it". "Blocked" already means an agent is stuck, and "hold" means a Task working a subtask. Stop, under an approved epic, is the owner's Release: it ends the attempt and pauses the card.
 13. **No autopilot for run Tasks.** The preamble asks for a single turn, and nudges cover the rest. Autopilot has no time limit outside routines. Enable it only if runs show most attempts needing a nudge.
 14. **Manual Launch and Do whole story stay outside approved epics**, ADR 0005 decision 6 included. Root cards and the owner's existing flows still need them, and removing them is not part of the request.
@@ -620,12 +642,12 @@ One PR per slice, merged in the order S0, S1, S3, S2, S4, S5, S6. S3 touches onl
 | Slice | Delivers | Migration |
 |---|---|---|
 | S0 | This ADR | none |
-| S1 | Agent CRUD under the integrity rules: `board_delete`, the agent checks of §6.3 rules 2 to 4, delete's container checks, split copies links, the cap of 50 live cards | none |
+| S1 | Agent CRUD under the integrity rules: `board_delete`, the agent checks of §6.3 rules 2 to 4, the container checks of delete and agent split, split copies links, the caps of 50 live and 200 lifetime cards | none |
 | S2 | Approve at the epic, Pause, Plans to approve, `run_owned` for per-card Confirm and every manual start under approved epics, cross-epic agent moves as change requests, Restore as proposals | v5 |
 | S3 | The lane git operations, with no user-facing change | none |
 | S4 | Lane runs started by hand: Launch under an approved epic starts a lane gated by ready; landing, Stop, Settle, the owner's Accept job, boot recovery, the owner integrity check | v6 |
 | S5 | The executor; Launch under approved epics is refused again; "Approve and run" | v7 |
-| S6 | Revert, Reopen without reverting code, Merge | none |
+| S6 | Revert, Reopen without reverting code, the automatic merge and Retry merge | none |
 
 In S2 and S3 an approved epic runs nothing. Each slice that changes what agents see or can do updates SKILL.md (§6.4), and each that refines this design updates this ADR.
 
@@ -644,10 +666,10 @@ Each item is a store, tool, web or UI test. Every ADR 0005 invariant still holds
 
 **Agent writes**
 
-7. Delete cascade-cancels a card in reach, which the owner can restore, and frees a cap slot. It is refused out of reach, with started work under the card, with a started subtask waiting on it, on an approved epic, when it would close another container, and when it would leave an approved container with no live confirmed subtask.
+7. Delete cascade-cancels a card in reach, which the owner can restore, and frees a live-card slot; the lifetime ceiling of 200 still counts the deleted card. It is refused out of reach, with started work under the card, with a started subtask waiting on it, on an approved epic, when it would close another container, and when it would leave an approved container with no live confirmed subtask.
 8. No agent write gives a started subtask a new open blocker. Agent creates and splits under a done container make proposals and leave it done. The same writes by the owner outside approved epics pass.
 9. Agents neither link nor unlink where the blocked side is a container with started or done work under it; the owner may.
-10. A split copies the original's links to every part, both ways, except links to started dependents, which the result names.
+10. A split copies the original's links to every part, both ways, except links to started dependents, which the result names. An agent split that would close a container is refused as a delete is; the owner's split is not.
 11. Under an approved epic, no owner write gives a running lane subtask a new open blocker or the blocked flag.
 
 **Starts and the executor**
@@ -674,7 +696,7 @@ Each item is a store, tool, web or UI test. Every ADR 0005 invariant still holds
 25. A revert writes the store before the ref. A failed compare-and-swap undoes the store, and a crash between the two is finished at boot. A conflict writes nothing and names the later cards that touched the files; including them then succeeds.
 26. A reverted subtask waits for Resume, then reruns without the change.
 27. Reopen without reverting code leaves the integration branch unchanged, keeps the landed sha and the dependents landed, and runs the owner integrity check. "Back to To do" without it is refused on a landed subtask.
-28. Merge refuses on a conflict and while a git write runs. Revert and Merge run as jobs.
+28. An approved epic that finishes is merged into `base_ref` with no click, and nothing fires again once `base_ref` has everything the integration branch carries (`hasAll`), after a sync merge of an owner commit too. Sync skips a base that brings nothing new. An owner Revert of merged work merges again. A merge into a checked-out `base_ref` runs hooks, waits with backoff on local changes or a busy git write, and on a conflict stays blocked until Retry merge or a new tip; a `base_ref` not checked out gets only a ref move. Revert and merge run as jobs.
 
 **Restart and migrations**
 
@@ -691,8 +713,7 @@ Each item is a store, tool, web or UI test. Every ADR 0005 invariant still holds
 - A "plan ready" or `approve` request kind (§9 decision 5).
 - Worktrees for root cards or for epics nobody approved.
 - Per-epic integration branches (§9 decision 10).
-- Automatic merge into the owner's branch.
-- Revert or Merge started by an agent.
+- Revert or merge started by an agent.
 - Resuming a turn after a restart. uam nudges the Task instead.
 - Resolving revert conflicts inside uam (§9 decision 15).
 - A steward Task per epic, as in ADR 0005. The executor is a goroutine.
@@ -727,9 +748,10 @@ The three designs, scored 1 to 10 (higher is better; for size, fewer concepts sc
 - **Landing is serialized per Project.** It holds the land mutex through any acceptance re-run, up to 10 minutes, and lane starts, reverts and merges in that Project wait behind it. A lane start also holds it across Task creation, which takes seconds. With the default acceptance limit of 1, claims queue as well, and a long command can push them past the timeout into `acceptance_busy` retries.
 - **The migrations are one-way** (v5, v6, v7). Rolling a deploy back disables the planner, so board.db is backed up first.
 - **Running epics hold up a restart that waits for idle Tasks.** The owner pauses running epics and lets attempts drain first. Recovery after an unplanned restart relies on nudges.
-- **The owner's repo gains refs and worktrees:** `uam/plan-*` branches, attempt branches that did not land, and `.git/worktrees` entries. Disk use grows with each lane until cleanup.
+- **The owner's repo gains refs and worktrees:** `uam-plan-*` branches, attempt branches that did not land, and `.git/worktrees` entries. Disk use grows with each lane until cleanup.
 - **Approval covers edits.** The planning Task can still change an approved card's text before it starts, with no new approval; Approve checks revisions only at approval time. The owner's lever is Pause.
-- **An agent could weaken a test to pass**, since `tests_or_build_changed` no longer holds the request. Review happens at Merge, not at landing.
+- **An agent could weaken a test to pass**, since `tests_or_build_changed` no longer holds the request and merges are automatic (§5.8). That change would reach the base branch with no human look. The flag is listed in the epic's merge comment, and Revert is the remedy.
+- **A merge changes the owner's working tree** when `base_ref` is checked out there. git refuses to overwrite local changes, and the merge retries with backoff, but files the owner has open in an editor change under them when it succeeds. A merge also carries the landed subtasks of other approved epics that have not finished.
 - **Proposals added after approval** can be cancelled when their container closes. The `closes_with_proposals` wait shows them, but only to an owner who reads it before accepting.
 - **The sticky landing intent** makes owner actions on that card answer `landing` between `MarkLanding` and `AcceptLanded`, and after a crash until the first pass.
 - **A provider outage stalls every epic on that provider**, shown as "Waiting for `<provider>`". A turn that fails every time on one subtask looks like a provider failure until three failed nudges retire it.
