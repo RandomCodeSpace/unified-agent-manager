@@ -28,7 +28,7 @@ func (f *fixture) items(refs ...string) []ApproveItem {
 // "head-1".
 func (f *fixture) approve(epic string, refs ...string) Card {
 	f.t.Helper()
-	c, err := f.s.Approve(f.ctx, owner, epic, testRun, f.items(refs...))
+	c, err := f.s.Approve(f.ctx, owner, epic, testRun, f.items(refs...), "")
 	if err != nil {
 		f.t.Fatalf("approve %s: %v", epic, err)
 	}
@@ -72,7 +72,7 @@ func TestApproveConfirmsListedSubtree(t *testing.T) {
 	f.acceptCmd("go test ./...")
 	planner := Agent("planner", "")
 	p := f.agentPlan(planner)
-	got, err := f.s.Approve(f.ctx, Owner("head-2"), p.epic.ID, testRun, f.items(p.ids()...))
+	got, err := f.s.Approve(f.ctx, Owner("head-2"), p.epic.ID, testRun, f.items(p.ids()...), " main ")
 	f.must(err)
 	if got.ID != p.epic.ID || got.Run == nil || got.Run.RunSettings != testRun || !got.Run.ApprovedAt.Equal(f.clock.Now()) || got.Paused != "" {
 		t.Fatalf("approved epic = %+v, run %+v", got, got.Run)
@@ -92,15 +92,20 @@ func TestApproveConfirmsListedSubtree(t *testing.T) {
 		t.Fatal("a card added after the approval is confirmed")
 	}
 	again := RunSettings{Provider: "copilot", Model: "ollama/deepseek-v4.1-flash", Effort: "high", ContextSize: "default", Mode: "yolo", Parallel: 4}
-	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(p.ids()...))
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(p.ids()...), "")
 	wantRefusal(t, err, CodeStale, later.ref())
 	if c := f.card(later.ID); c.Confirmed() || f.card(p.epic.ID).Run.RunSettings != testRun {
 		t.Fatalf("a stale approval wrote: %+v, run %+v", c, f.card(p.epic.ID).Run)
 	}
-	got, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(append(p.ids(), later.ID)...))
+	got, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(append(p.ids(), later.ID)...), "next")
 	f.must(err)
 	if got.Run.RunSettings != again {
 		t.Fatalf("approving again kept the run %+v", got.Run)
+	}
+	// The first approval set the branch the run follows, in the same write;
+	// approving again keeps it.
+	if ps, err := f.s.ProjectSettings(f.ctx, proj); err != nil || ps.BaseRef != "main" {
+		t.Fatalf("base branch = %q, %v; want main", ps.BaseRef, err)
 	}
 	if c := f.card(later.ID); !c.Confirmed() {
 		t.Fatalf("a listed proposal = %+v", c)
@@ -109,14 +114,16 @@ func TestApproveConfirmsListedSubtree(t *testing.T) {
 	// A card that is not under the epic is the caller's mistake, named in
 	// the message.
 	other := f.create(owner, "", KindEpic, "Other")
-	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(append(p.ids(), later.ID, other.ID)...))
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(append(p.ids(), later.ID, other.ID)...), "")
 	wantRefusal(t, err, CodeInvalid)
 	if !strings.Contains(err.Error(), other.ref()) {
 		t.Fatalf("refusal = %v, want it to name %s", err, other.ref())
 	}
-	_, err = f.s.Approve(f.ctx, owner, p.one.ID, testRun, f.items(p.one.ID))
+	_, err = f.s.Approve(f.ctx, owner, p.one.ID, testRun, f.items(p.one.ID), "")
 	wantCode(t, err, CodeInvalid)
-	_, err = f.s.Approve(f.ctx, planner, p.epic.ID, testRun, f.items(p.ids()...))
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(append(p.ids(), later.ID)...), "a\nb")
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.Approve(f.ctx, planner, p.epic.ID, testRun, f.items(p.ids()...), "")
 	wantCode(t, err, CodeForbidden)
 }
 
@@ -129,7 +136,7 @@ func TestApproveRefuses(t *testing.T) {
 	refused := func(settings RunSettings, items []ApproveItem, code Code, refs ...string) {
 		t.Helper()
 		before := f.revision()
-		_, err := f.s.Approve(f.ctx, owner, epic.ID, settings, items)
+		_, err := f.s.Approve(f.ctx, owner, epic.ID, settings, items, "")
 		if refs == nil {
 			wantCode(t, err, code)
 		} else {
@@ -192,7 +199,7 @@ func TestApproveRefuses(t *testing.T) {
 	f.create(owner, f.create(owner, cancelled.ID, KindStory, "S").ID, KindSubtask, "T")
 	_, err = f.s.SetStatus(f.ctx, owner, cancelled.ID, StatusCancelled, "dropped", false)
 	f.must(err)
-	_, err = f.s.Approve(f.ctx, owner, cancelled.ID, testRun, f.items(cancelled.ID))
+	_, err = f.s.Approve(f.ctx, owner, cancelled.ID, testRun, f.items(cancelled.ID), "")
 	wantCode(t, err, CodeInvalid)
 }
 
@@ -487,7 +494,7 @@ func TestMigrateV4ToV5(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Approve(ctx, owner, epic.ID, testRun, []ApproveItem{{ID: epic.ID, Revision: got.Revision}, {ID: leaf.ID, Revision: leaf.Revision}}); err != nil {
+	if _, err := s.Approve(ctx, owner, epic.ID, testRun, []ApproveItem{{ID: epic.ID, Revision: got.Revision}, {ID: leaf.ID, Revision: leaf.Revision}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()

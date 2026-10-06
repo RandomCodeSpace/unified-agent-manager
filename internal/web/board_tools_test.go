@@ -1352,7 +1352,7 @@ func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
 			}
 			items = append(items, board.ApproveItem{ID: c.ID, Revision: c.Revision})
 		}
-		_, err := st.Approve(ctx, board.Owner(""), epic.ID, board.RunSettings{Provider: "fake", Model: "luna", Mode: "safe", Parallel: 2}, items)
+		_, err := st.Approve(ctx, board.Owner(""), epic.ID, board.RunSettings{Provider: "fake", Model: "luna", Mode: "safe", Parallel: 2}, items, "")
 		return err
 	})
 

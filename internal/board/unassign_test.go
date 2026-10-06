@@ -73,7 +73,7 @@ func TestUnassignDropsApproval(t *testing.T) {
 	f := newFixture(t)
 	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "go test ./..."))
 	epic, story, one, two := f.tree()
-	c, err := f.s.Approve(f.ctx, owner, epic.ID, RunSettings{Provider: "copilot", Model: "gpt-6-luna", Mode: "safe", Parallel: 2}, f.items(epic.ID, story.ID, one.ID, two.ID))
+	c, err := f.s.Approve(f.ctx, owner, epic.ID, RunSettings{Provider: "copilot", Model: "gpt-6-luna", Mode: "safe", Parallel: 2}, f.items(epic.ID, story.ID, one.ID, two.ID), "")
 	f.must(err)
 	if c.Run == nil {
 		t.Fatal("the epic was not approved")

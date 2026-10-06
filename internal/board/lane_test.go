@@ -42,7 +42,7 @@ func (f *fixture) shownUnder(epic string) []string {
 // approveRun approves epic with run, listing everything the dialog shows.
 func (f *fixture) approveRun(epic string, run RunSettings) {
 	f.t.Helper()
-	if _, err := f.s.Approve(f.ctx, owner, epic, run, f.items(f.shownUnder(epic)...)); err != nil {
+	if _, err := f.s.Approve(f.ctx, owner, epic, run, f.items(f.shownUnder(epic)...), ""); err != nil {
 		f.t.Fatalf("approve %s: %v", epic, err)
 	}
 }
@@ -715,7 +715,7 @@ func TestOwnerWritesKeepRunningLanesUnblocked(t *testing.T) {
 
 	writes := f.ownerWrites(s)
 	writes["approve a proposal under a done blocker"] = func() error {
-		_, err := f.s.Approve(f.ctx, owner, s.epic.ID, testRun, f.items(f.shownUnder(s.epic.ID)...))
+		_, err := f.s.Approve(f.ctx, owner, s.epic.ID, testRun, f.items(f.shownUnder(s.epic.ID)...), "")
 		return err
 	}
 	before := f.revision()

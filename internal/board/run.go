@@ -75,17 +75,23 @@ func (r RunSettings) check() error {
 // are the cards the dialog showed, at the revisions it showed them: each
 // listed proposal is confirmed and pinned to the owner's HEAD, as an owner
 // touch confirms. The epic's run is written, or updated when it was
-// approved before, and its own pause is cleared. It refuses, writing
-// nothing, unless the epic is live and not done; every item is a live card
-// under it; every card the dialog shows (shown) is listed at its current
-// revision (stale otherwise); no subtask under it is held but by a lane; every
-// live story and the epic keep a live subtask that is confirmed or listed;
-// and every such subtask not started resolves to an acceptance command.
-func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSettings, items []ApproveItem) (Card, error) {
+// approved before, and its own pause is cleared. base, trimmed, becomes the
+// Project's base branch when it has none; "" leaves it as it is. It
+// refuses, writing nothing, unless the epic is live and not done; every
+// item is a live card under it; every card the dialog shows (shown) is
+// listed at its current revision (stale otherwise); no subtask under it is
+// held but by a lane; every live story and the epic keep a live subtask
+// that is confirmed or listed; and every such subtask not started resolves
+// to an acceptance command.
+func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSettings, items []ApproveItem, base string) (Card, error) {
 	if err := permit(a, opApprove, ""); err != nil {
 		return Card{}, err
 	}
 	if err := settings.check(); err != nil {
+		return Card{}, err
+	}
+	base = strings.TrimSpace(base)
+	if err := checkLine("base branch", base); err != nil {
 		return Card{}, err
 	}
 	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
@@ -109,11 +115,15 @@ func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSe
 				return err
 			}
 		}
-		return t.exec(`INSERT INTO runs (epic_id, provider, model, effort, context_size, mode, parallel, approved_at)
+		if err := t.exec(`INSERT INTO runs (epic_id, provider, model, effort, context_size, mode, parallel, approved_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(epic_id) DO UPDATE SET provider = excluded.provider, model = excluded.model, effort = excluded.effort,
 			context_size = excluded.context_size, mode = excluded.mode, parallel = excluded.parallel, approved_at = excluded.approved_at`,
-			n.ID, settings.Provider, settings.Model, settings.Effort, settings.ContextSize, settings.Mode, settings.Parallel, stamp(t.now))
+			n.ID, settings.Provider, settings.Model, settings.Effort, settings.ContextSize, settings.Mode, settings.Parallel, stamp(t.now)); err != nil || base == "" {
+			return err
+		}
+		return t.exec(`INSERT INTO project_settings (project_id, base_ref) VALUES (?, ?)
+			ON CONFLICT(project_id) DO UPDATE SET base_ref = excluded.base_ref WHERE project_settings.base_ref = ''`, o.project, base)
 	})
 }
 

@@ -735,14 +735,8 @@ func (m *Manager) ApproveCard(ref string, req ApproveRequest) (BoardCard, error)
 	var c board.Card
 	err = m.boardWrite(ref, func(ctx context.Context, st *board.Store, a board.Actor) error {
 		var err error
-		if c, err = st.Approve(ctx, a, ref, run, items); err != nil || base == "" {
-			return err
-		}
-		ps, err := st.ProjectSettings(ctx, c.ProjectID)
-		if err != nil || ps.BaseRef != "" {
-			return err
-		}
-		return st.SetProjectBaseRef(ctx, a, c.ProjectID, base)
+		c, err = st.Approve(ctx, a, ref, run, items, base)
+		return err
 	})
 	var refusal *Error
 	if errors.As(err, &refusal) && refusal.Code == string(board.CodeInvalid) && len(refusal.Refs) > 0 {
