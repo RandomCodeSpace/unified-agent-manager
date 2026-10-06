@@ -631,13 +631,19 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	if accept {
 		createdBy = TaskAuthor(requester)
 	}
+	// Siblings take n's own pause, as they take its place: a split never
+	// lets paused work start. A story's parts sit under n, which keeps it.
+	paused := ""
+	if siblings {
+		paused = n.Paused
+	}
 	sibs := slices.Clone(o.kids[parent])
 	var made []*node
 	for _, p := range list {
 		kid := &node{stored: StatusPlanned, Card: Card{
 			ProjectID: n.ProjectID, Kind: KindSubtask, ParentID: parent, Title: p.child.Title,
 			WinCondition: p.child.WinCondition, Status: StatusPlanned, Prio: PrioDefault, Effort: DefaultEffort,
-			CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
+			Paused: paused, CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
 		}}
 		if confirmed {
 			kid.PinnedSHA = a.Head

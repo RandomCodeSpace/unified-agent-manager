@@ -875,6 +875,84 @@ func TestAcceptedSplitUnderApprovedEpicMakesProposals(t *testing.T) {
 	}
 }
 
+// Under an approved epic the parts of a split of a subtask paused on itself
+// keep its pause, the owner's or uam's: an agent's split of a paused
+// subtask, and the owner's Accept of a split request on one a stopped or
+// ended attempt paused, never let paused work start once it is approved.
+func TestSplitPartsKeepThePause(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	f.create(planner, p.one.ID, KindSubtask, "Errors")
+	f.create(planner, p.two.ID, KindSubtask, "Fold")
+	f.approveRun(p.epic.ID, laneRun)
+	parts := func(story Card, titles ...string) []Card {
+		t.Helper()
+		var out []Card
+		for _, c := range f.children(story.ID) {
+			if slices.Contains(titles, c.Title) {
+				out = append(out, c)
+			}
+		}
+		if len(out) != len(titles) {
+			t.Fatalf("parts %v under %s = %+v", titles, story.ref(), out)
+		}
+		return out
+	}
+	splitRequest := func(c Card, task string, titles ...string) string {
+		t.Helper()
+		f.lane(c.ID, task)
+		var children []SplitChild
+		for _, title := range titles {
+			children = append(children, SplitChild{Title: title})
+		}
+		res, err := f.s.Split(f.ctx, Agent(task, ""), c.ID, children)
+		f.must(err)
+		if res.Request == nil {
+			t.Fatalf("split of the held %s = %+v", c.ref(), res)
+		}
+		return res.Request.ID
+	}
+
+	_, err := f.s.Edit(f.ctx, owner, p.a.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+	_, err = f.s.Split(f.ctx, planner, p.a.ID, []SplitChild{{Title: "Lex"}, {Title: "Scan"}})
+	f.must(err)
+
+	stopped := splitRequest(p.b, "t-stop", "Nodes", "Edges")
+	_, err = f.s.ReleaseHold(f.ctx, owner, p.b.ID, ReleaseOwner, "")
+	f.must(err)
+	_, err = f.s.Accept(f.ctx, owner, stopped, "")
+	f.must(err)
+
+	ended := splitRequest(p.c, "t-end", "Visit", "Fold in")
+	_, err = f.s.Reconcile(f.ctx, map[string]Stage{}, f.asOf(), nil)
+	f.must(err)
+	if got := f.card(p.c.ID).Paused; got != PausedUAM {
+		t.Fatalf("the ended attempt left %s paused %q", p.c.ref(), got)
+	}
+	_, err = f.s.Accept(f.ctx, owner, ended, "")
+	f.must(err)
+
+	f.approveRun(p.epic.ID, laneRun)
+	for _, tc := range []struct {
+		parts []Card
+		want  string
+	}{
+		{parts(p.one, "Lex", "Scan"), PausedOwner},
+		{parts(p.one, "Nodes", "Edges"), PausedOwner},
+		{parts(p.two, "Visit", "Fold in"), PausedUAM},
+	} {
+		for _, c := range tc.parts {
+			if !c.Confirmed() || c.Paused != tc.want {
+				t.Errorf("part %s %q = paused %q, confirmed %v; want paused %q", c.ref(), c.Title, c.Paused, c.Confirmed(), tc.want)
+			}
+			wantRefusal(t, f.s.CanStart(f.ctx, c.ID), CodeNotReady, c.ref())
+		}
+	}
+}
+
 // LaneHold finds an attempt by its branch, ended or not, and Note adds
 // uam's comment once.
 func TestLaneHoldAndNote(t *testing.T) {

@@ -844,11 +844,11 @@ func (t *txn) insertCard(o *outline, n *node) error {
 	labels, checklist, paths := encode(orEmpty(n.Labels)), encode(orEmpty(n.Checklist)), encode(orEmpty(n.Paths))
 	if err := t.exec(`INSERT INTO cards (id, seq, project_id, kind, parent_id, rank, title, "desc", win_condition,
 		status, prio, due, effort, labels, checklist, blocked, expires_at, held_by, pinned_sha, accept_cmd, paths,
-		cascade_id, created_by, created_at, updated_at, moved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		paused, cascade_id, created_by, created_at, updated_at, moved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Seq, n.ProjectID, string(n.Kind), n.ParentID, n.Rank, n.Title, n.Desc, n.WinCondition,
 		string(n.stored), n.Prio, n.Due, n.Effort, labels, checklist, boolInt(n.Blocked), nullTime(n), n.HeldBy,
-		n.PinnedSHA, nullString(n.AcceptCmd), paths, n.CascadeID, n.CreatedBy,
+		n.PinnedSHA, nullString(n.AcceptCmd), paths, n.Paused, n.CascadeID, n.CreatedBy,
 		stamp(n.CreatedAt), stamp(n.UpdatedAt), stamp(n.MovedAt)); err != nil {
 		return err
 	}
