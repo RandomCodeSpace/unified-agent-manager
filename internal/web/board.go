@@ -200,9 +200,10 @@ type boardEvent struct {
 }
 
 // boardChanged turns each committed write of st into a board frame for
-// everyone, and kicks the executor. The store calls it after the commit,
-// from the writer's goroutine, with no lock of this service held; it reads
-// the changed cards and requests before taking mu.
+// everyone, merges an approved epic the write left done (ADR 0006 §5.8)
+// and kicks the executor. The store calls it after the commit, from the
+// writer's goroutine, with no lock of this service held; it reads the
+// changed cards and requests before taking mu.
 func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 	return func(c board.Change) {
 		defer m.kickExecutor()
@@ -223,6 +224,7 @@ func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 		}
 		var requests []BoardRequest
 		if err == nil {
+			m.mergeOnChange(c.ProjectID, cards)
 			requests, err = requestViews(ctx, st, list, cards)
 		}
 		m.mu.Lock()
@@ -543,7 +545,7 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 		out.Integration = integration(m.ctx, id, dir, ps.BaseRef)
 	}
 	if out.Integration != nil {
-		out.Integration.Merge = m.mergeShown(id)
+		out.Integration.Merge = m.mergeShown(m.ctx, id)
 	}
 	return out, err
 }

@@ -201,7 +201,10 @@ func (s *Store) Revert(ctx context.Context, a Actor, ref string, include, expect
 // UndoRevert withdraws the revert recorded in commit, which the integration
 // branch never took (ADR 0006 §4.4): its landings are unmarked, each of its
 // subtasks still To do and unheld is done again and no longer paused, and
-// uam's comment on each says why with reason. These are uam's writes.
+// uam's comment on each says why with reason. These are uam's writes. A
+// pause the owner set on a landed subtask before the revert is not kept: it
+// held nothing back, since a landed subtask goes back to To do only through
+// a Revert or a Reopen, which both pause it.
 func (s *Store) UndoRevert(ctx context.Context, commit, reason string) error {
 	if strings.TrimSpace(reason) == "" {
 		return invalid("undoing a revert needs a reason")

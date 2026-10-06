@@ -456,9 +456,8 @@ Between the store write and the ref move nothing can start those cards: they are
 On 2026-10-06 the owner decided: "Merge also needs to be approval based only. I approve epic for approval." Approving an epic also authorizes merging its landed work into `base_ref`. There is no separate merge approval, and the normal flow needs no Merge click.
 
 **Triggers.** Events start the merge job, not a `Next` step, so the merge does not depend on the executor (decided 2026-10-06 while S5 and S6 were built side by side). Each trigger first checks whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2), and starts nothing when it has. A merge fires:
-- after `AcceptLanded`, when that landing makes its approved epic derive done;
+- after any write under an approved epic that derives done, and at boot in `recoverLanes`, for each Project whose `base_ref` lacks a landing or revert of an approved epic that derives done. The landing that finished the epic is such a write, and so is the owner's cancel or done of its last open subtask, so the merge never waits for a restart; at boot it finishes a merge a restart interrupted. The landed work of an epic still running waits for its epic. While a merge waits, writes leave it to its retry timer;
 - when an owner Revert job ends and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it;
-- at boot, in `recoverLanes`, for each Project whose `base_ref` lacks a landing or revert of an approved epic that derives done. This finishes a merge a restart interrupted; the landed work of an epic still running waits for its epic, as it does without a restart;
 - from a per-Project retry timer, for a merge that waits (below).
 
 While a merge job runs, a trigger makes it run once more when it ends.
@@ -478,6 +477,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 - Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).
 - `git_busy`, `local_changes`, and a lock file another git process holds (`index.lock`, or a ref's lock) retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
 - `merge_conflict` is not retried on its own for the same pair of integration and base tips. uam keeps that pair in memory, so after a restart it is tried once more. A merge that fails for any other reason, for example a hook that refuses the merge commit, is blocked the same way. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
+- Once `hasAll(base, integ)` holds, as after the owner merged by hand in Terminal, uam forgets a waiting or blocked merge, stops its retry, and the header no longer shows it.
 
 **Retry merge.** `POST /projects/{id}/merge` stays as an owner action: Retry merge after a blocked or waiting merge, and an early merge of an unfinished epic's landed work. It answers 202 `{job_id}` and runs the same job.
 

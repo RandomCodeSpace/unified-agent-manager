@@ -16,15 +16,17 @@ import (
 
 // The merge of a Project's integration branch into its base branch (ADR
 // 0006 §5.8). Approving an epic authorizes it, so events start it, not a
-// click: a landing that finishes its approved epic, the owner's Revert of
-// work the base branch already has, and the first pass after the planner
-// opens, for unmerged work of approved epics that are done. Each starts
-// the merge job only while the base lacks something the integration branch
+// click: a write under an approved epic that derives done, such as the
+// landing or the owner's cancel that finished it, and the first pass after
+// the planner opens, for unmerged work of approved epics that are done; and
+// the owner's Revert of work the base branch already has. Each starts the
+// merge job only while the base lacks something the integration branch
 // carries. The owner's Retry merge starts it too, also to merge an
 // unfinished epic's work early. A merge that waits on the owner's working
 // tree or git, a lock another git process holds included, is tried again
 // with backoff; one that conflicts, or fails otherwise, waits for Retry
-// merge or new tips.
+// merge or new tips. Once the base has it all, as after the owner merged by
+// hand, either is forgotten.
 
 const (
 	// jobMerge is the merge job (board_ai.go); it runs on a Project.
@@ -86,46 +88,48 @@ func (pm *projectMerge) settle() {
 }
 
 // mergeShown is the Project's merge state for the Planner header, nil when
-// nothing waits.
-func (m *Manager) mergeShown(project string) *BoardMerge {
+// nothing waits or the base branch has it all.
+func (m *Manager) mergeShown(ctx context.Context, project string) *BoardMerge {
 	m.lanes.mu.Lock()
-	defer m.lanes.mu.Unlock()
-	pm := m.lanes.merges[project]
-	if pm == nil || pm.shown.State == "" {
+	var shown BoardMerge
+	if pm := m.lanes.merges[project]; pm != nil {
+		shown = pm.shown
+	}
+	m.lanes.mu.Unlock()
+	if shown.State == "" {
 		return nil
 	}
-	shown := pm.shown
+	if has, _, _, err := m.baseHasAll(ctx, project); err == nil && has {
+		return nil
+	}
 	return &shown
 }
 
-// mergeWhenFinished merges the Project's integration branch when the
-// subtask id's approved epic derives done: the landing that finished it.
-func (m *Manager) mergeWhenFinished(ctx context.Context, id string) {
-	var epic board.Card
-	err := m.withBoard(func(st *board.Store) error {
-		c, err := st.Card(ctx, id)
-		if err != nil {
-			return err
-		}
-		path, err := ancestors(ctx, st, c)
-		if err == nil && len(path) > 0 {
-			epic = path[0]
-		}
-		return err
-	})
-	switch {
-	case err != nil:
-		log.Warn("read a landed subtask's epic failed", "card", id, "error", err)
-	case epic.Kind == board.KindEpic && epic.Run != nil && epic.Status == board.StatusDone:
-		m.autoMerge(ctx, epic.ProjectID)
+// mergeOnChange merges as mergeFinished does after a write whose cards,
+// the changed ones and their ancestors, hold an approved epic that derives
+// done: the landing, or the owner's cancel or done, that finished it. A
+// merge that waits is left to its retry.
+func (m *Manager) mergeOnChange(project string, cards []board.Card) {
+	if project == "" || !slices.ContainsFunc(cards, func(c board.Card) bool {
+		return c.Kind == board.KindEpic && c.Run != nil && c.Status == board.StatusDone
+	}) {
+		return
+	}
+	m.lanes.mu.Lock()
+	pm := m.lanes.merges[project]
+	waiting := pm != nil && pm.shown.State == mergeWaiting
+	m.lanes.mu.Unlock()
+	if !waiting {
+		m.goLanes(func(ctx context.Context) { m.mergeFinished(ctx, project) })
 	}
 }
 
 // mergeFinished merges the Project's integration branch when its base
-// branch lacks work of an approved epic that derives done: the first pass
-// after the planner opens, which finishes a merge a restart interrupted.
-// Work of an epic still running waits for its epic, as it does without a
-// restart, even beside an epic that finished and was merged long ago.
+// branch lacks work of an approved epic that derives done: after a write
+// that finished one, and on the first pass after the planner opens, which
+// finishes a merge a restart interrupted. Work of an epic still running
+// waits for its epic, even beside an epic that finished and was merged long
+// ago.
 func (m *Manager) mergeFinished(ctx context.Context, project string) {
 	_, items, err := m.carriedItems(ctx, project)
 	if err != nil {
@@ -155,21 +159,34 @@ func (m *Manager) autoMerge(ctx context.Context, project string) {
 // mergeDue reports whether the Project's base branch lacks something its
 // integration branch carries, at tips no failed merge blocks.
 func (m *Manager) mergeDue(ctx context.Context, project string) (bool, error) {
-	repo, base, err := m.mergeRepo(ctx, project)
-	if err != nil || repo == nil {
-		return false, err
-	}
-	baseTip, tip, err := repo.mergeTips(ctx, base)
-	if err != nil || tip == "" || baseTip == "" {
-		return false, err
-	}
-	if has, err := repo.hasAll(ctx, baseTip, tip); err != nil || has {
+	has, baseTip, tip, err := m.baseHasAll(ctx, project)
+	if err != nil || has || tip == "" || baseTip == "" {
 		return false, err
 	}
 	m.lanes.mu.Lock()
 	defer m.lanes.mu.Unlock()
 	pm := m.mergeOfLocked(project)
 	return pm.shown.State != mergeBlocked || pm.integ != tip || pm.base != baseTip, nil
+}
+
+// baseHasAll reports whether the Project's base branch has everything its
+// integration branch carries, and returns both tips, "" for a branch that
+// is not there or while no approval named a base branch. Once the base has
+// it all, a merge that did not go through is forgotten, with its retry.
+func (m *Manager) baseHasAll(ctx context.Context, project string) (bool, string, string, error) {
+	repo, base, err := m.mergeRepo(ctx, project)
+	if err != nil || repo == nil {
+		return false, "", "", err
+	}
+	baseTip, tip, err := repo.mergeTips(ctx, base)
+	if err != nil || tip == "" || baseTip == "" {
+		return false, baseTip, tip, err
+	}
+	has, err := repo.hasAll(ctx, baseTip, tip)
+	if has {
+		m.mergeSettled(project)
+	}
+	return has, baseTip, tip, err
 }
 
 // mergeRepo opens the Project's repository for lanes and returns its base

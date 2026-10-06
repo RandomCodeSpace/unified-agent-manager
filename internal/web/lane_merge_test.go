@@ -43,8 +43,7 @@ func (r *laneRun) nextMerge(sub *Subscriber) boardJobEvent {
 	}
 }
 
-// noMerge requires that no merge job started: one that does sends its
-// first frame before its trigger returns.
+// noMerge requires that no merge job started so far.
 func (r *laneRun) noMerge(sub *Subscriber) {
 	r.t.Helper()
 	for {
@@ -159,6 +158,69 @@ func TestMergeWhenApprovedEpicFinishes(t *testing.T) {
 	if gitOutput(t, r.repo, "rev-parse", "main") != owner || r.integration().Ahead != 0 {
 		t.Fatal("main moved, or counts the sync merge as ahead")
 	}
+}
+
+// An approved epic the owner finishes with no landing, by cancelling its
+// last open subtask, is merged into main as one whose last subtask lands.
+func TestMergeWhenOwnerFinishesApprovedEpic(t *testing.T) {
+	r := newFinishingRun(t, "true", "Add b", "Add c")
+	sub := r.subscribe()
+	r.landWith(0, "b.txt", "b\n")
+	r.noMerge(sub)
+	r.call(http.MethodPost, "/api/board/cards/"+r.leaves[1].ID+"/status", `{"status":"cancelled","comment":"not needed"}`, http.StatusOK, nil)
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("merge job = %+v", end)
+	}
+	if got := gitOutput(t, r.repo, "show", "main:b.txt"); got != "b" {
+		t.Fatalf("main's b.txt = %q", got)
+	}
+}
+
+// Once main has everything the integration branch carries, as after the
+// owner merges it by hand in Terminal, the header drops a blocked or a
+// waiting merge, and the waiting one's retry with it.
+func TestMergeStateClearsOnceMainHasItAll(t *testing.T) {
+	t.Run("blocked", func(t *testing.T) {
+		r := newFinishingRun(t, "true", "Change a")
+		sub := r.subscribe()
+		task, l := r.start(0)
+		commitFile(t, l.dir, "a.txt", "lane\n")
+		commitFile(t, r.repo, "a.txt", "owner\n")
+		r.landed(task, 0)
+		if end := r.nextMerge(sub); end.Status != jobFailed {
+			t.Fatalf("conflicting merge = %+v", end)
+		}
+		if m := r.integration().Merge; m == nil || m.State != mergeBlocked {
+			t.Fatalf("merge state = %+v", m)
+		}
+		gitIn(t, r.repo, "merge", "-q", "--no-edit", "-X", "theirs", r.integ())
+		if i := r.integration(); i.Ahead != 0 || i.Merge != nil {
+			t.Fatalf("integration once the owner merged by hand = %+v", i)
+		}
+	})
+	t.Run("waiting", func(t *testing.T) {
+		slowRetries(t)
+		r := newFinishingRun(t, "true", "Add b")
+		sub := r.subscribe()
+		writeRepoFile(t, r.repo, "b.txt", "owner, uncommitted\n")
+		r.landWith(0, "b.txt", "b\n")
+		if end := r.nextMerge(sub); end.Status != jobFailed {
+			t.Fatalf("merge over uncommitted b.txt = %+v", end)
+		}
+		if err := os.Remove(filepath.Join(r.repo, "b.txt")); err != nil {
+			t.Fatal(err)
+		}
+		gitIn(t, r.repo, "merge", "-q", "--no-edit", r.integ())
+		if i := r.integration(); i.Ahead != 0 || i.Merge != nil {
+			t.Fatalf("integration once the owner merged by hand = %+v", i)
+		}
+		r.m.lanes.mu.Lock()
+		retry := r.m.lanes.merges[r.project].retry
+		r.m.lanes.mu.Unlock()
+		if retry != nil {
+			t.Fatal("the merge main no longer needs is still tried again")
+		}
+	})
 }
 
 // A merge into main checked out in the Project directory runs git's hooks

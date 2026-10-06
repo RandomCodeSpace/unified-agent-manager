@@ -723,7 +723,7 @@ func (m *Manager) finishLanding(ctx context.Context, repo *laneRepo, r board.Req
 
 // acceptLanded records that the request id landed as sha on integ. A
 // landing that finishes its approved epic has the integration branch merged
-// into its base (ADR 0006 §5.8).
+// into its base, as the write's board change starts it (ADR 0006 §5.8).
 func (m *Manager) acceptLanded(ctx context.Context, id, sha, integ string, by board.DecidedBy, comment string) (board.Request, error) {
 	var r board.Request
 	err := m.withBoard(func(st *board.Store) error {
@@ -733,10 +733,8 @@ func (m *Manager) acceptLanded(ctx context.Context, id, sha, integ string, by bo
 	})
 	if err != nil {
 		log.Warn("record a landing failed; recovery finishes it", "request", id, "error", err)
-		return r, err
 	}
-	m.mergeWhenFinished(ctx, r.CardID)
-	return r, nil
+	return r, err
 }
 
 // acceptLane starts the owner's Accept of the lane's done request r on c

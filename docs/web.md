@@ -1388,9 +1388,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   runs of a Project, its lanes' included, run one at a time unless the
   Project allows up to 4 (Acceptance runs at a time, in the Approve
   dialog). The Planner names the integration branch beside its filters,
-  with how many landings and reverts the base branch lacks. When the last
-  subtask of an approved epic lands, uam merges the integration branch
-  into the base branch with no click, since the approval covers it, and
+  with how many landings and reverts the base branch lacks. When an
+  approved epic finishes, as its last subtask lands or you cancel what is
+  left, uam merges the integration branch into the base branch with no
+  click, since the approval covers it, and
   the epic's comment lists what the merge carried, marking the subtasks
   that changed test or build files. A Revert of work the base branch
   already has is merged the same way, and so is a finished epic uam finds
@@ -1402,7 +1403,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and uam tries again after 1, 2, 4, 8, then every 15 minutes. A base branch checked out nowhere just moves. A merge that
   conflicts, or that a hook refuses, shows "Merge blocked" and waits until
   either branch moves or you choose **Retry merge**; resolve it in
-  Terminal, or revert the subtask it conflicts with. **Merge into main
+  Terminal, or revert the subtask it conflicts with. Once the base branch
+  has it all, as after you merge by hand, uam drops either state. **Merge into main
   now** (named after your base branch), in the Planner's menu, merges what
   landed before the epic finishes. Its confirmation, like Retry merge's,
   lists what the merge carries, by epic, naming the epics not finished and
