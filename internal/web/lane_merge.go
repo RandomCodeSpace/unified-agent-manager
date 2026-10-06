@@ -404,9 +404,9 @@ func (m *Manager) mergeProject(ctx context.Context, project string) error {
 // unmade lists by short name, newest first, the commits on the integration
 // branch's first-parent line up to tip that baseTip lacks and uam did not
 // make: not a landing known has, not a commit of a revert known has, and
-// not a merge of a commit baseTip has, as uam's sync merges are. A revert's
-// commits are its last one, which known has, and the ones before it on the
-// line, one per landing it reverted.
+// not a sync merge (see syncMerge). A revert's commits are its last one,
+// which known has, and the ones before it on the line, one per landing it
+// reverted.
 func (r *laneRepo) unmade(ctx context.Context, baseTip, tip string, known board.LaneCommits) ([]string, error) {
 	out, err := r.output(ctx, r.top, "log", "--first-parent", "--format=%H %P", baseTip+".."+tip, "--")
 	if err != nil {
@@ -426,7 +426,7 @@ func (r *laneRepo) unmade(ctx context.Context, baseTip, tip string, known board.
 		case known.Reverted[sha] > 0:
 			left = known.Reverted[sha] - 1
 		case len(f) == 3:
-			synced, err := r.isAncestor(ctx, f[2], baseTip)
+			synced, err := r.syncMerge(ctx, sha, f[1], f[2], baseTip)
 			if err != nil {
 				return nil, err
 			}
@@ -438,6 +438,22 @@ func (r *laneRepo) unmade(ctx context.Context, baseTip, tip string, known board.
 		}
 	}
 	return unmade, nil
+}
+
+// syncMerge reports whether the commit sha, of parents first and second,
+// is a merge as uam's sync merges are (see syncInteg): second a commit
+// baseTip has, and sha's tree the clean merge of the two as objects, so a
+// merge made by hand that adds or drops content is not one.
+func (r *laneRepo) syncMerge(ctx context.Context, sha, first, second, baseTip string) (bool, error) {
+	if has, err := r.isAncestor(ctx, second, baseTip); err != nil || !has {
+		return false, err
+	}
+	tree, conflicts, err := r.mergeTree(ctx, first, second)
+	if err != nil || len(conflicts) > 0 {
+		return false, err
+	}
+	got, err := r.output(ctx, r.top, "rev-parse", sha+"^{tree}")
+	return err == nil && got == tree, err
 }
 
 // mergeInto merges the integration branch into base with message. Where a

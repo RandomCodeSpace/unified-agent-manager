@@ -498,6 +498,39 @@ func TestMergeBlocksCommitsUamDidNotMake(t *testing.T) {
 			t.Fatal("a blocked merge moved main")
 		}
 	})
+	// A merge of main's commit made by hand is not one of uam's sync
+	// merges unless its tree is their clean merge.
+	for _, tc := range []struct {
+		name  string
+		merge func(t *testing.T, held, owner string)
+	}{
+		{"a merge by hand that adds a file", func(t *testing.T, held, owner string) {
+			gitIn(t, held, "merge", "-q", "--no-ff", "--no-commit", owner)
+			commitFile(t, held, "x.txt", "by hand\n")
+		}},
+		{"a merge by hand that keeps none of main's commit", func(t *testing.T, held, owner string) {
+			gitIn(t, held, "merge", "-q", "-s", "ours", "--no-edit", owner)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFinishingRun(t, "true", "Add b", "Add c")
+			sub := r.subscribe()
+			r.landWith(0, "b.txt", "b\n")
+			owner := commitFile(t, r.repo, "o.txt", "owner\n")
+			held := filepath.Join(t.TempDir(), "held")
+			gitIn(t, r.repo, "worktree", "add", "-q", held, r.integ())
+			tc.merge(t, held, owner)
+			foreign := shortSHA(gitOutput(t, held, "rev-parse", "HEAD"))
+			gitIn(t, r.repo, "worktree", "remove", "--force", held)
+			r.landWith(1, "c.txt", "c\n")
+			if end := r.nextMerge(sub); end.Status != jobFailed || !strings.Contains(end.Error, foreign) {
+				t.Fatalf("merge job = %+v, want it failed naming %s", end, foreign)
+			}
+			if gitOutput(t, r.repo, "rev-parse", "main") != owner || gone(filepath.Join(r.repo, "o.txt")) || !gone(filepath.Join(r.repo, "x.txt")) {
+				t.Fatal("a blocked merge changed main or the owner's working tree")
+			}
+		})
+	}
 	t.Run("uam's own commits", func(t *testing.T) {
 		r := newLaneRun(t, "true", "Add b", "Add c", "Add d")
 		sub := r.subscribe()

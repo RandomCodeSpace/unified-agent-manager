@@ -1412,8 +1412,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   when it holds the content uam checked it would; a merge uam starts and
   cannot finish is aborted, but a merge you started never is. A commit on
   the integration branch that uam did not make, anything but its landings,
-  its reverts and its merges of the base branch, blocks the merge, and the
-  epic's comment names it. A lane that merged the base branch lands only
+  its reverts and its clean merges of the base branch, blocks the merge,
+  and the epic's comment names it. A lane that merged the base branch lands only
   its own work, as uam brings the base's commits onto the integration
   branch first, so a later Revert keeps your base commits. A merge that
   conflicts, or fails otherwise, shows "Merge blocked" and waits until
