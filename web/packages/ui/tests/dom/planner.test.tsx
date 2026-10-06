@@ -1314,6 +1314,8 @@ describe('approving an epic (ADR 0006)', () => {
     try {
       const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
       await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+      // The app's Needs-you count, 13 without it, counts the plan too.
+      await waitFor(() => expect(document.title).toBe('(14) UAM - Planner'));
       await user.click(screen.getByRole('button', { name: 'Inbox, 1 pending' }));
       const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
       expect(plans.getByRole('button', { name: '#90 Offline reading' })).toBeTruthy();
