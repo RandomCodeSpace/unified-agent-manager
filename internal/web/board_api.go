@@ -50,9 +50,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 		res, err := st.Split(ctx, a, ref, body.Children)
 		return res.Card, err
 	}))
-	mux.HandleFunc("POST /api/board/cards/{ref}/release", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, body commentBody) (board.Card, error) {
-		return st.ReleaseHold(ctx, a, ref, board.ReleaseOwner, body.Comment)
-	}))
+	mux.HandleFunc("POST /api/board/cards/{ref}/release", s.handleRelease)
 	mux.HandleFunc("POST /api/board/cards/{ref}/comments", s.handleCommentCard)
 	mux.HandleFunc("POST /api/board/cards/{ref}/launch", s.handleLaunch)
 	mux.HandleFunc("POST /api/board/cards/{ref}/attach", s.handleAttach)
@@ -166,18 +164,14 @@ func (s *Server) handleBoardProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
+// handleUpdateBoardProject changes a Project's planner settings: any of
+// accept_cmd ("" means none), base_ref and accept_parallel (1 to 4).
 func (s *Server) handleUpdateBoardProject(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		AcceptCmd *string `json:"accept_cmd"`
-	}
+	var body BoardProjectPatch
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.AcceptCmd == nil {
-		writeFailure(w, invalidBoard("accept_cmd is required; \"\" means none"))
-		return
-	}
-	p, err := s.m.SetBoardProject(r.PathValue("id"), *body.AcceptCmd)
+	p, err := s.m.SetBoardProject(r.PathValue("id"), body)
 	if err != nil {
 		writeFailure(w, err)
 		return
@@ -430,17 +424,37 @@ func (s *Server) link(w http.ResponseWriter, blocker, blocked string, link bool)
 	writeNoContent(w, s.m.LinkCards(blocker, blocked, link))
 }
 
+// handleAcceptRequest accepts a request: 200 with it, or, for a lane's
+// done request, 202 {job_id}, then board_job frames as it lands.
 func (s *Server) handleAcceptRequest(w http.ResponseWriter, r *http.Request) {
 	var body commentBody
 	if !decodeOptionalBody(w, r, &body) {
 		return
 	}
-	req, err := s.m.AcceptRequest(r.PathValue("id"), body.Comment)
+	req, job, err := s.m.AcceptRequest(r.PathValue("id"), body.Comment)
+	switch {
+	case err != nil:
+		writeFailure(w, err)
+	case job != "":
+		writeJSON(w, http.StatusAccepted, map[string]string{"job_id": job})
+	default:
+		writeJSON(w, http.StatusOK, req)
+	}
+}
+
+// handleRelease is the owner's Release of a held subtask; on a lane's it is
+// Stop. It answers with the card.
+func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
+	var body commentBody
+	if !decodeOptionalBody(w, r, &body) {
+		return
+	}
+	c, err := s.m.ReleaseCard(r.PathValue("ref"), body.Comment)
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, req)
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) handleRejectRequest(w http.ResponseWriter, r *http.Request) {

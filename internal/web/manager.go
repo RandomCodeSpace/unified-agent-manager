@@ -176,19 +176,25 @@ type Manager struct {
 	terminalWG sync.WaitGroup
 	// hostTools, when set, returns the host tools the conversation of a Task
 	// in a Project registers, spawned when uam_create_task or a routine's run
-	// created the Task, and the CallTool bound to that Task. It runs with mu held, so it takes
-	// no lock and never uses the planner store. NewManager sets it to the
-	// planner's tools and uam_create_task (create_task.go).
-	hostTools func(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// created the Task and lane when it works in a lane, and the CallTool
+	// bound to that Task. It runs with mu held, so it takes no lock and never
+	// uses the planner store. NewManager sets it to the planner's tools and
+	// uam_create_task (create_task.go).
+	hostTools func(taskID, projectID string, spawned, lane bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 	// skillDirs hold the built-in skills every Task's conversation loads
 	// (skills.go); Start installs them.
 	skillDirs []string
 	// board is the planner database while the Settings switch is on
 	// (board.go).
 	board boardDB
-	// accept runs the planner's acceptance commands, one per Project at a
-	// time (board_evidence.go).
+	// accept runs the planner's acceptance commands, as many per Project at
+	// a time as it allows (board_evidence.go).
 	accept acceptRunners
+	// lanes holds each Project's land mutex and the lane work in progress
+	// (lane_runs.go). landHook, when set, runs at each landing step; tests
+	// set it before the landings.
+	lanes    laneState
+	landHook func(stage string)
 	// calls are each Task's host tool calls in progress, which settling or
 	// archiving the Task cancels and waits for (board_tools.go). Guarded by
 	// mu. boardCallHook, when set, runs as each such call starts; tests set
@@ -972,7 +978,7 @@ func (m *Manager) Providers() []ProviderInfo {
 }
 
 // RecentWorkdirs returns distinct workdirs of stored records of any surface,
-// most recently seen first.
+// most recently seen first, leaving out the lanes.
 func (m *Manager) RecentWorkdirs() []string {
 	out := []string{}
 	cfg, err := m.store.Load()
@@ -982,7 +988,8 @@ func (m *Manager) RecentWorkdirs() []string {
 	}
 	recs := make([]store.SessionRecord, 0, len(cfg.Sessions))
 	for _, rec := range cfg.Sessions {
-		if rec.Workdir != "" {
+		// Lanes are uam's, never folders the owner picks.
+		if rec.Workdir != "" && !m.inLanes(rec.Workdir) {
 			recs = append(recs, rec)
 		}
 	}
@@ -2266,6 +2273,10 @@ type CreateRequest struct {
 	autopilot bool
 	// rerunOf is the Task Rerun runs again.
 	rerunOf string
+	// workdir is the lane a lane start makes the Task in (ADR 0006 §5.3);
+	// "" is the Project directory. checkCreate honours it only in the
+	// Project's lanes.
+	workdir string
 }
 
 // Create opens a new provider conversation in a Project's directory, records
@@ -2292,6 +2303,16 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 	var workdir string
 	if project != nil {
 		workdir = project.Dir
+	}
+	// Only a lane start sets its own workdir, and only in the Project's
+	// lanes.
+	if req.workdir != "" {
+		lanes := filepath.Join(m.lanesRoot(), req.ProjectID)
+		if !m.inLanes(req.workdir) || !inDir(lanes, filepath.Clean(req.workdir)) || filepath.Clean(req.workdir) == lanes {
+			m.mu.Unlock()
+			return nil, "", "", newError(http.StatusBadRequest, "a task works in its project's directory")
+		}
+		workdir = filepath.Clean(req.workdir)
 	}
 	req.ContextSize = cmp.Or(req.ContextSize, "default")
 	selectionErr := m.validateSelectionLocked(prov.Name(), req.Model, req.Effort, req.ContextSize)
@@ -2603,7 +2624,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	}
 	s.compactAt = m.settings.compactionThreshold()
 	if m.hostTools != nil {
-		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "")
+		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "", m.inLanes(s.workdir))
 	}
 	return req
 }
@@ -3818,13 +3839,17 @@ func (m *Manager) Reopen(id string) (SessionSummary, error) {
 // Archive moves an active or settled Task to its final stage; nothing moves
 // it back. An active Task must meet the same conditions as for Settle.
 // Archiving ends the Task's planner calls in progress, then releases its
-// planner holds.
+// planner holds; a lane Task's lane is then cleaned up.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
 	if err == nil {
 		m.endCalls(id)
 	}
-	return m.reconciled(summary, err)
+	summary, err = m.reconciled(summary, err)
+	if err == nil {
+		m.cleanLaneOf(summary.Workdir)
+	}
+	return summary, err
 }
 
 // reconciled reconciles the planner after a Task transition that succeeded.
@@ -4296,6 +4321,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		}
 	}
 	wait(ctx, &m.wg)
+	wait(ctx, &m.lanes.wg)
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}

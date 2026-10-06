@@ -869,3 +869,38 @@ func TestAcceptedSplitUnderApprovedEpicMakesProposals(t *testing.T) {
 		}
 	}
 }
+
+// LaneHold finds an attempt by its branch, ended or not, and Note adds
+// uam's comment once.
+func TestLaneHoldAndNote(t *testing.T) {
+	f := newFixture(t)
+	epic := f.create(owner, "", KindEpic, "Epic")
+	leaf := f.create(owner, epic.ID, KindSubtask, "Leaf")
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "true"))
+	f.approveRun(epic.ID, laneRun)
+	for _, branch := range []string{"uam-plan-p1-none", " "} {
+		if _, _, err := f.s.LaneHold(f.ctx, branch); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("lane hold of %q = %v", branch, err)
+		}
+	}
+	f.lane(leaf.ID, "t1")
+	c, h, err := f.s.LaneHold(f.ctx, "uam-plan-p1-t1")
+	if err != nil || c.ID != leaf.ID || h.TaskID != "t1" || h.EndedAt != nil {
+		t.Fatalf("lane hold = %+v, %+v, %v", c, h, err)
+	}
+	for i := range 2 {
+		added, err := f.s.Note(f.ctx, leaf.ID, "noted")
+		if err != nil || added != (i == 0) {
+			t.Fatalf("note %d = %v, %v", i, added, err)
+		}
+	}
+	d, err := f.s.Detail(f.ctx, leaf.ID)
+	f.must(err)
+	if n := slices.IndexFunc(d.Comments, func(c Comment) bool { return c.Body == "noted" }); n < 0 || d.Comments[n].Author != AuthorUAM || !d.Comments[n].Automatic ||
+		slices.ContainsFunc(d.Comments[n+1:], func(c Comment) bool { return c.Body == "noted" }) {
+		t.Fatalf("comments = %+v", d.Comments)
+	}
+	if _, err := f.s.Note(f.ctx, leaf.ID, " "); err == nil {
+		t.Fatal("an empty note was added")
+	}
+}

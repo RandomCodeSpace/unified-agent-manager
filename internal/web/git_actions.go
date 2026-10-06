@@ -527,9 +527,25 @@ func (r *gitRepo) chosen(ctx context.Context, paths []string) ([]statusEntry, er
 	return entries, nil
 }
 
+// notInLane refuses Push and Pull for a lane Task (ADR 0006 §5.3): uam
+// lands its work, and its lane's branch is uam's.
+func (m *Manager) notInLane(id string) error {
+	t, err := m.gitTarget(id)
+	if err != nil {
+		return err
+	}
+	if m.inLanes(t.workdir) {
+		return newError(http.StatusConflict, "This task works in a lane of an approved epic: uam lands its work, so its lane neither pushes nor pulls.")
+	}
+	return nil
+}
+
 // GitPush pushes the current branch, never forced: to its upstream when it
 // has one, else to origin under its own name, setting that as upstream.
 func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
+	if err := m.notInLane(id); err != nil {
+		return GitResult{}, err
+	}
 	_, repo, unlock, err := m.openWriteRepo(ctx, id)
 	if err != nil {
 		return GitResult{}, err
@@ -577,6 +593,9 @@ func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
 // GitPull fast-forwards the current branch to its upstream, and nothing
 // else: it never merges or rebases.
 func (m *Manager) GitPull(ctx context.Context, id string) (GitResult, error) {
+	if err := m.notInLane(id); err != nil {
+		return GitResult{}, err
+	}
 	t, repo, unlock, err := m.openWriteRepo(ctx, id)
 	if err != nil {
 		return GitResult{}, err

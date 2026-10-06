@@ -1317,8 +1317,43 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   epic, or out from under a pause, reaches the Inbox as a change request
   that names both parents and the run of each approved epic it leaves or
   enters. Restoring a cancelled card there brings it
-  back as a proposal, the epic itself excepted. Nothing runs yet: execution
-  comes later.
+  back as a proposal, the epic itself excepted. Approve also readies git for
+  the run: it refuses when the server's git is older than 2.40 or has no
+  committer identity, and when the Project's base branch (the branch checked
+  out at the first approval) does not merge cleanly into the Project's
+  integration branch `uam-plan-<id>`, which it creates or brings up to date.
+  Uncommitted changes in the Project folder are not part of the run.
+  **Launch** on a ready subtask of an approved epic starts it in a lane: a
+  new Task with the run's model and mode, in its own git worktree beside
+  uam's settings (never in the Project folder, so it never holds up your
+  Commit, Pull or Push), on its own branch made from the integration branch.
+  Launch is refused, naming why, on a subtask that waits on another, is
+  paused, flagged blocked or a proposal, and past the epic's subtasks at a
+  time or 4 across the server; Do whole story and adding a Task stay
+  unavailable. The lane's Task gets only the planner tools to read the
+  board, tick its checklist, comment and file requests, and its git panel
+  neither pushes nor pulls. Its done request commits what it left, merges
+  the integration tip into the lane (a conflict refuses it with the files
+  and the steps), runs the acceptance command there and lands the lane on
+  the integration branch as one commit whose trailers name the card and the
+  request: the card shows **Landing**, then **Landed** with the commit. A
+  change to test or build files is recorded, not held for you. A done
+  request that waits for you (nothing changed, or the command could not run
+  or outran its time limit) lands when you Accept it, as a job whose
+  progress shows on the request; when the integration branch moved since the
+  claim, the job merges it in and runs the command again, and a failure
+  rejects the request and tells the Task why. Accept is refused while the
+  Task works. **Stop** on a running subtask (its Release) asks first, then
+  pauses the subtask, stops and archives its Task and removes the lane,
+  keeping its branch. Settle offers release or cancel for a lane, not keep.
+  An attempt that ends without landing pauses its subtask ("Paused by
+  uam"). Archiving a lane's Task commits what the lane left to its branch
+  and removes the lane; a landed attempt's branch goes too. The acceptance
+  runs of a Project, its lanes' included, run one at a time unless the
+  Project allows up to 4 (Acceptance runs at a time, in the Approve
+  dialog). The Planner header names the integration branch and how many
+  landings the base branch lacks. Nothing starts by itself, and nothing
+  merges into the base branch, yet.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named
