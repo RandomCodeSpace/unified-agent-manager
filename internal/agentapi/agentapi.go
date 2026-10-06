@@ -88,6 +88,8 @@ type Capabilities struct {
 	MCP bool `json:"mcp,omitempty"`
 	// CLIUpdate is true when the provider implements CLIUpdater.
 	CLIUpdate bool `json:"cli_update,omitempty"`
+	// SubagentModels is true when the provider implements SubagentModelUser.
+	SubagentModels bool `json:"subagent_models,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -211,6 +213,15 @@ type UsageSessionRecorder interface {
 // and conversations opened or switched afterwards can select them.
 type CustomModelUser interface {
 	SetCustomModels([]CustomModel)
+}
+
+// SubagentModelUser is implemented by a provider whose agents start
+// subagents on a model they choose. SetSubagentModels limits every subagent
+// started afterwards, in open conversations too, to the model IDs in models;
+// the first is the fallback when the Task's own model is not among them. An
+// empty list lifts the limit.
+type SubagentModelUser interface {
+	SetSubagentModels(models []string)
 }
 
 // CustomModel is an OpenAI-compatible model the owner brought. Its model ID
