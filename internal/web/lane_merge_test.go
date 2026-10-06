@@ -438,6 +438,38 @@ func TestRevertOfMergedWorkMergesAgain(t *testing.T) {
 	}
 }
 
+// A lane that merged a newer main lands only its own work: the integration
+// branch takes main's commits first, so a Revert of the landing, merged
+// into main, keeps main's own commit.
+func TestLandingDoesNotCarryOwnerBaseCommits(t *testing.T) {
+	r := newFinishingRun(t, "true", "Add b")
+	sub := r.subscribe()
+	task, l := r.start(0)
+	commitFile(t, r.repo, "o.txt", "owner\n")
+	gitIn(t, l.dir, "merge", "-q", "--no-edit", "main")
+	commitFile(t, l.dir, "b.txt", "b\n")
+	landed := r.landed(task, 0)
+	if got := gitOutput(t, r.repo, "show", "--format=", "--name-only", landed); got != "b.txt" {
+		t.Fatalf("the landing changed %q, want b.txt alone", got)
+	}
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("merge job = %+v", end)
+	}
+	leaf := r.leaves[0]
+	if end := r.revert(leaf.ID, revertBody(nil, leaf.ID)); end.Status != jobDone {
+		t.Fatalf("revert job = %+v", end)
+	}
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("merge of the revert = %+v", end)
+	}
+	if got := gitOutput(t, r.repo, "show", "main:o.txt"); got != "owner" {
+		t.Fatalf("main's o.txt = %q, want the owner's", got)
+	}
+	if !gone(filepath.Join(r.repo, "b.txt")) || gone(filepath.Join(r.repo, "o.txt")) {
+		t.Fatal("the owner's working tree does not match main")
+	}
+}
+
 // The first pass after the planner opens merges only work of a finished
 // approved epic that the base branch lacks: with one epic merged and
 // another still running, a restart merges nothing, so the running epic's

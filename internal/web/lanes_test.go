@@ -276,6 +276,35 @@ func TestLaneStaleWhenTheIntegrationBranchLostALanding(t *testing.T) {
 	}
 }
 
+// A lane holding commits of main the integration tip lacks, which main
+// cannot bring in as it conflicts with the integration branch, is refused
+// land_stale with the agent's steps, and nothing moves: landing it would
+// carry main's own work.
+func TestLaneWithBaseCommitsTheTipCannotTakeIsStale(t *testing.T) {
+	f := newLaneFixture(t)
+	first := f.start(1)
+	commitFile(t, first.dir, "a.txt", "plan\n")
+	f.land(first, 1)
+	l, clean := f.start(2), f.start(3)
+	commitFile(t, f.top, "a.txt", "owner\n")
+	if err := gitTry(t, l.dir, "merge", "main"); err == nil {
+		t.Fatal("main merged into the lane without a conflict")
+	}
+	writeRepoFile(t, l.dir, "a.txt", "both\n")
+	gitIn(t, l.dir, "commit", "-q", "-a", "--no-edit")
+	refs := f.refs()
+	err := f.r.syncForLanding(f.ctx, l, "main")
+	if e := wantCode(t, err, codeLandStale); !strings.Contains(e.Message, "git merge "+f.r.integ) {
+		t.Fatalf("refusal = %q", e.Message)
+	}
+	if f.refs() != refs {
+		t.Fatal("a refused landing moved a branch")
+	}
+	if err := f.r.syncForLanding(f.ctx, clean, "main"); err != nil {
+		t.Fatalf("a lane without main's commits: %v", err)
+	}
+}
+
 func TestLaneCompareAndSwapFailsOnAStaleTip(t *testing.T) {
 	f := newLaneFixture(t)
 	tip := f.tip()

@@ -396,6 +396,65 @@ func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool
 	return true, nil
 }
 
+// syncForLanding keeps a landing from carrying base's own commits. When the
+// lane l holds commits of base that the integration tip lacks, as after the
+// agent merged base into its lane, it syncs the integration branch with
+// base first, so the landing is the lane's own work alone and a later
+// Revert of it never takes base's commits out of base. When base does not
+// merge cleanly into the integration branch, it refuses land_stale with the
+// agent's steps and moves nothing. base "" syncs nothing.
+func (r *laneRepo) syncForLanding(ctx context.Context, l lane, base string) error {
+	if base == "" {
+		return nil
+	}
+	head, err := r.laneHead(ctx, l)
+	if err != nil {
+		return err
+	}
+	if carries, err := r.carriesBase(ctx, head, base); err != nil || !carries {
+		return err
+	}
+	if _, err := r.syncInteg(ctx, base); err != nil && apiCode(err) != codeMergeConflict {
+		return err
+	}
+	if carries, err := r.carriesBase(ctx, head, base); err != nil || !carries {
+		return err
+	}
+	b := displaytext.Sanitize(base)
+	return &Error{Status: http.StatusConflict, Code: codeLandStale,
+		Message: fmt.Sprintf("your lane has commits of %s that %s lacks, and %s does not merge cleanly into %s, so landing would carry %s's own work: take your merge of %s out of your branch, run `git merge %s` instead, commit, and file done again",
+			b, r.integ, b, r.integ, b, b, r.integ)}
+}
+
+// carriesBase reports whether the commit head has commits of base that the
+// integration tip lacks: a best common ancestor of head and base that the
+// tip does not have all of (see hasAll).
+func (r *laneRepo) carriesBase(ctx context.Context, head, base string) (bool, error) {
+	baseTip, err := r.tipOf(ctx, base)
+	if err != nil || baseTip == "" {
+		return false, err
+	}
+	tip, err := r.tipOf(ctx, r.integ)
+	if err != nil || tip == "" {
+		return false, err
+	}
+	out, code, stderr, err := runGit(ctx, r.git, r.top, 64<<10, "merge-base", "--all", head, baseTip)
+	switch {
+	case err != nil:
+		return false, err
+	case code == 1:
+		return false, nil // no common history
+	case code != 0:
+		return false, newError(http.StatusBadGateway, "git merge-base failed: %s", gitMessage(stderr))
+	}
+	for _, common := range strings.Fields(string(out)) {
+		if has, err := r.hasAll(ctx, tip, common); err != nil || !has {
+			return err == nil, err
+		}
+	}
+	return false, nil
+}
+
 // checkLane refuses to land the attempt as it is: land_conflict while its
 // worktree is mid-merge or has unmerged paths, so leftovers are never
 // committed with conflict markers in them; land_stale when it holds a

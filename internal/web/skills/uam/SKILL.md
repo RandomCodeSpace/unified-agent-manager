@@ -158,7 +158,9 @@ Planner on and the Project is a git repository.
   tip into your lane, runs the acceptance command and lands your work as one
   commit. Commit any merge you start before filing done. When the tip's
   merge conflicts, the reply names the files: run `git merge uam-plan-…`,
-  resolve them, commit, and file done again. Once the reply says the work
+  resolve them, commit, and file done again. Merge only `uam-plan-…` into
+  your lane, never the base branch: a lane holding base commits that
+  `uam-plan-…` cannot take is refused. Once the reply says the work
   landed, or that landing is queued, end your turn. A landed subtask the
   owner reverts, or reopens with its code kept, comes back To do and
   paused; its comment says which and why, so read it before you plan

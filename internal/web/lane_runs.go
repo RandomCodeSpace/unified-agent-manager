@@ -574,6 +574,17 @@ func (m *Manager) landingRequest(ctx context.Context, id string) (board.Request,
 // returns the landing commit, on top of the integration tip it returns. A
 // content failure is a landFailure.
 func (m *Manager) prepareLanding(ctx context.Context, repo *laneRepo, l lane, r board.Request, c board.Card) (string, string, error) {
+	var ps board.ProjectSettings
+	if err := m.withBoard(func(st *board.Store) error {
+		var err error
+		ps, err = st.ProjectSettings(ctx, c.ProjectID)
+		return err
+	}); err != nil {
+		return "", "", err
+	}
+	if err := repo.syncForLanding(ctx, l, ps.BaseRef); err != nil {
+		return "", "", contentFailure(err)
+	}
 	tip, err := repo.tipOf(ctx, repo.integ)
 	if err != nil {
 		return "", "", err
