@@ -143,8 +143,13 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       });
     }
     if (c.status === 'cancelled') {
-      // Under an approved epic a restored card is a proposal again, until the epic is approved again.
-      const description = approved && approved !== c ? `The card and everything its cancel took with it reopen as proposals: approve #${approved.seq} again to confirm them.` : 'The card and everything its cancel took with it reopen, confirmed.';
+      // Under an approved epic a restored card is a proposal again, until the epic is approved again;
+      // the epic itself reopens confirmed.
+      const description = !approved
+        ? 'The card and everything its cancel took with it reopen, confirmed.'
+        : approved.id === c.id
+          ? `The epic reopens, and everything its cancel took with it comes back as proposals: approve #${c.seq} again to confirm them.`
+          : `The card and everything its cancel took with it reopen as proposals: approve #${approved.seq} again to confirm them.`;
       actions.push({ key: 'restore', label: 'Restore', icon: <RotateCcw />, onClick: () => setReason({ title: `Restore #${c.seq}?`, description, label: 'Why (required)', confirm: 'Restore', required: true, run: (t) => api.planner.restore(c.id, t) }) });
     }
     return actions;

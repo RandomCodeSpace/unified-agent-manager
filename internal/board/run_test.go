@@ -225,6 +225,20 @@ func TestPausedIsOwnerOnly(t *testing.T) {
 	if f.card(epic.ID).Paused != "" || f.card(story.ID).Paused != PausedOwner {
 		t.Fatalf("after approving again: epic %q, story %q", f.card(epic.ID).Paused, f.card(story.ID).Paused)
 	}
+	// Moved out of the approved epic, a card and everything under it drop
+	// their pauses, which nothing could clear there.
+	plain := f.create(owner, "", KindEpic, "Plain")
+	moving := f.create(owner, epic.ID, KindStory, "Moving")
+	inner := f.create(owner, moving.ID, KindSubtask, "Inner")
+	for _, id := range []string{moving.ID, inner.ID} {
+		_, err := f.s.Edit(f.ctx, owner, id, Patch{Paused: ptr(true)})
+		f.must(err)
+	}
+	res, err = f.s.Edit(f.ctx, owner, moving.ID, Patch{ParentID: ptr(plain.ID)})
+	f.must(err)
+	if res.Card.Paused != "" || f.card(inner.ID).Paused != "" {
+		t.Fatalf("moved out: story %q, subtask %q", res.Card.Paused, f.card(inner.ID).Paused)
+	}
 }
 
 // Under an approved epic nothing starts by hand and nothing is confirmed

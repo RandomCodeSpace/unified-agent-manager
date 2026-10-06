@@ -138,12 +138,12 @@ Planner on and the Project is a git repository.
   Planner. When your plan for an epic is complete, ask the owner to approve
   it there and end your turn; nothing runs before that. Under an approved
   epic the approval owns the work: `board_claim` answers `run_owned`, and a
-  card you add stays a proposal until the owner approves the epic again,
-  which you ask for the same way. Moving a card into or out of an approved
-  epic becomes a change request for the owner. Keep a confirmed subtask in
-  every confirmed story and epic there: a write that leaves one with none is
-  refused. `board_get` shows the approval and any pause; nothing at or under
-  a paused card starts.
+  card you add, or one the owner restores, stays a proposal until the owner
+  approves the epic again, which you ask for the same way. Moving a card
+  into or out of an approved epic becomes a change request for the owner.
+  Keep a confirmed subtask in every confirmed story and epic there: a write
+  that leaves one with none is refused. `board_get` shows the approval and
+  any pause; nothing at or under a paused card starts.
 - **Planning**: until a subtask starts (held, doing or done) you plan it
   directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
   `board_link`, `board_unlink`, `board_split` and `board_delete`. A started

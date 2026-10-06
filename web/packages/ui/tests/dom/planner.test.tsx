@@ -1289,6 +1289,17 @@ describe('approving an epic (ADR 0006)', () => {
     }
   });
 
+  test('Restore on a cancelled approved epic says what it took with it comes back as proposals', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-18');
+    await act(() => api.planner.status('cp1-18', 'cancelled', 'The release moves to next quarter.'));
+    await user.click(screen.getByRole('switch', { name: 'Show cancelled' }));
+    await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#18 .*, Cancelled$/ })).toBeTruthy());
+    await user.click((await openMenu(user, 'Actions for #18')).getByRole('menuitem', { name: 'Restore' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Restore #18?' }));
+    expect(dialog.getByText('The epic reopens, and everything its cancel took with it comes back as proposals: approve #18 again to confirm them.')).toBeTruthy();
+  });
+
   test('Plans to approve lists a proposed epic in the Inbox, which counts it', async () => {
     const { user } = renderApp('#planner=p3');
     const spy = serviceReply(

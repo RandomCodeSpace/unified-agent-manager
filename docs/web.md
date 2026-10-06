@@ -1303,8 +1303,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   approve" on the epic) until the epic is approved again. Under an approved
   epic nothing is confirmed or started card by card: Confirm, Launch, Do
   whole story and adding a Task to its stories are not offered, and Pause
-  and Resume block or free a card and everything under it. Nothing runs
-  yet: execution comes later.
+  and Resume block or free a card and everything under it; a card moved out
+  of the epic drops its pause. Restoring a cancelled card there brings it
+  back as a proposal, the epic itself excepted. Nothing runs yet: execution
+  comes later.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named

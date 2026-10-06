@@ -480,6 +480,19 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 			return err
 		}
 	}
+	// Only a card under an approved epic is paused: moved out of one, the
+	// card and everything under it drop their pauses.
+	if plan.moving && o.approved(n) == nil {
+		n.Paused = ""
+		for _, m := range o.subtree(n)[1:] {
+			if m.Paused != "" {
+				m.Paused = ""
+				if err := t.updateCard(m); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if a.owner() {
 		if err := t.planned(o, a, n); err != nil {
 			return err
