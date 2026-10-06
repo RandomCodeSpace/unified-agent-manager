@@ -1331,6 +1331,48 @@ describe('approving an epic (ADR 0006)', () => {
     }
   });
 
+  test('a Block takes in only its own write: a card someone else changed meanwhile, above the row or the row itself, stays as shown and Approve names it', async () => {
+    const { user } = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+    await act(() => api.planner.setProject('p3', { accept_cmd: 'npm test' }));
+    const pause = vi.spyOn(api.planner, 'pause');
+    const post = vi.spyOn(api.planner, 'approve');
+    const revisionOf = async (seq: number) => (await api.planner.board('p3')).cards.find((c) => c.seq === seq)!.revision;
+    try {
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const story = () => within(dialog.getByRole('region', { name: '#33 Alt text for every image' }));
+      const button = dialog.getByRole('button', { name: 'Approve and run' }) as HTMLButtonElement;
+      await pick(user, dialog, 'Model', /GPT-5 mini/);
+      // A Task edits the story's description, which the dialog doesn't show; then the owner blocks a subtask under it.
+      const shown = await revisionOf(33);
+      await act(() => api.planner.edit('cp3-33', { desc: 'Older posts too.' }));
+      await user.click(story().getByRole('button', { name: 'Block #35' }));
+      await waitFor(() => expect(story().getByRole('button', { name: 'Unblock #35' })).toBeTruthy());
+      await waitFor(() => expect(button.disabled).toBe(false));
+      await user.click(button);
+      expect(await dialog.findByText(/^#33 changed since this opened\. They are shown as they are now/)).toBeTruthy();
+      expect(post.mock.calls[0][1].items).toContainEqual({ id: 'cp3-33', revision: shown });
+      // A Task edits the story again, then the owner blocks the story itself: that write carries the edit.
+      const again = await revisionOf(33);
+      await act(() => api.planner.edit('cp3-33', { desc: 'Every post.' }));
+      await user.click(story().getByRole('button', { name: 'Block #33' }));
+      await waitFor(() => expect(pause).toHaveBeenCalledWith('cp3-33', true));
+      await waitFor(() => expect(button.disabled).toBe(false));
+      expect(story().getByRole('button', { name: 'Block #33' })).toBeTruthy();
+      await user.click(button);
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+      expect(post.mock.calls[1][1].items).toContainEqual({ id: 'cp3-33', revision: again });
+      // Shown again as it is now: blocked.
+      expect(await story().findByRole('button', { name: 'Unblock #33' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Approve #32?' })).toBeTruthy();
+    } finally {
+      pause.mockRestore();
+      post.mockRestore();
+    }
+  });
+
   test('under an approved epic Confirm and Launch give way to Pause, which sends PATCH, and the chips say so in words', async () => {
     const { user, tree } = await openPlanner();
     await approve('cp1-18');

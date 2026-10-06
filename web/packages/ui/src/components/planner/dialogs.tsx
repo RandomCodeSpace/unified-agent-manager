@@ -221,6 +221,19 @@ function runStart(epic: Card, meta: Meta | null, settings: Settings): TaskDefaul
   return named ? base : { ...base, model: '', effort: '', context_size: 'default' };
 }
 
+/**
+ * What a Block or Unblock writes besides the pause: its revision on the card and every card above
+ * it, and an owner touch's pin and proposal expiry. Staleness comes from git, not a write, and a
+ * Board frame doesn't carry it.
+ */
+const BLOCK_WRITES: ReadonlySet<string> = new Set(['revision', 'updated_at', 'pinned_sha', 'expires_at', 'stale']);
+
+/** Whether `now` is the shown card as the Block or Unblock of `toggled` left it, with nobody else's change. */
+function onlyBlocked(shown: Card, now: Card, toggled: string): boolean {
+  const keys = new Set([...Object.keys(shown), ...Object.keys(now)]);
+  return [...keys].every((k) => BLOCK_WRITES.has(k) || (k === 'paused' && now.id === toggled) || JSON.stringify(shown[k as keyof Card]) === JSON.stringify(now[k as keyof Card]));
+}
+
 const PARALLEL_ITEMS = ['1', '2', '3', '4'].map((value) => ({ value, label: value }));
 
 const seqs = (cards: readonly Card[]) => cards.map((c) => `#${c.seq}`).join(', ');
@@ -287,11 +300,18 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   const selection = picked ?? (epic ? runStart(epic, meta, settings) : null);
   const byId = new Map(cards.map((c) => [c.id, c]));
   // A Block or Unblock stamps the card and each card above it with its write's revision: once the
-  // Board has the write, those are shown as they are now.
+  // Board has the write, those it alone changed are shown as they are now. One someone else changed
+  // meanwhile stays as shown, so Approve answers `stale` and names it.
   const written = wrote && byId.get(wrote.id);
   if (written && written.revision >= wrote.revision) {
-    const path = new Set(cardPath(written, byId).map((c) => c.id));
-    setSnap((s) => ({ ...s, list: s.list.map((c) => (path.has(c.id) ? (byId.get(c.id) ?? c) : c)) }));
+    const path = new Map(cardPath(written, byId).map((c) => [c.id, c]));
+    setSnap((s) => ({
+      ...s,
+      list: s.list.map((c) => {
+        const now = path.get(c.id);
+        return now && onlyBlocked(c, now, wrote.id) ? now : c;
+      }),
+    }));
     setWrote(null);
   }
   const shownById = new Map(snap.list.map((c) => [c.id, c]));
