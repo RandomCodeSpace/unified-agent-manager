@@ -140,6 +140,18 @@ describe('subagents', () => {
     expect(log().queryByRole('button', { name: /^5 subagents/ })).toBeNull();
   });
 
+  test('a few subagents read as one column, each row naming what it was asked to do beside its name', async () => {
+    await openTask('t8');
+    const live = screen.getByRole('region', { name: 'Subagents at work' });
+    // Four families: one column, not spread into columns across a wide conversation.
+    const list = live.querySelector('ul')!;
+    expect(list.className).not.toContain('columns-');
+    expect(list.className).toContain('max-w-2xl');
+    // The task call's description sits beside the name, and the row's name carries it too.
+    const row = within(live).getByRole('button', { name: /^Run the accessibility linter, failed: axe-core is not installed in this project\. · Run axe on the rendered post page/ });
+    expect(row.textContent).toContain('Run axe on the rendered post page and report violations.');
+  });
+
   test('an earlier reply\'s chip opens its rows; a row opens its transcript, which leads to where it was spawned', async () => {
     const { user } = await openTask('t22');
     const chip = log().getByRole('button', { name: /^12 subagents · [\d.]+M tokens · 11 done · 1 running/ });

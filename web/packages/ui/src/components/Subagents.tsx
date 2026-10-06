@@ -476,8 +476,10 @@ export function SubagentChip({ subagents, calls, tones, open, controls, onToggle
   );
 }
 
-/** Rows a list draws past a filter's reach, and the columns they flow into. */
+/** Rows a list draws past a filter's reach, and the columns they flow into once a list is long. */
 const COLUMNS = 'columns-[20rem] gap-x-6';
+/** Up to this many families stay one column: a few rows read as a list, not spread across the page. */
+const ONE_COLUMN = 6;
 
 /**
  * Subagents as one-line rows flowing into columns as wide as the conversation allows (one on a
@@ -488,10 +490,10 @@ const COLUMNS = 'columns-[20rem] gap-x-6';
 function Families({ list, tones, anchor, limit, onMore }: Readonly<{ list: Family[]; tones: ReadonlyMap<string, IdentityTone>; anchor: boolean; limit: number; onMore: () => void }>) {
   return (
     <>
-      {/* No more columns than families, so a few rows take the width (up to 36rem) instead of leaving empty columns. */}
-      <ul className={COLUMNS} style={{ columnCount: Math.min(list.length, limit) }}>
+      {/* A short list is one column as wide as a row needs (42rem at most); a long one flows into columns, no more than its families. */}
+      <ul className={list.length > ONE_COLUMN ? COLUMNS : 'flex max-w-2xl flex-col'} style={list.length > ONE_COLUMN ? { columnCount: Math.min(list.length, limit) } : undefined}>
         {list.slice(0, limit).map((f) => (
-          <li key={f.head.id} className="max-w-xl break-inside-avoid">
+          <li key={f.head.id} className="break-inside-avoid">
             {f.rows.map(({ subagent, depth }) => (
               <SubagentRow key={subagent.id} subagent={subagent} tone={tones.get(subagent.id)} depth={depth} anchor={anchor} />
             ))}
@@ -561,13 +563,15 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   useEffect(() => () => window.clearTimeout(focusTimer.current), []);
   if (!scope) return null;
   const name = s.name || 'Subagent';
+  // What it was asked to do, in a few words (the `task` call's description): the name is often only the agent's kind.
+  const about = s.description && s.description.trim().toLowerCase() !== name.toLowerCase() ? s.description : '';
   const parentId = s.parent_tool_call_id;
   const failure = s.status === 'failed' ? s.error : '';
   const props = {
     type: 'button' as const,
     'data-subagent-toggle': '',
     'aria-haspopup': 'dialog' as const,
-    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}`,
+    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}${about ? ` · ${about}` : ''}`,
     className: cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11', open && 'bg-tint-selected hover:bg-tint-selected'),
     style: { paddingLeft: `${8 + depth * 18}px` },
   };
@@ -578,7 +582,12 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
         <SubagentMark status={s.status} />
       </span>
       {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
-      <span className="min-w-0 flex-1 truncate">{name}</span>
+      <span className={cn('min-w-0 truncate', about ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
+      {about && (
+        <span className="min-w-0 flex-1 truncate text-muted max-sm:hidden" title={about}>
+          {about}
+        </span>
+      )}
       <Took subagent={s} className="w-14 text-right" />
       <span className="w-10 shrink-0 text-right text-meta tabular-nums text-muted">{s.tokens ? compactTokens(s.tokens) : ''}</span>
     </>
