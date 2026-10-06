@@ -1234,16 +1234,16 @@ describe('approving an epic (ADR 0006)', () => {
       expect(dialog.getByText('In Safe mode a permission prompt stops unattended work until you answer it.')).toBeTruthy();
       const runs = within(dialog.getByRole('radiogroup', { name: 'Subtasks at a time' }));
       expect(runs.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true');
-      // The Project's acceptance limit, 1 by default, is saved as it is picked.
+      // notes-site has no acceptance command, so #35 would wait for the owner: refused inline until one is set.
+      expect(await within(dialog.getByRole('region', { name: '#33 Alt text for every image' })).findByText(/no acceptance command/)).toBeTruthy();
+      expect(dialog.getByRole('alert').textContent).toContain('#35 has no acceptance command');
+      // The Project's settings have loaded: its acceptance limit, 1 by default, is saved as it is picked.
       const limit = within(dialog.getByRole('radiogroup', { name: 'Acceptance runs at a time' }));
-      await waitFor(() => expect(limit.getByRole('radio', { name: '1' }).getAttribute('aria-checked')).toBe('true'));
+      expect(limit.getByRole('radio', { name: '1' }).getAttribute('aria-checked')).toBe('true');
       await user.click(limit.getByRole('radio', { name: '2' }));
       await waitFor(() => expect(limit.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true'));
       expect((await api.planner.project('p3')).accept_parallel).toBe(2);
       expect(dialog.getByText(/uncommitted changes are not included/)).toBeTruthy();
-      // notes-site has no acceptance command, so #35 would wait for the owner: refused inline until one is set.
-      expect(await within(dialog.getByRole('region', { name: '#33 Alt text for every image' })).findByText(/no acceptance command/)).toBeTruthy();
-      expect(dialog.getByRole('alert').textContent).toContain('#35 has no acceptance command');
       await user.click(dialog.getByRole('button', { name: 'Edit' }));
       await user.type(dialog.getByRole('textbox', { name: 'Project acceptance command' }), 'npm test{Enter}');
       await waitFor(() => expect(dialog.queryByRole('alert')).toBeNull());
