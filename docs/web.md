@@ -22,8 +22,9 @@ On the Linux host:
   [GitHub Copilot sign-in](#github-copilot-sign-in)). UAM reuses its existing
   configuration, credentials, model settings, and permission rules. It does
   not install or reconfigure it. It updates it only when asked in Settings,
-  with npm, and only to a release the Copilot SDK built into UAM accepts (see
-  **Copilot CLI updates** under [GitHub Copilot sign-in](#github-copilot-sign-in)).
+  the way it was installed, and only to a release the Copilot SDK built into
+  UAM accepts (see **Copilot CLI updates** under
+  [GitHub Copilot sign-in](#github-copilot-sign-in)).
 - Start `uam web` from a normal login shell, where `copilot` resolves on
   `PATH`. The service inherits that environment.
 
@@ -192,20 +193,26 @@ confirmation; it also signs the `copilot` command out for that user. A `gh`
 sign-in is changed with `gh auth logout` on the server.
 
 **Copilot CLI updates.** Settings → **GitHub Copilot** also shows the
-installed Copilot CLI version and the newest stable release of
-`@github/copilot` on npm, read when the service starts, every 6 hours, and
-when Settings asks again; the Settings icon carries an amber dot while an
-update is available. UAM updates only a CLI that npm installed globally, with
-an npm whose global folder the service user can write; otherwise Settings says
-why, and the CLI is updated the way it was installed. An update first installs
-the release into a temporary folder and starts the Copilot SDK built into UAM
-on it. A release the SDK refuses is not installed: Settings says it needs a
-newer UAM and does not offer it again until the service restarts. Otherwise
-UAM closes the idle Copilot conversations (their Tasks keep their state and
-reopen when next viewed or sent to), stops Copilot, runs
-`npm install -g @github/copilot@<version>`, and the next use starts the new
-CLI; starts wait while the install runs. While a Copilot Task is working or
-waiting for an answer, the update is refused; it never interrupts a Task.
+installed Copilot CLI version and the newest stable release, read when the
+service starts, every 6 hours, and when Settings asks again; the Settings icon
+carries an amber dot while an update is available. The newest release is read
+from `@github/copilot` on npm when npm installed the CLI, and from the
+published GitHub releases otherwise. UAM updates a CLI that npm installed
+globally, with an npm whose global folder the service user can write, and a
+standalone `copilot` binary (the install script, a Homebrew cask, or one
+placed by hand) in a folder the service user can write, on Linux and macOS;
+otherwise Settings says why, and the CLI is updated the way it was installed.
+An update first stages the release in a temporary folder, with npm or from the
+release archive for this platform checked against the release's
+`SHA256SUMS.txt`, and starts the Copilot SDK built into UAM on it. A release
+the SDK refuses is not installed: Settings says it needs a newer UAM and does
+not offer it again until the service restarts. Otherwise UAM closes the idle
+Copilot conversations (their Tasks keep their state and reopen when next
+viewed or sent to), stops Copilot, runs
+`npm install -g @github/copilot@<version>` or replaces the binary in place,
+and the next use starts the new CLI; starts wait while the install runs. While
+a Copilot Task is working or waiting for an answer, the update is refused; it
+never interrupts a Task.
 
 **Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
 `GITHUB_TOKEN` (in that order) in the service's environment takes precedence

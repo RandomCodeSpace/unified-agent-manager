@@ -1,9 +1,16 @@
 package copilot
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,15 +151,24 @@ func TestCLIReleaseReadsInstalledLatestAndManual(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(f.dir, "latest"), "1.0.94\n", 0o644)
 
-	t.Run("not installed with npm", func(t *testing.T) {
+	// A package in another node_modules, as another package manager places
+	// it, is not npm's to update.
+	t.Run("a Node.js package npm did not install", func(t *testing.T) {
 		other := t.TempDir()
-		writeFile(t, filepath.Join(other, "copilot"), fmt.Sprintf(loaderScript, f.dir), 0o755)
+		pkg := filepath.Join(other, "node_modules", "@github", "copilot")
+		if err := os.MkdirAll(pkg, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, filepath.Join(pkg, "npm-loader.js"), fmt.Sprintf(loaderScript, f.dir), 0o755)
+		if err := os.Symlink(filepath.Join(pkg, "npm-loader.js"), filepath.Join(other, "copilot")); err != nil {
+			t.Fatal(err)
+		}
 		t.Setenv("PATH", other+string(os.PathListSeparator)+f.bin)
 		rel, err := p.CLIRelease(ctx)
-		if err != nil || rel.Latest != "1.0.94" || !strings.Contains(rel.Manual, "Copilot CLI at "+filepath.Join(other, "copilot")+" was not installed with npm") {
+		if err != nil || rel.Latest != "1.0.94" || !strings.Contains(rel.Manual, "Copilot CLI at "+filepath.Join(other, "copilot")+" is a Node.js package npm did not install") {
 			t.Fatalf("CLIRelease = %+v, %v", rel, err)
 		}
-		if err := p.UpdateCLI(ctx, "1.0.94", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "not installed with npm") {
+		if err := p.UpdateCLI(ctx, "1.0.94", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "npm did not install") {
 			t.Fatalf("UpdateCLI = %v", err)
 		}
 		for _, c := range f.calls(t) {
@@ -346,4 +362,161 @@ func TestUpdateCLIStopsWhileTasksAreBusy(t *testing.T) {
 			t.Fatal("the running CLI was stopped under an open conversation")
 		}
 	})
+}
+
+// binaryScript is a standalone copilot: it reports its version however it
+// is asked, unlike the npm loader.
+const binaryScript = "#!/bin/sh\necho \"GitHub Copilot CLI %s.\"\n"
+
+// fakeBinaryInstall places a standalone copilot, as the install script or a
+// Homebrew cask does, in a temporary bin folder that alone is on PATH, so
+// neither npm nor a real copilot runs. It returns the binary's path.
+func fakeBinaryInstall(t *testing.T, installed string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(bin, "copilot")
+	writeFile(t, path, fmt.Sprintf(binaryScript, installed), 0o755)
+	t.Setenv("PATH", bin)
+	return path
+}
+
+// fakeReleases stands in for the published releases: /latest redirects to
+// version's tag, whose archive for this platform holds a copilot script
+// reporting version, listed in a checksum list that corrupt makes wrong.
+func fakeReleases(t *testing.T, version string, corrupt bool) {
+	t.Helper()
+	asset := releaseAsset()
+	if asset == "" {
+		t.Skip("no release archive for this platform")
+	}
+	archive := tarGz(t, "copilot", fmt.Sprintf(binaryScript, version))
+	sum := sha256.Sum256(archive)
+	sums := hex.EncodeToString(sum[:])
+	if corrupt {
+		sums = strings.Repeat("0", 64)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/releases/tag/v"+version, http.StatusFound)
+	})
+	mux.HandleFunc("GET /releases/download/v"+version+"/SHA256SUMS.txt", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, "%s  copilot-other.tar.gz\n%s  %s\n", strings.Repeat("1", 64), sums, asset)
+	})
+	mux.HandleFunc("GET /releases/download/v"+version+"/"+asset, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(archive)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	old := releaseBase
+	releaseBase = srv.URL + "/releases"
+	t.Cleanup(func() { releaseBase = old })
+}
+
+// tarGz is a gzipped tar holding one executable file.
+func tarGz(t *testing.T, name, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := errors.Join(tw.Close(), gz.Close()); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// A standalone binary reads the newest release from the published releases,
+// since npm need not exist, and can be updated while its folder is writable.
+func TestCLIReleaseForAStandaloneBinary(t *testing.T) {
+	path := fakeBinaryInstall(t, "1.0.89")
+	fakeReleases(t, "1.0.92", false)
+	p, _ := cliProvider(t)
+	rel, err := p.CLIRelease(context.Background())
+	if err != nil || rel != (agentapi.CLIRelease{Installed: "1.0.89", Latest: "1.0.92", Newer: true}) {
+		t.Fatalf("CLIRelease = %+v, %v", rel, err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(path), 0o755) })
+	rel, err = p.CLIRelease(context.Background())
+	if err != nil || !strings.Contains(rel.Manual, "cannot write") {
+		t.Fatalf("CLIRelease in a read-only folder = %+v, %v", rel, err)
+	}
+	if err := p.UpdateCLI(context.Background(), "1.0.92", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "cannot write") {
+		t.Fatalf("UpdateCLI in a read-only folder = %v", err)
+	}
+}
+
+// A standalone binary is replaced in place by the release's binary once it
+// passed the checksum and the SDK handshake on a staged copy; the running
+// CLI is stopped after the idle conversations closed, and the next start
+// runs the new one. Nothing is left beside it.
+func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
+	path := fakeBinaryInstall(t, "1.0.89")
+	fakeReleases(t, "1.0.92", false)
+	p, fc := cliProvider(t)
+	probed := fakeProbe(t, &fakeClient{})
+	if _, err := p.ensureStarted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	quiesced := false
+	if err := p.UpdateCLI(context.Background(), "1.0.92", func() error { quiesced = true; return nil }); err != nil {
+		t.Fatalf("UpdateCLI: %v", err)
+	}
+	staged, _ := probed.Load().(string)
+	if !quiesced || staged == "" || strings.HasPrefix(staged, filepath.Dir(path)) {
+		t.Fatalf("quiesced %v, probed %q", quiesced, staged)
+	}
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging folder kept: %v", err)
+	}
+	if v, err := cliVersion(context.Background(), path); err != nil || v != "1.0.92" {
+		t.Fatalf("installed copilot reports %q, %v", v, err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("replaced binary not executable: %v, %v", info, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
+		t.Fatalf("files beside copilot: %v", entries)
+	}
+	if started, stopped, _ := fc.lifecycle(); started != 1 || stopped != 1 {
+		t.Fatalf("running client started %d, stopped %d", started, stopped)
+	}
+	if _, err := p.ensureStarted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if started, _, _ := fc.lifecycle(); started != 2 {
+		t.Fatalf("starts after the update = %d", started)
+	}
+}
+
+// An archive that does not match the release's checksum list is never
+// unpacked, probed or installed.
+func TestUpdateCLIRefusesAnArchiveWithAWrongChecksum(t *testing.T) {
+	path := fakeBinaryInstall(t, "1.0.89")
+	fakeReleases(t, "1.0.92", true)
+	p, _ := cliProvider(t)
+	probed := fakeProbe(t, &fakeClient{})
+	err := p.UpdateCLI(context.Background(), "1.0.92", func() error { t.Fatal("quiesced"); return nil })
+	if err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("UpdateCLI = %v", err)
+	}
+	if probed.Load() != nil {
+		t.Fatal("probed a rejected archive")
+	}
+	if v, _ := cliVersion(context.Background(), path); v != "1.0.89" {
+		t.Fatalf("installed copilot changed to %q", v)
+	}
 }
