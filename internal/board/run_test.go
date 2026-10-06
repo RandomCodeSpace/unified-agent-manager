@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -232,14 +233,14 @@ func TestApproveNamesAHiddenCancelledStory(t *testing.T) {
 	}())
 }
 
-// The pause is the owner's flag, under an approved epic only, and holds on a
-// card that has started.
+// The pause is the owner's flag, on a card under an epic or on an approved
+// epic, and holds on a card that has started.
 func TestPausedIsOwnerOnly(t *testing.T) {
 	f := newFixture(t)
 	f.acceptCmd("go test ./...")
 	epic, story, one, two := f.tree()
-	_, err := f.s.Edit(f.ctx, owner, story.ID, Patch{Paused: ptr(true)})
-	wantCode(t, err, CodeInvalid) // not approved yet
+	_, err := f.s.Edit(f.ctx, owner, epic.ID, Patch{Paused: ptr(true)})
+	wantCode(t, err, CodeInvalid) // not approved yet, and approving clears it
 	_, err = f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "shipped", false)
 	f.must(err)
 	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
@@ -270,8 +271,9 @@ func TestPausedIsOwnerOnly(t *testing.T) {
 	if f.card(epic.ID).Paused != "" || f.card(story.ID).Paused != PausedOwner {
 		t.Fatalf("after approving again: epic %q, story %q", f.card(epic.ID).Paused, f.card(story.ID).Paused)
 	}
-	// Moved out of the approved epic, a card and everything under it drop
-	// their pauses, which nothing could clear there.
+	// Moved under another epic, approved or not, a card and everything under
+	// it keep their pauses; moved to the root, outside any epic, where
+	// nothing could clear them, they drop them.
 	plain := f.create(owner, "", KindEpic, "Plain")
 	moving := f.create(owner, epic.ID, KindStory, "Moving")
 	inner := f.create(owner, moving.ID, KindSubtask, "Inner")
@@ -281,8 +283,93 @@ func TestPausedIsOwnerOnly(t *testing.T) {
 	}
 	res, err = f.s.Edit(f.ctx, owner, moving.ID, Patch{ParentID: ptr(plain.ID)})
 	f.must(err)
+	if res.Card.Paused != PausedOwner || f.card(inner.ID).Paused != PausedOwner {
+		t.Fatalf("moved to another epic: story %q, subtask %q", res.Card.Paused, f.card(inner.ID).Paused)
+	}
+	res, err = f.s.Edit(f.ctx, owner, moving.ID, Patch{ParentID: ptr("")})
+	f.must(err)
 	if res.Card.Paused != "" || f.card(inner.ID).Paused != "" {
-		t.Fatalf("moved out: story %q, subtask %q", res.Card.Paused, f.card(inner.ID).Paused)
+		t.Fatalf("moved to the root: story %q, subtask %q", res.Card.Paused, f.card(inner.ID).Paused)
+	}
+}
+
+// readyUnder lists the titles of the subtasks RunFacts finds ready under
+// the approved epic id, in outline order.
+func (f *fixture) readyUnder(id string) []string {
+	f.t.Helper()
+	facts, err := f.s.RunFacts(f.ctx)
+	f.must(err)
+	var out []string
+	for _, e := range facts.Epics {
+		if e.Epic.ID == id {
+			for _, c := range e.Ready {
+				out = append(out, c.Title)
+			}
+		}
+	}
+	return out
+}
+
+// The owner may pause a story or subtask before approving its epic (ADR
+// 0006 §4.6): nothing runs before the approval, and the pause holds through
+// it, so the paused subtask is never ready while its siblings are, until
+// Resume. A card at the root, outside any epic, is refused, and so is an
+// epic not approved yet, whose own pause approving clears. It stays the
+// owner's flag.
+func TestPauseBeforeApproval(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	_, err := f.s.Edit(f.ctx, planner, p.c.ID, Patch{Paused: ptr(true)})
+	wantCode(t, err, CodeForbidden)
+	for _, c := range []Card{f.create(owner, "", KindSubtask, "Loose"), p.epic} {
+		_, err := f.s.Edit(f.ctx, owner, c.ID, Patch{Paused: ptr(true)})
+		wantCode(t, err, CodeInvalid)
+	}
+	res, err := f.s.Edit(f.ctx, owner, p.b.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+	if res.Card.Paused != PausedOwner || res.Request != nil {
+		t.Fatalf("paused before approval = %+v", res)
+	}
+
+	f.approve(p.epic.ID, p.ids()...)
+	if got := f.card(p.b.ID).Paused; got != PausedOwner {
+		t.Fatalf("approving cleared the subtask's pause: %q", got)
+	}
+	if got := f.readyUnder(p.epic.ID); !slices.Equal(got, []string{"Tokens", "Walk"}) {
+		t.Fatalf("ready with Tree paused = %v", got)
+	}
+	_, err = f.s.Edit(f.ctx, owner, p.b.ID, Patch{Paused: ptr(false)})
+	f.must(err)
+	if got := f.readyUnder(p.epic.ID); !slices.Equal(got, []string{"Tokens", "Tree", "Walk"}) {
+		t.Fatalf("ready after Resume = %v", got)
+	}
+}
+
+// Approving keeps every card's own pause, set before the approval or since,
+// by the owner or by uam; only the epic's own pause is cleared, as
+// approving an epic means run it.
+func TestApproveKeepsCardPauses(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	epic, story, one, two := f.tree()
+	for _, c := range []Card{story, one} {
+		_, err := f.s.Edit(f.ctx, owner, c.ID, Patch{Paused: ptr(true)})
+		f.must(err)
+	}
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
+	_, err := f.s.Edit(f.ctx, owner, epic.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+	f.raw(`UPDATE cards SET paused = 'uam' WHERE id = ?`, two.ID)
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
+	for _, tc := range []struct {
+		card Card
+		want string
+	}{{epic, ""}, {story, PausedOwner}, {one, PausedOwner}, {two, PausedUAM}} {
+		if got := f.card(tc.card.ID).Paused; got != tc.want {
+			t.Errorf("%s paused %q after approving again, want %q", tc.card.Title, got, tc.want)
+		}
 	}
 }
 

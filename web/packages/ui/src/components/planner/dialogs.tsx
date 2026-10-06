@@ -229,10 +229,11 @@ const isAre = (n: number) => (n === 1 ? 'is' : 'are');
 /**
  * Approve (ADR 0006 §6.2, §8): the owner's one approval of an epic. It shows the epic's live
  * cards as they were when it opened, grouped by story, with what each waits on, the proposals it
- * confirms ("new") and the paused ones, and says inline what the service would refuse. The run
- * needs a model the owner picks, a mode and how many subtasks run at a time. It posts the cards
- * with the revisions it showed: when one changed meanwhile, it names them, shows them as they are
- * now and asks again.
+ * confirms ("new") and the paused ones, and says inline what the service would refuse. Block and
+ * Unblock pause or resume a story or subtask at once (§4.6), so it and what is under it won't start
+ * once approved. The run needs a model the owner picks, a mode and how many subtasks run at a time.
+ * It posts the cards with the revisions it showed: when one changed meanwhile, it names them, shows
+ * them as they are now and asks again.
  */
 export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | null; onClose: () => void }>) {
   const api = useApi();
@@ -252,10 +253,14 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   const [changed, setChanged] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The card a Block or Unblock is writing, then the revision it wrote, until the Board has it.
+  const [blocking, setBlocking] = useState<string | null>(null);
+  const [wrote, setWrote] = useState<{ id: string; revision: number } | null>(null);
   if (ask && ask !== shown) {
     setShown(ask);
     setSnap({ source: cards, list: approvalList(ask.epic, cards) });
     setRetake(false);
+    setWrote(null);
     setPicked(null);
     setParallel(String(ask.epic.run?.parallel ?? 2));
     setCmdDraft(null);
@@ -281,6 +286,15 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   const epic = snap.list[0] ?? shown?.epic;
   const selection = picked ?? (epic ? runStart(epic, meta, settings) : null);
   const byId = new Map(cards.map((c) => [c.id, c]));
+  // A Block or Unblock stamps the card and each card above it with its write's revision: once the
+  // Board has the write, those are shown as they are now.
+  const written = wrote && byId.get(wrote.id);
+  if (written && written.revision >= wrote.revision) {
+    const path = new Set(cardPath(written, byId).map((c) => c.id));
+    setSnap((s) => ({ ...s, list: s.list.map((c) => (path.has(c.id) ? (byId.get(c.id) ?? c) : c)) }));
+    setWrote(null);
+  }
+  const shownById = new Map(snap.list.map((c) => [c.id, c]));
   const index = childIndex(snap.list);
   const subtasks = snap.list.filter((c) => c.kind === 'subtask');
   // Unknown until the Project default loads: nothing is refused for it meanwhile.
@@ -306,11 +320,14 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   // Grouped by story: the subtasks right under the epic first, then each story's.
   const groups = epic ? [epic, ...(index.get(epic.id) ?? []).filter((c) => c.kind === 'story')].map((head) => ({ head, items: (index.get(head.id) ?? []).filter((c) => c.kind === 'subtask') })).filter((g) => g.head !== epic || g.items.length > 0) : [];
 
+  // A story or subtask paused, itself or by the story above it, won't start; approving clears the epic's own pause.
+  const blockedRow = (c: Card) => c.kind !== 'epic' && cardPath(c, shownById).some((x) => x.kind !== 'epic' && !!x.paused);
   const marks = (c: Card) => {
     const words: { text: string; refused?: boolean }[] = [];
     if (!c.confirmed) words.push({ text: 'new' });
     if (c.status === 'done') words.push({ text: 'done' });
-    if (c.paused) words.push({ text: c.paused === 'uam' ? 'paused by uam' : 'paused' });
+    if (c.kind === 'epic' && c.paused) words.push({ text: c.paused === 'uam' ? 'paused by uam' : 'paused' });
+    if (blockedRow(c)) words.push({ text: c.paused === 'uam' ? "Blocked by uam: won't start" : "Blocked: won't start" });
     const waits = waitsOf(c, byId).filter((w) => !w.via);
     if (waits.length) words.push({ text: `waits on ${seqs(waits.map((w) => w.card))}` });
     if (handHeld(c)) words.push({ text: 'held by a task', refused: true });
@@ -326,6 +343,32 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
       </span>
     ));
   };
+
+  // Block and Unblock are the owner's Pause and Resume, written at once.
+  const block = async (c: Card) => {
+    setBlocking(c.id);
+    setError(null);
+    try {
+      const saved = await api.planner.pause(c.id, !c.paused);
+      setWrote({ id: saved.id, revision: saved.revision });
+    } catch (err) {
+      setError(plannerErrorText(err));
+    } finally {
+      setBlocking(null);
+    }
+  };
+  const toggle = (c: Card) => (
+    <Button
+      size="sm"
+      className="h-6 px-1.5 text-muted"
+      aria-label={`${c.paused ? 'Unblock' : 'Block'} #${c.seq}`}
+      title={c.paused ? 'Let uam start this and what is under it.' : "Block execution: uam won't start this or anything under it."}
+      disabled={busy || blocking !== null || wrote !== null}
+      onClick={() => void block(c)}
+    >
+      {c.paused ? 'Unblock' : 'Block'}
+    </Button>
+  );
 
   const saveCmd = async () => {
     if (cmdDraft === null) return;
@@ -398,16 +441,22 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
             {groups.map(({ head, items }) => (
               <section key={head.id} aria-label={`#${head.seq} ${head.title}`} className="flex flex-col gap-0.5">
                 {head !== epic && (
-                  <p className="text-ink">
-                    #{head.seq} {head.title}
-                    {marks(head)}
-                  </p>
+                  <div className="flex items-center gap-2 text-ink">
+                    <p className="min-w-0 flex-1">
+                      #{head.seq} {head.title}
+                      {marks(head)}
+                    </p>
+                    {toggle(head)}
+                  </div>
                 )}
                 <ul className="flex flex-col gap-0.5 pl-3 text-caption">
                   {items.map((c) => (
-                    <li key={c.id}>
-                      #{c.seq} {c.title}
-                      {marks(c)}
+                    <li key={c.id} className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1">
+                        #{c.seq} {c.title}
+                        {marks(c)}
+                      </span>
+                      {toggle(c)}
                     </li>
                   ))}
                 </ul>
@@ -485,13 +534,13 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
             : 'Subtasks run in their own worktrees made from the branch checked out in the project now'}
           ; uncommitted changes are not included. Their work lands on the integration branch.
         </Note>
-        <Note>uam starts each subtask in its lane once nothing it waits on is open, up to the subtasks at a time above, and never one under a paused card.</Note>
+        <Note>uam starts each subtask in its lane once nothing it waits on is open, up to the subtasks at a time above, and never one that is blocked or under a blocked card.</Note>
         {error && <p role="alert" className="text-caption text-error">{error}</p>}
         <div className="mt-2 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" loading={busy} disabled={!selection?.model || refused || retake || cmdDraft !== null}>
+          <Button type="submit" variant="primary" loading={busy} disabled={!selection?.model || refused || retake || cmdDraft !== null || blocking !== null || wrote !== null}>
             Approve and run
           </Button>
         </div>

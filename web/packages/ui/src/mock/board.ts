@@ -866,8 +866,12 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           const refused = gitless(body.project_id);
           if (refused) return refused;
         }
-        // Pause and Resume: only under an approved epic, and no planning edit.
-        if ('paused' in body && !approved) return refuse('invalid', `#${c.seq} is not under an approved epic; only work an approval authorizes is paused`);
+        // Pause and Resume: on a card under an epic, approved or not, or an approved epic, and no planning edit.
+        if ('paused' in body) {
+          const epic = cardPath(c, new Map(cards.map((x) => [x.id, x]))).find((x) => x.kind === 'epic');
+          if (!epic) return refuse('invalid', `#${c.seq} is not under an epic; only work under an epic is paused`);
+          if (epic === c && !approved) return refuse('invalid', `#${c.seq} is not approved, and approving it clears its own pause; pause the stories or subtasks that should not start`);
+        }
         return done(commit(() => {
           if ('paused' in body) c.paused = body.paused ? 'owner' : '';
           for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];

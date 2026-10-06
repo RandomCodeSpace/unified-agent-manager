@@ -44,9 +44,11 @@ type Patch struct {
 	Rank *int `json:"rank,omitempty"`
 
 	Blocked *bool `json:"-"`
-	// Paused pauses (true) or resumes (false) a card under an approved
-	// epic: the owner's Pause / Resume. Resume clears uam's pause too. It
-	// is no part of the card's plan, so a started card takes it.
+	// Paused pauses (true) or resumes (false) a card under an epic, approved
+	// or not, or an approved epic: the owner's Pause / Resume. Under an epic
+	// not approved yet it takes effect once the epic is. Resume clears uam's
+	// pause too. It is no part of the card's plan, so a started card takes
+	// it.
 	Paused *bool `json:"-"`
 	// AcceptCmd sets the subtask's acceptance command: an invalid
 	// NullString inherits the Project default, a valid "" means none. It is
@@ -404,8 +406,11 @@ func (t *txn) planEdit(o *outline, a Actor, n *node, p Patch) (editPlan, error) 
 		c.Paths = slices.Clone(*p.Paths)
 	}
 	if p.Paused != nil {
-		if o.approved(n) == nil {
-			return editPlan{}, invalid("%s is not under an approved epic; only approved work is paused", n.ref())
+		switch e := o.epicOf(n); {
+		case e == nil:
+			return editPlan{}, invalid("%s is not under an epic; only work under an epic is paused", n.ref())
+		case e == n && n.Run == nil:
+			return editPlan{}, invalid("%s is not approved, and approving it clears its own pause; pause the stories or subtasks that should not start", n.ref())
 		}
 		c.Paused = ""
 		if *p.Paused {
@@ -490,9 +495,9 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan, ac
 			return err
 		}
 	}
-	// Only a card under an approved epic is paused: moved out of one, the
-	// card and everything under it drop their pauses.
-	if plan.moving && o.approved(n) == nil {
+	// Only a card under an epic is paused: moved to the root, the card and
+	// everything under it drop their pauses.
+	if plan.moving && o.epicOf(n) == nil {
 		n.Paused = ""
 		for _, m := range o.subtree(n)[1:] {
 			if m.Paused != "" {

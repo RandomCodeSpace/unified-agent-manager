@@ -1304,7 +1304,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or the Inbox's **Plans to approve**, which lists proposed epics and
   approved epics with proposals added since) opens a dialog with the epic's
   live cards as they were when it opened, grouped by story, marking new
-  proposals, paused cards and what each waits on. It says inline what the
+  proposals, paused cards and what each waits on. Block and Unblock on a
+  story or subtask there pause or resume it at once, before any approval,
+  and it and everything under it read "Blocked: won't start"; approving
+  keeps those pauses and clears only the epic's own. It says inline what the
   service would refuse (a held subtask, a story or epic with no subtask, a
   subtask without an acceptance command, with the Project's command
   editable in place, and a running lane that would wait again on a done
@@ -1322,8 +1325,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   confirms no proposal (a card moved under one waits with it for the next
   approval), Triage's Re-pin gives way to
   approving the epic again, which re-pins the cards it lists, and Pause
-  and Resume block or free a card and everything under it; a card moved out
-  of the epic drops its pause. An agent's move into or out of an approved
+  and Resume block or free a card and everything under it; a card moved to
+  the root, out of any epic, drops its pause. An agent's move into or out of an approved
   epic, or out from under a pause, reaches the Inbox as a change request
   that names both parents and the run of each approved epic it leaves or
   enters. Accepting an agent's split request there is refused when it would

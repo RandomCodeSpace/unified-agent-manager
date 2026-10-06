@@ -150,6 +150,33 @@ func TestExecutorRunsAnEpic(t *testing.T) {
 	}
 }
 
+// A subtask the owner paused before approving its epic (ADR 0006 §4.6)
+// stays paused through the approval: uam runs its sibling to landing and
+// never starts it, though a slot is free, until the owner resumes it.
+func TestExecutorHoldsAPauseSetBeforeApproval(t *testing.T) {
+	r := planLaneRun(t, "true", "A", "B")
+	paused := r.leaves[1].ID
+	var got BoardCard
+	r.call(http.MethodPatch, "/api/board/cards/"+paused, `{"paused":true}`, http.StatusOK, &got)
+	if got.Paused != board.PausedOwner {
+		t.Fatalf("paused before approval = %+v", got)
+	}
+	r.runExec()
+	r.approve()
+	a, la := r.running(0)
+	commitFile(t, la.dir, "from-a.txt", "a\n")
+	r.landed(a, 0)
+	r.m.executorPass()
+	r.m.exec.mu.Lock()
+	starting := r.m.exec.starting[paused]
+	r.m.exec.mu.Unlock()
+	if c := r.card(paused).Card; c.HeldBy != "" || starting != "" || c.Paused != board.PausedOwner {
+		t.Fatalf("B under its pause: %+v, starting %q", c, starting)
+	}
+	r.call(http.MethodPatch, "/api/board/cards/"+paused, `{"paused":false}`, http.StatusOK, nil)
+	r.running(1)
+}
+
 // A restart (ADR 0006 §4.7): the next service lands a done request that
 // waited to land, nudges once each Task whose turn the restart interrupted,
 // and starts nothing again: no other Task is made, and each subtask keeps

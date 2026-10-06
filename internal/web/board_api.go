@@ -241,7 +241,8 @@ func (s *Server) handleCard(w http.ResponseWriter, r *http.Request) {
 
 // cardPatchBody is the owner's edit. accept_cmd is null to inherit the
 // Project default, "" for none, or a command; parent_id is null or "" for
-// the root; paused pauses or resumes a card under an approved epic.
+// the root; paused pauses or resumes a card under an epic, approved or not,
+// or an approved epic.
 type cardPatchBody struct {
 	Title        *string         `json:"title"`
 	Desc         *string         `json:"desc"`
