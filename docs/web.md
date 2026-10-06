@@ -1373,9 +1373,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   failed is asked to continue; any completed turn on that provider ends the
   wait. A signed-out provider waits until you sign in. A
   done request waiting to land when uam stops lands when it starts again,
-  and a lane Task that was working is told to continue. A lane that cannot
-  start for git or the planner's database backs its epic off and comments
-  why; the third failure in a row pauses the epic ("Paused by uam").
+  and a lane Task that was working is told to continue; one that cannot
+  take that message is archived, which ends the attempt without landing. A
+  lane that cannot start for git or the planner's database backs its epic
+  off and comments why; the third failure in a row pauses the epic
+  ("Paused by uam").
   Resume on a paused approved epic runs Approve's git checks again first.
   Epics approved before automatic runs come back paused: Resume runs them.
   Nothing merges into the base branch yet.

@@ -369,7 +369,10 @@ func TestNext(t *testing.T) {
 			want: Step{Land: []string{"r1", "r5", "r6"}},
 		},
 		{
-			name: "interrupted holders are nudged once, one per provider per pass",
+			// Only a restart interrupts a turn, so one still interrupted
+			// after its nudge never took it: it is retired, as an ended one
+			// is, instead of keeping its slot.
+			name: "interrupted holders are nudged once, one per provider per pass, then retired",
 			facts: RunFacts{InUse: 4, Lanes: []LaneFacts{
 				holder("h1", 1, "t1"), holder("h2", 2, "t2"), holder("h3", 3, "t3"), holder("h4", 4, "t4"),
 			}},
@@ -378,10 +381,13 @@ func TestNext(t *testing.T) {
 				"t3": turn("copilot", TurnInterrupted), "t4": turn("other", TurnInterrupted),
 			},
 			mem: Memory{Now: nextAt, Nudged: map[string]int{"t1": 1}},
-			want: Step{Nudge: []Act{
-				act("t2", "h2", 2, "copilot", WhyRestarted),
-				act("t4", "h4", 4, "other", WhyRestarted),
-			}},
+			want: Step{
+				Nudge: []Act{
+					act("t2", "h2", 2, "copilot", WhyRestarted),
+					act("t4", "h4", 4, "other", WhyRestarted),
+				},
+				Retire: []Act{act("t1", "h1", 1, "copilot", "")},
+			},
 		},
 		{
 			name: "a holder that ended without a done request is nudged, then retired",

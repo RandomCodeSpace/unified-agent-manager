@@ -473,6 +473,7 @@ func (m *Manager) nudge(now time.Time, a board.Act) {
 		// It works again: no nudge was due.
 		return
 	} else if err != nil {
+		// It counts still: a holder its nudge did not reach is retired.
 		log.Info("nudge a lane task failed", "session", a.Task, "error", err)
 	}
 	m.exec.mu.Lock()

@@ -344,8 +344,8 @@ const maxFailedNudges = 3
 //	holder gone                                               nothing: reconcile releases it
 //	holder settled or archived                                retire
 //	working, waiting, or cancelled by the owner               nothing
-//	interrupted, not nudged since boot                        nudge
-//	ended or cancelled by uam: not nudged / nudged            nudge / retire
+//	interrupted, ended or cancelled by uam: not nudged since
+//	  boot / nudged                                           nudge / retire
 //	failed, nothing in the lane                               abort
 //	failed after work: nudged 3 times / otherwise             retire / nudge once reported
 //
@@ -396,15 +396,16 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step {
 			continue
 		}
 		switch tf.Turn {
-		case TurnInterrupted:
-			if mem.Nudged[l.TaskID] == 0 {
-				nudge(a, WhyRestarted)
-			}
-		case TurnEnded, TurnUAMCancelled:
-			if mem.Nudged[l.TaskID] == 0 {
-				nudge(a, WhyNoDone)
-			} else {
+		case TurnInterrupted, TurnEnded, TurnUAMCancelled:
+			// Only a restart interrupts a turn: one still interrupted after
+			// its nudge never took it.
+			switch {
+			case mem.Nudged[l.TaskID] > 0:
 				st.Retire = append(st.Retire, a)
+			case tf.Turn == TurnInterrupted:
+				nudge(a, WhyRestarted)
+			default:
+				nudge(a, WhyNoDone)
 			}
 		case TurnFailed:
 			seen, ok := mem.SeenFailure[l.TaskID]
