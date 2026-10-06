@@ -401,9 +401,10 @@ func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool
 // lane l holds commits of base that the integration tip lacks, as after the
 // agent merged base into its lane, it syncs the integration branch with
 // base first, so the landing is the lane's own work alone and a later
-// Revert of it never takes base's commits out of base. When base does not
-// merge cleanly into the integration branch, it refuses land_stale with the
-// agent's steps and moves nothing. base "" syncs nothing.
+// Revert of it never takes base's commits out of base. When the
+// integration branch still lacks them, as when base does not merge cleanly
+// into it, it refuses land_stale with the agent's steps and moves nothing.
+// base "" syncs nothing.
 func (r *laneRepo) syncForLanding(ctx context.Context, l lane, base string) error {
 	if base == "" {
 		return nil
@@ -423,8 +424,8 @@ func (r *laneRepo) syncForLanding(ctx context.Context, l lane, base string) erro
 	}
 	b := displaytext.Sanitize(base)
 	return &Error{Status: http.StatusConflict, Code: codeLandStale,
-		Message: fmt.Sprintf("your lane has commits of %s that %s lacks, and %s does not merge cleanly into %s, so landing would carry %s's own work: take your merge of %s out of your branch, run `git merge %s` instead, commit, and file done again",
-			b, r.integ, b, r.integ, b, b, r.integ)}
+		Message: fmt.Sprintf("your lane has commits of %s that %s lacks and cannot take now, so landing would carry %s's own work: take your merge of %s out of your branch, run `git merge %s` instead, commit, and file done again",
+			b, r.integ, b, b, r.integ)}
 }
 
 // carriesBase reports whether the commit head has commits of base that the
