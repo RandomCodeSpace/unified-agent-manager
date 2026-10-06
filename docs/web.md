@@ -1364,6 +1364,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   stops each subtask running under it. Settle offers Stop or Cancel for a
   lane, not Keep held. Mark done and a move back to To do are refused on a
   running lane's subtask: its done request lands it, and Stop releases it.
+  **Revert** on a landed subtask, or on a story or epic for every subtask
+  landed under it, first shows what it takes along: the subtasks that
+  landed on top of it (as recorded when each started, whatever the links
+  say now), their commits and files, whether the base branch has one of
+  them, and the conflict when it would not apply, naming the files and
+  the later cards that changed them, which you can add to the revert. It is
+  refused while a subtask that started on top of it runs: Stop that one
+  first. It runs as a job that puts one revert commit per landing on the
+  integration branch, newest first, in one move, and the reverted
+  subtasks go back to To do, paused ("Reverted"); resumed, a subtask runs
+  again from the integration branch without the reverted change. When a
+  revert cannot apply, **Reopen without reverting code** moves the
+  subtask back to To do, paused, and leaves its commit on the integration
+  branch; what landed on top of it stays landed. A plain move back to To
+  do is refused on a landed subtask.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
   and removes the lane; a landed attempt's branch goes too, and the

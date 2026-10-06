@@ -191,7 +191,7 @@ type Manager struct {
 	// a time as it allows (board_evidence.go).
 	accept acceptRunners
 	// lanes holds each Project's land mutex and the lane work in progress
-	// (lane_runs.go). landHook, when set, runs at each landing step and
+	// (lane_runs.go). landHook, when set, runs at each landing, revert and
 	// lane start step; tests set it before them.
 	lanes    laneState
 	landHook func(stage string)

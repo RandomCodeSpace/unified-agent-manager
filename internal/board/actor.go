@@ -74,6 +74,7 @@ const (
 	opRestore     op = "restore"
 	opPurge       op = "purge"
 	opDecide      op = "decide" // accept or reject a request
+	opRevert      op = "revert" // landed → todo, its commit reverted
 	opSettings    op = "settings"
 )
 
@@ -109,6 +110,7 @@ var actorTable = map[op]struct{ owner, agent bool }{
 	opRestore:     {owner: true},
 	opPurge:       {owner: true},
 	opDecide:      {owner: true},
+	opRevert:      {owner: true},
 	opSettings:    {owner: true},
 }
 

@@ -952,10 +952,10 @@ func (m *Manager) noteCard(ctx context.Context, id, body string) {
 }
 
 // recoverLanes is the first lane pass after the planner opens (ADR 0006
-// §4.7): it finishes the landings a crash interrupted, aborts the merges
-// uam left in lanes whose Task is not working, sweeps the lanes no attempt
-// or active Task has, and names on its card each landing on an integration
-// branch whose request was not accepted.
+// §4.7): it finishes the landings and reverts a crash interrupted, aborts
+// the merges uam left in lanes whose Task is not working, sweeps the lanes
+// no attempt or active Task has, and names on its card each landing on an
+// integration branch whose request was not accepted.
 func (m *Manager) recoverLanes(ctx context.Context) {
 	var held []board.Card
 	if err := m.withBoard(func(st *board.Store) error {
@@ -976,6 +976,7 @@ func (m *Manager) recoverLanes(ctx context.Context) {
 			log.Warn("recover a lane failed", "card", c.ID, "branch", c.Lane.Branch, "error", err)
 		}
 	}
+	m.recoverReverts(ctx)
 	m.mu.Lock()
 	type project struct{ id, dir string }
 	var projects []project
