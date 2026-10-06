@@ -807,8 +807,17 @@ type acceptRunners struct {
 	timeout time.Duration
 	mu      sync.Mutex
 	slots   map[string]chan struct{}
-	// projects holds each Project's slots; one of a new size replaces it.
-	projects map[string]chan struct{}
+	// projects holds each Project's runs in flight, counted against the
+	// limit each run brings, so a change of limit counts the runs started
+	// before it.
+	projects map[string]*projectRuns
+}
+
+// projectRuns is a Project's acceptance runs in flight, and a channel
+// closed when one ends.
+type projectRuns struct {
+	running int
+	ended   chan struct{}
 }
 
 func (r *acceptRunners) slot(dir string) chan struct{} {
@@ -825,19 +834,46 @@ func (r *acceptRunners) slot(dir string) chan struct{} {
 	return s
 }
 
-// projectSlots are the Project's limit slots.
-func (r *acceptRunners) projectSlots(project string, limit int) chan struct{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.projects == nil {
-		r.projects = map[string]chan struct{}{}
+// takeProject waits, as take does, until fewer than limit of the Project
+// project's acceptance runs are in flight, and returns the release of the
+// place it took.
+func (r *acceptRunners) takeProject(ctx context.Context, project string, limit int) (func(), error) {
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
 	}
-	s := r.projects[project]
-	if s == nil || cap(s) != limit {
-		s = make(chan struct{}, limit)
-		r.projects[project] = s
+	wait := time.NewTimer(cmp.Or(r.timeout, acceptTimeout))
+	defer wait.Stop()
+	for {
+		r.mu.Lock()
+		if r.projects == nil {
+			r.projects = map[string]*projectRuns{}
+		}
+		p := r.projects[project]
+		if p == nil {
+			p = &projectRuns{ended: make(chan struct{})}
+			r.projects[project] = p
+		}
+		if p.running < limit {
+			p.running++
+			r.mu.Unlock()
+			return func() {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				p.running--
+				close(p.ended)
+				p.ended = make(chan struct{})
+			}, nil
+		}
+		ended := p.ended
+		r.mu.Unlock()
+		select {
+		case <-ended:
+		case <-wait.C:
+			return nil, errAcceptanceBusy
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
 	}
-	return s
 }
 
 // take waits for a place in slots, at most the timeout, after which it
@@ -861,7 +897,7 @@ func (r *acceptRunners) take(ctx context.Context, slots chan struct{}) (func(), 
 
 // inProject is the runner of the Project project's acceptance runs, in
 // its directory and in its lanes alike: each first takes one of the
-// Project's limit places, then its directory's runner.
+// Project's limit places (takeProject), then its directory's runner.
 func (r *acceptRunners) inProject(project string, limit int) acceptRunner {
 	return projectRunner{runners: r, project: project, limit: max(1, limit)}
 }
@@ -874,7 +910,7 @@ type projectRunner struct {
 }
 
 func (p projectRunner) run(ctx context.Context, dir, cmd string) (AcceptResult, error) {
-	release, err := p.runners.take(ctx, p.runners.projectSlots(p.project, p.limit))
+	release, err := p.runners.takeProject(ctx, p.project, p.limit)
 	if err != nil {
 		return AcceptResult{}, err
 	}
