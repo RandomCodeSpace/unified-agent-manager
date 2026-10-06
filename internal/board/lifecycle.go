@@ -170,7 +170,8 @@ type DeleteResult struct {
 // refused while anything in the subtree has started, while a started
 // subtask waits on a card in it, and when it would bring a container above
 // the card to done or cancelled: that would cancel the container's
-// proposals and release its dependents before any replacement exists.
+// proposals and release its dependents before any replacement exists. An
+// approved epic itself is never deleted: the agent files a cancel request.
 func (s *Store) Delete(ctx context.Context, a Actor, ref string) (DeleteResult, error) {
 	if err := permit(a, opDelete, ""); err != nil {
 		return DeleteResult{}, err
@@ -183,6 +184,9 @@ func (s *Store) Delete(ctx context.Context, a Actor, ref string) (DeleteResult, 
 		}
 		if a.Proposals && n.Confirmed() {
 			return refuse(CodeForbidden, "%s is confirmed; this agent deletes only proposals", n.ref())
+		}
+		if n.Run != nil {
+			return refuse(CodeForbidden, "%s is an approved epic; file a cancel request on it for the owner instead", n.ref())
 		}
 		if err := inProgress(n); err != nil {
 			return err
@@ -317,10 +321,14 @@ func (t *txn) drop(o *outline, n *node, author, agentID, body string) error {
 }
 
 // Restore reopens exactly the cards cancelled with the card ref, in one
-// cascade, and confirms each, with its unconfirmed ancestors. A subtask with
-// an earlier attempt reopens as todo, one without as planned. It needs a
-// comment, and is refused while a card of the cascade sits under a cancelled
-// card outside it.
+// cascade, and confirms each, with its unconfirmed ancestors. Under an
+// approved epic each card but the epic itself comes back as a proposal with
+// a fresh expiry instead, to approve again (ADR 0006 §6.3), unless confirmed
+// work outside the cascade sits under it; and a container the restore
+// brings to done stays open with them. A subtask with an earlier attempt
+// reopens as todo, one without as planned. It needs a comment, and is
+// refused while a card of the cascade sits under a cancelled card outside
+// it.
 func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card, error) {
 	if err := permit(a, opRestore, ""); err != nil {
 		return Card{}, err
@@ -368,7 +376,13 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 			if err := t.setStatus(m, to, "", ""); err != nil {
 				return err
 			}
-			if err := t.confirm(o, a, m); err != nil {
+			e := o.approved(m)
+			if e != nil && m.container() {
+				t.keepOpen[m.ID] = true
+			}
+			if e != nil && e != m && !confirmedUnder(o, m, in) {
+				rearm(t.now, m)
+			} else if err := t.confirm(o, a, m); err != nil {
 				return err
 			}
 			if err := t.updateCard(m); err != nil {
@@ -421,6 +435,12 @@ func (s *Store) Purge(ctx context.Context, a Actor, projectID string) (int, erro
 	return count, err
 }
 
+// confirmedUnder reports whether a confirmed card outside set sits under n:
+// n then stays confirmed, as no confirmed card sits under a proposal.
+func confirmedUnder(o *outline, n *node, set map[string]bool) bool {
+	return slices.ContainsFunc(o.subtree(n)[1:], func(m *node) bool { return !set[m.ID] && m.Confirmed() })
+}
+
 func allCancelled(tree []*node) bool {
 	for _, m := range tree {
 		if m.stored != StatusCancelled {
@@ -436,6 +456,7 @@ func (t *txn) purge(project, id string) error {
 		`DELETE FROM links WHERE blocker_id = ?1 OR blocked_id = ?1`,
 		`DELETE FROM requests WHERE card_id = ?1`,
 		`DELETE FROM holds WHERE card_id = ?1`,
+		`DELETE FROM runs WHERE epic_id = ?1`,
 		`DELETE FROM cards WHERE id = ?1`,
 	} {
 		if err := t.exec(q, id); err != nil {

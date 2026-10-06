@@ -65,6 +65,7 @@ const (
 	opPlan        op = "plan"    // scope a planning Task to a container
 	opRelease     op = "release" // doing → todo
 	opConfirm     op = "confirm"
+	opApprove     op = "approve" // approve an epic and write its run
 	opDismiss     op = "dismiss" // the owner drops a proposal
 	opDelete      op = "delete"  // an agent cancels a card it may plan
 	opDone        op = "done"    // → done
@@ -99,6 +100,7 @@ var actorTable = map[op]struct{ owner, agent bool }{
 	opPlan:        {owner: true},
 	opRelease:     {owner: true},
 	opConfirm:     {owner: true},
+	opApprove:     {owner: true},
 	opDismiss:     {owner: true},
 	opDelete:      {agent: true},
 	opDone:        {owner: true},

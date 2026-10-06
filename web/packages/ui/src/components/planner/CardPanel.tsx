@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
-import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs } from '../../lib/board';
+import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -72,7 +72,7 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
 
 function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void }>) {
   const api = useApi();
-  const { projects, jobs } = useShownBoard();
+  const { projects, jobs, cards } = useShownBoard();
   const { sessions } = usePlannerTasks();
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -150,7 +150,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             {!leaf && <ProgressText card={c} long />}
             {!c.confirmed && <Chip><Sparkles aria-hidden="true" className="size-3" />Suggested, {expiresIn(c.expires_at)}</Chip>}
             {c.held_by && <TaskChip taskId={c.held_by} />}
-            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} />
+            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
             {c.due && <span>Due {c.due}</span>}
@@ -166,7 +166,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {actions.map((a) => (
-              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} loading={busy === a.key} disabled={!!a.reason || (!!busy && busy !== a.key)} aria-describedby={a.reason ? `planner-action-${a.key}-reason` : undefined} onClick={a.onClick}>
+              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} title={a.title} loading={busy === a.key} disabled={!!a.reason || (!!busy && busy !== a.key)} aria-describedby={a.reason ? `planner-action-${a.key}-reason` : undefined} onClick={a.onClick}>
                 {a.icon}
                 {a.label}
               </Button>

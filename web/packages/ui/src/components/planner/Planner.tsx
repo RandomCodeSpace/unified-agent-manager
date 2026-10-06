@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { Ellipsis, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type BoardJob, type Project } from '../../api';
-import { boardOf, childIndex, epicOf } from '../../lib/board';
+import { boardOf, childIndex, epicOf, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
 import { popupOpen } from '../../App';
@@ -163,7 +163,8 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic' && (c.status !== 'cancelled' || c.id === ui.epic)) : []), [cards, ui.epic]);
   const stale = cards?.filter((c) => c.stale).length ?? 0;
   const cancelled = cards?.filter((c) => c.status === 'cancelled').length ?? 0;
-  const pending = board?.data?.requests.length ?? 0;
+  // The Inbox holds the plans to approve too (ADR 0006 §6.1).
+  const pending = (board?.data?.requests.length ?? 0) + (cards ? plansToApprove(cards).length : 0);
   const panelPresence = usePresence(!!ui.panel);
   const [lastPanel, setLastPanel] = useState(ui.panel);
   if (ui.panel && ui.panel !== lastPanel) setLastPanel(ui.panel);
@@ -316,7 +317,8 @@ function Empty({ children }: Readonly<{ children: ReactNode }>) {
 function InboxPanel({ inline, open, onClose, onClosed }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void }>) {
   const p = usePlanner();
   const { narrow } = useApp();
-  const pending = p.ui.project ? (p.boards[p.ui.project]?.data?.requests.length ?? 0) : 0;
+  const data = p.ui.project ? p.boards[p.ui.project]?.data : null;
+  const pending = data ? data.requests.length + plansToApprove(data.cards).length : 0;
   // Inline, the panel is no dialog: Esc closes it and returns to the Inbox button, unless a popup or a field owns the key.
   useEffect(() => {
     if (!inline || !open) return;

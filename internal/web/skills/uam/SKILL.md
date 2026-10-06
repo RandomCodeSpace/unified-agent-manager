@@ -127,13 +127,23 @@ Planner on and the Project is a git repository.
   passes and nothing holds it back: claim the next pending one. Otherwise
   it waits for the owner, and the reply says why.
 - **Proposals**: cards you create stay unconfirmed until the owner confirms
-  or launches them; the owner's edits keep them proposals and restart their
+  or launches them, or approves their epic; the owner's edits keep them proposals and restart their
   14 days, after which they expire. Work runs only on confirmed cards:
   `board_claim` refuses a proposal or a card under one. Caps per Task: 50
   live cards created (deleted and expired ones free their place), 200
   created in its lifetime (deleted and expired ones still count), 10
   unconfirmed children per card or 10 epics at the root, 20 comments per
   card.
+- **Approval**: an epic runs on the owner's one approval of it in the
+  Planner. When your plan for an epic is complete, ask the owner to approve
+  it there and end your turn; nothing runs before that. Under an approved
+  epic the approval owns the work: `board_claim` answers `run_owned`, and a
+  card you add stays a proposal until the owner approves the epic again,
+  which you ask for the same way. Moving a card into or out of an approved
+  epic becomes a change request for the owner. Keep a confirmed subtask in
+  every confirmed story and epic there: a write that leaves one with none is
+  refused. `board_get` shows the approval and any pause; nothing at or under
+  a paused card starts.
 - **Planning**: until a subtask starts (held, doing or done) you plan it
   directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
   `board_link`, `board_unlink`, `board_split` and `board_delete`. A started

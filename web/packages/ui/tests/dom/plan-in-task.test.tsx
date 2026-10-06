@@ -142,6 +142,41 @@ describe('the Plan panel', () => {
   });
 });
 
+describe('the Plan panel under an approved epic (ADR 0006)', () => {
+  /** Approves `epic` through the service, as the Approve dialog would, listing nothing more. */
+  const approve = (epic: string) => act(() => api.planner.approve(epic, { provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode: 'safe', parallel: 2, items: [] }));
+
+  test('no Launch and no Confirm under it, and the epic opens the Approve dialog', async () => {
+    const { user } = await openTask('t21');
+    await approve('cp1-18');
+    const panel = await openPlan(user);
+    const outline = within(panel.getByRole('list', { name: 'Plan outline' }));
+    await user.click(outline.getByRole('button', { name: /^#26 Verify signatures in the install script/ }));
+    const other = within(panel.getByRole('region', { name: '#26 details' }));
+    expect(other.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(other.queryByRole('button', { name: 'Launch' })).toBeNull();
+    // A proposal under it waits for the epic's next approval, not a launch.
+    await user.click(outline.getByRole('button', { name: /^#31 Publish SHA-256 checksums beside the archives, Planned, proposed/ }));
+    const proposal = within(panel.getByRole('region', { name: '#31 details' }));
+    expect(proposal.getByText('A proposal: editing and linking keep it one; approving #18 again confirms it.')).toBeTruthy();
+    expect(proposal.queryByRole('button', { name: 'Launch' })).toBeNull();
+    expect(proposal.getByRole('button', { name: 'Discard' })).toBeTruthy();
+    await user.click(outline.getByRole('button', { name: /^#18 Release automation/ }));
+    await user.click(within(panel.getByRole('region', { name: '#18 details' })).getByRole('button', { name: 'Approve…' }));
+    expect(await screen.findByRole('dialog', { name: 'Approve #18?' })).toBeTruthy();
+  });
+
+  test('adding a Task to a story offers none under it', async () => {
+    const { user } = await openTask('t20');
+    await approve('cp1-18');
+    const panel = await openPlan(user);
+    const box = within(panel.getByRole('region', { name: 'Add this task to a story' }));
+    await user.click(box.getByRole('combobox', { name: 'Story' }));
+    expect(await screen.findByRole('option', { name: 'Faster first load of long transcripts › #16 Lazy-load the diagram renderer (proposed)' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Release automation › #27 Changelog from merged pull requests' })).toBeNull();
+  });
+});
+
 describe('card links inside a Task', () => {
   test('a transcript card chip opens the card in the Plan panel and the Task stays', async () => {
     const { user } = await openTask('t21');

@@ -1,14 +1,17 @@
 import { useApi } from '../../ApiContext';
-import { Plus, X } from 'lucide-react';
-import { useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, doneGuard, resolveTaskDefaults, type Card, type CardKind, type DoneGuard, type TaskDefaults } from '../../api';
-import { KIND_LABEL } from '../../lib/board';
-import { useApp } from '../common';
+import { Pencil, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type Card, type CardKind, type DoneGuard, type Meta, type Settings, type TaskDefaults } from '../../api';
+import { KIND_LABEL, childIndex, isStarted, leavesUnder, waitsOf } from '../../lib/board';
+import { cn } from '../../lib/cn';
+import { Note, useApp } from '../common';
 import { Field, TaskDefaultsFields } from '../TaskDefaults';
 import { Button } from '../ui/button';
 import { Dialog } from '../ui/dialog';
 import { Input } from '../ui/input';
+import { Segmented } from '../ui/segmented';
 import { Select } from '../ui/select';
+import { useShownBoard } from './context';
 import { splitSentence } from './Requests';
 
 const areaClass =
@@ -176,6 +179,272 @@ export function LaunchDialog({ ask, onClose }: Readonly<{ ask: LaunchAsk | null;
           </Button>
           <Button type="submit" variant="primary" loading={busy} disabled={!selection}>
             {label}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+export interface ApproveAsk {
+  epic: Card;
+}
+
+/** The epic and its live cards, depth first in rank order: what the Approve dialog shows and lists. */
+function approvalList(epic: Card, cards: readonly Card[]): Card[] {
+  const index = childIndex(cards);
+  const out = [cards.find((c) => c.id === epic.id) ?? epic];
+  const walk = (id: string) => {
+    for (const c of index.get(id) ?? []) {
+      if (c.status === 'cancelled') continue;
+      out.push(c);
+      if (c.kind !== 'subtask') walk(c.id);
+    }
+  };
+  walk(epic.id);
+  return out;
+}
+
+/**
+ * The run's settings to start from: the epic's own when it was approved before, else the New
+ * task defaults, keeping their model only when Settings names one (ADR 0006 §8): a run never
+ * takes a fallback model without the owner picking it.
+ */
+function runStart(epic: Card, meta: Meta | null, settings: Settings): TaskDefaults | null {
+  if (epic.run) return { provider: epic.run.provider, model: epic.run.model, effort: epic.run.effort, context_size: epic.run.context_size || 'default', mode: epic.run.mode };
+  const base = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
+  if (!base) return null;
+  const named = settings.task_defaults?.provider === base.provider && settings.task_defaults.model === base.model;
+  return named ? base : { ...base, model: '', effort: '', context_size: 'default' };
+}
+
+const PARALLEL_ITEMS = ['1', '2', '3', '4'].map((value) => ({ value, label: value }));
+
+const seqs = (cards: readonly Card[]) => cards.map((c) => `#${c.seq}`).join(', ');
+const isAre = (n: number) => (n === 1 ? 'is' : 'are');
+
+/**
+ * Approve (ADR 0006 §6.2, §8): the owner's one approval of an epic. It shows the epic's live
+ * cards as they were when it opened, grouped by story, with what each waits on, the proposals it
+ * confirms ("new") and the paused ones, and says inline what the service would refuse. The run
+ * needs a model the owner picks, a mode and how many subtasks run at a time. It posts the cards
+ * with the revisions it showed: when one changed meanwhile, it names them, shows them as they are
+ * now and asks again.
+ */
+export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | null; onClose: () => void }>) {
+  const api = useApi();
+  const { meta, settings } = useApp();
+  const { cards, reload } = useShownBoard();
+  const [shown, setShown] = useState(ask);
+  // The cards as shown, and the Board they were taken from; taken again once the Board changes after a `stale`.
+  const [snap, setSnap] = useState(() => ({ source: cards, list: ask ? approvalList(ask.epic, cards) : [] }));
+  const [retake, setRetake] = useState(false);
+  const [picked, setPicked] = useState<TaskDefaults | null>(null);
+  const [parallel, setParallel] = useState('2');
+  // The Project's default acceptance command, once loaded for the Project shown.
+  const [loaded, setLoaded] = useState<{ project: string; cmd: string } | null>(null);
+  const [cmdDraft, setCmdDraft] = useState<string | null>(null);
+  const [savingCmd, setSavingCmd] = useState(false);
+  const [changed, setChanged] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (ask && ask !== shown) {
+    setShown(ask);
+    setSnap({ source: cards, list: approvalList(ask.epic, cards) });
+    setRetake(false);
+    setPicked(null);
+    setParallel(String(ask.epic.run?.parallel ?? 2));
+    setCmdDraft(null);
+    setChanged([]);
+    setError(null);
+  }
+  if (shown && retake && cards !== snap.source) {
+    setSnap({ source: cards, list: approvalList(shown.epic, cards) });
+    setRetake(false);
+  }
+  const projectId = shown?.epic.project_id ?? '';
+  useEffect(() => {
+    if (!projectId) return;
+    let alive = true;
+    api.planner.project(projectId).then((p) => alive && setLoaded({ project: projectId, cmd: p.accept_cmd })).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, projectId]);
+  const projectCmd = loaded?.project === projectId ? loaded.cmd : null;
+
+  const epic = snap.list[0] ?? shown?.epic;
+  const selection = picked ?? (epic ? runStart(epic, meta, settings) : null);
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const index = childIndex(snap.list);
+  const subtasks = snap.list.filter((c) => c.kind === 'subtask');
+  // Unknown until the Project default loads: nothing is refused for it meanwhile.
+  const noCommand = (c: Card) => {
+    const cmd = c.accept_cmd ?? projectCmd;
+    return c.kind === 'subtask' && !isStarted(c) && cmd !== null && !cmd.trim();
+  };
+  const held = subtasks.filter((c) => !!c.held_by);
+  const empty = snap.list.filter((c) => c.kind !== 'subtask' && leavesUnder(c.id, index).length === 0);
+  const noCmd = subtasks.filter(noCommand);
+  const refused = held.length + empty.length + noCmd.length > 0;
+  const unapproved = epic ? epic.blocked_by.map((id) => byId.get(id)).filter((b): b is Card => !!b && b.kind === 'epic' && !b.run && b.status !== 'done' && b.status !== 'cancelled') : [];
+  // Grouped by story: the subtasks right under the epic first, then each story's.
+  const groups = epic ? [epic, ...(index.get(epic.id) ?? []).filter((c) => c.kind === 'story')].map((head) => ({ head, items: (index.get(head.id) ?? []).filter((c) => c.kind === 'subtask') })).filter((g) => g.head !== epic || g.items.length > 0) : [];
+
+  const marks = (c: Card) => {
+    const words: { text: string; refused?: boolean }[] = [];
+    if (!c.confirmed) words.push({ text: 'new' });
+    if (c.status === 'done') words.push({ text: 'done' });
+    if (c.paused) words.push({ text: c.paused === 'uam' ? 'paused by uam' : 'paused' });
+    const waits = waitsOf(c, byId).filter((w) => !w.via);
+    if (waits.length) words.push({ text: `waits on ${seqs(waits.map((w) => w.card))}` });
+    if (c.held_by) words.push({ text: 'held by a task', refused: true });
+    if (noCommand(c)) words.push({ text: 'no acceptance command', refused: true });
+    if (c.kind !== 'subtask' && empty.includes(c)) words.push({ text: 'no subtask', refused: true });
+    return words.map((w) => (
+      <span key={w.text} className={w.refused ? 'text-error' : 'text-muted'}>
+        {' · '}
+        {w.text}
+      </span>
+    ));
+  };
+
+  const saveCmd = async () => {
+    if (cmdDraft === null) return;
+    setSavingCmd(true);
+    setError(null);
+    try {
+      await api.planner.setProject(projectId, cmdDraft.trim());
+      setLoaded({ project: projectId, cmd: cmdDraft.trim() });
+      setCmdDraft(null);
+    } catch (err) {
+      setError(plannerErrorText(err));
+    } finally {
+      setSavingCmd(false);
+    }
+  };
+  const submit = async (e: SubmitEvent) => {
+    e.preventDefault();
+    if (!shown || !selection?.model || refused) return;
+    setBusy(true);
+    setError(null);
+    setChanged([]);
+    try {
+      await api.planner.approve(shown.epic.id, { ...selection, parallel: Number(parallel), items: snap.list.map((c) => ({ id: c.id, revision: c.revision })) });
+      onClose();
+    } catch (err) {
+      if (errorCode(err) === 'stale') {
+        // Shown again as they are now, once the Board has them.
+        setChanged(errorRefs(err));
+        setRetake(true);
+        reload(projectId);
+      } else setError(plannerErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const seq = epic ? `#${epic.seq}` : '';
+  return (
+    <Dialog
+      open={!!ask}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={() => setShown(null)}
+      title={`Approve ${seq}?`}
+      description={`Approving confirms the cards below and authorizes them to run with these settings. A card added under ${seq} later stays a proposal until you approve again.`}
+    >
+      <form aria-label={`Approve ${seq}`} className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
+        {changed.length > 0 && (
+          <Note role="alert" tone="warn">
+            {changed.join(', ')} changed since this opened. {retake ? 'Loading them again…' : 'They are shown as they are now: look again, then approve.'}
+          </Note>
+        )}
+        {epic && (
+          <div className="flex flex-col gap-2 rounded-md bg-tint-well px-3 py-2 text-ui text-body">
+            <p className="font-medium text-ink">
+              #{epic.seq} {epic.title}
+              {marks(epic)}
+            </p>
+            {groups.map(({ head, items }) => (
+              <section key={head.id} aria-label={`#${head.seq} ${head.title}`} className="flex flex-col gap-0.5">
+                {head !== epic && (
+                  <p className="text-ink">
+                    #{head.seq} {head.title}
+                    {marks(head)}
+                  </p>
+                )}
+                <ul className="flex flex-col gap-0.5 pl-3 text-caption">
+                  {items.map((c) => (
+                    <li key={c.id}>
+                      #{c.seq} {c.title}
+                      {marks(c)}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        )}
+        {refused && (
+          <div role="alert" className="flex flex-col gap-0.5 text-caption text-error">
+            {held.length > 0 && <p>{seqs(held)} {isAre(held.length)} held by a task: finish or release {held.length === 1 ? 'it' : 'them'} first, as work started by hand and approved work never mix.</p>}
+            {empty.length > 0 && <p>{seqs(empty)} {isAre(empty.length)} without a subtask, and a card with none never finishes: add one or cancel {empty.length === 1 ? 'it' : 'them'}.</p>}
+            {noCmd.length > 0 && <p>{seqs(noCmd)} {noCmd.length === 1 ? 'has' : 'have'} no acceptance command, so done would always wait for you: set one on {noCmd.length === 1 ? 'it' : 'them'} or a Project default below.</p>}
+          </div>
+        )}
+        {unapproved.length > 0 && <Note tone="warn">{seq} waits on {seqs(unapproved)}, not approved yet: nothing here runs before {unapproved.length === 1 ? 'it is' : 'they are'} done.</Note>}
+        <div className="flex flex-col gap-1">
+          <span id="planner-approve-cmd-label" className="text-caption text-muted">Project acceptance command</span>
+          {cmdDraft === null ? (
+            <span className="flex min-h-8 items-center gap-2">
+              <span className={cn('min-w-0 truncate', projectCmd ? 'font-mono text-code-sm text-ink' : 'text-ui text-muted')}>{projectCmd === null ? 'Loading…' : projectCmd || 'None'}</span>
+              <Button size="sm" className="text-muted" disabled={projectCmd === null || busy} onClick={() => setCmdDraft(projectCmd ?? '')}>
+                <Pencil />
+                Edit
+              </Button>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <Input
+                size="md"
+                aria-labelledby="planner-approve-cmd-label"
+                className="font-mono text-code-sm"
+                spellCheck={false}
+                placeholder="make test"
+                value={cmdDraft}
+                onChange={(e) => setCmdDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter saves the command; it must not approve.
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void saveCmd();
+                  }
+                }}
+              />
+              <Button size="sm" variant="secondary" loading={savingCmd} onClick={() => void saveCmd()}>
+                Save
+              </Button>
+              <Button size="sm" onClick={() => setCmdDraft(null)}>
+                Cancel
+              </Button>
+            </span>
+          )}
+          <Note>A subtask without its own command runs this one to check its work.</Note>
+        </div>
+        {selection && <TaskDefaultsFields prefix="planner-approve" value={selection} disabled={busy} onChange={setPicked} />}
+        {selection && !selection.model && <Note tone="warn">Pick a model: an approved run never falls back to a default one.</Note>}
+        {selection?.mode === 'safe' && <Note tone="warn">In Safe mode a permission prompt stops unattended work until you answer it.</Note>}
+        <div className="flex flex-col gap-1">
+          <span id="planner-approve-parallel" className="text-caption text-muted">Subtasks at a time</span>
+          <Segmented aria-labelledby="planner-approve-parallel" className="w-40" value={parallel} disabled={busy} onValueChange={setParallel} items={PARALLEL_ITEMS} />
+        </div>
+        <Note>Nothing runs until execution ships; manual starts are not offered under an approved epic.</Note>
+        {error && <p role="alert" className="text-caption text-error">{error}</p>}
+        <div className="mt-2 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={busy} disabled={!selection?.model || refused || retake || cmdDraft !== null}>
+            Approve
           </Button>
         </div>
       </form>

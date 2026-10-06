@@ -246,7 +246,8 @@ var (
 // boardToolSet is every planner tool, in the order they are registered.
 var boardToolSet = []boardTool{
 	defineTool("board_get", "Read one card of the planner board: its fields, checklist with item indexes, blockers and recent comments. "+
-		"For an epic or a story, also its pending subtasks in the order to work on them, blocked ones last.",
+		"For an epic or a story, also its pending subtasks in the order to work on them, blocked ones last. "+
+		"It also says when the card's epic is approved and when the card or a card above it is paused.",
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolGet),
 	defineTool("board_list", "List cards of the planner board, in outline order. Every filter is optional.",
 		toolSchema(nil, map[string]any{
@@ -258,7 +259,8 @@ var boardToolSet = []boardTool{
 	defineTool("board_create", "Propose a card: an epic at the root of the board, with no parent; a story under an epic; or a subtask under a story or an epic. "+
 		"A task not started from a card may propose epics and build them out: stories, subtasks and links under the epics it proposed, until work on a card starts. "+
 		"A task started from a card creates only within its scope and under cards it created, and proposes no epics. "+
-		"The card stays a proposal until the owner confirms it.",
+		"The card stays a proposal until the owner confirms it; under an approved epic, until the owner approves the epic again. "+
+		"When the plan of an epic is complete, ask the owner to approve it in the Planner and end your turn: nothing runs before that.",
 		toolSchema([]string{"kind", "title"}, map[string]any{
 			"kind":          enumProp("An epic holds stories and subtasks and needs no parent; a story holds subtasks; a subtask is one piece of work.", string(board.KindEpic), string(board.KindStory), string(board.KindSubtask)),
 			"parent":        stringProp("For a story or subtask: the epic or story to create it under. Leave it out for an epic. " + refDesc),
@@ -272,7 +274,7 @@ var boardToolSet = []boardTool{
 		}), (*Manager).toolCreate),
 	defineTool("board_edit", "Change a card's fields or move it. A card that has not started changes at once, confirmed or not. "+
 		"A subtask in progress or done keeps its plan: the edit is filed as a change request, which the owner can apply once it is released. "+
-		"Moving a confirmed card under a proposal is also filed as a change request. "+
+		"Moving a confirmed card under a proposal, or moving any card into or out of an approved epic, is also filed as a change request. "+
 		"Work that has started keeps what it waits on: a move that would make it wait on an open card, such as a confirmed subtask into a done story that started work waits on, is refused.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref":           refProp,
@@ -308,7 +310,8 @@ var boardToolSet = []boardTool{
 		"Deleting a blocker releases what waits on it, so link the replacement first. "+
 		fmt.Sprintf("A deleted card frees its place among the %d live cards you created, but still counts toward the %d you may create in all.", board.CapCreated, board.CapCreatedTotal),
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolDelete),
-	defineTool("board_claim", "Start work on a planned or todo subtask in your scope that the owner confirmed: a proposal, or a subtask under one, waits for the owner. You may hold one subtask at a time without a pending request on it.",
+	defineTool("board_claim", "Start work on a planned or todo subtask in your scope that the owner confirmed: a proposal, or a subtask under one, waits for the owner. You may hold one subtask at a time without a pending request on it. "+
+		"Nothing under an approved epic is claimed.",
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolClaim),
 	defineTool("board_split", "Split a subtask into new subtasks: the given children, then its checklist items. A subtask that has not started splits at once; "+
 		"one in progress keeps its plan, and the split is filed as a request, which the owner can accept once it is released. "+
@@ -536,6 +539,9 @@ func detailText(ctx context.Context, st *board.Store, sc boardScope, d board.Det
 	if c.ExpiresAt != nil {
 		fmt.Fprintf(&b, "A proposal: the owner has not confirmed it, and it expires %s unless confirmed.\n", c.ExpiresAt.Format(time.DateOnly))
 	}
+	if err := writeRunState(ctx, st, &b, c); err != nil {
+		return "", err
+	}
 	if c.Progress != nil {
 		fmt.Fprintf(&b, "Progress: %d of %d confirmed subtasks done, %d proposed.\n", c.Progress.Done, c.Progress.Total, c.Progress.Proposed)
 	}
@@ -602,6 +608,50 @@ func detailText(ctx context.Context, st *board.Store, sc boardScope, d board.Det
 		}
 	}
 	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+// epicOf returns the epic c sits under, c itself for an epic; nil at the
+// root, which has no epic.
+func epicOf(ctx context.Context, st *board.Store, c board.Card) (*board.Card, error) {
+	for c.ParentID != "" {
+		var err error
+		if c, err = st.Card(ctx, c.ParentID); err != nil {
+			return nil, err
+		}
+	}
+	if c.Kind != board.KindEpic {
+		return nil, nil
+	}
+	return &c, nil
+}
+
+// writeRunState writes, for board_get, whether c's epic is approved and
+// which cards from the root to c are paused (ADR 0006 §6.4).
+func writeRunState(ctx context.Context, st *board.Store, b *strings.Builder, c board.Card) error {
+	path := []board.Card{c}
+	for p := c; p.ParentID != ""; {
+		var err error
+		if p, err = st.Card(ctx, p.ParentID); err != nil {
+			return err
+		}
+		path = append([]board.Card{p}, path...)
+	}
+	if e := path[0]; e.Kind == board.KindEpic && e.Run != nil {
+		fmt.Fprintf(b, "#%d is an approved epic: nothing under it is claimed or started by hand, and a card added under it waits for the owner to approve #%d again.\n", e.Seq, e.Seq)
+	}
+	var paused []string
+	for _, p := range path {
+		switch p.Paused {
+		case board.PausedOwner:
+			paused = append(paused, fmt.Sprintf("#%d by the owner", p.Seq))
+		case board.PausedUAM:
+			paused = append(paused, fmt.Sprintf("#%d by uam, as an attempt ended without landing", p.Seq))
+		}
+	}
+	if len(paused) > 0 {
+		fmt.Fprintf(b, "Paused: %s. Nothing at or under a paused card starts.\n", strings.Join(paused, "; "))
+	}
+	return nil
 }
 
 type listArgs struct {
@@ -704,7 +754,18 @@ func (m *Manager) toolCreate(ctx context.Context, sc boardScope, in createArgs) 
 		if parent.ID != "" {
 			where = fmt.Sprintf("under #%d", parent.Seq)
 		}
-		reply = cardReply(c, "Created #%d %s. It stays a proposal until the owner confirms it.", c.Seq, where)
+		epic, err := epicOf(ctx, st, c)
+		switch {
+		case err != nil:
+			return err
+		case c.Kind == board.KindEpic:
+			// The hand-off (ADR 0006 §6.1): the owner approves the plan once.
+			reply = cardReply(c, "Created #%d %s. When the plan is complete, ask the owner to approve #%d in the Planner; nothing runs before that.", c.Seq, where, c.Seq)
+		case epic != nil && epic.Run != nil:
+			reply = cardReply(c, "Created #%d %s. #%d is approved, so it stays a proposal until the owner approves #%d again.", c.Seq, where, epic.Seq, epic.Seq)
+		default:
+			reply = cardReply(c, "Created #%d %s. It stays a proposal until the owner confirms it.", c.Seq, where)
+		}
 		return nil
 	})
 	return reply, err
@@ -742,6 +803,8 @@ func (m *Manager) toolEdit(ctx context.Context, sc boardScope, in editArgs) (too
 			return err
 		}
 		switch {
+		case res.AcrossRun:
+			reply = cardReply(res.Card, "Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
 		case res.Request != nil && res.Card.Status != board.StatusDoing && res.Card.Status != board.StatusDone:
 			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
 		case res.Request != nil:

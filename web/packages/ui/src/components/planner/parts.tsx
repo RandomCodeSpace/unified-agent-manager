@@ -1,4 +1,4 @@
-import { Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, SquareCheck, TriangleAlert, X } from 'lucide-react';
+import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, shownProgress } from '../../lib/board';
@@ -104,9 +104,41 @@ export function TaskChip({ taskId, className }: Readonly<{ taskId: string; class
   );
 }
 
-/** The quiet markers a card row carries: pending requests, staleness, blocked (`blockers`: its open blockers, from `openBlockerSeqs`). */
-export function CardMarkers({ card, blockers, compact = false }: Readonly<{ card: Card; blockers: string; compact?: boolean }>) {
+/**
+ * The quiet markers a card row carries: an approved epic and the proposals waiting for its next
+ * approval (`toApprove`), its pause (`pause`, from `pauseLabel`), pending requests, staleness,
+ * blocked (`blockers`: its open blockers, from `openBlockerSeqs`).
+ */
+export function CardMarkers({ card, blockers, pause = '', toApprove = 0, compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; compact?: boolean }>) {
   const marks: ReactNode[] = [];
+  if (card.run) {
+    const r = card.run;
+    marks.push(
+      <Chip key="approved" title={`Approved to run on ${r.model}, ${r.mode === 'yolo' ? 'Yolo' : 'Safe'}, ${r.parallel} at a time`}>
+        <BadgeCheck aria-hidden="true" className="size-3" />
+        <span className={cn(compact && 'max-sm:sr-only')}>Approved</span>
+      </Chip>,
+    );
+  }
+  if (toApprove > 0) {
+    marks.push(
+      <Chip key="to-approve" tone="attention" title={`${toApprove} ${toApprove === 1 ? 'proposal waits' : 'proposals wait'} for this epic's next approval`}>
+        <span aria-hidden="true" className="size-1.5 rounded-full bg-attention" />
+        {toApprove} to approve
+      </Chip>,
+    );
+  }
+  if (pause) {
+    // A pause on a card above is named on that card; a compact row says so with a glyph. uam's
+    // pause (an attempt ended without landing) is a warning; the owner's is their own choice.
+    const own = !pause.includes(' via ');
+    marks.push(
+      <Chip key="paused" tone={pause.startsWith('Paused by uam') ? 'warning' : undefined} title={pause}>
+        <Pause aria-hidden="true" className="size-3" />
+        {compact && !own ? <span className="sr-only">{pause}</span> : pause}
+      </Chip>,
+    );
+  }
   if (card.pending_requests > 0) {
     marks.push(
       <Chip key="pending" tone="attention" title={`${card.pending_requests} pending ${card.pending_requests === 1 ? 'request' : 'requests'}`}>

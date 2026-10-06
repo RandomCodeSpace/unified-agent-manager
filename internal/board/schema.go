@@ -175,4 +175,21 @@ CREATE TABLE import_refs (
 ALTER TABLE requests ADD COLUMN decided_by TEXT NOT NULL DEFAULT '';
 UPDATE requests SET decided_by = 'owner' WHERE status IN ('accepted', 'rejected');
 `,
+	// v5 (ADR 0006 §3.1): the owner's pause on a card under an approved epic,
+	// set by the owner or by uam when an attempt ended without landing, and
+	// one run row per approved epic, which is the authorization to run it.
+	// Purge deletes a purged epic's row.
+	`
+ALTER TABLE cards ADD COLUMN paused TEXT NOT NULL DEFAULT '' CHECK (paused IN ('', 'owner', 'uam'));
+CREATE TABLE runs (
+  epic_id      TEXT PRIMARY KEY,
+  provider     TEXT NOT NULL,
+  model        TEXT NOT NULL CHECK (model <> ''),
+  effort       TEXT NOT NULL DEFAULT '',
+  context_size TEXT NOT NULL DEFAULT '',
+  mode         TEXT NOT NULL CHECK (mode IN ('safe', 'yolo')),
+  parallel     INTEGER NOT NULL CHECK (parallel BETWEEN 1 AND 4),
+  approved_at  TEXT NOT NULL
+);
+`,
 }

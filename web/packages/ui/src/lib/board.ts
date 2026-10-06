@@ -100,6 +100,67 @@ export function epicOf(card: Card, byId: ReadonlyMap<string, Card>): Card | unde
   return cardPath(card, byId).find((c) => c.kind === 'epic');
 }
 
+/* ---------- Approved epics (ADR 0006) ---------- */
+
+/** The approved epic a card sits under, the card itself for one; undefined when its epic is not approved. */
+export function approvedEpicOf(card: Card, byId: ReadonlyMap<string, Card>): Card | undefined {
+  const epic = epicOf(card, byId);
+  return epic?.run ? epic : undefined;
+}
+
+/** The nearest paused card at or above `card` (itself first); undefined when nothing on its path is paused. */
+export function pausedOn(card: Card, byId: ReadonlyMap<string, Card>): Card | undefined {
+  return cardPath(card, byId).reverse().find((c) => !!c.paused);
+}
+
+/**
+ * A card's pause in words, for its chip: "Paused" (by the owner) or "Paused by uam" (an attempt ended
+ * without landing), "via #3" when a card above it holds it back; '' when nothing does. A plain string,
+ * so a row that takes it stays equal while it does.
+ */
+export function pauseLabel(card: Card, byId: ReadonlyMap<string, Card>): string {
+  const at = pausedOn(card, byId);
+  if (!at) return '';
+  const who = at.paused === 'uam' ? 'Paused by uam' : 'Paused';
+  return at === card ? who : `${who} via #${at.seq}`;
+}
+
+/** The live proposals under `parent`, at any depth: what approving its epic again would confirm. */
+export function proposalsUnder(parent: string, index: ReadonlyMap<string, Card[]>): Card[] {
+  const out: Card[] = [];
+  const walk = (id: string) => {
+    for (const c of index.get(id) ?? []) {
+      if (c.status === 'cancelled') continue;
+      if (!c.confirmed) out.push(c);
+      if (c.kind !== 'subtask') walk(c.id);
+    }
+  };
+  walk(parent);
+  return out;
+}
+
+/** A plan waiting for the owner's approval: a proposed epic, or an approved one with `proposals` added since. */
+export interface PlanToApprove {
+  epic: Card;
+  proposals: number;
+}
+
+/** The plans waiting for the owner's approval on one Board (§6.1): proposed epics, then approved epics with live proposals under them; none done or cancelled, which approval refuses. */
+export function plansToApprove(cards: readonly Card[]): PlanToApprove[] {
+  const index = childIndex(cards);
+  const epics = (index.get('') ?? []).filter((c) => c.kind === 'epic' && c.status !== 'cancelled' && c.status !== 'done');
+  const proposed = epics.filter((e) => !e.confirmed).map((epic) => ({ epic, proposals: proposalsUnder(epic.id, index).length + 1 }));
+  const approved = epics.filter((e) => e.confirmed && e.run).map((epic) => ({ epic, proposals: proposalsUnder(epic.id, index).length })).filter((p) => p.proposals > 0);
+  return [...proposed, ...approved];
+}
+
+/** Plans to approve over every loaded Board, for the Needs-you count. */
+export function plansWaiting(boards: Readonly<Record<string, { data: BoardData | null }>>): number {
+  let n = 0;
+  for (const b of Object.values(boards)) n += b.data ? plansToApprove(b.data.cards).length : 0;
+  return n;
+}
+
 /* ---------- Live updates (§15) ---------- */
 
 export type FrameOutcome = { kind: 'applied'; data: BoardData } | { kind: 'ignored' } | { kind: 'gap' };

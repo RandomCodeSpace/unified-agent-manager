@@ -66,6 +66,7 @@ function card(n: number, project_id: string, kind: CardKind, parent: number | nu
     blocked_by: [],
     blocks: [],
     confirmed: true,
+    paused: '',
     pinned_sha: HEAD[project_id] ?? '',
     accept_cmd: null,
     paths: [],
@@ -303,6 +304,13 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (comment) say(c, author, comment, author === 'uam');
   };
   const openBlockers = (c: Card) => c.blocked_by.map(byId).filter((b): b is Card => !!b && b.status !== 'done' && b.status !== 'cancelled');
+  /** The approved epic `c` sits under, itself for one (ADR 0006 §6.3). */
+  const approvedOf = (c: Card) => {
+    const epic = cardPath(c, new Map(cards.map((x) => [x.id, x]))).find((x) => x.kind === 'epic');
+    return epic?.run ? epic : undefined;
+  };
+  /** The service's `run_owned`: under an approved epic nothing is confirmed or started card by card. */
+  const runOwned = (c: Card, epic: Card) => refuse('run_owned', c === epic ? `#${c.seq} is an approved epic: nothing under it is started or confirmed card by card; approve it again from the epic` : `#${c.seq} is under approved epic #${epic.seq}: it is not started or confirmed card by card; approve it from the epic`);
   /** A parent must outrank its child (epic < story < subtask); the root may hold any kind (§1). Null when the place is valid. */
   const misplaced = (kind: CardKind, parentId: unknown, project: string): Response | null => {
     if (parentId === null || parentId === undefined || parentId === '') return null;
@@ -678,16 +686,35 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if (locked && (['POST move', 'POST split'].includes(`${method} ${action}`) || (method === 'PATCH' && (retexts || ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels'].some((k) => k in body))))) {
       return refuse('in_progress', locked);
     }
+    const approved = approvedOf(c);
+    if (approved && ['POST confirm', 'POST launch', 'POST attach'].includes(`${method} ${action}`)) return runOwned(c, approved);
     switch (`${method} ${action}`) {
       case 'PATCH ': {
         if (typeof body.project_id === 'string' && body.project_id !== c.project_id) {
           const refused = gitless(body.project_id);
           if (refused) return refused;
         }
+        // Pause and Resume: only under an approved epic, and no planning edit.
+        if ('paused' in body && !approved) return refuse('invalid', `#${c.seq} is not under an approved epic; only work an approval authorizes is paused`);
         return done(commit(() => {
+          if ('paused' in body) c.paused = body.paused ? 'owner' : '';
           for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];
           if ('project_id' in body) c.moved_at = now();
-          planned(c);
+          if (Object.keys(body).some((k) => k !== 'paused')) planned(c);
+        }), ok);
+      }
+      case 'POST approve': {
+        // The service's Store.Approve (ADR 0006 §6.2), its main refusals: a model, an epic, the shown revisions.
+        if (!String(body.model ?? '').trim()) return refuse('invalid', 'pick a model for the run; no default stands in for it');
+        if (c.kind !== 'epic') return refuse('invalid', `#${c.seq} is a ${c.kind}; approve its epic`);
+        const listed = (Array.isArray(body.items) ? (body.items as { id: string; revision: number }[]) : []).map((i) => ({ card: byId(i.id), revision: i.revision }));
+        const stale = listed.filter((i) => i.card && i.card.revision !== i.revision).map((i) => `#${i.card!.seq}`);
+        if (stale.length) return refuse('stale', `${stale.join(', ')} changed since the approval was shown; look again and approve what is there now`, { refs: stale });
+        return done(commit(() => {
+          for (const { card: x } of listed) if (x && !x.confirmed) confirmAndPin(x);
+          confirmAndPin(c);
+          c.paused = '';
+          c.run = { provider: String(body.provider), model: String(body.model), effort: String(body.effort ?? ''), context_size: String(body.context_size || 'default'), mode: body.mode === 'yolo' ? 'yolo' : 'safe', parallel: Number(body.parallel), approved_at: now() };
         }), ok);
       }
       case 'POST confirm':

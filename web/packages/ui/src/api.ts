@@ -502,11 +502,36 @@ export interface Card {
   paths: string[];
   /** Sent only once computed. */
   stale?: Staleness;
+  /**
+   * Who paused it (ADR 0006 §4.6): the owner, or uam when an attempt ended without landing; `''` when it
+   * is not. Nothing new starts at or under a paused card. Absent from a service older than approvals.
+   */
+  paused?: '' | 'owner' | 'uam';
+  /** An approved epic's run: what its approval authorizes its subtasks to run with. Absent on every other card. */
+  run?: CardRun;
   pending_requests: number;
   revision: number;
   created_at: string;
   updated_at: string;
   moved_at: string;
+}
+
+/** An approved epic's run (ADR 0006 §3.3). */
+export interface CardRun {
+  provider: string;
+  model: string;
+  effort: string;
+  context_size: string;
+  mode: 'safe' | 'yolo';
+  /** How many of its subtasks may run at a time, 1 to 4. */
+  parallel: number;
+  approved_at: string;
+}
+
+/** The Approve dialog's post (ADR 0006 §7): the cards it showed, at the revisions it showed, and the run's settings. */
+export interface ApproveBody extends TaskDefaults {
+  items: { id: string; revision: number }[];
+  parallel: number;
 }
 
 export type RequestKind = 'done' | 'cancel' | 'blocked' | 'split' | 'change';
@@ -622,8 +647,8 @@ export function errorCode(e: unknown): string | undefined {
   return e instanceof ApiError && typeof e.body.code === 'string' ? e.body.code : undefined;
 }
 
-/** What a refusal was about (`refs`): the open checklist items of `guard_open_items`, the `#seq` of each open blocker of `guard_blockers`. */
-function errorRefs(e: unknown): string[] {
+/** What a refusal was about (`refs`): the open checklist items of `guard_open_items`, the `#seq` of each open blocker of `guard_blockers`, the cards an approval found changed (`stale`) or in its way. */
+export function errorRefs(e: unknown): string[] {
   return e instanceof ApiError && Array.isArray(e.body.refs) ? e.body.refs.map(String) : [];
 }
 
@@ -1655,6 +1680,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       create: (body: { project_id: string; kind: CardKind; parent_id: string | null; title: string; desc?: string; win_condition?: string; prio?: number; effort?: string; due?: string; labels?: string[]; checklist?: ChecklistItem[] }) => call<Card>('POST', '/api/board/cards', body),
       edit: (ref: string, patch: CardPatch) => call<unknown>('PATCH', card(ref), patch),
       confirm: (ref: string) => call<unknown>('POST', card(ref, 'confirm')),
+      /** Approves an epic (ADR 0006 §6.2): confirms the listed cards at their listed revisions and records its run. `stale` names the cards that changed. */
+      approve: (ref: string, body: ApproveBody) => call<Card>('POST', card(ref, 'approve'), body),
+      /** Pause or Resume a card under an approved epic. */
+      pause: (ref: string, paused: boolean) => call<unknown>('PATCH', card(ref), { paused }),
       dismiss: (ref: string) => call<unknown>('POST', card(ref, 'dismiss')),
       /** Without a rank the card goes after its new parent's last child; `rank` is an index among the siblings. */
       move: (ref: string, parent_id: string | null, rank?: number) => call<unknown>('POST', card(ref, 'move'), rank === undefined ? { parent_id } : { parent_id, rank }),

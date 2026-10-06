@@ -13,7 +13,7 @@ import (
 
 // cardCols is the select list scanCard decodes.
 const cardCols = `id, seq, project_id, kind, parent_id, rank, title, "desc", win_condition, status, prio, due, effort,
-	labels, checklist, blocked, expires_at, held_by, pinned_sha, accept_cmd, paths, cascade_id, created_by, revision,
+	labels, checklist, blocked, expires_at, held_by, pinned_sha, accept_cmd, paths, cascade_id, created_by, paused, revision,
 	created_at, updated_at, moved_at`
 
 // node is a card as the rules see it: the Card, with its stored status next
@@ -41,7 +41,7 @@ func scanCard(row interface{ Scan(...any) error }) (*node, error) {
 	var expires, accept sql.NullString
 	if err := row.Scan(&n.ID, &n.Seq, &n.ProjectID, &kind, &n.ParentID, &n.Rank, &n.Title, &n.Desc, &n.WinCondition,
 		&status, &n.Prio, &n.Due, &n.Effort, &labels, &checklist, &blocked, &expires, &n.HeldBy, &n.PinnedSHA, &accept,
-		&paths, &n.CascadeID, &n.CreatedBy, &n.Revision, &created, &updated, &moved); err != nil {
+		&paths, &n.CascadeID, &n.CreatedBy, &n.Paused, &n.Revision, &created, &updated, &moved); err != nil {
 		return nil, fmt.Errorf("board: scan card: %w", err)
 	}
 	n.Kind, n.stored, n.Status, n.Blocked = Kind(kind), Status(status), Status(status), blocked != 0
@@ -160,6 +160,9 @@ func (t *txn) loadCounts(o *outline) error {
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return fmt.Errorf("board: load links: %w", err)
+	}
+	if err := t.loadRuns(o); err != nil {
+		return err
 	}
 	return t.loadWorkedBy(o)
 }
@@ -606,8 +609,10 @@ func (t *txn) atRoot(a Actor) error {
 
 // mutate runs fn as a's write to project: it sweeps expired cards first when
 // sweep is set, and afterwards settles every container fn brought to done and
-// refuses the write if it gave started work a new open blocker (holdBacks).
-// uam's own writes, such as reconcile and the sweep, pass the zero Actor.
+// refuses the write if it gave started work a new open blocker (holdBacks)
+// or, for an agent, left approved work with no confirmed subtask
+// (staffedApproved). uam's own writes, such as reconcile and the sweep, pass
+// the zero Actor.
 func (t *txn) mutate(a Actor, project string, sweep bool, fn func() error) error {
 	if sweep {
 		if _, err := t.sweep(project); err != nil {
@@ -623,13 +628,17 @@ func (t *txn) mutate(a Actor, project string, sweep bool, fn func() error) error
 	if err != nil {
 		return err
 	}
+	staffed := staffedApproved(a, o)
 	if err := fn(); err != nil {
 		return err
 	}
 	if err := t.settle(project, before); err != nil {
 		return err
 	}
-	return t.noNewBlockers(project, held)
+	if err := t.noNewBlockers(project, held); err != nil {
+		return err
+	}
+	return t.noneEmptied(project, staffed)
 }
 
 // holdBacks snapshots the open blockers each subtask a's write must not add
@@ -717,9 +726,9 @@ func (o *outline) startedWork(n *node) error {
 }
 
 // settle closes every container that reached done since before, deepest
-// first: its unconfirmed, unheld subtasks are cancelled with an automatic
-// comment, its own pending requests are withdrawn, and a roll-up of its
-// children's close comments is added.
+// first, except one the write keeps open: its unconfirmed, unheld subtasks
+// are cancelled with an automatic comment, its own pending requests are
+// withdrawn, and a roll-up of its children's close comments is added.
 func (t *txn) settle(project string, before map[string]Status) error {
 	o, err := t.outline(project)
 	if err != nil {
@@ -727,7 +736,7 @@ func (t *txn) settle(project string, before map[string]Status) error {
 	}
 	var closing []*node
 	for _, n := range o.order {
-		if n.container() && n.Status == StatusDone && before[n.ID] != StatusDone {
+		if n.container() && n.Status == StatusDone && before[n.ID] != StatusDone && !t.keepOpen[n.ID] {
 			closing = append(closing, n)
 		}
 	}

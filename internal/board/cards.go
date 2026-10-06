@@ -44,6 +44,10 @@ type Patch struct {
 	Rank *int `json:"rank,omitempty"`
 
 	Blocked *bool `json:"-"`
+	// Paused pauses (true) or resumes (false) a card under an approved
+	// epic: the owner's Pause / Resume. Resume clears uam's pause too. It
+	// is no part of the card's plan, so a started card takes it.
+	Paused *bool `json:"-"`
 	// AcceptCmd sets the subtask's acceptance command: an invalid
 	// NullString inherits the Project default, a valid "" means none. It is
 	// stored trimmed, so a blank one is none.
@@ -56,14 +60,16 @@ type Patch struct {
 func (p Patch) empty() bool { return p == Patch{} }
 
 func (p Patch) ownerOnly() bool {
-	return p.Blocked != nil || p.AcceptCmd != nil || p.Paths != nil || p.ProjectID != nil
+	return p.Blocked != nil || p.Paused != nil || p.AcceptCmd != nil || p.Paths != nil || p.ProjectID != nil
 }
 
 // EditResult is an edit's outcome: the card, and the change request filed
-// instead when an agent edited a confirmed card.
+// instead when an agent's edit needs the owner. AcrossRun says it was filed
+// because the move changes the card's epic while one of them is approved.
 type EditResult struct {
-	Card    Card
-	Request *Request
+	Card      Card
+	Request   *Request
+	AcrossRun bool
 }
 
 // ChecklistEdit ticks, unticks and appends checklist items; indexes are
@@ -288,8 +294,8 @@ func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditRes
 			if target != project {
 				return t.moveIn(a, project, id, target, p)
 			}
-			req, err := t.edit(a, project, id, p)
-			out.Request = req
+			req, across, err := t.edit(a, project, id, p)
+			out.Request, out.AcrossRun = req, across
 			return err
 		})
 		if err != nil {
@@ -302,30 +308,30 @@ func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditRes
 	return out, err
 }
 
-func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, error) {
+func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, bool, error) {
 	o, n, err := t.cardIn(project, id)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if n.stored == StatusCancelled {
-		return nil, invalid("%s is cancelled; restore it first", n.ref())
+		return nil, false, invalid("%s is cancelled; restore it first", n.ref())
 	}
 	if err := t.inScope(o, a, n); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !a.owner() && a.Proposals && n.Confirmed() {
-		return nil, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
+		return nil, false, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
 	}
 	locked := n.started() && p.planning(n)
 	if locked && a.owner() {
-		return nil, inProgress(n)
+		return nil, false, inProgress(n)
 	}
 	if err := permit(a, opEdit, ""); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	plan, err := t.planEdit(o, a, n, p)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// An agent never puts a confirmed card under a proposal, which the owner
 	// could dismiss with it: the owner decides that move, and accepting it
@@ -333,14 +339,18 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, error) {
 	if !a.owner() && plan.moving && n.Confirmed() && plan.parent != "" && len(o.unconfirmed(o.byID[plan.parent])) > 0 {
 		locked = true
 	}
-	if locked {
+	// Nor does it move a card into or out of an approved epic, where it would
+	// run, or stop running, under settings the owner did not approve for it
+	// (ADR 0006 §6.3 rule 5).
+	across := !a.owner() && plan.moving && o.crossesRun(n, plan.parent)
+	if locked || across {
 		if err := permit(a, opChange, ""); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
-		return &req, err
+		return &req, across && !n.started(), err
 	}
-	return nil, t.applyEdit(o, a, n, p, plan)
+	return nil, false, t.applyEdit(o, a, n, p, plan)
 }
 
 // editPlan is a validated edit: the card after it and where it will sit.
@@ -384,6 +394,15 @@ func (t *txn) planEdit(o *outline, a Actor, n *node, p Patch) (editPlan, error) 
 	}
 	if p.Paths != nil {
 		c.Paths = slices.Clone(*p.Paths)
+	}
+	if p.Paused != nil {
+		if o.approved(n) == nil {
+			return editPlan{}, invalid("%s is not under an approved epic; only approved work is paused", n.ref())
+		}
+		c.Paused = ""
+		if *p.Paused {
+			c.Paused = PausedOwner
+		}
 	}
 	if err := validateFields(c); err != nil {
 		return editPlan{}, err
@@ -455,7 +474,7 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 	oldParent := n.ParentID
 	c := plan.card
 	n.Title, n.Desc, n.WinCondition, n.Prio, n.Due, n.Effort = c.Title, c.Desc, c.WinCondition, c.Prio, c.Due, c.Effort
-	n.Labels, n.Checklist, n.Blocked, n.AcceptCmd, n.Paths = c.Labels, c.Checklist, c.Blocked, c.AcceptCmd, c.Paths
+	n.Labels, n.Checklist, n.Blocked, n.AcceptCmd, n.Paths, n.Paused = c.Labels, c.Checklist, c.Blocked, c.AcceptCmd, c.Paths, c.Paused
 	if plan.moving || p.Rank != nil {
 		if err := t.place(o, n, plan.parent, p.Rank); err != nil {
 			return err
@@ -632,12 +651,16 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 }
 
 // Confirm confirms a card: it stops expiring and is pinned to the owner's
-// HEAD, and so is every unconfirmed ancestor.
+// HEAD, and so is every unconfirmed ancestor. Under an approved epic it is
+// refused with CodeRunOwned: the owner approves there from the epic.
 func (s *Store) Confirm(ctx context.Context, a Actor, ref string) (Card, error) {
 	if err := permit(a, opConfirm, ""); err != nil {
 		return Card{}, err
 	}
 	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
+		if err := o.runOwned(n); err != nil {
+			return err
+		}
 		if n.stored == StatusCancelled {
 			return invalid("%s is cancelled; restore it instead", n.ref())
 		}
@@ -821,9 +844,9 @@ func (t *txn) updateCard(n *node) error {
 	labels, checklist, paths := encode(orEmpty(n.Labels)), encode(orEmpty(n.Checklist)), encode(orEmpty(n.Paths))
 	if err := t.exec(`UPDATE cards SET project_id = ?, kind = ?, parent_id = ?, rank = ?, title = ?, "desc" = ?,
 		win_condition = ?, prio = ?, due = ?, effort = ?, labels = ?, checklist = ?, blocked = ?, expires_at = ?,
-		pinned_sha = ?, accept_cmd = ?, paths = ?, updated_at = ? WHERE id = ?`,
+		pinned_sha = ?, accept_cmd = ?, paths = ?, paused = ?, updated_at = ? WHERE id = ?`,
 		n.ProjectID, string(n.Kind), n.ParentID, n.Rank, n.Title, n.Desc, n.WinCondition, n.Prio, n.Due, n.Effort,
-		labels, checklist, boolInt(n.Blocked), nullTime(n), n.PinnedSHA, nullString(n.AcceptCmd), paths,
+		labels, checklist, boolInt(n.Blocked), nullTime(n), n.PinnedSHA, nullString(n.AcceptCmd), paths, n.Paused,
 		stamp(n.UpdatedAt), n.ID); err != nil {
 		return err
 	}

@@ -507,13 +507,19 @@ func TestOpenUpgradesAV1Board(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	card, err := s.Create(context.Background(), owner, NewCard{ProjectID: proj, Kind: KindSubtask, Title: "Before"})
-	if err != nil {
+	// The store's queries read the newest columns, so the v1 board is
+	// written by hand.
+	now := stamp(time.Now())
+	card := Card{ID: "before"}
+	if _, err := s.db.Exec(`INSERT INTO cards (id, seq, project_id, kind, title, status, created_by, created_at, updated_at, moved_at)
+		VALUES ('before', 1, ?, 'subtask', 'Before', 'planned', 'owner', ?2, ?2, ?2)`, proj, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO sequences (name, next) VALUES ('card', 2)`); err != nil {
 		t.Fatal(err)
 	}
 	// Requests the owner decided before decided_by was recorded (v4), and
 	// ones nobody decided.
-	now := stamp(time.Now())
 	if _, err := s.db.Exec(`INSERT INTO requests (id, card_id, task_id, kind, comment, status, created_at, decided_at, decision_comment)
 		VALUES ('old', ?1, 'task-1', 'done', 'finished', 'accepted', ?2, ?2, 'fine'),
 		       ('old-split', ?1, 'task-1', 'split', 'halve it', 'rejected', ?2, ?2, 'no'),

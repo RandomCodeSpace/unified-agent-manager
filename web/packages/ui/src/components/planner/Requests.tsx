@@ -1,7 +1,8 @@
 import { useApi } from '../../ApiContext';
-import { Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, SquareCheck, SquareTerminal, Undo2, X } from 'lucide-react';
+import { BadgeCheck, Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, SquareCheck, SquareTerminal, Undo2, X } from 'lucide-react';
 import { useMemo, useState, type ReactNode, type SubmitEvent } from 'react';
 import { plannerErrorText, type BoardRequest, type Card, type Evidence, type Rejection, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
+import { plansToApprove, type PlanToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { dateTime, relTime, timeAgo } from '../common';
 import { Button } from '../ui/button';
@@ -9,6 +10,7 @@ import { Chip } from '../ui/chip';
 import { Collapse } from '../ui/collapse';
 import { Input } from '../ui/input';
 import { usePlannerTasks, useShownBoard } from './context';
+import { ApproveDialog, type ApproveAsk } from './dialogs';
 import { TaskChip } from './parts';
 
 export const REQUEST_LABEL: Record<RequestKind, string> = { done: 'Done', cancel: 'Cancel', blocked: 'Blocked', split: 'Split', change: 'Change' };
@@ -302,12 +304,51 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
 }
 
 /**
- * The Inbox (§10): the shown Board's pending requests, oldest first. A rejection the Task did
- * not hear stays in its place, offering Release, while the Task still holds the subtask.
+ * Plans to approve (ADR 0006 §6.1): the shown Board's proposed epics, and approved epics with
+ * proposals added since, each with Approve. Nothing under them runs before the owner approves.
+ */
+function PlansToApprove({ plans }: Readonly<{ plans: PlanToApprove[] }>) {
+  const { openCard } = useShownBoard();
+  const [approving, setApproving] = useState<ApproveAsk | null>(null);
+  return (
+    <section aria-label="Plans to approve" className="flex flex-col gap-2">
+      <h3 className="text-caption font-medium text-muted">Plans to approve</h3>
+      <ul className="flex flex-col gap-2">
+        {plans.map(({ epic, proposals }) => (
+          <li key={epic.id} className="flex flex-col gap-1.5 rounded-md bg-raised px-3 py-2.5 shadow-raised">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Chip tone="attention">
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-attention" />
+                {epic.run ? `${proposals} to approve` : 'New plan'}
+              </Chip>
+              <button type="button" className="min-w-0 truncate text-left text-ui font-medium text-ink hover:underline focus-visible:outline-offset-0" onClick={() => openCard(epic.id)}>
+                #{epic.seq} {epic.title}
+              </button>
+            </div>
+            <p className="text-caption text-muted">{epic.run ? `Approved before; ${proposals === 1 ? 'a proposal was' : `${proposals} proposals were`} added since and wait for you.` : `A proposed epic with ${proposals} ${proposals === 1 ? 'card' : 'cards'}. Nothing in it runs before you approve it.`}</p>
+            <div className="flex justify-end">
+              <Button size="sm" variant="primary" onClick={() => setApproving({ epic })}>
+                <BadgeCheck />
+                Approve…
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <ApproveDialog ask={approving} onClose={() => setApproving(null)} />
+    </section>
+  );
+}
+
+/**
+ * The Inbox (§10): the plans waiting for approval, then the shown Board's pending requests,
+ * oldest first. A rejection the Task did not hear stays in its place, offering Release, while the
+ * Task still holds the subtask.
  */
 export function InboxList() {
   const { board, cards } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+  const plans = useMemo(() => plansToApprove(cards), [cards]);
   const [unheard, setUnheard] = useState<Rejection[]>([]);
   const requests = useMemo(() => {
     const pending = board?.data?.requests ?? [];
@@ -315,20 +356,25 @@ export function InboxList() {
     return [...pending, ...kept].sort((a, b) => a.created_at.localeCompare(b.created_at));
   }, [board?.data?.requests, unheard, byId]);
   const drop = (id: string) => setUnheard((list) => list.filter((x) => x.id !== id));
-  if (!requests.length) return <p className="px-1 py-4 text-ui text-muted">Nothing to decide.</p>;
+  if (!requests.length && !plans.length) return <p className="px-1 py-4 text-ui text-muted">Nothing to decide.</p>;
   return (
-    <ul className="flex flex-col gap-2" aria-label="Pending requests">
-      {requests.map((r) => (
-        <li key={r.id}>
-          <RequestItem
-            request={r}
-            byId={byId}
-            unheard={r.status === 'rejected'}
-            onUnheard={(x) => setUnheard((list) => [...list.filter((y) => y.id !== x.id), x])}
-            onDismiss={() => drop(r.id)}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-4">
+      {plans.length > 0 && <PlansToApprove plans={plans} />}
+      {requests.length > 0 && (
+        <ul className="flex flex-col gap-2" aria-label="Pending requests">
+          {requests.map((r) => (
+            <li key={r.id}>
+              <RequestItem
+                request={r}
+                byId={byId}
+                unheard={r.status === 'rejected'}
+                onUnheard={(x) => setUnheard((list) => [...list.filter((y) => y.id !== x.id), x])}
+                onDismiss={() => drop(r.id)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

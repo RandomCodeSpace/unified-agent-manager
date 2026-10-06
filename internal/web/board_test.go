@@ -423,6 +423,95 @@ func TestPlannerCardRoutes(t *testing.T) {
 	f.refused(http.MethodGet, "/api/board?project_id=gone", "", http.StatusNotFound, string(board.CodeNotFound))
 }
 
+// approveBody is an Approve dialog's post: the cards it showed, at their
+// revisions now, and the run's settings.
+func (f *plannerFixture) approveBody(model string, refs ...string) string {
+	f.t.Helper()
+	items := make([]string, len(refs))
+	for i, ref := range refs {
+		c := f.card(ref).Card
+		items[i] = fmt.Sprintf(`{"id":%q,"revision":%d}`, c.ID, c.Revision)
+	}
+	return fmt.Sprintf(`{"items":[%s],"provider":"fake","model":%q,"effort":"","context_size":"","mode":"safe","parallel":2}`, strings.Join(items, ","), model)
+}
+
+// The owner approves an epic once (ADR 0006 §6.2): the run needs a model
+// the provider offers and Settings shows; a card changed since the dialog
+// showed it answers stale; an empty story is named. Under the approved epic
+// nothing is confirmed or started by hand, and the owner may pause a card.
+func TestApproveRoute(t *testing.T) {
+	f := newPlanner(t)
+	f.m.mu.Lock()
+	info := f.m.infos["fake"]
+	info.Models = []agentapi.Model{{ID: "luna", Name: "Luna"}, {ID: "hidden", Name: "Hidden"}}
+	f.m.infos["fake"] = info
+	f.m.mu.Unlock()
+	if _, err := f.m.UpdateSettings(SettingsPatch{HiddenModels: map[string][]string{"fake": {"hidden"}}}); err != nil {
+		t.Fatal(err)
+	}
+	f.call(http.MethodPatch, "/api/board/projects/"+f.project, `{"accept_cmd":"go test ./..."}`, http.StatusOK, nil)
+	epic := f.create(board.KindEpic, "", "Epic")
+	story := f.create(board.KindStory, epic.ID, "Story")
+	leaf := f.create(board.KindSubtask, story.ID, "Leaf")
+	other := f.create(board.KindSubtask, story.ID, "Other")
+	approve := "/api/board/cards/" + epic.ID + "/approve"
+
+	for _, model := range []string{"", "nope", "hidden"} {
+		f.refused(http.MethodPost, approve, f.approveBody(model, epic.ID), http.StatusBadRequest, string(board.CodeInvalid))
+	}
+	f.refused(http.MethodPost, approve, strings.Replace(f.approveBody("luna", epic.ID), `"parallel":2`, `"parallel":9`, 1), http.StatusBadRequest, string(board.CodeInvalid))
+	f.refused(http.MethodPost, approve, strings.Replace(f.approveBody("luna", epic.ID), `"provider":"fake"`, `"provider":"elsewhere"`, 1), http.StatusBadRequest, string(board.CodeInvalid))
+
+	shown := f.approveBody("luna", epic.ID, story.ID, leaf.ID)
+	f.call(http.MethodPatch, "/api/board/cards/"+leaf.ID, `{"title":"Leaf, renamed"}`, http.StatusOK, nil)
+	reply := f.refused(http.MethodPost, approve, shown, http.StatusConflict, string(board.CodeStale))
+	if string(reply["refs"]) != fmt.Sprintf(`["#%d","#%d","#%d"]`, epic.Seq, story.Seq, leaf.Seq) {
+		t.Fatalf("stale refs = %s", reply["refs"])
+	}
+
+	empty := f.create(board.KindStory, epic.ID, "Empty")
+	reply = f.refused(http.MethodPost, approve, f.approveBody("luna", epic.ID), http.StatusConflict, string(board.CodeInvalid))
+	if string(reply["refs"]) != fmt.Sprintf(`["#%d"]`, empty.Seq) {
+		t.Fatalf("empty refs = %s", reply["refs"])
+	}
+	f.call(http.MethodPost, "/api/board/cards/"+empty.ID+"/status", `{"status":"cancelled","comment":"not needed"}`, http.StatusOK, nil)
+
+	var got BoardCard
+	f.call(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID), http.StatusOK, &got)
+	if got.ID != epic.ID || got.Run == nil || got.Run.Provider != "fake" || got.Run.Model != "luna" || got.Run.Mode != "safe" ||
+		got.Run.Parallel != 2 || got.Run.ContextSize != "default" || got.Run.ApprovedAt.IsZero() || got.Paused != "" {
+		t.Fatalf("approved = %+v, run %+v", got, got.Run)
+	}
+	if w := f.do(http.MethodGet, "/api/board/cards/"+leaf.ID, ""); !strings.Contains(w.Body.String(), `"paused":""`) || strings.Contains(w.Body.String(), `"run":`) {
+		t.Fatalf("a subtask's JSON = %s", w.Body)
+	}
+
+	for _, route := range []struct{ path, body string }{
+		{"/api/board/cards/" + other.ID + "/confirm", ``},
+		{"/api/board/cards/" + leaf.ID + "/launch", `{"provider":"fake","model":"luna"}`},
+		{"/api/board/cards/" + leaf.ID + "/launch", `{"provider":"fake","model":"luna","confirm":true}`},
+		{"/api/board/cards/" + story.ID + "/launch", `{}`},
+	} {
+		f.refused(http.MethodPost, route.path, route.body, http.StatusConflict, string(board.CodeRunOwned))
+	}
+	task := f.newTask(f.project)
+	f.refused(http.MethodPost, "/api/board/cards/"+leaf.ID+"/attach", fmt.Sprintf(`{"task_id":%q}`, task.ID), http.StatusConflict, string(board.CodeRunOwned))
+	if n := len(f.ts.prov.Conversations()); n != 1 {
+		t.Fatalf("refused launches opened %d conversations", n)
+	}
+
+	f.call(http.MethodPatch, "/api/board/cards/"+story.ID, `{"paused":true}`, http.StatusOK, &got)
+	if got.Paused != board.PausedOwner {
+		t.Fatalf("paused = %+v", got)
+	}
+	f.call(http.MethodPatch, "/api/board/cards/"+story.ID, `{"paused":false}`, http.StatusOK, &got)
+	if got.Paused != "" {
+		t.Fatalf("resumed = %+v", got)
+	}
+	plain := f.create(board.KindEpic, "", "Plain")
+	f.refused(http.MethodPatch, "/api/board/cards/"+plain.ID, `{"paused":true}`, http.StatusBadRequest, string(board.CodeInvalid))
+}
+
 func TestPlannerProjectSettings(t *testing.T) {
 	f := newPlanner(t)
 	var p BoardProject
@@ -571,7 +660,8 @@ func TestPlannerPlanScopesATaskToTheContainer(t *testing.T) {
 	}
 	got := f.conversation(reply.Session.ID).Sends()[0]
 	for _, part := range []string{"You are planning the work under a card", "Epic: #1 Epic\nPath: #1\n", "Brief:\nSplit the epic into stories.\n",
-		"- Create and edit stories and subtasks under #1.", "- Plan only: hold no subtask"} {
+		"- Create and edit stories and subtasks under #1.", "- Plan only: hold no subtask",
+		"- When the plan is complete, ask the owner to approve #1 in the Planner and end your turn; nothing runs before that."} {
 		if !strings.Contains(got, part) {
 			t.Fatalf("plan preamble %q lacks %q", got, part)
 		}

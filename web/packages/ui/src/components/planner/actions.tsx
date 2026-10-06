@@ -1,13 +1,13 @@
 import { useApi } from '../../ApiContext';
-import { Ban, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
+import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { cardPath, isStarted, linkedReason, pendingUnder, startedUnderReason } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, linkedReason, pendingUnder, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
 import { useShownBoard } from './context';
-import { BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
+import { ApproveDialog, BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
 
 export interface TriageResult {
   verdict: TriageVerdict;
@@ -25,6 +25,8 @@ export interface CardAction {
   danger?: boolean;
   /** Why the service refuses it now: shown off, with this reason. */
   reason?: string;
+  /** What it does, where a button has room to say (its tooltip). */
+  title?: string;
 }
 
 /**
@@ -45,6 +47,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   const [reason, setReason] = useState<ReasonAsk | null>(null);
   const [brief, setBrief] = useState<BriefAsk | null>(null);
   const [launching, setLaunching] = useState<LaunchAsk | null>(null);
+  const [approving, setApproving] = useState<ApproveAsk | null>(null);
 
   async function run<T>(card: string, key: string, verb: string, op: () => Promise<T>): Promise<T | undefined> {
     setBusy({ card, key });
@@ -63,10 +66,15 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     setDialog(d);
   };
 
-  /** A card's actions as it stands (§10); none for an Unassigned card, which only moves into a Project. */
+  /**
+   * A card's actions as it stands (§10); none for an Unassigned card, which only moves into a
+   * Project. Under an approved epic (ADR 0006 §8) the approval owns starting and confirming work:
+   * Confirm, Launch and Do whole story give way to Pause and Resume.
+   */
   function actionsOf(c: Card): CardAction[] {
     if (!c.project_id) return [];
     const leaf = c.kind === 'subtask';
+    const approved = approvedEpicOf(c, byId);
     const launched = (res: { card: Card; session: { id: string } }) => notify({ tone: 'muted', text: `Launched #${res.card.seq} ${res.card.title} in a new task.`, task: res.session.id });
     // The launch dialog picks the new Task's model and mode and takes a brief. Work starts only on
     // confirmed cards (§5): a suggestion, or a subtask under one, is launched through the confirm
@@ -85,10 +93,18 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       setLaunching({ card: c, whole, confirms, waits, run: (body) => api.planner.launch(c.id, confirms.length ? { ...body, confirm: true } : body).then(launched) });
     };
     const actions: CardAction[] = [];
-    if (!c.confirmed) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
-    if (leaf && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => launch(false) });
+    if (c.kind === 'epic' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'approve', label: 'Approve…', icon: <BadgeCheck />, onClick: () => setApproving({ epic: c }) });
+    if (approved && c.status !== 'done' && c.status !== 'cancelled') {
+      actions.push(
+        c.paused
+          ? { key: 'pause', label: 'Resume', icon: <Play />, title: 'Let uam start this and what is under it again.', onClick: () => void run(c.id, 'pause', 'resume the card', () => api.planner.pause(c.id, false)) }
+          : { key: 'pause', label: 'Pause', icon: <Pause />, title: "Block execution: uam won't start this or anything under it.", onClick: () => void run(c.id, 'pause', 'pause the card', () => api.planner.pause(c.id, true)) },
+      );
+    }
+    if (!c.confirmed && !approved) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
+    if (leaf && !approved && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => launch(false) });
     // A story's launch starts one of its confirmed subtasks waiting to start; with none, the service refuses it.
-    if (c.kind === 'story' && c.status !== 'done' && c.status !== 'cancelled') {
+    if (c.kind === 'story' && !approved && c.status !== 'done' && c.status !== 'cancelled') {
       const reason = pendingUnder(c, byId).length ? undefined : 'No confirmed subtask is waiting to start: confirm or add one first.';
       actions.push({ key: 'launch', label: 'Do whole story', icon: <Play />, reason, onClick: () => launch(true) });
     }
@@ -126,7 +142,11 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
         onClick: () => setReason({ title: `Cancel #${c.seq}?`, description: leaf ? 'The subtask is cancelled; its hold and pending requests end. Restore brings it back.' : 'Every open subtask under it is cancelled with this comment. Restore brings back exactly these.', label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, run: (t) => api.planner.status(c.id, 'cancelled', t) }),
       });
     }
-    if (c.status === 'cancelled') actions.push({ key: 'restore', label: 'Restore', icon: <RotateCcw />, onClick: () => setReason({ title: `Restore #${c.seq}?`, description: 'The card and everything its cancel took with it reopen, confirmed.', label: 'Why (required)', confirm: 'Restore', required: true, run: (t) => api.planner.restore(c.id, t) }) });
+    if (c.status === 'cancelled') {
+      // Under an approved epic a restored card is a proposal again, until the epic is approved again.
+      const description = approved && approved !== c ? `The card and everything its cancel took with it reopen as proposals: approve #${approved.seq} again to confirm them.` : 'The card and everything its cancel took with it reopen, confirmed.';
+      actions.push({ key: 'restore', label: 'Restore', icon: <RotateCcw />, onClick: () => setReason({ title: `Restore #${c.seq}?`, description, label: 'Why (required)', confirm: 'Restore', required: true, run: (t) => api.planner.restore(c.id, t) }) });
+    }
     return actions;
   }
 
@@ -155,6 +175,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       <ReasonDialog ask={reason} onClose={() => setReason(null)} />
       <BriefDialog ask={brief} onClose={() => setBrief(null)} />
       <LaunchDialog ask={launching} onClose={() => setLaunching(null)} />
+      <ApproveDialog ask={approving} onClose={() => setApproving(null)} />
       {shown && (
         <>
           <DoneDialog card={shown} byId={byId} open={dialog === 'done'} onClose={() => setDialog(null)} />
