@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 )
@@ -727,12 +729,8 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message
 		}
 		mergeErr = newError(http.StatusConflict, "git merge in %s did not make a merge of %s and %s", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip))
 	}
-	if started, err := r.mergeHead(ctx, gitAt{dir: dir}); err != nil {
+	if err := r.abortOwnMergeIn(ctx, dir, tip, message); err != nil {
 		return "", err
-	} else if started {
-		if _, err := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--abort"); err != nil {
-			return "", gitFailed("git merge --abort failed", err)
-		}
 	}
 	var gerr *gitError
 	if errors.As(mergeErr, &gerr) && containsAny(gerr.output, "would be overwritten by merge") {
@@ -741,6 +739,60 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message
 		return "", e
 	}
 	return "", gitFailed("git merge failed", mergeErr)
+}
+
+// abortOwnMergeIn aborts the merge in progress in the worktree at dir when
+// it is uam's: of tip alone, with uam's message. Any other merge there, the
+// owner's own merge of the integration branch included, is left as it is
+// and refused local_changes, to retry once the owner finished it.
+func (r *laneRepo) abortOwnMergeIn(ctx context.Context, dir, tip, message string) error {
+	paths, err := r.gitPaths(ctx, gitAt{dir: dir}, "MERGE_HEAD", "MERGE_MSG")
+	if err != nil {
+		return err
+	}
+	head, err := readGitFile(paths[0])
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	msg, err := readGitFile(paths[1])
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	rest, own := strings.CutPrefix(msg, strings.TrimSpace(message))
+	if strings.TrimSpace(head) == tip && own && (rest == "" || rest[0] == '\n') {
+		if _, err := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--abort"); err != nil {
+			return gitFailed("git merge --abort failed", err)
+		}
+		return nil
+	}
+	return &Error{Status: http.StatusConflict, Code: codeLocalChanges,
+		Message: fmt.Sprintf("a merge uam did not start is in progress in %s; uam left it as it is: finish or abort it", displaytext.Sanitize(dir))}
+}
+
+// maxGitFile is the most uam reads of a file git keeps in its directory.
+const maxGitFile = 64 << 10
+
+// readGitFile reads a file git keeps in its directory, such as MERGE_MSG:
+// a regular file, opened without following a symbolic link or waiting on a
+// FIFO, of which it reads at most maxGitFile bytes.
+func readGitFile(path string) (string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- a path git names inside its own directory.
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", filepath.Base(path))
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxGitFile))
+	return string(b), err
 }
 
 // onBase refuses git_busy, to retry later, unless the worktree at dir is

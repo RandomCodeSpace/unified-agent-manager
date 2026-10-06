@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -873,6 +874,73 @@ func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
 	})
 	if gitOutput(t, other, "for-each-ref") != otherRefs {
 		t.Fatal("the merge moved a branch of the other repository")
+	}
+}
+
+// After its merge in the owner's checkout fails, uam aborts only its own
+// merge: of the integration tip, with uam's message. Any other merge in
+// progress there, the owner's own merge of the integration branch
+// included, is left as it is and reported.
+func TestMergeAbortsOnlyItsOwnMerge(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	tip := f.land(l, 1)
+	gitIn(t, f.top, "switch", "-q", "-c", "side")
+	commitFile(t, f.top, "c.txt", "side\n")
+	gitIn(t, f.top, "switch", "-q", "main")
+	merging := func() string {
+		t.Helper()
+		if err := gitTry(t, f.top, "rev-parse", "-q", "--verify", "MERGE_HEAD"); err != nil {
+			return ""
+		}
+		return gitOutput(t, f.top, "rev-parse", "MERGE_HEAD")
+	}
+
+	for _, tc := range []struct{ name, branch, message string }{
+		{"the owner's merge of another branch", "side", "Merge plan"},
+		{"the owner's merge of the integration branch", f.r.integ, ""},
+		{"a merge of the tip with another message", tip, "Merge side work"},
+	} {
+		args := []string{"merge", "-q", "--no-commit", "--no-ff", tc.branch}
+		if tc.message != "" {
+			args = append(args, "-m", tc.message)
+		}
+		gitIn(t, f.top, args...)
+		before := merging()
+		err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan")
+		if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, realPath(f.top)) && !strings.Contains(e.Message, f.top) {
+			t.Fatalf("%s: refusal = %q", tc.name, e.Message)
+		}
+		if before == "" || merging() != before {
+			t.Fatalf("%s: uam aborted a merge it did not start", tc.name)
+		}
+		gitIn(t, f.top, "merge", "--abort")
+	}
+
+	// uam's own merge, here stopped before its commit, is aborted.
+	gitIn(t, f.top, "merge", "-q", "--no-commit", "--no-ff", "-m", "Merge plan", tip)
+	if err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan"); err != nil {
+		t.Fatal(err)
+	}
+	if merging() != "" || gitOutput(t, f.top, "status", "--porcelain") != "" {
+		t.Fatal("uam left its own merge in progress")
+	}
+	if err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan"); err != nil {
+		t.Fatalf("no merge in progress: %v", err)
+	}
+
+	// A MERGE_MSG that is no regular file is not read, and nothing aborts.
+	gitIn(t, f.top, "merge", "-q", "--no-commit", "--no-ff", "-m", "Merge plan", tip)
+	msg := filepath.Join(f.top, ".git", "MERGE_MSG")
+	if err := os.Remove(msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(msg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan"); err == nil || merging() != tip {
+		t.Fatalf("abortOwnMergeIn = %v with a FIFO for MERGE_MSG; merge in progress %q", err, merging())
 	}
 }
 
