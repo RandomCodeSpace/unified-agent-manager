@@ -416,12 +416,14 @@ func (m *Manager) applyStep(ctx context.Context, now time.Time, facts board.RunF
 	}
 }
 
-// epicsOn lists the approved epics that run on provider.
+// epicsOn lists the approved epics that run on provider: those not paused,
+// done or cancelled.
 func epicsOn(facts board.RunFacts, provider string) []board.Card {
 	var out []board.Card
 	for _, e := range facts.Epics {
-		if e.Epic.Run != nil && e.Epic.Run.Provider == provider {
-			out = append(out, e.Epic)
+		c := e.Epic
+		if c.Run != nil && c.Run.Provider == provider && c.Paused == "" && c.Status != board.StatusDone && c.Status != board.StatusCancelled {
+			out = append(out, c)
 		}
 	}
 	return out

@@ -603,3 +603,29 @@ func TestExecutorKeepsALandingIntentsRetryTime(t *testing.T) {
 		t.Fatalf("retry = %v, tries %d", mem.LandRetry["r1"], m.exec.landTries["r1"])
 	}
 }
+
+// A provider failure notes only the epics it holds back (ADR 0006 §4.5):
+// one paused, done or cancelled runs nothing more on the provider.
+func TestEpicsOnListsTheEpicsThatRunOnTheProvider(t *testing.T) {
+	run := func(provider string) *board.Run {
+		return &board.Run{RunSettings: board.RunSettings{Provider: provider}}
+	}
+	epic := func(id, provider string, status board.Status, paused string) board.EpicFacts {
+		return board.EpicFacts{Epic: board.Card{ID: id, Kind: board.KindEpic, Status: status, Paused: paused, Run: run(provider)}}
+	}
+	facts := board.RunFacts{Epics: []board.EpicFacts{
+		epic("doing", "copilot", board.StatusDoing, ""),
+		epic("todo", "copilot", board.StatusTodo, ""),
+		epic("paused", "copilot", board.StatusDoing, board.PausedOwner),
+		epic("done", "copilot", board.StatusDone, ""),
+		epic("cancelled", "copilot", board.StatusCancelled, ""),
+		epic("other", "other", board.StatusDoing, ""),
+	}}
+	var ids []string
+	for _, e := range epicsOn(facts, "copilot") {
+		ids = append(ids, e.ID)
+	}
+	if !slices.Equal(ids, []string{"doing", "todo"}) {
+		t.Fatalf("epics on copilot = %v, want doing and todo", ids)
+	}
+}
