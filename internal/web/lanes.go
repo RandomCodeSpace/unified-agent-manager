@@ -877,8 +877,10 @@ func (r *laneRepo) abortOwnMergeIn(ctx context.Context, dir, tip, message string
 const maxGitFile = 64 << 10
 
 // readGitFile reads a file git keeps in its directory, such as MERGE_MSG:
-// a regular file, opened without following a symbolic link or waiting on a
-// FIFO, of which it reads at most maxGitFile bytes.
+// a regular file, opened without waiting on a FIFO, of which it reads at
+// most maxGitFile bytes. It follows no symbolic link at path itself, but
+// git names the files uam reads by their real paths (gitPaths), so a link
+// there is read as its target, which must be a regular file too.
 func readGitFile(path string) (string, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 G703 -- a path git names inside its own directory.
 	if err != nil {
