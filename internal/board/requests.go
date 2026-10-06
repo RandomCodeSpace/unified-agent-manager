@@ -954,8 +954,9 @@ func (s *Store) AcceptLanded(ctx context.Context, id, sha, integ string, by Deci
 // LandFailed rejects the pending lane done request id, which cannot land,
 // with reason as uam's decision, and says so on the card (ADR 0006 §4.5).
 // While its Task is live the attempt stays held for it to try again;
-// otherwise the hold is released as rejected, which pauses the subtask. A
-// stored landing intent is cleared first (ClearLanding).
+// otherwise the hold is released as rejected, which pauses the subtask. It
+// refuses with landing while a landing intent is stored: the caller clears
+// it first (ClearLanding).
 func (s *Store) LandFailed(ctx context.Context, id, reason string, holderActive bool) (Request, error) {
 	body, err := checkComment(reason)
 	if err != nil {
