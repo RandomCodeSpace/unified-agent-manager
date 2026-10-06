@@ -143,7 +143,8 @@ Planner on and the Project is a git repository.
   into or out of an approved epic becomes a change request for the owner.
   Keep a confirmed subtask in every confirmed story and epic there: a write
   that leaves one with none is refused. `board_get` shows the approval and
-  any pause; nothing at or under a paused card starts.
+  any pause; nothing at or under a paused card starts, and moving a card
+  out from under one becomes a change request too.
 - **Planning**: until a subtask starts (held, doing or done) you plan it
   directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
   `board_link`, `board_unlink`, `board_split` and `board_delete`. A started

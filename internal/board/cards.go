@@ -65,11 +65,13 @@ func (p Patch) ownerOnly() bool {
 
 // EditResult is an edit's outcome: the card, and the change request filed
 // instead when an agent's edit needs the owner. AcrossRun says it was filed
-// because the move changes the card's epic while one of them is approved.
+// because the move changes the card's epic while one of them is approved,
+// OutOfPause because the move takes the card out from under a pause.
 type EditResult struct {
-	Card      Card
-	Request   *Request
-	AcrossRun bool
+	Card       Card
+	Request    *Request
+	AcrossRun  bool
+	OutOfPause bool
 }
 
 // ChecklistEdit ticks, unticks and appends checklist items; indexes are
@@ -294,8 +296,8 @@ func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditRes
 			if target != project {
 				return t.moveIn(a, project, id, target, p)
 			}
-			req, across, err := t.edit(a, project, id, p)
-			out.Request, out.AcrossRun = req, across
+			var err error
+			out, err = t.edit(a, project, id, p)
 			return err
 		})
 		if err != nil {
@@ -308,30 +310,32 @@ func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditRes
 	return out, err
 }
 
-func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, bool, error) {
+// edit applies p to the card id as Edit does, or files it as a change
+// request; the result carries no card.
+func (t *txn) edit(a Actor, project, id string, p Patch) (EditResult, error) {
 	o, n, err := t.cardIn(project, id)
 	if err != nil {
-		return nil, false, err
+		return EditResult{}, err
 	}
 	if n.stored == StatusCancelled {
-		return nil, false, invalid("%s is cancelled; restore it first", n.ref())
+		return EditResult{}, invalid("%s is cancelled; restore it first", n.ref())
 	}
 	if err := t.inScope(o, a, n); err != nil {
-		return nil, false, err
+		return EditResult{}, err
 	}
 	if !a.owner() && a.Proposals && n.Confirmed() {
-		return nil, false, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
+		return EditResult{}, refuse(CodeForbidden, "%s is confirmed; this agent edits only proposals", n.ref())
 	}
 	locked := n.started() && p.planning(n)
 	if locked && a.owner() {
-		return nil, false, inProgress(n)
+		return EditResult{}, inProgress(n)
 	}
 	if err := permit(a, opEdit, ""); err != nil {
-		return nil, false, err
+		return EditResult{}, err
 	}
 	plan, err := t.planEdit(o, a, n, p)
 	if err != nil {
-		return nil, false, err
+		return EditResult{}, err
 	}
 	// An agent never puts a confirmed card under a proposal, which the owner
 	// could dismiss with it: the owner decides that move, and accepting it
@@ -343,14 +347,16 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (*Request, bool, error)
 	// run, or stop running, under settings the owner did not approve for it
 	// (ADR 0006 §6.3 rule 5).
 	across := !a.owner() && plan.moving && o.crossesRun(n, plan.parent)
-	if locked || across {
+	// Nor out from under a pause, which only the owner lifts.
+	unpaused := !a.owner() && plan.moving && !across && o.leavesPause(n, plan.parent)
+	if locked || across || unpaused {
 		if err := permit(a, opChange, ""); err != nil {
-			return nil, false, err
+			return EditResult{}, err
 		}
 		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
-		return &req, across && !n.started(), err
+		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started()}, err
 	}
-	return nil, false, t.applyEdit(o, a, n, p, plan)
+	return EditResult{}, t.applyEdit(o, a, n, p, plan)
 }
 
 // editPlan is a validated edit: the card after it and where it will sit.

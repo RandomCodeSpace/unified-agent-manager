@@ -1331,8 +1331,8 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 // The hand-off and an approved epic as the tools see it (ADR 0006 §6.1,
 // §6.4): board_create on an epic asks for the approval; under the approved
 // epic a new card waits for the next one, board_get names the approval and
-// a pause on the path, nothing is claimed, and a move out of the epic goes
-// to the owner.
+// a pause on the path, nothing is claimed, and a move out of the epic or
+// out from under a pause goes to the owner.
 func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
 	f := newPlanner(t)
 	f.setAcceptCmd("go test ./...")
@@ -1376,6 +1376,13 @@ func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
 		t.Fatalf("move out of the approved epic = %q, want %q", r.Text, want)
 	}
 	if c := f.card(sibling.ID).Card; *c.ParentID != story.ID {
+		t.Fatalf("the move applied: %+v", c)
+	}
+	r = f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, leaf.ID, epic.ID))
+	if want := fmt.Sprintf("Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", leaf.Seq); r.Text != want {
+		t.Fatalf("move out from under the pause = %q, want %q", r.Text, want)
+	}
+	if c := f.card(leaf.ID).Card; *c.ParentID != story.ID {
 		t.Fatalf("the move applied: %+v", c)
 	}
 }

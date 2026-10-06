@@ -502,3 +502,35 @@ func TestPurgeDropsRun(t *testing.T) {
 		t.Fatalf("%d runs left after the purge", runs)
 	}
 }
+
+// An agent's move never takes a card out from under a pause: leaving a
+// place with a paused card at or above it for one with none goes to the
+// owner as a change request. A move under a pause applies, and so does one
+// that keeps the card's own pause.
+func TestAgentMoveOutOfPausedIsAChangeRequest(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	d := f.create(planner, p.two.ID, KindSubtask, "Fold")
+	f.approve(p.epic.ID, append(p.ids(), d.ID)...)
+	_, err := f.s.Edit(f.ctx, owner, p.one.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+
+	for name, to := range map[string]Card{"to a story not paused": p.two, "to the epic": p.epic} {
+		res, err := f.s.Edit(f.ctx, planner, p.a.ID, Patch{ParentID: &to.ID})
+		f.must(err)
+		if res.Request == nil || res.Request.Kind != RequestChange || !res.OutOfPause || res.AcrossRun || res.Card.ParentID != p.one.ID {
+			t.Fatalf("%s: %+v", name, res)
+		}
+	}
+	if res, err := f.s.Edit(f.ctx, planner, d.ID, Patch{ParentID: &p.one.ID}); err != nil || res.Request != nil || res.Card.ParentID != p.one.ID {
+		t.Fatalf("a move under the pause = %+v, %v", res, err)
+	}
+	_, err = f.s.Edit(f.ctx, owner, p.b.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+	res, err := f.s.Edit(f.ctx, planner, p.b.ID, Patch{ParentID: &p.two.ID})
+	if err != nil || res.Request != nil || res.Card.ParentID != p.two.ID || res.Card.Paused != PausedOwner {
+		t.Fatalf("a move keeping its own pause = %+v, %v", res, err)
+	}
+}

@@ -290,6 +290,28 @@ func (o *outline) crossesRun(n *node, parent string) bool {
 	return from != to && ((from != nil && from.Run != nil) || (to != nil && to.Run != nil))
 }
 
+// pausedAt returns the nearest paused card at or above n, n itself first;
+// nil when nothing on its path is paused.
+func (o *outline) pausedAt(n *node) *node {
+	for m := n; m != nil; m = o.byID[m.ParentID] {
+		if m.Paused != "" {
+			return m
+		}
+	}
+	return nil
+}
+
+// leavesPause reports whether moving n under parent ("" for the root) takes
+// it out from under a pause: a paused card is at or above it now, and none
+// would be after the move, its own pause included.
+func (o *outline) leavesPause(n *node, parent string) bool {
+	if n.Paused != "" || o.pausedAt(n) == nil {
+		return false
+	}
+	p := o.byID[parent]
+	return p == nil || o.pausedAt(p) == nil
+}
+
 // staffed is the number of live confirmed subtasks under the container n.
 func staffed(n *node) int {
 	count := 0
