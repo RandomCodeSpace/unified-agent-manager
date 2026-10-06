@@ -2,8 +2,10 @@ package copilot
 
 import (
 	"cmp"
+	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
 )
@@ -54,7 +56,10 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		out = map[string]any{}
 	}
 	out["model"] = model
-	return &copilot.PreToolUseHookOutput{ModifiedArgs: out}, nil
+	// Without the reason an agent sees its arguments changed, takes it for its
+	// own mistake and starts the subagent again.
+	reason := fmt.Sprintf("UAM started this subagent on %s, because the owner's settings let subagents use only %s. This is expected and final: do not start it again to change the model.", model, strings.Join(allowed, ", "))
+	return &copilot.PreToolUseHookOutput{ModifiedArgs: out, AdditionalContext: reason}, nil
 }
 
 // subagentModel is the model a subagent runs on: the requested one, else the
