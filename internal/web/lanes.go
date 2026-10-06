@@ -1,0 +1,735 @@
+package web
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+)
+
+// Lanes (ADR 0006): each run attempt works in its own git worktree, on its
+// own branch, outside the Project directory, and lands on the Project's
+// integration branch as one squash commit whose trailers name the card and
+// the request. uam moves its branches only by compare-and-swap, and never
+// backwards. Callers hold the Project's land mutex, and record an intent in
+// the store before a ref moves.
+const (
+	lanesDir    = "lanes"
+	integPrefix = "uam/plan-"
+
+	// The trailers uam writes: a landing names its card and request, a
+	// revert its card, and uam's merge of the integration tip into a lane
+	// the tip it merged.
+	trailerCard    = "Uam-Card"
+	trailerRequest = "Uam-Request"
+	trailerRevert  = "Uam-Revert"
+	trailerMerge   = "Uam-Merge"
+
+	codeLandConflict   = "land_conflict"
+	codeLandStale      = "land_stale"
+	codeMergeConflict  = "merge_conflict"
+	codeRevertConflict = "revert_conflict"
+	codeLocalChanges   = "local_changes"
+	codeGitTooOld      = "git_too_old"
+	codeNoGitIdentity  = "no_git_identity"
+
+	// maxNamedFiles is how many paths a refusal names.
+	maxNamedFiles = 10
+)
+
+var (
+	// attemptPart is an attempt branch's part after the integration branch:
+	// <seq>-<id8>.
+	attemptPart = regexp.MustCompile(`^[0-9]+-[0-9a-f]{8}$`)
+	cardTrailer = regexp.MustCompile(`^#[0-9]+$`)
+)
+
+// lane is one attempt: its branch and its worktree.
+type lane struct {
+	branch string
+	dir    string
+}
+
+// laneRepo is a Project's repository and its integration branch.
+type laneRepo struct {
+	*gitRepo
+	integ string
+}
+
+// lanesRoot is where lane worktrees live: next to sessions.json, never in a
+// Project directory, so lane Tasks never count as busy in the owner's
+// repository.
+func (m *Manager) lanesRoot() string {
+	return filepath.Join(filepath.Dir(m.store.Path()), lanesDir)
+}
+
+// integBranch is the Project's integration branch.
+func integBranch(projectID string) string { return integPrefix + hex8(projectID) }
+
+// hex8 is the first 8 hex digits of a UUID.
+func hex8(id string) string {
+	id = strings.ReplaceAll(id, "-", "")
+	return id[:min(len(id), 8)]
+}
+
+// newLane names a new attempt at subtask #seq: a branch beside the
+// integration branch with a random part, so no name is ever reused.
+func newLane(root, projectID string, seq int64) (lane, error) {
+	id, err := newUUID()
+	if err != nil {
+		return lane{}, err
+	}
+	return laneOf(root, projectID, fmt.Sprintf("%s-%d-%s", integBranch(projectID), seq, hex8(id)))
+}
+
+// laneOf is the attempt on branch, with its worktree derived from the name:
+// <root>/<project id>/<seq>-<id8>.
+func laneOf(root, projectID, branch string) (lane, error) {
+	part, ok := strings.CutPrefix(branch, integBranch(projectID)+"-")
+	if !ok || !attemptPart.MatchString(part) {
+		return lane{}, fmt.Errorf("%q is not an attempt branch of project %s", branch, projectID)
+	}
+	return lane{branch: branch, dir: filepath.Join(root, projectID, part)}, nil
+}
+
+// laneWorkdir is where an attempt's Task works: the worktree plus the
+// Project's place in the repository whose top is top.
+func laneWorkdir(l lane, top, projectDir string) (string, error) {
+	rel, err := filepath.Rel(realPath(top), realPath(projectDir))
+	if err != nil || !filepath.IsLocal(rel) {
+		return "", fmt.Errorf("%s is not in the repository at %s", projectDir, top)
+	}
+	return filepath.Join(l.dir, rel), nil
+}
+
+// openLanes opens the repository holding the Project directory dir.
+func openLanes(ctx context.Context, projectID, dir string) (*laneRepo, error) {
+	repo, err := openEvidenceRepo(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	return &laneRepo{gitRepo: repo, integ: integBranch(projectID)}, nil
+}
+
+// preflight checks what lanes need: git 2.40 or later for merge-tree
+// --write-tree, a committer identity, a commit, and the base branch.
+func (r *laneRepo) preflight(ctx context.Context, base string) error {
+	version, err := r.output(ctx, r.top, "version")
+	if err != nil {
+		return err
+	}
+	if !gitAtLeast(version, 2, 40) {
+		return &Error{Status: http.StatusConflict, Code: codeGitTooOld, Message: fmt.Sprintf("running a plan needs git 2.40 or later; the server has %s", strings.TrimPrefix(version, "git version "))}
+	}
+	if _, code, stderr, err := runGit(ctx, r.git, r.top, 4096, "var", "GIT_COMMITTER_IDENT"); err != nil {
+		return err
+	} else if code != 0 {
+		return &Error{Status: http.StatusConflict, Code: codeNoGitIdentity, Message: "git has no committer identity for this repository; set user.name and user.email: " + gitMessage(stderr)}
+	}
+	if !r.hasHead {
+		return newError(http.StatusConflict, "the repository has no commit yet")
+	}
+	_, code, _, err := runGit(ctx, r.git, r.top, 4096, "check-ref-format", "refs/heads/"+base)
+	if err != nil {
+		return err
+	}
+	if code == 0 {
+		if tip, err := r.tipOf(ctx, base); err != nil || tip != "" {
+			return err
+		}
+	}
+	return newError(http.StatusConflict, "there is no branch %s", displaytext.Sanitize(base))
+}
+
+// gitAtLeast reports whether `git version` printed a version at least
+// major.minor.
+func gitAtLeast(version string, major, minor int) bool {
+	fields := strings.Fields(version)
+	if len(fields) < 3 {
+		return false
+	}
+	parts := strings.SplitN(fields[2], ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	gotMajor, err1 := strconv.Atoi(parts[0])
+	gotMinor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return gotMajor > major || gotMajor == major && gotMinor >= minor
+}
+
+// syncInteg brings base's commits onto the integration branch and returns
+// its tip. It creates the branch at base's tip on first need. Later it
+// merges base in as objects, the integration branch as first parent, and
+// never fast-forwards, so every landing stays on its first-parent line. A
+// conflict refuses merge_conflict and moves nothing.
+func (r *laneRepo) syncInteg(ctx context.Context, base string) (string, error) {
+	baseTip, err := r.tipOf(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	if baseTip == "" {
+		return "", newError(http.StatusConflict, "there is no branch %s", displaytext.Sanitize(base))
+	}
+	tip, err := r.tipOf(ctx, r.integ)
+	if err != nil {
+		return "", err
+	}
+	if tip == "" {
+		if err := r.moveBranch(ctx, r.integ, baseTip, ""); err != nil {
+			return "", err
+		}
+		return baseTip, nil
+	}
+	if synced, err := r.isAncestor(ctx, baseTip, tip); err != nil || synced {
+		return tip, err
+	}
+	tree, conflicts, err := r.mergeTree(ctx, tip, baseTip)
+	if err != nil {
+		return "", err
+	}
+	if len(conflicts) > 0 {
+		cards := r.cardsTouching(ctx, baseTip, tip, conflicts)
+		return "", &Error{Status: http.StatusConflict, Code: codeMergeConflict, Refs: cards,
+			Message: fmt.Sprintf("%s does not merge cleanly into %s: %s conflict%s", displaytext.Sanitize(base), r.integ, fileList(conflicts), changedBy(cards))}
+	}
+	merged, err := r.commitTree(ctx, tree, fmt.Sprintf("Merge %s into %s\n", base, r.integ), tip, baseTip)
+	if err != nil {
+		return "", err
+	}
+	if err := r.moveBranch(ctx, r.integ, merged, tip); err != nil {
+		return "", err
+	}
+	return merged, nil
+}
+
+// addLane makes the attempt's worktree on a new branch at tip.
+func (r *laneRepo) addLane(ctx context.Context, l lane, tip string) error {
+	if _, err := runGitWrite(ctx, r.top, nil, "worktree", "add", "--quiet", "-b", l.branch, l.dir, tip); err != nil {
+		return gitFailed("git worktree add failed", err)
+	}
+	return nil
+}
+
+// removeLane ends an attempt's worktree: it aborts a merge in progress,
+// commits what is left to the attempt branch, removes the worktree, and
+// deletes the branch only when its work landed. A worktree already gone is
+// pruned.
+func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed bool) error {
+	switch _, err := os.Stat(l.dir); {
+	case errors.Is(err, fs.ErrNotExist):
+		if _, err := runGitWrite(ctx, r.top, nil, "worktree", "prune"); err != nil {
+			return gitFailed("git worktree prune failed", err)
+		}
+	case err != nil:
+		return err
+	default:
+		if err := r.ownLane(ctx, l); err != nil {
+			return err
+		}
+		merging, err := r.mergeHead(ctx, l.dir)
+		if err != nil {
+			return err
+		}
+		if merging {
+			if _, err := runGitWrite(ctx, l.dir, nil, "merge", "--abort"); err != nil {
+				return gitFailed("git merge --abort failed", err)
+			}
+		}
+		if _, err := r.commitLeftovers(ctx, l, seq); err != nil {
+			return err
+		}
+		if _, err := runGitWrite(ctx, r.top, nil, "worktree", "remove", l.dir); err != nil {
+			return gitFailed("git worktree remove failed", err)
+		}
+	}
+	if !landed {
+		return nil
+	}
+	if tip, err := r.tipOf(ctx, l.branch); err != nil || tip == "" {
+		return err
+	}
+	if _, err := runGitWrite(ctx, r.top, nil, "branch", "-D", l.branch); err != nil {
+		return gitFailed("git branch -D failed", err)
+	}
+	return nil
+}
+
+// commitLeftovers commits what the attempt left uncommitted, hooks
+// skipped, and reports whether there was anything.
+func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool, error) {
+	if err := r.ownLane(ctx, l); err != nil {
+		return false, err
+	}
+	if _, err := runGitWrite(ctx, l.dir, nil, "add", "-A"); err != nil {
+		return false, gitFailed("git add failed", err)
+	}
+	_, code, stderr, err := runGit(ctx, r.git, l.dir, 4096, "diff", "--cached", "--quiet")
+	switch {
+	case err != nil:
+		return false, err
+	case code == 0:
+		return false, nil
+	case code != 1:
+		return false, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
+	}
+	if _, err := runGitWrite(ctx, l.dir, nil, "commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", fmt.Sprintf("#%d: work in progress", seq)); err != nil {
+		return false, gitFailed("git commit failed", err)
+	}
+	return true, nil
+}
+
+// checkLane refuses to land the attempt as it is: land_conflict while its
+// worktree is mid-merge or has unmerged paths, so leftovers are never
+// committed with conflict markers in them; land_stale when it holds a
+// landing or a revert that the integration tip no longer has, which only an
+// edit of the integration branch by hand causes.
+func (r *laneRepo) checkLane(ctx context.Context, l lane, tip string) error {
+	merging, err := r.mergeHead(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	files, err := r.unmerged(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	if merging || len(files) > 0 {
+		msg := fmt.Sprintf("finish your merge of %s and commit, then file done again", r.integ)
+		if len(files) > 0 {
+			msg += "; unmerged: " + fileList(files)
+		}
+		return &Error{Status: http.StatusConflict, Code: codeLandConflict, Message: msg}
+	}
+	out, err := r.output(ctx, l.dir, "log", "--format=%(trailers:key="+trailerRequest+",key="+trailerRevert+",valueonly)", tip+"..HEAD", "--")
+	if err != nil {
+		return err
+	}
+	if out != "" {
+		return &Error{Status: http.StatusConflict, Code: codeLandStale,
+			Message: fmt.Sprintf("your lane holds landed work that %s no longer has, so it cannot land; end your turn", r.integ)}
+	}
+	return nil
+}
+
+// mergeHead reports whether the worktree at dir is mid-merge.
+func (r *laneRepo) mergeHead(ctx context.Context, dir string) (bool, error) {
+	_, code, _, err := runGit(ctx, r.git, dir, 4096, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
+	return err == nil && code == 0, err
+}
+
+// unmerged lists the worktree's unmerged paths.
+func (r *laneRepo) unmerged(ctx context.Context, dir string) ([]string, error) {
+	out, err := r.output(ctx, dir, "ls-files", "--unmerged", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, rec := range nulRecords([]byte(out)) {
+		if _, path, ok := strings.Cut(rec, "\t"); ok && !slices.Contains(files, path) {
+			files = append(files, path)
+		}
+	}
+	return files, nil
+}
+
+// mergeTip merges the integration tip into the attempt when the lane lacks
+// it. A merge commit carries a Uam-Merge trailer naming the tip, so uam can
+// tell its own merges from the agent's. On a conflict it aborts, leaving the
+// lane as it was, and refuses land_conflict with the files, the cards that
+// changed them since the lane forked, and the agent's steps.
+func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
+	if err := r.ownLane(ctx, l); err != nil {
+		return err
+	}
+	head, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	if has, err := r.isAncestor(ctx, tip, head); err != nil || has {
+		return err
+	}
+	msg := fmt.Sprintf("Merge %s\n\n%s: %s\n", r.integ, trailerMerge, tip)
+	_, mergeErr := runGitWrite(ctx, l.dir, nil, "merge", "--ff", "--no-edit", "--no-verify", "-m", msg, tip)
+	if mergeErr == nil {
+		return nil
+	}
+	merging, err := r.mergeHead(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	if !merging {
+		return gitFailed("git merge failed", mergeErr)
+	}
+	files, err := r.unmerged(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	if _, err := runGitWrite(ctx, l.dir, nil, "merge", "--abort"); err != nil {
+		return gitFailed("git merge --abort failed", err)
+	}
+	if len(files) == 0 {
+		return gitFailed("git merge failed", mergeErr)
+	}
+	var cards []string
+	if base, err := r.output(ctx, r.top, "merge-base", head, tip); err == nil {
+		cards = r.cardsTouching(ctx, base, tip, files)
+	}
+	return &Error{Status: http.StatusConflict, Code: codeLandConflict, Refs: cards,
+		Message: fmt.Sprintf("merging %s into your lane conflicts in %s%s: run `git merge %s` in your directory, resolve %s, commit, and file done again",
+			r.integ, fileList(files), changedBy(cards), r.integ, fileList(files))}
+}
+
+// squashLane writes the landing commit: the lane HEAD's tree on top of tip,
+// as one commit. It moves no ref.
+func (r *laneRepo) squashLane(ctx context.Context, l lane, tip, message string) (string, error) {
+	if err := r.ownLane(ctx, l); err != nil {
+		return "", err
+	}
+	tree, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{tree}")
+	if err != nil {
+		return "", err
+	}
+	return r.commitTree(ctx, tree, message, tip)
+}
+
+// landMessage is a landing's commit message: the title, the claim, and the
+// trailers naming the card and the request.
+func landMessage(title string, seq int64, claim, requestID string) string {
+	msg := fmt.Sprintf("%s (#%d)\n\n", strings.TrimSpace(title), seq)
+	if claim = strings.TrimSpace(claim); claim != "" {
+		msg += claim + "\n\n"
+	}
+	return msg + fmt.Sprintf("%s: #%d\n%s: %s\n", trailerCard, seq, trailerRequest, requestID)
+}
+
+// moveBranch moves branch from the commit from to to with a
+// compare-and-swap; from "" creates it only when it does not exist. It
+// refuses git_busy, to retry later, while a worktree has the branch checked
+// out or when another writer moved it first.
+func (r *laneRepo) moveBranch(ctx context.Context, branch, to, from string) error {
+	dir, err := r.checkedOut(ctx, branch)
+	if err != nil {
+		return err
+	}
+	if dir != "" {
+		return &Error{Status: http.StatusConflict, Code: codeGitBusy,
+			Message: fmt.Sprintf("%s is checked out in %s; uam moves it only while no worktree has it checked out", branch, dir)}
+	}
+	_, err = runGitWrite(ctx, r.top, nil, "update-ref", "-m", "uam", "refs/heads/"+branch, to, from)
+	if err == nil {
+		return nil
+	}
+	if now, terr := r.tipOf(ctx, branch); terr == nil && now != from {
+		return &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: fmt.Sprintf("%s moved while uam was updating it", branch)}
+	}
+	return gitFailed("git update-ref failed", err)
+}
+
+// finishOnInteg finishes an intent whose commit is x (ADR 0006): it reports
+// true when x is on the integration branch, fast-forwarding the branch to x
+// when it is behind, and false when the two diverged or x is gone, so the
+// caller undoes the intent and redoes the work.
+func (r *laneRepo) finishOnInteg(ctx context.Context, x string) (bool, error) {
+	tip, err := r.tipOf(ctx, r.integ)
+	if err != nil || tip == "" {
+		return false, err
+	}
+	if exists, err := r.hasCommit(ctx, x); err != nil || !exists {
+		return false, err
+	}
+	if on, err := r.isAncestor(ctx, x, tip); err != nil || on {
+		return on, err
+	}
+	if behind, err := r.isAncestor(ctx, tip, x); err != nil || !behind {
+		return false, err
+	}
+	if err := r.moveBranch(ctx, r.integ, x, tip); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// revertItem is a landing to revert: its commit, card and title.
+type revertItem struct {
+	sha   string
+	seq   int64
+	title string
+}
+
+// revertChain builds, as objects only, one revert commit per landing on top
+// of tip, newest landing first by its place on the integration branch's
+// first-parent line, and returns the last. It moves no ref. A landing off
+// that line, or a conflict, refuses revert_conflict; a conflict names the
+// files and the later landings that changed them.
+func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertItem) (string, error) {
+	line, err := r.output(ctx, r.top, "rev-list", "--first-parent", tip, "--")
+	if err != nil {
+		return "", err
+	}
+	place := map[string]int{}
+	for i, sha := range strings.Fields(line) {
+		place[sha] = i
+	}
+	items = slices.Clone(items)
+	for _, it := range items {
+		if _, ok := place[it.sha]; !ok {
+			return "", &Error{Status: http.StatusConflict, Code: codeRevertConflict,
+				Message: fmt.Sprintf("#%d landed as %s, which is not on %s; reopen it without reverting code", it.seq, shortSHA(it.sha), r.integ)}
+		}
+	}
+	slices.SortFunc(items, func(a, b revertItem) int { return place[a.sha] - place[b.sha] })
+	cur := tip
+	for _, it := range items {
+		tree, conflicts, err := r.mergeTree(ctx, "--merge-base="+it.sha, cur, it.sha+"^")
+		if err != nil {
+			return "", err
+		}
+		if len(conflicts) > 0 {
+			cards := r.cardsTouching(ctx, it.sha, tip, conflicts)
+			return "", &Error{Status: http.StatusConflict, Code: codeRevertConflict, Refs: cards,
+				Message: fmt.Sprintf("reverting #%d conflicts in %s%s; include those cards or reopen #%d without reverting code", it.seq, fileList(conflicts), changedBy(cards), it.seq)}
+		}
+		msg := fmt.Sprintf("Revert #%d %s\n\nThis reverts %s.\n\n%s: #%d\n", it.seq, strings.TrimSpace(it.title), it.sha, trailerRevert, it.seq)
+		if cur, err = r.commitTree(ctx, tree, msg, cur); err != nil {
+			return "", err
+		}
+	}
+	return cur, nil
+}
+
+// mergeIntoBase merges the integration branch into the owner's branch base
+// and returns base's new tip, "" when base already has it all. Where a
+// worktree has base checked out it runs git merge there, so hooks run and
+// git refuses to overwrite local changes; otherwise it merges as objects and
+// moves base by compare-and-swap. A conflict refuses merge_conflict before
+// anything is touched. The caller holds the land mutex, and beginWrite when
+// base is checked out.
+func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (string, error) {
+	baseTip, err := r.tipOf(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	tip, err := r.tipOf(ctx, r.integ)
+	if err != nil {
+		return "", err
+	}
+	if baseTip == "" || tip == "" {
+		return "", newError(http.StatusConflict, "there is no branch %s or %s", displaytext.Sanitize(base), r.integ)
+	}
+	if merged, err := r.isAncestor(ctx, tip, baseTip); err != nil || merged {
+		return "", err
+	}
+	tree, conflicts, err := r.mergeTree(ctx, baseTip, tip)
+	if err != nil {
+		return "", err
+	}
+	if len(conflicts) > 0 {
+		cards := r.cardsTouching(ctx, baseTip, tip, conflicts)
+		return "", &Error{Status: http.StatusConflict, Code: codeMergeConflict, Refs: cards,
+			Message: fmt.Sprintf("%s does not merge cleanly into %s: %s conflict%s", r.integ, displaytext.Sanitize(base), fileList(conflicts), changedBy(cards))}
+	}
+	dir, err := r.checkedOut(ctx, base)
+	if err != nil {
+		return "", err
+	}
+	if dir != "" {
+		return r.mergeIn(ctx, dir, tip, message)
+	}
+	merged, err := r.commitTree(ctx, tree, message, baseTip, tip)
+	if err != nil {
+		return "", err
+	}
+	if err := r.moveBranch(ctx, base, merged, baseTip); err != nil {
+		return "", err
+	}
+	return merged, nil
+}
+
+// mergeIn runs git merge of tip in the worktree at dir and returns its new
+// HEAD. A merge it started and could not finish, for example when a hook
+// refuses the commit, is aborted, so dir is never left mid-merge by uam.
+func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (string, error) {
+	if merging, err := r.mergeHead(ctx, dir); err != nil {
+		return "", err
+	} else if merging {
+		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("a merge is in progress in %s; finish or abort it first", dir)}
+	}
+	_, mergeErr := runGitWrite(ctx, dir, nil, "merge", "--no-ff", "--no-edit", "-m", message, tip)
+	if mergeErr == nil {
+		return r.output(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+	}
+	if started, err := r.mergeHead(ctx, dir); err != nil {
+		return "", err
+	} else if started {
+		if _, err := runGitWrite(ctx, dir, nil, "merge", "--abort"); err != nil {
+			return "", gitFailed("git merge --abort failed", err)
+		}
+	}
+	var gerr *gitError
+	if errors.As(mergeErr, &gerr) && containsAny(gerr.output, "would be overwritten by merge") {
+		e := gitFailed(fmt.Sprintf("merging %s would overwrite uncommitted changes in %s; commit or stash them", r.integ, dir), mergeErr)
+		e.Code = codeLocalChanges
+		return "", e
+	}
+	return "", gitFailed("git merge failed", mergeErr)
+}
+
+// ownLane refuses to run git in the attempt's directory unless it is the
+// top of a working tree, so git never falls through to a repository that
+// holds the lanes root.
+func (r *laneRepo) ownLane(ctx context.Context, l lane) error {
+	top, err := r.output(ctx, l.dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	if realPath(top) != realPath(l.dir) {
+		return newError(http.StatusConflict, "%s is not a lane worktree", l.dir)
+	}
+	return nil
+}
+
+// tipOf is the commit branch names, "" when there is no such branch.
+func (r *laneRepo) tipOf(ctx context.Context, branch string) (string, error) {
+	out, code, stderr, err := runGit(ctx, r.git, r.top, 4096, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	switch {
+	case err != nil:
+		return "", err
+	case code == 0:
+		return strings.TrimSpace(string(out)), nil
+	case strings.TrimSpace(stderr) == "":
+		return "", nil
+	}
+	return "", newError(http.StatusBadGateway, "git rev-parse failed: %s", gitMessage(stderr))
+}
+
+// isAncestor reports whether commit a is b or an ancestor of it.
+func (r *laneRepo) isAncestor(ctx context.Context, a, b string) (bool, error) {
+	_, code, stderr, err := runGit(ctx, r.git, r.top, 4096, "merge-base", "--is-ancestor", a, b)
+	switch {
+	case err != nil:
+		return false, err
+	case code == 0 || code == 1:
+		return code == 0, nil
+	}
+	return false, newError(http.StatusBadGateway, "git merge-base failed: %s", gitMessage(stderr))
+}
+
+// checkedOut is the worktree that has branch checked out, "" when none has.
+func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error) {
+	out, err := r.output(ctx, r.top, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return "", err
+	}
+	var dir string
+	for _, line := range strings.Split(out, "\x00") {
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			dir = path
+		} else if line == "branch refs/heads/"+branch {
+			return dir, nil
+		}
+	}
+	return "", nil
+}
+
+// mergeTree merges as objects only and returns the tree, or the
+// conflicted paths when the merge is not clean.
+func (r *laneRepo) mergeTree(ctx context.Context, args ...string) (string, []string, error) {
+	argv := append([]string{"merge-tree", "--write-tree", "-z", "--name-only", "--no-messages"}, args...)
+	out, code, stderr, err := runGit(ctx, r.git, r.top, maxStatusBytes, argv...)
+	if err != nil {
+		return "", nil, err
+	}
+	recs := nulRecords(out)
+	if (code != 0 && code != 1) || len(recs) == 0 {
+		return "", nil, newError(http.StatusBadGateway, "git merge-tree failed: %s", gitMessage(stderr))
+	}
+	if code == 1 {
+		files := slices.Clone(recs[1:])
+		slices.Sort(files)
+		return "", slices.Compact(files), nil
+	}
+	return recs[0], nil, nil
+}
+
+// commitTree writes a commit of tree with message and parents, moving no
+// ref.
+func (r *laneRepo) commitTree(ctx context.Context, tree, message string, parents ...string) (string, error) {
+	args := []string{"commit-tree", tree}
+	for _, p := range parents {
+		args = append(args, "-p", p)
+	}
+	out, code, stderr, err := runGitInput(ctx, r.git, r.top, strings.NewReader(message), 4096, args...)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", newError(http.StatusBadGateway, "git commit-tree failed: %s", gitMessage(stderr))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// cardsTouching lists, newest first, the cards whose landings in from..to
+// changed any of files. It is best effort: nil when git cannot tell.
+func (r *laneRepo) cardsTouching(ctx context.Context, from, to string, files []string) []string {
+	args := append([]string{"--literal-pathspecs", "log", "--format=%(trailers:key=" + trailerCard + ",valueonly)", from + ".." + to, "--"}, files...)
+	out, code, _, err := runGit(ctx, r.git, r.top, 64<<10, args...)
+	if err != nil || code != 0 {
+		return nil
+	}
+	var cards []string
+	for _, card := range strings.Fields(string(out)) {
+		if cardTrailer.MatchString(card) && !slices.Contains(cards, card) {
+			cards = append(cards, card)
+		}
+	}
+	return cards
+}
+
+// output runs a git command that must succeed in dir and returns its
+// output without surrounding white space.
+func (r *laneRepo) output(ctx context.Context, dir string, args ...string) (string, error) {
+	out, code, stderr, err := runGit(ctx, r.git, dir, maxStatusBytes, args...)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", newError(http.StatusBadGateway, "git %s failed: %s", args[0], gitMessage(stderr))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// fileList names up to maxNamedFiles paths, made safe to show.
+func fileList(files []string) string {
+	shown := files[:min(len(files), maxNamedFiles)]
+	names := make([]string, len(shown))
+	for i, f := range shown {
+		names[i] = displaytext.Sanitize(f)
+	}
+	list := strings.Join(names, ", ")
+	if more := len(files) - len(shown); more > 0 {
+		list += fmt.Sprintf(" and %d more", more)
+	}
+	return list
+}
+
+// changedBy is " (changed by #3, #5)", or "" for no cards.
+func changedBy(cards []string) string {
+	if len(cards) == 0 {
+		return ""
+	}
+	return " (changed by " + strings.Join(cards, ", ") + ")"
+}
+
+// shortSHA is the first 7 characters of a commit name.
+func shortSHA(sha string) string { return sha[:min(len(sha), 7)] }
