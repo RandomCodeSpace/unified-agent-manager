@@ -17,7 +17,7 @@ import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSl
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
-import { byModelName, cheapestLabel, modelChoices, UTILITY_NONE } from '../lib/models';
+import { byModelName, cheapestLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
@@ -111,6 +111,37 @@ function UtilitySelect({ provider: p, settings, saving, describedBy, onSave }: R
     { value: UTILITY_NONE, label: 'None (no utility AI)' },
     ...choices.map(({ model, note }) => ({ value: model.id, label: choiceLabel(model.name, note), description: cost(model), hidden: !!note })),
   ]} onValueChange={(id) => onSave({ title_model: { ...settings.title_model, [p.name]: id } })} />;
+}
+
+const SUBAGENT_HELP = "Subagents run only on the models listed. The first is the fallback, used when neither the requested model nor the task's model is listed. An empty list allows any model.";
+
+/**
+ * The models one provider's subagents may use, the fallback first, and a menu adding its visible models not listed yet.
+ * An ID the catalog no longer lists keeps its row, so it can be removed.
+ */
+function SubagentModels({ provider: p, settings, saving, onSave }: Readonly<{ provider: ProviderInfo; settings: Settings; saving: boolean; onSave: (patch: Partial<Settings>) => void }>) {
+  const allowed = settings.subagent_models?.[p.name] ?? [];
+  const change = (next: string[]) => onSave({ subagent_models: { ...settings.subagent_models, [p.name]: next } });
+  const addable = visibleModels(p.models, settings.hidden_models?.[p.name]).filter((m) => !allowed.includes(m.id)).sort(byModelName);
+  return <div className="flex flex-col gap-1">
+    {allowed.length === 0 && <Note>No limit: subagents may use any model.</Note>}
+    {allowed.map((id, index) => {
+      const listed = p.models.find((m) => m.id === id);
+      const name = listed?.name || id;
+      return <div key={id} className="flex min-h-12 items-center gap-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-center gap-2 text-ui font-medium text-ink">{name}{index === 0 && <Chip tone="accent">Fallback</Chip>}</span>
+          {(!listed || name !== id) && <span className="min-w-0 break-all text-meta text-muted">{listed ? id : 'Not offered now'}</span>}
+        </div>
+        {index > 0 && <Button size="sm" disabled={saving} aria-label={`Make ${name} the fallback`} onClick={() => change([id, ...allowed.filter((a) => a !== id)])}>Make fallback</Button>}
+        <Button size="sm" variant="danger" disabled={saving} aria-label={`Remove ${name} from subagent models`} onClick={() => change(allowed.filter((a) => a !== id))}>Remove</Button>
+      </div>;
+    })}
+    <Select aria-label={`Add a ${p.display_name} subagent model`} value="" disabled={saving || addable.length === 0} className="mt-1 sm:w-72" items={[
+      { value: '', label: 'Add a model', hidden: true },
+      ...addable.map((m) => ({ value: m.id, label: m.name || m.id })),
+    ]} onValueChange={(id) => { if (id) change([...allowed, id]); }} />
+  </div>;
 }
 
 /** The compaction thresholds Settings offers, in percent. */
@@ -607,6 +638,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   const other = settings.send_default === 'steer' ? 'After this turn' : 'Send now';
   const titled = (meta?.providers ?? []).filter((p) => p.capabilities.titles);
+  // A connected instance older than the subagent limit does not report it: no section, rather than a form that fails.
+  const limited = (meta?.providers ?? []).filter((p) => p.capabilities.subagent_models);
   // What New task uses today: the setting checked against the live catalog, or the provider's own defaults until it is set.
   const taskDefaults = resolveTaskDefaults(meta, settings.task_defaults, settings.hidden_models);
   const configured = customProviders(settings.custom_models ?? []);
@@ -722,6 +755,15 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               <Row key={p.name} id={`utility-${p.name}`} label={p.display_name} help={UTILITY_HELP}>
                 <UtilitySelect provider={p} settings={settings} saving={saving} describedBy={`utility-${p.name}-help`} onSave={(patch) => void save(patch)} />
               </Row>
+            ))}
+          </Section>}
+          {/* As Utility model: one provider is the card's secondary line; several get a group each, named by provider. */}
+          {loaded && !catalogPending && limited.length > 0 && <Section hidden={section !== 'models'} id="subagent-models" title="Subagent models" help={SUBAGENT_HELP} subtitle={limited.length === 1 ? limited[0].display_name : undefined}>
+            {limited.length === 1 ? <SubagentModels provider={limited[0]} settings={settings} saving={saving} onSave={(patch) => void save(patch)} /> : limited.map((p) => (
+              <div key={p.name} role="group" aria-label={`${p.display_name} subagent models`} className="flex flex-col gap-1">
+                <h3 className="mb-1 text-ui font-medium">{p.display_name}</h3>
+                <SubagentModels provider={p} settings={settings} saving={saving} onSave={(patch) => void save(patch)} />
+              </div>
             ))}
           </Section>}
           {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
