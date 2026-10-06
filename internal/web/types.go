@@ -95,6 +95,9 @@ type ProviderInfo struct {
 	// CheapestModel is the cheapest priced model not hidden in Settings: the
 	// Utility model when Settings name none. Omitted when none is priced.
 	CheapestModel string `json:"cheapest_model,omitempty"`
+	// CLIUpdate is the newest release of the provider's CLI while an update
+	// to it is available (ProviderCLI.UpdateAvailable).
+	CLIUpdate string `json:"cli_update,omitempty"`
 }
 
 // Project is a directory the user added; its Tasks are web sessions whose

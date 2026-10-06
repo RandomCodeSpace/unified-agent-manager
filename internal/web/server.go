@@ -208,6 +208,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/providers/{provider}/account/device", s.handleCancelDeviceSignIn)
 	mux.HandleFunc("DELETE /api/providers/{provider}/account/link", s.handleUnlinkAccount)
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
+	mux.HandleFunc("GET /api/providers/{provider}/cli", s.handleProviderCLI)
+	mux.HandleFunc("POST /api/providers/{provider}/cli/update", s.handleUpdateProviderCLI)
 	mux.HandleFunc("GET /api/utility", s.handleUtility)
 	mux.HandleFunc("GET /api/push", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)

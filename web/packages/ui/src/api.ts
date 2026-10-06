@@ -45,6 +45,8 @@ export interface Capabilities {
   device_sign_in?: boolean;
   /** The provider's MCP servers can be listed and managed (Settings → MCP servers, a Task's MCP servers). */
   mcp?: boolean;
+  /** The runtime's CLI version shows in Settings, which can update it (`api.providerCli`). */
+  cli_update?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -248,6 +250,8 @@ export interface ProviderInfo {
   models: Model[];
   /** The cheapest priced model not hidden in Settings, the Utility model while `title_model` names none; omitted when none is priced. */
   cheapest_model?: string;
+  /** The CLI release Settings can update to (`ProviderCLI.latest` while `update_available`); omitted otherwise. */
+  cli_update?: string;
 }
 
 /** A provider runtime's sign-in, shared by every Task on the server; it never carries a credential. */
@@ -276,6 +280,32 @@ export interface DeviceSignIn {
   user_code?: string;
   error?: string;
   account?: ProviderAccount;
+}
+
+/**
+ * The provider's CLI on the server, one per server: the installed version, the newest stable release and the update
+ * job. The server picks the update's target; `state` is `idle` until an update has started.
+ */
+export interface ProviderCLI {
+  /** The version the runtime runs, e.g. "1.0.89"; may carry a prerelease suffix ("1.0.93-1"). */
+  installed?: string;
+  /** The newest stable release. */
+  latest?: string;
+  /** `latest` is newer than `installed`, not `incompatible`, and nothing is `manual`. */
+  update_available: boolean;
+  /** Why UAM cannot update the CLI here. */
+  manual?: string;
+  /** The newest release the SDK refused; never offered as an update. */
+  incompatible?: string;
+  /** RFC 3339 time of the last successful check. */
+  checked_at?: string;
+  /** Why the last check failed. */
+  check_error?: string;
+  state: 'idle' | 'updating' | 'updated' | 'failed';
+  /** The version being installed (`updating`), or the last one installed (`updated`, `failed`). */
+  target?: string;
+  /** Why the update failed (`failed`). */
+  error?: string;
 }
 
 /** Refusal code of a create or send while the Task's provider is signed out. */
@@ -1713,6 +1743,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     cancelDeviceSignIn: (provider: string) => call<void>('DELETE', `/api/providers/${enc(provider)}/account/device`),
     /** Clears the linked account and signs out a sign-in the runtime stored; the next sign-in links its account. */
     unlink: (provider: string) => call<ProviderAccount>('DELETE', `/api/providers/${enc(provider)}/account/link`),
+    /** The CLI's versions and update job, as last checked; `refresh` checks for a newer release first. */
+    providerCli: (provider: string, refresh = false) => call<ProviderCLI>('GET', `/api/providers/${enc(provider)}/cli${refresh ? '?refresh=1' : ''}`),
+    /** Starts the update to the release the server picked, or returns the one running. */
+    updateProviderCli: (provider: string) => call<ProviderCLI>('POST', `/api/providers/${enc(provider)}/cli/update`, {}),
 
     session: (id: string) => call<SessionDetail>('GET', `/api/sessions/${enc(id)}?history=recent&view=compact-v1`),
     history: (id: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),

@@ -1,6 +1,6 @@
 import { useFederation, type Machine } from '../FederationContext';
 import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ViewTransition, memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { encodeEntity } from '../lib/instanceIdentity';
@@ -140,19 +140,28 @@ function RoutinesButton({ actions, side }: Readonly<{ actions: WorkspaceActions;
   );
 }
 
-/** An icon with its name in a tip: the rail's and the sidebar footer's. */
-function FooterButton({ label, icon, pressed, onClick, side }: Readonly<{ label: string; icon: ReactNode; pressed: boolean; onClick: () => void; side?: TipSide }>) {
+/**
+ * An icon with its name in a tip: the rail's and the sidebar footer's. A `notice` (something waiting there) is an
+ * amber dot on the icon's corner, its sentence in the tip and the button's description; the name stays the same.
+ */
+function FooterButton({ label, icon, pressed, onClick, side, notice }: Readonly<{ label: string; icon: ReactNode; pressed: boolean; onClick: () => void; side?: TipSide; notice?: string }>) {
+  const noticeId = useId();
   return (
-    <Tip label={label} side={side}>
-      <Button size="icon" aria-label={label} aria-pressed={pressed} className="text-muted" onClick={onClick}>
-        {icon}
-      </Button>
-    </Tip>
+    <>
+      <Tip label={notice ? <>{label}<span className="block text-on-primary/70">{notice}</span></> : label} side={side}>
+        <Button size="icon" aria-label={label} aria-pressed={pressed} aria-describedby={notice ? noticeId : undefined} className="text-muted" onClick={onClick}>
+          {icon}
+          {notice && <Dot tone="warning" className="absolute top-0.5 right-0.5" />}
+        </Button>
+      </Tip>
+      {notice && <span id={noticeId} className="sr-only">{notice}</span>}
+    </>
   );
 }
 
 function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
-  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} />;
+  const cliUpdate = useApp().meta?.providers.some((p) => p.cli_update);
+  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={cliUpdate ? 'Copilot CLI update available' : undefined} />;
 }
 
 function PlannerButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {

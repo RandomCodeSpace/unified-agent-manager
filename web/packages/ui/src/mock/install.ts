@@ -10,6 +10,7 @@ import { gitMock } from './git';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
 import { accountMock } from './account';
+import { cliMock } from './cli';
 import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
@@ -182,6 +183,7 @@ export function install(): { received: Received[] } {
   const busy = (t: MockTask) => LIVE.includes(t.state);
   const routines = routinesMock((id) => st.projects.some((p) => p.id === id));
   const account = accountMock(st.meta);
+  const cli = cliMock(st.meta);
   const configuration = configurationMock(() => !!st.settings.terminal);
   const mcp = mcpMock(() => !!st.settings.terminal);
   // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
@@ -690,6 +692,8 @@ export function install(): { received: Received[] } {
     if (path === '/api/meta') return json(200, st.meta);
     const accounted = account.route(method, path, body);
     if (accounted) return accounted;
+    const versioned = cli(method, url);
+    if (versioned) return versioned;
     const planned = plannerKnown ? board.route(method, url, body) : null;
     if (planned) return planned;
     const gitted = git.route(method, url, body);

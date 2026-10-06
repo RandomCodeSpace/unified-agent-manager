@@ -32,6 +32,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/providers/copilot/account/device", true},
 		{"DELETE", "/api/providers/copilot/account/device", true},
 		{"DELETE", "/api/providers/copilot/account/link", true},
+		{"GET", "/api/providers/copilot/cli", true},
+		{"POST", "/api/providers/copilot/cli/update", true},
 		{"GET", "/api/mcp", true},
 		{"POST", "/api/mcp/servers", true},
 		{"PUT", "/api/mcp/servers/docs", true},

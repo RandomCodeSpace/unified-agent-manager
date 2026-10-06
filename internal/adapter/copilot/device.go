@@ -123,19 +123,33 @@ func (p *webProvider) openConversations() int {
 // the current sign-in. Conversations still open end like on a CLI failure.
 func (p *webProvider) restartClient(ctx context.Context) error {
 	p.mu.Lock()
-	c := p.client
+	c := p.detachLocked()
 	if c == nil {
 		p.mu.Unlock()
 		return nil
 	}
-	p.client = nil
-	close(p.stop)
-	p.stop = nil
 	convs := p.takeConvs()
 	p.mu.Unlock()
 	for _, conv := range convs {
 		conv.exit(restartReason)
 	}
+	return p.stopDetached(ctx, c)
+}
+
+// detachLocked clears the running client and its watchdog, so the next call
+// starts a new CLI, and returns it; nil when none runs. The caller holds mu.
+func (p *webProvider) detachLocked() sdkClient {
+	c := p.client
+	if c != nil {
+		p.client = nil
+		close(p.stop)
+		p.stop = nil
+	}
+	return c
+}
+
+// stopDetached stops a client detachLocked returned.
+func (p *webProvider) stopDetached(ctx context.Context, c sdkClient) error {
 	err := stopClient(ctx, c)
 	if rerr := p.releaseClientUsage(c); rerr != nil {
 		log.Warn("release stopped copilot usage ownership failed", "error", rerr)

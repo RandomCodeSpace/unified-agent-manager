@@ -108,6 +108,8 @@ type Manager struct {
 	signIns mcpSignIns
 	// devices holds each provider's device sign-in in progress, or its last outcome.
 	devices deviceSignIns
+	// cli holds each provider CLI's releases last read and its update.
+	cli cliUpdates
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -665,6 +667,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.sessions[s.id] = s
 	}
 	usage := m.usageProviderLocked()
+	cliNames := m.cliProvidersLocked()
 	planner := m.settings.Planner
 	m.mu.Unlock()
 	m.loadRoutines(cfg)
@@ -701,6 +704,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if usage {
 		m.wg.Add(1)
 		go m.usageLoop()
+	}
+	if len(cliNames) > 0 {
+		m.wg.Add(1)
+		go m.cliLoop(cliNames)
 	}
 	go m.imageLoop()
 	m.summaryWorkers.Add(maxTitleJobs)
@@ -950,12 +957,14 @@ func (m *Manager) RefreshModels() {
 
 // Providers lists every provider with its availability.
 func (m *Manager) Providers() []ProviderInfo {
+	updates := m.cliUpdatesAvailable()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ProviderInfo, 0, len(m.order))
 	for _, name := range m.order {
 		info := m.infos[name]
 		info.CheapestModel = m.cheapestModelLocked(name)
+		info.CLIUpdate = updates[name]
 		out = append(out, info)
 	}
 	return out

@@ -21,7 +21,9 @@ On the Linux host:
   signed in exactly as for the terminal, or signed in later from Settings (see
   [GitHub Copilot sign-in](#github-copilot-sign-in)). UAM reuses its existing
   configuration, credentials, model settings, and permission rules. It does
-  not install, update, or reconfigure it.
+  not install or reconfigure it. It updates it only when asked in Settings,
+  with npm, and only to a release the Copilot SDK built into UAM accepts (see
+  **Copilot CLI updates** under [GitHub Copilot sign-in](#github-copilot-sign-in)).
 - Start `uam web` from a normal login shell, where `copilot` resolves on
   `PATH`. The service inherits that environment.
 
@@ -189,6 +191,22 @@ sign-in, Settings says it lasts until the service restarts.
 confirmation; it also signs the `copilot` command out for that user. A `gh`
 sign-in is changed with `gh auth logout` on the server.
 
+**Copilot CLI updates.** Settings → **GitHub Copilot** also shows the
+installed Copilot CLI version and the newest stable release of
+`@github/copilot` on npm, read when the service starts, every 6 hours, and
+when Settings asks again; the Settings icon carries an amber dot while an
+update is available. UAM updates only a CLI that npm installed globally, with
+an npm whose global folder the service user can write; otherwise Settings says
+why, and the CLI is updated the way it was installed. An update first installs
+the release into a temporary folder and starts the Copilot SDK built into UAM
+on it. A release the SDK refuses is not installed: Settings says it needs a
+newer UAM and does not offer it again until the service restarts. Otherwise
+UAM closes the idle Copilot conversations (their Tasks keep their state and
+reopen when next viewed or sent to), stops Copilot, runs
+`npm install -g @github/copilot@<version>`, and the next use starts the new
+CLI; starts wait while the install runs. While a Copilot Task is working or
+waiting for an answer, the update is refused; it never interrupts a Task.
+
 **Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
 `GITHUB_TOKEN` (in that order) in the service's environment takes precedence
 over any stored sign-in, so while one is set Settings names the variable and
@@ -251,8 +269,18 @@ sign-in as another account than the linked one fails with the same text as the
 token refusal). `POST`
 answers 409 while an environment token takes precedence and 400 while Copilot
 Tasks have open conversations. The provider's `capabilities.device_sign_in` in
-`GET /api/meta` says whether it is offered. All need sign-in like other
-protected API routes. Sign-ins and sign-outs are logged without the token.
+`GET /api/meta` says whether it is offered. `GET /api/providers/copilot/cli`
+returns `{"installed"?, "latest"?, "update_available", "manual"?,
+"incompatible"?, "checked_at"?, "check_error"?, "state" ("idle", "updating",
+"updated" or "failed"), "target"?, "error"?}`, reading the releases first when
+none were read yet or with `?refresh=1`. `POST
+/api/providers/copilot/cli/update` starts the update to `latest` and returns
+the same shape in state `updating`, or the update in progress; it answers 409
+when no update is available, when `manual` says the CLI must be updated
+another way, and while a Copilot Task is working or waiting. While an update
+is available, `GET /api/meta` lists its release as the provider's
+`cli_update`; `capabilities.cli_update` says whether updates are offered. All
+need sign-in like other protected API routes. Sign-ins and sign-outs are logged without the token.
 
 ## Use it
 
