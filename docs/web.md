@@ -1347,7 +1347,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   pauses the subtask, stops and archives its Task and removes the lane,
   keeping its branch; on a story or epic, Stop pauses it first and then
   stops each subtask running under it. Settle offers Stop or Cancel for a
-  lane, not Keep held.
+  lane, not Keep held. Mark done and a move back to To do are refused on a
+  running lane's subtask: its done request lands it, and Stop releases it.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
   and removes the lane; a landed attempt's branch goes too. The acceptance

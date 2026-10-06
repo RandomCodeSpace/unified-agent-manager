@@ -511,9 +511,8 @@ func TestLandingIntentIsSticky(t *testing.T) {
 			_, err := f.s.SetStatus(f.ctx, owner, story.ID, StatusCancelled, "dropped", false)
 			return err
 		}(),
-		"back to To do": func() error { _, err := f.s.SetStatus(f.ctx, owner, one.ID, StatusTodo, "", false); return err }(),
-		"reject":        func() error { _, err := f.s.Reject(f.ctx, owner, id, "no", false); return err }(),
-		"reject, live":  func() error { _, err := f.s.Reject(f.ctx, owner, id, "no", true); return err }(),
+		"reject":       func() error { _, err := f.s.Reject(f.ctx, owner, id, "no", false); return err }(),
+		"reject, live": func() error { _, err := f.s.Reject(f.ctx, owner, id, "no", true); return err }(),
 		"file done again": func() error {
 			_, err := f.s.FileRequest(f.ctx, run, one.ID, RequestInput{Kind: RequestDone, Comment: "again"})
 			return err
@@ -566,9 +565,15 @@ func TestAcceptLandedRecordsSha(t *testing.T) {
 	three := f.create(owner, story.ID, KindSubtask, "Three")
 	f.approveRun(epic.ID, testRun)
 	f.lane(one.ID, "run")
-	// Mark done would skip landing.
+	// Mark done would skip landing, and To do would leave its Task at work
+	// with no hold: the owner Stops a lane instead.
 	_, err := f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "by hand", true)
 	wantCode(t, err, CodeInvalid)
+	_, err = f.s.SetStatus(f.ctx, owner, one.ID, StatusTodo, "", false)
+	wantCode(t, err, CodeInvalid)
+	if !strings.Contains(err.Error(), "Stop it") {
+		t.Fatalf("To do on a lane = %v, want it to say to Stop it", err)
+	}
 	id := f.landDone(one.ID, "run").Request.ID
 	_, err = f.s.AcceptLanded(f.ctx, id, landedSHA, "uam-plan-p1", DecidedByUAM, "")
 	wantCode(t, err, CodeInvalid) // no intent
