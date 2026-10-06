@@ -2,6 +2,7 @@ package board
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -201,6 +202,34 @@ func TestApproveRefuses(t *testing.T) {
 	f.must(err)
 	_, err = f.s.Approve(f.ctx, owner, cancelled.ID, testRun, f.items(cancelled.ID), "")
 	wantCode(t, err, CodeInvalid)
+}
+
+// A story whose confirmed subtasks were all cancelled shows as cancelled,
+// so the Approve dialog leaves it and its proposals out; when proposals
+// under it are live, the refusal names the story and says why it is not
+// shown. Cancelling the story lets the approval through.
+func TestApproveNamesAHiddenCancelledStory(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	f.approve(p.epic.ID, p.ids()...)
+	f.create(planner, p.two.ID, KindSubtask, "Fold")
+	_, err := f.s.SetStatus(f.ctx, owner, p.c.ID, StatusCancelled, "not needed", false)
+	f.must(err)
+	wantStatus(t, f.card(p.two.ID), StatusCancelled)
+
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(f.shownUnder(p.epic.ID)...), "")
+	wantRefusal(t, err, CodeInvalid, p.two.ref())
+	if want := fmt.Sprintf("%[1]s shows as cancelled, so the Approve dialog leaves it out, but proposals under it are live and would never run: cancel %[1]s, then approve", p.two.ref()); err.Error() != want {
+		t.Fatalf("refusal = %q, want %q", err, want)
+	}
+	_, err = f.s.SetStatus(f.ctx, owner, p.two.ID, StatusCancelled, "dropped", false)
+	f.must(err)
+	f.must(func() error {
+		_, err := f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(f.shownUnder(p.epic.ID)...), "")
+		return err
+	}())
 }
 
 // The pause is the owner's flag, under an approved epic only, and holds on a

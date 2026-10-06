@@ -170,7 +170,9 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 	}
 	// A card the dialog shows but did not list was added or moved in
 	// since it opened.
+	shown := map[string]bool{}
 	for _, m := range o.shown(n) {
+		shown[m.ID] = true
 		if !listed[m.ID] {
 			stale = append(stale, m.ref())
 		}
@@ -181,7 +183,7 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 	}
 	live := func(m *node) bool { return m.stored != StatusCancelled && o.underCancelled(m, nil) == nil }
 	runs := func(l *node) bool { return live(l) && (l.Confirmed() || listed[l.ID]) }
-	var held, empty, noCmd []string
+	var held, empty, hidden, noCmd []string
 	settings, err := t.settings(o.project)
 	if err != nil {
 		return nil, err
@@ -191,8 +193,14 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 			continue
 		}
 		if m.container() {
-			if !slices.ContainsFunc(m.leaves, runs) {
+			switch {
+			case slices.ContainsFunc(m.leaves, runs):
+			case shown[m.ID]:
 				empty = append(empty, m.ref())
+			default:
+				// It shows as cancelled, so the dialog left it out
+				// with the live proposals under it.
+				hidden = append(hidden, m.ref())
 			}
 			continue
 		}
@@ -217,6 +225,13 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 	case len(empty) > 0:
 		return nil, &Error{Code: CodeInvalid, Refs: empty, Message: fmt.Sprintf(
 			"%s would have no confirmed subtask, and a card with none never finishes; list a subtask under it, add one, or cancel it", strings.Join(empty, ", "))}
+	case len(hidden) > 0:
+		verb, it := "shows", "it"
+		if len(hidden) > 1 {
+			verb, it = "show", "them"
+		}
+		return nil, &Error{Code: CodeInvalid, Refs: hidden, Message: fmt.Sprintf(
+			"%[1]s %[2]s as cancelled, so the Approve dialog leaves %[3]s out, but proposals under %[3]s are live and would never run: cancel %[1]s, then approve", strings.Join(hidden, ", "), verb, it)}
 	case len(noCmd) > 0:
 		return nil, &Error{Code: CodeInvalid, Refs: noCmd, Message: fmt.Sprintf(
 			"%s %s no acceptance command, so its done would always wait for you; set one on it or a Project default", strings.Join(noCmd, ", "), hasHave(len(noCmd)))}
