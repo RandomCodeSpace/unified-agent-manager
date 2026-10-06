@@ -158,12 +158,10 @@ type Manager struct {
 	// replies, turn outcomes and commit drafts), which Shutdown waits for
 	// before providers stop: a job deletes its throwaway conversation on the
 	// way out.
-	// titleSlots bounds provider calls shared by titles, subagent summaries,
-	// suggested replies and turn outcomes.
-	titles         sync.WaitGroup
-	titleSlots     chan struct{}
-	summaryJobs    chan subagentSummaryJob
-	summaryWorkers sync.WaitGroup
+	// titleSlots bounds provider calls shared by titles, suggested replies and
+	// turn outcomes.
+	titles     sync.WaitGroup
+	titleSlots chan struct{}
 	// reads holds a slot for each read-only transcript load in progress.
 	reads chan struct{}
 	// archive caches windows of records read past the retained transcript.
@@ -256,11 +254,10 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		quotaTick: quotaCheck,
 		spawnWait: viewWait,
 
-		titleSlots:  make(chan struct{}, maxTitleJobs),
-		summaryJobs: make(chan subagentSummaryJob, maxSubagents),
-		imageJobs:   make(chan imageJob, maxImageJobs),
-		reads:       make(chan struct{}, maxHistoryReads),
-		exec:        newExecutorState(),
+		titleSlots: make(chan struct{}, maxTitleJobs),
+		imageJobs:  make(chan imageJob, maxImageJobs),
+		reads:      make(chan struct{}, maxHistoryReads),
+		exec:       newExecutorState(),
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -372,14 +369,11 @@ type webSession struct {
 	// subagentsOlder is set once held subagent records were forgotten.
 	// Every subagent recorded after subagents[subagentHead] is held; the
 	// ones before it that are not are paged from the record.
-	subagentsOlder    bool
-	subagentHead      int
-	stoppedSubagents  map[string]bool // accepted stops awaiting the provider event
-	summaryRuns       map[string]*subagentSummaryRun
-	subagentSummaries map[string]store.SubagentSummary
-	summaryRevision   uint64
-	backgroundTasks   *agentapi.BackgroundTasks
-	execution         *agentapi.ExecutionState
+	subagentsOlder   bool
+	subagentHead     int
+	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
+	backgroundTasks  *agentapi.BackgroundTasks
+	execution        *agentapi.ExecutionState
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -484,7 +478,6 @@ func (ix *interaction) public() agentapi.Interaction {
 // persistKey is the durable part of a session; sessions.json is written only
 // when it changes, never per streamed token.
 type persistKey struct {
-	summaryRevision                                                                                                  uint64
 	timingRevision                                                                                                   uint64
 	commandResult                                                                                                    *agentapi.CommandResult
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
@@ -498,7 +491,6 @@ func newSession(id, provider, name, workdir, convID string, created time.Time) *
 		id: id, provider: provider, name: name, workdir: workdir, convID: convID,
 		createdAt: created, updatedAt: created, base: StateIdle, mode: store.ModeSafe, activeTiming: -1,
 		itemIdx: map[string]int{}, ixIdx: map[string]*interaction{}, subIdx: map[string]*agentapi.Subagent{},
-		summaryRuns: map[string]*subagentSummaryRun{}, subagentSummaries: map[string]store.SubagentSummary{},
 	}
 }
 
@@ -557,7 +549,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{summaryRevision: s.summaryRevision, timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -721,10 +713,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		go m.cliLoop(cliNames)
 	}
 	go m.imageLoop()
-	m.summaryWorkers.Add(maxTitleJobs)
-	for range maxTitleJobs {
-		go m.subagentSummaryLoop()
-	}
 	if err := m.flush(); err != nil {
 		log.Warn("persist interrupted web sessions failed", "error", err)
 	}
@@ -813,7 +801,6 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.mode = store.ModeYolo
 	}
 	if web := rec.Web; web != nil {
-		s.loadSubagentSummaries(web.SubagentSummaries)
 		s.turnTimings = slices.Clone(web.TurnTimings)
 		if len(s.turnTimings) > maxTurnTimings {
 			s.turnTimings = s.turnTimings[len(s.turnTimings)-maxTurnTimings:]
@@ -1863,7 +1850,6 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.conv = nil
 	s.gen++
 	s.removed = true
-	s.cancelSubagentSummaries()
 	m.cancelHistoryLocked(s)
 	s.stopPreviews()
 	m.archive.forget(s.id)
@@ -1966,8 +1952,7 @@ func (m *Manager) flush() (err error) {
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
-				SubagentSummaries: s.savedSubagentSummaries(),
-				Turn:              key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
+				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
@@ -2143,7 +2128,6 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			if s.noteEdits(it) {
 				m.kickDiffLocked(s)
 			}
-			m.subagentSummaryItemLocked(s, it)
 		}
 	case agentapi.EventDelta:
 		if ev.Delta != nil && ev.Delta.ItemID != "" {
@@ -2159,12 +2143,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
-			var previous agentapi.SubagentStatus
-			if sa := s.subIdx[ev.Subagent.ID]; sa != nil {
-				previous = sa.Status
-			}
 			m.upsertSubagentLocked(s, *ev.Subagent, true)
-			m.subagentSummaryStatusLocked(s, ev.Subagent.ID, previous)
 		}
 	case agentapi.EventExecution:
 		if ev.Execution != nil {
@@ -4313,8 +4292,6 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.cancel()
 	wait(ctx, &m.terminalWG)
 	wait(ctx, &m.titles)
-	wait(ctx, &m.summaryWorkers)
-	m.discardSubagentSummaryJobs()
 	for _, conv := range convs {
 		m.closeConversation(conv)
 	}

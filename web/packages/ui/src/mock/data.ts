@@ -1022,7 +1022,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       const audit = (n: number, min: number, pkg: string, status: Subagent['status'], extra: Partial<Subagent> = {}) => {
         const id = `sa${n}`, call = `sc${n}`;
         items.push(tool(call, min, { name: 'task', title: `Audit package ${pkg}`, status: status === 'running' ? 'running' : status === 'failed' ? 'failed' : 'completed', input: JSON.stringify({ description: `Audit package ${pkg}` }), output: status === 'failed' ? extra.error : status === 'running' ? undefined : `${pkg}: ${n % 4} exports without callers.` }));
-        subagents.push({ id, parent_tool_call_id: call, name: `Audit package ${pkg}`, description: `List the exported symbols of ${pkg} that nothing calls.`, status, started_at: ago(min), ...(status === 'running' ? {} : { ended_at: ago(min - 1 - (n % 3)) }), model: n % 2 ? 'gpt-5-mini' : 'claude-haiku-4.5', effort: 'low', tokens: 8_000 + ((n * 37_919) % 400_000), tool_calls: 3 + (n % 17), ...(status === 'completed' || status === 'idle' ? { summary: `${pkg}: ${n % 4} exports without callers.` } : {}), ...extra });
+        subagents.push({ id, parent_tool_call_id: call, name: `Audit package ${pkg}`, description: `List the exported symbols of ${pkg} that nothing calls.`, status, started_at: ago(min), ...(status === 'running' ? {} : { ended_at: ago(min - 1 - (n % 3)) }), model: n % 2 ? 'gpt-5-mini' : 'claude-haiku-4.5', effort: 'low', tokens: 8_000 + ((n * 37_919) % 400_000), tool_calls: 3 + (n % 17), ...(status === 'completed' || status === 'idle' ? { result_summary: `${pkg}: ${n % 4} exports without callers.` } : {}), ...extra });
         agentItems[id] = [
           tool(`${id}-g`, min - 0.5, { name: 'grep', title: `Search "export" in ${pkg}`, status: 'completed', output: `${(n % 5) + 2} matches` }, id),
           { id: `${id}-m`, kind: 'assistant', time: ago(min - 1), agent_id: id, text: status === 'running' ? `Reading ${pkg} for callers…` : `${pkg}: ${n % 4} exports without callers.` },
@@ -1057,7 +1057,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         status: 'running',
         started_at: ago(5),
         ended_at: undefined,
-        summary: undefined,
+        result_summary: undefined,
         preview: 'Re-checking internal/store after the fix',
         runs: [
           { started_at: ago(59), ended_at: ago(57), status: 'completed', trigger: 'spawn' },

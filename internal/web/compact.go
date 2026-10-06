@@ -44,7 +44,6 @@ type compactSubagent struct {
 	agentapi.Subagent
 	Preview       string `json:"preview"`
 	ResultSummary string `json:"result_summary"`
-	Summary       string `json:"summary,omitempty"`
 }
 type compactSessionDetail struct {
 	SessionDetail
@@ -331,7 +330,38 @@ func (s *webSession) compactSubagent(sa agentapi.Subagent) compactSubagent {
 	if preview == "" {
 		preview = s.subagentTails[sa.ID].preview
 	}
-	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result), Summary: s.generatedSubagentSummary(sa)}
+	return compactSubagent{Subagent: sa, Preview: boundedPreview(preview, 512), ResultSummary: boundedResultSummary(result)}
+}
+
+// subagentResult is the result text of one item: a subagent's own assistant
+// message (agentID set), or the parent's completed task call output.
+func (s *webSession) subagentResult(itemID, agentID string) string {
+	index, ok := s.itemIdx[itemKey(agentID, itemID)]
+	if !ok {
+		if last := s.subagentTails[agentID].lastAssistant; agentID != "" && last.ID == itemID {
+			return last.Text
+		}
+		return ""
+	}
+	it := s.items[index]
+	if agentID != "" && it.Kind == agentapi.ItemAssistant {
+		return it.Text
+	}
+	if agentID == "" && it.Tool != nil && it.Tool.Status == agentapi.ToolCompleted {
+		return it.Tool.Output
+	}
+	return ""
+}
+
+// lastSubagentAssistant is the ID of a subagent's latest assistant message,
+// retained or only in its archived tail.
+func (s *webSession) lastSubagentAssistant(id string) string {
+	for i := len(s.items) - 1; i >= 0; i-- {
+		if it := s.items[i]; it.AgentID == id && it.Kind == agentapi.ItemAssistant {
+			return it.ID
+		}
+	}
+	return s.subagentTails[id].lastAssistant.ID
 }
 
 // itemPreview is what a subagent's list entry shows for its latest item, or

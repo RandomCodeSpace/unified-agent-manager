@@ -41,7 +41,6 @@ const (
 // The purposes of Utility calls.
 const (
 	purposeTitle              = "title"
-	purposeSubagentSummary    = "subagent-summary"
 	purposePlannerTriage      = "planner-triage"
 	purposePlannerSuggest     = "planner-suggest"
 	purposeCommitMessage      = "commit-message"
@@ -64,8 +63,8 @@ const codeUtilityPaused = "utility_paused"
 // Day is its server-local date, set when the log is read. Tokens are the
 // provider's figures unless Estimated, when they are worked out from the
 // characters. PromptChars counts what the service sent the provider: a
-// Utility request's system message and prompt, or the text a title or a
-// subagent summary is made from. Reason is why a call was skipped
+// Utility request's system message and prompt, or the text a title is made
+// from. Reason is why a call was skipped
 // (daily_limit or off) or failed. SessionModel marks a title call made on
 // the Task's own model because no Utility model is set.
 type UtilityCall struct {

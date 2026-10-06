@@ -684,10 +684,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   scroll within their own regions. Subagent output never
   appears in the Task's own conversation. Its model and effort are shown
   when Copilot reports them; they are not guessed from the parent Task.
-  After successful completion, the Utility model generates a short saved
-  result line. None, an unavailable model or a failed request keeps the
-  provider's report as the fallback. Opening an older conversation does not
-  generate missing summaries. A subagent is "Idle" when it has finished and the main
+  A finished subagent's line is the first line of its own result, as
+  Copilot reported it; nothing rewrites it. A subagent is "Idle" when it has finished and the main
   agent may still resume it. The web interface sends no messages to a
   subagent.
 - **Approvals and questions**: when the provider asks for permission or asks a
@@ -964,8 +962,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   **Show log · N calls today** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Subagent summary", "Suggested replies",
-  "Outcome line", "Planner triage", "Planner suggestion"), the Task (a click opens it) or Project, the model
+  what it was for ("Task title", "Suggested replies", "Outcome line",
+  "Planner triage", "Planner suggestion"; older versions also logged
+  "Subagent summary"), the Task (a click opens it) or Project, the model
   (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it

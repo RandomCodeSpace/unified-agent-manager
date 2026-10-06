@@ -533,11 +533,10 @@ test('compact completed subagent previews preserve the meaningful plain report l
 });
 
 
-test('utility summaries describe only successful completed results and preserve live/error fallbacks', () => {
+test('a done subagent\'s line is its own result, never a generated summary an older service sent', () => {
   const child = { summary: 'Verified the cache stays bounded.', result_summary: '## Report\nExisting report line.', preview: 'Checking file references', error: 'The check failed.' };
   for (const status of ['completed', 'idle']) {
-    assert.equal(subagentSummary({ ...child, status }, undefined, undefined), 'Verified the cache stays bounded.');
-    assert.equal(subagentSummary({ ...child, status, summary: undefined }, undefined, undefined), 'Existing report line.');
+    assert.equal(subagentSummary({ ...child, status }, undefined, undefined), 'Existing report line.');
   }
   assert.equal(subagentSummary({ ...child, status: 'running' }, undefined, undefined), 'Checking file references');
   assert.equal(subagentSummary({ ...child, status: 'failed' }, undefined, undefined), 'The check failed.');
