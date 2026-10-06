@@ -1462,8 +1462,11 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	subagents := make(map[string][]string, len(p.SubagentModels))
 	for provider, ids := range p.SubagentModels {
-		if u, ok := m.providers[provider].(agentapi.SubagentModelUser); !ok || u == nil {
-			return Settings{}, newError(http.StatusBadRequest, "%s cannot limit subagent models", clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		if m.providers[provider] == nil {
+			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		}
+		if _, ok := m.providers[provider].(agentapi.SubagentModelUser); !ok {
+			return Settings{}, newError(http.StatusBadRequest, "%s cannot limit subagent models", m.providers[provider].DisplayName())
 		}
 		if slices.ContainsFunc(ids, func(id string) bool { return !store.ValidHiddenModel(id) }) {
 			return Settings{}, newError(http.StatusBadRequest, "a subagent model ID must be 1 to %d bytes without control characters", store.MaxHiddenModelBytes)
