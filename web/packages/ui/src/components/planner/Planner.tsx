@@ -376,7 +376,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
         open={!!mergeAsk && !!integration}
         onOpenChange={(o) => !o && setMergeAsk(null)}
         title={mergeAsk === 'retry' ? `Retry the merge into ${integration?.base_ref ?? ''}?` : `Merge into ${integration?.base_ref ?? ''} now?`}
-        description={`${integration?.branch ?? ''} goes into ${integration?.base_ref ?? ''} with everything that landed on it, epics not finished included. Where ${integration?.base_ref ?? ''} is checked out the merge runs there, with its hooks; uam never pushes.`}
+        description={`${integration?.branch ?? ''} goes into ${integration?.base_ref ?? ''} with everything that landed on it, epics not finished included. Where ${integration?.base_ref ?? ''} is checked out the merge runs there, with no repository hooks; uam never pushes.`}
         confirmLabel="Merge"
         danger={false}
         busy={mergeBusy}

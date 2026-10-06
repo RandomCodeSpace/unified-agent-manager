@@ -223,14 +223,13 @@ func TestMergeStateClearsOnceMainHasItAll(t *testing.T) {
 	})
 }
 
-// A merge into main checked out in the Project directory runs git's hooks
+// A merge into main checked out in the Project directory runs git merge
 // there; uncommitted changes the merge would overwrite make it wait, named
 // once on the epic, and uam tries it again until it goes through.
 func TestMergeIntoCheckedOutBranch(t *testing.T) {
 	slowRetries(t)
 	r := newFinishingRun(t, "true", "Add b")
 	sub := r.subscribe()
-	writeHook(t, r.repo, "post-merge", "#!/bin/sh\necho ran > .git/merged-by-hook\n")
 	writeRepoFile(t, r.repo, "b.txt", "owner, uncommitted\n")
 	main := gitOutput(t, r.repo, "rev-parse", "main")
 	r.landWith(0, "b.txt", "b\n")
@@ -264,18 +263,8 @@ func TestMergeIntoCheckedOutBranch(t *testing.T) {
 	if got := gitOutput(t, r.repo, "rev-parse", "main^1"); got != main {
 		t.Fatalf("main^1 = %s, want %s", got, main)
 	}
-	if _, err := os.Stat(filepath.Join(r.repo, ".git", "merged-by-hook")); err != nil {
-		t.Fatal("the merge did not run the post-merge hook")
-	}
 	if m := r.integration().Merge; m != nil {
 		t.Fatalf("merge state after it went through = %+v", m)
-	}
-}
-
-func writeHook(t *testing.T, repo, name, script string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(repo, ".git", "hooks", name), []byte(script), 0o755); err != nil { // #nosec G306 -- a hook git must run.
-		t.Fatal(err)
 	}
 }
 
@@ -300,6 +289,68 @@ func TestMergeIntoBranchNotCheckedOutMovesTheRefOnly(t *testing.T) {
 	}
 	if got := gitOutput(t, r.repo, "status", "--porcelain"); got != "?? b.txt" {
 		t.Fatalf("the owner's working tree changed: %q", got)
+	}
+}
+
+// uam's merge into main runs no hook and no fsmonitor the repository's
+// shared configuration sets, which an agent can write: no hook in a hooks
+// directory and none defined in configuration, where main is checked out
+// and where it is not. They still run for git the owner runs.
+func TestAutoMergeRunsNoHooks(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		elsewhere bool
+	}{{"main checked out", false}, {"main checked out nowhere", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFinishingRun(t, "true", "Add b")
+			sub := r.subscribe()
+			if tc.elsewhere {
+				gitIn(t, r.repo, "checkout", "-q", "-b", "owner")
+			}
+			task, l := r.start(0)
+			commitFile(t, l.dir, "b.txt", "b\n")
+
+			ran, hooks := filepath.Join(t.TempDir(), "ran"), t.TempDir()
+			note := func(label string) string { return fmt.Sprintf("echo %s >> '%s'", label, ran) }
+			events := []string{"reference-transaction", "post-checkout", "pre-commit", "prepare-commit-msg", "commit-msg",
+				"post-commit", "pre-merge-commit", "post-merge", "post-index-change"}
+			for _, name := range append(events, "fsmonitor") {
+				label := "hooks-dir"
+				if name == "fsmonitor" {
+					label = name
+				}
+				if err := os.WriteFile(filepath.Join(hooks, name), []byte("#!/bin/sh\n"+note(label)+"\n"), 0o755); err != nil { // #nosec G306 -- a hook git would run.
+					t.Fatal(err)
+				}
+			}
+			gitIn(t, r.repo, "config", "core.hooksPath", hooks)
+			gitIn(t, r.repo, "config", "core.fsmonitor", filepath.Join(hooks, "fsmonitor"))
+			gitIn(t, r.repo, "config", "hook.planted.command", note("config"))
+			for _, event := range events {
+				gitIn(t, r.repo, "config", "--add", "hook.planted.event", event)
+			}
+
+			main := gitOutput(t, r.repo, "rev-parse", "main")
+			r.landed(task, 0)
+			if end := r.nextMerge(sub); end.Status != jobDone {
+				t.Fatalf("merge job = %+v", end)
+			}
+			if got := gitOutput(t, r.repo, "rev-parse", "main^1"); got != main {
+				t.Fatalf("main^1 = %s, want %s: no merge", got, main)
+			}
+			if out, err := os.ReadFile(ran); err == nil {
+				t.Fatalf("the landing or the merge ran planted hooks:\n%s", out)
+			}
+
+			gitIn(t, r.repo, "commit", "-q", "--allow-empty", "-m", "probe")
+			gitIn(t, r.repo, "status", "--porcelain")
+			out, _ := os.ReadFile(ran)
+			for _, label := range []string{"hooks-dir", "fsmonitor", "config"} {
+				if !strings.Contains("\n"+string(out), "\n"+label) {
+					t.Errorf("the planted %s does not run for the owner's git either, so this test proves nothing for it", label)
+				}
+			}
+		})
 	}
 }
 

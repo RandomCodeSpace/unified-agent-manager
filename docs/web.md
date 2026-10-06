@@ -1396,12 +1396,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   that changed test or build files. A Revert of work the base branch
   already has is merged the same way, and so is a finished epic uam finds
   unmerged when it starts. Where the base branch is checked out, the merge
-  runs there as your Commit does, with your git hooks; while another git
+  runs there; while another git
   action runs there, a Task there works, another git program holds a lock
   the merge needs, or the merge would overwrite a change you have not
   committed, it waits ("Merge waiting" and the reason beside the branch)
-  and uam tries again after 1, 2, 4, 8, then every 15 minutes. A base branch checked out nowhere just moves. A merge that
-  conflicts, or that a hook refuses, shows "Merge blocked" and waits until
+  and uam tries again after 1, 2, 4, 8, then every 15 minutes. A base branch checked out nowhere just moves. uam's merge does
+  not run repository hooks, wherever the base branch is, and does not sign
+  the merge commit: it runs unattended, and an agent can change the
+  repository's configuration. A merge that
+  conflicts, or fails otherwise, shows "Merge blocked" and waits until
   either branch moves or you choose **Retry merge**; resolve it in
   Terminal, or revert the subtask it conflicts with. Once the base branch
   has it all, as after you merge by hand, uam drops either state. **Merge into main

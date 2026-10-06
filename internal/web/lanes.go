@@ -81,11 +81,12 @@ func (a gitAt) argv(args ...string) []string {
 	return append(slices.Clone(a.pin), args...)
 }
 
-// runLaneGit runs one git write uam makes for lanes at a: runGitWrite with
-// hooks and fsmonitor off, as runGit has them, and every hook the
-// configuration at a defines turned off too (see hooksOff), so uam's
-// unattended writes run no hook the repository's configuration names. The
-// owner's own Commit, Pull and Push run the repository's hooks.
+// runLaneGit runs one git write uam makes for lanes, or for its merge into
+// a base branch, at a: runGitWrite with hooks and fsmonitor off, as runGit
+// has them, and every hook the configuration at a defines turned off too
+// (see hooksOff), so uam's unattended writes run no hook the repository's
+// configuration names. The owner's own Commit, Pull and Push run the
+// repository's hooks.
 func runLaneGit(ctx context.Context, a gitAt, args ...string) (string, error) {
 	env, err := hooksOff(ctx, a)
 	if err != nil {
@@ -633,11 +634,13 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 // and returns base's new tip, "" when base already has it all (see hasAll),
 // so uam's sync merges never come back to base as merges that change
 // nothing. Where a worktree has base checked out it runs git merge there, so
-// hooks run and git refuses to overwrite local changes; otherwise it merges
-// as objects and moves base by compare-and-swap. A lane under lanes, the
-// lanes root, with base checked out refuses git_busy: uam runs no git merge
-// in a lane. A conflict refuses merge_conflict before anything is touched.
-// The caller holds the land mutex, and beginWrite when base is checked out.
+// git refuses to overwrite local changes; otherwise it merges as objects and
+// moves base by compare-and-swap. Either way it runs no repository hook: it
+// is unattended, and agents can write the repository's configuration (see
+// runLaneGit). A lane under lanes, the lanes root, with base checked out
+// refuses git_busy: uam runs no git merge in a lane. A conflict refuses
+// merge_conflict before anything is touched. The caller holds the land
+// mutex, and beginWrite when base is checked out.
 func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message string) (string, error) {
 	baseTip, err := r.tipOf(ctx, base)
 	if err != nil {
@@ -684,10 +687,12 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 }
 
 // mergeIn runs git merge of tip in the worktree at dir and returns its new
-// HEAD. It refuses local_changes while dir is in the middle of a git
-// operation or has unmerged paths. A merge it started and could not finish,
-// for example when a hook refuses the commit, is aborted, so dir is never
-// left mid-merge by uam.
+// HEAD, through runLaneGit: no hooks and no fsmonitor, and it signs nothing
+// and checks no signature, as the merge as objects does. It refuses
+// local_changes while dir is in the middle of a git operation or has
+// unmerged paths. A merge it started and could not finish, for example
+// behind another git process's lock, is aborted, so dir is never left
+// mid-merge by uam.
 func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (string, error) {
 	if op, err := r.inProgress(ctx, dir); err != nil {
 		return "", err
@@ -699,14 +704,14 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	} else if len(files) > 0 {
 		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s has unmerged paths: %s; resolve and commit them first", displaytext.Sanitize(dir), fileList(files))}
 	}
-	_, mergeErr := runGitWrite(ctx, dir, nil, "merge", "--no-ff", "--no-edit", "-m", message, tip)
+	_, mergeErr := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures", "-m", message, tip)
 	if mergeErr == nil {
 		return r.output(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	}
 	if started, err := r.mergeHead(ctx, gitAt{dir: dir}); err != nil {
 		return "", err
 	} else if started {
-		if _, err := runGitWrite(ctx, dir, nil, "merge", "--abort"); err != nil {
+		if _, err := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--abort"); err != nil {
 			return "", gitFailed("git merge --abort failed", err)
 		}
 	}

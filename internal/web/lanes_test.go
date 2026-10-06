@@ -668,14 +668,15 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 		t.Fatal("a refused merge moved main")
 	}
 
-	// A hook refusing the merge commit leaves no merge in progress.
+	// A merge git starts and cannot finish, here as another git process
+	// holds main's ref lock, leaves no merge in progress.
 	gitIn(t, f.top, "checkout", "-q", "--", "a.txt")
-	hook := filepath.Join(f.top, ".git", "hooks", "pre-merge-commit")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	lock := filepath.Join(f.top, ".git", "refs", "heads", "main.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge"); err == nil {
-		t.Fatal("merge ran past a refusing hook")
+		t.Fatal("merge went through behind main's ref lock")
 	}
 	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
 		t.Fatal("the owner's directory was left mid-merge")
@@ -683,7 +684,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if got := gitOutput(t, f.top, "status", "--porcelain"); got != "" {
 		t.Fatalf("the owner's directory was left changed: %q", got)
 	}
-	if err := os.Remove(hook); err != nil {
+	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
 
