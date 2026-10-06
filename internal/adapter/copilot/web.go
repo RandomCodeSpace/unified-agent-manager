@@ -338,10 +338,12 @@ type webProvider struct {
 	usageSessionRecorder func(string, bool) error
 	usageMu              sync.Mutex
 	usageOwned           map[string]sdkClient
-	// customMu guards custom, the owner's custom models; it is never held
-	// with mu, which a CLI start holds for long.
+	// customMu guards custom, the owner's custom models, and subagent, the
+	// models subagents may use (empty for any); it is never held with mu,
+	// which a CLI start holds for long.
 	customMu sync.Mutex
 	custom   []agentapi.CustomModel
+	subagent []string
 	// quotaMu guards live, the quota snapshots by type from the latest model
 	// call's response since this CLI started. account.getQuota keeps
 	// returning what the CLI read at sign-in, so these supersede it.
@@ -413,7 +415,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -901,6 +903,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnUserInputRequest:    c.askUser,
 			OnExitPlanModeRequest: refusePlanExit,
 			OnEvent:               c.onEvent,
+			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -924,6 +927,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnUserInputRequest:    c.askUser,
 			OnExitPlanModeRequest: refusePlanExit,
 			OnEvent:               c.onEvent,
+			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,

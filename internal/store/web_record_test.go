@@ -498,6 +498,68 @@ func TestWebHiddenModelsLoadClean(t *testing.T) {
 	}
 }
 
+// Subagent models load in their stored order, without duplicates or invalid
+// IDs, within the cap and without invalid providers, and round-trip.
+func TestWebSubagentModelsLoadClean(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	many := make([]string, MaxHiddenModels+5)
+	for i := range many {
+		many[i] = strconv.Quote(fmt.Sprintf("m%03d", len(many)-i))
+	}
+	long := strconv.Quote(strings.Repeat("x", MaxHiddenModelBytes+1))
+	longProvider := strconv.Quote(strings.Repeat("p", maxWebModelBytes+1))
+	raw := `{"schema_version":4,"default_agent":"opencode","profiles":{},"ui":{"sort":"state","peek_width":60},"web_settings":{"later_setting":"t","subagent_models":{` +
+		`"copilot":["b","a","b","","bad\u0007",` + long + `,"c"],"empty":["",` + long + `],"":["a"],"bad\u0007":["a"],` + longProvider + `:["a"],"many":["m000",` + strings.Join(many, ",") + `]}}}`
+	if err := os.WriteFile(s.Path(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := cfg.WebSettings.SubagentModels
+	if len(sub) != 2 || strings.Join(sub["copilot"], ",") != "b,a,c" || len(sub["many"]) != MaxHiddenModels || sub["many"][0] != "m000" || sub["many"][1] != fmt.Sprintf("m%03d", len(many)) {
+		t.Fatalf("loaded subagent models = %v", sub)
+	}
+	if err := s.Update(func(cfg *Config) error {
+		cfg.UI.GroupByDir = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct {
+		WebSettings struct {
+			LaterSetting   string              `json:"later_setting"`
+			SubagentModels map[string][]string `json:"subagent_models"`
+		} `json:"web_settings"`
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if w := saved.WebSettings; w.LaterSetting != "t" || len(w.SubagentModels) != 2 || strings.Join(w.SubagentModels["copilot"], ",") != "b,a,c" || len(w.SubagentModels["many"]) != MaxHiddenModels {
+		t.Fatalf("saved web_settings = %s", data)
+	}
+	if again, err := s.Load(); err != nil || strings.Join(again.WebSettings.SubagentModels["copilot"], ",") != "b,a,c" {
+		t.Fatalf("reloaded subagent models = %v, %v", again.WebSettings.SubagentModels, err)
+	}
+}
+
+func TestUniqueModelIDsKeepsFirstOrder(t *testing.T) {
+	if got := UniqueModelIDs([]string{"b", "a", "b", "c", "a"}); strings.Join(got, ",") != "b,a,c" {
+		t.Fatalf("UniqueModelIDs = %v", got)
+	}
+	if got := UniqueModelIDs(nil); len(got) != 0 {
+		t.Fatalf("UniqueModelIDs(nil) = %v", got)
+	}
+}
+
 // Title models load without entries whose provider or model ID is empty,
 // too long or holds a control character.
 func TestWebTitleModelsLoadClean(t *testing.T) {

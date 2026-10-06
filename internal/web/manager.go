@@ -598,6 +598,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}()
 	// The catalogs include the custom models, so providers get them first.
 	m.setCustomModels(cfg.WebSettings.CustomModels)
+	m.setSubagentModels(cfg.WebSettings.SubagentModels)
 	m.mu.Lock()
 	maps.Copy(m.links, cfg.WebAccountLinks)
 	m.mu.Unlock()
@@ -645,7 +646,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
-	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold}
 	if m.settings.SendDefault != store.WebSendQueue {
@@ -1385,7 +1386,10 @@ func (m *Manager) Settings() Settings {
 
 // SettingsPatch is a settings change; a nil field changes nothing.
 // HiddenModels replaces the hidden model IDs of each provider it names, and
-// only those; an empty list hides none of that provider's models. TitleModel
+// only those; an empty list hides none of that provider's models.
+// SubagentModels works the same way for the models a provider's subagents
+// may use, in order, each one the provider lists now; an empty list lifts the
+// limit. TitleModel
 // sets the Utility model of each provider it names: a model ID, or
 // store.WebTitleModelNone to opt out; an empty ID unsets it, so the provider
 // uses its cheapest priced model again.
@@ -1400,15 +1404,16 @@ func (m *Manager) Settings() Settings {
 // CompactionThreshold works the same way, store.MinCompactionThreshold to
 // store.MaxCompactionThreshold; the default itself is stored as nil.
 type SettingsPatch struct {
-	TokenPrices  *map[string]map[string]store.WebTokenPrice
-	SendDefault  *string
-	Terminal     *bool
-	Planner      *bool
-	HiddenModels map[string][]string
-	TitleModel   map[string]string
-	CustomModels *[]store.WebCustomModel
-	TaskDefaults *TaskDefaults
-	UtilityLimit **int
+	TokenPrices    *map[string]map[string]store.WebTokenPrice
+	SendDefault    *string
+	Terminal       *bool
+	Planner        *bool
+	HiddenModels   map[string][]string
+	SubagentModels map[string][]string
+	TitleModel     map[string]string
+	CustomModels   *[]store.WebCustomModel
+	TaskDefaults   *TaskDefaults
+	UtilityLimit   **int
 	// SuggestReplies turns suggested replies on or off.
 	SuggestReplies      *bool
 	CompactionThreshold **int
@@ -1454,6 +1459,22 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			return Settings{}, newError(http.StatusBadRequest, "at most %d models of a provider can be hidden", store.MaxHiddenModels)
 		}
 		hidden[provider] = ids
+	}
+	subagents := make(map[string][]string, len(p.SubagentModels))
+	for provider, ids := range p.SubagentModels {
+		if m.providers[provider] == nil {
+			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
+		}
+		if _, ok := m.providers[provider].(agentapi.SubagentModelUser); !ok {
+			return Settings{}, newError(http.StatusBadRequest, "%s cannot limit subagent models", m.providers[provider].DisplayName())
+		}
+		if slices.ContainsFunc(ids, func(id string) bool { return !store.ValidHiddenModel(id) }) {
+			return Settings{}, newError(http.StatusBadRequest, "a subagent model ID must be 1 to %d bytes without control characters", store.MaxHiddenModelBytes)
+		}
+		if ids = store.UniqueModelIDs(ids); len(ids) > store.MaxHiddenModels {
+			return Settings{}, newError(http.StatusBadRequest, "at most %d subagent models of a provider can be allowed", store.MaxHiddenModels)
+		}
+		subagents[provider] = ids
 	}
 	for provider := range p.TitleModel {
 		if m.providers[provider] == nil {
@@ -1503,6 +1524,15 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			return Settings{}, newError(http.StatusBadRequest, "at least one %s model must stay visible", info.DisplayName)
 		}
 	}
+	for provider, ids := range subagents {
+		info := m.infos[provider]
+		for _, id := range ids {
+			if !slices.ContainsFunc(info.Models, func(mo agentapi.Model) bool { return mo.ID == id }) {
+				m.mu.Unlock()
+				return Settings{}, newError(http.StatusBadRequest, "%s does not offer model %q", info.DisplayName, clipRunes(displaytext.Sanitize(id), maxDetailRunes))
+			}
+		}
+	}
 	for provider, model := range p.TitleModel {
 		info := m.infos[provider]
 		switch {
@@ -1518,7 +1548,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Unlock()
 	titles := p.TitleModel
 	if p.CustomModels != nil {
-		titles = withoutRemovedCustom(current, *p.CustomModels, hidden, titles)
+		titles = withoutRemovedCustom(current, *p.CustomModels, hidden, subagents, titles)
+		// Removing the last allowed models must not lift the limit unasked.
+		for provider, ids := range subagents {
+			if _, asked := p.SubagentModels[provider]; !asked && len(ids) == 0 {
+				return Settings{}, newError(http.StatusBadRequest, "removing these custom models leaves %s subagents no allowed model; change Subagent models first", m.providers[provider].DisplayName())
+			}
+		}
 	}
 	next := current
 	if p.TokenPrices != nil {
@@ -1535,6 +1571,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
+	}
+	if len(subagents) > 0 {
+		next.SubagentModels = withProviders(current.SubagentModels, subagents)
 	}
 	if len(titles) > 0 {
 		next.TitleModel = withProviders(current.TitleModel, titles)
@@ -1560,7 +1599,8 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	customChanged := customKeysChanged || !slices.Equal(next.CustomModels, current.CustomModels)
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	opening := next.Planner && !current.Planner
@@ -1584,6 +1624,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.SuggestReplies = next.SuggestReplies
 		cfg.WebSettings.CompactionThreshold = next.CompactionThreshold
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
+		cfg.WebSettings.SubagentModels = withProviders(cfg.WebSettings.SubagentModels, subagents)
 		cfg.WebSettings.TitleModel = withProviders(cfg.WebSettings.TitleModel, titles)
 		if p.CustomModels != nil {
 			cfg.WebSettings.CustomModels = slices.Clone(*p.CustomModels)
@@ -1602,6 +1643,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		m.setCustomModels(*p.CustomModels)
 		m.reloadCustomCatalogs()
 	}
+	if subagentsChanged {
+		m.setSubagentModels(next.SubagentModels)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
@@ -1614,21 +1658,25 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 
 // withoutRemovedCustom extends a settings change that sets the custom models
 // to list: a custom model it removes is no longer hidden (hidden gains the
-// provider's list without it) nor a title model (the returned title change
-// clears it).
-func withoutRemovedCustom(current Settings, list []store.WebCustomModel, hidden map[string][]string, titles map[string]string) map[string]string {
+// provider's list without it), nor a subagent model (likewise in subagents),
+// nor a title model (the returned title change clears it).
+func withoutRemovedCustom(current Settings, list []store.WebCustomModel, hidden, subagents map[string][]string, titles map[string]string) map[string]string {
 	removed := func(id string) bool {
 		return slices.ContainsFunc(current.CustomModels, func(c CustomModel) bool { return c.Name+"/"+c.ModelID == id }) &&
 			!slices.ContainsFunc(list, func(c store.WebCustomModel) bool { return c.Name+"/"+c.ModelID == id })
 	}
-	for provider, ids := range current.HiddenModels {
-		if change, ok := hidden[provider]; ok {
-			ids = change
-		}
-		if kept := slices.DeleteFunc(slices.Clone(ids), removed); len(kept) != len(ids) {
-			hidden[provider] = kept
+	prune := func(current, change map[string][]string) {
+		for provider, ids := range current {
+			if c, ok := change[provider]; ok {
+				ids = c
+			}
+			if kept := slices.DeleteFunc(slices.Clone(ids), removed); len(kept) != len(ids) {
+				change[provider] = kept
+			}
 		}
 	}
+	prune(current.HiddenModels, hidden)
+	prune(current.SubagentModels, subagents)
 	out := maps.Clone(titles)
 	if out == nil {
 		out = map[string]string{}
@@ -1682,6 +1730,16 @@ func (m *Manager) setCustomModels(list []store.WebCustomModel) {
 	for _, name := range m.order {
 		if u, ok := m.providers[name].(agentapi.CustomModelUser); ok {
 			u.SetCustomModels(models)
+		}
+	}
+}
+
+// setSubagentModels gives each provider that can limit its subagents' models
+// its list; a provider without one is not limited.
+func (m *Manager) setSubagentModels(byProvider map[string][]string) {
+	for _, name := range m.order {
+		if u, ok := m.providers[name].(agentapi.SubagentModelUser); ok {
+			u.SetSubagentModels(byProvider[name])
 		}
 	}
 }

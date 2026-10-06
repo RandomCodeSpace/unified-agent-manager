@@ -103,6 +103,52 @@ describe('settings', () => {
     if (state === 'failed') expect(models.getByRole('alert').textContent).toContain('Catalog unavailable');
   });
 
+  test('Subagent models shows only for a provider that can limit them', async () => {
+    await customModelSettings();
+    expect(screen.queryByRole('region', { name: 'Subagent models' })).toBeNull();
+  });
+
+  /** The Models tab with Copilot able to limit subagents to `allowed`, and the PATCH spied. */
+  async function subagentSettings(allowed?: string[], change?: (context: AppContextValue) => void) {
+    const { user, context } = await customModelSettings((context) => {
+      context.meta!.providers.find((p) => p.name === 'copilot')!.capabilities.subagent_models = true;
+      if (allowed) context.settings.subagent_models = { copilot: allowed };
+      change?.(context);
+    });
+    const save = vi.spyOn(api, 'updateWebSettings').mockResolvedValue(context.settings);
+    return { user, save, subagents: await section('Subagent models') };
+  }
+
+  test('adding a subagent model saves the list in order, offering only visible models not listed yet', async () => {
+    const { user, save, subagents } = await subagentSettings(['gpt-5-mini'], (context) => { context.settings.hidden_models = { copilot: ['kimi-k3'] }; });
+    try {
+      expect(subagents.getByText('Fallback')).toBeTruthy();
+      await user.click(subagents.getByRole('combobox', { name: 'Add a GitHub Copilot subagent model' }));
+      expect(screen.queryByRole('option', { name: 'Kimi K3' })).toBeNull();
+      expect(screen.queryByRole('option', { name: 'GPT-5 mini' })).toBeNull();
+      await user.click(await screen.findByRole('option', { name: 'DeepSeek V4.1 Flash' }));
+      await waitFor(() => expect(save).toHaveBeenCalledWith({ subagent_models: { copilot: ['gpt-5-mini', 'ollama/deepseek-v4.1-flash'] } }));
+    } finally { save.mockRestore(); }
+  });
+
+  test('Make fallback moves a subagent model to the front, and an ID no longer offered keeps its row', async () => {
+    const { user, save, subagents } = await subagentSettings(['gpt-5-mini', 'retired-model', 'kimi-k3']);
+    try {
+      expect(subagents.getByText('Not offered now')).toBeTruthy();
+      expect(subagents.queryByRole('button', { name: 'Make GPT-5 mini the fallback' })).toBeNull();
+      await user.click(subagents.getByRole('button', { name: 'Make Kimi K3 the fallback' }));
+      await waitFor(() => expect(save).toHaveBeenCalledWith({ subagent_models: { copilot: ['kimi-k3', 'gpt-5-mini', 'retired-model'] } }));
+    } finally { save.mockRestore(); }
+  });
+
+  test('removing the last subagent model lifts the limit', async () => {
+    const { user, save, subagents } = await subagentSettings(['retired-model']);
+    try {
+      await user.click(subagents.getByRole('button', { name: 'Remove retired-model from subagent models' }));
+      await waitFor(() => expect(save).toHaveBeenCalledWith({ subagent_models: { copilot: [] } }));
+    } finally { save.mockRestore(); }
+  });
+
   test('Models contains model choices and Providers contains accounts and endpoints', async () => {
     const { user } = await openSettings('Models');
     expect(screen.getByRole('region', { name: 'Utility model' })).toBeTruthy();

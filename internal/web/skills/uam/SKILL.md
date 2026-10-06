@@ -179,3 +179,10 @@ Planner on and the Project is a git repository.
 
 A PDF the owner attaches reaches you natively only when the model supports
 PDFs. Otherwise you get its file path; read it with your own tools.
+
+## Subagent models
+
+The owner can limit the models subagents run on in Settings. When a limit is
+set, a subagent you start runs on the model you asked for only if it is
+allowed; otherwise uam moves it to this Task's model or the owner's fallback.
+If no allowed model is usable, the launch is refused: do the work yourself.

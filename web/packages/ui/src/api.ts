@@ -47,6 +47,8 @@ export interface Capabilities {
   mcp?: boolean;
   /** The runtime's CLI version shows in Settings, which can update it (`api.providerCli`). */
   cli_update?: boolean;
+  /** The models the provider's subagents may use can be limited (`Settings.subagent_models`). */
+  subagent_models?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -363,6 +365,12 @@ export interface Settings {
   send_default: SendDefault;
   /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
   hidden_models?: Record<string, string[]>;
+  /**
+   * The model IDs a provider's subagents may use, by provider, the fallback first; omitted when no provider is limited. A
+   * subagent keeps its requested model if listed, else takes the Task's model if listed, else the fallback. PATCH replaces
+   * each named provider's list; `[]` lifts its limit.
+   */
+  subagent_models?: Record<string, string[]>;
   /**
    * The Utility model by provider, the model UAM uses for its own small AI jobs such as titling new Tasks: a model ID,
    * or `none` to keep the provider's own title. A provider without an entry titles a Task with the Task's own model at

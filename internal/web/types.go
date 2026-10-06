@@ -154,6 +154,9 @@ type Settings struct {
 	// offer, sorted; omitted when none is hidden. IDs the provider no longer
 	// lists are kept. The service never refuses a hidden model.
 	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
+	// SubagentModels lists, by provider, the model IDs its subagents may
+	// use, the fallback first; omitted when no provider is limited.
+	SubagentModels map[string][]string `json:"subagent_models,omitempty"`
 	// TitleModel maps a provider to its Utility model, the model UAM uses for
 	// its own small AI jobs such as titling new Tasks: a model ID, or
 	// store.WebTitleModelNone when the provider keeps its own title. A

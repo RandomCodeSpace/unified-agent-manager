@@ -606,6 +606,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "hidden_models must map providers to lists of model IDs")
 				return
 			}
+		case "subagent_models":
+			if patch.SubagentModels = hiddenModelsBody(raw); patch.SubagentModels == nil {
+				writeError(w, http.StatusBadRequest, "subagent_models must map providers to lists of model IDs")
+				return
+			}
 		case "title_model":
 			if json.Unmarshal(raw, &patch.TitleModel) != nil || patch.TitleModel == nil {
 				writeError(w, http.StatusBadRequest, "title_model must map providers to model IDs")
@@ -671,8 +676,8 @@ func (s *Server) handleDiscoverModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
-// hiddenModelsBody decodes a hidden_models object, or returns nil when raw is
-// not an object of string lists (null included).
+// hiddenModelsBody decodes a hidden_models or subagent_models object, or
+// returns nil when raw is not an object of string lists (null included).
 func hiddenModelsBody(raw json.RawMessage) map[string][]string {
 	var byProvider map[string]json.RawMessage
 	if json.Unmarshal(raw, &byProvider) != nil || byProvider == nil {
