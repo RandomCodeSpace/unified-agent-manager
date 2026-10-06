@@ -136,6 +136,9 @@ func TestLaneLandsOntoAMovedTip(t *testing.T) {
 	if err := f.r.checkLane(f.ctx, second, landed1); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.r.squashLane(f.ctx, second, landed1, "x"); err == nil {
+		t.Fatal("squashLane landed a lane without the tip, which would undo #1")
+	}
 	if err := f.r.mergeTip(f.ctx, second, landed1); err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +220,15 @@ func TestLaneMidMergeIsDetected(t *testing.T) {
 	if !strings.Contains(e.Message, "a.txt") {
 		t.Fatalf("refusal = %q, want the unmerged file", e.Message)
 	}
+	// mergeTip leaves the agent's merge and its partial resolution alone.
 	writeRepoFile(t, second.dir, "a.txt", "both\n")
+	_ = wantCode(t, f.r.mergeTip(f.ctx, second, landed), codeLandConflict)
+	if merging, err := f.r.mergeHead(f.ctx, second.dir); err != nil || !merging {
+		t.Fatalf("mergeTip ended the agent's merge: %v, %v", merging, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(second.dir, "a.txt")); err != nil || string(got) != "both\n" {
+		t.Fatalf("a.txt = %q, %v; want the agent's resolution", got, err)
+	}
 	gitIn(t, second.dir, "add", "a.txt")
 	e = wantCode(t, f.r.checkLane(f.ctx, second, landed), codeLandConflict)
 	if !strings.Contains(e.Message, "finish your merge of "+f.r.integ) {
@@ -282,10 +293,10 @@ func TestLaneCompareAndSwapFailsOnAStaleTip(t *testing.T) {
 	}
 
 	// A worktree with the integration branch checked out blocks every move.
-	view := filepath.Join(t.TempDir(), "view")
+	view := filepath.Join(t.TempDir(), "vi\x1b[31mew")
 	gitIn(t, f.top, "worktree", "add", "-q", view, f.r.integ)
 	e := wantCode(t, f.r.moveBranch(f.ctx, f.r.integ, next, tip), codeGitBusy)
-	if !strings.Contains(e.Message, "checked out") {
+	if !strings.Contains(e.Message, "checked out") || strings.Contains(e.Message, "\x1b") {
 		t.Fatalf("refusal = %q", e.Message)
 	}
 	gitIn(t, f.top, "worktree", "remove", view)
@@ -451,6 +462,39 @@ func TestLaneSync(t *testing.T) {
 	if got := gitOutput(t, f.top, "rev-parse", f.r.integ); got != landed {
 		t.Fatalf("a refused sync moved integ to %s", got)
 	}
+}
+
+func TestLaneSyncAndMergeSettle(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	f.land(l, 1)
+	settled := func(when string) {
+		t.Helper()
+		before := f.refs()
+		for range 2 {
+			f.tip()
+			if merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil || merged != "" {
+				t.Fatalf("%s: merging again = %q, %v", when, merged, err)
+			}
+		}
+		if got := f.refs(); got != before {
+			t.Fatalf("%s: sync and merge wrote commits that change nothing:\n%s\nwant\n%s", when, got, before)
+		}
+	}
+	if _, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil {
+		t.Fatal(err)
+	}
+	settled("after a merge")
+
+	// The owner's commit reaches integ through a sync merge, and the merge
+	// back would bring nothing.
+	integ := gitOutput(t, f.top, "rev-parse", f.r.integ)
+	commitFile(t, f.top, "c.txt", "owner\n")
+	if f.tip() == integ {
+		t.Fatal("the owner's commit did not reach integ")
+	}
+	settled("after the owner's commit")
 }
 
 func TestLaneWorktreeOutsideTheRepositoryIsNotInTasksIn(t *testing.T) {
@@ -671,6 +715,12 @@ func TestLanePreflight(t *testing.T) {
 	if err := f.r.preflight(f.ctx, "main@{1}"); err == nil {
 		t.Fatal("a base that is no branch name passed")
 	}
+	// A branch named uam stops git from creating any branch under uam/.
+	gitIn(t, f.top, "branch", "uam")
+	if e := wantCode(t, f.r.preflight(f.ctx, "main"), codeBranchClash); !strings.Contains(e.Message, "branch named uam") {
+		t.Fatalf("refusal = %q", e.Message)
+	}
+	gitIn(t, f.top, "branch", "-D", "-q", "uam")
 	empty := t.TempDir()
 	gitIn(t, empty, "init", "-q", "-b", "main")
 	r, err := openLanes(f.ctx, laneProject, empty)

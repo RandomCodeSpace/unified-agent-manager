@@ -41,6 +41,7 @@ const (
 	codeLocalChanges   = "local_changes"
 	codeGitTooOld      = "git_too_old"
 	codeNoGitIdentity  = "no_git_identity"
+	codeBranchClash    = "branch_clash"
 
 	// maxNamedFiles is how many paths a refusal names.
 	maxNamedFiles = 10
@@ -121,7 +122,8 @@ func openLanes(ctx context.Context, projectID, dir string) (*laneRepo, error) {
 }
 
 // preflight checks what lanes need: git 2.40 or later for merge-tree
-// --write-tree, a committer identity, a commit, and the base branch.
+// --write-tree, a committer identity, a commit, the base branch, and no
+// branch where uam's branches go.
 func (r *laneRepo) preflight(ctx context.Context, base string) error {
 	version, err := r.output(ctx, r.top, "version")
 	if err != nil {
@@ -142,12 +144,23 @@ func (r *laneRepo) preflight(ctx context.Context, base string) error {
 	if err != nil {
 		return err
 	}
+	var tip string
 	if code == 0 {
-		if tip, err := r.tipOf(ctx, base); err != nil || tip != "" {
+		if tip, err = r.tipOf(ctx, base); err != nil {
 			return err
 		}
 	}
-	return newError(http.StatusConflict, "there is no branch %s", displaytext.Sanitize(base))
+	if tip == "" {
+		return newError(http.StatusConflict, "there is no branch %s", displaytext.Sanitize(base))
+	}
+	// git keeps a branch as a file, so a branch named uam leaves no room for
+	// the branches under uam/.
+	root, _, _ := strings.Cut(integPrefix, "/")
+	if clash, err := r.tipOf(ctx, root); err != nil || clash == "" {
+		return err
+	}
+	return &Error{Status: http.StatusConflict, Code: codeBranchClash,
+		Message: fmt.Sprintf("a branch named %s stops git from creating %s and the other branches under %s/; rename or delete it", root, r.integ, root)}
 }
 
 // gitAtLeast reports whether `git version` printed a version at least
@@ -172,8 +185,9 @@ func gitAtLeast(version string, major, minor int) bool {
 // syncInteg brings base's commits onto the integration branch and returns
 // its tip. It creates the branch at base's tip on first need. Later it
 // merges base in as objects, the integration branch as first parent, and
-// never fast-forwards, so every landing stays on its first-parent line. A
-// conflict refuses merge_conflict and moves nothing.
+// never fast-forwards, so every landing stays on its first-parent line. It
+// skips a merge that would change nothing (see hasAll). A conflict refuses
+// merge_conflict and moves nothing.
 func (r *laneRepo) syncInteg(ctx context.Context, base string) (string, error) {
 	baseTip, err := r.tipOf(ctx, base)
 	if err != nil {
@@ -192,7 +206,7 @@ func (r *laneRepo) syncInteg(ctx context.Context, base string) (string, error) {
 		}
 		return baseTip, nil
 	}
-	if synced, err := r.isAncestor(ctx, baseTip, tip); err != nil || synced {
+	if synced, err := r.hasAll(ctx, tip, baseTip); err != nil || synced {
 		return tip, err
 	}
 	tree, conflicts, err := r.mergeTree(ctx, tip, baseTip)
@@ -296,20 +310,8 @@ func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool
 // landing or a revert that the integration tip no longer has, which only an
 // edit of the integration branch by hand causes.
 func (r *laneRepo) checkLane(ctx context.Context, l lane, tip string) error {
-	merging, err := r.mergeHead(ctx, l.dir)
-	if err != nil {
+	if err := r.notMerging(ctx, l); err != nil {
 		return err
-	}
-	files, err := r.unmerged(ctx, l.dir)
-	if err != nil {
-		return err
-	}
-	if merging || len(files) > 0 {
-		msg := fmt.Sprintf("finish your merge of %s and commit, then file done again", r.integ)
-		if len(files) > 0 {
-			msg += "; unmerged: " + fileList(files)
-		}
-		return &Error{Status: http.StatusConflict, Code: codeLandConflict, Message: msg}
 	}
 	out, err := r.output(ctx, l.dir, "log", "--format=%(trailers:key="+trailerRequest+",key="+trailerRevert+",valueonly)", tip+"..HEAD", "--")
 	if err != nil {
@@ -320,6 +322,27 @@ func (r *laneRepo) checkLane(ctx context.Context, l lane, tip string) error {
 			Message: fmt.Sprintf("your lane holds landed work that %s no longer has, so it cannot land; end your turn", r.integ)}
 	}
 	return nil
+}
+
+// notMerging refuses land_conflict while the attempt's worktree is
+// mid-merge or has unmerged paths.
+func (r *laneRepo) notMerging(ctx context.Context, l lane) error {
+	merging, err := r.mergeHead(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	files, err := r.unmerged(ctx, l.dir)
+	if err != nil {
+		return err
+	}
+	if !merging && len(files) == 0 {
+		return nil
+	}
+	msg := fmt.Sprintf("finish your merge of %s and commit, then file done again", r.integ)
+	if len(files) > 0 {
+		msg += "; unmerged: " + fileList(files)
+	}
+	return &Error{Status: http.StatusConflict, Code: codeLandConflict, Message: msg}
 }
 
 // mergeHead reports whether the worktree at dir is mid-merge.
@@ -345,11 +368,15 @@ func (r *laneRepo) unmerged(ctx context.Context, dir string) ([]string, error) {
 
 // mergeTip merges the integration tip into the attempt when the lane lacks
 // it. A merge commit carries a Uam-Merge trailer naming the tip, so uam can
-// tell its own merges from the agent's. On a conflict it aborts, leaving the
-// lane as it was, and refuses land_conflict with the files, the cards that
-// changed them since the lane forked, and the agent's steps.
+// tell its own merges from the agent's. A lane already mid-merge refuses as
+// checkLane does, untouched. On a conflict it aborts, leaving the lane as it
+// was, and refuses land_conflict with the files, the cards that changed them
+// since the lane forked, and the agent's steps.
 func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 	if err := r.ownLane(ctx, l); err != nil {
+		return err
+	}
+	if err := r.notMerging(ctx, l); err != nil {
 		return err
 	}
 	head, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
@@ -391,16 +418,22 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 }
 
 // squashLane writes the landing commit: the lane HEAD's tree on top of tip,
-// as one commit. It moves no ref.
+// as one commit. It refuses unless the lane has tip, since the tree would
+// otherwise undo what landed after the lane forked. It moves no ref.
 func (r *laneRepo) squashLane(ctx context.Context, l lane, tip, message string) (string, error) {
 	if err := r.ownLane(ctx, l); err != nil {
 		return "", err
 	}
-	tree, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{tree}")
+	head, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
 		return "", err
 	}
-	return r.commitTree(ctx, tree, message, tip)
+	if has, err := r.isAncestor(ctx, tip, head); err != nil {
+		return "", err
+	} else if !has {
+		return "", newError(http.StatusConflict, "the lane lacks %s; merge it in before landing", shortSHA(tip))
+	}
+	return r.commitTree(ctx, head+"^{tree}", message, tip)
 }
 
 // landMessage is a landing's commit message: the title, the claim, and the
@@ -424,14 +457,14 @@ func (r *laneRepo) moveBranch(ctx context.Context, branch, to, from string) erro
 	}
 	if dir != "" {
 		return &Error{Status: http.StatusConflict, Code: codeGitBusy,
-			Message: fmt.Sprintf("%s is checked out in %s; uam moves it only while no worktree has it checked out", branch, dir)}
+			Message: fmt.Sprintf("%s is checked out in %s; uam moves it only while no worktree has it checked out", displaytext.Sanitize(branch), displaytext.Sanitize(dir))}
 	}
 	_, err = runGitWrite(ctx, r.top, nil, "update-ref", "-m", "uam", "refs/heads/"+branch, to, from)
 	if err == nil {
 		return nil
 	}
 	if now, terr := r.tipOf(ctx, branch); terr == nil && now != from {
-		return &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: fmt.Sprintf("%s moved while uam was updating it", branch)}
+		return &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: fmt.Sprintf("%s moved while uam was updating it", displaytext.Sanitize(branch))}
 	}
 	return gitFailed("git update-ref failed", err)
 }
@@ -509,12 +542,13 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 }
 
 // mergeIntoBase merges the integration branch into the owner's branch base
-// and returns base's new tip, "" when base already has it all. Where a
-// worktree has base checked out it runs git merge there, so hooks run and
-// git refuses to overwrite local changes; otherwise it merges as objects and
-// moves base by compare-and-swap. A conflict refuses merge_conflict before
-// anything is touched. The caller holds the land mutex, and beginWrite when
-// base is checked out.
+// and returns base's new tip, "" when base already has it all (see hasAll),
+// so uam's sync merges never come back to base as merges that change
+// nothing. Where a worktree has base checked out it runs git merge there, so
+// hooks run and git refuses to overwrite local changes; otherwise it merges
+// as objects and moves base by compare-and-swap. A conflict refuses
+// merge_conflict before anything is touched. The caller holds the land
+// mutex, and beginWrite when base is checked out.
 func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (string, error) {
 	baseTip, err := r.tipOf(ctx, base)
 	if err != nil {
@@ -527,7 +561,7 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (str
 	if baseTip == "" || tip == "" {
 		return "", newError(http.StatusConflict, "there is no branch %s or %s", displaytext.Sanitize(base), r.integ)
 	}
-	if merged, err := r.isAncestor(ctx, tip, baseTip); err != nil || merged {
+	if merged, err := r.hasAll(ctx, baseTip, tip); err != nil || merged {
 		return "", err
 	}
 	tree, conflicts, err := r.mergeTree(ctx, baseTip, tip)
@@ -563,7 +597,7 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	if merging, err := r.mergeHead(ctx, dir); err != nil {
 		return "", err
 	} else if merging {
-		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("a merge is in progress in %s; finish or abort it first", dir)}
+		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("a merge is in progress in %s; finish or abort it first", displaytext.Sanitize(dir))}
 	}
 	_, mergeErr := runGitWrite(ctx, dir, nil, "merge", "--no-ff", "--no-edit", "-m", message, tip)
 	if mergeErr == nil {
@@ -578,7 +612,7 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	}
 	var gerr *gitError
 	if errors.As(mergeErr, &gerr) && containsAny(gerr.output, "would be overwritten by merge") {
-		e := gitFailed(fmt.Sprintf("merging %s would overwrite uncommitted changes in %s; commit or stash them", r.integ, dir), mergeErr)
+		e := gitFailed(fmt.Sprintf("merging %s would overwrite uncommitted changes in %s; commit or stash them", r.integ, displaytext.Sanitize(dir)), mergeErr)
 		e.Code = codeLocalChanges
 		return "", e
 	}
@@ -594,7 +628,7 @@ func (r *laneRepo) ownLane(ctx context.Context, l lane) error {
 		return err
 	}
 	if realPath(top) != realPath(l.dir) {
-		return newError(http.StatusConflict, "%s is not a lane worktree", l.dir)
+		return newError(http.StatusConflict, "%s is not a lane worktree", displaytext.Sanitize(l.dir))
 	}
 	return nil
 }
@@ -623,6 +657,25 @@ func (r *laneRepo) isAncestor(ctx context.Context, a, b string) (bool, error) {
 		return code == 0, nil
 	}
 	return false, newError(http.StatusBadGateway, "git merge-base failed: %s", gitMessage(stderr))
+}
+
+// hasAll reports whether merging commit b into commit a would bring
+// nothing: b is a or an ancestor of it, or a is an ancestor of b with the
+// same tree, so b adds only merges that change nothing. Skipping that merge
+// loses no history git needs later, since a stays their merge base.
+func (r *laneRepo) hasAll(ctx context.Context, a, b string) (bool, error) {
+	if has, err := r.isAncestor(ctx, b, a); err != nil || has {
+		return has, err
+	}
+	if behind, err := r.isAncestor(ctx, a, b); err != nil || !behind {
+		return false, err
+	}
+	trees, err := r.output(ctx, r.top, "rev-parse", a+"^{tree}", b+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	t := strings.Fields(trees)
+	return len(t) == 2 && t[0] == t[1], nil
 }
 
 // checkedOut is the worktree that has branch checked out, "" when none has.
