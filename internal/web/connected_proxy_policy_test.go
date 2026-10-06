@@ -48,6 +48,7 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/utility", true},
 		{"PATCH", "/api/board/projects/project", true},
+		{"GET", "/api/board/executor", true},
 		{"POST", "/api/board/import", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},

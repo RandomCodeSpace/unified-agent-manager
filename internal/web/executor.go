@@ -616,6 +616,19 @@ type BoardProviderWait struct {
 	Until    *time.Time `json:"until"`
 }
 
+// ExecutorWaits lists the providers the executor waits for, none in an
+// empty list. The Planner reads it again on each Board change while an epic
+// runs: unlike BoardProject, it runs no git.
+func (m *Manager) ExecutorWaits() (BoardExecutor, error) {
+	if err := m.boardOn(); err != nil {
+		return BoardExecutor{}, err
+	}
+	if w := m.executorWaits(); w != nil {
+		return *w, nil
+	}
+	return BoardExecutor{Providers: []BoardProviderWait{}}, nil
+}
+
 // executorWaits lists the providers the executor waits for; nil for none.
 func (m *Manager) executorWaits() *BoardExecutor {
 	m.mu.Lock()

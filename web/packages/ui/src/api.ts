@@ -563,7 +563,7 @@ export interface BoardProject {
   executor?: BoardExecutor | null;
 }
 
-/** The providers nothing starts on now: backing off after a failure until `until`, or signed out (`until` null). */
+/** `GET /api/board/executor`, also in `BoardProject`: the providers nothing starts on now, backing off after a failure until `until`, or signed out (`until` null). */
 export interface BoardExecutor {
   providers: ProviderWait[];
 }
@@ -1735,6 +1735,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     return {
       board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
       project: (id: string) => call<BoardProject>('GET', `/api/board/projects/${enc(id)}`),
+      /** What uam's executor waits for, read with no git, unlike `project`. */
+      executor: () => call<BoardExecutor>('GET', '/api/board/executor'),
       /** Changes the given settings only. */
       setProject: (id: string, patch: { accept_cmd?: string; base_ref?: string; accept_parallel?: number }) => call<BoardProject>('PATCH', `/api/board/projects/${enc(id)}`, patch),
       card: (ref: string, signal?: AbortSignal) => call<CardDetail>('GET', card(ref), undefined, false, signal),

@@ -130,34 +130,47 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
 }
 
 /**
- * The Project's integration branch (ADR 0006 §5.2) and the providers uam's executor waits for
- * (§4.5), fetched for `project` and again as `key` changes: the landings, and while an epic runs,
- * each Board revision. A wait ends with no Board change, so the first to end reads it again too.
- * Null and none until it loads.
+ * The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `landed`
+ * changes, and the providers uam's executor waits for (§4.5), read again as `revision` changes:
+ * each Board revision while an epic runs. Only the first runs git on the service, so a Board change
+ * reads the waits alone. A wait ends with no Board change, so the first to end reads them again too.
+ * Null and none until they load.
  */
-function useProjectRun(project: string, key: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
+function useProjectRun(project: string, landed: string, revision: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
   const api = useApi();
-  const [shown, setShown] = useState<{ project: string; integration: BoardIntegration | null; waits: ProviderWait[] } | null>(null);
+  const [integration, setIntegration] = useState<{ project: string; value: BoardIntegration | null } | null>(null);
+  const [waits, setWaits] = useState<ProviderWait[] | null>(null);
   const [ended, setEnded] = useState(0);
   useEffect(() => {
     if (!project) return;
     let alive = true;
     api.planner
       .project(project)
-      .then((p) => alive && setShown({ project, integration: p.integration ?? null, waits: p.executor?.providers ?? [] }))
+      .then((p) => alive && setIntegration({ project, value: p.integration ?? null }))
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [api.planner, project, key, ended]);
+  }, [api.planner, project, landed]);
   useEffect(() => {
-    const ends = shown?.waits.map((w) => Date.parse(w.until ?? '')).filter(Number.isFinite) ?? [];
+    if (!project) return;
+    let alive = true;
+    api.planner
+      .executor()
+      .then((e) => alive && setWaits(e.providers ?? []))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, project, revision, ended]);
+  useEffect(() => {
+    const ends = waits?.map((w) => Date.parse(w.until ?? '')).filter(Number.isFinite) ?? [];
     if (!ends.length) return;
     // A little after the service's time, so it says the wait ended; each read sets the next.
     const timer = setTimeout(() => setEnded((n) => n + 1), Math.max(0, Math.min(...ends) - Date.now()) + WAIT_SLACK_MS);
     return () => clearTimeout(timer);
-  }, [shown]);
-  return shown?.project === project ? shown : { integration: null, waits: NO_WAITS };
+  }, [waits]);
+  return { integration: integration?.project === project ? integration.value : null, waits: project && waits ? waits : NO_WAITS };
 }
 
 const WAIT_SLACK_MS = 500;
@@ -202,7 +215,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   // executor waits for, read again on each change while an approved epic runs.
   const landed = cards?.filter((c) => c.status === 'done' && c.lane?.landed_sha).length ?? 0;
   const running = cards?.some((c) => c.kind === 'epic' && c.run && !c.paused && c.status !== 'done' && c.status !== 'cancelled') ?? false;
-  const { integration, waits } = useProjectRun(key && key !== 'unassigned' && !project?.no_git ? key : '', `${landed}:${running ? board?.data?.revision : ''}`);
+  const { integration, waits } = useProjectRun(key && key !== 'unassigned' && !project?.no_git ? key : '', String(landed), running ? String(board?.data?.revision) : '');
   // The Inbox holds the plans to approve too (ADR 0006 §6.1).
   const pending = (board?.data?.requests.length ?? 0) + (cards ? plansToApprove(cards).length : 0);
   const panelPresence = usePresence(!!ui.panel);

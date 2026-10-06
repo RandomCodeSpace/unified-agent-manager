@@ -667,6 +667,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const ids = new Set(own.map((c) => c.id));
       return json(200, { cards: own, requests: requests.filter((r) => r.status === 'pending' && ids.has(r.card_id)), revision: revisions[pid] ?? 0 });
     }
+    // The mock's providers never fail, so its executor waits for nothing.
+    if (path === '/api/board/executor' && method === 'GET') return json(200, { providers: [] });
     if ((m = path.match(/^\/api\/board\/projects\/([^/]+)$/))) {
       const pid = decodeURIComponent(m[1]);
       const p = project(pid);

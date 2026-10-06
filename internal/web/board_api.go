@@ -18,6 +18,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/board", s.handleBoard)
 	mux.HandleFunc("GET /api/board/projects/{id}", s.handleBoardProject)
 	mux.HandleFunc("PATCH /api/board/projects/{id}", s.handleUpdateBoardProject)
+	mux.HandleFunc("GET /api/board/executor", s.handleBoardExecutor)
 	mux.HandleFunc("POST /api/board/cards", s.handleCreateCard)
 	mux.HandleFunc("GET /api/board/cards/{ref}", s.handleCard)
 	mux.HandleFunc("PATCH /api/board/cards/{ref}", s.handleEditCard)
@@ -162,6 +163,15 @@ func (s *Server) handleBoardProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleBoardExecutor(w http.ResponseWriter, _ *http.Request) {
+	e, err := s.m.ExecutorWaits()
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, e)
 }
 
 // handleUpdateBoardProject changes a Project's planner settings: any of

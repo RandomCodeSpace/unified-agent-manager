@@ -545,12 +545,22 @@ func TestExecutorWaitsWhileSignedOut(t *testing.T) {
 	if p.Executor == nil || p.Executor.Providers[0].Until != nil || !strings.Contains(p.Executor.Providers[0].Detail, "signed out") {
 		t.Fatalf("executor = %+v", p.Executor)
 	}
+	// The Planner reads the waits alone on each Board change: no git.
+	var e BoardExecutor
+	r.call(http.MethodGet, "/api/board/executor", "", http.StatusOK, &e)
+	if !slices.Equal(e.Providers, p.Executor.Providers) {
+		t.Fatalf("executor waits = %+v, want %+v", e, p.Executor)
+	}
 	if n := len(r.ts.prov.Opens()); n != 0 {
 		t.Fatalf("%d Tasks opened while signed out", n)
 	}
 	signOut(false)
 	r.m.kickExecutor()
 	r.running(0)
+	r.call(http.MethodGet, "/api/board/executor", "", http.StatusOK, &e)
+	if e.Providers == nil || len(e.Providers) != 0 {
+		t.Fatalf("executor waits after signing in = %+v, want none", e)
+	}
 }
 
 // A lane start that failed is recorded without waiting for mu while it

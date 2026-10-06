@@ -1544,15 +1544,21 @@ describe('lanes (ADR 0006 §5)', () => {
 
   test('an approved epic whose provider backs off says so on a chip, in words', async () => {
     const { user, tree } = await lanePlanner();
+    const projectReads = vi.fn();
     const spy = serviceReply(
-      (url, method) => method === 'GET' && url.includes('/api/board/projects/p3'),
-      async (real) => reply(200, { ...(await (await real()).json()), executor: { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(Date.now() + 60_000).toISOString() }] } }),
+      (url, method) => {
+        if (method === 'GET' && url.includes('/api/board/projects/p3')) projectReads();
+        return method === 'GET' && url.includes('/api/board/executor');
+      },
+      () => reply(200, { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(Date.now() + 60_000).toISOString() }] }),
     );
     try {
-      // A Board change reads the Project again while the epic runs.
+      // A Board change reads the executor's waits again while the epic runs.
       await act(() => api.planner.comment('cp3-33', 'Looking at the template now.'));
       // On the epic's row, in words a screen reader reads where the row has no room for them.
       await waitFor(() => expect(row(tree, 32).textContent).toContain('Waiting for GitHub Copilot: rate limited'));
+      // Not the Project, whose integration branch the service reads with git: only a landing changes it.
+      expect(projectReads).not.toHaveBeenCalled();
       const panel = await openCard(user, tree, 32);
       expect(await panel.findByText('Waiting for GitHub Copilot: rate limited')).toBeTruthy();
     } finally {
@@ -1564,12 +1570,11 @@ describe('lanes (ADR 0006 §5)', () => {
     const { tree } = await lanePlanner();
     let until = 0;
     const spy = serviceReply(
-      (url, method) => method === 'GET' && url.includes('/api/board/projects/p3'),
+      (url, method) => method === 'GET' && url.includes('/api/board/executor'),
       async (real) => {
-        const data = await (await real()).json();
         until ||= Date.now() + 500;
         // As the service does: the provider waits until then, and not after.
-        return Date.now() < until ? reply(200, { ...data, executor: { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(until).toISOString() }] } }) : reply(200, data);
+        return Date.now() < until ? reply(200, { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(until).toISOString() }] }) : real();
       },
     );
     try {

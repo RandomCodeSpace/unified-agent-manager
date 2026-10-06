@@ -21,6 +21,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"DELETE /api/sessions/{id}/queue/{request_id}",
 		"GET /api/board",
 		"GET /api/board/cards/{ref}",
+		"GET /api/board/executor",
 		"GET /api/board/projects/{id}",
 		"GET /api/configuration",
 		"GET /api/events",
