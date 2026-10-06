@@ -470,6 +470,63 @@ func TestLandingDoesNotCarryOwnerBaseCommits(t *testing.T) {
 	}
 }
 
+// uam merges into main only the commits it made on the integration branch:
+// its landings, its reverts and its sync merges of main. Any other commit
+// there blocks the merge, named on the epic and in the header, and main
+// stays where it is.
+func TestMergeBlocksCommitsUamDidNotMake(t *testing.T) {
+	t.Run("a commit by hand", func(t *testing.T) {
+		r := newFinishingRun(t, "true", "Add b", "Add c")
+		sub := r.subscribe()
+		r.landWith(0, "b.txt", "b\n")
+		held := filepath.Join(t.TempDir(), "held")
+		gitIn(t, r.repo, "worktree", "add", "-q", held, r.integ())
+		foreign := shortSHA(commitFile(t, held, "x.txt", "by hand\n"))
+		gitIn(t, r.repo, "worktree", "remove", "--force", held)
+		main := gitOutput(t, r.repo, "rev-parse", "main")
+		r.landWith(1, "c.txt", "c\n")
+		if end := r.nextMerge(sub); end.Status != jobFailed || !strings.Contains(end.Error, foreign) {
+			t.Fatalf("merge job = %+v, want it failed naming %s", end, foreign)
+		}
+		if m := r.integration().Merge; m == nil || m.State != mergeBlocked || !strings.Contains(m.Reason, foreign) {
+			t.Fatalf("merge state = %+v", m)
+		}
+		if got := r.epicComments("uam: Merge of "); len(got) != 1 || !strings.Contains(got[0], "is blocked") || !strings.Contains(got[0], foreign) {
+			t.Fatalf("epic comments = %q", got)
+		}
+		if gitOutput(t, r.repo, "rev-parse", "main") != main {
+			t.Fatal("a blocked merge moved main")
+		}
+	})
+	t.Run("uam's own commits", func(t *testing.T) {
+		r := newLaneRun(t, "true", "Add b", "Add c", "Add d")
+		sub := r.subscribe()
+		r.landWith(0, "b.txt", "b\n")
+		r.landWith(1, "c.txt", "c\n")
+		r.landWith(2, "d.txt", "d\n")
+		commitFile(t, r.repo, "o.txt", "owner\n")
+		repo, err := openLanes(context.Background(), r.project, r.repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.syncInteg(context.Background(), "main"); err != nil {
+			t.Fatal(err)
+		}
+		b, c := r.leaves[0].ID, r.leaves[1].ID
+		if end := r.revert(b, revertBody([]string{c}, b, c)); end.Status != jobDone {
+			t.Fatalf("revert of two landings = %+v", end)
+		}
+		r.call(http.MethodPost, "/api/board/projects/"+r.project+"/merge", `{}`, http.StatusAccepted, nil)
+		if end := r.nextMerge(sub); end.Status != jobDone {
+			t.Fatalf("merge of landings, a two-commit revert and a sync merge = %+v", end)
+		}
+		if gitOutput(t, r.repo, "show", "main:o.txt") != "owner" || gitOutput(t, r.repo, "show", "main:d.txt") != "d" ||
+			!gone(filepath.Join(r.repo, "b.txt")) || !gone(filepath.Join(r.repo, "c.txt")) {
+			t.Fatal("main is not the owner's commit and d.txt, with b.txt and c.txt reverted")
+		}
+	})
+}
+
 // The first pass after the planner opens merges only work of a finished
 // approved epic that the base branch lacks: with one epic merged and
 // another still running, a restart merges nothing, so the running epic's

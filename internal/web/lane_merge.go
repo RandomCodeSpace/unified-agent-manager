@@ -378,9 +378,66 @@ func (m *Manager) mergeProject(ctx context.Context, project string) error {
 		return err
 	}
 	items := m.mergeItems(ctx, commits)
-	merged, err := m.mergeInto(ctx, repo, base, mergeMessage(repo.integ, items))
+	var known board.LaneCommits
+	if err := m.withBoard(func(st *board.Store) error {
+		var err error
+		known, err = st.LaneCommits(ctx, project)
+		return err
+	}); err != nil {
+		return err
+	}
+	unmade, err := repo.unmade(ctx, baseTip, tip, known)
+	if err != nil {
+		return err
+	}
+	merged := ""
+	if len(unmade) > 0 {
+		err = &Error{Status: http.StatusConflict, Code: codeMergeBlocked, Message: fmt.Sprintf(
+			"%s has commits uam did not make: %s; uam merges only its own landings and reverts, and its merges of %s", repo.integ, fileList(unmade), displaytext.Sanitize(base))}
+	} else {
+		merged, err = m.mergeInto(ctx, repo, base, mergeMessage(repo.integ, items))
+	}
 	m.mergeOutcome(ctx, project, items, at, merged, err)
 	return err
+}
+
+// unmade lists by short name, newest first, the commits on the integration
+// branch's first-parent line up to tip that baseTip lacks and uam did not
+// make: not a landing known has, not a commit of a revert known has, and
+// not a merge of a commit baseTip has, as uam's sync merges are. A revert's
+// commits are its last one, which known has, and the ones before it on the
+// line, one per landing it reverted.
+func (r *laneRepo) unmade(ctx context.Context, baseTip, tip string, known board.LaneCommits) ([]string, error) {
+	out, err := r.output(ctx, r.top, "log", "--first-parent", "--format=%H %P", baseTip+".."+tip, "--")
+	if err != nil {
+		return nil, err
+	}
+	var unmade []string
+	left := 0 // the commits of a revert still to come, older on the line
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		sha, inRevert := f[0], left > 0
+		left = max(left-1, 0)
+		switch {
+		case known.Landed[sha] || inRevert:
+		case known.Reverted[sha] > 0:
+			left = known.Reverted[sha] - 1
+		case len(f) == 3:
+			synced, err := r.isAncestor(ctx, f[2], baseTip)
+			if err != nil {
+				return nil, err
+			}
+			if !synced {
+				unmade = append(unmade, shortSHA(sha))
+			}
+		default:
+			unmade = append(unmade, shortSHA(sha))
+		}
+	}
+	return unmade, nil
 }
 
 // mergeInto merges the integration branch into base with message. Where a
@@ -449,6 +506,9 @@ func (m *Manager) mergeOutcome(ctx context.Context, project string, items []merg
 		pm.shown, pm.tries = BoardMerge{State: mergeWaiting, Reason: reason, RetryAt: &retryAt}, tries+1
 		pm.retry = time.AfterFunc(wait, func() { m.goLanes(func(ctx context.Context) { m.autoMerge(ctx, project) }) })
 		body = fmt.Sprintf("Merge of %s is waiting: %s\nuam tries it again until it goes through.", at, reason)
+	case code == codeMergeBlocked:
+		pm.shown, pm.integ, pm.base = BoardMerge{State: mergeBlocked, Reason: reason}, at.tip, at.baseTip
+		body = fmt.Sprintf("Merge of %s is blocked: %s\nTake them off %s, then Retry merge in the Planner, or merge it by hand.", at, reason, at.integ)
 	default:
 		pm.shown, pm.integ, pm.base = BoardMerge{State: mergeBlocked, Reason: reason}, at.tip, at.baseTip
 		body = fmt.Sprintf("Merge of %s is blocked: %s\nResolve it on %s, or revert the subtask it conflicts with, then Retry merge in the Planner.", at, reason, displaytext.Sanitize(at.base))

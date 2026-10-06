@@ -39,6 +39,7 @@ const (
 	codeLandConflict   = "land_conflict"
 	codeLandStale      = "land_stale"
 	codeMergeConflict  = "merge_conflict"
+	codeMergeBlocked   = "merge_blocked"
 	codeRevertConflict = "revert_conflict"
 	codeLocalChanges   = "local_changes"
 	codeGitTooOld      = "git_too_old"

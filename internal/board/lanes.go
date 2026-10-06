@@ -46,6 +46,43 @@ func (s *Store) LaneHold(ctx context.Context, branch string) (Card, Hold, error)
 	return card, hold, err
 }
 
+// LaneCommits are the commits uam made on a Project's integration branch,
+// as its lane attempts record them: each landing, and each revert's last
+// commit with the number of landings it reverted, one revert commit each.
+type LaneCommits struct {
+	Landed   map[string]bool
+	Reverted map[string]int
+}
+
+// LaneCommits returns the landings and the reverts of projectID's lane
+// attempts.
+func (s *Store) LaneCommits(ctx context.Context, projectID string) (LaneCommits, error) {
+	out := LaneCommits{Landed: map[string]bool{}, Reverted: map[string]int{}}
+	err := s.read(ctx, func(t *txn) error {
+		rows, err := t.tx.QueryContext(t.ctx, `SELECT h.landed_sha, h.reverted_sha FROM holds h JOIN cards c ON c.id = h.card_id
+			WHERE c.project_id = ? AND h.branch <> '' AND h.landed_sha <> ''`, projectID)
+		if err != nil {
+			return fmt.Errorf("board: read lane commits: %w", err)
+		}
+		for rows.Next() {
+			var landed, reverted string
+			if err := rows.Scan(&landed, &reverted); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("board: read lane commits: %w", err)
+			}
+			out.Landed[landed] = true
+			if reverted != "" {
+				out.Reverted[reverted]++
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return fmt.Errorf("board: read lane commits: %w", err)
+		}
+		return nil
+	})
+	return out, err
+}
+
 // Note adds uam's automatic comment body to the card ref, once: a card that
 // has the same comment from uam already is left as it is. It reports
 // whether it added the comment.
