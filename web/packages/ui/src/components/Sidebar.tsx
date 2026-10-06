@@ -515,18 +515,27 @@ function shelfKeys(label: string, rows: ListRow[], open: boolean, selectedKey: s
   return [`shelf:${label}`, ...rows.filter((r) => open || r.key === selectedKey).map((r) => r.key)];
 }
 
-function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render }: Readonly<{ label: string; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; render: (row: ListRow, compact: boolean) => ReactNode }>) {
+function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, above = false, first = false }: Readonly<{ label: string; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; /** Another shelf header is pinned under this one: it sticks one header higher. */ above?: boolean; /** The first shelf: it takes the room left under a short list, so the shelves sit at the foot. */ first?: boolean; render: (row: ListRow, compact: boolean) => ReactNode }>) {
+  const head = useRef<HTMLButtonElement>(null);
   if (rows.length === 0) return null;
   const pinned = !open ? rows.find((r) => r.key === selectedKey) : undefined;
+  // The header is pinned to the scroller's foot, so an opened shelf's rows unfold below the fold: once they have
+  // (the soft collapse takes `slow`), the header goes to the top of the list and its rows fill the view under it.
+  const toggle = () => {
+    onToggle();
+    if (!open) window.setTimeout(() => head.current?.scrollIntoView({ block: 'start' }), 300);
+  };
+  // No wrapper: a sticky header can only move within its parent, so the header, the rows and the pinned row are siblings in the list's column.
   return (
-    <div className="mt-1">
+    <>
       <button
+        ref={head}
         type="button"
         data-nav={`shelf:${label}`}
         tabIndex={tabStop === `shelf:${label}` ? 0 : -1}
         aria-expanded={open}
-        className="flex h-7 w-full items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
-        onClick={onToggle}
+        className={cn('sticky z-10 mt-1 flex h-7 w-full shrink-0 items-center gap-2 rounded-sm bg-rail px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11', above ? 'bottom-7 pointer-coarse:bottom-11' : 'bottom-0', first && 'mt-auto')}
+        onClick={toggle}
       >
         <span className="whitespace-nowrap">
           {label} <span className="tabular-nums text-muted">{rows.length}</span>
@@ -545,7 +554,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render }: Re
           {render(pinned, true)}
         </ul>
       )}
-    </div>
+    </>
   );
 }
 
@@ -683,16 +692,15 @@ export const Sidebar = memo(function Sidebar({
     );
   } else {
     body = (
-      // The shelves sit at the foot of the list while the active Tasks are few, and follow them once they scroll.
+      // The shelves sit at the foot of the list while the active Tasks are few; their headers stay pinned there once the list scrolls.
       <div className="flex min-h-full flex-col">
         <ul aria-label="Unsettled tasks" className="flex flex-col gap-1 animate-fade-in">
           {unsettled.map((r) => renderRow(r))}
         </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
-        <div className="mt-auto">
-          <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} render={renderRow} />
-          <Shelf label="Archived" rows={archived} selectedKey={selectedKey} open={archivedOpen} onToggle={() => toggleShelf(`${shelfScope}:archived`)} tabStop={tabStop} render={renderRow} />
-        </div>
+        {/* The shelves are the column's own children (their headers pin to the scroller's foot); the first takes the room left under a short list. */}
+        <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} render={renderRow} above={archived.length > 0} first />
+        <Shelf label="Archived" rows={archived} selectedKey={selectedKey} open={archivedOpen} onToggle={() => toggleShelf(`${shelfScope}:archived`)} tabStop={tabStop} render={renderRow} first={settled.length === 0} />
       </div>
     );
   }

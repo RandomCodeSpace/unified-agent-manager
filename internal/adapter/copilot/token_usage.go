@@ -21,6 +21,7 @@ func modelTokens(ev copilot.SessionEvent, d *rpc.AssistantUsageData) *agentapi.T
 		Model: d.Model, Time: ev.Timestamp,
 		Input: max(orZero(d.InputTokens), 0), Output: max(orZero(d.OutputTokens), 0),
 		CacheRead: max(orZero(d.CacheReadTokens), 0), CacheWrite: max(orZero(d.CacheWriteTokens), 0),
+		DurationMS: max(orZero(d.Duration), 0),
 	}
 }
 

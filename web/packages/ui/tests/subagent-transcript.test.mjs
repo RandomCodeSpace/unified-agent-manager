@@ -33,6 +33,7 @@ const modules = {
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
   '../lib/transcript': transcript,
+  '../lib/cost': { compactTokens: (n) => String(n) },
   '../lib/historyState': history,
   '../lib/subagents': subagentsLib,
   // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.

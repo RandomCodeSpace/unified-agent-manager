@@ -360,6 +360,13 @@ type TurnTiming struct {
 	PausedAt   time.Time `json:"paused_at,omitzero"`
 	PausedMS   int64     `json:"paused_ms,omitempty"`
 	State      string    `json:"state"`
+	// Token usage the provider reported for the turn's model calls (the main
+	// agent and its subagents), summed as the calls report: tokens in and out,
+	// and the calls' own duration, so a reader can tell generation speed from
+	// wall time spent in tools or waiting.
+	InputTokens  int64 `json:"input_tokens,omitempty"`
+	OutputTokens int64 `json:"output_tokens,omitempty"`
+	GenerationMS int64 `json:"generation_ms,omitempty"`
 }
 
 // SubagentSummary is the latest generated line for one completed result.

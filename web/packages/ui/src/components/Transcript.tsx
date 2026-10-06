@@ -7,6 +7,7 @@ import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
+import { compactTokens } from '../lib/cost';
 import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
@@ -119,7 +120,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyTiming: replyTimings(identityItems, turnTimings), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart in both densities, the images its result returned in Compact.
@@ -233,7 +234,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} timing={ctx.replyTiming?.get(item.id)} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -536,6 +537,8 @@ interface RenderContext {
   streamingId: string | undefined;
   /** For each reasoning item with a recorded end: when it ended. */
   thoughtEnd: Map<string, string>;
+  /** For the last assistant message of each turn whose timing is known: that timing, so the reply's foot can carry the turn's tokens. */
+  replyTiming?: ReadonlyMap<string, TurnTiming>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -624,7 +627,7 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: ReadonlyMap<strin
     // A reasoning item the provider closed without any text has nothing to show.
     if (item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
     flush();
-    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} className={ctx.arrival(item.id)} />);
+    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} timing={ctx.replyTiming?.get(item.id)} className={ctx.arrival(item.id)} />);
   }
   flush();
   return out;
@@ -720,7 +723,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time. */ timing?: TurnTiming; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -759,6 +762,7 @@ function Copyable({ text, read, label, className, side = 'right', at, children, 
             {clockTime(at)}
           </time>
         )}
+        {timing && <TurnTokens timing={timing} />}
       </div>
       {menuReady && (
         <ContextMenu.Root>
@@ -772,13 +776,51 @@ function Copyable({ text, read, label, className, side = 'right', at, children, 
   );
 }
 
+/** The reply's foot: the turn's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count. */
+function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
+  const out = timing.output_tokens ?? 0;
+  if (!out) return null;
+  const rate = timing.generation_ms ? Math.round(out / (timing.generation_ms / 1000)) : 0;
+  const title = `${(timing.input_tokens ?? 0).toLocaleString()} tokens in · ${out.toLocaleString()} out${timing.generation_ms ? ` · ${Math.round(timing.generation_ms / 1000)}s generating` : ''}`;
+  return (
+    <span className="whitespace-nowrap" title={title}>
+      <span aria-hidden="true"> · </span>
+      {compactTokens(out)} tokens
+      {rate > 0 && (
+        <>
+          <span aria-hidden="true"> · </span>
+          {rate} tok/s
+        </>
+      )}
+    </span>
+  );
+}
+
+/** The timing of each turn, keyed by the turn's last assistant message, so the reply's foot carries it once. */
+function replyTimings(items: Item[], timings: TurnTiming[]): ReadonlyMap<string, TurnTiming> | undefined {
+  if (!timings.length) return undefined;
+  const lastReply = new Map<string, string>();
+  let turn: string | undefined;
+  for (const item of items) {
+    if (item.agent_id) continue;
+    if (item.kind === 'user' && !item.delivery) turn = item.id;
+    else if (item.kind === 'assistant' && turn) lastReply.set(turn, item.id);
+  }
+  const out = new Map<string, TurnTiming>();
+  for (const t of timings) {
+    const id = t.user_item_id && lastReply.get(t.user_item_id);
+    if (id && t.output_tokens) out.set(id, t);
+  }
+  return out;
+}
+
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
 const UserBubble = memo(function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   return item.clipped ? <ClippedMessage item={item} sessionId={sessionId} className={className} /> : userBubble({ item, text: item.text ?? '', sessionId, className });
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; timing?: TurnTiming }
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
@@ -812,9 +854,9 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, timing }: MessageParts) {
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={item.time} className={className}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={item.time} timing={timing} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
@@ -1252,14 +1294,14 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, timing, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; /** The turn's timing when this is its last reply: its tokens go in the foot. */ timing?: TurnTiming; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, className }) : noticeRow({ item, text: item.text ?? '', className });
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, timing, className }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':

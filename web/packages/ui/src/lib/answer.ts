@@ -11,6 +11,9 @@ const RECOMMENDED = /\(recommended\)\s*$/i;
 /** The first option the agent marked as recommended, staged when its question arrives; undefined when none is. */
 export const recommendedChoice = (choices: readonly string[] | undefined): string | undefined => choices?.find((c) => RECOMMENDED.test(c));
 
+/** The option staged when a question arrives: the recommended one, else the first of a single-choice question; a "choose any" question starts empty. */
+export const initialChoice = (question: Pick<Question, 'choices' | 'multiple'>): string | undefined => recommendedChoice(question.choices) ?? (question.multiple ? undefined : question.choices?.[0]);
+
 /** Whether the composer can send now: an option is staged, or the question takes free text and some is typed. */
 export const canAnswer = (question: Pick<Question, 'custom'>, staged: readonly string[], text: string): boolean => staged.length > 0 || (question.custom && !!text.trim());
 

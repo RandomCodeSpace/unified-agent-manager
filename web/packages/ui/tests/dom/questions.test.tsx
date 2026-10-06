@@ -26,16 +26,19 @@ describe('answering from the composer', () => {
     expect(screen.queryByRole('group', { name: 'How should the retry be bounded?' })).toBeNull();
     expect(box().getByText('Needs answer')).toBeTruthy();
     expect(box().getByText('Pick a bound for the retry, or describe one')).toBeTruthy();
-    expect(composer().placeholder).toBe('Type your answer…');
-    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
-    const once = box().getByRole('radio', { name: 'Retry once' });
-    const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
-    await user.click(once);
-    expect(once).toHaveProperty('checked', true);
+    // The first option arrives staged: Answer is live and the placeholder offers the alternative.
     expect(composer().placeholder).toBe('Or type your own answer…');
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
+    const once = box().getByRole('radio', { name: 'Retry once' });
+    const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
+    expect(once).toHaveProperty('checked', true);
     await user.click(thrice);
     expect(once).toHaveProperty('checked', false);
+    expect(thrice).toHaveProperty('checked', true);
+    await user.click(once);
+    expect(once).toHaveProperty('checked', true);
+    expect(thrice).toHaveProperty('checked', false);
+    await user.click(thrice);
     expect(thrice).toHaveProperty('checked', true);
     expect(box().getByText('Click again to answer')).toBeTruthy();
     expect(mock.received).toEqual([]);
@@ -78,10 +81,10 @@ describe('answering from the composer', () => {
     expect(box().queryByText('Needs answer')).toBeNull();
   });
 
-  test('a question with options takes a typed answer with nothing chosen and sends it as the answer', async () => {
+  test('a question with options takes a typed answer, which clears the staged option, and sends it as the answer', async () => {
     const { user, mock } = await openTask('t16');
-    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
     await user.type(composer(), 'Retry twice, then fail loudly');
+    expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
     expect(answerButton().getAttribute('aria-disabled')).toBeNull();
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Pick a bound for the retry, or describe one')).toBeNull());
@@ -91,11 +94,11 @@ describe('answering from the composer', () => {
 
   test('typing clears a chosen option and the typed text is the answer', async () => {
     const { user, mock } = await openTask('t16');
-    const once = box().getByRole('radio', { name: 'Retry once' });
-    await user.click(once);
-    expect(once).toHaveProperty('checked', true);
+    const thrice = box().getByRole('radio', { name: 'Retry up to 3 times' });
+    await user.click(thrice);
+    expect(thrice).toHaveProperty('checked', true);
     await user.type(composer(), 'Only on CI');
-    expect(once).toHaveProperty('checked', false);
+    expect(thrice).toHaveProperty('checked', false);
     expect(composer().placeholder).toBe('Type your answer…');
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
@@ -254,10 +257,13 @@ describe('a recommended option', () => {
     expect(mock.received[0].body.answers).toEqual([['yarn']]);
   });
 
-  test('without one, nothing is staged', async () => {
+  test('without one, the first option is staged; a question that takes several starts empty', async () => {
     await openTask('t16');
-    expect(box().getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([false, false, false]);
-    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
+    expect(box().getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([true, false, false]);
+    expect(answerButton().getAttribute('aria-disabled')).toBeNull();
+    await switchTo('t4', 'Bump GitHub Actions pins');
+    await switchTo('t19');
+    expect(box().getAllByRole('checkbox').some((c) => (c as HTMLInputElement).checked)).toBe(false);
   });
 
   test('typing replaces it, the typed text alone is sent, and the task draft comes back', async () => {

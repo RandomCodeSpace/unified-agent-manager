@@ -2,9 +2,12 @@ import { useApi } from '../ApiContext';
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
-import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../lib/answer';
+import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
+
+/** On a phone the composer's pickers span the viewport (less the 8px collision gutters): a menu wider than the room beside its trigger would otherwise be shoved sideways and hang off it. */
+const PHONE_PICKER = 'max-sm:w-[calc(100vw-16px)] max-sm:max-w-none';
 import { compactTokens, estimateTurnCost, formatCredits, modelCostLine } from '../lib/cost';
 import { visibleModels } from '../lib/models';
 import { foldToFit } from '../lib/toolbarFold';
@@ -168,7 +171,7 @@ function Picker({
       <Tip label={tip()}>
         <Menu.Trigger render={<Button id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} className={cn(SHRINK, 'text-body', className)} />}>{face}</Menu.Trigger>
       </Tip>
-      <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
+      <Menu.Content side="top" align="start" sideOffset={6} className={cn('min-w-52', PHONE_PICKER)}>
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
           <Menu.Label>{heading ?? label}</Menu.Label>
           {choices.filter((c) => !c.group).map(item)}
@@ -625,7 +628,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // is what the storage keeps meanwhile. An answer left unsent stays only where the draft was empty.
   const answeringId = answering?.interaction.id ?? null;
   // The options chosen on the question, its own: another question starts with its recommended option
-  // staged, else none. Once per question, so a pick the owner changes or clears stays that way: the
+  // staged, else its first (a "choose any" question with none). Once per question, so a pick the owner changes or clears stays that way: the
   // tab's storage keeps it per Task (one question at a time), so leaving the Task or reloading restores it.
   const choicesKey = api.storageKey(`uam:question-choices:${session.id}`);
   const [chosen, setChosen] = useState<{ id: string; choices: string[] }>(() => {
@@ -652,8 +655,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     askedId.current = answeringId;
   }, [answeringId, choicesKey]);
   if (answering && chosen.id !== answering.interaction.id) {
-    const recommended = recommendedChoice(answering.question.choices);
-    setChosen({ id: answering.interaction.id, choices: recommended ? [recommended] : NO_CHOICES });
+    const first = initialChoice(answering.question);
+    setChosen({ id: answering.interaction.id, choices: first ? [first] : NO_CHOICES });
   }
   const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
   const [parked, setParked] = useState<{ id: string; text: string; files: string[]; uploads: Pending[] } | null>(null);
@@ -1496,7 +1499,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
               </Menu.Trigger>
             </Tip>
-            <Menu.Content side="top" align="start">{tuningItems}</Menu.Content>
+            <Menu.Content side="top" align="start" className={PHONE_PICKER}>{tuningItems}</Menu.Content>
           </Menu.Root>
         )}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
@@ -1518,7 +1521,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
               </Menu.Trigger>
             </Tip>
-            <Menu.Content side="top" align="start" className="max-w-80">
+            <Menu.Content side="top" align="start" className={cn('max-w-80', PHONE_PICKER)}>
               {riskLine}
               <Menu.Separator />
               {permissionItems}
@@ -1539,7 +1542,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                 <Ellipsis />
               </Menu.Trigger>
             </Tip>
-            <Menu.Content side="top" align="start" className="max-w-80">
+            <Menu.Content side="top" align="start" className={cn('max-w-80', PHONE_PICKER)}>
               {settingsLocked ? <p className="max-w-64 px-2 py-1 text-caption text-muted">Effort and context cannot change now.</p> : tuningItems}
               <Menu.Separator />
               {riskLine}
