@@ -988,6 +988,38 @@ func TestLaneMergeWaitsForALaneWithTheBaseCheckedOut(t *testing.T) {
 	}
 }
 
+// A base checked out in more than one worktree holds uam's merge up
+// git_busy, a lane among them or not: a merge in one would leave the
+// other's files behind its branch.
+func TestLaneMergeWaitsForABaseCheckedOutTwice(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		inLane bool
+	}{{"two checkouts", false}, {"the owner's and a lane's", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaneFixture(t)
+			l := f.start(1)
+			commitFile(t, l.dir, "b.txt", "lane\n")
+			f.land(l, 1)
+			second := filepath.Join(t.TempDir(), "second")
+			if tc.inLane {
+				second = f.start(2).dir
+				gitIn(t, second, "switch", "-q", "--ignore-other-worktrees", "main")
+			} else {
+				gitIn(t, f.top, "worktree", "add", "-q", "-f", second, "main")
+			}
+			refs := f.refs()
+			_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+			if e := wantCode(t, err, codeGitBusy); !strings.Contains(e.Message, filepath.Base(second)) {
+				t.Fatalf("refusal = %q", e.Message)
+			}
+			if f.refs() != refs || !gone(filepath.Join(f.top, "b.txt")) || !gone(filepath.Join(second, "b.txt")) {
+				t.Fatal("a merge ran in one of the checkouts")
+			}
+		})
+	}
+}
+
 func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	f := newLaneFixture(t)
 	l := f.start(1)

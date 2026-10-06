@@ -926,19 +926,20 @@ func (r *laneRepo) hasAll(ctx context.Context, a, b string) (bool, error) {
 
 // checkedOut is the worktree that has branch checked out, "" when none has.
 // Like git, it counts a worktree in the middle of a rebase or a bisect that
-// started from branch, which git lists as detached.
+// started from branch, which git lists as detached. More than one refuses
+// git_busy: uam then moves or merges into branch nowhere.
 func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error) {
 	out, err := r.output(ctx, r.top, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return "", err
 	}
 	var dir string
-	var detached []string
+	var dirs, detached []string
 	for _, line := range strings.Split(out, "\x00") {
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
 			dir = path
 		} else if line == "branch refs/heads/"+branch {
-			return dir, nil
+			dirs = append(dirs, dir)
 		} else if line == "detached" {
 			detached = append(detached, dir)
 		}
@@ -950,10 +951,17 @@ func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error
 		if from, err := r.startedFrom(ctx, dir, branch); err != nil {
 			return "", err
 		} else if from {
-			return dir, nil
+			dirs = append(dirs, dir)
 		}
 	}
-	return "", nil
+	switch len(dirs) {
+	case 0:
+		return "", nil
+	case 1:
+		return dirs[0], nil
+	}
+	return "", &Error{Status: http.StatusConflict, Code: codeGitBusy,
+		Message: fmt.Sprintf("%s is checked out in more than one worktree: %s; uam leaves it alone until only one has it", displaytext.Sanitize(branch), fileList(dirs))}
 }
 
 // startedFrom reports whether the worktree at dir is in the middle of a
