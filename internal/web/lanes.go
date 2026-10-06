@@ -50,11 +50,11 @@ const (
 )
 
 // pinnedMerge is how uam runs git merge, in a lane or in the owner's
-// checkout of a base branch: a commit by the ort strategy that stashes
-// nothing, runs no hook and signs nothing, whatever merge.autoStash,
-// branch.<name>.mergeOptions or pull.twohead say, since the command line
-// outranks them.
-var pinnedMerge = []string{"merge", "--commit", "--no-autostash", "-s", "ort", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures"}
+// checkout of a base branch (see runLaneMerge): by the ort strategy alone,
+// stashing nothing, running no hook and signing nothing, whatever
+// merge.autoStash or pull.twohead say, since the command line outranks
+// them.
+var pinnedMerge = []string{"merge", "--no-autostash", "-s", "ort", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures"}
 
 var (
 	// attemptPart is an attempt branch's part after the integration branch:
@@ -98,20 +98,34 @@ func (a gitAt) argv(args ...string) []string {
 // configuration names. They never recurse into submodules either. The
 // owner's own Commit, Pull and Push run the repository's hooks.
 func runLaneGit(ctx context.Context, a gitAt, args ...string) (string, error) {
-	env, err := hooksOff(ctx, a)
+	return runLaneGitSet(ctx, a, nil, args...)
+}
+
+// runLaneMerge runs git merge, pinned (pinnedMerge), with args at a, where
+// branch is checked out. It clears branch.<branch>.mergeOptions too: git
+// takes options from there before the command line's, and tries a strategy
+// named there besides the one the command line names.
+func runLaneMerge(ctx context.Context, a gitAt, branch string, args ...string) (string, error) {
+	return runLaneGitSet(ctx, a, [][2]string{{"branch." + branch + ".mergeOptions", ""}}, slices.Concat(pinnedMerge, args)...)
+}
+
+// runLaneGitSet is runLaneGit with each setting of set, a name and its
+// value, in git's configuration (see hooksOff).
+func runLaneGitSet(ctx context.Context, a gitAt, set [][2]string, args ...string) (string, error) {
+	env, err := hooksOff(ctx, a, set)
 	if err != nil {
 		return "", err
 	}
 	return runGitWriteEnv(ctx, a.dir, nil, env, slices.Concat(gitBase, []string{"-c", "submodule.recurse=false"}, a.argv(args...))...)
 }
 
-// hooksOff is the environment that turns off, for one git command at a,
-// each hook the configuration there defines: git 2.54 and later also run
-// the hooks named by hook.<name>.command, whatever core.hooksPath says, and
-// only hook.<name>.enabled turns one off. The settings go in through
-// GIT_CONFIG_COUNT, which outranks every configuration file and, unlike -c,
-// takes any name.
-func hooksOff(ctx context.Context, a gitAt) ([]string, error) {
+// hooksOff is the environment that sets, for one git command at a, each
+// setting of set, and turns off each hook the configuration there defines:
+// git 2.54 and later also run the hooks named by hook.<name>.command,
+// whatever core.hooksPath says, and only hook.<name>.enabled turns one off.
+// The settings go in through GIT_CONFIG_COUNT, which outranks every
+// configuration file and, unlike -c, takes any name, a branch's too.
+func hooksOff(ctx context.Context, a gitAt, set [][2]string) ([]string, error) {
 	git, err := lookGit()
 	if err != nil {
 		return nil, err
@@ -120,29 +134,32 @@ func hooksOff(ctx context.Context, a gitAt) ([]string, error) {
 	switch {
 	case err != nil:
 		return nil, err
-	case code == 1:
-		return nil, nil // no hook.* settings
-	case code != 0:
+	case code != 0 && code != 1: // 1: no hook.* settings
 		return nil, newError(http.StatusBadGateway, "git config failed: %s", gitMessage(stderr))
 	case len(out) >= maxStatusBytes:
 		return nil, newError(http.StatusBadGateway, "the git configuration holds too many hook settings")
 	}
-	base, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
-	var env []string
+	set = slices.Clone(set)
 	seen := map[string]bool{}
 	for _, key := range nulRecords(out) {
 		off := "hook.enabled" // hook.command and hook.event: the hook with no name
 		if rest := strings.TrimPrefix(key, "hook."); strings.Contains(rest, ".") {
 			off = "hook." + rest[:strings.LastIndexByte(rest, '.')] + ".enabled"
 		}
-		if seen[off] {
-			continue
+		if !seen[off] {
+			seen[off] = true
+			set = append(set, [2]string{off, "false"})
 		}
-		seen[off] = true
-		i := base + len(seen) - 1
-		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, off), fmt.Sprintf("GIT_CONFIG_VALUE_%d=false", i))
 	}
-	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", base+len(seen))), nil
+	if len(set) == 0 {
+		return nil, nil
+	}
+	base, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
+	var env []string
+	for i, kv := range set {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", base+i, kv[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", base+i, kv[1]))
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", base+len(set))), nil
 }
 
 // lanesRoot is where lane worktrees live: next to sessions.json, never in a
@@ -549,7 +566,7 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 		return err
 	}
 	msg := fmt.Sprintf("Merge %s\n\n%s: %s\n", r.integ, trailerMerge, tip)
-	_, mergeErr := runLaneGit(ctx, a, slices.Concat(pinnedMerge, []string{"--ff", "-m", msg, tip})...)
+	_, mergeErr := runLaneMerge(ctx, a, l.branch, "--commit", "--ff", "-m", msg, tip)
 	if mergeErr == nil {
 		return nil
 	}
@@ -744,7 +761,7 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 			Message: fmt.Sprintf("%s is checked out in the lane %s; uam merges into it only where you have it checked out", displaytext.Sanitize(base), displaytext.Sanitize(dir))}
 	}
 	if dir != "" {
-		return r.mergeIn(ctx, dir, base, baseTip, tip, message)
+		return r.mergeIn(ctx, dir, base, baseTip, tip, tree, message)
 	}
 	merged, err := r.commitTree(ctx, tree, message, baseTip, tip)
 	if err != nil {
@@ -759,13 +776,15 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 // mergeIn runs git merge of tip into baseTip, checked out in the worktree
 // at dir, and returns the merge commit, through runLaneGit: no hooks and no
 // fsmonitor, and it signs nothing and checks no signature, as the merge as
-// objects does. The merge is pinned (pinnedMerge), and only a merge commit
-// whose parents are baseTip and tip counts as merged. It refuses
-// local_changes while dir is in the middle of a git operation or has
-// unmerged paths. A merge it started and could not finish, for example
+// objects does. The merge is pinned (runLaneMerge) and stops before the
+// commit; uam commits it only when its tree is tree, the merge as objects,
+// so no setting or merge driver makes it merge other content, and counts as
+// merged only a commit on base whose parents are baseTip and tip. It
+// refuses local_changes while dir is in the middle of a git operation or
+// has unmerged paths. A merge it started and could not finish, for example
 // behind another git process's lock, is aborted, so dir is never left
 // mid-merge by uam.
-func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message string) (string, error) {
+func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, tree, message string) (string, error) {
 	if op, err := r.inProgress(ctx, dir); err != nil {
 		return "", err
 	} else if op != "" {
@@ -779,16 +798,13 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message
 	if err := r.onBase(ctx, dir, base, baseTip); err != nil {
 		return "", err
 	}
-	_, mergeErr := runLaneGit(ctx, gitAt{dir: dir}, slices.Concat(pinnedMerge, []string{"--no-ff", "-m", message, tip})...)
+	_, mergeErr := runLaneMerge(ctx, gitAt{dir: dir}, base, "--no-commit", "--no-ff", "-m", message, tip)
 	if mergeErr == nil {
-		line, err := r.output(ctx, dir, "rev-list", "--parents", "-n1", "HEAD", "--")
-		if err != nil {
-			return "", err
+		merged, err := r.commitMergeIn(ctx, dir, base, baseTip, tip, tree, message)
+		if err == nil {
+			return merged, nil
 		}
-		if f := strings.Fields(line); len(f) == 3 && f[1] == baseTip && f[2] == tip {
-			return f[0], nil
-		}
-		mergeErr = newError(http.StatusConflict, "git merge in %s did not make a merge of %s and %s", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip))
+		mergeErr = err
 	}
 	if err := r.abortOwnMergeIn(ctx, dir, tip, message); err != nil {
 		return "", err
@@ -800,6 +816,30 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message
 		return "", e
 	}
 	return "", gitFailed("git merge failed", mergeErr)
+}
+
+// commitMergeIn commits uam's merge of tip, stopped before the commit in the
+// worktree at dir, when the index holds tree, and returns the commit once
+// base names it as a merge of baseTip and tip.
+func (r *laneRepo) commitMergeIn(ctx context.Context, dir, base, baseTip, tip, tree, message string) (string, error) {
+	out, err := runLaneGit(ctx, gitAt{dir: dir}, "write-tree")
+	if err != nil {
+		return "", gitFailed("git write-tree failed", err)
+	}
+	if out[strings.LastIndexByte(out, '\n')+1:] != tree {
+		return "", newError(http.StatusConflict, "git merge in %s made other content than the merge of %s and %s; check the repository's merge settings and merge drivers", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip))
+	}
+	if _, err := runLaneGit(ctx, gitAt{dir: dir}, "commit", "--quiet", "--no-verify", "--no-gpg-sign", "-m", message); err != nil {
+		return "", gitFailed("git commit failed", err)
+	}
+	line, err := r.output(ctx, dir, "rev-list", "--parents", "-n1", "refs/heads/"+base, "--")
+	if err != nil {
+		return "", err
+	}
+	if f := strings.Fields(line); len(f) == 3 && f[1] == baseTip && f[2] == tip {
+		return f[0], nil
+	}
+	return "", newError(http.StatusConflict, "git merge in %s did not make a merge of %s and %s on %s", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip), displaytext.Sanitize(base))
 }
 
 // abortOwnMergeIn aborts the merge in progress in the worktree at dir when

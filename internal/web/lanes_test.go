@@ -793,6 +793,23 @@ func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 			t.Fatalf("main's a.txt = %q, want the integration branch's", got)
 		}
 	})
+	// git tries a strategy named there besides the command line's.
+	for _, value := range []string{"-s ours", "--strategy=ours"} {
+		t.Run("branch.main.mergeOptions="+value, func(t *testing.T) {
+			f, tip := landed(t, "branch.main.mergeOptions", value)
+			main := gitOutput(t, f.top, "rev-parse", "main")
+			merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := gitOutput(t, f.top, "rev-list", "--parents", "-n1", "main"); got != merged+" "+main+" "+tip {
+				t.Fatalf("main = %q, want %s, the merge of %s and %s", got, merged, main, tip)
+			}
+			if got := gitOutput(t, f.top, "show", "main:a.txt"); got != "lane" {
+				t.Fatalf("main's a.txt = %q, want the integration branch's", got)
+			}
+		})
+	}
 }
 
 // uam's merge of the integration tip into a lane is pinned as the merge
@@ -828,6 +845,7 @@ func TestLaneTipMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 	})
 	for _, tc := range []struct{ name, key, value string }{
 		{"mergeOptions", "mergeOptions", "--no-commit"},
+		{"mergeOptions strategy", "mergeOptions", "-s ours"},
 		{"pull.twohead", "pull.twohead", "ours"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -862,6 +880,10 @@ func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
 	commitFile(t, l.dir, "b.txt", "lane\n")
 	tip := f.land(l, 1)
 	main := gitOutput(t, f.top, "rev-parse", "main")
+	tree, _, err := f.r.mergeTree(f.ctx, main, tip)
+	if err != nil {
+		t.Fatal(err)
+	}
 	refused := func(step string, merge func() error) {
 		t.Helper()
 		refs := f.refs()
@@ -876,14 +898,14 @@ func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
 
 	gitIn(t, f.top, "switch", "-q", "-c", "owner")
 	refused("another branch", func() error {
-		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, "Merge plan")
+		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, tree, "Merge plan")
 		return err
 	})
 
 	gitIn(t, f.top, "switch", "-q", "main")
 	commitFile(t, f.top, "c.txt", "owner\n")
 	refused("a newer tip", func() error {
-		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, "Merge plan")
+		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, tree, "Merge plan")
 		return err
 	})
 
@@ -903,6 +925,31 @@ func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
 	})
 	if gitOutput(t, other, "for-each-ref") != otherRefs {
 		t.Fatal("the merge moved a branch of the other repository")
+	}
+}
+
+// uam commits its merge in the owner's checkout only when git merged the
+// content uam merged as objects; otherwise it aborts the merge and moves
+// nothing.
+func TestMergeInCommitsOnlyTheMergeUamChecked(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	tip := f.land(l, 1)
+	main := gitOutput(t, f.top, "rev-parse", "main")
+	refs := f.refs()
+	other := gitOutput(t, f.top, "rev-parse", "main^{tree}")
+	if merged, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, other, "Merge plan"); err == nil {
+		t.Fatalf("merged %s, whose tree is not the one uam checked", merged)
+	}
+	if f.refs() != refs {
+		t.Fatal("a refused merge moved a branch")
+	}
+	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
+		t.Fatal("the owner's directory was left mid-merge")
+	}
+	if got := gitOutput(t, f.top, "status", "--porcelain"); got != "" {
+		t.Fatalf("the owner's directory was left changed: %q", got)
 	}
 }
 

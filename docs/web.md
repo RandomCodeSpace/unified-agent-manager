@@ -1408,7 +1408,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the merge commit: it runs unattended, and an agent can change the
   repository's configuration. For the same reason it is always a real
   merge commit by git's default strategy that never stashes your changes,
-  whatever the repository's merge settings say; a merge uam starts and
+  whatever the repository's merge settings say, and uam commits it only
+  when it holds the content uam checked it would; a merge uam starts and
   cannot finish is aborted, but a merge you started never is. A commit on
   the integration branch that uam did not make, anything but its landings,
   its reverts and its merges of the base branch, blocks the merge, and the
