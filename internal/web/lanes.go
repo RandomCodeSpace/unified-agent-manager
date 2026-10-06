@@ -850,7 +850,7 @@ func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error
 		}
 	}
 	for _, dir := range detached {
-		if _, err := os.Stat(dir); err != nil {
+		if _, err := os.Stat(dir); err != nil { // #nosec G703 -- a worktree directory git lists for the Project's repository; only checks it exists.
 			continue // its directory is gone, so nothing can go on there
 		}
 		if from, err := r.startedFrom(ctx, dir, branch); err != nil {
@@ -871,7 +871,7 @@ func (r *laneRepo) startedFrom(ctx context.Context, dir, branch string) (bool, e
 		return false, err
 	}
 	for _, path := range paths {
-		name, err := os.ReadFile(path) // #nosec G304 -- a path git names inside its own directory.
+		name, err := os.ReadFile(path) // #nosec G304 G703 -- a path git names inside its own directory.
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
@@ -902,7 +902,7 @@ func (r *laneRepo) inProgress(ctx context.Context, dir string) (string, error) {
 		return "", err
 	}
 	for i, name := range []string{"a rebase", "a rebase or am", "a bisect"} {
-		if _, err := os.Lstat(paths[i]); err == nil {
+		if _, err := os.Lstat(paths[i]); err == nil { // #nosec G703 -- a path git names inside its own directory; only checks it exists.
 			return name, nil
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return "", err
