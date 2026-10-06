@@ -436,9 +436,10 @@ func (f *plannerFixture) approveBody(model string, refs ...string) string {
 }
 
 // The owner approves an epic once (ADR 0006 §6.2): the run needs a model
-// the provider offers and Settings shows; a card changed since the dialog
-// showed it answers stale; an empty story is named. Under the approved epic
-// nothing is confirmed or started by hand, and the owner may pause a card.
+// the provider offers and Settings shows; a card changed or added since the
+// dialog showed it answers stale; an empty story is named; a card that is
+// not under the epic is a bad request. Under the approved epic nothing is
+// confirmed or started by hand, and the owner may pause a card.
 func TestApproveRoute(t *testing.T) {
 	f := newPlanner(t)
 	f.m.mu.Lock()
@@ -462,22 +463,34 @@ func TestApproveRoute(t *testing.T) {
 	f.refused(http.MethodPost, approve, strings.Replace(f.approveBody("luna", epic.ID), `"parallel":2`, `"parallel":9`, 1), http.StatusBadRequest, string(board.CodeInvalid))
 	f.refused(http.MethodPost, approve, strings.Replace(f.approveBody("luna", epic.ID), `"provider":"fake"`, `"provider":"elsewhere"`, 1), http.StatusBadRequest, string(board.CodeInvalid))
 
-	shown := f.approveBody("luna", epic.ID, story.ID, leaf.ID)
+	shown := f.approveBody("luna", epic.ID, story.ID, leaf.ID, other.ID)
 	f.call(http.MethodPatch, "/api/board/cards/"+leaf.ID, `{"title":"Leaf, renamed"}`, http.StatusOK, nil)
 	reply := f.refused(http.MethodPost, approve, shown, http.StatusConflict, string(board.CodeStale))
 	if string(reply["refs"]) != fmt.Sprintf(`["#%d","#%d","#%d"]`, epic.Seq, story.Seq, leaf.Seq) {
 		t.Fatalf("stale refs = %s", reply["refs"])
 	}
+	reply = f.refused(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID), http.StatusConflict, string(board.CodeStale))
+	if string(reply["refs"]) != fmt.Sprintf(`["#%d"]`, other.Seq) {
+		t.Fatalf("unlisted refs = %s", reply["refs"])
+	}
 
 	empty := f.create(board.KindStory, epic.ID, "Empty")
-	reply = f.refused(http.MethodPost, approve, f.approveBody("luna", epic.ID), http.StatusConflict, string(board.CodeInvalid))
+	reply = f.refused(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID, other.ID, empty.ID), http.StatusConflict, string(board.CodeInvalid))
 	if string(reply["refs"]) != fmt.Sprintf(`["#%d"]`, empty.Seq) {
 		t.Fatalf("empty refs = %s", reply["refs"])
 	}
 	f.call(http.MethodPost, "/api/board/cards/"+empty.ID+"/status", `{"status":"cancelled","comment":"not needed"}`, http.StatusOK, nil)
 
+	elsewhere := f.create(board.KindEpic, "", "Elsewhere")
+	reply = f.refused(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID, other.ID, elsewhere.ID), http.StatusBadRequest, string(board.CodeInvalid))
+	if len(reply["refs"]) != 0 || !strings.Contains(string(reply["error"]), fmt.Sprintf("#%d", elsewhere.Seq)) {
+		t.Fatalf("a card outside the epic = %v", reply)
+	}
+	unknown := strings.Replace(f.approveBody("luna", epic.ID, story.ID, leaf.ID, other.ID), `"items":[`, `"items":[{"id":"nope","revision":1},`, 1)
+	f.refused(http.MethodPost, approve, unknown, http.StatusBadRequest, string(board.CodeInvalid))
+
 	var got BoardCard
-	f.call(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID), http.StatusOK, &got)
+	f.call(http.MethodPost, approve, f.approveBody("luna", epic.ID, story.ID, leaf.ID, other.ID), http.StatusOK, &got)
 	if got.ID != epic.ID || got.Run == nil || got.Run.Provider != "fake" || got.Run.Model != "luna" || got.Run.Mode != "safe" ||
 		got.Run.Parallel != 2 || got.Run.ContextSize != "default" || got.Run.ApprovedAt.IsZero() || got.Paused != "" {
 		t.Fatalf("approved = %+v, run %+v", got, got.Run)

@@ -63,9 +63,10 @@ func (p agentPlan) ids() []string {
 	return []string{p.epic.ID, p.one.ID, p.two.ID, p.a.ID, p.b.ID, p.c.ID}
 }
 
-// Approve confirms exactly the listed proposals, nested ones included, pins
-// them to the owner's HEAD and records the run on the epic. A proposal added
-// later stays one until an approval lists it.
+// Approve confirms the listed proposals, nested ones included, pins them to
+// the owner's HEAD and records the run on the epic. A proposal added later
+// stays one until an approval lists it, and an approval that does not list
+// it is stale.
 func TestApproveConfirmsListedSubtree(t *testing.T) {
 	f := newFixture(t)
 	f.acceptCmd("go test ./...")
@@ -91,22 +92,28 @@ func TestApproveConfirmsListedSubtree(t *testing.T) {
 		t.Fatal("a card added after the approval is confirmed")
 	}
 	again := RunSettings{Provider: "copilot", Model: "ollama/deepseek-v4.1-flash", Effort: "high", ContextSize: "default", Mode: "yolo", Parallel: 4}
-	got, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(p.ids()...))
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(p.ids()...))
+	wantRefusal(t, err, CodeStale, later.ref())
+	if c := f.card(later.ID); c.Confirmed() || f.card(p.epic.ID).Run.RunSettings != testRun {
+		t.Fatalf("a stale approval wrote: %+v, run %+v", c, f.card(p.epic.ID).Run)
+	}
+	got, err = f.s.Approve(f.ctx, owner, p.epic.ID, again, f.items(append(p.ids(), later.ID)...))
 	f.must(err)
 	if got.Run.RunSettings != again {
 		t.Fatalf("approving again kept the run %+v", got.Run)
 	}
-	if c := f.card(later.ID); c.Confirmed() {
-		t.Fatalf("an unlisted proposal = %+v", c)
-	}
-	f.approve(p.epic.ID, append(p.ids(), later.ID)...)
 	if c := f.card(later.ID); !c.Confirmed() {
 		t.Fatalf("a listed proposal = %+v", c)
 	}
 
+	// A card that is not under the epic is the caller's mistake, named in
+	// the message.
 	other := f.create(owner, "", KindEpic, "Other")
-	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(p.epic.ID, other.ID))
-	wantRefusal(t, err, CodeInvalid, other.ref())
+	_, err = f.s.Approve(f.ctx, owner, p.epic.ID, testRun, f.items(append(p.ids(), later.ID, other.ID)...))
+	wantRefusal(t, err, CodeInvalid)
+	if !strings.Contains(err.Error(), other.ref()) {
+		t.Fatalf("refusal = %v, want it to name %s", err, other.ref())
+	}
 	_, err = f.s.Approve(f.ctx, owner, p.one.ID, testRun, f.items(p.one.ID))
 	wantCode(t, err, CodeInvalid)
 	_, err = f.s.Approve(f.ctx, planner, p.epic.ID, testRun, f.items(p.ids()...))
@@ -134,22 +141,24 @@ func TestApproveRefuses(t *testing.T) {
 	}
 
 	// Every subtask that may run needs an acceptance command.
-	refused(testRun, f.items(epic.ID), CodeInvalid, one.ref())
+	refused(testRun, f.items(epic.ID, story.ID, one.ID), CodeInvalid, one.ref())
 	f.acceptCmd("go test ./...")
 
 	empty := f.create(owner, epic.ID, KindStory, "Empty")
-	refused(testRun, f.items(epic.ID), CodeInvalid, empty.ref())
+	refused(testRun, f.items(epic.ID, story.ID, one.ID, empty.ID), CodeInvalid, empty.ref())
 	_, err := f.s.SetStatus(f.ctx, owner, empty.ID, StatusCancelled, "not needed", false)
 	f.must(err)
 
-	// A story whose only live subtasks are proposals the dialog did not list.
+	// The dialog shows every live card under the epic: one it did not
+	// list, at any depth and the epic included, is a change it did not
+	// show, so the approval is stale.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
 	proposed := f.create(planner, epic.ID, KindStory, "Proposed")
 	idea := f.create(planner, proposed.ID, KindSubtask, "Idea")
-	refused(testRun, f.items(epic.ID, proposed.ID), CodeInvalid, proposed.ref())
+	refused(testRun, f.items(epic.ID, story.ID, one.ID, proposed.ID), CodeStale, idea.ref())
+	refused(testRun, f.items(story.ID, one.ID, proposed.ID, idea.ID), CodeStale, epic.ref())
 	_, err = f.s.Dismiss(f.ctx, owner, proposed.ID)
 	f.must(err)
-	_ = idea
 
 	for _, bad := range []RunSettings{
 		{Provider: "copilot", Mode: "safe", Parallel: 2},
@@ -159,25 +168,25 @@ func TestApproveRefuses(t *testing.T) {
 		{Provider: "copilot", Model: "m", Mode: "safe", Parallel: 5},
 		{Model: "m", Mode: "safe", Parallel: 2},
 	} {
-		refused(bad, f.items(epic.ID), CodeInvalid)
+		refused(bad, f.items(epic.ID, story.ID, one.ID), CodeInvalid)
 	}
 
 	// A card changed after the dialog showed it.
-	items := f.items(epic.ID, one.ID)
+	items := f.items(epic.ID, story.ID, one.ID)
 	_, err = f.s.Edit(f.ctx, owner, one.ID, Patch{Title: ptr("One, renamed")})
 	f.must(err)
-	refused(testRun, items, CodeStale, epic.ref(), one.ref())
+	refused(testRun, items, CodeStale, epic.ref(), story.ref(), one.ref())
 
 	// Manual and lane work never mix: a held subtask is finished or released first.
 	f.launch(one.ID, "worker")
-	refused(testRun, f.items(epic.ID), CodeInvalid, one.ref())
+	refused(testRun, f.items(epic.ID, story.ID, one.ID), CodeInvalid, one.ref())
 	_, err = f.s.ReleaseHold(f.ctx, owner, one.ID, ReleaseOwner, "")
 	f.must(err)
 
 	_, err = f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "shipped", false)
 	f.must(err)
 	wantStatus(t, f.card(epic.ID), StatusDone)
-	refused(testRun, f.items(epic.ID), CodeInvalid)
+	refused(testRun, f.items(epic.ID, story.ID, one.ID), CodeInvalid)
 
 	cancelled := f.create(owner, "", KindEpic, "Cancelled")
 	f.create(owner, f.create(owner, cancelled.ID, KindStory, "S").ID, KindSubtask, "T")
@@ -221,7 +230,7 @@ func TestPausedIsOwnerOnly(t *testing.T) {
 		t.Fatalf("resumed = %+v", res.Card)
 	}
 	// Approving again clears only the epic's own pause.
-	f.approve(epic.ID, epic.ID)
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
 	if f.card(epic.ID).Paused != "" || f.card(story.ID).Paused != PausedOwner {
 		t.Fatalf("after approving again: epic %q, story %q", f.card(epic.ID).Paused, f.card(story.ID).Paused)
 	}
@@ -474,7 +483,11 @@ func TestMigrateV4ToV5(t *testing.T) {
 	if err := s.SetProjectAcceptCmd(ctx, owner, proj, "make test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Approve(ctx, owner, epic.ID, testRun, []ApproveItem{{ID: epic.ID, Revision: got.Revision}}); err != nil {
+	leaf, err := s.Card(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Approve(ctx, owner, epic.ID, testRun, []ApproveItem{{ID: epic.ID, Revision: got.Revision}, {ID: leaf.ID, Revision: leaf.Revision}}); err != nil {
 		t.Fatal(err)
 	}
 	_ = s.Close()

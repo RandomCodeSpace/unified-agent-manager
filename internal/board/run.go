@@ -70,13 +70,13 @@ func (r RunSettings) check() error {
 // Approve is the owner's approval of the epic ref (ADR 0006 §6.2). items
 // are the cards the dialog showed, at the revisions it showed them: each
 // listed proposal is confirmed and pinned to the owner's HEAD, as an owner
-// touch confirms, and a proposal not listed stays one. The epic's run is
-// written, or updated when it was approved before, and its own pause is
-// cleared. It refuses, writing nothing, unless the epic is live and not
-// done; every item is a live card under it at its listed revision (stale
-// otherwise); no subtask under it is held; every live story and the epic
-// keep a live subtask that is confirmed or listed; and every such subtask
-// not started resolves to an acceptance command.
+// touch confirms. The epic's run is written, or updated when it was
+// approved before, and its own pause is cleared. It refuses, writing
+// nothing, unless the epic is live and not done; every item is a live card
+// under it; every card the dialog shows (shown) is listed at its current
+// revision (stale otherwise); no subtask under it is held; every live story
+// and the epic keep a live subtask that is confirmed or listed; and every
+// such subtask not started resolves to an acceptance command.
 func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSettings, items []ApproveItem) (Card, error) {
 	if err := permit(a, opApprove, ""); err != nil {
 		return Card{}, err
@@ -149,13 +149,21 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 			out = append(out, m)
 		}
 	}
+	// An item that is not a live card under the epic is the caller's
+	// mistake, not a change to the plan, so it names no cards to show again.
+	if len(stale) == 0 && len(outside) > 0 {
+		return nil, invalid("%s %s not a live card under %s", strings.Join(outside, ", "), isAre(len(outside)), n.ref())
+	}
+	// A card the dialog shows but did not list was added or moved in
+	// since it opened.
+	for _, m := range o.shown(n) {
+		if !listed[m.ID] {
+			stale = append(stale, m.ref())
+		}
+	}
 	if len(stale) > 0 {
 		return nil, &Error{Code: CodeStale, Refs: stale, Message: fmt.Sprintf(
 			"%s changed since the approval was shown; look again and approve what is there now", strings.Join(stale, ", "))}
-	}
-	if len(outside) > 0 {
-		return nil, &Error{Code: CodeInvalid, Refs: outside, Message: fmt.Sprintf(
-			"%s %s not a live card under %s", strings.Join(outside, ", "), isAre(len(outside)), n.ref())}
 	}
 	live := func(m *node) bool { return m.stored != StatusCancelled && o.underCancelled(m, nil) == nil }
 	runs := func(l *node) bool { return live(l) && (l.Confirmed() || listed[l.ID]) }
@@ -200,6 +208,20 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 			"%s %s no acceptance command, so its done would always wait for you; set one on it or a Project default", strings.Join(noCmd, ", "), hasHave(len(noCmd)))}
 	}
 	return out, nil
+}
+
+// shown lists what the Approve dialog shows of the epic n: n and every card
+// under it whose status, and every ancestor's, is not cancelled, depth
+// first. A container all of whose confirmed subtasks were cancelled shows as
+// cancelled and is left out with its subtree, where only proposals are live.
+func (o *outline) shown(n *node) []*node {
+	out := []*node{n}
+	for _, kid := range o.kids[n.ID] {
+		if kid.Status != StatusCancelled {
+			out = append(out, o.shown(kid)...)
+		}
+	}
+	return out
 }
 
 func isAre(n int) string {

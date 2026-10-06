@@ -645,7 +645,9 @@ type ApproveRequest struct {
 // confirms the listed cards and records the run, after checking that the
 // provider offers the model and Settings shows it. Nothing starts. A
 // refusal naming cards (an empty story, a subtask without an acceptance
-// command, a held one) is a conflict with the plan, not a bad request.
+// command, a held one) is a conflict with the plan, not a bad request; an
+// item that is not a live card under the epic is a bad request, and names
+// none.
 func (m *Manager) ApproveCard(ref string, req ApproveRequest) (BoardCard, error) {
 	run := board.RunSettings{Provider: strings.TrimSpace(req.Provider), Model: req.Model, Effort: req.Effort,
 		ContextSize: cmp.Or(req.ContextSize, "default"), Mode: req.Mode, Parallel: req.Parallel}
