@@ -717,25 +717,28 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 	return cur, nil
 }
 
-// mergeIntoBase merges the integration branch into the owner's branch base
-// and returns base's new tip, "" when base already has it all (see hasAll),
-// so uam's sync merges never come back to base as merges that change
-// nothing. Where a worktree has base checked out it runs git merge there, so
-// git refuses to overwrite local changes; otherwise it merges as objects and
-// moves base by compare-and-swap. Either way it runs no repository hook: it
-// is unattended, and agents can write the repository's configuration (see
-// runLaneGit). A lane under lanes, the lanes root, with base checked out
-// refuses git_busy: uam runs no git merge in a lane. A conflict refuses
-// merge_conflict before anything is touched. The caller holds the land
-// mutex, and beginWrite when base is checked out.
-func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message string) (string, error) {
-	baseTip, err := r.tipOf(ctx, base)
+// mergeIntoBase merges the integration branch at tip into the owner's
+// branch base at baseTip, the tips the caller checked, and returns base's
+// new tip, "" when base already has it all (see hasAll), so uam's sync
+// merges never come back to base as merges that change nothing. When
+// either branch moved since, it refuses git_busy and merges nothing, so a
+// retry checks the new tips. Where a worktree has base checked out it
+// runs git merge there, so git refuses to overwrite local changes;
+// otherwise it merges as objects and moves base by compare-and-swap.
+// Either way it runs no repository hook: it is unattended, and agents can
+// write the repository's configuration (see runLaneGit). A lane under
+// lanes, the lanes root, with base checked out refuses git_busy: uam runs
+// no git merge in a lane. A conflict refuses merge_conflict before
+// anything is touched. The caller holds the land mutex, and beginWrite
+// when base is checked out.
+func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, baseTip, tip, message string) (string, error) {
+	nowBase, nowTip, err := r.mergeTips(ctx, base)
 	if err != nil {
 		return "", err
 	}
-	tip, err := r.tipOf(ctx, r.integ)
-	if err != nil {
-		return "", err
+	if nowBase != baseTip || nowTip != tip {
+		return "", &Error{Status: http.StatusConflict, Code: codeGitBusy,
+			Message: fmt.Sprintf("%s or %s moved after uam checked them; uam merges only the commits it checked", displaytext.Sanitize(base), r.integ)}
 	}
 	if baseTip == "" || tip == "" {
 		return "", newError(http.StatusConflict, "there is no branch %s or %s", displaytext.Sanitize(base), r.integ)

@@ -976,7 +976,11 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	if _, err := repo.revertChain(ctx, tip, []revertItem{{sha: landed, seq: r.leaves[1].Seq, title: "Second"}}); err != nil {
 		t.Fatal(err)
 	}
-	if merged, err := repo.mergeIntoBase(ctx, r.m.lanesRoot(), "main", "Merge plan"); err != nil || merged == "" {
+	baseTip, tip, err := repo.mergeTips(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged, err := repo.mergeIntoBase(ctx, r.m.lanesRoot(), "main", baseTip, tip, "Merge plan"); err != nil || merged == "" {
 		t.Fatalf("merge = %q, %v", merged, err)
 	}
 	noHooks("uam's git that writes objects only")

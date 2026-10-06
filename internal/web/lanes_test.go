@@ -96,6 +96,17 @@ func (f *laneFixture) land(l lane, seq int64) string {
 	return landed
 }
 
+// mergeBase merges the integration branch into main at the tips both have
+// now, as mergeProject does with the tips it checked.
+func (f *laneFixture) mergeBase(message string) (string, error) {
+	f.t.Helper()
+	baseTip, tip, err := f.r.mergeTips(f.ctx, "main")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return f.r.mergeIntoBase(f.ctx, f.root, "main", baseTip, tip, message)
+}
+
 // refs lists every ref of the repository with its commit.
 func (f *laneFixture) refs() string {
 	f.t.Helper()
@@ -513,7 +524,7 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 		before := f.refs()
 		for range 2 {
 			f.tip()
-			if merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil || merged != "" {
+			if merged, err := f.mergeBase("Merge plan"); err != nil || merged != "" {
 				t.Fatalf("%s: merging again = %q, %v", when, merged, err)
 			}
 			if needsMerge() {
@@ -527,7 +538,7 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 	if !needsMerge() {
 		t.Fatal("main has the landing before any merge")
 	}
-	if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil {
+	if _, err := f.mergeBase("Merge plan"); err != nil {
 		t.Fatal(err)
 	}
 	settled("after a merge")
@@ -666,7 +677,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	commitFile(t, l.dir, "b.txt", "lane\n")
 	landed := f.land(l, 1)
 
-	merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan: Epic (#1)")
+	merged, err := f.mergeBase("Merge plan: Epic (#1)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +690,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.top, "b.txt")); err != nil {
 		t.Fatal("the owner's working tree lacks the merged file")
 	}
-	if again, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "again"); err != nil || again != "" {
+	if again, err := f.mergeBase("again"); err != nil || again != "" {
 		t.Fatalf("merging again = %q, %v", again, err)
 	}
 
@@ -690,7 +701,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	f.land(next, 2)
 	writeRepoFile(t, f.top, "a.txt", "owner, uncommitted\n")
 	head := gitOutput(t, f.top, "rev-parse", "HEAD")
-	_, err = f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge")
+	_, err = f.mergeBase("Merge")
 	if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, "a.txt") {
 		t.Fatalf("refusal = %q", e.Message)
 	}
@@ -705,7 +716,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge"); err == nil {
+	if _, err := f.mergeBase("Merge"); err == nil {
 		t.Fatal("merge went through behind main's ref lock")
 	}
 	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
@@ -721,7 +732,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	// A conflict with the owner's committed work refuses before git merge.
 	commitFile(t, f.top, "a.txt", "owner\n")
 	head = gitOutput(t, f.top, "rev-parse", "HEAD")
-	_, err = f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge")
+	_, err = f.mergeBase("Merge")
 	if e := wantCode(t, err, codeMergeConflict); !strings.Contains(e.Message, "a.txt") || !slices.Equal(e.Refs, []string{"#2"}) {
 		t.Fatalf("refusal = %q refs %v", e.Message, e.Refs)
 	}
@@ -757,7 +768,7 @@ func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 		f, _ := landed(t, "merge.autoStash", "true")
 		writeRepoFile(t, f.top, "a.txt", "owner, uncommitted\n")
 		head := gitOutput(t, f.top, "rev-parse", "HEAD")
-		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		_, err := f.mergeBase("Merge plan")
 		_ = wantCode(t, err, codeLocalChanges)
 		if got, _ := os.ReadFile(filepath.Join(f.top, "a.txt")); string(got) != "owner, uncommitted\n" {
 			t.Fatalf("the owner's a.txt = %q", got)
@@ -770,7 +781,7 @@ func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 	t.Run("branch.main.mergeOptions", func(t *testing.T) {
 		f, tip := landed(t, "branch.main.mergeOptions", "--no-commit")
 		main := gitOutput(t, f.top, "rev-parse", "main")
-		merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		merged, err := f.mergeBase("Merge plan")
 		if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
 			t.Fatal("the owner's directory was left mid-merge")
 		}
@@ -786,7 +797,7 @@ func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 	})
 	t.Run("pull.twohead", func(t *testing.T) {
 		f, _ := landed(t, "pull.twohead", "ours")
-		if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil {
+		if _, err := f.mergeBase("Merge plan"); err != nil {
 			t.Fatal(err)
 		}
 		if got := gitOutput(t, f.top, "show", "main:a.txt"); got != "lane" {
@@ -798,7 +809,7 @@ func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 		t.Run("branch.main.mergeOptions="+value, func(t *testing.T) {
 			f, tip := landed(t, "branch.main.mergeOptions", value)
 			main := gitOutput(t, f.top, "rev-parse", "main")
-			merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+			merged, err := f.mergeBase("Merge plan")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -920,11 +931,58 @@ func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
 	}
 	otherRefs := gitOutput(t, other, "for-each-ref")
 	refused("another repository", func() error {
-		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		_, err := f.mergeBase("Merge plan")
 		return err
 	})
 	if gitOutput(t, other, "for-each-ref") != otherRefs {
 		t.Fatal("the merge moved a branch of the other repository")
+	}
+}
+
+// uam merges into the base only the tips it checked for commits it did not
+// make: when the integration branch or the base moved after that check, it
+// answers git_busy and merges nothing, so the retry checks the new tips.
+// That holds whether main is checked out, where git merge runs, or not,
+// where uam merges as objects.
+func TestMergeIntoBaseMergesOnlyTheTipsUamChecked(t *testing.T) {
+	for _, elsewhere := range []bool{false, true} {
+		for _, moved := range []string{"integration", "base"} {
+			t.Run(fmt.Sprintf("%s moved, main checked out elsewhere=%v", moved, elsewhere), func(t *testing.T) {
+				f := newLaneFixture(t)
+				l := f.start(1)
+				commitFile(t, l.dir, "b.txt", "lane\n")
+				f.land(l, 1)
+				if elsewhere {
+					gitIn(t, f.top, "switch", "-q", "-c", "owner")
+				}
+				baseTip, tip, err := f.r.mergeTips(f.ctx, "main")
+				if err != nil {
+					t.Fatal(err)
+				}
+				branch := map[string]string{"integration": f.r.integ, "base": "main"}[moved]
+				dir := f.top
+				if elsewhere || moved == "integration" {
+					dir = filepath.Join(t.TempDir(), "held")
+					gitIn(t, f.top, "worktree", "add", "-q", dir, branch)
+				}
+				commitFile(t, dir, "x.txt", "by hand\n")
+				if dir != f.top {
+					gitIn(t, f.top, "worktree", "remove", "--force", dir)
+				}
+				refs := f.refs()
+				_, err = f.r.mergeIntoBase(f.ctx, f.root, "main", baseTip, tip, "Merge plan")
+				_ = wantCode(t, err, codeGitBusy)
+				if f.refs() != refs {
+					t.Fatal("a merge of tips that moved moved a branch")
+				}
+				if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
+					t.Fatal("the owner's directory was left mid-merge")
+				}
+				if got := gitOutput(t, f.top, "status", "--porcelain"); got != "" {
+					t.Fatalf("the owner's directory was left changed: %q", got)
+				}
+			})
+		}
 	}
 }
 
@@ -1029,7 +1087,7 @@ func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	gitIn(t, f.top, "checkout", "-q", "-b", "owner")
 	writeRepoFile(t, f.top, "b.txt", "owner, uncommitted\n")
 
-	merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+	merged, err := f.mergeBase("Merge plan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,7 +1113,7 @@ func TestLaneMergeWaitsForALaneWithTheBaseCheckedOut(t *testing.T) {
 	gitIn(t, l.dir, "switch", "-q", "main")
 	refs := f.refs()
 
-	_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+	_, err := f.mergeBase("Merge plan")
 	if e := wantCode(t, err, codeGitBusy); !strings.Contains(e.Message, realPath(l.dir)) {
 		t.Fatalf("refusal = %q", e.Message)
 	}
@@ -1085,7 +1143,7 @@ func TestLaneMergeWaitsForABaseCheckedOutTwice(t *testing.T) {
 				gitIn(t, f.top, "worktree", "add", "-q", "-f", second, "main")
 			}
 			refs := f.refs()
-			_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+			_, err := f.mergeBase("Merge plan")
 			if e := wantCode(t, err, codeGitBusy); !strings.Contains(e.Message, filepath.Base(second)) {
 				t.Fatalf("refusal = %q", e.Message)
 			}
@@ -1110,7 +1168,7 @@ func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	head := commitFile(t, f.top, "d.txt", "main\n")
 	refused := func(want string) {
 		t.Helper()
-		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		_, err := f.mergeBase("Merge plan")
 		if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, want) {
 			t.Fatalf("refusal = %q, want %q", e.Message, want)
 		}
@@ -1133,7 +1191,7 @@ func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	}
 	refused("a rebase is in progress")
 	gitIn(t, f.top, "rebase", "--abort")
-	if merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil || merged == "" {
+	if merged, err := f.mergeBase("Merge plan"); err != nil || merged == "" {
 		t.Fatalf("merge after the owner finished = %q, %v", merged, err)
 	}
 }
@@ -1522,7 +1580,7 @@ func TestLaneGitFailuresAreErrors(t *testing.T) {
 	_, failures["squashLane"] = f.r.squashLane(ctx, l, tip, "x")
 	_, failures["finishOnInteg"] = f.r.finishOnInteg(ctx, tip)
 	_, failures["revertChain"] = f.r.revertChain(ctx, tip, nil)
-	_, failures["mergeIntoBase"] = f.r.mergeIntoBase(ctx, f.root, "main", "x")
+	_, failures["mergeIntoBase"] = f.r.mergeIntoBase(ctx, f.root, "main", tip, tip, "x")
 	for name, err := range failures {
 		if err == nil {
 			t.Errorf("%s succeeded without git", name)

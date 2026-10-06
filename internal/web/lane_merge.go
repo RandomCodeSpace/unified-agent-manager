@@ -395,7 +395,7 @@ func (m *Manager) mergeProject(ctx context.Context, project string) error {
 		err = &Error{Status: http.StatusConflict, Code: codeMergeBlocked, Message: fmt.Sprintf(
 			"%s has commits uam did not make: %s; uam merges only its own landings and reverts, and its merges of %s", repo.integ, fileList(unmade), displaytext.Sanitize(base))}
 	} else {
-		merged, err = m.mergeInto(ctx, repo, base, mergeMessage(repo.integ, items))
+		merged, err = m.mergeInto(ctx, repo, base, baseTip, tip, mergeMessage(repo.integ, items))
 	}
 	m.mergeOutcome(ctx, project, items, at, merged, err)
 	return err
@@ -456,23 +456,24 @@ func (r *laneRepo) syncMerge(ctx context.Context, sha, first, second, baseTip st
 	return err == nil && got == tree, err
 }
 
-// mergeInto merges the integration branch into base with message. Where a
+// mergeInto merges the integration branch at tip into base at baseTip, the
+// tips mergeProject checked, with message (see mergeIntoBase). Where a
 // worktree has base checked out, the merge runs there as the owner's git
 // actions do, refused git_busy while one runs or a Task there works.
-func (m *Manager) mergeInto(ctx context.Context, repo *laneRepo, base, message string) (string, error) {
+func (m *Manager) mergeInto(ctx context.Context, repo *laneRepo, base, baseTip, tip, message string) (string, error) {
 	dir, err := repo.checkedOut(ctx, base)
 	if err != nil {
 		return "", err
 	}
 	if dir == "" {
-		return repo.mergeIntoBase(ctx, m.lanesRoot(), base, message)
+		return repo.mergeIntoBase(ctx, m.lanesRoot(), base, baseTip, tip, message)
 	}
 	end, err := m.beginWrite(dir)
 	if err != nil {
 		return "", err
 	}
 	defer end()
-	merged, err := repo.mergeIntoBase(ctx, m.lanesRoot(), base, message)
+	merged, err := repo.mergeIntoBase(ctx, m.lanesRoot(), base, baseTip, tip, message)
 	if merged != "" {
 		m.kickDiffsIn(dir)
 	}
