@@ -388,8 +388,8 @@ func (t *txn) releaseHold(n *node, reason ReleaseReason, to Status, cascade stri
 // and says so (ADR 0006 §4.5): uam pauses it when the attempt ended or was
 // rejected without landing, unless a card at or above it is paused
 // already, and the owner's pause stands when the owner stopped it, so it
-// never relaunches by itself. Only a card under an approved epic is
-// paused. Every other reason pauses nothing and says nothing.
+// never relaunches by itself. uam pauses only a card under an approved
+// epic. Every other reason pauses nothing and says nothing.
 func (t *txn) laneEnded(n *node, h Hold, reason ReleaseReason) error {
 	var pause, ended string
 	switch reason {

@@ -46,7 +46,7 @@ The owner asks an ordinary Task for a plan and approves the epic once. From ther
 How each requirement is met:
 - **R1.** A Task with no scope already proposes epics and builds them out (ADR 0005 decisions 4 and 9). The real blocker is the cap, which becomes 50 live cards under a lifetime ceiling of 200 (§6.3). `board_create` and SKILL.md add the hand-off: when the plan is complete, ask the owner to approve #E, and end the turn.
 - **R2.** A new owner action, **Approve and run**, on an epic (§6.2). It confirms downward exactly the proposals the dialog showed, at the revisions it showed, and writes a `runs` row with the model, mode and parallel limit. Under an approved epic nobody confirms or launches per card, and the store refuses both with `run_owned`.
-- **R3.** An owner flag, `paused`, on any card under an approved epic, shown as Pause / Resume with the hint "Block execution" (§4.6). It holds back the card and everything under it. Stop on a running subtask is the owner's Release: it ends the attempt and pauses the card.
+- **R3.** An owner flag, `paused`, on any card under an epic, approved or not, shown as Pause / Resume with the hint "Block execution", and as Block / Unblock in the Approve dialog (§4.6). It holds back the card and everything under it, from the approval on. Stop on a running subtask is the owner's Release: it ends the attempt and pauses the card.
 - **R4.** A server-side executor (§4) starts ready subtasks up to the epic's parallel limit and a global lane cap. A subtask is ready when it and its ancestors are confirmed, nothing at or above it is paused, it is not flagged blocked, and it has no open blocker, own or inherited.
 - **R5.** Every attempt is a new Task in a new worktree, scoped to that subtask only (§5.3). It gets a reduced tool set and cannot claim.
 - **R6.** An accepted subtask lands as one squash commit on the Project's integration branch (§5.4). Revert undoes it, together with the landed subtasks that started on top of it, in one compare-and-swap ref update (§5.7). When a revert cannot apply, the owner reopens the subtask without reverting its code.
@@ -141,7 +141,7 @@ Nothing is stored beyond the columns above.
 
 | State | Rule |
 |---|---|
-| Not approved | No `runs` row. The manual flow of ADR 0005 |
+| Not approved | No `runs` row. The manual flow of ADR 0005. A pause set now takes effect at approval |
 | Approved, paused | A `runs` row, and `paused` set on the epic |
 | Running k of n | A `runs` row, k open lane holds without a pending done, blocked or split request (§4.1), n the parallel limit |
 | Waiting for provider | A `runs` row, and the provider's breaker is open (executor memory, §4.5) |
@@ -307,7 +307,7 @@ The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their 
 
 ### 4.6 Pause, Stop, Settle and blocked
 
-- **Pause** (owner) works on any card under an approved epic, the epic included. Nothing new starts at or under it; running attempts go on. The parts of a split into siblings take the original's own pause, `owner` or `uam`, so a split never lets paused work start. **Resume** clears both `owner` and `uam`. From S5, Resume of an approved epic runs the Approve preflight and sync (§5.2) before the write, refuses with the same codes, and sets `base_ref` when it is empty.
+- **Pause** (owner) works on any card under an epic, approved or not, and on an approved epic itself. Nothing new starts at or under it; running attempts go on. Under an epic not approved yet the pause is stored and holds from the approval on, which is how the owner blocks a story or subtask from running when approving (S7); an unapproved epic itself is refused, since approving clears its pause. A card moved to the root, out of any epic, drops its pauses and those under it. The parts of a split into siblings take the original's own pause, `owner` or `uam`, so a split never lets paused work start. **Resume** clears both `owner` and `uam`. From S5, Resume of an approved epic runs the Approve preflight and sync (§5.2) before the write, refuses with the same codes, and sets `base_ref` when it is empty.
 - **Stop** is the owner's Release on a lane-held subtask. The hold ends `released`, the card gets `paused='owner'` and the comment. The web handler then cancels the holder with the reason "uam: #N was stopped", archives it and cleans its lane (§5.6). From S5 the executor's "holding nothing" rows are the safety net, for example after a crash. On a container, Stop is Pause followed by a Release of each running subtask under it; Pause goes first, so nothing new starts in between. There is no separate Stop route, store method or release reason.
 - **Settle of a lane holder.** The Settle dialog offers release or cancel for a lane hold, not keep. Release goes through `ReleaseHold` with the settled reason and pauses `owner`, as Stop does. Holds nobody decided are released as before. A keep on a lane hold is refused with 400 before the Task moves. The settled lane Task then holds nothing and is retired.
 - **An accepted blocked request on a lane hold** sets the flag or adds the link as before, and also ends the hold with reason `blocked`: todo, not paused. The flag or the open blocker keeps the subtask out of the ready set. Clearing the flag, or the blocker finishing, restarts it in a fresh worktree; the attempt branch is kept. The holder holds nothing and is retired.
@@ -516,7 +516,7 @@ It refuses unless all of these hold:
 - the settings are valid: a model that is set and offered, parallel 1 to 4, mode safe or yolo. From S4 the git preflight must also pass and the base must sync cleanly;
 - from S4, confirming the listed proposals gives no running lane subtask a new open blocker (§6.3 rule 2). Re-approval is the usual way a done container reopens, since a proposal added under it was ignored by derivation until then.
 
-On success it confirms and pins each listed id, confirming ancestors as an owner touch does; upserts the `runs` row; clears the epic's own `paused`; and from S4 sets `base_ref` when it is empty. Every live card the dialog shows must be listed (`stale` otherwise), so Approve lists everything except under a story the dialog hides: one that shows as cancelled because every confirmed subtask under it was. Proposals there stay proposals, and while any is live Approve refuses, naming the story and saying the dialog leaves it out: cancel it, then approve. Approving again updates the settings and confirms new additions. Attempts already running keep their Task's settings.
+On success it confirms and pins each listed id, confirming ancestors as an owner touch does; upserts the `runs` row; clears the epic's own `paused` and keeps every other card's, set before the approval or since; and from S4 sets `base_ref` when it is empty. Every live card the dialog shows must be listed (`stale` otherwise), so Approve lists everything except under a story the dialog hides: one that shows as cancelled because every confirmed subtask under it was. Proposals there stay proposals, and while any is live Approve refuses, naming the story and saying the dialog leaves it out: cancel it, then approve. Approving again updates the settings and confirms new additions. Attempts already running keep their Task's settings.
 
 From S2 the store refuses, under an approved epic, per-card Confirm and every manual start with `run_owned`. Accepting an agent's request there confirms no proposal either: an accepted move, split or done leaves each card its own confirmation, so a confirmed card moved under a proposal story waits, with the story, for the next approval. S4 reopens Launch there as a lane start gated by ready, and S5 refuses it again. So approved epics never collect non-lane holds or per-card confirmations before the executor arrives, and v7 pauses every approval made before S5.
 
@@ -578,7 +578,7 @@ Owner-only unless noted, behind the existing sign-in, cross-origin and JSON chec
 | Route | Slice | Notes |
 |---|---|---|
 | `POST /api/board/cards/{ref}/approve` `{items: [{id, revision}], provider, model, effort, context_size, mode, parallel}` | S2 | Returns the epic. 400 for a missing model or invalid settings. 409 `stale` with refs, and the dialog reloads. 409 `invalid` with refs for empty containers (including ones whose only live subtasks are unlisted proposals), subtasks with no command, and held subtasks. From S4 also `git_too_old`, `no_git_identity`, `merge_conflict` on sync, and `in_progress` with refs when it would reopen a running lane's blocker |
-| `PATCH /api/board/cards/{ref}` `{paused: bool}` | S2 | An owner-only field beside `blocked`, only under approved epics. From S5, Resume on an approved epic runs the Approve preflight and sync and sets `base_ref` when it is empty |
+| `PATCH /api/board/cards/{ref}` `{paused: bool}` | S2, S7 | An owner-only field beside `blocked`, only under approved epics. From S7 on any card under an epic, approved or not, and on an approved epic; 400 `invalid` at the root outside an epic and on an epic not approved yet. From S5, Resume on an approved epic runs the Approve preflight and sync and sets `base_ref` when it is empty |
 | `POST /api/board/cards/{ref}/confirm` under an approved epic | S2 | 409 `run_owned`: "approve it from the epic" |
 | `POST /api/board/cards/{ref}/launch` and `/attach` under an approved epic | S2, S4, S5 | S2: `run_owned`, with or without confirm (Do whole story is Launch on a container). S4: Launch on a subtask starts a lane with the run's settings, or refuses `not_ready` with refs; Attach and Do whole story stay `run_owned`. S5: Launch is `run_owned` again |
 | `POST /api/board/cards/{ref}/restore` under an approved epic | S2 | Restores as proposals. From S4 also 409 `in_progress` when it would reopen a running lane's blocker |
@@ -603,7 +603,7 @@ New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `
 - Outside approved epics nothing changes.
 
 **The Approve dialog** shows:
-- the subtree that will run, grouped by story, with "waits on" lines, new proposals marked, and paused cards;
+- the subtree that will run, grouped by story, with "waits on" lines, new proposals marked, and paused cards. From S7 each story and subtask has a Block / Unblock toggle that sends `PATCH {paused}` at once, and a blocked row and the rows under it read "Blocked: won't start";
 - refusals inline: empty containers, subtasks without a command, held subtasks, and from S4 running subtasks the approval would reopen a blocker of;
 - the Task default fields. A model is required, and none is preselected unless Settings has one, so no fallback model applies silently;
 - the mode, with Safe warning that permission prompts stop unattended work;

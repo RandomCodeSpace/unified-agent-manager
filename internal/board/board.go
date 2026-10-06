@@ -159,7 +159,8 @@ type Card struct {
 	CascadeID string
 	CreatedBy string
 	// Paused is "", PausedOwner or PausedUAM: nothing new starts at or under
-	// the card (ADR 0006 §4.6). Only a card under an approved epic is paused.
+	// the card (ADR 0006 §4.6). Only a card under an epic, or an approved
+	// epic, is paused.
 	Paused string
 	// Run is an approved epic's run; nil on every other card.
 	Run *Run

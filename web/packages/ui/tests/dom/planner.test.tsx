@@ -1291,6 +1291,88 @@ describe('approving an epic (ADR 0006)', () => {
     }
   });
 
+  test('Block in the dialog pauses a story or subtask at once: it and what is under it say in words they won’t start, and the approval keeps it', async () => {
+    const { user } = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+    await act(() => api.planner.setProject('p3', { accept_cmd: 'npm test' }));
+    const pause = vi.spyOn(api.planner, 'pause');
+    const post = vi.spyOn(api.planner, 'approve');
+    try {
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const story = within(dialog.getByRole('region', { name: '#33 Alt text for every image' }));
+      // Approving clears an epic's own pause, so the epic has no toggle.
+      expect(dialog.queryByRole('button', { name: /Block #32/ })).toBeNull();
+      await user.click(story.getByRole('button', { name: 'Block #33' }));
+      await waitFor(() => expect(pause).toHaveBeenCalledWith('cp3-33', true));
+      await waitFor(() => expect(story.getAllByText(/Blocked: won't start/)).toHaveLength(3));
+      await user.click(story.getByRole('button', { name: 'Unblock #33' }));
+      await waitFor(() => expect(pause).toHaveBeenCalledWith('cp3-33', false));
+      await waitFor(() => expect(story.queryByText(/Blocked: won't start/)).toBeNull());
+      await user.click(story.getByRole('button', { name: 'Block #35' }));
+      await waitFor(() => expect(story.getAllByText(/Blocked: won't start/)).toHaveLength(1));
+      expect(story.getByRole('button', { name: 'Unblock #35' })).toBeTruthy();
+      await pick(user, dialog, 'Model', /GPT-5 mini/);
+      const button = dialog.getByRole('button', { name: 'Approve and run' }) as HTMLButtonElement;
+      await waitFor(() => expect(button.disabled).toBe(false));
+      await user.click(button);
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve #32?' })).toBeNull());
+      // The dialog showed the cards as the Block left them, so the approval was not stale.
+      expect(post).toHaveBeenCalledTimes(1);
+      const blocked = (await api.planner.board('p3')).cards.find((c) => c.seq === 35)!;
+      expect(post.mock.calls[0][1].items).toContainEqual({ id: 'cp3-35', revision: blocked.revision });
+      expect(blocked).toMatchObject({ paused: 'owner', status: 'todo' });
+      expect(blocked.held_by).toBeFalsy();
+      await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#35 / }).textContent).toContain('Paused'));
+    } finally {
+      pause.mockRestore();
+      post.mockRestore();
+    }
+  });
+
+  test('a Block takes in only its own write: a card someone else changed meanwhile, above the row or the row itself, stays as shown and Approve names it', async () => {
+    const { user } = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+    await act(() => api.planner.setProject('p3', { accept_cmd: 'npm test' }));
+    const pause = vi.spyOn(api.planner, 'pause');
+    const post = vi.spyOn(api.planner, 'approve');
+    const revisionOf = async (seq: number) => (await api.planner.board('p3')).cards.find((c) => c.seq === seq)!.revision;
+    try {
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const story = () => within(dialog.getByRole('region', { name: '#33 Alt text for every image' }));
+      const button = dialog.getByRole('button', { name: 'Approve and run' }) as HTMLButtonElement;
+      await pick(user, dialog, 'Model', /GPT-5 mini/);
+      // A Task edits the story's description, which the dialog doesn't show; then the owner blocks a subtask under it.
+      const shown = await revisionOf(33);
+      await act(() => api.planner.edit('cp3-33', { desc: 'Older posts too.' }));
+      await user.click(story().getByRole('button', { name: 'Block #35' }));
+      await waitFor(() => expect(story().getByRole('button', { name: 'Unblock #35' })).toBeTruthy());
+      await waitFor(() => expect(button.disabled).toBe(false));
+      await user.click(button);
+      expect(await dialog.findByText(/^#33 changed since this opened\. They are shown as they are now/)).toBeTruthy();
+      expect(post.mock.calls[0][1].items).toContainEqual({ id: 'cp3-33', revision: shown });
+      // A Task edits the story again, then the owner blocks the story itself: that write carries the edit.
+      const again = await revisionOf(33);
+      await act(() => api.planner.edit('cp3-33', { desc: 'Every post.' }));
+      await user.click(story().getByRole('button', { name: 'Block #33' }));
+      await waitFor(() => expect(pause).toHaveBeenCalledWith('cp3-33', true));
+      await waitFor(() => expect(button.disabled).toBe(false));
+      expect(story().getByRole('button', { name: 'Block #33' })).toBeTruthy();
+      await user.click(button);
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+      expect(post.mock.calls[1][1].items).toContainEqual({ id: 'cp3-33', revision: again });
+      // Shown again as it is now: blocked.
+      expect(await story().findByRole('button', { name: 'Unblock #33' })).toBeTruthy();
+      expect(screen.getByRole('dialog', { name: 'Approve #32?' })).toBeTruthy();
+    } finally {
+      pause.mockRestore();
+      post.mockRestore();
+    }
+  });
+
   test('under an approved epic Confirm and Launch give way to Pause, which sends PATCH, and the chips say so in words', async () => {
     const { user, tree } = await openPlanner();
     await approve('cp1-18');

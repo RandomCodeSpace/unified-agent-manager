@@ -1799,8 +1799,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       confirm: (ref: string) => call<unknown>('POST', card(ref, 'confirm')),
       /** Approves an epic (ADR 0006 §6.2): confirms the listed cards at their listed revisions and records its run. `stale` names the cards that changed. */
       approve: (ref: string, body: ApproveBody) => call<Card>('POST', card(ref, 'approve'), body),
-      /** Pause or Resume a card under an approved epic. */
-      pause: (ref: string, paused: boolean) => call<unknown>('PATCH', card(ref), { paused }),
+      /** Pause or Resume a card under an epic, approved or not, or an approved epic. */
+      pause: (ref: string, paused: boolean) => call<Card>('PATCH', card(ref), { paused }),
       dismiss: (ref: string) => call<unknown>('POST', card(ref, 'dismiss')),
       /** Without a rank the card goes after its new parent's last child; `rank` is an index among the siblings. */
       move: (ref: string, parent_id: string | null, rank?: number) => call<unknown>('POST', card(ref, 'move'), rank === undefined ? { parent_id } : { parent_id, rank }),
