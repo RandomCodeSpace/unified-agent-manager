@@ -442,7 +442,9 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 // split never creates a done subtask. A subtask that has not started splits
 // at once, for the owner and for an agent in scope; an agent's parts are
 // proposals, so its split is refused, as a delete is, when it would bring a
-// container above the subtask to done or cancelled. A started one keeps its
+// container above the subtask to done or cancelled, and when it would turn
+// a confirmed subtask under an approved epic into a story of proposals,
+// which would never finish. A started one keeps its
 // plan (lock.go): the owner's split is refused, and an agent's is filed as
 // one split request, which the owner can accept once the subtask is
 // released.
@@ -480,6 +482,10 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 			req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestSplit, payload: payload{Children: children}})
 			out.Request = &req
 			return err
+		}
+		if e := o.approved(n); e != nil && !a.owner() && n.Confirmed() && !o.splitsIntoSiblings(n) {
+			return &Error{Code: CodeInvalid, Refs: []string{n.ref()}, Message: fmt.Sprintf(
+				"Splitting %[1]s would make it a story of proposals under approved epic %[2]s, and it would never finish: edit %[1]s into the first part and create the others instead, or ask the owner to split it", n.ref(), e.ref())}
 		}
 		parent, unconfirmed := n.ID, count
 		if o.splitsIntoSiblings(n) {
@@ -724,8 +730,11 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			} else {
 				n.Blocked = true
 			}
-			if err := t.confirm(o, a, n); err != nil {
-				return err
+			// Under an approved epic only its approval confirms a proposal.
+			if o.approved(n) == nil {
+				if err := t.confirm(o, a, n); err != nil {
+					return err
+				}
 			}
 			return t.updateCard(n)
 		case RequestSplit:

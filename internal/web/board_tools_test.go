@@ -581,7 +581,7 @@ func TestBoardToolsProposeRootEpics(t *testing.T) {
 	task := f.newTask(f.project).ID
 
 	r := f.toolOK(task, "board_create", `{"kind":"epic","title":"Offline mode","win_condition":"works offline","prio":1}`)
-	if r.Card == nil || r.Card.Kind != board.KindEpic || r.Card.Status != board.StatusPlanned || r.Text != fmt.Sprintf("Created #%d at the root of the board. It stays a proposal until the owner confirms it.", r.Card.Seq) {
+	if r.Card == nil || r.Card.Kind != board.KindEpic || r.Card.Status != board.StatusPlanned || r.Text != fmt.Sprintf("Created #%[1]d at the root of the board. When the plan is complete, ask the owner to approve #%[1]d in the Planner; nothing runs before that.", r.Card.Seq) {
 		t.Fatalf("create = %+v", r)
 	}
 	c := f.card(r.Card.ID).Card
@@ -1325,5 +1325,64 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 	if get, _ := run("board_get", fmt.Sprintf(`{"ref":%q}`, story.ID)); strings.Contains(get.Text, "#4") || strings.Contains(get.Text, "Blocked by") {
 		t.Fatalf("get the container = %q", get.Text)
+	}
+}
+
+// The hand-off and an approved epic as the tools see it (ADR 0006 §6.1,
+// §6.4): board_create on an epic asks for the approval; under the approved
+// epic a new card waits for the next one, board_get names the approval and
+// a pause on the path, nothing is claimed, and a move out of the epic or
+// out from under a pause goes to the owner.
+func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
+	f := newPlanner(t)
+	f.setAcceptCmd("go test ./...")
+	task := f.newTask(f.project).ID
+	epic := f.toolOK(task, "board_create", `{"kind":"epic","title":"Calculator"}`).Card
+	story := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Parse"}`, epic.ID)).Card
+	leaf := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Tokens"}`, story.ID)).Card
+	sibling := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Tree"}`, story.ID)).Card
+	free := f.toolOK(task, "board_create", `{"kind":"epic","title":"Free"}`).Card
+	freeStory := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Loose"}`, free.ID)).Card
+	f.store(func(ctx context.Context, st *board.Store) error {
+		var items []board.ApproveItem
+		for _, id := range []string{epic.ID, story.ID, leaf.ID, sibling.ID} {
+			c, err := st.Card(ctx, id)
+			if err != nil {
+				return err
+			}
+			items = append(items, board.ApproveItem{ID: c.ID, Revision: c.Revision})
+		}
+		_, err := st.Approve(ctx, board.Owner(""), epic.ID, board.RunSettings{Provider: "fake", Model: "luna", Mode: "safe", Parallel: 2}, items)
+		return err
+	})
+
+	r := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Errors"}`, story.ID))
+	if want := fmt.Sprintf("Created #%d under #%d. #%d is approved, so it stays a proposal until the owner approves #%d again.", r.Card.Seq, story.Seq, epic.Seq, epic.Seq); r.Text != want {
+		t.Fatalf("create under the approved epic = %q, want %q", r.Text, want)
+	}
+	f.call(http.MethodPatch, "/api/board/cards/"+story.ID, `{"paused":true}`, http.StatusOK, nil)
+	got := f.toolOK(task, "board_get", fmt.Sprintf(`{"ref":%q}`, leaf.ID)).Text
+	for _, part := range []string{
+		fmt.Sprintf("#%d is an approved epic: nothing under it is claimed or started by hand", epic.Seq),
+		fmt.Sprintf("Paused: #%d by the owner. Nothing at or under a paused card starts.", story.Seq),
+	} {
+		if !strings.Contains(got, part) {
+			t.Fatalf("board_get = %q, lacks %q", got, part)
+		}
+	}
+	f.toolRefused(task, "board_claim", fmt.Sprintf(`{"ref":%q}`, leaf.ID), string(board.CodeRunOwned))
+	r = f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, sibling.ID, freeStory.ID))
+	if want := fmt.Sprintf("Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", sibling.Seq); r.Text != want {
+		t.Fatalf("move out of the approved epic = %q, want %q", r.Text, want)
+	}
+	if c := f.card(sibling.ID).Card; *c.ParentID != story.ID {
+		t.Fatalf("the move applied: %+v", c)
+	}
+	r = f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, leaf.ID, epic.ID))
+	if want := fmt.Sprintf("Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", leaf.Seq); r.Text != want {
+		t.Fatalf("move out from under the pause = %q, want %q", r.Text, want)
+	}
+	if c := f.card(leaf.ID).Card; *c.ParentID != story.ID {
+		t.Fatalf("the move applied: %+v", c)
 	}
 }

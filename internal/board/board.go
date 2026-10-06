@@ -154,10 +154,15 @@ type Card struct {
 	WorkedBy  string
 	PinnedSHA string
 	// AcceptCmd is nil to inherit the Project default, "" for none.
-	AcceptCmd       *string
-	Paths           []string
-	CascadeID       string
-	CreatedBy       string
+	AcceptCmd *string
+	Paths     []string
+	CascadeID string
+	CreatedBy string
+	// Paused is "", PausedOwner or PausedUAM: nothing new starts at or under
+	// the card (ADR 0006 §4.6). Only a card under an approved epic is paused.
+	Paused string
+	// Run is an approved epic's run; nil on every other card.
+	Run             *Run
 	PendingRequests int
 	Revision        int64
 	CreatedAt       time.Time
@@ -173,6 +178,13 @@ func (c Card) container() bool { return c.Kind != KindSubtask }
 
 // ref renders the card's user-facing handle.
 func (c Card) ref() string { return fmt.Sprintf("#%d", c.Seq) }
+
+// Who paused a card: the owner's Pause, or uam when an attempt ended
+// without landing.
+const (
+	PausedOwner = "owner"
+	PausedUAM   = "uam"
+)
 
 // Comment authors.
 const (
@@ -267,6 +279,13 @@ const (
 	// CodeInProgress refuses changing the plan of a started subtask
 	// (lock.go) until the owner releases it.
 	CodeInProgress Code = "in_progress"
+	// CodeRunOwned refuses a manual start or a per-card confirmation under
+	// an approved epic (ADR 0006 §6.2): uam runs it, and the owner approves
+	// from the epic.
+	CodeRunOwned Code = "run_owned"
+	// CodeStale refuses an approval whose listed cards changed since the
+	// dialog showed them; Refs lists them.
+	CodeStale Code = "stale"
 	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
 	// acceptance: the Project's runner stayed busy past the timeout, or the
 	// command exited non-zero.

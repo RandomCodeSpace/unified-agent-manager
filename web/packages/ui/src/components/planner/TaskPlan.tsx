@@ -1,9 +1,9 @@
 import { useApi } from '../../ApiContext';
-import { ChevronDown, ChevronRight, ListTree, Lock, Pencil, Plus, X } from 'lucide-react';
+import { BadgeCheck, ChevronDown, ChevronRight, ListTree, Lock, Pencil, Plus, X } from 'lucide-react';
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { popupOpen } from '../../App';
 import { plannerErrorText, taskName, type Card, type CardStatus, type Project } from '../../api';
-import { cardPath, childIndex, lockedReason, nextSubtask, shownProgress, taskCard, waitsOf, type Wait } from '../../lib/board';
+import { approvedEpicOf, cardPath, childIndex, lockedReason, nextSubtask, shownProgress, taskCard, waitsOf, type Wait } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Markdown, Note } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -462,8 +462,9 @@ function HolderChip({ taskId }: Readonly<{ taskId: string }>) {
 /**
  * A card's details where it is shown (under its outline row, or under the graph): what done
  * means, its description and checklist, its dependencies at its own level and what it waits for
- * through its parents, the agents' requests on it, and Edit, Discard for a proposal, and Launch
- * (with the confirm step) for a subtask. A started subtask keeps its plan and says why.
+ * through its parents, the agents' requests on it, and Edit, Discard for a proposal, Launch
+ * (with the confirm step) for a subtask, and Approve for an epic (ADR 0006 §8). Under an approved
+ * epic nothing is launched here. A started subtask keeps its plan and says why.
  */
 export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ card: Card; plan: TaskPlan; taskId: string; className?: string }>) {
   const api = useApi();
@@ -474,6 +475,8 @@ export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ car
   const locked = lockedReason(c);
   const requests = (boards[plan.project.id]?.data?.requests ?? []).filter((r) => r.card_id === c.id);
   const launch = c.kind === 'subtask' ? cardActions.actionsOf(c).find((a) => a.key === 'launch') : undefined;
+  const approve = c.kind === 'epic' ? cardActions.actionsOf(c).find((a) => a.key === 'approve') : undefined;
+  const approved = approvedEpicOf(c, plan.byId);
   const mine = c.held_by === taskId || (c.status === 'done' && c.worked_by === taskId);
   const run = (key: string, verb: string, op: () => Promise<unknown>) => cardActions.run(c.id, key, verb, op);
   return (
@@ -489,7 +492,7 @@ export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ car
         {mine && <span className="text-accent">· This task works on it</span>}
         {!mine && c.held_by && <TaskChip taskId={c.held_by} />}
       </p>
-      {!c.confirmed && <Note>A proposal: editing and linking keep it one; launching it confirms it.</Note>}
+      {!c.confirmed && <Note>{approved ? `A proposal: editing and linking keep it one; approving #${approved.seq} again confirms it.` : 'A proposal: editing and linking keep it one; launching it confirms it.'}</Note>}
       {locked && <Note>{locked}</Note>}
       {editing ? (
         <CardEditor
@@ -546,6 +549,12 @@ export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ car
               Launch
             </Button>
           )}
+          {approve && (
+            <Button size="sm" variant="primary" disabled={!!busy} onClick={approve.onClick}>
+              <BadgeCheck />
+              Approve…
+            </Button>
+          )}
           {!locked && (
             <Button size="sm" variant="secondary" disabled={!!busy} onClick={() => setEditing(true)}>
               <Pencil />
@@ -578,7 +587,8 @@ const NEW = 'new';
  */
 function AttachBox({ plan, taskId, taskName, onAttached }: Readonly<{ plan: TaskPlan; taskId: string; taskName: string; onAttached: (id: string) => void }>) {
   const api = useApi();
-  const stories = plan.cards.filter((c) => c.kind === 'story' && c.status !== 'done');
+  // Not under an approved epic: its approval owns starting the work there (ADR 0006 §6.3).
+  const stories = plan.cards.filter((c) => c.kind === 'story' && c.status !== 'done' && !approvedEpicOf(c, plan.byId));
   const [story, setStory] = useState('');
   const [target, setTarget] = useState(NEW);
   const [title, setTitle] = useState(taskName);

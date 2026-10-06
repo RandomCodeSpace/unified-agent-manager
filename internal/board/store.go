@@ -252,6 +252,10 @@ type txn struct {
 	outlines map[string]*outline
 	changes  map[string]*changeSet
 	scopes   map[string]*scope
+	// keepOpen lists containers settle leaves open in this write, though
+	// they reached done: a Restore under an approved epic brings their
+	// cards back as proposals to approve, which closing would cancel.
+	keepOpen map[string]bool
 }
 
 type changeSet struct {
@@ -321,6 +325,7 @@ func (s *Store) newTxn(ctx context.Context, tx *sql.Tx) *txn {
 		outlines: map[string]*outline{},
 		changes:  map[string]*changeSet{},
 		scopes:   map[string]*scope{},
+		keepOpen: map[string]bool{},
 	}
 }
 

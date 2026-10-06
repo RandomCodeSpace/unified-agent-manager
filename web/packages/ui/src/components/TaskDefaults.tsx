@@ -140,7 +140,9 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
               id={`${prefix}-model`}
               value={value.model}
               disabled={disabled}
-              items={choices.map(({ model: m, note }) => ({ value: m.id, label: choiceLabel(m.name, note), hidden: !!note }))}
+              // No model yet (an approval's run, ADR 0006 §8): the trigger asks for one. Always listed, hidden, so
+              // the select never loses the item it starts on.
+              items={[{ value: '', label: 'Pick a model', hidden: true }, ...choices.map(({ model: m, note }) => ({ value: m.id, label: choiceLabel(m.name, note), hidden: !!note }))]}
               onValueChange={(id) => {
                 const next = catalog.find((m) => m.id === id);
                 onChange({

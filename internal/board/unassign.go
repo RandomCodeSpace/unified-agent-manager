@@ -8,8 +8,9 @@ import (
 // Unassign moves every card of projectID, a Project being removed, to the
 // read-only Unassigned list, keeping its tree, comments and history. The
 // Project's Tasks are gone with it, so its pending requests are withdrawn
-// and a hold still open ends as an ended attempt. It returns the number of
-// cards moved.
+// and a hold still open ends as an ended attempt. Its epics' approvals and
+// its pauses were given for its repository, so they go too. It returns the
+// number of cards moved.
 func (s *Store) Unassign(ctx context.Context, projectID string) (int, error) {
 	if projectID == "" {
 		return 0, errReadOnly
@@ -37,7 +38,10 @@ func (s *Store) Unassign(ctx context.Context, projectID string) (int, error) {
 			if err := t.withdraw(n, false); err != nil {
 				return err
 			}
-			if err := t.exec(`UPDATE cards SET project_id = '', updated_at = ? WHERE id = ?`, stamp(t.now), n.ID); err != nil {
+			if err := t.exec(`UPDATE cards SET project_id = '', paused = '', updated_at = ? WHERE id = ?`, stamp(t.now), n.ID); err != nil {
+				return err
+			}
+			if err := t.exec(`DELETE FROM runs WHERE epic_id = ?`, n.ID); err != nil {
 				return err
 			}
 			t.removed(projectID, n.ID)

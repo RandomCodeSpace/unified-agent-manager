@@ -1209,3 +1209,181 @@ describe('card menus', () => {
     expect(await board.findByRole('button', { name: '#22 Sign the macOS build' })).toBeTruthy();
   });
 });
+
+describe('approving an epic (ADR 0006)', () => {
+  /** The service's Settings with New tasks naming no model, so nothing stands in for one. */
+  const noDefaultModel = () => act(() => api.updateWebSettings({ task_defaults: { provider: 'copilot', model: '', effort: '', context_size: 'default', mode: 'safe' } }));
+  /** Approves `epic` through the service, as the dialog would, listing nothing more. */
+  const approve = (epic: string) => act(() => api.planner.approve(epic, { provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode: 'safe', parallel: 2, items: [] }));
+
+  test('the dialog needs a model, posts each card with the revision it showed, and on stale shows them again', async () => {
+    const { user } = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+    await noDefaultModel();
+    const post = vi.spyOn(api.planner, 'approve');
+    try {
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const button = dialog.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
+      // No model is picked for the run: Settings names none, and no fallback stands in.
+      expect(dialog.getByRole('combobox', { name: 'Model' }).textContent).toContain('Pick a model');
+      expect(dialog.getByText('Pick a model: an approved run never falls back to a default one.')).toBeTruthy();
+      expect(dialog.getByText('In Safe mode a permission prompt stops unattended work until you answer it.')).toBeTruthy();
+      expect(dialog.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true');
+      // notes-site has no acceptance command, so #35 would wait for the owner: refused inline until one is set.
+      expect(await within(dialog.getByRole('region', { name: '#33 Alt text for every image' })).findByText(/no acceptance command/)).toBeTruthy();
+      expect(dialog.getByRole('alert').textContent).toContain('#35 has no acceptance command');
+      await user.click(dialog.getByRole('button', { name: 'Edit' }));
+      await user.type(dialog.getByRole('textbox', { name: 'Project acceptance command' }), 'npm test{Enter}');
+      await waitFor(() => expect(dialog.queryByRole('alert')).toBeNull());
+      expect(button.disabled).toBe(true);
+      await pick(user, dialog, 'Model', /GPT-5 mini/);
+      await user.click(dialog.getByRole('radio', { name: '3' }));
+      expect(button.disabled).toBe(false);
+      // A Task edits #35 while the dialog shows it: the approval is stale.
+      const shown = (await api.planner.board('p3')).cards.find((c) => c.seq === 35)!.revision;
+      await act(() => api.planner.edit('cp3-35', { title: 'Fail the build on any image without alt text' }));
+      await user.click(button);
+      expect(await dialog.findByText(/^#35 changed since this opened\./)).toBeTruthy();
+      expect(post.mock.calls[0][1].items).toContainEqual({ id: 'cp3-35', revision: shown });
+      expect(post.mock.calls[0][1]).toMatchObject({ provider: 'copilot', model: 'gpt-5-mini', mode: 'safe', parallel: 3 });
+      // Shown again as it is now; approving again posts its new revision.
+      expect(await dialog.findByText(/^#35 Fail the build on any image without alt text/)).toBeTruthy();
+      await user.click(button);
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve #32?' })).toBeNull());
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(post.mock.calls[1][1].items.find((i) => i.id === 'cp3-35')!.revision).toBeGreaterThan(shown);
+      expect(await tree.findByText('Approved')).toBeTruthy();
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  test('under an approved epic Confirm and Launch give way to Pause, which sends PATCH, and the chips say so in words', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-18');
+    const epic = tree.getByRole('treeitem', { name: /^#18 Release automation/ });
+    await waitFor(() => expect(epic.textContent).toContain('Approved'));
+    // #31 is a proposal under it, waiting for the next approval.
+    expect(epic.textContent).toContain('1 to approve');
+    expect(itemsOf(await openMenu(user, 'Actions for #22'))).toEqual(['Open', 'Edit', 'Pause', 'Mark done', 'Check at HEAD', 'Move to…', 'Split', 'Cancel']);
+    await user.keyboard('{Escape}');
+    expect(itemsOf(await openMenu(user, 'Actions for #19'))).not.toContain('Do whole story');
+    await user.keyboard('{Escape}');
+    // The proposal folds as before, after #23's last subtask; Dismiss stays, Confirm goes.
+    const last = tree.getByRole('treeitem', { name: /^#26 / });
+    const suggested = tree.getAllByRole('treeitem', { name: '+1 suggested' }).find((r) => r.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_PRECEDING)!;
+    await user.click(suggested);
+    const proposal = within(await tree.findByRole('treeitem', { name: /^#31 / }));
+    expect(proposal.getByRole('button', { name: 'Dismiss Publish SHA-256 checksums beside the archives' })).toBeTruthy();
+    expect(proposal.queryByRole('button', { name: /^Confirm / })).toBeNull();
+    const pause = vi.spyOn(api.planner, 'pause');
+    try {
+      await user.click((await openMenu(user, 'Actions for #22')).getByRole('menuitem', { name: 'Pause' }));
+      await waitFor(() => expect(pause).toHaveBeenCalledWith('cp1-22', true));
+      await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#22 / }).textContent).toContain('Paused'));
+      expect(itemsOf(await openMenu(user, 'Actions for #22'))).toContain('Resume');
+    } finally {
+      pause.mockRestore();
+    }
+  });
+
+  test('Restore on a cancelled approved epic says what it took with it comes back as proposals', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-18');
+    await act(() => api.planner.status('cp1-18', 'cancelled', 'The release moves to next quarter.'));
+    await user.click(screen.getByRole('switch', { name: 'Show cancelled' }));
+    await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#18 .*, Cancelled$/ })).toBeTruthy());
+    await user.click((await openMenu(user, 'Actions for #18')).getByRole('menuitem', { name: 'Restore' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Restore #18?' }));
+    expect(dialog.getByText('The epic reopens, and everything its cancel took with it comes back as proposals: approve #18 again to confirm them.')).toBeTruthy();
+  });
+
+  test('Plans to approve lists a proposed epic in the Inbox, which counts it', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const base = data.cards.find((c: { seq: number }) => c.seq === 32);
+        const epic = { ...base, id: 'cp3-90', seq: 90, rank: 99, title: 'Offline reading', status: 'planned', progress: { done: 0, total: 0, proposed: 0 }, confirmed: false, expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(), pinned_sha: '' };
+        return reply(200, { ...data, cards: [...data.cards, epic] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: '#32 Accessible post template, Doing' });
+      // The app's Needs-you count, 13 without it, counts the plan too.
+      await waitFor(() => expect(document.title).toBe('(14) UAM - Planner'));
+      await user.click(screen.getByRole('button', { name: 'Inbox, 1 pending' }));
+      const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
+      expect(plans.getByRole('button', { name: '#90 Offline reading' })).toBeTruthy();
+      expect(plans.getByText('New plan')).toBeTruthy();
+      await user.click(plans.getByRole('button', { name: 'Approve…' }));
+      expect(await screen.findByRole('dialog', { name: 'Approve #90?' })).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('Needs-you counts a plan to approve: an approved epic with a proposal added since', async () => {
+    const { user } = await openPlanner();
+    await waitFor(() => expect(document.title).toBe('(13) UAM - Planner'));
+    await approve('cp1-18');
+    await waitFor(() => expect(document.title).toBe('(14) UAM - Planner'));
+    await user.click(screen.getByRole('button', { name: 'Inbox, 7 pending' }));
+    const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
+    expect(plans.getByRole('button', { name: '#18 Release automation' })).toBeTruthy();
+    expect(plans.getByText('1 to approve')).toBeTruthy();
+  });
+
+  test('a change request moving a card names both parents and the approved epics it leaves and enters, with their runs', async () => {
+    const { user } = renderApp('#planner=p1');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p1'),
+      async (real) => {
+        const data = await (await real()).json();
+        const run = (mode: string, parallel: number) => ({ provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode, parallel, approved_at: new Date().toISOString() });
+        const cards = data.cards.map((c: { id: string }) => (c.id === 'cp1-1' ? { ...c, run: run('safe', 2) } : c.id === 'cp1-18' ? { ...c, run: run('yolo', 3) } : c));
+        const requests = data.requests.map((r: { id: string }) => (r.id === 'rq3' ? { ...r, payload: { patch: { parent_id: 'cp1-19' } } } : r));
+        return reply(200, { ...data, cards, requests });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ });
+      await user.click(screen.getByRole('button', { name: /^Inbox, \d+ pending$/ }));
+      const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+      const change = within(inbox.getByRole('article', { name: 'Change request on #9' }));
+      expect(change.getByText('parent')).toBeTruthy();
+      expect(change.getByText('#7 Trim the snapshot payload')).toBeTruthy();
+      expect(change.getByText('#19 Cross-compile the release matrix')).toBeTruthy();
+      expect(change.getByText('Out of approved epic #1 Faster first load of long transcripts, which runs in safe mode, 2 subtasks at a time.')).toBeTruthy();
+      expect(change.getByText('Into approved epic #18 Release automation, which runs in yolo mode, 3 subtasks at a time.')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('under an approved epic Triage offers no Re-pin and says approving the epic again re-pins', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-1');
+    const panel = await openCard(user, tree, 6);
+    await user.click(panel.getByRole('button', { name: 'Triage' }));
+    const repin = (await panel.findByRole('button', { name: /^Re-pin at / })) as HTMLButtonElement;
+    expect(repin.disabled).toBe(true);
+    expect(panel.getByText('Under approved epic #1, approving it again re-pins its cards at HEAD.')).toBeTruthy();
+  });
+
+  test('under an approved epic Mark done on a proposal is not offered, as only the approval confirms it', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-1');
+    // #11 folds after #9, its story's last confirmed subtask shown.
+    const last = tree.getByRole('treeitem', { name: /^#9 / });
+    await user.click(tree.getAllByRole('treeitem', { name: '+1 suggested' }).find((r) => r.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_PRECEDING)!);
+    const panel = await openCard(user, tree, 11);
+    expect((panel.getByRole('button', { name: 'Mark done' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(panel.getByText('Approve #1 again to confirm it first: under an approved epic only the approval confirms a card.')).toBeTruthy();
+  });
+});

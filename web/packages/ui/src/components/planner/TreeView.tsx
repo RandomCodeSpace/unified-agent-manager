@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { Check, ChevronRight, ListPlus, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
 import { plannerErrorText, type Card, type CardKind } from '../../api';
-import { KIND_LABEL, STATUS_LABEL, buildOutline, lockedReason, openBlockerSeqs, type OutlineNode } from '../../lib/board';
+import { KIND_LABEL, STATUS_LABEL, approvedEpicOf, buildOutline, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, type OutlineNode } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -74,6 +74,8 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
   const menuHandle = useCardMenuHandle();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const outline = useMemo(() => buildOutline(cards, { epic: ui.epic, showCancelled: ui.showCancelled }), [cards, ui.epic, ui.showCancelled]);
+  // The proposals each approved epic waits to approve again ("N to approve" on its row).
+  const toApprove = useMemo(() => new Map(plansToApprove(cards).filter((p) => p.epic.run).map((p) => [p.epic.id, p.proposals])), [cards]);
   const creating = readOnly ? null : ui.creating;
   const rows = useMemo(() => flatten(outline.roots, outline.suggested, ui.folded, ui.suggestedOpen, creating), [outline, ui.folded, ui.suggestedOpen, creating]);
   const [focus, setFocus] = useState<string | null>(null);
@@ -246,6 +248,9 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
         tabbable={tabbable}
         busy={!!busy[c.id]}
         blockers={openBlockerSeqs(c, byId)}
+        approved={!!approvedEpicOf(c, byId)}
+        pause={pauseLabel(c, byId)}
+        toApprove={toApprove.get(c.id) ?? 0}
         readOnly={readOnly}
         actions={actions}
       />
@@ -304,9 +309,10 @@ const SuggestedRow = memo(function SuggestedRow({ rowKey, count, level, open, ta
 /**
  * One card's row. Memoised: it renders again only when its card object or its own view state changes.
  * Its counts sit in one right-aligned column; the add and "…" buttons show with the row's hover or
- * focus (always on a touch screen, and while the menu is open), so a long outline stays quiet.
+ * focus (always on a touch screen, and while the menu is open), so a long outline stays quiet. Under
+ * an approved epic (`approved`) a suggestion is confirmed by approving the epic again, not on its row.
  */
-const CardRow = memo(function CardRow({ card: c, level, selected, folded, suggestion, tabbable, busy, blockers, readOnly, actions }: Readonly<{
+const CardRow = memo(function CardRow({ card: c, level, selected, folded, suggestion, tabbable, busy, blockers, approved, pause, toApprove, readOnly, actions }: Readonly<{
   card: Card;
   level: number;
   selected: boolean;
@@ -315,6 +321,9 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
   tabbable: boolean;
   busy: boolean;
   blockers: string;
+  approved: boolean;
+  pause: string;
+  toApprove: number;
   readOnly: boolean;
   actions: RowActions;
 }>) {
@@ -380,9 +389,9 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
             <span className="max-sm:sr-only">Suggested</span>
           </Chip>
         )}
-        <CardMarkers card={c} blockers={blockers} compact />
+        <CardMarkers card={c} blockers={blockers} pause={pause} toApprove={toApprove} compact />
         {c.held_by && <TaskChip taskId={c.held_by} className="max-sm:max-w-24" />}
-        {!c.confirmed && !readOnly && <SuggestionActions busy={busy} title={c.title} onConfirm={() => actions.confirm(c.id)} onDismiss={() => actions.dismiss(c.id)} />}
+        {!c.confirmed && !readOnly && <SuggestionActions busy={busy} title={c.title} onConfirm={approved ? undefined : () => actions.confirm(c.id)} onDismiss={() => actions.dismiss(c.id)} />}
         {(adds.length > 0 || menu) && (
           <span className="flex items-center gap-0.5 opacity-0 transition-opacity duration-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100 pointer-coarse:opacity-100">
             {adds.map((kind) => (
@@ -410,17 +419,20 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
   );
 });
 
-function SuggestionActions({ busy, title, onConfirm, onDismiss }: Readonly<{ busy: boolean; title: string; onConfirm: () => void; onDismiss: () => void }>) {
+/** A suggestion's Confirm and Dismiss; without `onConfirm` (under an approved epic) Dismiss alone. */
+function SuggestionActions({ busy, title, onConfirm, onDismiss }: Readonly<{ busy: boolean; title: string; onConfirm?: () => void; onDismiss: () => void }>) {
   const stop = (fn: () => void) => (e: { stopPropagation: () => void }) => {
     e.stopPropagation();
     fn();
   };
   return (
     <span className="flex items-center gap-0.5">
-      <Button size="sm" variant="secondary" className="h-6 px-1.5" disabled={busy} aria-label={`Confirm ${title}`} title="Confirm" onClick={stop(onConfirm)}>
-        <Check />
-        <span className="max-sm:hidden">Confirm</span>
-      </Button>
+      {onConfirm && (
+        <Button size="sm" variant="secondary" className="h-6 px-1.5" disabled={busy} aria-label={`Confirm ${title}`} title="Confirm" onClick={stop(onConfirm)}>
+          <Check />
+          <span className="max-sm:hidden">Confirm</span>
+        </Button>
+      )}
       <Button size="icon-sm" className="text-muted" disabled={busy} aria-label={`Dismiss ${title}`} title="Dismiss" onClick={stop(onDismiss)}>
         <X />
       </Button>

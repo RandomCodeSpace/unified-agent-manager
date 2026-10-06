@@ -24,6 +24,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/board/cards/{ref}/confirm", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, _ struct{}) (board.Card, error) {
 		return st.Confirm(ctx, a, ref)
 	}))
+	mux.HandleFunc("POST /api/board/cards/{ref}/approve", s.handleApprove)
 	mux.HandleFunc("POST /api/board/cards/{ref}/dismiss", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, _ struct{}) (board.Card, error) {
 		return st.Dismiss(ctx, a, ref)
 	}))
@@ -225,7 +226,7 @@ func (s *Server) handleCard(w http.ResponseWriter, r *http.Request) {
 
 // cardPatchBody is the owner's edit. accept_cmd is null to inherit the
 // Project default, "" for none, or a command; parent_id is null or "" for
-// the root.
+// the root; paused pauses or resumes a card under an approved epic.
 type cardPatchBody struct {
 	Title        *string         `json:"title"`
 	Desc         *string         `json:"desc"`
@@ -238,6 +239,7 @@ type cardPatchBody struct {
 	ParentID     json.RawMessage `json:"parent_id"`
 	Rank         *int            `json:"rank"`
 	Blocked      *bool           `json:"blocked"`
+	Paused       *bool           `json:"paused"`
 	AcceptCmd    json.RawMessage `json:"accept_cmd"`
 	Paths        *[]string       `json:"paths"`
 	ProjectID    *string         `json:"project_id"`
@@ -245,7 +247,7 @@ type cardPatchBody struct {
 
 func (b cardPatchBody) patch() (board.Patch, error) {
 	p := board.Patch{Title: b.Title, Desc: b.Desc, WinCondition: b.WinCondition, Prio: b.Prio, Due: b.Due, Effort: b.Effort,
-		Labels: b.Labels, Checklist: b.Checklist, Rank: b.Rank, Blocked: b.Blocked, Paths: b.Paths, ProjectID: b.ProjectID}
+		Labels: b.Labels, Checklist: b.Checklist, Rank: b.Rank, Blocked: b.Blocked, Paused: b.Paused, Paths: b.Paths, ProjectID: b.ProjectID}
 	if b.ParentID != nil {
 		parent, err := optionalRef("parent_id", b.ParentID)
 		if err != nil {
@@ -280,6 +282,21 @@ func (s *Server) handleEditCard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeFailure(w, err)
+}
+
+// handleApprove approves an epic (ADR 0006 §7): 200 with the epic and its
+// run.
+func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
+	var req ApproveRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	c, err := s.m.ApproveCard(r.PathValue("ref"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) handleCommentCard(w http.ResponseWriter, r *http.Request) {

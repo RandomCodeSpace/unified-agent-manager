@@ -1273,7 +1273,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and reset the view without changing cards or dependencies. Clicking a card opens its details in
   place: done when, description, checklist, dependencies (its own level, and
   what it waits for through its story or epic), the agents' requests on it,
-  Edit, Discard for a proposal, and Launch. Launch, Do whole story and Plan with agent in
+  Edit, Discard for a proposal, Launch, and Approve on an epic. Launch, Do whole story and Plan with agent in
   the Planner, open a dialog with the new Task's model, effort, context size
   and mode (starting from Settings → New tasks) and an optional brief, which
   the Task's first message carries; when launching confirms proposals, the
@@ -1285,8 +1285,33 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   proposed") in the strip, the outline, the graph and the Planner's views.
   Editing, linking, moving or splitting a proposal
   keeps it a proposal and restarts its 14 days before it expires; only
-  Confirm, launching it, or adding a Task to it confirms it. A subtask in progress shows why its plan
+  Confirm, launching it, adding a Task to it, or approving its epic confirms it. A subtask in progress shows why its plan
   is locked.
+  **Approve** on an epic (its "…" menu, its card panel, its details here,
+  or the Inbox's **Plans to approve**, which lists proposed epics and
+  approved epics with proposals added since) opens a dialog with the epic's
+  live cards as they were when it opened, grouped by story, marking new
+  proposals, paused cards and what each waits on. It says inline what the
+  service would refuse (a held subtask, a story or epic with no subtask, a
+  subtask without an acceptance command, with the Project's command
+  editable in place) and asks for the run's model (none is picked unless
+  Settings → New tasks names one), mode (Safe warns that a permission prompt
+  stops unattended work) and subtasks at a time (1 to 4, 2 by default).
+  Approving confirms every card it showed and records the run; when a card
+  changed or was added meanwhile, the dialog names it, shows it as it is
+  now and asks again. A card added under an approved epic stays a proposal ("1 to
+  approve" on the epic) until the epic is approved again. Under an approved
+  epic nothing is confirmed or started card by card: Confirm, Launch, Do
+  whole story and adding a Task to its stories are not offered, Mark done
+  on a proposal waits for the next approval, Triage's Re-pin gives way to
+  approving the epic again, which re-pins the cards it lists, and Pause
+  and Resume block or free a card and everything under it; a card moved out
+  of the epic drops its pause. An agent's move into or out of an approved
+  epic, or out from under a pause, reaches the Inbox as a change request
+  that names both parents and the run of each approved epic it leaves or
+  enters. Restoring a cancelled card there brings it
+  back as a proposal, the epic itself excepted. Nothing runs yet: execution
+  comes later.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named
@@ -1364,7 +1389,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge and the sidebar button on a
     narrow window carry the Needs you count (the app badge and title add
-    pending planner requests). The tab title reads "UAM" on the home
+    pending planner requests and plans to approve). The tab title reads "UAM" on the home
     screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
     a new Task or one still waiting for a title), and "UAM - Settings",
     "UAM - Planner" or "UAM - Routines" for those views; the count comes
@@ -1570,7 +1595,7 @@ list's **Needs you** count. Failed or interrupted Tasks count until any
 browser opens them, because the service does not know which browser has
 read them; that mark survives a restart, and a Task whose turn a restart
 interrupted counts too. A visible page keeps the badge at its own count,
-with this browser's read marks and planner requests.
+with this browser's read marks, planner requests and plans to approve.
 
 **Storage.** The first browser to turn notifications on makes the service
 generate its Web Push (VAPID) key pair. The keys and the subscribed

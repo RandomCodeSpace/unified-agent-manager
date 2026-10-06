@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
-import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -72,7 +72,7 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
 
 function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void }>) {
   const api = useApi();
-  const { projects, jobs } = useShownBoard();
+  const { projects, jobs, cards } = useShownBoard();
   const { sessions } = usePlannerTasks();
   const [detail, setDetail] = useState<CardDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -86,6 +86,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   const leaf = c.kind === 'subtask';
   // A started subtask keeps its plan (ADR 0005 decision 8); ticks and the owner's own fields go on.
   const locked = lockedReason(c);
+  const approved = approvedEpicOf(c, byId);
   const path = cardPath(c, byId).slice(0, -1);
   const job = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'suggest').at(-1);
   // Check at HEAD is a job, started here or from a row's menu: its run arrives in the job's last board_job frame.
@@ -150,7 +151,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             {!leaf && <ProgressText card={c} long />}
             {!c.confirmed && <Chip><Sparkles aria-hidden="true" className="size-3" />Suggested, {expiresIn(c.expires_at)}</Chip>}
             {c.held_by && <TaskChip taskId={c.held_by} />}
-            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} />
+            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
             {c.due && <span>Due {c.due}</span>}
@@ -166,7 +167,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {actions.map((a) => (
-              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} loading={busy === a.key} disabled={!!a.reason || (!!busy && busy !== a.key)} aria-describedby={a.reason ? `planner-action-${a.key}-reason` : undefined} onClick={a.onClick}>
+              <Button key={a.key} size="sm" variant={a.primary ? 'primary' : a.danger ? 'danger' : 'secondary'} title={a.title} loading={busy === a.key} disabled={!!a.reason || (!!busy && busy !== a.key)} aria-describedby={a.reason ? `planner-action-${a.key}-reason` : undefined} onClick={a.onClick}>
                 {a.icon}
                 {a.label}
               </Button>
@@ -190,10 +191,12 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
               <span className="font-medium capitalize">{triage.verdict}</span>: {triage.sentence}
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {triage.verdict === 'valid' && <Button size="sm" variant="secondary" onClick={() => void run('repin', 're-pin the subtask', () => api.planner.confirm(c.id)).then(() => setTriage(null))}>Re-pin at {triage.head}</Button>}
+              {triage.verdict === 'valid' && <Button size="sm" variant="secondary" disabled={!!approved} aria-describedby={approved ? 'planner-repin-reason' : undefined} onClick={() => void run('repin', 're-pin the subtask', () => api.planner.confirm(c.id)).then(() => setTriage(null))}>Re-pin at {triage.head}</Button>}
               {triage.verdict === 'moot' && <Button size="sm" variant="danger" onClick={() => cardActions.ask({ title: `Cancel #${c.seq}?`, label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, initial: triage.sentence, run: (t) => api.planner.status(c.id, 'cancelled', t) })}>Cancel with this comment</Button>}
               {triage.verdict === 'conflicts' && <Button size="sm" variant="secondary" onClick={() => setComment(triage.sentence)}>Add as a comment</Button>}
             </div>
+            {/* Re-pin confirms the card, which under an approved epic only its approval does; that approval pins every card it lists. */}
+            {triage.verdict === 'valid' && approved && <Note id="planner-repin-reason">Under approved epic #{approved.seq}, approving it again re-pins its cards at HEAD.</Note>}
           </div>
         )}
 

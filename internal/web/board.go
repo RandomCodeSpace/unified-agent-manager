@@ -621,6 +621,69 @@ func (m *Manager) EditCard(ref string, p board.Patch) (BoardCard, error) {
 	return boardCard(res.Card), err
 }
 
+// ApproveItem is a card the Approve dialog showed, at the revision it
+// showed it.
+type ApproveItem struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+}
+
+// ApproveRequest is the Approve dialog's post (ADR 0006 §7): the cards it
+// showed and the run's settings. The model is explicit: neither the Task
+// defaults nor auto stand in for an empty one.
+type ApproveRequest struct {
+	Items       []ApproveItem `json:"items"`
+	Provider    string        `json:"provider"`
+	Model       string        `json:"model"`
+	Effort      string        `json:"effort"`
+	ContextSize string        `json:"context_size"`
+	Mode        string        `json:"mode"`
+	Parallel    int           `json:"parallel"`
+}
+
+// ApproveCard is the owner's approval of the epic ref (ADR 0006 §6.2): it
+// confirms the listed cards and records the run, after checking that the
+// provider offers the model and Settings shows it. Nothing starts. A
+// refusal naming cards (an empty story, a subtask without an acceptance
+// command, a held one) is a conflict with the plan, not a bad request; an
+// item that is not a live card under the epic is a bad request, and names
+// none.
+func (m *Manager) ApproveCard(ref string, req ApproveRequest) (BoardCard, error) {
+	run := board.RunSettings{Provider: strings.TrimSpace(req.Provider), Model: req.Model, Effort: req.Effort,
+		ContextSize: cmp.Or(req.ContextSize, "default"), Mode: req.Mode, Parallel: req.Parallel}
+	if run.Model == "" {
+		return BoardCard{}, invalidBoard("pick a model for the run; no default stands in for it")
+	}
+	m.mu.Lock()
+	known := m.providers[run.Provider] != nil
+	err := m.validateSelectionLocked(run.Provider, run.Model, run.Effort, run.ContextSize)
+	hidden := slices.Contains(m.settings.HiddenModels[run.Provider], run.Model)
+	m.mu.Unlock()
+	switch {
+	case !known:
+		return BoardCard{}, invalidBoard(msgUnknownProvider, run.Provider)
+	case err != nil:
+		return BoardCard{}, invalidBoard("%s", err.Error())
+	case hidden:
+		return BoardCard{}, invalidBoard("model %q is hidden in Settings; show it there or pick another", run.Model)
+	}
+	items := make([]board.ApproveItem, len(req.Items))
+	for i, it := range req.Items {
+		items[i] = board.ApproveItem{ID: it.ID, Revision: it.Revision}
+	}
+	var c board.Card
+	err = m.boardWrite(ref, func(ctx context.Context, st *board.Store, a board.Actor) error {
+		var err error
+		c, err = st.Approve(ctx, a, ref, run, items)
+		return err
+	})
+	var refusal *Error
+	if errors.As(err, &refusal) && refusal.Code == string(board.CodeInvalid) && len(refusal.Refs) > 0 {
+		refusal.Status = http.StatusConflict
+	}
+	return boardCard(c), err
+}
+
 // CommentCard adds the owner's comment to the card ref.
 func (m *Manager) CommentCard(ref, body string) (BoardComment, error) {
 	var c board.Comment
@@ -892,9 +955,11 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 			return err
 		}
 		if !plan && c.ProjectID != "" {
-			// An unconfirmed launch is refused before its Task exists, and
-			// Launch checks again. The checks below word the other refusals.
-			if err := st.CheckLaunch(ctx, board.Owner(""), c.ID, req.Confirm); board.CodeOf(err) == board.CodeUnconfirmed {
+			// An unconfirmed launch, and one under an approved epic, is
+			// refused before its Task exists, and Launch checks again. The
+			// checks below word the other refusals.
+			err := st.CheckLaunch(ctx, board.Owner(""), c.ID, req.Confirm)
+			if code := board.CodeOf(err); code == board.CodeUnconfirmed || code == board.CodeRunOwned {
 				return err
 			}
 		}
@@ -1109,6 +1174,19 @@ type preambleInput struct {
 
 func cardRef(c board.Card) string { return fmt.Sprintf("#%d %s", c.Seq, c.Title) }
 
+// epic is the epic the card sits under, the card itself for an epic; nil
+// at the root.
+func (p preambleInput) epic() *board.Card {
+	top := p.card
+	if len(p.path) > 0 {
+		top = p.path[0]
+	}
+	if top.Kind != board.KindEpic {
+		return nil
+	}
+	return &top
+}
+
 func (p preambleInput) String() string {
 	var b strings.Builder
 	c := p.card
@@ -1155,6 +1233,12 @@ func (p preambleInput) String() string {
 	case p.plan:
 		fmt.Fprintf(&b, "- Create and edit stories and subtasks under #%d. They stay proposals until the owner confirms them.\n", c.Seq)
 		b.WriteString("- Plan only: hold no subtask and do not start the work.\n")
+		// The hand-off (ADR 0006 §6.1): the owner approves the epic once.
+		if e := p.epic(); e != nil && e.Run != nil {
+			fmt.Fprintf(&b, "- #%d is approved: what you add stays a proposal until the owner approves #%d again. When the plan is complete, ask for that in the Planner and end your turn.\n", e.Seq, e.Seq)
+		} else if e != nil {
+			fmt.Fprintf(&b, "- When the plan is complete, ask the owner to approve #%d in the Planner and end your turn; nothing runs before that.\n", e.Seq)
+		}
 	case whole:
 		b.WriteString("- Finish each subtask with a done request, then claim the next pending one.\n")
 	default:
@@ -1318,12 +1402,26 @@ type BoardCard struct {
 	PinnedSHA       string         `json:"pinned_sha"`
 	AcceptCmd       *string        `json:"accept_cmd"`
 	Paths           []string       `json:"paths"`
+	Paused          string         `json:"paused"`
+	Run             *BoardRun      `json:"run,omitempty"`
 	Stale           *Stale         `json:"stale,omitempty"`
 	PendingRequests int            `json:"pending_requests"`
 	Revision        int64          `json:"revision"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
 	MovedAt         time.Time      `json:"moved_at"`
+}
+
+// BoardRun is an approved epic's run (ADR 0006 §3.3): what the approval
+// authorizes its subtasks to run with, and when it was given.
+type BoardRun struct {
+	Provider    string    `json:"provider"`
+	Model       string    `json:"model"`
+	Effort      string    `json:"effort"`
+	ContextSize string    `json:"context_size"`
+	Mode        string    `json:"mode"`
+	Parallel    int       `json:"parallel"`
+	ApprovedAt  time.Time `json:"approved_at"`
 }
 
 // BoardProgress is a container's done ÷ non-cancelled confirmed subtasks,
@@ -1405,8 +1503,11 @@ func boardCard(c board.Card) BoardCard {
 		WinCondition: c.WinCondition, Status: c.Status, Prio: c.Prio, Due: c.Due, Effort: c.Effort,
 		Labels: nonNil(c.Labels), Checklist: nonNil(c.Checklist), Blocked: c.Blocked, BlockedBy: nonNil(c.BlockedBy),
 		Blocks: nonNil(c.Blocks), Confirmed: c.Confirmed(), ExpiresAt: c.ExpiresAt, HeldBy: c.HeldBy, WorkedBy: c.WorkedBy, PinnedSHA: c.PinnedSHA,
-		AcceptCmd: c.AcceptCmd, Paths: nonNil(c.Paths), PendingRequests: c.PendingRequests, Revision: c.Revision,
+		AcceptCmd: c.AcceptCmd, Paths: nonNil(c.Paths), Paused: c.Paused, PendingRequests: c.PendingRequests, Revision: c.Revision,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MovedAt: c.MovedAt,
+	}
+	if r := c.Run; r != nil {
+		out.Run = &BoardRun{Provider: r.Provider, Model: r.Model, Effort: r.Effort, ContextSize: r.ContextSize, Mode: r.Mode, Parallel: r.Parallel, ApprovedAt: r.ApprovedAt}
 	}
 	if c.ParentID != "" {
 		parent := c.ParentID

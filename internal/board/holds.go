@@ -20,7 +20,8 @@ import (
 // them, unless confirm is set. Launch is an owner touch: the held subtask
 // and its unconfirmed ancestors are confirmed and pinned, in the write that
 // starts the hold. base is the working tree state the hold's evidence is
-// measured from.
+// measured from. Under an approved epic nothing is launched by hand
+// (CodeRunOwned).
 func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Baseline, confirm bool) (Card, error) {
 	if err := permit(a, opLaunch, ""); err != nil {
 		return Card{}, err
@@ -94,7 +95,8 @@ func (s *Store) CheckLaunch(ctx context.Context, a Actor, ref string, confirm bo
 // which a new subtask titled title is created for the Task. It is work, so
 // it refuses with CodeUnconfirmed while the subtask or a parent is
 // unconfirmed, unless confirm is set, in which case they are confirmed in
-// the same write. A Task works on one subtask at a time.
+// the same write. A Task works on one subtask at a time. Under an approved
+// epic nothing is attached (CodeRunOwned).
 func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, base Baseline, confirm bool) (Card, error) {
 	if err := permit(a, opLaunch, ""); err != nil {
 		return Card{}, err
@@ -122,6 +124,9 @@ func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, 
 			}
 			o, n, err := t.cardIn(project, id)
 			if err != nil {
+				return err
+			}
+			if err := o.runOwned(n); err != nil {
 				return err
 			}
 			if n.container() {
@@ -166,8 +171,12 @@ func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, 
 }
 
 // launchLeaf resolves the subtask a launch of n holds and the scope its Task
-// gets, refusing what Launch refuses before it writes.
+// gets, refusing what Launch refuses before it writes: nothing under an
+// approved epic is started by hand (CodeRunOwned).
 func (t *txn) launchLeaf(o *outline, a Actor, n *node, confirm bool) (*node, string, error) {
+	if err := o.runOwned(n); err != nil {
+		return nil, "", err
+	}
 	leaf, scopeID := n, n.ParentID
 	if n.container() {
 		leaves, err := t.pending(o, n)
@@ -224,6 +233,7 @@ func (s *Store) StartPlanning(ctx context.Context, a Actor, ref, taskID string) 
 // Claim starts the agent's Task's hold on the subtask ref, which must be in
 // the Task's scope and confirmed, with its ancestors (startHold). A Task may have only one hold without a pending done,
 // blocked or split request at a time, and a planning Task may hold nothing.
+// Nothing under an approved epic is claimed (CodeRunOwned).
 func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (Card, error) {
 	if err := permit(a, opClaim, ""); err != nil {
 		return Card{}, err
@@ -233,6 +243,9 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 			return invalid("%s is a %s; only subtasks are held", n.ref(), n.Kind)
 		}
 		if err := permit(a, opClaim, n.stored); err != nil {
+			return err
+		}
+		if err := o.runOwned(n); err != nil {
 			return err
 		}
 		if err := o.underCancelled(n, nil); err != nil {

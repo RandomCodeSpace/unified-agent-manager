@@ -18,7 +18,7 @@ import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
-import { pendingRequests } from './lib/board';
+import { pendingRequests, plansWaiting } from './lib/board';
 import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
 import { PlannerTasks } from './components/planner/context';
 import { SettleDialog, type SettleAsk } from './components/planner/SettleDialog';
@@ -1166,10 +1166,10 @@ export default function App() {
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
 
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
-  // Pending planner requests need the owner too (ADR 0005 §10): they fold into the same count.
+  // Pending planner requests and plans to approve need the owner too (ADR 0005 §10, ADR 0006 §6.1): they fold into the same count.
   const localNeedsYouTasks = useMemo(() => needsYouCount(state.sessions, hasNews), [state.sessions, hasNews]);
   const needsYouTasks = localNeedsYouTasks + (federation?.otherAttention ?? 0);
-  const attention = needsYouTasks + (plannerOn ? pendingRequests(state.boards) : 0);
+  const attention = needsYouTasks + (plannerOn ? pendingRequests(state.boards) + plansWaiting(state.boards) : 0);
   // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
   let shownName: string | null = null;
   if (settingsOpen) shownName = 'Settings';
