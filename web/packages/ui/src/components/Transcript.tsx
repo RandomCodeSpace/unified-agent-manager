@@ -120,7 +120,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyTiming: replyTimings(identityItems, turnTimings), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart in both densities, the images its result returned in Compact.
@@ -234,7 +234,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} timing={ctx.replyTiming?.get(item.id)} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -537,8 +537,8 @@ interface RenderContext {
   streamingId: string | undefined;
   /** For each reasoning item with a recorded end: when it ended. */
   thoughtEnd: Map<string, string>;
-  /** For the last assistant message of each turn whose timing is known: that timing, so the reply's foot can carry the turn's tokens. */
-  replyTiming?: ReadonlyMap<string, TurnTiming>;
+  /** For the last reply of each ended turn: when the turn ended and its timing, so that reply alone carries the foot with the time and the turn's tokens. */
+  replyEnd?: ReadonlyMap<string, ReplyEnd>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -627,7 +627,7 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: ReadonlyMap<strin
     // A reasoning item the provider closed without any text has nothing to show.
     if (item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
     flush();
-    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} timing={ctx.replyTiming?.get(item.id)} className={ctx.arrival(item.id)} />);
+    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
   }
   flush();
   return out;
@@ -723,7 +723,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time. */ timing?: TurnTiming; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time. */ timing?: TurnTiming; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -751,19 +751,21 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, ch
     >
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
-      <div className={cn('absolute top-full z-[1] -mt-1.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
-        <Tip label={copied ? 'Copied' : label}>
-          <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
-            {copied ? <Check /> : <Copy />}
-          </Button>
-        </Tip>
-        {at && (
-          <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap">
-            {clockTime(at)}
-          </time>
-        )}
-        {timing && <TurnTokens timing={timing} />}
-      </div>
+      {foot && (
+        <div className={cn('absolute top-full z-[1] -mt-1.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
+          <Tip label={copied ? 'Copied' : label}>
+            <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
+              {copied ? <Check /> : <Copy />}
+            </Button>
+          </Tip>
+          {at && (
+            <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap">
+              {clockTime(at)}
+            </time>
+          )}
+          {timing && <TurnTokens timing={timing} />}
+        </div>
+      )}
       {menuReady && (
         <ContextMenu.Root>
           <ContextMenu.Trigger render={<CopyableMenuTarget handlersRef={menuHandlers} />} className="contents" />
@@ -796,20 +798,26 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
   );
 }
 
-/** The timing of each ended turn, keyed by the turn's last assistant message, so the reply's foot carries it once: the count covers the whole turn, from the user's message to the agent stopping, so a turn still working shows nothing yet. */
-function replyTimings(items: Item[], timings: TurnTiming[]): ReadonlyMap<string, TurnTiming> | undefined {
-  if (!timings.length) return undefined;
-  const lastReply = new Map<string, string>();
+/** What the last reply of a turn shows in its foot: when the turn ended and, when known, its timing. */
+interface ReplyEnd { at: string; timing?: TurnTiming }
+
+/** The end of each turn, keyed by the turn's last assistant message, so that reply alone carries the foot: the time the turn ended and the whole turn's tokens, from the user's message to the agent stopping. A turn still working has no end yet, so its replies show nothing. */
+function replyEnds(items: Item[], timings: TurnTiming[], working: boolean): ReadonlyMap<string, ReplyEnd> | undefined {
+  const lastReply = new Map<string, Item>();
   let turn: string | undefined;
   for (const item of items) {
     if (item.agent_id) continue;
     if (item.kind === 'user' && !item.delivery) turn = item.id;
-    else if (item.kind === 'assistant' && turn) lastReply.set(turn, item.id);
+    else if (item.kind === 'assistant' && turn) lastReply.set(turn, item);
   }
-  const out = new Map<string, TurnTiming>();
-  for (const t of timings) {
-    const id = t.state !== 'working' && t.user_item_id && lastReply.get(t.user_item_id);
-    if (id && t.output_tokens) out.set(id, t);
+  if (!lastReply.size) return undefined;
+  const timingOf = new Map(timings.filter((t) => t.user_item_id).map((t) => [t.user_item_id!, t]));
+  const out = new Map<string, ReplyEnd>();
+  for (const [userItemId, reply] of lastReply) {
+    const timing = timingOf.get(userItemId);
+    // Without a recorded timing, only the live last turn can still be working.
+    const ended = timing ? timing.state !== 'working' : !(working && userItemId === turn);
+    if (ended) out.set(reply.id, { at: timing?.ended_at ?? reply.time, timing });
   }
   return out;
 }
@@ -820,7 +828,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; timing?: TurnTiming }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd }
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
@@ -854,9 +862,9 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, timing }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, end }: MessageParts) {
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={item.time} timing={timing} className={className}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} foot={!!end} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
@@ -878,9 +886,9 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string }>) {
+function ClippedMessage({ item, sessionId, streaming, className, end }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd }>) {
   const whole = useWholeText(item);
-  const parts = { item, text: whole.text, sessionId, streaming, className, whole };
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end };
   if (item.kind === 'user') return userBubble(parts);
   if (item.kind === 'notice') return noticeRow(parts);
   return assistantMessage(parts);
@@ -1294,14 +1302,14 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, timing, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; /** The turn's timing when this is its last reply: its tokens go in the foot. */ timing?: TurnTiming; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, end, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
-      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, timing, className }) : noticeRow({ item, text: item.text ?? '', className });
+      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} />;
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, className }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':
