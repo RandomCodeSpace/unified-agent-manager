@@ -440,7 +440,9 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 // back and leaves the siblings. Unticked items become planned subtasks and
 // ticked ones subtasks with a pending done request that cites the tick: a
 // split never creates a done subtask. A subtask that has not started splits
-// at once, for the owner and for an agent in scope. A started one keeps its
+// at once, for the owner and for an agent in scope; an agent's parts are
+// proposals, so its split is refused, as a delete is, when it would bring a
+// container above the subtask to done or cancelled. A started one keeps its
 // plan (lock.go): the owner's split is refused, and an agent's is filed as
 // one split request, which the owner can accept once the subtask is
 // released.
@@ -490,9 +492,13 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 		if err := t.caps(o, a, parent, count, unconfirmed); err != nil {
 			return err
 		}
+		above := o.above(n)
 		var err error
-		out.NotLinked, err = t.applySplit(o, a, a.TaskID, n, children, false)
-		return err
+		if out.NotLinked, err = t.applySplit(o, a, a.TaskID, n, children, false); err != nil || a.owner() {
+			return err
+		}
+		return t.closesNone(o.project, n, above,
+			"Splitting %[1]s would make %[2]s, and a split closes no other card: edit %[1]s into the first part and create the others instead, or ask the owner to split it")
 	})
 	out.Card = card
 	return out, err

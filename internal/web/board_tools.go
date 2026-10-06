@@ -305,13 +305,15 @@ var boardToolSet = []boardTool{
 		(*Manager).toolUnlink),
 	defineTool("board_delete", "Delete a card in your scope with everything under it, confirmed or not: it is cancelled with the comment \"deleted\", and the owner can restore it. "+
 		"Refused while anything in it is in progress or done, while started work waits on it, and when it would leave the story or epic above it done or cancelled. "+
-		"Deleting a blocker releases what waits on it, so link the replacement first.",
+		"Deleting a blocker releases what waits on it, so link the replacement first. "+
+		fmt.Sprintf("A deleted card frees its place among the %d live cards you created, but still counts toward the %d you may create in all.", board.CapCreated, board.CapCreatedTotal),
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolDelete),
 	defineTool("board_claim", "Start work on a planned or todo subtask in your scope that the owner confirmed: a proposal, or a subtask under one, waits for the owner. You may hold one subtask at a time without a pending request on it.",
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolClaim),
 	defineTool("board_split", "Split a subtask into new subtasks: the given children, then its checklist items. A subtask that has not started splits at once; "+
 		"one in progress keeps its plan, and the split is filed as a request, which the owner can accept once it is released. "+
-		"Under a story the new subtasks become its siblings and take over its links, both ways, except to a subtask already in progress or done.",
+		"Under a story the new subtasks become its siblings and take over its links, both ways, except to a subtask already in progress or done. "+
+		"Your new subtasks are proposals, so the split is refused when it would leave the story or epic above it done or cancelled: edit the subtask into the first part and create the others instead.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref": refProp,
 			"children": listProp("The new subtasks.", toolSchema([]string{"title"}, map[string]any{

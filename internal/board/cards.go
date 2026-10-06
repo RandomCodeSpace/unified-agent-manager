@@ -216,17 +216,21 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 }
 
 // caps refuses an agent write that would take its Task past a cap: created
-// more live cards to create, and unconfirmed more live unconfirmed children
-// of parentID. Subagents count against their Task.
+// more cards to create, live and over its lifetime, and unconfirmed more live
+// unconfirmed children of parentID. Subagents count against their Task.
 func (t *txn) caps(o *outline, a Actor, parentID string, created, unconfirmed int) error {
 	if a.owner() {
 		return nil
 	}
 	author := a.author()
 	if created > 0 {
-		var count int
-		if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM cards WHERE created_by = ? AND status <> 'cancelled'`, author).Scan(&count); err != nil {
+		var count, total int
+		if err := t.tx.QueryRowContext(t.ctx, `SELECT COALESCE(SUM(status <> 'cancelled'), 0), COUNT(*) FROM cards WHERE created_by = ?`, author).Scan(&count, &total); err != nil {
 			return fmt.Errorf("board: count created cards: %w", err)
+		}
+		// Deleting frees no place under the ceiling, so it is checked first.
+		if total+created > CapCreatedTotal {
+			return refuse(CodeLimit, "the Task may create at most %d cards in its lifetime, deleted and expired ones included", CapCreatedTotal)
 		}
 		if count+created > CapCreated {
 			return refuse(CodeLimit, "the Task may have at most %d live cards it created; deleted and expired ones don't count", CapCreated)

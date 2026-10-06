@@ -194,29 +194,18 @@ func (s *Store) Delete(ctx context.Context, a Actor, ref string) (DeleteResult, 
 		if err := t.awaited(o, tree); err != nil {
 			return err
 		}
-		above := map[string]Status{}
-		for p := o.byID[n.ParentID]; p != nil; p = o.byID[p.ParentID] {
-			above[p.ID] = p.Status
-		}
+		above := o.above(n)
 		released := dependents(o, tree)
 		if err := t.drop(o, n, a.author(), a.AgentID, "deleted"); err != nil {
+			return err
+		}
+		if err := t.closesNone(o.project, n, above,
+			"Deleting %[1]s would make %[2]s, and a delete closes no other card: edit %[1]s instead, or file a cancel request on it for the owner"); err != nil {
 			return err
 		}
 		after, err := t.outline(o.project)
 		if err != nil {
 			return err
-		}
-		var refs, closed []string
-		for p := after.byID[n.ParentID]; p != nil; p = after.byID[p.ParentID] {
-			if p.Status.terminal() && p.Status != above[p.ID] {
-				refs = append(refs, p.ref())
-				closed = append(closed, fmt.Sprintf("%s %s", p.ref(), p.Status))
-			}
-		}
-		if len(refs) > 0 {
-			return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(
-				"Deleting %s would make %s, and a delete closes no other card: edit %s instead, or file a cancel request on it for the owner",
-				n.ref(), strings.Join(closed, ", "), n.ref())}
 		}
 		for _, id := range released {
 			out.Released = append(out.Released, after.byID[id].Card)
@@ -225,6 +214,38 @@ func (s *Store) Delete(ctx context.Context, a Actor, ref string) (DeleteResult, 
 	})
 	out.Card = card
 	return out, err
+}
+
+// above maps each container above n to its status.
+func (o *outline) above(n *node) map[string]Status {
+	out := map[string]Status{}
+	for p := o.byID[n.ParentID]; p != nil; p = o.byID[p.ParentID] {
+		out[p.ID] = p.Status
+	}
+	return out
+}
+
+// closesNone refuses the agent write on n in progress, naming them, when it
+// brought a container above n to done or cancelled: that would cancel the
+// container's proposals and release its dependents. before is o.above(n)
+// from before the write; format gets n's ref and the closed containers, as
+// "#3 done, #1 done".
+func (t *txn) closesNone(project string, n *node, before map[string]Status, format string) error {
+	after, err := t.outline(project)
+	if err != nil {
+		return err
+	}
+	var refs, closed []string
+	for p := after.byID[n.ParentID]; p != nil; p = after.byID[p.ParentID] {
+		if p.Status.terminal() && p.Status != before[p.ID] {
+			refs = append(refs, p.ref())
+			closed = append(closed, fmt.Sprintf("%s %s", p.ref(), p.Status))
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(format, n.ref(), strings.Join(closed, ", "))}
 }
 
 // awaited refuses deleting the cards of tree while a started subtask waits

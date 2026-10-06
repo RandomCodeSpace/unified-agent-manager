@@ -31,6 +31,8 @@ func TestAgentsPlanUntilWorkStarts(t *testing.T) {
 	f.must(f.s.Unlink(f.ctx, planner, one.ID, p.ID))
 	f.must(f.s.Link(f.ctx, planner, story.ID, other.ID))
 	f.must(f.s.Unlink(f.ctx, planner, other.ID, story.ID))
+	// The story keeps an open confirmed subtask, so the split closes nothing.
+	f.create(owner, story.ID, KindSubtask, "Stays")
 	split, err := f.s.Split(f.ctx, planner, one.ID, []SplitChild{{Title: "a"}, {Title: "b"}})
 	f.must(err)
 	if split.Request != nil || f.card(one.ID).Status != StatusCancelled {

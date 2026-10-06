@@ -724,6 +724,50 @@ func TestSplitIntoSiblingsCopiesLinks(t *testing.T) {
 	}
 }
 
+// An agent's split closes no other card, as a delete doesn't: splitting a
+// story's last unfinished confirmed subtask leaves only proposals there, so
+// the story would derive done or cancelled and release its dependents
+// before the parts are confirmed. The owner's parts take the original's
+// confirmation, so the owner may split it.
+func TestAgentSplitNeverClosesAContainer(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	three := f.create(owner, story.ID, KindSubtask, "Three")
+	_, err := f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "shipped", false)
+	f.must(err)
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	// Three stays open, so splitting Two leaves the story open.
+	res, err := f.s.Split(f.ctx, planner, two.ID, []SplitChild{{Title: "Two a"}, {Title: "Two b"}})
+	f.must(err)
+	if res.Card.Status != StatusCancelled {
+		t.Fatalf("split of two = %+v", res)
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	_, err = f.s.Split(f.ctx, planner, three.ID, []SplitChild{{Title: "Three a"}})
+	wantRefusal(t, err, CodeInvalid, story.ref(), epic.ref())
+	if !strings.Contains(err.Error(), fmt.Sprintf("would make %s done, %s done", story.ref(), epic.ref())) {
+		t.Fatalf("refusal = %v", err)
+	}
+	wantStatus(t, f.card(three.ID), StatusPlanned)
+	if kids := f.children(story.ID); len(kids) != 5 {
+		t.Fatalf("the refused split left %d cards in the story", len(kids))
+	}
+	lone := f.create(owner, epic.ID, KindStory, "Lone")
+	only := f.create(owner, lone.ID, KindSubtask, "Only")
+	_, err = f.s.Split(f.ctx, planner, only.ID, []SplitChild{{Title: "Only a"}})
+	wantRefusal(t, err, CodeInvalid, lone.ref())
+	if !strings.Contains(err.Error(), fmt.Sprintf("would make %s cancelled", lone.ref())) {
+		t.Fatalf("refusal = %v", err)
+	}
+	res, err = f.s.Split(f.ctx, owner, three.ID, []SplitChild{{Title: "Three a"}})
+	f.must(err)
+	if res.Card.Status != StatusCancelled {
+		t.Fatalf("owner's split of three = %+v", res)
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+}
+
 // A held subtask under a story splits by request; once it is released,
 // accepting it makes the siblings, accepts the ticked one and cancels the
 // original.

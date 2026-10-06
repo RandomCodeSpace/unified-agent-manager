@@ -370,6 +370,45 @@ func TestCaps(t *testing.T) {
 	wantCode(t, err, CodeInvalid)
 }
 
+// A deleted card frees its live place but still counts toward the Task's
+// lifetime ceiling, so creating and deleting stops there. Purge removes the
+// rows, which frees their places.
+func TestCapsCountDeletedCardsTowardTheLifetimeCeiling(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	main, sub := Agent("planner", ""), Agent("planner", "sub-1")
+	// One live card at a time, so the live cap never binds.
+	cycle := func(a Actor, title string) Card {
+		t.Helper()
+		c := f.create(a, story.ID, KindSubtask, title)
+		_, err := f.s.Delete(f.ctx, a, c.ID)
+		f.must(err)
+		return c
+	}
+	first := cycle(main, "first")
+	// Copies of the deleted card stand for the Task deleting it again and
+	// again: hundreds of real writes take half a minute under -race.
+	f.raw(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+		INSERT INTO cards (id, seq, project_id, kind, parent_id, rank, title, status, cascade_id, created_by, created_at, updated_at, moved_at)
+		SELECT c.id || '-' || n.i, 10000 + n.i, c.project_id, c.kind, c.parent_id, c.rank, c.title || ' ' || n.i, c.status,
+			c.cascade_id, c.created_by, c.created_at, c.updated_at, c.moved_at FROM n, cards c WHERE c.id = ?`, CapCreatedTotal-2, first.ID)
+	cycle(sub, "last")
+	_, err := f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "one more"})
+	wantCode(t, err, CodeLimit)
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards in its lifetime", CapCreatedTotal)) {
+		t.Fatalf("past the lifetime ceiling: %v", err)
+	}
+	_, err = f.s.Split(f.ctx, sub, one.ID, []SplitChild{{Title: "part"}})
+	wantCode(t, err, CodeLimit)
+	n, err := f.s.Purge(f.ctx, owner, proj)
+	f.must(err)
+	if n != CapCreatedTotal {
+		t.Fatalf("purged %d cards, want %d", n, CapCreatedTotal)
+	}
+	f.create(main, story.ID, KindSubtask, "after the purge")
+}
+
 func TestEditOwner(t *testing.T) {
 	f := newFixture(t)
 	epic, story, one, two := f.tree()

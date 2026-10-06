@@ -130,7 +130,8 @@ Planner on and the Project is a git repository.
   or launches them; the owner's edits keep them proposals and restart their
   14 days, after which they expire. Work runs only on confirmed cards:
   `board_claim` refuses a proposal or a card under one. Caps per Task: 50
-  live cards created (deleted and expired ones free their place), 10
+  live cards created (deleted and expired ones free their place), 200
+  created in its lifetime (deleted and expired ones still count), 10
   unconfirmed children per card or 10 epics at the root, 20 comments per
   card.
 - **Planning**: until a subtask starts (held, doing or done) you plan it
@@ -150,7 +151,9 @@ Planner on and the Project is a git repository.
   while started work waits on it, and when it would leave the story or epic
   above it done or cancelled; then edit the card, or file a cancel request.
   Deleting a blocker releases what waits on it, so link the replacement
-  first.
+  first. `board_split` is refused the same way when its parts, which are
+  proposals, would leave the story or epic above done or cancelled; then
+  edit the subtask into the first part and create the others.
 - **Links** order cards at one level: epics with epics, stories with stories
   in one epic, subtasks with subtasks in one story. Either side may be a
   proposal. To order work across containers, link the containers; a card
