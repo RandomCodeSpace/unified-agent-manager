@@ -822,8 +822,12 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, tree, m
 }
 
 // commitMergeIn commits uam's merge of tip, stopped before the commit in the
-// worktree at dir, when the index holds tree, and returns the commit once
-// base names it as a merge of baseTip and tip.
+// worktree at dir, when the index holds tree, and returns the commit. The
+// commit is made from tree and the two tips, not from the index or HEAD as
+// git reads them later, and base moves to it by compare-and-swap from
+// baseTip, so a base that moved meanwhile refuses git_busy and gets no
+// commit. The merge state is then dropped, keeping the index and the
+// working tree, which hold the commit's content.
 func (r *laneRepo) commitMergeIn(ctx context.Context, dir, base, baseTip, tip, tree, message string) (string, error) {
 	out, err := runLaneGit(ctx, gitAt{dir: dir}, "write-tree")
 	if err != nil {
@@ -832,17 +836,20 @@ func (r *laneRepo) commitMergeIn(ctx context.Context, dir, base, baseTip, tip, t
 	if out[strings.LastIndexByte(out, '\n')+1:] != tree {
 		return "", newError(http.StatusConflict, "git merge in %s made other content than the merge of %s and %s; check the repository's merge settings and merge drivers", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip))
 	}
-	if _, err := runLaneGit(ctx, gitAt{dir: dir}, "commit", "--quiet", "--no-verify", "--no-gpg-sign", "-m", message); err != nil {
-		return "", gitFailed("git commit failed", err)
-	}
-	line, err := r.output(ctx, dir, "rev-list", "--parents", "-n1", "refs/heads/"+base, "--")
+	merged, err := r.commitTree(ctx, tree, message, baseTip, tip)
 	if err != nil {
 		return "", err
 	}
-	if f := strings.Fields(line); len(f) == 3 && f[1] == baseTip && f[2] == tip {
-		return f[0], nil
+	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "update-ref", "-m", "uam", "refs/heads/"+base, merged, baseTip); err != nil {
+		if now, terr := r.tipOf(ctx, base); terr == nil && now != baseTip {
+			return "", &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: fmt.Sprintf("%s moved while uam was merging into it", displaytext.Sanitize(base))}
+		}
+		return "", gitFailed("git update-ref failed", err)
 	}
-	return "", newError(http.StatusConflict, "git merge in %s did not make a merge of %s and %s on %s", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip), displaytext.Sanitize(base))
+	if _, err := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--quit"); err != nil {
+		return "", gitFailed("git merge --quit failed", err)
+	}
+	return merged, nil
 }
 
 // abortOwnMergeIn aborts the merge in progress in the worktree at dir when

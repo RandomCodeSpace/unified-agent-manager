@@ -1011,6 +1011,32 @@ func TestMergeInCommitsOnlyTheMergeUamChecked(t *testing.T) {
 	}
 }
 
+// uam commits its merge in the owner's checkout only onto the base tip it
+// checked: when base moves while the merge waits for its commit, nothing
+// is committed on top of the new tip, and the merge waits.
+func TestMergeInCommitsOnlyOntoTheBaseUamChecked(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	tip := f.land(l, 1)
+	main := gitOutput(t, f.top, "rev-parse", "main")
+	tree, conflicts, err := f.r.mergeTree(f.ctx, main, tip)
+	if err != nil || len(conflicts) > 0 {
+		t.Fatalf("mergeTree = %v, %v", conflicts, err)
+	}
+	if _, err := runLaneMerge(f.ctx, gitAt{dir: f.top}, "main", "--no-commit", "--no-ff", "-m", "Merge plan", tip); err != nil {
+		t.Fatal(err)
+	}
+	moved := strings.TrimSpace(gitOutput(t, f.top, "commit-tree", "-p", main, "-m", "moved meanwhile", main+"^{tree}"))
+	gitIn(t, f.top, "update-ref", "refs/heads/main", moved, main)
+
+	merged, err := f.r.commitMergeIn(f.ctx, f.top, "main", main, tip, tree, "Merge plan")
+	_ = wantCode(t, err, codeGitBusy)
+	if now := gitOutput(t, f.top, "rev-parse", "main"); now != moved {
+		t.Fatalf("main = %s (merge %s), want it left at %s", now, merged, moved)
+	}
+}
+
 // After its merge in the owner's checkout fails, uam aborts only its own
 // merge: of the integration tip, with uam's message. Any other merge in
 // progress there, the owner's own merge of the integration branch
