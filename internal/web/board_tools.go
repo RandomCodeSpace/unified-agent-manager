@@ -863,20 +863,11 @@ func (m *Manager) toolDelete(ctx context.Context, sc boardScope, in refArgs) (to
 		}
 		reply = cardReply(res.Card, "Deleted #%d and everything under it. The owner can restore it.", res.Card.Seq)
 		if len(res.Released) > 0 {
-			reply.Text += fmt.Sprintf(" It no longer blocks %s.", seqRefs(res.Released))
+			reply.Text += fmt.Sprintf(" It no longer blocks %s.", seqList(res.Released))
 		}
 		return nil
 	})
 	return reply, err
-}
-
-// seqRefs lists cards by number: "#4, #5".
-func seqRefs(cards []board.Card) string {
-	refs := make([]string, len(cards))
-	for i, c := range cards {
-		refs[i] = fmt.Sprintf("#%d", c.Seq)
-	}
-	return strings.Join(refs, ", ")
 }
 
 func (m *Manager) toolClaim(ctx context.Context, sc boardScope, in refArgs) (toolReply, error) {
@@ -927,7 +918,7 @@ func (m *Manager) toolSplit(ctx context.Context, sc boardScope, in splitArgs) (t
 		default:
 			reply = cardReply(res.Card, "Split #%d into new subtasks after it; #%d was cancelled, and they took over its links.", c.Seq, c.Seq)
 			if len(res.NotLinked) > 0 {
-				reply.Text += fmt.Sprintf(" They do not block %s, which already started.", seqRefs(res.NotLinked))
+				reply.Text += fmt.Sprintf(" They do not block %s, which already started.", seqList(res.NotLinked))
 			}
 		}
 		return nil

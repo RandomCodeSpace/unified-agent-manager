@@ -142,8 +142,9 @@ Planner on and the Project is a git repository.
   subtask wait on an open card again is refused `in_progress`, naming that
   subtask: for example, moving a confirmed subtask into a done story that
   started work waits on. A card you create under a done story is a proposal
-  and leaves the story done. The links of a story or epic with started or
-  done work under it are the owner's.
+  and leaves the story done. Once work under a story or epic is in progress
+  or done, only the owner links or unlinks what it waits on; you may still
+  link it as the blocker of another card.
 - **Delete**: `board_delete` cancels a card and everything under it, and the
   owner can restore it. It is refused while anything in it has started,
   while started work waits on it, and when it would leave the story or epic
