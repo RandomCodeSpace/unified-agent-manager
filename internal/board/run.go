@@ -516,10 +516,8 @@ func (t *txn) startable(o *outline, n *node) (*node, error) {
 		return nil, err
 	}
 	var mine []string
-	for _, l := range lanes {
-		if m := o.byID[l.id]; m != nil && o.epicOf(m) == e {
-			mine = append(mine, l.ref())
-		}
+	for _, l := range o.lanesUnder(e, lanes) {
+		mine = append(mine, l.ref())
 	}
 	if len(mine) >= e.Run.Parallel {
 		return nil, &Error{Code: CodeNotReady, Refs: mine, Message: fmt.Sprintf(
@@ -631,6 +629,17 @@ func (t *txn) lanesInUse() ([]laneSlot, error) {
 		return nil, fmt.Errorf("board: count lanes: %w", err)
 	}
 	return out, nil
+}
+
+// lanesUnder lists the lanes, of those in use, that run under the epic e.
+func (o *outline) lanesUnder(e *node, lanes []laneSlot) []laneSlot {
+	var out []laneSlot
+	for _, l := range lanes {
+		if m := o.byID[l.id]; m != nil && o.epicOf(m) == e {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // waitedOn lists, in outline order, the done subtasks at or under a blocker
