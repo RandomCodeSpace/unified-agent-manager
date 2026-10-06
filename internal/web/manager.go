@@ -2112,6 +2112,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventTokens:
 		if ev.Tokens != nil {
 			m.recordTokensLocked(s.provider, *ev.Tokens)
+			m.countTurnTokensLocked(s, *ev.Tokens)
 		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {

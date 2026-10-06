@@ -1033,6 +1033,10 @@ export interface TurnTiming {
   paused_at?: string;
   paused_ms?: number;
   state: 'working' | 'completed' | 'cancelled' | 'failed' | 'unknown';
+  /** The turn's model calls (main agent and subagents) as reported: tokens in and out, and the calls' own duration. */
+  input_tokens?: number;
+  output_tokens?: number;
+  generation_ms?: number;
 }
 
 export interface Representation {

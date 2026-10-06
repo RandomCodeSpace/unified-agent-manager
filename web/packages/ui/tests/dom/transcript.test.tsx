@@ -43,6 +43,20 @@ describe('messages', () => {
     expect(foot.className).toContain('group-hover/copy:opacity-100');
   });
 
+  test("the turn's last reply carries its tokens out and generation speed after the time", async () => {
+    await openTask('t3');
+    // The assistant's anchor is the text block; its foot is the block's sibling inside the copyable wrapper.
+    const reply = log().getByText('Done.', { exact: false }).closest('[data-history-anchor]')!.parentElement as HTMLElement;
+    const foot = within(reply).getByRole('time').parentElement!;
+    // 1,860 tokens out over 41.2 s of generation (mock t3).
+    expect(foot.textContent).toContain('1.9K tokens');
+    expect(foot.textContent).toContain('45 tok/s');
+    expect(foot.querySelector('[title*="48,210 tokens in"]')).toBeTruthy();
+    // The user's bubble carries the time alone.
+    const bubble = log().getByText('Add a line to', { exact: false }).closest('[data-history-anchor]') as HTMLElement;
+    expect(within(bubble).getByRole('time').parentElement!.textContent).not.toContain('tokens');
+  });
+
   test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), 'first line{Shift>}{Enter}{/Shift}second line');

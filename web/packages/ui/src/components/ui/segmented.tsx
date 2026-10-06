@@ -9,12 +9,13 @@ export interface Segment {
 }
 
 /**
- * A segmented control on Base UI's radio group: one inset `sunken` track (the `well` ring)
- * with equal-width segments and one floating `raised` thumb that slides to the chosen one
- * on its transform (`base`; it snaps under Motion: Match system). The segment count and the
- * chosen index reach the thumb as custom properties through the CSSOM (React's `style`
- * prop), never as inline markup. Arrow keys move the choice; the group carries the label.
- * `sm` (28px, `caption`) fits a panel header.
+ * A segmented control on Base UI's radio group: one compact inset `sunken` track (24px, the
+ * `well` ring, 1px padding) with equal-width segments, their `caption` labels centred, and one
+ * floating `raised` thumb that slides to the chosen one on its transform (`base`; it snaps
+ * under Motion: Match system). The segment count and the chosen index reach the thumb as
+ * custom properties through the CSSOM (React's `style` prop), never as inline markup. Arrow
+ * keys move the choice; the group carries the label. `size` is accepted for its callers; both
+ * sizes are this one track.
  */
 export function Segmented({
   value,
@@ -48,20 +49,18 @@ export function Segmented({
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       style={vars}
-      className={cn('relative isolate grid shrink-0 auto-cols-fr grid-flow-col rounded-sm bg-sunken p-0.5 shadow-well', size === 'sm' ? 'h-7 pointer-coarse:h-9' : 'h-8 pointer-coarse:h-12', className)}
+      className={cn('relative isolate grid h-6 shrink-0 auto-cols-fr grid-flow-col rounded-sm bg-sunken p-px shadow-well pointer-coarse:h-9', className)}
+      data-size={size}
     >
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0.5 left-0.5 -z-10 w-[calc((100%-4px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-xs bg-raised shadow-raised transition-transform duration-160 ease-app"
+        className="pointer-events-none absolute inset-y-px left-px -z-10 w-[calc((100%-2px)/var(--seg-n))] translate-x-[calc(100%*var(--seg-i))] rounded-[5px] bg-raised shadow-raised transition-transform duration-160 ease-app"
       />
       {items.map((it) => (
         <Radio.Root
           key={it.value}
           value={it.value}
-          className={cn(
-            'flex h-full cursor-pointer items-center justify-center rounded-xs font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45',
-            size === 'sm' ? 'px-2 text-caption' : 'min-w-16 px-3 text-ui',
-          )}
+          className="flex h-full cursor-pointer items-center justify-center rounded-[5px] px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45"
         >
           {it.label}
         </Radio.Root>

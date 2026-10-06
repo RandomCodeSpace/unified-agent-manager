@@ -192,6 +192,8 @@ type TokenUsage struct {
 	Model                                string
 	Time                                 time.Time
 	Input, Output, CacheRead, CacheWrite int64
+	// DurationMS is the model call's own duration when the provider reports it.
+	DurationMS int64
 }
 
 // UsageSessionRecorder lets the host persist ownership of provider sessions

@@ -313,3 +313,22 @@ func TestTurnTimingYoloClaimsDoNotPauseButQuestionsDo(t *testing.T) {
 		t.Fatalf("question in yolo mode did not pause timer: %+v", got)
 	}
 }
+
+// Each model call's usage lands on the running turn, so a reader can see what the
+// turn generated and how fast; usage outside a turn counts for nothing there.
+func TestTurnTimingSumsModelCallUsage(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	_, advance := turnClock(m)
+	sum, conv := createSession(t, m, prov)
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 100, Output: 10, DurationMS: 500}})
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitItem(agentapi.Item{ID: "user", Kind: agentapi.ItemUser, Text: "go"})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 1200, Output: 300, DurationMS: 6000}})
+	advance(2 * time.Second)
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 800, Output: 200, DurationMS: 4000}})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	got := detail(t, m, sum.ID).TurnTimings
+	if len(got) != 1 || got[0].InputTokens != 2000 || got[0].OutputTokens != 500 || got[0].GenerationMS != 10000 {
+		t.Fatalf("turn usage=%+v", got)
+	}
+}

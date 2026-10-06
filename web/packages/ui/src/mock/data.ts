@@ -434,6 +434,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       outcome: 'Explained how a dumb terminal is reported',
       created_at: ago(60),
       updated_at: ago(42),
+      turn_timings: [{ id: 'tt-t3', user_item_id: 'i1', started_at: ago(60), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200 }],
       items: [
         { id: 'i1', kind: 'user', time: ago(60), text: 'Add a line to `uam doctor` that reports the detected terminal and glyph set.' },
         { id: 'r1', kind: 'reasoning', time: ago(58), text: '`doctor.go` prints rows through `printRow`; the terminal probe already exposes `term.Describe()`. One line plus a test.' },
@@ -736,7 +737,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       created_at: ago(24),
       updated_at: ago(1),
       turn_timings: [
-        { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed' },
+        { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed', input_tokens: 23400, output_tokens: 940, generation_ms: 18800 },
         { id: 'tt-2', user_item_id: 'u2', started_at: ago(14), ended_at: ago(13.5), state: 'completed' },
         { id: 'tt-3', user_item_id: 'u3', started_at: ago(12), state: 'working' },
       ],
@@ -968,7 +969,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'completed',
       created_at: ago(70),
       updated_at: ago(42),
-      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(70), ended_at: ago(42), state: 'completed' }],
+      turn_timings: [{ id: 'tt-f1', user_item_id: 'f1', started_at: ago(70), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200 }],
       items: [
         { id: 'f1', kind: 'user', time: ago(70), text: 'Focus events stop after a re-attach. Fix it, add a regression test, and document the replay order in docs/terminal.md.' },
         { id: 'f2', kind: 'reasoning', time: ago(69), ended_at: ago(68), text: '`Redraw` replays the private modes but not `?1004`. Add the replay after them and a test that re-attaches.' },

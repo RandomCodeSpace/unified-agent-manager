@@ -64,6 +64,20 @@ func (m *Manager) updateTurnTimingPauseLocked(s *webSession) {
 	m.publishTurnTimingLocked(s, timing)
 }
 
+// A model call's usage lands on the running turn: tokens in and out, and the
+// call's duration. Subagent calls count too; they are the turn's work.
+func (m *Manager) countTurnTokensLocked(s *webSession, usage agentapi.TokenUsage) {
+	if s.activeTiming < 0 || (usage.Input == 0 && usage.Output == 0) {
+		return
+	}
+	timing := s.turnTimings[s.activeTiming]
+	timing.InputTokens += usage.Input
+	timing.OutputTokens += usage.Output
+	timing.GenerationMS += usage.DurationMS
+	s.turnTimings[s.activeTiming] = timing
+	m.publishTurnTimingLocked(s, timing)
+}
+
 func finishTimingPause(timing *TurnTiming, end time.Time) {
 	if timing.PausedAt.IsZero() {
 		return
