@@ -511,6 +511,32 @@ func TestExecutorProbesAProviderThatFailedDuringWork(t *testing.T) {
 	}
 }
 
+// The executor reads whether a failed lane Task did work in the lane uam
+// made, as uam's other git for lanes does, never where the lane's directory
+// leads: a lane that became a symbolic link to the owner's clean checkout
+// still has the commit it made, so its attempt is not discarded.
+func TestLaneWorkedReadsOnlyTheLaneUamMade(t *testing.T) {
+	r := newLaneRun(t, "true", "Leaf")
+	task, l := r.start(0)
+	ctx := context.Background()
+	if r.m.laneWorked(ctx, task.Workdir) {
+		t.Fatal("a lane with no work counts as worked")
+	}
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	if !r.m.laneWorked(ctx, task.Workdir) {
+		t.Fatal("a lane with a commit of its own counts as not worked")
+	}
+	if err := os.Rename(l.dir, l.dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(r.repo, l.dir); err != nil {
+		t.Fatal(err)
+	}
+	if !r.m.laneWorked(ctx, task.Workdir) {
+		t.Fatal("a lane linked to the owner's clean checkout counts as not worked")
+	}
+}
+
 // While its provider is signed out nothing starts on it: the Project reports
 // the wait, with no end, and the subtask starts once the provider is signed
 // in again (ADR 0006 §4.5).

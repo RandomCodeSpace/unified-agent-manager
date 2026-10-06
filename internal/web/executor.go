@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
@@ -269,21 +267,37 @@ func laneTurn(s *webSession) board.Turn {
 }
 
 // laneWorked reports whether the lane a Task works in at workdir has
-// changes or commits of its own beyond the integration branch. When git
-// cannot tell, it has: a lane is never discarded on a guess.
+// changes or commits of its own beyond the integration branch, read with
+// git pinned to the lane uam made (laneAt). When git cannot tell, it has: a
+// lane is never discarded on a guess.
 func (m *Manager) laneWorked(ctx context.Context, workdir string) bool {
 	project, l, ok := m.laneOfDir(workdir)
-	git, err := execpath.Resolve("git")
-	if !ok || err != nil {
+	if !ok {
 		return true
 	}
-	out, code, _, err := runGit(ctx, git, l.dir, maxStatusBytes, "status", "--porcelain")
-	if err != nil || code != 0 || strings.TrimSpace(string(out)) != "" {
+	m.mu.Lock()
+	p := m.projects[project]
+	var dir string
+	if p != nil {
+		dir = p.Dir
+	}
+	m.mu.Unlock()
+	if p == nil {
 		return true
 	}
-	out, code, _, err = runGit(ctx, git, l.dir, maxStatusBytes, "rev-list", "--count", integBranch(project)+"..HEAD", "--")
-	n, perr := strconv.Atoi(strings.TrimSpace(string(out)))
-	return err != nil || code != 0 || perr != nil || n > 0
+	repo, err := openLanes(ctx, project, dir)
+	if err != nil {
+		return true
+	}
+	a, err := repo.laneAt(l)
+	if err != nil {
+		return true
+	}
+	if out, err := repo.outputAt(ctx, a, "status", "--porcelain"); err != nil || out != "" {
+		return true
+	}
+	n, err := repo.outputAt(ctx, a, "rev-list", "--count", repo.integ+"..HEAD", "--")
+	return err != nil || n != "0"
 }
 
 // landingCards copies the cards a land call is in flight for.
