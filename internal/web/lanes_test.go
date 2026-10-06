@@ -196,7 +196,7 @@ func TestLaneTipMergeConflictListsFilesAndAborts(t *testing.T) {
 	if got := gitOutput(t, second.dir, "status", "--porcelain"); got != status {
 		t.Fatalf("status = %q, want %q", got, status)
 	}
-	if merging, err := f.r.mergeHead(f.ctx, second.dir); err != nil || merging {
+	if merging, err := f.r.mergeHead(f.ctx, gitAt{dir: second.dir}); err != nil || merging {
 		t.Fatalf("lane still mid-merge: %v, %v", merging, err)
 	}
 	if err := f.r.mergeTip(f.ctx, second, head); err != nil {
@@ -223,7 +223,7 @@ func TestLaneMidMergeIsDetected(t *testing.T) {
 	// mergeTip leaves the agent's merge and its partial resolution alone.
 	writeRepoFile(t, second.dir, "a.txt", "both\n")
 	_ = wantCode(t, f.r.mergeTip(f.ctx, second, landed), codeLandConflict)
-	if merging, err := f.r.mergeHead(f.ctx, second.dir); err != nil || !merging {
+	if merging, err := f.r.mergeHead(f.ctx, gitAt{dir: second.dir}); err != nil || !merging {
 		t.Fatalf("mergeTip ended the agent's merge: %v, %v", merging, err)
 	}
 	if got, err := os.ReadFile(filepath.Join(second.dir, "a.txt")); err != nil || string(got) != "both\n" {
@@ -244,7 +244,7 @@ func TestLaneMidMergeIsDetected(t *testing.T) {
 	if _, err := runGitWrite(f.ctx, second.dir, nil, "cherry-pick", landed); err == nil {
 		t.Fatal("cherry-pick did not conflict")
 	}
-	if merging, _ := f.r.mergeHead(f.ctx, second.dir); merging {
+	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: second.dir}); merging {
 		t.Fatal("a cherry-pick wrote MERGE_HEAD")
 	}
 	e = wantCode(t, f.r.checkLane(f.ctx, second, landed), codeLandConflict)
@@ -677,7 +677,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if _, err := f.r.mergeIntoBase(f.ctx, "main", "Merge"); err == nil {
 		t.Fatal("merge ran past a refusing hook")
 	}
-	if merging, _ := f.r.mergeHead(f.ctx, f.top); merging {
+	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
 		t.Fatal("the owner's directory was left mid-merge")
 	}
 	if got := gitOutput(t, f.top, "status", "--porcelain"); got != "" {
@@ -887,6 +887,73 @@ func TestLaneRefusesADirectoryThatIsNoWorktree(t *testing.T) {
 	}
 	if got := gitOutput(t, f.top, "status", "--porcelain"); got != "?? plain/" {
 		t.Fatalf("status = %q", got)
+	}
+}
+
+// uam works on a lane as the lane it made, whatever its .git file names:
+// with that file naming the owner's repository, the leftovers commit to the
+// lane's branch, the landing is the lane's work, and the owner's branch and
+// index never change. A lane whose own git directory names another worktree
+// is refused.
+func TestLaneCommitIgnoresRepointedGitfile(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	writeRepoFile(t, l.dir, "b.txt", "lane\n")
+	if err := os.WriteFile(filepath.Join(l.dir, ".git"), []byte("gitdir: "+filepath.Join(f.top, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	main, index := gitOutput(t, f.top, "rev-parse", "refs/heads/main"), gitOutput(t, f.top, "ls-files", "--stage")
+	ownerUntouched := func(step string) {
+		t.Helper()
+		if gitOutput(t, f.top, "rev-parse", "refs/heads/main") != main || gitOutput(t, f.top, "ls-files", "--stage") != index {
+			t.Fatalf("%s changed the owner's branch or index", step)
+		}
+	}
+
+	if left, err := f.r.commitLeftovers(f.ctx, l, 1); err != nil || !left {
+		t.Fatalf("commitLeftovers = %v, %v", left, err)
+	}
+	ownerUntouched("commitLeftovers")
+	if got := gitOutput(t, f.top, "show", l.branch+":b.txt"); got != "lane" {
+		t.Fatalf("the lane branch holds b.txt = %q", got)
+	}
+	landed := f.land(l, 1)
+	ownerUntouched("landing")
+	if got := gitOutput(t, f.top, "show", "--format=", "--name-only", landed); got != "b.txt" {
+		t.Fatalf("landed files = %q", got)
+	}
+	if err := f.r.removeLane(f.ctx, l, 1, true); err == nil && !gone(l.dir) {
+		t.Fatal("removeLane reported success and left the lane")
+	}
+	ownerUntouched("removeLane")
+
+	other := f.start(2)
+	writeRepoFile(t, other.dir, "c.txt", "other\n")
+	before := gitOutput(t, f.top, "rev-parse", other.branch)
+	admin := filepath.Join(f.top, ".git", "worktrees", filepath.Base(other.dir), "gitdir")
+	if err := os.WriteFile(admin, []byte(filepath.Join(t.TempDir(), ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.r.commitLeftovers(f.ctx, other, 2); err == nil {
+		t.Fatal("commitLeftovers ran in a lane whose git directory names another worktree")
+	}
+	if _, err := f.r.squashLane(f.ctx, other, f.tip(), "x"); err == nil {
+		t.Fatal("squashLane ran in a lane whose git directory names another worktree")
+	}
+	if gitOutput(t, f.top, "rev-parse", other.branch) != before {
+		t.Fatal("a refused lane's branch moved")
+	}
+	ownerUntouched("a refused lane")
+}
+
+// A repository whose worktrees record relative paths still has its lanes.
+func TestLaneInARepositoryWithRelativeWorktreePaths(t *testing.T) {
+	f := newLaneFixture(t)
+	gitIn(t, f.top, "config", "worktree.useRelativePaths", "true")
+	l := f.start(1)
+	writeRepoFile(t, l.dir, "b.txt", "lane\n")
+	if got := f.land(l, 1); gitOutput(t, f.top, "show", "--format=", "--name-only", got) != "b.txt" {
+		t.Fatal("the lane did not land its work")
 	}
 }
 

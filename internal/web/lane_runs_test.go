@@ -758,6 +758,69 @@ func TestBootSweepsLanesNoAttemptHas(t *testing.T) {
 	}
 }
 
+// uam's own git work for lanes runs no hook, even with a hooks path set in
+// the repository's shared configuration from a lane: not in a lane start, a
+// landing with leftovers or a merge, a lane removal, or the boot sweep.
+// Hooks still run for git the owner runs.
+func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
+	r := newLaneRun(t, "true", "First", "Second")
+	one, l1 := r.start(0)
+	ran, hooks := filepath.Join(t.TempDir(), "ran"), t.TempDir()
+	for _, name := range []string{"reference-transaction", "post-checkout", "pre-commit", "prepare-commit-msg", "commit-msg",
+		"post-commit", "pre-merge-commit", "post-merge", "post-index-change"} {
+		if err := os.WriteFile(filepath.Join(hooks, name), fmt.Appendf(nil, "#!/bin/sh\necho %s >> '%s'\n", name, ran), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, l1.dir, "config", "core.hooksPath", hooks)
+	noHooks := func(step string) {
+		t.Helper()
+		if out, err := os.ReadFile(ran); err == nil {
+			t.Errorf("%s ran planted hooks:\n%s", step, out)
+			_ = os.Remove(ran)
+		}
+	}
+
+	two, l2 := r.start(1)
+	noHooks("a lane start")
+	writeRepoFile(t, l1.dir, "b.txt", "b\n")
+	r.landed(one, 0)
+	noHooks("a landing with leftovers")
+	writeRepoFile(t, l2.dir, "c.txt", "c\n")
+	r.landed(two, 1)
+	noHooks("a landing that merges the moved tip")
+	r.idle(one.ID)
+	if _, err := r.m.Archive(one.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the landed lane and its branch to go", func() bool {
+		return gone(l1.dir) && gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l1.branch) != nil
+	})
+	noHooks("a lane removal")
+
+	orphan, err := newLane(r.m.lanesRoot(), r.project, 9)
+	stray, err2 := newLane(r.m.lanesRoot(), r.project, 8)
+	if err != nil || err2 != nil {
+		t.Fatal(err, err2)
+	}
+	gitIn(t, r.repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", orphan.branch, orphan.dir, r.integ())
+	writeRepoFile(t, orphan.dir, "left.txt", "left\n")
+	gitIn(t, r.repo, "-c", "core.hooksPath=/dev/null", "branch", stray.branch, r.integ())
+	r.m.closeBoard()
+	if err := r.m.openBoard(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !gone(orphan.dir) || gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+stray.branch) == nil {
+		t.Fatal("the boot sweep did not run")
+	}
+	noHooks("the boot sweep")
+
+	gitIn(t, r.repo, "branch", "probe")
+	if _, err := os.Stat(ran); err != nil {
+		t.Fatal("the planted hooks do not run for the owner's git either, so this test proves nothing")
+	}
+}
+
 // Recovery leaves a Project that never had a lane alone: git keeps the
 // worktrees it lists there, a missing one included, and a Project that is
 // not a git repository logs nothing.

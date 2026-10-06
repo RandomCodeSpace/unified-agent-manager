@@ -480,6 +480,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 - An unlinked semantic dependency, for example later code calling a reverted function, reverts cleanly but breaks the build. Revert does not run acceptance. The epic shows the new tip, and Check stays available.
 - If the integration branch is rewritten by hand, the stored shas are no longer ancestors and Revert refuses. It never reverts partially. Reopen without reverting code is the way out; uam does not resolve revert conflicts.
 - Lanes separate work by directory. Work an agent does outside its worktree is not isolated; the preamble tells it to stay in its directory, and nothing else holds it there.
+- Lanes are not a security sandbox. Agents run as the owner's OS user. uam hardens its own git operations for lanes: they run no hooks and no fsmonitor, and each command in a lane is pinned to the git directory git made for that lane, never the one its `.git` file names. An agent with shell access can still change the owner's repository directly, as before lanes existed. The owner's Commit, Pull and Push, and the merge into a checked-out `base_ref` (§5.8), still run the repository's hooks.
 
 ## 6. Planning, agent writes and approval
 

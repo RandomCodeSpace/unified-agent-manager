@@ -570,7 +570,7 @@ func (m *Manager) prepareLanding(ctx context.Context, repo *laneRepo, l lane, r 
 	if err := repo.checkLane(ctx, l, tip); err != nil {
 		return "", "", contentFailure(err)
 	}
-	head, err := repo.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
+	head, err := repo.laneHead(ctx, l)
 	if err != nil {
 		return "", "", err
 	}
@@ -887,7 +887,7 @@ func (r *laneRepo) deleteBranch(ctx context.Context, branch string) error {
 	if tip, err := r.tipOf(ctx, branch); err != nil || tip == "" {
 		return err
 	}
-	if _, err := runGitWrite(ctx, r.top, nil, "branch", "-D", branch); err != nil {
+	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "branch", "-D", branch); err != nil {
 		return gitFailed("git branch -D failed", err)
 	}
 	return nil
@@ -1009,11 +1009,15 @@ func (r *laneRepo) abortOwnMerge(ctx context.Context, l lane) error {
 	if _, err := os.Stat(l.dir); err != nil {
 		return nil
 	}
-	merging, err := r.mergeHead(ctx, l.dir)
+	a, err := r.laneAt(l)
+	if err != nil {
+		return err
+	}
+	merging, err := r.mergeHead(ctx, a)
 	if err != nil || !merging {
 		return err
 	}
-	paths, err := r.gitPaths(ctx, l.dir, "MERGE_MSG")
+	paths, err := r.gitPaths(ctx, a, "MERGE_MSG")
 	if err != nil {
 		return err
 	}
@@ -1021,7 +1025,7 @@ func (r *laneRepo) abortOwnMerge(ctx context.Context, l lane) error {
 	if err != nil || !strings.Contains(string(msg), "\n"+trailerMerge+": ") {
 		return nil
 	}
-	if _, err := runGitWrite(ctx, l.dir, nil, "merge", "--abort"); err != nil {
+	if _, err := runLaneGit(ctx, a, "merge", "--abort"); err != nil {
 		return gitFailed("git merge --abort failed", err)
 	}
 	return nil
@@ -1066,7 +1070,7 @@ func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[
 	if err != nil {
 		return err
 	}
-	if _, err := runGitWrite(ctx, repo.top, nil, "worktree", "prune"); err != nil {
+	if _, err := runLaneGit(ctx, gitAt{dir: repo.top}, "worktree", "prune"); err != nil {
 		return gitFailed("git worktree prune failed", err)
 	}
 	if err := m.sweepBranches(ctx, repo, project); err != nil {
@@ -1100,7 +1104,7 @@ func (m *Manager) sweepBranches(ctx context.Context, repo *laneRepo, project str
 		if none, err := repo.ownCommitsNone(ctx, branch); err != nil || !none {
 			continue
 		}
-		if _, err := runGitWrite(ctx, repo.top, nil, "branch", "-D", branch); err != nil {
+		if _, err := runLaneGit(ctx, gitAt{dir: repo.top}, "branch", "-D", branch); err != nil {
 			log.Warn("delete a stray attempt branch failed", "branch", branch, "error", err)
 		}
 	}

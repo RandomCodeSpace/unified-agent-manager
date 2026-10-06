@@ -63,6 +63,30 @@ type lane struct {
 type laneRepo struct {
 	*gitRepo
 	integ string
+	// common is the repository's common git directory, read from the
+	// Project's directory. git keeps each lane's own git directory under it.
+	common string
+}
+
+// gitAt is where uam runs a git command: a directory and, in a lane, the
+// arguments that pin git to the lane's own git directory and worktree (see
+// laneAt).
+type gitAt struct {
+	dir string
+	pin []string
+}
+
+// argv is args after the pin.
+func (a gitAt) argv(args ...string) []string {
+	return append(slices.Clone(a.pin), args...)
+}
+
+// runLaneGit runs one git write uam makes for lanes at a: runGitWrite with
+// hooks and fsmonitor off, as runGit has them, so uam's unattended writes
+// run no hook the repository's configuration names. The owner's own Commit,
+// Pull and Push run the repository's hooks.
+func runLaneGit(ctx context.Context, a gitAt, args ...string) (string, error) {
+	return runGitWrite(ctx, a.dir, nil, append(slices.Clone(gitBase), a.argv(args...)...)...)
 }
 
 // lanesRoot is where lane worktrees live: next to sessions.json, never in a
@@ -117,7 +141,14 @@ func openLanes(ctx context.Context, projectID, dir string) (*laneRepo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &laneRepo{gitRepo: repo, integ: integBranch(projectID)}, nil
+	r := &laneRepo{gitRepo: repo, integ: integBranch(projectID)}
+	if r.common, err = r.output(ctx, repo.top, "rev-parse", "--git-common-dir"); err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(r.common) {
+		r.common = filepath.Join(repo.top, r.common)
+	}
+	return r, nil
 }
 
 // preflight checks what lanes need: git 2.40 or later for merge-tree
@@ -221,7 +252,7 @@ func (r *laneRepo) syncInteg(ctx context.Context, base string) (string, error) {
 
 // addLane makes the attempt's worktree on a new branch at tip.
 func (r *laneRepo) addLane(ctx context.Context, l lane, tip string) error {
-	if _, err := runGitWrite(ctx, r.top, nil, "worktree", "add", "--quiet", "-b", l.branch, l.dir, tip); err != nil {
+	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "worktree", "add", "--quiet", "-b", l.branch, l.dir, tip); err != nil {
 		return gitFailed("git worktree add failed", err)
 	}
 	return nil
@@ -234,28 +265,29 @@ func (r *laneRepo) addLane(ctx context.Context, l lane, tip string) error {
 func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed bool) error {
 	switch _, err := os.Stat(l.dir); {
 	case errors.Is(err, fs.ErrNotExist):
-		if _, err := runGitWrite(ctx, r.top, nil, "worktree", "prune"); err != nil {
+		if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "worktree", "prune"); err != nil {
 			return gitFailed("git worktree prune failed", err)
 		}
 	case err != nil:
 		return err
 	default:
-		if err := r.ownLane(ctx, l); err != nil {
+		a, err := r.laneAt(l)
+		if err != nil {
 			return err
 		}
-		merging, err := r.mergeHead(ctx, l.dir)
+		merging, err := r.mergeHead(ctx, a)
 		if err != nil {
 			return err
 		}
 		if merging {
-			if _, err := runGitWrite(ctx, l.dir, nil, "merge", "--abort"); err != nil {
+			if _, err := runLaneGit(ctx, a, "merge", "--abort"); err != nil {
 				return gitFailed("git merge --abort failed", err)
 			}
 		}
 		if _, err := r.commitLeftovers(ctx, l, seq); err != nil {
 			return err
 		}
-		if _, err := runGitWrite(ctx, r.top, nil, "worktree", "remove", l.dir); err != nil {
+		if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "worktree", "remove", l.dir); err != nil {
 			return gitFailed("git worktree remove failed", err)
 		}
 	}
@@ -265,7 +297,7 @@ func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed boo
 	if tip, err := r.tipOf(ctx, l.branch); err != nil || tip == "" {
 		return err
 	}
-	if _, err := runGitWrite(ctx, r.top, nil, "branch", "-D", l.branch); err != nil {
+	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "branch", "-D", l.branch); err != nil {
 		return gitFailed("git branch -D failed", err)
 	}
 	return nil
@@ -274,13 +306,14 @@ func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed boo
 // commitLeftovers commits what the attempt left uncommitted, hooks
 // skipped, and reports whether there was anything.
 func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool, error) {
-	if err := r.ownLane(ctx, l); err != nil {
+	a, err := r.laneAt(l)
+	if err != nil {
 		return false, err
 	}
-	if _, err := runGitWrite(ctx, l.dir, nil, "add", "-A"); err != nil {
+	if _, err := runLaneGit(ctx, a, "add", "-A"); err != nil {
 		return false, gitFailed("git add failed", err)
 	}
-	_, code, stderr, err := runGit(ctx, r.git, l.dir, 4096, "diff", "--cached", "--quiet")
+	_, code, stderr, err := runGit(ctx, r.git, a.dir, 4096, a.argv("diff", "--cached", "--quiet")...)
 	switch {
 	case err != nil:
 		return false, err
@@ -289,7 +322,7 @@ func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool
 	case code != 1:
 		return false, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
 	}
-	if _, err := runGitWrite(ctx, l.dir, nil, "commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", fmt.Sprintf("#%d: work in progress", seq)); err != nil {
+	if _, err := runLaneGit(ctx, a, "commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", fmt.Sprintf("#%d: work in progress", seq)); err != nil {
 		return false, gitFailed("git commit failed", err)
 	}
 	return true, nil
@@ -304,7 +337,11 @@ func (r *laneRepo) checkLane(ctx context.Context, l lane, tip string) error {
 	if err := r.notMerging(ctx, l); err != nil {
 		return err
 	}
-	out, err := r.output(ctx, l.dir, "log", "--format=%(trailers:key="+trailerRequest+",key="+trailerRevert+",valueonly)", tip+"..HEAD", "--")
+	a, err := r.laneAt(l)
+	if err != nil {
+		return err
+	}
+	out, err := r.outputAt(ctx, a, "log", "--format=%(trailers:key="+trailerRequest+",key="+trailerRevert+",valueonly)", tip+"..HEAD", "--")
 	if err != nil {
 		return err
 	}
@@ -318,11 +355,15 @@ func (r *laneRepo) checkLane(ctx context.Context, l lane, tip string) error {
 // notMerging refuses land_conflict while the attempt's worktree is
 // mid-merge or has unmerged paths.
 func (r *laneRepo) notMerging(ctx context.Context, l lane) error {
-	merging, err := r.mergeHead(ctx, l.dir)
+	a, err := r.laneAt(l)
 	if err != nil {
 		return err
 	}
-	files, err := r.unmerged(ctx, l.dir)
+	merging, err := r.mergeHead(ctx, a)
+	if err != nil {
+		return err
+	}
+	files, err := r.unmerged(ctx, a)
 	if err != nil {
 		return err
 	}
@@ -336,15 +377,15 @@ func (r *laneRepo) notMerging(ctx context.Context, l lane) error {
 	return &Error{Status: http.StatusConflict, Code: codeLandConflict, Message: msg}
 }
 
-// mergeHead reports whether the worktree at dir is mid-merge.
-func (r *laneRepo) mergeHead(ctx context.Context, dir string) (bool, error) {
-	_, code, _, err := runGit(ctx, r.git, dir, 4096, "rev-parse", "--verify", "--quiet", "MERGE_HEAD")
+// mergeHead reports whether the worktree at a is mid-merge.
+func (r *laneRepo) mergeHead(ctx context.Context, a gitAt) (bool, error) {
+	_, code, _, err := runGit(ctx, r.git, a.dir, 4096, a.argv("rev-parse", "--verify", "--quiet", "MERGE_HEAD")...)
 	return err == nil && code == 0, err
 }
 
-// unmerged lists the worktree's unmerged paths.
-func (r *laneRepo) unmerged(ctx context.Context, dir string) ([]string, error) {
-	out, err := r.output(ctx, dir, "ls-files", "--unmerged", "-z")
+// unmerged lists the unmerged paths of the worktree at a.
+func (r *laneRepo) unmerged(ctx context.Context, a gitAt) ([]string, error) {
+	out, err := r.outputAt(ctx, a, "ls-files", "--unmerged", "-z")
 	if err != nil {
 		return nil, err
 	}
@@ -364,13 +405,14 @@ func (r *laneRepo) unmerged(ctx context.Context, dir string) ([]string, error) {
 // was, and refuses land_conflict with the files, the cards that changed them
 // since the lane forked, and the agent's steps.
 func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
-	if err := r.ownLane(ctx, l); err != nil {
+	a, err := r.laneAt(l)
+	if err != nil {
 		return err
 	}
 	if err := r.notMerging(ctx, l); err != nil {
 		return err
 	}
-	head, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
+	head, err := r.laneHead(ctx, l)
 	if err != nil {
 		return err
 	}
@@ -378,22 +420,22 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 		return err
 	}
 	msg := fmt.Sprintf("Merge %s\n\n%s: %s\n", r.integ, trailerMerge, tip)
-	_, mergeErr := runGitWrite(ctx, l.dir, nil, "merge", "--ff", "--no-edit", "--no-verify", "-m", msg, tip)
+	_, mergeErr := runLaneGit(ctx, a, "merge", "--ff", "--no-edit", "--no-verify", "-m", msg, tip)
 	if mergeErr == nil {
 		return nil
 	}
-	merging, err := r.mergeHead(ctx, l.dir)
+	merging, err := r.mergeHead(ctx, a)
 	if err != nil {
 		return err
 	}
 	if !merging {
 		return gitFailed("git merge failed", mergeErr)
 	}
-	files, err := r.unmerged(ctx, l.dir)
+	files, err := r.unmerged(ctx, a)
 	if err != nil {
 		return err
 	}
-	if _, err := runGitWrite(ctx, l.dir, nil, "merge", "--abort"); err != nil {
+	if _, err := runLaneGit(ctx, a, "merge", "--abort"); err != nil {
 		return gitFailed("git merge --abort failed", err)
 	}
 	if len(files) == 0 {
@@ -412,10 +454,7 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 // as one commit. It refuses unless the lane has tip, since the tree would
 // otherwise undo what landed after the lane forked. It moves no ref.
 func (r *laneRepo) squashLane(ctx context.Context, l lane, tip, message string) (string, error) {
-	if err := r.ownLane(ctx, l); err != nil {
-		return "", err
-	}
-	head, err := r.output(ctx, l.dir, "rev-parse", "--verify", "HEAD^{commit}")
+	head, err := r.laneHead(ctx, l)
 	if err != nil {
 		return "", err
 	}
@@ -450,7 +489,7 @@ func (r *laneRepo) moveBranch(ctx context.Context, branch, to, from string) erro
 		return &Error{Status: http.StatusConflict, Code: codeGitBusy,
 			Message: fmt.Sprintf("%s is checked out in %s; uam moves it only while no worktree has it checked out", displaytext.Sanitize(branch), displaytext.Sanitize(dir))}
 	}
-	_, err = runGitWrite(ctx, r.top, nil, "update-ref", "-m", "uam", "refs/heads/"+branch, to, from)
+	_, err = runLaneGit(ctx, gitAt{dir: r.top}, "update-ref", "-m", "uam", "refs/heads/"+branch, to, from)
 	if err == nil {
 		return nil
 	}
@@ -592,7 +631,7 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	} else if op != "" {
 		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s is in progress in %s; finish or abort it first", op, displaytext.Sanitize(dir))}
 	}
-	if files, err := r.unmerged(ctx, dir); err != nil {
+	if files, err := r.unmerged(ctx, gitAt{dir: dir}); err != nil {
 		return "", err
 	} else if len(files) > 0 {
 		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s has unmerged paths: %s; resolve and commit them first", displaytext.Sanitize(dir), fileList(files))}
@@ -601,7 +640,7 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	if mergeErr == nil {
 		return r.output(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
 	}
-	if started, err := r.mergeHead(ctx, dir); err != nil {
+	if started, err := r.mergeHead(ctx, gitAt{dir: dir}); err != nil {
 		return "", err
 	} else if started {
 		if _, err := runGitWrite(ctx, dir, nil, "merge", "--abort"); err != nil {
@@ -617,18 +656,31 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	return "", gitFailed("git merge failed", mergeErr)
 }
 
-// ownLane refuses to run git in the attempt's directory unless it is the
-// top of a working tree, so git never falls through to a repository that
-// holds the lanes root.
-func (r *laneRepo) ownLane(ctx context.Context, l lane) error {
-	top, err := r.output(ctx, l.dir, "rev-parse", "--show-toplevel")
+// laneAt is where uam runs git in the lane l: its directory, with git pinned
+// to its worktree and to the git directory git made for it under the
+// repository's common directory when uam added it, never to what the .git
+// file in the agent's directory names. It refuses while that git directory
+// is missing or names another worktree, and leaves the lane where it is.
+func (r *laneRepo) laneAt(l lane) (gitAt, error) {
+	gitDir := filepath.Join(r.common, "worktrees", filepath.Base(l.dir))
+	back, err := os.ReadFile(filepath.Join(gitDir, "gitdir")) // #nosec G304 -- a file git keeps in the repository's own git directory.
+	dotGit := strings.TrimSpace(string(back))
+	if dotGit != "" && !filepath.IsAbs(dotGit) {
+		dotGit = filepath.Join(gitDir, dotGit) // written by worktree.useRelativePaths
+	}
+	if err != nil || filepath.Base(dotGit) != ".git" || realPath(filepath.Dir(dotGit)) != realPath(l.dir) {
+		return gitAt{}, newError(http.StatusConflict, "%s is not a lane worktree of this repository: its git directory is missing or names another worktree", displaytext.Sanitize(l.dir))
+	}
+	return gitAt{dir: l.dir, pin: []string{"--git-dir=" + gitDir, "--work-tree=" + l.dir}}, nil
+}
+
+// laneHead is the commit the lane l has checked out.
+func (r *laneRepo) laneHead(ctx context.Context, l lane) (string, error) {
+	a, err := r.laneAt(l)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if realPath(top) != realPath(l.dir) {
-		return newError(http.StatusConflict, "%s is not a lane worktree", displaytext.Sanitize(l.dir))
-	}
-	return nil
+	return r.outputAt(ctx, a, "rev-parse", "--verify", "HEAD^{commit}")
 }
 
 // tipOf is the commit branch names, "" when there is no such branch.
@@ -712,7 +764,7 @@ func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error
 // rebase or a bisect that started from branch, from the files git keeps
 // for each, as git itself checks before it moves a branch.
 func (r *laneRepo) startedFrom(ctx context.Context, dir, branch string) (bool, error) {
-	paths, err := r.gitPaths(ctx, dir, "rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START")
+	paths, err := r.gitPaths(ctx, gitAt{dir: dir}, "rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START")
 	if err != nil {
 		return false, err
 	}
@@ -743,7 +795,7 @@ func (r *laneRepo) inProgress(ctx context.Context, dir string) (string, error) {
 			return op.name, nil
 		}
 	}
-	paths, err := r.gitPaths(ctx, dir, "rebase-merge", "rebase-apply", "BISECT_LOG")
+	paths, err := r.gitPaths(ctx, gitAt{dir: dir}, "rebase-merge", "rebase-apply", "BISECT_LOG")
 	if err != nil {
 		return "", err
 	}
@@ -757,14 +809,14 @@ func (r *laneRepo) inProgress(ctx context.Context, dir string) (string, error) {
 	return "", nil
 }
 
-// gitPaths is where the worktree at dir keeps each of the files git names
+// gitPaths is where the worktree at a keeps each of the files git names
 // relative to its git directory.
-func (r *laneRepo) gitPaths(ctx context.Context, dir string, names ...string) ([]string, error) {
+func (r *laneRepo) gitPaths(ctx context.Context, a gitAt, names ...string) ([]string, error) {
 	args := []string{"rev-parse", "--path-format=absolute"}
 	for _, name := range names {
 		args = append(args, "--git-path", name)
 	}
-	out, err := r.output(ctx, dir, args...)
+	out, err := r.outputAt(ctx, a, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -832,7 +884,12 @@ func (r *laneRepo) cardsTouching(ctx context.Context, from, to string, files []s
 // output runs a git command that must succeed in dir and returns its
 // output without surrounding white space.
 func (r *laneRepo) output(ctx context.Context, dir string, args ...string) (string, error) {
-	out, code, stderr, err := runGit(ctx, r.git, dir, maxStatusBytes, args...)
+	return r.outputAt(ctx, gitAt{dir: dir}, args...)
+}
+
+// outputAt is output at a.
+func (r *laneRepo) outputAt(ctx context.Context, a gitAt, args ...string) (string, error) {
+	out, code, stderr, err := runGit(ctx, r.git, a.dir, maxStatusBytes, a.argv(args...)...)
 	if err != nil {
 		return "", err
 	}
