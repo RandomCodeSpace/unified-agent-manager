@@ -19,6 +19,9 @@ const (
 	// cliCheckTimeout bounds one look: the installed version, npm's folder
 	// and the newest release.
 	cliCheckTimeout = 60 * time.Second
+	// cliRestartEvery is how often a pending CLI restart is tried besides
+	// when a Task changes.
+	cliRestartEvery = time.Minute
 )
 
 // CLI update states, as the UI sees them.
@@ -32,7 +35,11 @@ const (
 // ProviderCLI is a provider CLI's installed and newest release and its
 // update, as the API reports them.
 type ProviderCLI struct {
+	// Installed is the release on disk; Running, while set, is the older
+	// one the CLI still runs after an update, until no Task works or waits
+	// and it restarts.
 	Installed string `json:"installed,omitempty"`
+	Running   string `json:"running,omitempty"`
 	Latest    string `json:"latest,omitempty"`
 	// UpdateAvailable: Latest is newer than Installed, the SDK did not
 	// refuse it, and the CLI can be updated here.
@@ -58,6 +65,8 @@ type cliStatus struct {
 	// updates counts the updates started; a read begun before one is
 	// dropped, so it cannot bring back the release replaced.
 	updates int
+	// restarting: a goroutine tries the pending restart.
+	restarting bool
 }
 
 func (st *cliStatus) view() ProviderCLI {
@@ -196,8 +205,9 @@ func (m *Manager) cliUpdatesAvailable() map[string]string {
 
 // StartCLIUpdate starts updating the provider's CLI to its newest release,
 // or returns the update in progress. It runs on the service's context, so it
-// outlives the request. It is refused when no update is available or while
-// any of the provider's Tasks works or waits.
+// outlives the request. It is refused when no update is available. Tasks
+// that work or wait are not disturbed: the CLI restarts onto the release
+// once none does.
 func (m *Manager) StartCLIUpdate(ctx context.Context, name string) (ProviderCLI, error) {
 	p, u, err := m.cliUpdater(name)
 	if err != nil {
@@ -209,7 +219,6 @@ func (m *Manager) StartCLIUpdate(ctx context.Context, name string) (ProviderCLI,
 	if !checked {
 		m.checkCLI(ctx, name, u)
 	}
-	busy := m.cliBusyTasks(name)
 	m.cli.mu.Lock()
 	defer m.cli.mu.Unlock()
 	st := m.cli.by[name]
@@ -221,31 +230,31 @@ func (m *Manager) StartCLIUpdate(ctx context.Context, name string) (ProviderCLI,
 		return ProviderCLI{}, newError(http.StatusConflict, "%s", view.Manual)
 	case !view.UpdateAvailable:
 		return ProviderCLI{}, newError(http.StatusConflict, "no update of the %s CLI is available", p.DisplayName())
-	case busy > 0:
-		return ProviderCLI{}, busyTasksError(p, busy)
 	}
 	st.State, st.Target, st.Error = cliUpdating, st.Latest, ""
 	st.updates++
 	m.wg.Add(1)
-	go m.runCLIUpdate(p, u, st.Target)
+	go m.runCLIUpdate(p, u, st.Target, st.Installed)
 	return st.view(), nil
 }
 
-func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, target string) {
+// runCLIUpdate installs target over from, then restarts the CLI onto it at
+// once when no Task works or waits, else as soon as none does.
+func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, target, from string) {
 	defer m.wg.Done()
 	name := p.Name()
-	err := u.UpdateCLI(m.ctx, target, func() error { return m.quiesceCLI(p) })
+	err := u.UpdateCLI(m.ctx, target)
+	pending := false
 	if err == nil {
 		log.Info("web provider CLI updated", "provider", name, "version", target)
+		pending = m.restartCLI(p, u) != nil
 	} else {
 		log.Warn("update web provider CLI failed", "provider", name, "version", target, "error", err)
 	}
 	// Read again, so the installed version is the one now in place.
 	m.checkCLI(m.ctx, name, u)
 	m.cli.mu.Lock()
-	defer m.cli.mu.Unlock()
 	st := m.cli.by[name]
-	var webErr *Error
 	switch {
 	case err == nil:
 		st.State = cliUpdated
@@ -254,6 +263,14 @@ func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, targe
 		if st.Installed != target {
 			st.Installed, st.newer = target, false
 		}
+		// A second update while a restart is pending keeps the release
+		// still running.
+		switch {
+		case !pending:
+			st.Running = ""
+		case st.Running == "":
+			st.Running = from
+		}
 	case errors.Is(err, agentapi.ErrCLIIncompatible):
 		reason := err.Error()
 		if _, after, ok := strings.Cut(reason, agentapi.ErrCLIIncompatible.Error()+": "); ok {
@@ -261,11 +278,52 @@ func (m *Manager) runCLIUpdate(p agentapi.Provider, u agentapi.CLIUpdater, targe
 		}
 		st.State, st.Incompatible = cliFailed, target
 		st.Error = shortError(fmt.Errorf("%s CLI %s needs a newer uam: %s", p.DisplayName(), target, reason))
-	case errors.As(err, &webErr):
-		st.State, st.Error = cliFailed, webErr.Message
 	default:
 		st.State, st.Error = cliFailed, shortError(err)
 	}
+	wait := pending && !st.restarting
+	st.restarting = st.restarting || wait
+	m.cli.mu.Unlock()
+	if wait {
+		m.restartCLIWhenIdle(p, u)
+	}
+}
+
+// restartCLIWhenIdle tries the pending restart of p's CLI each time a Task
+// changes and every cliRestartEvery, until it is done or the service stops.
+func (m *Manager) restartCLIWhenIdle(p agentapi.Provider, u agentapi.CLIUpdater) {
+	t := time.NewTicker(cliRestartEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-t.C:
+		case <-m.cliKick:
+		}
+		if err := m.restartCLI(p, u); err != nil {
+			if errors.Is(err, agentapi.ErrClosed) {
+				return
+			}
+			continue
+		}
+		log.Info("web provider CLI restarted onto its update", "provider", p.Name())
+		m.cli.mu.Lock()
+		st := m.cli.by[p.Name()]
+		st.Running, st.restarting = "", false
+		m.cli.mu.Unlock()
+		return
+	}
+}
+
+// restartCLI restarts p's CLI onto the release an update installed unless
+// any of p's Tasks works or waits. The idle conversations are closed for it
+// and reopen on their next use. nil once no CLI runs a replaced release.
+func (m *Manager) restartCLI(p agentapi.Provider, u agentapi.CLIUpdater) error {
+	if n := m.cliBusyTasks(p.Name()); n > 0 {
+		return busyTasksError(p, n)
+	}
+	return u.RestartCLI(m.ctx, func() error { return m.quiesceCLI(p) })
 }
 
 // cliBusyTasks counts the provider's Tasks whose open conversation works or
@@ -282,15 +340,15 @@ func (m *Manager) cliBusyTasks(name string) int {
 	return n
 }
 
+// busyTasksError says how many of p's Tasks hold its CLI restart back.
 func busyTasksError(p agentapi.Provider, n int) error {
-	return newError(http.StatusConflict, "%d %s %s working or waiting for an answer; update when %s",
-		n, p.DisplayName(), plural(n, "task is", "tasks are"), plural(n, "it finishes", "they finish"))
+	return fmt.Errorf("%d %s %s working or waiting for an answer", n, p.DisplayName(), plural(n, "task is", "tasks are"))
 }
 
 // quiesceCLI closes the open conversations of p's Tasks for its CLI to be
-// replaced. The Tasks keep their state and reopen on their next view or
+// restarted. The Tasks keep their state and reopen on their next view or
 // prompt, as after an idle close. A Task that works or waits, or that an
-// operation holds, keeps its conversation and fails the update; the idle
+// operation holds, keeps its conversation and fails the restart; the idle
 // ones are closed all the same.
 func (m *Manager) quiesceCLI(p agentapi.Provider) error {
 	m.mu.Lock()

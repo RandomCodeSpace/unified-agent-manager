@@ -153,9 +153,10 @@ func latestPublished(ctx context.Context) (string, error) {
 
 // UpdateCLI installs version the way the installed CLI was installed. It
 // first stages version and starts an SDK client on it, so a release the SDK
-// refuses is never installed for real. Then it holds new starts, quiesces,
-// stops the running CLI and puts version in place; the next use starts it.
-func (p *webProvider) UpdateCLI(ctx context.Context, version string, quiesce func() error) error {
+// refuses is never installed for real. Then it puts version in place while
+// starts of a new CLI wait; a running CLI keeps serving its conversations,
+// and new ones, until RestartCLI stops it.
+func (p *webProvider) UpdateCLI(ctx context.Context, version string) error {
 	if !releaseExpr.MatchString(version) {
 		return fmt.Errorf("%q is not a Copilot CLI release", version)
 	}
@@ -194,12 +195,8 @@ func (p *webProvider) UpdateCLI(ctx context.Context, version string, quiesce fun
 		return err
 	}
 	defer release()
-	if err := quiesce(); err != nil {
-		return err
-	}
-	if err := p.stopForUpdate(ctx); err != nil {
-		return err
-	}
+	// npm moves the package folder aside and the binary is renamed over, so
+	// the running CLI's files are never written to.
 	if inst.npm != "" {
 		pkg := copilotPackage + "@" + version
 		if _, err := runCLI(ctx, cliUpdateTimeout, inst.npm, "install", "-g", "--no-audit", "--no-fund", pkg); err != nil {
@@ -208,6 +205,9 @@ func (p *webProvider) UpdateCLI(ctx context.Context, version string, quiesce fun
 	} else if err := replaceBinary(staged, inst.target); err != nil {
 		return err
 	}
+	p.mu.Lock()
+	p.outdated = p.client != nil
+	p.mu.Unlock()
 	release()
 	installed, err := cliVersion(ctx, inst.path)
 	if err != nil {
@@ -441,20 +441,44 @@ func (p *webProvider) holdStarts() (release func(), err error) {
 	}), nil
 }
 
-// stopForUpdate stops the running CLI so the next call starts the updated
-// one. Ending an open conversation would fail its Task, so it refuses while
-// any is open; the check and the stop share the lock, so none opens between.
-func (p *webProvider) stopForUpdate(ctx context.Context) error {
+// RestartCLI stops a CLI that runs a release UpdateCLI replaced, so the next
+// call starts the installed one. Starts wait meanwhile, and quiesce first
+// closes the idle conversations; its error, or a conversation or utility
+// prompt still running on the CLI (ErrCLIBusy), leaves it running for a
+// later call. With no outdated CLI running it does nothing.
+func (p *webProvider) RestartCLI(ctx context.Context, quiesce func() error) error {
 	p.mu.Lock()
-	if n := len(p.convs); n > 0 {
+	outdated := p.outdated
+	p.mu.Unlock()
+	if !outdated {
+		return nil
+	}
+	release, err := p.holdStarts()
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := quiesce(); err != nil {
+		return err
+	}
+	return p.stopOutdated(ctx)
+}
+
+// stopOutdated stops the outdated CLI. Ending an open conversation would
+// fail its Task, so it refuses while any is open or a utility prompt runs;
+// the check and the stop share the lock, so none starts between.
+func (p *webProvider) stopOutdated(ctx context.Context) error {
+	p.mu.Lock()
+	if !p.outdated {
+		p.mu.Unlock()
+		return nil
+	}
+	if n := len(p.convs) + p.utilities; n > 0 {
 		p.mu.Unlock()
 		return fmt.Errorf("%w (%d); try again once they close", agentapi.ErrCLIBusy, n)
 	}
 	c := p.detachLocked()
 	p.mu.Unlock()
-	if c == nil {
-		return nil
-	}
 	if err := p.stopDetached(ctx, c); err != nil {
 		log.Warn("stop copilot CLI for an update failed", "error", err)
 	}

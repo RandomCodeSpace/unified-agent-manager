@@ -110,6 +110,8 @@ type Manager struct {
 	devices deviceSignIns
 	// cli holds each provider CLI's releases last read and its update.
 	cli cliUpdates
+	// cliKick wakes a pending CLI restart when a Task changes.
+	cliKick chan struct{}
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -251,6 +253,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		branchAt:  map[string]time.Time{},
 		quota:     map[string]*quotaCache{},
 		quotaKick: make(chan struct{}, 1),
+		cliKick:   make(chan struct{}, 1),
 		quotaTick: quotaCheck,
 		spawnWait: viewWait,
 
@@ -1875,6 +1878,10 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	s.queueChanged = false
 	if after == before && !durable && !queue {
 		return
+	}
+	select {
+	case m.cliKick <- struct{}{}:
+	default:
 	}
 	// updated_at is Task activity, which is what the durable part records:
 	// turn state (including waiting for input), detail, name, title, model

@@ -333,6 +333,11 @@ type webProvider struct {
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
+	// outdated: the running client runs a release an update replaced on
+	// disk; RestartCLI stops it once nothing runs on it. utilities counts
+	// the utility prompts running, which it waits for too.
+	outdated  bool
+	utilities int
 
 	// Guarded by mu; invoked outside the lock before a session can send.
 	usageSessionRecorder func(string, bool) error
@@ -640,10 +645,11 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
-	client, err := p.ensureStarted(ctx)
+	client, done, err := p.startUtility(ctx)
 	if err != nil {
 		return "", err
 	}
+	defer done()
 	model, purpose := req.Model, req.Purpose
 	gate, tools, err := sessionTools("", nil, req.Tools, req.CallTool)
 	if err != nil {
@@ -1455,9 +1461,10 @@ func (p *webProvider) InUse(ctx context.Context, ids []string) ([]string, error)
 func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	// An update is replacing the CLI under the running client: wait for the
-	// new one instead of failing.
-	for p.updating != nil {
+	// An update is replacing the CLI: a start waits for the new install
+	// instead of failing, and an outdated client is not handed out while it
+	// is being stopped. A current one keeps serving.
+	for p.updating != nil && (p.client == nil || p.outdated) {
 		updating := p.updating
 		p.mu.Unlock()
 		select {
@@ -1503,6 +1510,28 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	return c, nil
 }
 
+// startUtility returns the running client for a utility prompt, counted
+// until done is called, so an update's restart does not stop the CLI under
+// it. A client stopped between the start and the count is not used.
+func (p *webProvider) startUtility(ctx context.Context) (client sdkClient, done func(), err error) {
+	for {
+		if client, err = p.ensureStarted(ctx); err != nil {
+			return nil, nil, err
+		}
+		p.mu.Lock()
+		if p.client == client {
+			p.utilities++
+			p.mu.Unlock()
+			return client, sync.OnceFunc(func() {
+				p.mu.Lock()
+				p.utilities--
+				p.mu.Unlock()
+			}), nil
+		}
+		p.mu.Unlock()
+	}
+}
+
 // watch pings the CLI until stop closes. The SDK reports neither a CLI exit
 // nor a hang, so a failed ping is the only signal that the runtime is gone.
 func (p *webProvider) watch(c sdkClient, stop <-chan struct{}) {
@@ -1541,7 +1570,7 @@ func (p *webProvider) fail(c sdkClient, reason string) {
 		p.mu.Unlock()
 		return
 	}
-	p.client = nil
+	p.client, p.outdated = nil, false
 	close(p.stop)
 	p.stop = nil
 	convs := p.takeConvs()
@@ -1585,7 +1614,7 @@ func (p *webProvider) Shutdown(ctx context.Context) error {
 	p.shut = true
 	convs := p.takeConvs()
 	client := p.client
-	p.client = nil
+	p.client, p.outdated = nil, false
 	if p.stop != nil {
 		close(p.stop)
 		p.stop = nil

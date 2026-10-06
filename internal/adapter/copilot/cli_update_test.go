@@ -168,7 +168,7 @@ func TestCLIReleaseReadsInstalledLatestAndManual(t *testing.T) {
 		if err != nil || rel.Latest != "1.0.94" || !strings.Contains(rel.Manual, "Copilot CLI at "+filepath.Join(other, "copilot")+" is a Node.js package npm did not install") {
 			t.Fatalf("CLIRelease = %+v, %v", rel, err)
 		}
-		if err := p.UpdateCLI(ctx, "1.0.94", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "npm did not install") {
+		if err := p.UpdateCLI(ctx, "1.0.94"); err == nil || !strings.Contains(err.Error(), "npm did not install") {
 			t.Fatalf("UpdateCLI = %v", err)
 		}
 		for _, c := range f.calls(t) {
@@ -212,47 +212,44 @@ func TestNewerRelease(t *testing.T) {
 	}
 }
 
-// An update stages the release, starts an SDK client on it, then stops the
-// running CLI and installs the release globally while starts wait; the next
-// start runs the new CLI.
-func TestUpdateCLIStagesProbesAndReplacesTheRunningCLI(t *testing.T) {
+// waitFile waits for the fake npm to create name in its folder.
+func (f npmFake) waitFile(t *testing.T, name string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(f.dir, name)); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s did not appear", name)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// An update stages the release, starts an SDK client on it, then installs
+// it globally under the running CLI, which keeps serving its conversation
+// and new calls meanwhile. Once nothing is open on it, RestartCLI stops it
+// and the next start runs the new CLI.
+func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) {
 	ctx := context.Background()
 	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
 	probe := &fakeClient{}
 	probed := fakeProbe(t, probe)
 	p, fc := cliProvider(t)
-	if _, err := p.ensureStarted(ctx); err != nil {
+	conv, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
-	var quiesced atomic.Int32
 	done := make(chan error, 1)
-	go func() { done <- p.UpdateCLI(ctx, "1.0.92", func() error { quiesced.Add(1); return nil }) }()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(filepath.Join(f.dir, "installing")); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the global install did not start")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if _, stopped, _ := fc.lifecycle(); stopped != 1 || quiesced.Load() != 1 {
-		t.Fatalf("before the global install: stopped %d, quiesced %d", stopped, quiesced.Load())
-	}
-	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-	_, err := p.ensureStarted(short)
+	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	f.waitFile(t, "installing")
+	short, cancel := context.WithTimeout(ctx, time.Second)
+	c, err := p.ensureStarted(short)
 	cancel()
-	if err == nil || !strings.Contains(err.Error(), "wait for the Copilot CLI update") {
-		t.Fatalf("start bounded by its context during the install = %v", err)
-	}
-	started := make(chan error, 1)
-	go func() { _, err := p.ensureStarted(ctx); started <- err }()
-	select {
-	case err := <-started:
-		t.Fatalf("a start did not wait for the install: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	if err != nil || c != fc {
+		t.Fatalf("a call during the install = %v, %v; want the running CLI", c, err)
 	}
 	if err := os.Remove(filepath.Join(f.dir, "hold")); err != nil {
 		t.Fatal(err)
@@ -260,11 +257,30 @@ func TestUpdateCLIStagesProbesAndReplacesTheRunningCLI(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("UpdateCLI = %v", err)
 	}
-	if err := <-started; err != nil {
-		t.Fatalf("start after the update = %v", err)
+	if started, stopped, _ := fc.lifecycle(); started != 1 || stopped != 0 || p.openConversations() != 1 {
+		t.Fatalf("after the install: started %d, stopped %d, open %d; want the running CLI untouched", started, stopped, p.openConversations())
 	}
-	if started, _, _ := fc.lifecycle(); started != 2 {
-		t.Fatalf("CLI started %d times; want the next use to start the new one", started)
+	quiesced := 0
+	if err := p.RestartCLI(ctx, func() error { quiesced++; return nil }); !errors.Is(err, agentapi.ErrCLIBusy) || quiesced != 1 {
+		t.Fatalf("RestartCLI under an open conversation = %v, quiesced %d", err, quiesced)
+	}
+	if _, stopped, _ := fc.lifecycle(); stopped != 0 {
+		t.Fatal("the running CLI was stopped under an open conversation")
+	}
+	if err := conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.RestartCLI(ctx, func() error { quiesced++; return nil }); err != nil || quiesced != 2 {
+		t.Fatalf("RestartCLI once idle = %v, quiesced %d", err, quiesced)
+	}
+	if _, err := p.ensureStarted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if started, stopped, _ := fc.lifecycle(); started != 2 || stopped != 1 {
+		t.Fatalf("CLI started %d, stopped %d times; want the next use to start the new one", started, stopped)
+	}
+	if err := p.RestartCLI(ctx, func() error { quiesced++; return nil }); err != nil || quiesced != 2 {
+		t.Fatalf("RestartCLI on the new CLI = %v, quiesced %d", err, quiesced)
 	}
 	if started, stopped, _ := probe.lifecycle(); started != 1 || stopped != 1 {
 		t.Fatalf("staged client started %d, stopped %d times", started, stopped)
@@ -291,6 +307,47 @@ func TestUpdateCLIStagesProbesAndReplacesTheRunningCLI(t *testing.T) {
 	}
 }
 
+// With no CLI running, a start waits while the files are replaced and then
+// runs the new CLI; nothing is left to restart.
+func TestUpdateCLIHoldsStartsDuringTheInstall(t *testing.T) {
+	ctx := context.Background()
+	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
+	fakeProbe(t, &fakeClient{})
+	p, fc := cliProvider(t)
+	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
+	done := make(chan error, 1)
+	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	f.waitFile(t, "installing")
+	short, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err := p.ensureStarted(short)
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), "wait for the Copilot CLI update") {
+		t.Fatalf("start bounded by its context during the install = %v", err)
+	}
+	started := make(chan error, 1)
+	go func() { _, err := p.ensureStarted(ctx); started <- err }()
+	select {
+	case err := <-started:
+		t.Fatalf("a start did not wait for the install: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := os.Remove(filepath.Join(f.dir, "hold")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("UpdateCLI = %v", err)
+	}
+	if err := <-started; err != nil {
+		t.Fatalf("start after the update = %v", err)
+	}
+	if err := p.RestartCLI(ctx, func() error { t.Fatal("quiesced"); return nil }); err != nil {
+		t.Fatalf("RestartCLI = %v", err)
+	}
+	if started, stopped, _ := fc.lifecycle(); started != 1 || stopped != 0 {
+		t.Fatalf("CLI started %d, stopped %d times", started, stopped)
+	}
+}
+
 // A release the SDK refuses at the protocol handshake is never installed
 // globally, and the running CLI is left alone.
 func TestUpdateCLIRefusesAReleaseTheSDKCannotDrive(t *testing.T) {
@@ -302,13 +359,15 @@ func TestUpdateCLIRefusesAReleaseTheSDKCannotDrive(t *testing.T) {
 	if _, err := p.ensureStarted(ctx); err != nil {
 		t.Fatal(err)
 	}
-	quiesced := 0
-	err := p.UpdateCLI(ctx, "1.0.95", func() error { quiesced++; return nil })
+	err := p.UpdateCLI(ctx, "1.0.95")
 	if !errors.Is(err, agentapi.ErrCLIIncompatible) || !strings.Contains(err.Error(), "server reports version 4") {
 		t.Fatalf("UpdateCLI = %v", err)
 	}
-	if f.installedGlobally(t) || quiesced != 0 {
-		t.Fatalf("refused release: npm %q, quiesced %d", f.calls(t), quiesced)
+	if f.installedGlobally(t) {
+		t.Fatalf("refused release: npm %q", f.calls(t))
+	}
+	if err := p.RestartCLI(ctx, func() error { t.Fatal("quiesced"); return nil }); err != nil {
+		t.Fatalf("RestartCLI after a refused release = %v", err)
 	}
 	if _, stopped, _ := fc.lifecycle(); stopped != 0 {
 		t.Fatal("the running CLI was stopped for a refused release")
@@ -318,48 +377,89 @@ func TestUpdateCLIRefusesAReleaseTheSDKCannotDrive(t *testing.T) {
 	}
 }
 
-// An update stops before anything is installed when quiesce refuses or a
-// conversation is still open; starts are released again.
-func TestUpdateCLIStopsWhileTasksAreBusy(t *testing.T) {
+// outdatedProvider is a provider whose running CLI an update replaced.
+func outdatedProvider(t *testing.T) (*webProvider, *fakeClient) {
+	t.Helper()
+	fakeNPMInstall(t, "1.0.80", "1.0.92")
+	fakeProbe(t, &fakeClient{})
+	p, fc := cliProvider(t)
+	if _, err := p.ensureStarted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.UpdateCLI(context.Background(), "1.0.92"); err != nil {
+		t.Fatal(err)
+	}
+	return p, fc
+}
+
+// A restart leaves the outdated CLI running while quiesce refuses, a
+// conversation is open or a utility prompt runs on it, and is done by a
+// later try; starts are not held after a refusal.
+func TestRestartCLIWaitsWhileTheCLIIsBusy(t *testing.T) {
 	ctx := context.Background()
 	t.Run("quiesce refuses", func(t *testing.T) {
-		f := fakeNPMInstall(t, "1.0.80", "1.0.92")
-		fakeProbe(t, &fakeClient{})
-		p, fc := cliProvider(t)
-		if _, err := p.ensureStarted(ctx); err != nil {
-			t.Fatal(err)
-		}
+		p, fc := outdatedProvider(t)
 		busy := errors.New("1 task is working")
-		if err := p.UpdateCLI(ctx, "1.0.92", func() error { return busy }); !errors.Is(err, busy) {
-			t.Fatalf("UpdateCLI = %v", err)
+		if err := p.RestartCLI(ctx, func() error { return busy }); !errors.Is(err, busy) {
+			t.Fatalf("RestartCLI = %v", err)
 		}
-		if f.installedGlobally(t) {
-			t.Fatal("installed while busy")
+		short, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		if c, err := p.ensureStarted(short); err != nil || c != fc {
+			t.Fatalf("call after a refused restart = %v, %v", c, err)
 		}
 		if _, stopped, _ := fc.lifecycle(); stopped != 0 {
 			t.Fatal("the running CLI was stopped while busy")
 		}
-		short, cancel := context.WithTimeout(ctx, time.Second)
-		defer cancel()
-		if _, err := p.ensureStarted(short); err != nil {
-			t.Fatalf("start after a refused update = %v", err)
+		if err := p.RestartCLI(ctx, func() error { return nil }); err != nil {
+			t.Fatalf("RestartCLI once idle = %v", err)
+		}
+		if _, stopped, _ := fc.lifecycle(); stopped != 1 {
+			t.Fatal("the outdated CLI was not stopped once idle")
 		}
 	})
-	t.Run("conversation open", func(t *testing.T) {
-		f := fakeNPMInstall(t, "1.0.80", "1.0.92")
-		fakeProbe(t, &fakeClient{})
-		p, fc := cliProvider(t)
-		if _, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}}); err != nil {
+	t.Run("utility prompt running", func(t *testing.T) {
+		p, fc := outdatedProvider(t)
+		_, done, err := p.startUtility(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := p.UpdateCLI(ctx, "1.0.92", func() error { return nil }); !errors.Is(err, agentapi.ErrCLIBusy) {
-			t.Fatalf("UpdateCLI = %v", err)
+		if err := p.RestartCLI(ctx, func() error { return nil }); !errors.Is(err, agentapi.ErrCLIBusy) {
+			t.Fatalf("RestartCLI = %v", err)
 		}
-		if f.installedGlobally(t) || p.openConversations() != 1 {
-			t.Fatalf("busy update: npm %q, open %d", f.calls(t), p.openConversations())
-		}
+		done()
 		if _, stopped, _ := fc.lifecycle(); stopped != 0 {
-			t.Fatal("the running CLI was stopped under an open conversation")
+			t.Fatal("the CLI was stopped under a utility prompt")
+		}
+		if err := p.RestartCLI(ctx, func() error { return nil }); err != nil {
+			t.Fatalf("RestartCLI after the prompt = %v", err)
+		}
+	})
+	// A conversation opening while idle ones close waits for the restart and
+	// lands on the new CLI rather than on the one being stopped.
+	t.Run("open during the restart", func(t *testing.T) {
+		p, fc := outdatedProvider(t)
+		opened := make(chan error, 1)
+		err := p.RestartCLI(ctx, func() error {
+			go func() {
+				_, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}})
+				opened <- err
+			}()
+			select {
+			case err := <-opened:
+				t.Errorf("an open did not wait for the restart: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("RestartCLI = %v", err)
+		}
+		if err := <-opened; err != nil {
+			t.Fatalf("open after the restart = %v", err)
+		}
+		if started, stopped, _ := fc.lifecycle(); started != 2 || stopped != 1 || p.openConversations() != 1 {
+			t.Fatalf("started %d, stopped %d, open %d", started, stopped, p.openConversations())
 		}
 	})
 }
@@ -454,15 +554,15 @@ func TestCLIReleaseForAStandaloneBinary(t *testing.T) {
 	if err != nil || !strings.Contains(rel.Manual, "cannot write") {
 		t.Fatalf("CLIRelease in a read-only folder = %+v, %v", rel, err)
 	}
-	if err := p.UpdateCLI(context.Background(), "1.0.92", func() error { return nil }); err == nil || !strings.Contains(err.Error(), "cannot write") {
+	if err := p.UpdateCLI(context.Background(), "1.0.92"); err == nil || !strings.Contains(err.Error(), "cannot write") {
 		t.Fatalf("UpdateCLI in a read-only folder = %v", err)
 	}
 }
 
 // A standalone binary is replaced in place by the release's binary once it
 // passed the checksum and the SDK handshake on a staged copy; the running
-// CLI is stopped after the idle conversations closed, and the next start
-// runs the new one. Nothing is left beside it.
+// CLI keeps running until a restart stops it, and the next start runs the
+// new one. Nothing is left beside it.
 func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
 	path := fakeBinaryInstall(t, "1.0.89")
 	fakeReleases(t, "1.0.92", false)
@@ -471,13 +571,12 @@ func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
 	if _, err := p.ensureStarted(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	quiesced := false
-	if err := p.UpdateCLI(context.Background(), "1.0.92", func() error { quiesced = true; return nil }); err != nil {
+	if err := p.UpdateCLI(context.Background(), "1.0.92"); err != nil {
 		t.Fatalf("UpdateCLI: %v", err)
 	}
 	staged, _ := probed.Load().(string)
-	if !quiesced || staged == "" || strings.HasPrefix(staged, filepath.Dir(path)) {
-		t.Fatalf("quiesced %v, probed %q", quiesced, staged)
+	if staged == "" || strings.HasPrefix(staged, filepath.Dir(path)) {
+		t.Fatalf("probed %q", staged)
 	}
 	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging folder kept: %v", err)
@@ -491,8 +590,11 @@ func TestUpdateCLIReplacesAStandaloneBinary(t *testing.T) {
 	if entries, _ := os.ReadDir(filepath.Dir(path)); len(entries) != 1 {
 		t.Fatalf("files beside copilot: %v", entries)
 	}
-	if started, stopped, _ := fc.lifecycle(); started != 1 || stopped != 1 {
+	if started, stopped, _ := fc.lifecycle(); started != 1 || stopped != 0 {
 		t.Fatalf("running client started %d, stopped %d", started, stopped)
+	}
+	if err := p.RestartCLI(context.Background(), func() error { return nil }); err != nil {
+		t.Fatalf("RestartCLI: %v", err)
 	}
 	if _, err := p.ensureStarted(context.Background()); err != nil {
 		t.Fatal(err)
@@ -509,7 +611,7 @@ func TestUpdateCLIRefusesAnArchiveWithAWrongChecksum(t *testing.T) {
 	fakeReleases(t, "1.0.92", true)
 	p, _ := cliProvider(t)
 	probed := fakeProbe(t, &fakeClient{})
-	err := p.UpdateCLI(context.Background(), "1.0.92", func() error { t.Fatal("quiesced"); return nil })
+	err := p.UpdateCLI(context.Background(), "1.0.92")
 	if err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("UpdateCLI = %v", err)
 	}
