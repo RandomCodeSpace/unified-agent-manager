@@ -14,26 +14,31 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 )
 
-// cliFake is a fake provider whose CLI the tests update. Its update runs
-// quiesce, then installs the release, unless a test replaces it.
+// cliFake is a fake provider whose CLI the tests update. Its update
+// installs the release and leaves the running CLI outdated, unless a test
+// replaces it; its restart runs quiesce, then restarts an outdated CLI.
 type cliFake struct {
 	*agenttest.Provider
-	mu     sync.Mutex
-	rel    agentapi.CLIRelease
-	relErr error
-	update func(ctx context.Context, version string, quiesce func() error) error
-	tried  []string
+	mu       sync.Mutex
+	rel      agentapi.CLIRelease
+	relErr   error
+	update   func(ctx context.Context, version string) error
+	tried    []string
+	outdated bool
+	restarts int
+	// beforeQuiesce, when set, runs at the start of each restart.
+	beforeQuiesce func()
 }
 
 func newCLIFake(rel agentapi.CLIRelease) *cliFake {
 	caps := allCaps
 	caps.CLIUpdate = true
 	p := &cliFake{Provider: agenttest.NewProvider("fake", caps), rel: rel}
-	p.update = func(_ context.Context, version string, quiesce func() error) error {
-		if err := quiesce(); err != nil {
-			return err
-		}
+	p.update = func(_ context.Context, version string) error {
 		p.setRelease(agentapi.CLIRelease{Installed: version, Latest: version}, nil)
+		p.mu.Lock()
+		p.outdated = true
+		p.mu.Unlock()
 		return nil
 	}
 	return p
@@ -45,7 +50,7 @@ func (p *cliFake) setRelease(rel agentapi.CLIRelease, err error) {
 	p.rel, p.relErr = rel, err
 }
 
-func (p *cliFake) setUpdate(update func(ctx context.Context, version string, quiesce func() error) error) {
+func (p *cliFake) setUpdate(update func(ctx context.Context, version string) error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.update = update
@@ -63,12 +68,38 @@ func (p *cliFake) CLIRelease(context.Context) (agentapi.CLIRelease, error) {
 	return p.rel, p.relErr
 }
 
-func (p *cliFake) UpdateCLI(ctx context.Context, version string, quiesce func() error) error {
+func (p *cliFake) UpdateCLI(ctx context.Context, version string) error {
 	p.mu.Lock()
 	p.tried = append(p.tried, version)
 	update := p.update
 	p.mu.Unlock()
-	return update(ctx, version, quiesce)
+	return update(ctx, version)
+}
+
+func (p *cliFake) RestartCLI(_ context.Context, quiesce func() error) error {
+	p.mu.Lock()
+	outdated, before := p.outdated, p.beforeQuiesce
+	p.mu.Unlock()
+	if !outdated {
+		return nil
+	}
+	if before != nil {
+		before()
+	}
+	if err := quiesce(); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.outdated = false
+	p.restarts++
+	return nil
+}
+
+func (p *cliFake) restarted() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.restarts
 }
 
 func cliServer(t *testing.T, prov agentapi.Provider) (*Manager, *testServer, reqOpt) {
@@ -115,9 +146,9 @@ func waitCLI(t *testing.T, m *Manager, state string) ProviderCLI {
 	return cli
 }
 
-// An update offered in meta runs in the background, closes the idle Task's
-// conversation without changing its state, and leaves the new release
-// installed and no update offered.
+// An update offered in meta runs in the background, restarts the CLI at once
+// with no Task busy, closing the idle Task's conversation without changing
+// its state, and leaves the new release installed and no update offered.
 func TestCLIUpdateRunsAndClosesIdleConversations(t *testing.T) {
 	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
 	m, ts, auth := cliServer(t, prov)
@@ -133,9 +164,9 @@ func TestCLIUpdateRunsAndClosesIdleConversations(t *testing.T) {
 
 	release := make(chan struct{})
 	update := prov.update
-	prov.setUpdate(func(ctx context.Context, version string, quiesce func() error) error {
+	prov.setUpdate(func(ctx context.Context, version string) error {
 		<-release
-		return update(ctx, version, quiesce)
+		return update(ctx, version)
 	})
 	code, cli, body = cliCall(t, ts, auth, http.MethodPost, "/api/providers/fake/cli/update")
 	if code != http.StatusOK || cli.State != cliUpdating || cli.Target != "1.0.92" {
@@ -151,11 +182,11 @@ func TestCLIUpdateRunsAndClosesIdleConversations(t *testing.T) {
 		t.Fatalf("updates run = %q", got)
 	}
 	after := mustSummary(t, m, sum.ID)
-	if conv.Closes() != 1 || after.Open || after.State != before.State {
+	if prov.restarted() != 1 || conv.Closes() != 1 || after.Open || after.State != before.State {
 		t.Fatalf("idle Task after the update: closes %d, %+v (was %s)", conv.Closes(), after, before.State)
 	}
 	code, cli, body = cliCall(t, ts, auth, http.MethodGet, "/api/providers/fake/cli")
-	if code != http.StatusOK || cli.Installed != "1.0.92" || cli.UpdateAvailable || cli.State != cliUpdated || cli.Target != "1.0.92" || cli.Error != "" {
+	if code != http.StatusOK || cli.Installed != "1.0.92" || cli.Running != "" || cli.UpdateAvailable || cli.State != cliUpdated || cli.Target != "1.0.92" || cli.Error != "" {
 		t.Fatalf("GET after the update = %d %s", code, body)
 	}
 	if got := metaCLIUpdate(t, ts, auth); got != "" {
@@ -186,16 +217,6 @@ func TestCLIUpdateRefusals(t *testing.T) {
 			t.Fatalf("POST = %d %s", code, body)
 		}
 	})
-	t.Run("task working", func(t *testing.T) {
-		prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
-		m, ts, auth := cliServer(t, prov)
-		_, conv := createSession(t, m, prov.Provider)
-		conv.EmitTurn(agentapi.TurnWorking, "")
-		code, _, body := cliCall(t, ts, auth, http.MethodPost, "/api/providers/fake/cli/update")
-		if code != http.StatusConflict || !strings.Contains(body, "1 Fake fake task is working or waiting for an answer; update when it finishes") || len(prov.updates()) != 0 {
-			t.Fatalf("POST while working = %d %s, updates %q", code, body, prov.updates())
-		}
-	})
 	t.Run("check failed", func(t *testing.T) {
 		prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
 		_, ts, auth := cliServer(t, prov)
@@ -212,7 +233,7 @@ func TestCLIUpdateRefusals(t *testing.T) {
 // place and offers no update.
 func TestCLIUpdateFailedReadAfterInstall(t *testing.T) {
 	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
-	prov.setUpdate(func(context.Context, string, func() error) error {
+	prov.setUpdate(func(context.Context, string) error {
 		prov.setRelease(agentapi.CLIRelease{}, errors.New("npm view @github/copilot: network unreachable"))
 		return nil
 	})
@@ -228,30 +249,59 @@ func TestCLIUpdateFailedReadAfterInstall(t *testing.T) {
 	}
 }
 
-// A Task that starts working once the update runs keeps its conversation and
-// fails the update; an idle one is closed all the same.
-func TestCLIUpdateQuiesceRefusesAWorkingTask(t *testing.T) {
+// An update is accepted while a Task works: the release is installed, the
+// working Task keeps its conversation, and the CLI still runs the release
+// before it until the Task finishes; then it restarts.
+func TestCLIUpdateWhileATaskWorksRestartsOnceItFinishes(t *testing.T) {
+	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
+	m, ts, auth := cliServer(t, prov)
+	_, conv := createSession(t, m, prov.Provider)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if code, cli, body := cliCall(t, ts, auth, http.MethodPost, "/api/providers/fake/cli/update"); code != http.StatusOK || cli.State != cliUpdating {
+		t.Fatalf("POST while working = %d %s", code, body)
+	}
+	cli := waitCLI(t, m, cliUpdated)
+	if cli.Installed != "1.0.92" || cli.Running != "1.0.80" || cli.UpdateAvailable || cli.Error != "" {
+		t.Fatalf("after the install = %+v", cli)
+	}
+	if prov.restarted() != 0 || conv.Closes() != 0 {
+		t.Fatalf("working Task disturbed: restarts %d, closes %d", prov.restarted(), conv.Closes())
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the restart", func() bool { return prov.restarted() == 1 })
+	waitUntil(t, "the running release cleared", func() bool {
+		cli, _ := m.ProviderCLI(context.Background(), "fake", false)
+		return cli.Running == ""
+	})
+	if conv.Closes() != 1 {
+		t.Fatalf("closes after the restart = %d", conv.Closes())
+	}
+}
+
+// A Task that starts working between the busy check and the restart keeps
+// its conversation and holds the restart back; an idle one is closed all the
+// same. The restart happens once the Task finishes.
+func TestCLIRestartWaitsForATaskThatStartsWorking(t *testing.T) {
 	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
 	m, ts, auth := cliServer(t, prov)
 	_, idle := createSession(t, m, prov.Provider)
 	working, busy := createSession(t, m, prov.Provider)
-	ready := make(chan struct{})
-	update := prov.update
-	prov.setUpdate(func(ctx context.Context, version string, quiesce func() error) error {
-		<-ready
-		return update(ctx, version, quiesce)
-	})
+	var once sync.Once
+	prov.beforeQuiesce = func() { once.Do(func() { busy.EmitTurn(agentapi.TurnWorking, "") }) }
 	if code, _, body := cliCall(t, ts, auth, http.MethodPost, "/api/providers/fake/cli/update"); code != http.StatusOK {
 		t.Fatalf("POST = %d %s", code, body)
 	}
-	busy.EmitTurn(agentapi.TurnWorking, "")
-	close(ready)
-	cli := waitCLI(t, m, cliFailed)
-	if cli.Error != "1 Fake fake task is working or waiting for an answer; update when it finishes" || cli.Installed != "1.0.80" || !cli.UpdateAvailable {
-		t.Fatalf("refused update = %+v", cli)
+	cli := waitCLI(t, m, cliUpdated)
+	if cli.Installed != "1.0.92" || cli.Running != "1.0.80" || cli.Error != "" {
+		t.Fatalf("held-back restart = %+v", cli)
 	}
-	if idle.Closes() != 1 || busy.Closes() != 0 || !mustSummary(t, m, working.ID).Open {
-		t.Fatalf("closes: idle %d, working %d", idle.Closes(), busy.Closes())
+	if prov.restarted() != 0 || idle.Closes() != 1 || busy.Closes() != 0 || !mustSummary(t, m, working.ID).Open {
+		t.Fatalf("restarts %d, closes: idle %d, working %d", prov.restarted(), idle.Closes(), busy.Closes())
+	}
+	busy.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the restart", func() bool { return prov.restarted() == 1 })
+	if busy.Closes() != 1 {
+		t.Fatalf("working Task closes after the restart = %d", busy.Closes())
 	}
 }
 
@@ -259,7 +309,7 @@ func TestCLIUpdateQuiesceRefusesAWorkingTask(t *testing.T) {
 // not offered again; a newer one is.
 func TestCLIUpdateRemembersAnIncompatibleRelease(t *testing.T) {
 	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.95", Newer: true})
-	prov.setUpdate(func(context.Context, string, func() error) error {
+	prov.setUpdate(func(context.Context, string) error {
 		return fmt.Errorf("%w: SDK protocol version mismatch: SDK supports versions 3-3, but server reports version 4", agentapi.ErrCLIIncompatible)
 	})
 	m, ts, auth := cliServer(t, prov)

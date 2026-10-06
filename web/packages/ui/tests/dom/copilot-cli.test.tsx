@@ -49,11 +49,12 @@ describe('Copilot CLI version and update', () => {
     const group = await cli(user);
     await user.click(await group.findByRole('button', { name: 'Update to 1.0.92' }));
     expect(await group.findByText('Updating to 1.0.92…')).toBeTruthy();
-    expect(group.getByText('Open Copilot tasks reconnect when they are next used; new ones wait until the update finishes.')).toBeTruthy();
+    expect(group.getByText('Copilot tasks keep running; new ones use the current version until it restarts.')).toBeTruthy();
     expect(group.queryByRole('button', { name: 'Check again' })).toBeNull();
     expect(await group.findByText('Copilot CLI updated to 1.0.92.', {}, POLLED)).toBeTruthy();
     expect(group.getByText('1.0.92')).toBeTruthy();
     expect(group.getByText(/^Up to date/)).toBeTruthy();
+    expect(group.queryByText(/^Still running/)).toBeNull();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull());
     expect(screen.getByRole('button', { name: 'Settings' }).querySelector('.bg-warning')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Providers', description: NOTICE })).toBeNull();
@@ -78,12 +79,22 @@ describe('Copilot CLI version and update', () => {
     expect(group.queryByRole('button', { name: 'Update to 1.0.92' })).toBeNull();
   });
 
+  test('an update while a Task works installs it and says the CLI restarts once none is busy', async () => {
+    const { user } = renderApp('?cli=busy#settings');
+    const group = await cli(user);
+    await user.click(await group.findByRole('button', { name: 'Update to 1.0.92' }));
+    expect(await group.findByText('Copilot CLI updated to 1.0.92.', {}, POLLED)).toBeTruthy();
+    expect(group.getByText('1.0.92')).toBeTruthy();
+    expect(group.getByText('Still running 1.0.89; restarts when no Copilot task is working or waiting.')).toBeTruthy();
+    expect(group.queryByRole('button', { name: /^Update to/ })).toBeNull();
+  });
+
   test('a refused update shows the server message', async () => {
-    vi.spyOn(api, 'updateProviderCli').mockRejectedValue(new ApiError(409, '2 Copilot tasks are working or waiting for an answer; update when they finish'));
+    vi.spyOn(api, 'updateProviderCli').mockRejectedValue(new ApiError(409, 'no update of the GitHub Copilot CLI is available'));
     const { user } = renderApp('?cli=outdated#settings');
     const group = await cli(user);
     await user.click(await group.findByRole('button', { name: 'Update to 1.0.92' }));
-    expect((await group.findByRole('alert')).textContent).toBe('Could not update: 2 Copilot tasks are working or waiting for an answer; update when they finish');
+    expect((await group.findByRole('alert')).textContent).toBe('Could not update: no update of the GitHub Copilot CLI is available');
     expect(group.getByRole('button', { name: 'Update to 1.0.92' })).toBeTruthy();
   });
 

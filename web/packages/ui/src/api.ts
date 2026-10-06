@@ -289,8 +289,10 @@ export interface DeviceSignIn {
  * job. The server picks the update's target; `state` is `idle` until an update has started.
  */
 export interface ProviderCLI {
-  /** The version the runtime runs, e.g. "1.0.89"; may carry a prerelease suffix ("1.0.93-1"). */
+  /** The version installed, e.g. "1.0.89"; may carry a prerelease suffix ("1.0.93-1"). */
   installed?: string;
+  /** After an update, the older version the runtime still runs until no Copilot Task works or waits and it restarts. */
+  running?: string;
   /** The newest stable release. */
   latest?: string;
   /** `latest` is newer than `installed`, not `incompatible`, and nothing is `manual`. */

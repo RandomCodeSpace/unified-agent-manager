@@ -141,7 +141,7 @@ func (p *webProvider) restartClient(ctx context.Context) error {
 func (p *webProvider) detachLocked() sdkClient {
 	c := p.client
 	if c != nil {
-		p.client = nil
+		p.client, p.outdated = nil, false
 		close(p.stop)
 		p.stop = nil
 	}

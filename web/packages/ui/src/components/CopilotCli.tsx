@@ -25,10 +25,11 @@ function statusText(c: ProviderCLI): ReactNode {
 }
 
 /**
- * Settings → GitHub Copilot → Copilot CLI: the version the server runs and the newest release, read each time the
- * section opens and checked again on request. Update installs the release the server picked, one the SDK accepts; it
- * runs on the server and outlives the page, so one in progress is picked up on open and read again every 2 s until it
- * ends. The server refuses it while a Copilot Task is working or waiting for an answer, and says why.
+ * Settings → GitHub Copilot → Copilot CLI: the version installed on the server and the newest release, read each time
+ * the section opens and checked again on request. Update installs the release the server picked, one the SDK accepts;
+ * it runs on the server and outlives the page, so one in progress is picked up on open and read again every 2 s until
+ * it ends. Tasks keep running meanwhile: the server restarts the CLI onto the update once no Copilot Task is working or
+ * waiting, and the section keeps reading until it has.
  */
 export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
   const api = useApi();
@@ -77,10 +78,11 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
   }
   const polled = useEffectEvent(follow);
 
-  // Poll while the update runs; a hidden page skips its turns.
+  // Poll while the update runs or the restart onto it waits; a hidden page skips its turns.
   const updating = cli?.state === 'updating';
+  const restarting = !updating && !!cli?.running;
   useEffect(() => {
-    if (!updating) return;
+    if (!updating && !restarting) return;
     let current = true;
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
@@ -93,7 +95,7 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
       current = false;
       window.clearInterval(timer);
     };
-  }, [api, name, updating]);
+  }, [api, name, updating, restarting]);
 
   function check() {
     setChecking(true);
@@ -142,7 +144,8 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
           </div>
           <div role="status" className="flex flex-col gap-1">
             {status && <Note>{status}</Note>}
-            {updating && <Note>Open Copilot tasks reconnect when they are next used; new ones wait until the update finishes.</Note>}
+            {updating && <Note>Copilot tasks keep running; new ones use the current version until it restarts.</Note>}
+            {restarting && <Note>Still running {cli.running}; restarts when no Copilot task is working or waiting.</Note>}
             {!updating && cli.check_error && <Note className="[overflow-wrap:anywhere]">Could not check for a newer release: {cli.check_error}</Note>}
             {cli.manual && <Note className="[overflow-wrap:anywhere]">UAM cannot update it here: {cli.manual}</Note>}
           </div>

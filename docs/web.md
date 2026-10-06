@@ -206,13 +206,15 @@ An update first stages the release in a temporary folder, with npm or from the
 release archive for this platform checked against the release's
 `SHA256SUMS.txt`, and starts the Copilot SDK built into UAM on it. A release
 the SDK refuses is not installed: Settings says it needs a newer UAM and does
-not offer it again until the service restarts. Otherwise UAM closes the idle
-Copilot conversations (their Tasks keep their state and reopen when next
-viewed or sent to), stops Copilot, runs
-`npm install -g @github/copilot@<version>` or replaces the binary in place,
-and the next use starts the new CLI; starts wait while the install runs. While
-a Copilot Task is working or waiting for an answer, the update is refused; it
-never interrupts a Task.
+not offer it again until the service restarts. Otherwise UAM runs
+`npm install -g @github/copilot@<version>` or replaces the binary in place
+while Copilot keeps running: Tasks working or waiting are not interrupted,
+and new conversations keep using the running version. Only starting Copilot
+waits while the files are replaced. As soon as no Copilot Task is working or
+waiting, UAM closes the idle Copilot conversations (their Tasks keep their
+state and reopen when next viewed or sent to) and stops Copilot, and the next
+use starts the new version; until then Settings shows the version still
+running.
 
 **Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
 `GITHUB_TOKEN` (in that order) in the service's environment takes precedence
@@ -277,14 +279,16 @@ token refusal). `POST`
 answers 409 while an environment token takes precedence and 400 while Copilot
 Tasks have open conversations. The provider's `capabilities.device_sign_in` in
 `GET /api/meta` says whether it is offered. `GET /api/providers/copilot/cli`
-returns `{"installed"?, "latest"?, "update_available", "manual"?,
-"incompatible"?, "checked_at"?, "check_error"?, "state" ("idle", "updating",
-"updated" or "failed"), "target"?, "error"?}`, reading the releases first when
-none were read yet or with `?refresh=1`. `POST
+returns `{"installed"?, "running"?, "latest"?, "update_available",
+"manual"?, "incompatible"?, "checked_at"?, "check_error"?, "state" ("idle",
+"updating", "updated" or "failed"), "target"?, "error"?}`, reading the
+releases first when none were read yet or with `?refresh=1`; `installed` is
+the version on disk, and `running`, while set, the older one Copilot still runs
+until it restarts. `POST
 /api/providers/copilot/cli/update` starts the update to `latest` and returns
 the same shape in state `updating`, or the update in progress; it answers 409
-when no update is available, when `manual` says the CLI must be updated
-another way, and while a Copilot Task is working or waiting. While an update
+when no update is available and when `manual` says the CLI must be updated
+another way. While an update
 is available, `GET /api/meta` lists its release as the provider's
 `cli_update`; `capabilities.cli_update` says whether updates are offered. All
 need sign-in like other protected API routes. Sign-ins and sign-outs are logged without the token.

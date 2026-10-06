@@ -1,7 +1,8 @@
 // The in-browser fake's Copilot CLI version and update (Settings → Providers). By default the newest release is
 // installed; `?cli=outdated` runs 1.0.89 with 1.0.92 out, `?cli=manual` cannot update here, `?cli=incompatible` has
-// a newest release the SDK refused, `?cli=fail` ends an update failed and `?cli=hold` never finishes one. A read
-// 1 s after an update started ends it.
+// a newest release the SDK refused, `?cli=fail` ends an update failed, `?cli=hold` never finishes one and `?cli=busy`
+// ends one with a Task still working, so 1.0.89 keeps running until it restarts. A read 1 s after an update started
+// ends it.
 
 import type { Meta, ProviderCLI } from '../api';
 
@@ -18,6 +19,7 @@ function initial(mode: string | null): ProviderCLI {
     case 'outdated':
     case 'fail':
     case 'hold':
+    case 'busy':
       return outdated;
     case 'manual':
       return { ...outdated, update_available: false, manual: 'copilot at /usr/local/bin/copilot is not an npm global install; update it the way it was installed' };
@@ -47,7 +49,7 @@ export function cliMock(meta: Meta) {
       if (cli.state === 'updating' && mode !== 'hold' && Date.now() - began >= 1000) {
         if (mode === 'fail') cli = { ...cli, state: 'failed', error: `npm install -g @github/copilot@${cli.target} failed: EACCES: permission denied` };
         else {
-          cli = { ...cli, installed: cli.target, update_available: false, state: 'updated' };
+          cli = { ...cli, installed: cli.target, running: mode === 'busy' ? cli.installed : undefined, update_available: false, state: 'updated' };
           sync();
         }
       }
