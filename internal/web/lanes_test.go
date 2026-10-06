@@ -822,6 +822,60 @@ func TestLaneTipMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
 	}
 }
 
+// uam runs git merge in a checkout of the base only while that checkout is
+// still this repository's, with the base checked out at the tip uam
+// checked; otherwise it answers git_busy and merges nothing, as after the
+// owner switched branch, committed, or repointed the worktree.
+func TestMergeRefusesWhenTheCheckoutSwitchedBranch(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	tip := f.land(l, 1)
+	main := gitOutput(t, f.top, "rev-parse", "main")
+	refused := func(step string, merge func() error) {
+		t.Helper()
+		refs := f.refs()
+		_ = wantCode(t, merge(), codeGitBusy)
+		if f.refs() != refs {
+			t.Fatalf("%s: a refused merge moved a branch", step)
+		}
+		if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
+			t.Fatalf("%s: the owner's directory was left mid-merge", step)
+		}
+	}
+
+	gitIn(t, f.top, "switch", "-q", "-c", "owner")
+	refused("another branch", func() error {
+		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, "Merge plan")
+		return err
+	})
+
+	gitIn(t, f.top, "switch", "-q", "main")
+	commitFile(t, f.top, "c.txt", "owner\n")
+	refused("a newer tip", func() error {
+		_, err := f.r.mergeIn(f.ctx, f.top, "main", main, tip, "Merge plan")
+		return err
+	})
+
+	// A worktree with main checked out whose .git file names a clone that
+	// holds the same commits.
+	gitIn(t, f.top, "switch", "-q", "owner")
+	view, other := filepath.Join(t.TempDir(), "view"), filepath.Join(t.TempDir(), "other")
+	gitIn(t, f.top, "worktree", "add", "-q", view, "main")
+	gitIn(t, f.top, "clone", "-q", "-b", "main", f.top, other)
+	if err := os.WriteFile(filepath.Join(view, ".git"), []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	otherRefs := gitOutput(t, other, "for-each-ref")
+	refused("another repository", func() error {
+		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		return err
+	})
+	if gitOutput(t, other, "for-each-ref") != otherRefs {
+		t.Fatal("the merge moved a branch of the other repository")
+	}
+}
+
 func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	f := newLaneFixture(t)
 	main := gitOutput(t, f.top, "rev-parse", "main")

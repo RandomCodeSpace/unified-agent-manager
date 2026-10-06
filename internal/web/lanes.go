@@ -681,7 +681,7 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 			Message: fmt.Sprintf("%s is checked out in the lane %s; uam merges into it only where you have it checked out", displaytext.Sanitize(base), displaytext.Sanitize(dir))}
 	}
 	if dir != "" {
-		return r.mergeIn(ctx, dir, baseTip, tip, message)
+		return r.mergeIn(ctx, dir, base, baseTip, tip, message)
 	}
 	merged, err := r.commitTree(ctx, tree, message, baseTip, tip)
 	if err != nil {
@@ -702,7 +702,7 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 // unmerged paths. A merge it started and could not finish, for example
 // behind another git process's lock, is aborted, so dir is never left
 // mid-merge by uam.
-func (r *laneRepo) mergeIn(ctx context.Context, dir, baseTip, tip, message string) (string, error) {
+func (r *laneRepo) mergeIn(ctx context.Context, dir, base, baseTip, tip, message string) (string, error) {
 	if op, err := r.inProgress(ctx, dir); err != nil {
 		return "", err
 	} else if op != "" {
@@ -712,6 +712,9 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, baseTip, tip, message strin
 		return "", err
 	} else if len(files) > 0 {
 		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s has unmerged paths: %s; resolve and commit them first", displaytext.Sanitize(dir), fileList(files))}
+	}
+	if err := r.onBase(ctx, dir, base, baseTip); err != nil {
+		return "", err
 	}
 	_, mergeErr := runLaneGit(ctx, gitAt{dir: dir}, slices.Concat(pinnedMerge, []string{"--no-ff", "-m", message, tip})...)
 	if mergeErr == nil {
@@ -738,6 +741,29 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, baseTip, tip, message strin
 		return "", e
 	}
 	return "", gitFailed("git merge failed", mergeErr)
+}
+
+// onBase refuses git_busy, to retry later, unless the worktree at dir is
+// one of this repository's, by its common git directory, with base checked
+// out at baseTip: git merge goes into whatever dir has checked out.
+func (r *laneRepo) onBase(ctx context.Context, dir, base, baseTip string) error {
+	ref, code, stderr, err := runGit(ctx, r.git, dir, 4096, "symbolic-ref", "--quiet", "HEAD")
+	if err != nil {
+		return err
+	}
+	if code != 0 && code != 1 {
+		return newError(http.StatusBadGateway, "git symbolic-ref failed: %s", gitMessage(stderr))
+	}
+	out, err := r.output(ctx, dir, "rev-parse", "--path-format=absolute", "--git-common-dir", "HEAD^{commit}")
+	if err != nil {
+		return err
+	}
+	common, head, _ := strings.Cut(out, "\n")
+	if code == 0 && strings.TrimSpace(string(ref)) == "refs/heads/"+base && head == baseTip && realPath(common) == realPath(r.common) {
+		return nil
+	}
+	return &Error{Status: http.StatusConflict, Code: codeGitBusy,
+		Message: fmt.Sprintf("%s no longer has %s checked out at %s; uam merges once it is", displaytext.Sanitize(dir), displaytext.Sanitize(base), shortSHA(baseTip))}
 }
 
 // laneAt is where uam runs git in the lane l: its directory, with git pinned
