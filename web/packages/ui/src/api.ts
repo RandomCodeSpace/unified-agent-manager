@@ -1003,8 +1003,6 @@ export type OutlineItem = Pick<Item, 'id' | 'kind' | 'time' | 'text' | 'delivery
 export interface Subagent {
   preview?: string;
   result_summary?: string;
-  /** Utility-model summary of this completed result, when generation succeeded. */
-  summary?: string;
   id: string;
   /** Item id of the `task` tool call that started this subagent (a tool item's id is the provider tool call id). */
   parent_tool_call_id?: string;

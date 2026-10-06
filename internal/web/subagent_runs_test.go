@@ -163,11 +163,11 @@ func TestExportCountsSubagentRuns(t *testing.T) {
 	t0 := time.Now()
 	sa := &agentapi.Subagent{Name: "helper", Status: agentapi.SubagentCompleted}
 	tc := &agentapi.ToolCall{Name: "task", Status: agentapi.ToolCompleted}
-	if line := toolSummary(tc, sa, ""); strings.Contains(line, "runs") {
+	if line := toolSummary(tc, sa); strings.Contains(line, "runs") {
 		t.Fatalf("one run = %q", line)
 	}
 	sa.Runs = []agentapi.SubagentRun{run(t0, agentapi.SubagentCompleted, "spawn"), run(t0.Add(time.Minute), agentapi.SubagentCompleted, "agent")}
-	if line := toolSummary(tc, sa, ""); !strings.Contains(line, "· completed · 2 runs") {
+	if line := toolSummary(tc, sa); !strings.Contains(line, "· completed · 2 runs") {
 		t.Fatalf("two runs = %q", line)
 	}
 }

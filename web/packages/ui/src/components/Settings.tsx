@@ -766,7 +766,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               </div>
             ))}
           </Section>}
-          {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, subagent summaries, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
+          {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
             <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
           </Section>}
           {loaded && !catalogPending && <Section hidden={section !== 'models'} id="models" title="Models" help="Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.">

@@ -369,27 +369,14 @@ type TurnTiming struct {
 	GenerationMS int64 `json:"generation_ms,omitempty"`
 }
 
-// SubagentSummary is the latest generated line for one completed result.
-// ItemID and ItemAgentID identify its provider-owned source; Digest binds
-// the line to the bounded result text without storing that text again.
-type SubagentSummary struct {
-	AgentID         string `json:"agent_id"`
-	ItemID          string `json:"item_id"`
-	ItemAgentID     string `json:"item_agent_id,omitempty"`
-	Digest          string `json:"digest"`
-	LastAssistantID string `json:"last_assistant_id,omitempty"`
-	Text            string `json:"text"`
-}
-
 // WebState is the small durable part of a web session. Transcripts stay with
-// the provider; lifecycle metadata, request outcomes and short generated
-// summaries survive a service restart.
+// the provider; lifecycle metadata and request outcomes survive a service
+// restart.
 type WebState struct {
 	// Turn is the last known session state (for example "working" or
 	// "completed").
-	Turn              string            `json:"turn,omitempty"`
-	TurnTimings       []TurnTiming      `json:"turn_timings,omitempty"`
-	SubagentSummaries []SubagentSummary `json:"subagent_summaries,omitempty"`
+	Turn        string       `json:"turn,omitempty"`
+	TurnTimings []TurnTiming `json:"turn_timings,omitempty"`
 	// RequestID is the client-generated ID of the last prompt submission.
 	RequestID string `json:"request_id,omitempty"`
 	// RequestStatus is that submission's outcome: accepted, rejected or
@@ -454,8 +441,10 @@ func (w *WebState) Update(v WebState) {
 type webStateAlias WebState
 
 var knownWebStateFields = map[string]struct{}{
-	"turn":                {},
-	"turn_timings":        {},
+	"turn":         {},
+	"turn_timings": {},
+	// Retired: the generated subagent summaries of older versions. Known, so
+	// it is not kept as a newer version's field and drops on the next save.
 	"subagent_summaries":  {},
 	"request_id":          {},
 	"request_status":      {},

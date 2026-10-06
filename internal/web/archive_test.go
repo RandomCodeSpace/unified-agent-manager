@@ -1058,16 +1058,16 @@ func TestSubagentsWithoutARecordAndRouteFailures(t *testing.T) {
 }
 
 // The summary input kept for a subagent whose transcript is not retained is
-// its last message cut to maxSummaryInputRunes runes, unmarked.
+// its last message cut to maxSubagentTailRunes runes, unmarked.
 func TestUnretainedSubagentResultIsBounded(t *testing.T) {
 	record := archiveRecord(100)
-	long := strings.Repeat("é", maxSummaryInputRunes+10)
+	long := strings.Repeat("é", maxSubagentTailRunes+10)
 	record.Items[slices.IndexFunc(record.Items, func(it agentapi.Item) bool { return it.ID == "s-119" })].Text = long
 	m, _, _, sum := archivedTask(t, record, true)
 	m.mu.Lock()
 	got := m.sessions[sum.ID].subagentResult("s-119", "sa1")
 	m.mu.Unlock()
-	if got != strings.Repeat("é", maxSummaryInputRunes) {
+	if got != strings.Repeat("é", maxSubagentTailRunes) {
 		t.Fatalf("summary input = %d runes", len([]rune(got)))
 	}
 }

@@ -53,7 +53,7 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
 }
 
 /**
- * Settings → Background AI: UAM's own calls on the Utility model (titles, subagent summaries, planner jobs), today's
+ * Settings → Background AI: UAM's own calls on the Utility model (titles, suggested replies, planner jobs), today's
  * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. The log
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
