@@ -1,9 +1,11 @@
 import { AlertDialog as BaseAlertDialog } from '@base-ui/react/alert-dialog';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
+import { Popover as BasePopover } from '@base-ui/react/popover';
 import { X } from 'lucide-react';
 import { useRef, useState, type ComponentProps, type ReactNode, type RefObject } from 'react';
 import { cn } from '../../lib/cn';
 import { Button } from './button';
+import { popupClass as floatingClass } from './menu';
 import { PanelHead } from './panel';
 
 /**
@@ -148,8 +150,83 @@ export function useConfirm<T>() {
   };
 }
 
-/** Confirmation with the safe action focused first (DESIGN.md: initial focus on the least destructive button). */
-export function AlertDialog({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: Readonly<AlertDialogProps>) {
+/**
+ * The element whose activation asked for a confirmation: the last pointer, context-menu or
+ * keyboard target. A menu item's menu closes before the confirmation opens, so the menu's
+ * trigger stands for the item; a context menu's row (its `contextmenu` target) stays.
+ */
+let lastActivated: Element | null = null;
+function remember(target: EventTarget | null) {
+  if (!(target instanceof Element)) return;
+  const menu = target.closest('[role="menu"]');
+  if (!menu) {
+    lastActivated = target;
+    return;
+  }
+  const trigger = (menu.id && document.querySelector(`[aria-controls="${CSS.escape(menu.id)}"]`)) || document.querySelector('[aria-haspopup="menu"][aria-expanded="true"]');
+  if (trigger) lastActivated = trigger;
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', (e) => remember(e.target), true);
+  document.addEventListener('contextmenu', (e) => remember(e.target), true);
+  document.addEventListener('keydown', () => remember(document.activeElement), true);
+}
+
+/** Where a confirmation anchors: the last activated element while it is on screen and the screen is not a phone's, else nowhere (the centred dialog). */
+function confirmAnchor(): Element | null {
+  if (window.matchMedia('(width < 40rem)').matches) return null;
+  return lastActivated?.isConnected && lastActivated.getClientRects().length ? lastActivated : null;
+}
+
+/**
+ * Confirmation with the safe action focused first (DESIGN.md Confirmations: initial focus on
+ * the least destructive button). It opens beside the control that asked for it, so the pointer
+ * has nowhere to travel; on a phone, or when that control has left the screen, it is the
+ * centred dialog. The anchor is read once per opening and kept through the exit.
+ */
+export function AlertDialog(props: Readonly<AlertDialogProps>) {
+  const [anchor, setAnchor] = useState<Element | null | undefined>(undefined);
+  // The anchor is read as the dialog opens (state adjusted during render, so the first paint is in place).
+  const [wasOpen, setWasOpen] = useState(false);
+  if (props.open !== wasOpen) {
+    setWasOpen(props.open);
+    if (props.open) setAnchor(confirmAnchor());
+  }
+  const onClosed = () => {
+    setAnchor(undefined);
+    props.onClosed?.();
+  };
+  if (anchor === undefined) return null;
+  return anchor ? <AnchoredAlert {...props} anchor={anchor} onClosed={onClosed} /> : <CentredAlert {...props} onClosed={onClosed} />;
+}
+
+function AnchoredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel', anchor }: Readonly<AlertDialogProps & { anchor: Element }>) {
+  const cancel = useRef<HTMLButtonElement>(null);
+  return (
+    <BasePopover.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()} modal="trap-focus">
+      <BasePopover.Portal>
+        <BasePopover.Positioner anchor={anchor} side="bottom" align="end" sideOffset={6} collisionPadding={8} className="z-50 outline-hidden">
+          <BasePopover.Popup data-popup="" role="alertdialog" initialFocus={cancel} className={cn(floatingClass, 'flex w-max max-w-80 flex-col gap-1 p-3 text-ui text-body', className)}>
+            <BasePopover.Title className="text-ui font-medium text-ink">{title}</BasePopover.Title>
+            {description && <BasePopover.Description className="text-caption text-muted">{description}</BasePopover.Description>}
+            {children}
+            <div className="fade-rule mt-2" aria-hidden="true" />
+            <div className="mt-2 flex justify-end gap-2">
+              <BasePopover.Close render={<Button size="sm" variant="secondary" ref={cancel} />}>
+                {cancelLabel}
+              </BasePopover.Close>
+              <Button size="sm" variant={danger ? 'danger' : 'primary'} className={danger ? 'bg-sunken' : undefined} loading={busy} disabled={disabled} onClick={onConfirm}>
+                {confirmLabel}
+              </Button>
+            </div>
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
+  );
+}
+
+function CentredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: Readonly<AlertDialogProps>) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
     <BaseAlertDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>

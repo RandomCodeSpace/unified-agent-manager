@@ -1243,6 +1243,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             setChosen({ id: answering.interaction.id, choices });
             if (choices.length && answering.question.custom && text) updateText('', 0);
           }}
+          onAnswer={() => void sendAnswer()}
         />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (

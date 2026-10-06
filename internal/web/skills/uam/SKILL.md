@@ -23,7 +23,9 @@ a phone.
   its choices, and waits for an answer with no time limit. Put each option in
   `choices`, not in the question text; the owner often answers from a phone.
   List the one you recommend first, ending in "(Recommended)": the owner sees
-  it pre-selected.
+  it pre-selected. When several options may apply together, end the question
+  itself with "(Choose any that apply)": the owner then ticks any number of them
+  and you receive the chosen labels joined by ", ".
 - **Changes**: the owner's diff view. It opens on **This task**: the files
   you or your subagents edited with an edit tool, compared with `HEAD`.
   Files written by shell commands, or changed by another Task, show only

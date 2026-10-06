@@ -21,8 +21,8 @@ async function switchTo(id: string, title?: string) {
 }
 
 describe('answering from the composer', () => {
-  test('the question sits on the composer: an option is chosen there, another replaces it, choosing it again clears it', async () => {
-    const { user } = await openTask('t16');
+  test('the question sits on the composer: an option is chosen there, another replaces it, choosing it again answers with it', async () => {
+    const { user, mock } = await openTask('t16');
     expect(screen.queryByRole('group', { name: 'How should the retry be bounded?' })).toBeNull();
     expect(box().getByText('Needs answer')).toBeTruthy();
     expect(box().getByText('Pick a bound for the retry, or describe one')).toBeTruthy();
@@ -37,10 +37,23 @@ describe('answering from the composer', () => {
     await user.click(thrice);
     expect(once).toHaveProperty('checked', false);
     expect(thrice).toHaveProperty('checked', true);
+    expect(box().getByText('Click again to answer')).toBeTruthy();
+    expect(mock.received).toEqual([]);
     await user.click(thrice);
-    expect(thrice).toHaveProperty('checked', false);
-    expect(composer().placeholder).toBe('Type your answer…');
-    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['Retry up to 3 times']]);
+  });
+
+  test('a question that takes several says so, and its checkboxes toggle without sending', async () => {
+    const { user, mock } = await openTask('t19');
+    expect(box().getByText('Choose any that apply')).toBeTruthy();
+    expect(box().queryByText('Click again to answer')).toBeNull();
+    const arm = box().getByRole('checkbox', { name: 'linux/arm64' });
+    await user.click(arm);
+    await user.click(arm);
+    expect(arm).toHaveProperty('checked', false);
+    expect(mock.received).toEqual([]);
   });
 
   test('the action row reads Stop, Decline, Answer', async () => {
@@ -209,18 +222,19 @@ describe('a recommended option', () => {
     expect(mock.received[0].body.answers).toEqual([['yarn']]);
   });
 
-  test('cleared, it is not staged again', async () => {
-    const { user } = await openTask('t17');
+  test('one click on it sends it as offered', async () => {
+    const { user, mock } = await openTask('t17');
+    expect(box().getByText('Click again to answer')).toBeTruthy();
     await user.click(recommended());
-    expect(recommended()).toHaveProperty('checked', false);
-    await new Promise((r) => setTimeout(r, 400));
-    expect(recommended()).toHaveProperty('checked', false);
-    expect(answerButton().getAttribute('aria-disabled')).toBe('true');
+    await waitFor(() => expect(box().queryByRole('radio')).toBeNull());
+    expect(mock.received.map((r) => r.route)).toEqual(['answer']);
+    expect(mock.received[0].body.answers).toEqual([['pnpm (Recommended)']]);
   });
 
-  test('cleared, it is not staged again after a task switch', async () => {
+  test('cleared by typing, it is not staged again after a task switch', async () => {
     const { user } = await openTask('t17');
-    await user.click(recommended());
+    await user.type(composer(), 'x');
+    await user.keyboard('{Backspace}');
     expect(recommended()).toHaveProperty('checked', false);
     await switchTo('t4', 'Bump GitHub Actions pins');
     await switchTo('t17');

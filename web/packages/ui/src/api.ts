@@ -1093,6 +1093,11 @@ export interface HistoryPage extends Representation {
 /** `task`: files this Task's agent edited; `turn`: those of its latest turn; `workspace`: every uncommitted change; `session`: the provider's own record. */
 export type Scope = 'task' | 'turn' | 'workspace' | 'session';
 
+/** Scope the header counts and the Changes sheet open on: the provider's own diff when it has one, else the files this Task's agent edited. */
+export function defaultScope(s: SessionSummary): Scope {
+  return s.capabilities.session_diff ? 'session' : 'task';
+}
+
 export interface DiffStat {
   files: number;
   additions: number;

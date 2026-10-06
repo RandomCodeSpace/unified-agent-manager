@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
 import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
-import { LIVE, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
+import { LIVE, defaultScope, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
@@ -13,11 +13,6 @@ import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
-
-/** Scope the header counts: the provider's own diff when it has one, else the files this Task's agent edited. */
-export function defaultScope(s: SessionSummary): Scope {
-  return s.capabilities.session_diff ? 'session' : 'task';
-}
 
 /** A turn's "View changes": the files it edited, and whether it is the Task's latest turn; `at` tells two asks apart. */
 export interface ChangesTurn {

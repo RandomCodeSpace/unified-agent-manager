@@ -27,6 +27,22 @@ describe('messages', () => {
     expect(view.getByText('earlier-run.png')).toBeTruthy();
   });
 
+  test('a message ends in its foot: the copy glyph and its clock time, the full date in the tooltip', async () => {
+    await openTask('t3');
+    const bubble = log().getByText('Add a line to', { exact: false }).closest('[data-history-anchor]') as HTMLElement;
+    const time = within(bubble).getByRole('time') as HTMLTimeElement;
+    const at = new Date(time.dateTime);
+    expect(time.textContent).toBe(at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }));
+    expect(time.title).toBe(at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+    // The foot holds the copy button beside it, under the bubble.
+    const foot = time.parentElement!;
+    expect(within(foot).getByRole('button', { name: 'Copy message' })).toBeTruthy();
+    expect(bubble.querySelector('.bg-bubble')!.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Hover only: the row keeps its height and fades in with the pointer over the block.
+    expect(foot.className).toContain('opacity-0');
+    expect(foot.className).toContain('group-hover/copy:opacity-100');
+  });
+
   test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {
     const { user } = await openTask('t3');
     await user.type(composer(), 'first line{Shift>}{Enter}{/Shift}second line');

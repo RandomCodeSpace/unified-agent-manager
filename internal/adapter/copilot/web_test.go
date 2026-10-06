@@ -2463,3 +2463,48 @@ func TestWebStaleClientFailureKeepsConversations(t *testing.T) {
 		t.Fatalf("Send after a stale failure: %v", err)
 	}
 }
+
+// A question ending in "(Choose any that apply)" takes several answers: the marker marks
+// it and leaves the text, and the chosen labels reach the CLI joined, as free-form text.
+// Any other question still takes exactly one.
+func TestWebAskUserMultipleChoice(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	question := func(text string) *agentapi.Interaction {
+		for _, e := range slices.Backward(h.sink.all()) {
+			if e.Kind == agentapi.EventInteraction && e.Interaction.Kind == agentapi.InteractionQuestion && e.Interaction.Questions[0].Text == text {
+				return e.Interaction
+			}
+		}
+		return nil
+	}
+
+	d := askAsync(h.fs, copilot.UserInputRequest{Question: "Which targets? (Choose any that apply)", Choices: []string{"a", "b", "c"}})
+	waitFor(t, "multiple-choice question", func() bool { return question("Which targets?") != nil })
+	q := question("Which targets?")
+	if !q.Questions[0].Multiple || !q.Questions[0].Custom {
+		t.Fatalf("question = %+v", q.Questions[0])
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"a", "c"}}}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if r := <-d; r.err != nil || r.resp.Answer != "a, c" || !r.resp.WasFreeform {
+		t.Fatalf("reply = %+v, %v", r.resp, r.err)
+	}
+
+	d = askAsync(h.fs, copilot.UserInputRequest{Question: "Colour?", Choices: []string{"a", "b"}})
+	waitFor(t, "single-choice question", func() bool { return question("Colour?") != nil })
+	q = question("Colour?")
+	if q.Questions[0].Multiple {
+		t.Fatalf("question = %+v", q.Questions[0])
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"a", "b"}}}); err == nil {
+		t.Fatal("two answers to a single-choice question were accepted")
+	}
+	if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"b"}}}); err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	if r := <-d; r.err != nil || r.resp.Answer != "b" || r.resp.WasFreeform {
+		t.Fatalf("reply = %+v, %v", r.resp, r.err)
+	}
+}

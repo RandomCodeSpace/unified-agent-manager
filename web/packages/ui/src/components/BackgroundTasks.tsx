@@ -50,7 +50,8 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
       <Popover.Root>
         <Tip label={`Background tasks · ${status}`}>
           <Popover.Trigger render={<Button id="composer-background-tasks" size="sm" variant="subtle" aria-label={`Background tasks: ${status}`} className="px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" />}>
-            {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="text-faint" />}
+            {/* The glyph turns `accent` while any runs; the ring is the list's, on demand. */}
+            <Terminal aria-hidden="true" className={active ? 'text-accent' : 'text-faint'} />
             {active ? running : shown.tasks.length}
           </Popover.Trigger>
         </Tip>
