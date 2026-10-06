@@ -65,3 +65,35 @@ func TestUnassignMovesTheWholeBoard(t *testing.T) {
 		t.Fatalf("unassign of an empty Project = %d, %v", n, err)
 	}
 }
+
+// A removed Project's approvals and pauses are for its repository: the
+// cards leave them behind, and an epic moved into another Project carries
+// none.
+func TestUnassignDropsApproval(t *testing.T) {
+	f := newFixture(t)
+	f.must(f.s.SetProjectAcceptCmd(f.ctx, owner, proj, "go test ./..."))
+	epic, story, one, two := f.tree()
+	c, err := f.s.Approve(f.ctx, owner, epic.ID, RunSettings{Provider: "copilot", Model: "gpt-6-luna", Mode: "safe", Parallel: 2}, f.items(epic.ID, story.ID, one.ID, two.ID))
+	f.must(err)
+	if c.Run == nil {
+		t.Fatal("the epic was not approved")
+	}
+	_, err = f.s.Edit(f.ctx, owner, story.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+
+	_, err = f.s.Unassign(f.ctx, proj)
+	f.must(err)
+	if got := f.card(epic.ID); got.Run != nil || f.card(story.ID).Paused != "" {
+		t.Fatalf("unassigned: epic run %+v, story paused %q", got.Run, f.card(story.ID).Paused)
+	}
+	var runs int
+	f.must(f.s.db.QueryRow(`SELECT COUNT(*) FROM runs`).Scan(&runs))
+	if runs != 0 {
+		t.Fatalf("%d runs left after the unassign", runs)
+	}
+	res, err := f.s.Edit(f.ctx, owner, epic.ID, Patch{ProjectID: ptr("p2")})
+	f.must(err)
+	if res.Card.Run != nil || f.card(story.ID).Paused != "" {
+		t.Fatalf("moved into p2: %+v", res.Card)
+	}
+}
