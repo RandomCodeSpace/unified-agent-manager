@@ -115,7 +115,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     }
     const agent = inline ? byParent.get(item.id) : undefined;
     return agent ? (
-      <div key={item.id} className="overflow-hidden rounded-md bg-raised shadow-raised">
+      <div key={item.id} className="max-w-2xl overflow-hidden rounded-md bg-raised shadow-raised">
         <SubagentRow subagent={agent} tone={tones.get(agent.id)} anchor />
       </div>
     ) : null;
@@ -741,7 +741,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
 
   return (
     <div
-      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', className)}
+      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', foot && 'not-last:mb-3', className)}
       style={{ WebkitTouchCallout: 'none' }}
       onContextMenu={event => menuEvents(event)?.onContextMenu?.(event)}
       onTouchStart={event => menuEvents(event)?.onTouchStart?.(event)}
@@ -752,7 +752,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] -mt-1.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
