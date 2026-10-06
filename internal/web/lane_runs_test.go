@@ -414,6 +414,21 @@ func TestLaneEvidenceIsTheLaneOnly(t *testing.T) {
 	}
 }
 
+// A lane's change to test or build files does not hold its done request
+// (ADR 0006 §2 item 9): it lands at once, and the flag stays on the
+// accepted request in the card's JSON, for the owner to see.
+func TestLaneDoneRecordsTestsOrBuildChanged(t *testing.T) {
+	r := newLaneRun(t, "true", "Cover it")
+	task, l := r.start(0)
+	commitFile(t, l.dir, "x_test.go", "package x\n")
+	r.landed(task, 0)
+	reqs := r.card(r.leaves[0].ID).Requests
+	if len(reqs) != 1 || reqs[0].Status != board.RequestAccepted || reqs[0].DecidedBy != board.AuthorUAM ||
+		!slices.Equal(reqs[0].Flags, []string{board.FlagTestsOrBuildChanged}) {
+		t.Fatalf("the landed request = %+v", reqs)
+	}
+}
+
 // The owner's Accept of a lane's done request lands it as a job: 202, then
 // board_job frames; while the holder works it is refused.
 func TestOwnerAcceptLandsAsAJob(t *testing.T) {

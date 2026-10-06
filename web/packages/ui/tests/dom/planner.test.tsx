@@ -1114,6 +1114,27 @@ describe('parity with the service', () => {
     expect(await panel.findByText('Accepted automatically: the acceptance command passed')).toBeTruthy();
   });
 
+  test('a request accepted automatically still shows its tests-or-build flag, as a landed lane’s does', async () => {
+    const { user, tree } = await openPlanner();
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.endsWith('/api/board/cards/cp1-4'),
+      async (real) => {
+        const data = await (await real()).json();
+        const requests = data.requests.map((r: { kind: string }) => (r.kind === 'done' ? { ...r, flags: ['tests_or_build_changed'] } : r));
+        return reply(200, { ...data, requests });
+      },
+    );
+    try {
+      const panel = await openCard(user, tree, 4);
+      const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
+      const request = within(await trail.findByRole('article', { name: 'Done request on #4' }));
+      expect(request.getByText('Accepted automatically')).toBeTruthy();
+      expect(request.getByText('Tests or build files changed')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('Purge reports how many cards went', async () => {
     const { user } = await openPlanner();
     const menu = await openMenu(user, 'Planner actions');

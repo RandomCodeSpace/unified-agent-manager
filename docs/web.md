@@ -1343,7 +1343,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and the steps), runs the acceptance command there and lands the lane on
   the integration branch as one commit whose trailers name the card and the
   request: the card shows **Landing**, then **Landed** with the commit. A
-  change to test or build files is recorded, not held for you. A done
+  change to test or build files is flagged on its request, not held for you. A done
   request that waits for you (nothing changed, or the command could not run
   or outran its time limit) lands when you Accept it, as a job whose
   progress shows on the request; when the integration branch moved since the
