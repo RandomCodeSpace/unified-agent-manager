@@ -1070,8 +1070,8 @@ func (r *laneRepo) abortOwnMerge(ctx context.Context, l lane) error {
 	if err != nil {
 		return err
 	}
-	msg, err := os.ReadFile(paths[0]) // #nosec G304 -- a path git names inside its own directory.
-	if err != nil || !strings.Contains(string(msg), "\n"+trailerMerge+": ") {
+	msg, err := readGitFile(paths[0])
+	if err != nil || !strings.Contains(msg, "\n"+trailerMerge+": ") {
 		return nil
 	}
 	if _, err := runLaneGit(ctx, a, "merge", "--abort"); err != nil {

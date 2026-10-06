@@ -95,14 +95,14 @@ func (a gitAt) argv(args ...string) []string {
 // a base branch, at a: runGitWrite with hooks and fsmonitor off, as runGit
 // has them, and every hook the configuration at a defines turned off too
 // (see hooksOff), so uam's unattended writes run no hook the repository's
-// configuration names. The owner's own Commit, Pull and Push run the
-// repository's hooks.
+// configuration names. They never recurse into submodules either. The
+// owner's own Commit, Pull and Push run the repository's hooks.
 func runLaneGit(ctx context.Context, a gitAt, args ...string) (string, error) {
 	env, err := hooksOff(ctx, a)
 	if err != nil {
 		return "", err
 	}
-	return runGitWriteEnv(ctx, a.dir, nil, env, append(slices.Clone(gitBase), a.argv(args...)...)...)
+	return runGitWriteEnv(ctx, a.dir, nil, env, slices.Concat(gitBase, []string{"-c", "submodule.recurse=false"}, a.argv(args...))...)
 }
 
 // hooksOff is the environment that turns off, for one git command at a,
@@ -1033,14 +1033,14 @@ func (r *laneRepo) startedFrom(ctx context.Context, dir, branch string) (bool, e
 		return false, err
 	}
 	for _, path := range paths {
-		name, err := os.ReadFile(path) // #nosec G304 G703 -- a path git names inside its own directory.
+		name, err := readGitFile(path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return false, err
 		}
-		if strings.TrimPrefix(strings.TrimSpace(string(name)), "refs/heads/") == branch {
+		if strings.TrimPrefix(strings.TrimSpace(name), "refs/heads/") == branch {
 			return true, nil
 		}
 	}

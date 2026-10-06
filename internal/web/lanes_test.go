@@ -1091,6 +1091,89 @@ func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	}
 }
 
+// uam's git writes never recurse into submodules, whatever
+// submodule.recurse says: aborting its own merge in the owner's checkout
+// leaves the owner's submodule where the owner moved it.
+func TestUamGitRecursesIntoNoSubmodule(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	tip := f.land(l, 1)
+	lib := branchRepo(t)
+	first := gitOutput(t, lib, "rev-parse", "HEAD")
+	moved := commitFile(t, lib, "s.txt", "two\n")
+	gitIn(t, f.top, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib")
+	sub := filepath.Join(f.top, "lib")
+	gitIn(t, sub, "checkout", "-q", first)
+	gitIn(t, f.top, "add", "lib")
+	gitIn(t, f.top, "commit", "-q", "-m", "add lib")
+	gitIn(t, sub, "checkout", "-q", moved)
+	gitIn(t, f.top, "config", "submodule.recurse", "true")
+
+	gitIn(t, f.top, "merge", "-q", "--no-commit", "--no-ff", "-m", "Merge plan", tip)
+	if err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutput(t, sub, "rev-parse", "HEAD"); got != moved {
+		t.Fatalf("the owner's submodule is at %s, want %s where the owner moved it", got, moved)
+	}
+}
+
+// fifo replaces the file at path with a FIFO; at the end of the test it
+// frees a reader blocked on it.
+func fifo(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if w, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = w.Close()
+		}
+	})
+}
+
+// The files git keeps that uam reads, a rebase's head-name and a lane's
+// MERGE_MSG, are read only as regular files: a FIFO there holds nothing
+// up, and nothing is decided from it.
+func TestLaneGitFilesThatAreNoRegularFile(t *testing.T) {
+	f := newLaneFixture(t)
+	view := filepath.Join(t.TempDir(), "view")
+	gitIn(t, f.top, "worktree", "add", "-q", "--detach", view, "main")
+	headName := gitOutput(t, view, "rev-parse", "--path-format=absolute", "--git-path", "rebase-merge/head-name")
+	fifo(t, headName)
+	var err error
+	done := make(chan struct{})
+	go func() { _, err = f.r.checkedOut(f.ctx, "main"); close(done) }()
+	within(t, "checkedOut to read a FIFO", done)
+	if err == nil {
+		t.Fatal("checkedOut read a FIFO as a rebase's head-name")
+	}
+	if err := os.RemoveAll(filepath.Dir(headName)); err != nil {
+		t.Fatal(err)
+	}
+
+	l := f.start(1)
+	other := f.start(2)
+	commitFile(t, other.dir, "b.txt", "other\n")
+	tip := f.land(other, 2)
+	gitIn(t, l.dir, "merge", "-q", "--no-commit", "--no-ff", "-m", "Merge plan\n\n"+trailerMerge+": "+tip, tip)
+	msg := gitOutput(t, l.dir, "rev-parse", "--path-format=absolute", "--git-path", "MERGE_MSG")
+	fifo(t, msg)
+	done = make(chan struct{})
+	go func() { _ = f.r.abortOwnMerge(f.ctx, l); close(done) }()
+	within(t, "abortOwnMerge to read a FIFO", done)
+	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: l.dir}); !merging {
+		t.Fatal("a merge whose MERGE_MSG is a FIFO was aborted as uam's")
+	}
+}
+
 func TestLaneBranchMidRebaseOrBisectCountsAsCheckedOut(t *testing.T) {
 	f := newLaneFixture(t)
 	tip := f.tip()
