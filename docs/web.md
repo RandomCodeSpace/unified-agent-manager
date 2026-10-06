@@ -1400,10 +1400,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   action runs there, a Task there works, another git program holds a lock
   the merge needs, or the merge would overwrite a change you have not
   committed, it waits ("Merge waiting" and the reason beside the branch)
-  and uam tries again after 1, 2, 4, 8, then every 15 minutes. A base branch checked out nowhere just moves. uam's merge does
+  and uam tries again after 1, 2, 4, 8, then every 15 minutes. It also
+  waits while the base branch is checked out in more than one worktree,
+  and when, right before the merge, that checkout no longer has the base
+  branch at the commit uam checked. A base branch checked out nowhere just moves. uam's merge does
   not run repository hooks, wherever the base branch is, and does not sign
   the merge commit: it runs unattended, and an agent can change the
-  repository's configuration. A merge that
+  repository's configuration. For the same reason it is always a real
+  merge commit by git's default strategy that never stashes your changes,
+  whatever the repository's merge settings say; a merge uam starts and
+  cannot finish is aborted, but a merge you started never is. A commit on
+  the integration branch that uam did not make, anything but its landings,
+  its reverts and its merges of the base branch, blocks the merge, and the
+  epic's comment names it. A lane that merged the base branch lands only
+  its own work, as uam brings the base's commits onto the integration
+  branch first, so a later Revert keeps your base commits. A merge that
   conflicts, or fails otherwise, shows "Merge blocked" and waits until
   either branch moves or you choose **Retry merge**; resolve it in
   Terminal, or revert the subtask it conflicts with. Once the base branch
