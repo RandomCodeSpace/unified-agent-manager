@@ -263,7 +263,14 @@ func wantCode(t *testing.T, err error, code Code) {
 // refs, in that order.
 func wantUnconfirmed(t *testing.T, err error, refs ...string) {
 	t.Helper()
-	wantCode(t, err, CodeUnconfirmed)
+	wantRefusal(t, err, CodeUnconfirmed, refs...)
+}
+
+// wantRefusal checks that err is a refusal with code about refs, in that
+// order.
+func wantRefusal(t *testing.T, err error, code Code, refs ...string) {
+	t.Helper()
+	wantCode(t, err, code)
 	var e *Error
 	if !errors.As(err, &e) || !slices.Equal(e.Refs, refs) {
 		t.Fatalf("refusal %v refs = %v, want %v", err, e.Refs, refs)

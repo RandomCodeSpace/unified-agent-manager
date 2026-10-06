@@ -683,6 +683,47 @@ func TestSplitIntoSiblings(t *testing.T) {
 	}
 }
 
+// A split into siblings copies the original's links to every part, both
+// ways, so its dependents keep waiting and its parts wait on its blockers. A
+// dependent that has started is not linked to the parts, and the result
+// names it. The owner's splits copy links too.
+func TestSplitIntoSiblingsCopiesLinks(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	mid := f.create(owner, story.ID, KindSubtask, "Mid")
+	after := f.create(owner, story.ID, KindSubtask, "After")
+	for _, l := range [][2]string{{one.ID, mid.ID}, {mid.ID, after.ID}, {mid.ID, two.ID}} {
+		f.must(f.s.Link(f.ctx, owner, l[0], l[1]))
+	}
+	f.launch(two.ID, "worker") // decision 6: started while it waits
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	res, err := f.s.Split(f.ctx, Agent("planner", ""), mid.ID, []SplitChild{{Title: "Mid a"}, {Title: "Mid b"}})
+	f.must(err)
+	if res.Card.Status != StatusCancelled || len(res.NotLinked) != 1 || res.NotLinked[0].ID != two.ID {
+		t.Fatalf("split = %+v", res)
+	}
+	kids := f.children(story.ID)
+	parts := kids[3:5]
+	for _, p := range parts {
+		if !strings.HasPrefix(p.Title, "Mid ") || !slices.Equal(p.BlockedBy, []string{one.ID}) || !slices.Equal(p.Blocks, []string{after.ID}) {
+			t.Fatalf("part %+v", p)
+		}
+	}
+	if got := f.card(after.ID).BlockedBy; !slices.Equal(got, []string{mid.ID, parts[0].ID, parts[1].ID}) {
+		t.Fatalf("after waits on %v", got)
+	}
+	if got := f.card(two.ID).BlockedBy; !slices.Equal(got, []string{mid.ID}) {
+		t.Fatalf("the started dependent waits on %v", got)
+	}
+	_, err = f.s.CheckFinishable(f.ctx, owner, after.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	res, err = f.s.Split(f.ctx, owner, after.ID, []SplitChild{{Title: "After a"}})
+	f.must(err)
+	if part := f.children(story.ID)[6]; part.Title != "After a" || !slices.Equal(part.BlockedBy, []string{mid.ID, parts[0].ID, parts[1].ID}) || len(res.NotLinked) != 0 {
+		t.Fatalf("owner's part %+v", part)
+	}
+}
+
 // A held subtask under a story splits by request; once it is released,
 // accepting it makes the siblings, accepts the ticked one and cancels the
 // original.

@@ -138,7 +138,7 @@ func (s *Store) Create(ctx context.Context, a Actor, in NewCard) (Card, error) {
 			return errReadOnly
 		}
 		var id string
-		err := t.mutate(project, true, func() error {
+		err := t.mutate(a, project, true, func() error {
 			n, err := t.create(a, project, parentID, in)
 			if n != nil {
 				id = n.ID
@@ -216,8 +216,8 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 }
 
 // caps refuses an agent write that would take its Task past a cap: created
-// more cards to create, and unconfirmed more live unconfirmed children of
-// parentID. Subagents count against their Task.
+// more live cards to create, and unconfirmed more live unconfirmed children
+// of parentID. Subagents count against their Task.
 func (t *txn) caps(o *outline, a Actor, parentID string, created, unconfirmed int) error {
 	if a.owner() {
 		return nil
@@ -225,11 +225,11 @@ func (t *txn) caps(o *outline, a Actor, parentID string, created, unconfirmed in
 	author := a.author()
 	if created > 0 {
 		var count int
-		if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM cards WHERE created_by = ?`, author).Scan(&count); err != nil {
+		if err := t.tx.QueryRowContext(t.ctx, `SELECT COUNT(*) FROM cards WHERE created_by = ? AND status <> 'cancelled'`, author).Scan(&count); err != nil {
 			return fmt.Errorf("board: count created cards: %w", err)
 		}
 		if count+created > CapCreated {
-			return refuse(CodeLimit, "the Task may create at most %d cards", CapCreated)
+			return refuse(CodeLimit, "the Task may have at most %d live cards it created; deleted and expired ones don't count", CapCreated)
 		}
 	}
 	if unconfirmed > 0 {
@@ -280,7 +280,7 @@ func (s *Store) Edit(ctx context.Context, a Actor, ref string, p Patch) (EditRes
 		} else if project == "" {
 			return errReadOnly
 		}
-		err = t.mutate(target, true, func() error {
+		err = t.mutate(a, target, true, func() error {
 			if target != project {
 				return t.moveIn(a, project, id, target, p)
 			}
@@ -571,7 +571,7 @@ func (s *Store) Checklist(ctx context.Context, a Actor, ref string, e ChecklistE
 		if project == "" {
 			return errReadOnly
 		}
-		err = t.mutate(project, true, func() error {
+		err = t.mutate(a, project, true, func() error {
 			o, n, err := t.cardIn(project, id)
 			if err != nil {
 				return err
@@ -633,7 +633,7 @@ func (s *Store) Confirm(ctx context.Context, a Actor, ref string) (Card, error) 
 	if err := permit(a, opConfirm, ""); err != nil {
 		return Card{}, err
 	}
-	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.stored == StatusCancelled {
 			return invalid("%s is cancelled; restore it instead", n.ref())
 		}
@@ -644,9 +644,10 @@ func (s *Store) Confirm(ctx context.Context, a Actor, ref string) (Card, error) 
 	})
 }
 
-// ownerWrite runs fn on the card ref inside one sweeping, settling write to
-// its Project, refusing Unassigned cards, and returns the card afterwards.
-func (s *Store) ownerWrite(ctx context.Context, ref string, fn func(*txn, *outline, *node) error) (Card, error) {
+// ownerWrite runs fn on the card ref inside one sweeping, settling write by
+// a to its Project, refusing Unassigned cards, and returns the card
+// afterwards.
+func (s *Store) ownerWrite(ctx context.Context, a Actor, ref string, fn func(*txn, *outline, *node) error) (Card, error) {
 	var out Card
 	changes, err := s.write(ctx, func(t *txn) error {
 		project, id, err := t.locate(ref)
@@ -656,7 +657,7 @@ func (s *Store) ownerWrite(ctx context.Context, ref string, fn func(*txn, *outli
 		if project == "" {
 			return errReadOnly
 		}
-		err = t.mutate(project, true, func() error {
+		err = t.mutate(a, project, true, func() error {
 			o, n, err := t.cardIn(project, id)
 			if err != nil {
 				return err

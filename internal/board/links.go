@@ -14,7 +14,8 @@ import (
 // a proposal, since dependencies are part of planning and only starting work
 // needs the owner's confirmation. Self links, duplicates and links that
 // would close a cycle are refused. Agents may link a blocked card in their
-// scope (inScope), which includes the epics a Task proposed.
+// scope (inScope), which includes the epics a Task proposed, unless it is a
+// container with work started under it (startedWork).
 func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string) error {
 	if err := permit(a, opLink, ""); err != nil {
 		return err
@@ -27,13 +28,18 @@ func (s *Store) Link(ctx context.Context, a Actor, blockerRef, blockedRef string
 		if project == "" {
 			return errReadOnly
 		}
-		return t.mutate(project, true, func() error {
+		return t.mutate(a, project, true, func() error {
 			o, blocked, err := t.cardIn(project, id)
 			if err != nil {
 				return err
 			}
 			if err := t.inScope(o, a, blocked); err != nil {
 				return err
+			}
+			if !a.owner() {
+				if err := o.startedWork(blocked); err != nil {
+					return err
+				}
 			}
 			blocker, err := t.blocker(o, blocked, blockerRef)
 			if err != nil {
@@ -155,8 +161,9 @@ func (t *txn) link(o *outline, blocker, blocked *node) error {
 }
 
 // Unlink removes the link between two cards, whichever way it points. An
-// agent unlinks where it may link: the blocked card is in its scope. Neither
-// card may have started (lock.go).
+// agent unlinks where it may link: the blocked card is in its scope, and no
+// container with work started under it. Neither card may have started
+// (lock.go).
 func (s *Store) Unlink(ctx context.Context, a Actor, aRef, bRef string) error {
 	if err := permit(a, opUnlink, ""); err != nil {
 		return err
@@ -193,6 +200,9 @@ func (s *Store) Unlink(ctx context.Context, a Actor, aRef, bRef string) error {
 				o, blocked = oa, x
 			}
 			if err := t.inScope(o, a, blocked); err != nil {
+				return err
+			}
+			if err := o.startedWork(blocked); err != nil {
 				return err
 			}
 		}

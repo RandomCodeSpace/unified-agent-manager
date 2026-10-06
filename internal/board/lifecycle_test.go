@@ -615,3 +615,174 @@ func TestDoneContainerWithdrawsRequests(t *testing.T) {
 	_, err = f.s.Accept(f.ctx, owner, r.ID, "")
 	wantCode(t, err, CodeInvalid)
 }
+
+// An agent deletes a card in its reach, confirmed or not, with everything
+// under it: one cascade, stamped by its Task, that the owner can restore. A
+// card out of its reach is forbidden; dismissing is the owner's, and
+// deleting the agents'.
+func TestAgentDeletesInReach(t *testing.T) {
+	f := newFixture(t)
+	free := Agent("free", "sub-1")
+	epic := f.create(free, "", KindEpic, "Mine")
+	story := f.create(free, epic.ID, KindStory, "Story")
+	one := f.create(free, story.ID, KindSubtask, "One")
+	two := f.create(free, story.ID, KindSubtask, "Two")
+	_, err := f.s.Confirm(f.ctx, owner, one.ID)
+	f.must(err)
+	_, err = f.s.Delete(f.ctx, Actor{Role: RoleAgent, TaskID: "free", Proposals: true}, epic.ID)
+	wantCode(t, err, CodeForbidden) // an agent limited to proposals
+	res, err := f.s.Delete(f.ctx, free, epic.ID)
+	f.must(err)
+	if res.Card.ID != epic.ID || res.Card.Status != StatusCancelled || len(res.Released) != 0 {
+		t.Fatalf("delete = %+v", res)
+	}
+	cascade := f.card(epic.ID).CascadeID
+	for _, c := range []Card{epic, story, one, two} {
+		got := f.card(c.ID)
+		if got.Status != StatusCancelled || cascade == "" || got.CascadeID != cascade || !hasComment(f.comments(c.ID), "task:free: deleted") {
+			t.Fatalf("%s after the delete = %+v, %q", c.Title, got, f.comments(c.ID))
+		}
+	}
+	_, err = f.s.Delete(f.ctx, free, epic.ID)
+	wantCode(t, err, CodeInvalid)
+	_, err = f.s.Restore(f.ctx, owner, epic.ID, "keep it")
+	f.must(err)
+	for _, c := range []Card{epic, story, one, two} {
+		if got := f.card(c.ID); got.Status != StatusPlanned || !got.Confirmed() {
+			t.Fatalf("%s after the restore = %+v", c.Title, got)
+		}
+	}
+	theirs := f.create(owner, "", KindEpic, "Theirs")
+	_, err = f.s.Delete(f.ctx, free, theirs.ID)
+	wantCode(t, err, CodeForbidden)
+	proposed := f.create(free, epic.ID, KindStory, "Proposed")
+	_, err = f.s.Dismiss(f.ctx, free, proposed.ID)
+	wantCode(t, err, CodeForbidden)
+	_, err = f.s.Delete(f.ctx, owner, proposed.ID)
+	wantCode(t, err, CodeForbidden)
+}
+
+// Nothing that has started is deleted: the subtask in progress, the story
+// and epic over it, and a done subtask and its story.
+func TestAgentDeleteRefusedWithStartedUnder(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	f.launch(one.ID, "worker")
+	refused := func(a Actor, refs ...string) {
+		t.Helper()
+		before := f.revision()
+		for _, ref := range refs {
+			_, err := f.s.Delete(f.ctx, a, ref)
+			wantCode(t, err, CodeInProgress)
+		}
+		if after := f.revision(); after != before {
+			t.Fatalf("refused deletes moved the revision from %d to %d", before, after)
+		}
+	}
+	refused(planner, one.ID, story.ID, epic.ID)
+	refused(Agent("worker", ""), one.ID, story.ID)
+	_, err := f.s.ReleaseHold(f.ctx, owner, one.ID, ReleaseOwner, "")
+	f.must(err)
+	_, err = f.s.SetStatus(f.ctx, owner, one.ID, StatusDone, "shipped", false)
+	f.must(err)
+	refused(planner, one.ID, story.ID, epic.ID)
+}
+
+// A card that started work waits on, directly or through its story, stays:
+// deleting it would release that work. A card under the blocker that
+// leaves the blocker open goes.
+func TestAgentDeleteRefusedWhenAStartedCardWaitsOnIt(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	f.must(f.s.Link(f.ctx, owner, one.ID, two.ID))
+	f.launch(two.ID, "worker") // decision 6: started while it waits
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	_, err := f.s.Delete(f.ctx, planner, one.ID)
+	wantRefusal(t, err, CodeInProgress, two.ref())
+	if !strings.Contains(err.Error(), fmt.Sprintf("%s has started and waits on %s", two.ref(), one.ref())) {
+		t.Fatalf("refusal = %v", err)
+	}
+	other := f.create(owner, epic.ID, KindStory, "Other")
+	first := f.create(owner, other.ID, KindSubtask, "Other one")
+	f.create(owner, other.ID, KindSubtask, "Other two")
+	f.must(f.s.Link(f.ctx, owner, other.ID, story.ID))
+	_, err = f.s.Delete(f.ctx, planner, other.ID)
+	wantRefusal(t, err, CodeInProgress, two.ref())
+	if !strings.Contains(err.Error(), fmt.Sprintf("waits on %s (via its story %s)", other.ref(), story.ref())) {
+		t.Fatalf("refusal = %v", err)
+	}
+	_, err = f.s.Delete(f.ctx, planner, first.ID)
+	f.must(err)
+}
+
+// A delete closes no card but its own subtree: deleting the last
+// unfinished confirmed subtask of a story whose others are done, or a
+// story's only confirmed subtask, is refused, naming what it would close.
+// Deleting the story itself is allowed, and a proposal never counts.
+func TestAgentDeleteNeverClosesAnotherContainer(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	three := f.create(owner, story.ID, KindSubtask, "Three")
+	for _, c := range []Card{one, two} {
+		_, err := f.s.SetStatus(f.ctx, owner, c.ID, StatusDone, "shipped", false)
+		f.must(err)
+	}
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	_, err := f.s.Delete(f.ctx, planner, three.ID)
+	wantRefusal(t, err, CodeInvalid, story.ref(), epic.ref())
+	if !strings.Contains(err.Error(), fmt.Sprintf("would make %s done, %s done", story.ref(), epic.ref())) {
+		t.Fatalf("refusal = %v", err)
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	lone := f.create(owner, epic.ID, KindStory, "Lone")
+	only := f.create(owner, lone.ID, KindSubtask, "Only")
+	_, err = f.s.Delete(f.ctx, planner, only.ID)
+	wantRefusal(t, err, CodeInvalid, lone.ref())
+	res, err := f.s.Delete(f.ctx, planner, lone.ID)
+	f.must(err)
+	if res.Card.Status != StatusCancelled || f.card(only.ID).Status != StatusCancelled {
+		t.Fatalf("delete of the story = %+v", res)
+	}
+	wantStatus(t, f.card(epic.ID), StatusDoing)
+	proposed := f.create(planner, story.ID, KindSubtask, "Proposed")
+	_, err = f.s.Delete(f.ctx, planner, proposed.ID)
+	f.must(err)
+	wantStatus(t, f.card(story.ID), StatusDoing)
+}
+
+// A deleted blocker releases what waited on it, and the result names it;
+// restoring the blocker holds it back again.
+func TestDeletedBlockerReleasesDependents(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	after := f.create(owner, epic.ID, KindStory, "After")
+	f.create(owner, after.ID, KindSubtask, "After one")
+	f.must(f.s.Link(f.ctx, owner, one.ID, two.ID))
+	f.must(f.s.Link(f.ctx, owner, story.ID, after.ID))
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	planner := Agent("planner", "")
+	_, err := f.s.CheckFinishable(f.ctx, owner, two.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	res, err := f.s.Delete(f.ctx, planner, one.ID)
+	f.must(err)
+	if len(res.Released) != 1 || res.Released[0].ID != two.ID {
+		t.Fatalf("released = %+v", res.Released)
+	}
+	if _, err := f.s.CheckFinishable(f.ctx, owner, two.ID); err != nil {
+		t.Fatalf("after the delete: %v", err)
+	}
+	_, err = f.s.Restore(f.ctx, owner, one.ID, "back")
+	f.must(err)
+	_, err = f.s.CheckFinishable(f.ctx, owner, two.ID)
+	wantCode(t, err, CodeGuardBlockers)
+	// A story releases the stories it blocked.
+	res, err = f.s.Delete(f.ctx, planner, story.ID)
+	f.must(err)
+	if len(res.Released) != 1 || res.Released[0].ID != after.ID {
+		t.Fatalf("released = %+v", res.Released)
+	}
+}

@@ -197,14 +197,16 @@ func TestAgentRootEpics(t *testing.T) {
 			t.Fatalf("%s under the swept epic = %+v", c.Title, c)
 		}
 	}
-	// And they count toward the created cap: with nothing left to confirm,
-	// the Task's 21st card is refused.
-	for i := range CapCreated - 12 {
-		f.create(free, "", KindEpic, fmt.Sprintf("Late %d", i))
+	// Expired, they give their places under the created cap back: of the
+	// Task's 12 cards only the confirmed epic still counts.
+	for i := range CapCreated - 1 {
+		c := f.create(free, "", KindEpic, fmt.Sprintf("Late %d", i))
+		_, err := f.s.Confirm(f.ctx, owner, c.ID)
+		f.must(err)
 	}
 	_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindEpic, Title: "Past the cap"})
 	wantCode(t, err, CodeLimit)
-	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards", CapCreated)) {
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d live cards", CapCreated)) {
 		t.Fatalf("past the created cap: %v", err)
 	}
 }
@@ -329,11 +331,25 @@ func TestCaps(t *testing.T) {
 	// Another Task has its own count.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "other"))
 	f.create(Agent("other", ""), story.ID, KindSubtask, "other's")
-	// The created cap spans containers.
+	// The created cap spans containers and counts live cards: the owner
+	// confirms each story, so only the created cap binds.
+	var stories []Card
 	for i := range CapCreated - CapUnconfirmed {
-		f.create(main, epic.ID, KindStory, "story "+string(rune('a'+i)))
+		c := f.create(main, epic.ID, KindStory, fmt.Sprintf("story %d", i))
+		_, err := f.s.Confirm(f.ctx, owner, c.ID)
+		f.must(err)
+		stories = append(stories, c)
 	}
 	_, err = f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: epic.ID, Title: "one more"})
+	wantCode(t, err, CodeLimit)
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d live cards", CapCreated)) {
+		t.Fatalf("past the created cap: %v", err)
+	}
+	// A deleted card gives its place back.
+	_, err = f.s.Delete(f.ctx, sub, stories[0].ID)
+	f.must(err)
+	f.create(main, epic.ID, KindSubtask, "one more")
+	_, err = f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: epic.ID, Title: "and another"})
 	wantCode(t, err, CodeLimit)
 	// Comments: CapComments per card per Task, automatic ones exempt.
 	for i := range CapComments {

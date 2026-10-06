@@ -93,10 +93,10 @@ const DefaultEffort = "S"
 // sweep cancels it.
 const ExpiryWindow = 14 * 24 * time.Hour
 
-// Caps counted per Task (ADR 0005 §4). Calls made by a Task's subagents count
-// against the Task.
+// Caps counted per Task (ADR 0005 §4, ADR 0006). Calls made by a Task's
+// subagents count against the Task.
 const (
-	CapCreated     = 20 // cards a Task may create
+	CapCreated     = 50 // live cards a Task created; deleted and expired ones free their place
 	CapUnconfirmed = 10 // live unconfirmed children a Task may add to one container, the root included
 	CapComments    = 20 // non-automatic comments a Task may add to one card
 )

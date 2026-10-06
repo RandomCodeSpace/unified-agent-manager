@@ -38,7 +38,7 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 			return errReadOnly
 		}
 		var held string
-		err = t.mutate(project, true, func() error {
+		err = t.mutate(a, project, true, func() error {
 			o, n, err := t.cardIn(project, id)
 			if err != nil {
 				return err
@@ -112,7 +112,7 @@ func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, 
 			return errReadOnly
 		}
 		var held string
-		err = t.mutate(project, true, func() error {
+		err = t.mutate(a, project, true, func() error {
 			var seq int64
 			switch err := t.tx.QueryRowContext(t.ctx, `SELECT seq FROM cards WHERE held_by = ? AND held_by <> ''`, taskID).Scan(&seq); {
 			case err == nil:
@@ -269,7 +269,7 @@ const heldQuery = `SELECT id, seq, project_id, held_by FROM cards WHERE held_by 
 // agentWrite runs fn on the card ref inside one sweeping, settling write,
 // after refusing Unassigned cards and cards outside an agent's scope.
 func (s *Store) agentWrite(ctx context.Context, a Actor, ref string, fn func(*txn, *outline, *node) error) (Card, error) {
-	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if err := t.inScope(o, a, n); err != nil {
 			return err
 		}
@@ -295,7 +295,7 @@ func (s *Store) ReleaseHold(ctx context.Context, a Actor, ref string, reason Rel
 			return Card{}, err
 		}
 	}
-	return s.ownerWrite(ctx, ref, func(t *txn, _ *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, _ *outline, n *node) error {
 		if err := permit(a, opRelease, n.stored); err != nil {
 			return err
 		}
@@ -416,7 +416,7 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, asOf time
 		}
 		slices.SortFunc(held, func(a, b heldLeaf) int { return cmp.Compare(a.seq, b.seq) })
 		for _, h := range endedHolds(held, tasks) {
-			err := t.mutate(h.project, false, func() error {
+			err := t.mutate(Actor{}, h.project, false, func() error {
 				_, n, err := t.cardIn(h.project, h.cardID)
 				if err != nil {
 					return err

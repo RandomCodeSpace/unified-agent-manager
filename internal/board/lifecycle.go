@@ -3,6 +3,7 @@ package board
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -26,7 +27,7 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			return Card{}, invalid("marking a card %s needs a comment", to)
 		}
 	}
-	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.container() {
 			if to != StatusCancelled || force {
 				return invalid("a %s's status is derived from its subtasks; it can only be cancelled", n.Kind)
@@ -135,43 +136,163 @@ func (t *txn) cancelNode(n *node, cascade string) error {
 	return t.setStatus(n, StatusCancelled, "", cascade)
 }
 
-// Dismiss cancels an unconfirmed card and everything under it, with the
-// automatic comment "dismissed": the owner's, or an agent's in its scope
-// while planning. It never ends a hold under the card, nor, for an agent, on
-// it (lock.go).
+// Dismiss is the owner's drop of an unconfirmed card: it cancels the card
+// and everything under it, with the automatic comment "dismissed". It never
+// ends a hold under the card (lock.go). Agents delete instead.
 func (s *Store) Dismiss(ctx context.Context, a Actor, ref string) (Card, error) {
 	if err := permit(a, opDismiss, ""); err != nil {
 		return Card{}, err
 	}
-	return s.agentWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.Confirmed() {
 			return invalid("%s is confirmed; cancel it instead", n.ref())
 		}
 		if n.stored == StatusCancelled {
 			return invalid("%s is already cancelled", n.ref())
 		}
-		if !a.owner() {
-			if err := inProgress(n); err != nil {
-				return err
-			}
-		}
 		if err := o.startedUnder(n, true); err != nil {
 			return err
 		}
-		cascade := t.s.newID()
-		for _, m := range o.subtree(n) {
-			if m != n && m.Status.terminal() {
-				continue
+		return t.drop(o, n, AuthorUAM, "", "dismissed")
+	})
+}
+
+// DeleteResult is an agent's delete: the card, now cancelled, and the live
+// cards outside it that a deleted card blocked, which no longer wait on it.
+type DeleteResult struct {
+	Card     Card
+	Released []Card
+}
+
+// Delete is an agent's delete (ADR 0006): it cancels the card ref in the
+// agent's reach, confirmed or not, and everything under it, in one cascade
+// the owner can restore, each card stamped "deleted" by the Task. It is
+// refused while anything in the subtree has started, while a started
+// subtask waits on a card in it, and when it would bring a container above
+// the card to done or cancelled: that would cancel the container's
+// proposals and release its dependents before any replacement exists.
+func (s *Store) Delete(ctx context.Context, a Actor, ref string) (DeleteResult, error) {
+	if err := permit(a, opDelete, ""); err != nil {
+		return DeleteResult{}, err
+	}
+	var out DeleteResult
+	card, err := s.agentWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
+		out.Released = nil
+		if n.stored == StatusCancelled {
+			return invalid("%s is already cancelled", n.ref())
+		}
+		if a.Proposals && n.Confirmed() {
+			return refuse(CodeForbidden, "%s is confirmed; this agent deletes only proposals", n.ref())
+		}
+		if err := inProgress(n); err != nil {
+			return err
+		}
+		if err := o.startedUnder(n, false); err != nil {
+			return err
+		}
+		tree := o.subtree(n)
+		if err := t.awaited(o, tree); err != nil {
+			return err
+		}
+		above := map[string]Status{}
+		for p := o.byID[n.ParentID]; p != nil; p = o.byID[p.ParentID] {
+			above[p.ID] = p.Status
+		}
+		released := dependents(o, tree)
+		if err := t.drop(o, n, a.author(), a.AgentID, "deleted"); err != nil {
+			return err
+		}
+		after, err := t.outline(o.project)
+		if err != nil {
+			return err
+		}
+		var refs, closed []string
+		for p := after.byID[n.ParentID]; p != nil; p = after.byID[p.ParentID] {
+			if p.Status.terminal() && p.Status != above[p.ID] {
+				refs = append(refs, p.ref())
+				closed = append(closed, fmt.Sprintf("%s %s", p.ref(), p.Status))
 			}
-			if err := t.cancelNode(m, cascade); err != nil {
-				return err
-			}
-			if _, err := t.addComment(m, AuthorUAM, "", "dismissed", true, false); err != nil {
-				return err
-			}
+		}
+		if len(refs) > 0 {
+			return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(
+				"Deleting %s would make %s, and a delete closes no other card: edit %s instead, or file a cancel request on it for the owner",
+				n.ref(), strings.Join(closed, ", "), n.ref())}
+		}
+		for _, id := range released {
+			out.Released = append(out.Released, after.byID[id].Card)
 		}
 		return nil
 	})
+	out.Card = card
+	return out, err
+}
+
+// awaited refuses deleting the cards of tree while a started subtask waits
+// on one of them, directly or through an ancestor, naming it: deleting
+// would release it.
+func (t *txn) awaited(o *outline, tree []*node) error {
+	in := map[string]bool{}
+	for _, m := range tree {
+		in[m.ID] = true
+	}
+	var refs, named []string
+	for _, n := range o.order {
+		if !n.started() {
+			continue
+		}
+		waits, err := t.waitsOn(o, n)
+		if err != nil {
+			return err
+		}
+		if i := slices.IndexFunc(waits, func(w waiting) bool { return in[w.blocker.ID] }); i >= 0 {
+			refs = append(refs, n.ref())
+			named = append(named, fmt.Sprintf("%s has started and waits on %s", n.ref(), waits[i].named()))
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return &Error{Code: CodeInProgress, Refs: refs, Message: strings.Join(named, "; ") + ", and started work keeps what it waits on"}
+}
+
+// dependents lists the IDs of the live cards outside tree that an open card
+// of tree blocks, in tree order.
+func dependents(o *outline, tree []*node) []string {
+	in := map[string]bool{}
+	for _, m := range tree {
+		in[m.ID] = true
+	}
+	var out []string
+	for _, m := range tree {
+		if m.Status.terminal() {
+			continue
+		}
+		for _, id := range m.Blocks {
+			if d := o.byID[id]; d != nil && !in[id] && !d.Status.terminal() && !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// drop cancels n and every card under it that is not yet done or
+// cancelled, in one cascade, each with the automatic comment body by
+// author.
+func (t *txn) drop(o *outline, n *node, author, agentID, body string) error {
+	cascade := t.s.newID()
+	for _, m := range o.subtree(n) {
+		if m != n && m.Status.terminal() {
+			continue
+		}
+		if err := t.cancelNode(m, cascade); err != nil {
+			return err
+		}
+		if _, err := t.addComment(m, author, agentID, body, true, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Restore reopens exactly the cards cancelled with the card ref, in one
@@ -187,7 +308,7 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 	if err != nil {
 		return Card{}, invalid("a restore needs a comment")
 	}
-	return s.ownerWrite(ctx, ref, func(t *txn, o *outline, n *node) error {
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
 		if n.stored != StatusCancelled {
 			return invalid("%s is not cancelled", n.ref())
 		}
@@ -251,7 +372,7 @@ func (s *Store) Purge(ctx context.Context, a Actor, projectID string) (int, erro
 	count := 0
 	_, err := s.write(ctx, func(t *txn) error {
 		count = 0
-		return t.mutate(projectID, false, func() error {
+		return t.mutate(a, projectID, false, func() error {
 			o, err := t.outline(projectID)
 			if err != nil {
 				return err
@@ -316,7 +437,7 @@ func (s *Store) Sweep(ctx context.Context) (int, error) {
 			return err
 		}
 		for _, p := range projects {
-			err := t.mutate(p, false, func() error {
+			err := t.mutate(Actor{}, p, false, func() error {
 				n, err := t.sweep(p)
 				count += n
 				return err
