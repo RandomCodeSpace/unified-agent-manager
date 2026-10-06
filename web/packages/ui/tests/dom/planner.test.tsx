@@ -1688,6 +1688,52 @@ describe('lanes (ADR 0006 §5)', () => {
     expect(row(tree, 35).textContent).toContain('Paused');
   });
 
+  test('Merge now lists what the merge carries, by epic, naming an epic not finished, a revert, and a landing that changed tests or build files', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    // Reverted, #35 leaves its epic unfinished; the base branch lacks both its landing and its revert.
+    await act(() => api.planner.revert('cp3-35', { include: [], expect: ['cp3-35'], comment: '' }));
+    await waitFor(() => expect(row(tree, 35).textContent).toContain('Reverted'));
+    const real = api.planner.mergePreview;
+    const preview = vi.spyOn(api.planner, 'mergePreview').mockImplementation(async (project) => {
+      const p = await real(project);
+      return { ...p, items: p.items.map((i) => (i.revert ? i : { ...i, flagged: true })) };
+    });
+    try {
+      await user.click((await openMenu(user, 'Planner actions')).getByRole('menuitem', { name: 'Merge into main now…' }));
+      const confirm = await screen.findByRole('alertdialog', { name: 'Merge into main now?' });
+      const carried = await within(confirm).findByRole('list', { name: 'What it carries' });
+      const [epic] = within(carried).getAllByRole('listitem');
+      expect(epic.textContent).toMatch(/^#32 Accessible post template · not finished/);
+      expect(within(epic).getAllByRole('listitem').map((i) => i.textContent)).toEqual([
+        '#35 Fail the build on an image without alt text · changed tests or build files',
+        'The revert of #35 Fail the build on an image without alt text',
+      ]);
+      expect(preview).toHaveBeenCalledWith('p3');
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
+  test('Reopen without reverting code names the subtasks that landed on top of it, which stay landed', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    const preview = vi.spyOn(api.planner, 'revertPreview').mockResolvedValue({
+      branch: 'uam-plan-p3', cards: ['cp3-35', 'cp3-34'], running: [], merged: false,
+      landings: [{ card_id: 'cp3-35', seq: 35, title: 'Fail the build on an image without alt text', sha: '9f3e2c4', files: [] }],
+    });
+    try {
+      const panel = await openCard(user, tree, 35);
+      await user.click(panel.getByRole('button', { name: 'Reopen without reverting code' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Reopen #35 without reverting code?' }));
+      const stays = within(await dialog.findByRole('list', { name: 'Stays landed' }));
+      expect(stays.getAllByRole('listitem').map((i) => i.textContent)).toEqual(['#34 Add an alt field to the front matter']);
+      expect(preview).toHaveBeenCalledWith('cp3-35');
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
   test('the header says, in words, a merge is blocked or waits, and Retry merge asks first, then merges as a job', async () => {
     const { user, tree } = await lanePlanner();
     let merge: { state: 'waiting' | 'blocked'; reason: string } = { state: 'blocked', reason: 'uam-plan-p3 does not merge cleanly into main: notes/35.md conflict (changed by #35)' };
@@ -1708,6 +1754,10 @@ describe('lanes (ADR 0006 §5)', () => {
         await user.click(screen.getByRole('button', { name: 'Retry merge' }));
         const confirm = await screen.findByRole('alertdialog', { name: 'Retry the merge into main?' });
         expect(confirm.closest('[data-side]')).toBeTruthy();
+        // It says what the merge carries, by epic.
+        const carried = await within(confirm).findByRole('list', { name: 'What it carries' });
+        expect(carried.textContent).toContain('#32 Accessible post template');
+        expect(carried.textContent).toContain('#35 Fail the build on an image without alt text');
         await user.click(within(confirm).getByRole('button', { name: 'Merge' }));
         await waitFor(() => expect(merging).toHaveBeenCalledWith('p3'));
       } finally {

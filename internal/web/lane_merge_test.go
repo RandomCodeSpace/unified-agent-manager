@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -321,5 +322,107 @@ func TestRevertOfMergedWorkMergesAgain(t *testing.T) {
 	}
 	if c := r.card(leaf.ID).Card; c.Status != board.StatusTodo || c.Paused != board.PausedOwner {
 		t.Fatalf("the reverted subtask = %+v", c)
+	}
+}
+
+// The first pass after the planner opens merges only work of a finished
+// approved epic that the base branch lacks: with one epic merged and
+// another still running, a restart merges nothing, so the running epic's
+// landed work waits for its epic as it does without a restart.
+func TestBootMergesOnlyFinishedEpicsWork(t *testing.T) {
+	r := newFinishingRun(t, "true", "Add b")
+	sub := r.subscribe()
+	r.landWith(0, "b.txt", "b\n")
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("merge of the finished epic = %+v", end)
+	}
+	main := gitOutput(t, r.repo, "rev-parse", "main")
+	epic := r.create(board.KindEpic, "", "Second")
+	story := r.create(board.KindStory, epic.ID, "Story")
+	first, second := r.create(board.KindSubtask, story.ID, "Add c"), r.create(board.KindSubtask, story.ID, "Add d")
+	r.call(http.MethodPost, "/api/board/cards/"+epic.ID+"/approve", r.approveBody("luna", epic.ID, story.ID, first.ID, second.ID), http.StatusOK, nil)
+	r.leaves = append(r.leaves, first, second)
+	r.landWith(1, "c.txt", "c\n")
+	r.noMerge(sub)
+	r.reboot()
+	r.noMerge(sub)
+	if gitOutput(t, r.repo, "rev-parse", "main") != main || r.integration().Ahead != 1 {
+		t.Fatal("a restart merged the running epic's work")
+	}
+}
+
+// A merge that finds another git process's lock in its way waits and is
+// tried again, as one that waits on uncommitted changes does: the index
+// lock where main is checked out, or main's ref lock where it is not.
+func TestMergeWaitsOnAGitLock(t *testing.T) {
+	for _, tc := range []struct {
+		name, lock string
+		elsewhere  bool
+	}{{"index lock", "index.lock", false}, {"ref lock", filepath.Join("refs", "heads", "main.lock"), true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			slowRetries(t)
+			r := newFinishingRun(t, "true", "Add b")
+			sub := r.subscribe()
+			if tc.elsewhere {
+				gitIn(t, r.repo, "checkout", "-q", "-b", "owner")
+			}
+			lock := filepath.Join(r.repo, ".git", tc.lock)
+			if err := os.WriteFile(lock, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			main := gitOutput(t, r.repo, "rev-parse", "main")
+			r.landWith(0, "b.txt", "b\n")
+			if end := r.nextMerge(sub); end.Status != jobFailed || !strings.Contains(end.Error, ".lock") {
+				t.Fatalf("merge behind a lock = %+v", end)
+			}
+			if m := r.integration().Merge; m == nil || m.State != mergeWaiting || m.RetryAt == nil {
+				t.Fatalf("merge state = %+v", m)
+			}
+			if gitOutput(t, r.repo, "rev-parse", "main") != main {
+				t.Fatal("a waiting merge moved main")
+			}
+			if err := os.Remove(lock); err != nil {
+				t.Fatal(err)
+			}
+			r.retryNow()
+			if end := r.nextMerge(sub); end.Status != jobDone {
+				t.Fatalf("merge once the lock went = %+v", end)
+			}
+		})
+	}
+}
+
+// The merge preview lists what a merge would carry into the base branch,
+// oldest first: each landing and revert it lacks, with its subtask and
+// epic, the landings that changed tests or build files marked; nothing
+// once the base has it all.
+func TestMergePreviewListsWhatItCarries(t *testing.T) {
+	r := newLaneRun(t, "true", "Add b", "Test c")
+	sub := r.subscribe()
+	r.landWith(0, "b.txt", "b\n")
+	r.landWith(1, "c_test.go", "package c\n")
+	b, c := r.leaves[0], r.leaves[1]
+	if end := r.revert(b.ID, revertBody(nil, b.ID)); end.Status != jobDone {
+		t.Fatalf("revert job = %+v", end)
+	}
+	preview := func() MergePreview {
+		var p MergePreview
+		r.call(http.MethodGet, "/api/board/projects/"+r.project+"/merge", "", http.StatusOK, &p)
+		return p
+	}
+	want := MergePreview{Branch: r.integ(), BaseRef: "main", Items: []MergeCarried{
+		{CardID: b.ID, Seq: b.Seq, Title: "Add b", EpicID: r.epic.ID},
+		{CardID: c.ID, Seq: c.Seq, Title: "Test c", EpicID: r.epic.ID, Flagged: true},
+		{CardID: b.ID, Seq: b.Seq, Title: "Add b", EpicID: r.epic.ID, Revert: true},
+	}}
+	if got := preview(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("preview = %+v, want %+v", got, want)
+	}
+	r.call(http.MethodPost, "/api/board/projects/"+r.project+"/merge", `{}`, http.StatusAccepted, nil)
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("early merge = %+v", end)
+	}
+	if got := preview(); got.BaseRef != "main" || len(got.Items) != 0 || got.Items == nil {
+		t.Fatalf("preview once main has it all = %+v", got)
 	}
 }

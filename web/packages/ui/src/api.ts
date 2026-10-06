@@ -625,6 +625,17 @@ export interface RevertPreview {
   conflict?: { code: string; error: string; refs?: string[] };
 }
 
+/**
+ * What a merge of a Project's integration branch into its base branch would carry (ADR 0006 §5.8): each
+ * landing and revert the base branch lacks, oldest first, with its subtask, the subtask's epic, and whether
+ * the landing changed tests or build files.
+ */
+export interface MergePreview {
+  branch: string;
+  base_ref: string;
+  items: { card_id: string; seq: number; title: string; epic_id: string; revert: boolean; flagged: boolean }[];
+}
+
 /** The Approve dialog's post (ADR 0006 §7): the cards it showed, at the revisions it showed, and the run's settings. */
 export interface ApproveBody extends TaskDefaults {
   items: { id: string; revision: number }[];
@@ -1816,6 +1827,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       reopen: (ref: string, comment: string) => call<Card>('POST', card(ref, 'status'), { status: 'todo', keep_code: true, comment }),
       /** Retry merge, or an early merge, of the Project's integration branch into its base branch: a job (202), its `board_job` frames of kind `merge`. */
       merge: (project: string) => call<{ job_id: string }>('POST', `/api/board/projects/${enc(project)}/merge`),
+      /** What Retry merge or Merge now would carry into the base branch. */
+      mergePreview: (project: string) => call<MergePreview>('GET', `/api/board/projects/${enc(project)}/merge`),
       /** On a subtask held in a lane it is Stop: the subtask is paused, and its Task stops and is archived. */
       release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
       /** Starts Check at HEAD; its `board_job` frames carry the run. */

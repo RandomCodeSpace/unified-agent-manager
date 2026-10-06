@@ -708,6 +708,21 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     }
     // The mock's providers never fail, so its executor waits for nothing.
     if (path === '/api/board/executor' && method === 'GET') return json(200, { providers: [] });
+    if ((m = path.match(/^\/api\/board\/projects\/([^/]+)\/merge$/)) && method === 'GET') {
+      // What a merge would carry: the landings and reverts the base branch lacks, by subtask and epic.
+      const pid = decodeURIComponent(m[1]);
+      if (!project(pid)) return refuse('not_found', 'project not found');
+      const map = new Map(cards.map((x) => [x.id, x]));
+      const lacks = unmerged(pid);
+      const items = cards.flatMap((c) =>
+        c.project_id === pid && c.lane
+          ? [c.lane.landed_sha, c.lane.reverted_sha]
+              .filter((sha) => sha && lacks.includes(sha))
+              .map((sha) => ({ card_id: c.id, seq: c.seq, title: c.title, epic_id: cardPath(c, map)[0]?.id ?? c.id, revert: sha === c.lane!.reverted_sha, flagged: false }))
+          : [],
+      );
+      return json(200, { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid] ?? '', items });
+    }
     if ((m = path.match(/^\/api\/board\/projects\/([^/]+)\/merge$/)) && method === 'POST') {
       // Retry merge, or an early merge: a job on the Project that merges what the base branch lacks.
       const pid = decodeURIComponent(m[1]);

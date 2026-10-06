@@ -8,7 +8,7 @@ import { Button } from '../ui/button';
 import { AlertDialog, useConfirm } from '../ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
 import { useShownBoard } from './context';
-import { ApproveDialog, BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, RevertPanel, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
+import { ApproveDialog, BriefDialog, DoneDialog, LandedOnTop, LaunchDialog, MoveDialog, ReasonDialog, RevertPanel, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
 
 export interface TriageResult {
   verdict: TriageVerdict;
@@ -196,10 +196,11 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   function reopen(c: Card) {
     setReason({
       title: `Reopen #${c.seq} without reverting code?`,
-      description: `It goes back to To do, paused, and its commit ${c.lane?.landed_sha.slice(0, 7) ?? ''} stays on the integration branch; what landed on top of it stays landed. Fix the code by hand, or leave it to its next attempt.`,
+      description: `It goes back to To do, paused, and its commit ${c.lane?.landed_sha.slice(0, 7) ?? ''} stays on the integration branch. Fix the code by hand, or leave it to its next attempt.`,
       label: 'Comment (optional)',
       confirm: 'Reopen',
       required: false,
+      detail: <LandedOnTop card={c} />,
       run: (t) => api.planner.reopen(c.id, t),
     });
   }

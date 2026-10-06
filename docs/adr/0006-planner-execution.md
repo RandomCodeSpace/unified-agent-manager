@@ -445,7 +445,7 @@ Commit phase, on `context.WithoutCancel`:
 4. `Store.Revert(owner, items, expect, C = cur, comment)`, in one transaction: each card goes from done to todo with `paused='owner'`, `reverted_sha = C` on its landed hold, and the comment "reverted in `<C>`: `<reason>`". It refuses if the closure differs from `expect`.
 5. One `update-ref integ C tip`. If the integration branch is checked out in a worktree, or the compare-and-swap fails, `Store.UndoRevert(items, C)` puts the cards back to done, clears `reverted_sha` and `paused`, and adds the comment "revert not applied: `<reason>`". The job fails with that reason.
 
-Between the store write and the ref move nothing can start those cards: they are paused, and lane starts wait on the mutex. Recovery finishes a revert whose `reverted_sha` is not on the integration branch with the rule of §4.4: a fast-forward when the branch is an ancestor of C, `UndoRevert` otherwise.
+Between the store write and the ref move nothing can start those cards: they are paused, and lane starts wait on the mutex. Recovery finishes a revert whose `reverted_sha` is not on the integration branch with the rule of §4.4: a fast-forward when the branch is an ancestor of C, `UndoRevert` otherwise. Only a branch that still has the reverted landings can tell an interrupted revert. A branch that is gone, or lacks those landings, was deleted or rewritten since, maybe long after the revert went through, so recovery leaves that revert as recorded and moves nothing (§5.9).
 
 **Reopen without reverting code.** The way out when Revert cannot apply, for example on a conflict with commits no card owns (sync merges, the owner's own commits) or after a hand edit of the integration branch. On a landed subtask, `POST /cards/{ref}/status {status: "todo", keep_code: true, comment}` sets todo and `paused='owner'`, leaves `reverted_sha` empty, and adds the comment "reopened without reverting `<landed sha>`; the code stays on uam-plan-x". It moves no ref and runs the owner integrity check (§6.3 rule 2). Its landed dependents stay landed, and the dialog lists them. The owner fixes the code by hand, in Terminal or on their own branch once the work is merged, or leaves it to the next attempt.
 
@@ -458,7 +458,7 @@ On 2026-10-06 the owner decided: "Merge also needs to be approval based only. I 
 **Triggers.** Events start the merge job, not a `Next` step, so the merge does not depend on the executor (decided 2026-10-06 while S5 and S6 were built side by side). Each trigger first checks whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2), and starts nothing when it has. A merge fires:
 - after `AcceptLanded`, when that landing makes its approved epic derive done;
 - when an owner Revert job ends and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it;
-- at boot, in `recoverLanes`, for each Project with an approved epic that derives done;
+- at boot, in `recoverLanes`, for each Project whose `base_ref` lacks a landing or revert of an approved epic that derives done. This finishes a merge a restart interrupted; the landed work of an epic still running waits for its epic, as it does without a restart;
 - from a per-Project retry timer, for a merge that waits (below).
 
 While a merge job runs, a trigger makes it run once more when it ends.
@@ -476,7 +476,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 
 **Outcomes.**
 - Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).
-- `git_busy` and `local_changes` retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
+- `git_busy`, `local_changes`, and a lock file another git process holds (`index.lock`, or a ref's lock) retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
 - `merge_conflict` is not retried on its own for the same pair of integration and base tips. uam keeps that pair in memory, so after a restart it is tried once more. A merge that fails for any other reason, for example a hook that refuses the merge commit, is blocked the same way. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
 
 **Retry merge.** `POST /projects/{id}/merge` stays as an owner action: Retry merge after a blocked or waiting merge, and an early merge of an unfinished epic's landed work. It answers 202 `{job_id}` and runs the same job.
@@ -585,6 +585,7 @@ Owner-only unless noted, behind the existing sign-in, cross-origin and JSON chec
 | `GET /api/board/cards/{ref}/revert` | S6 | The preview |
 | `POST /api/board/cards/{ref}/revert` `{include: [ref], expect: [ref], comment}` | S6 | 202 `{job_id}`, job kind `revert`. 409 `stale` (the closure differs from `expect`) or `revert_running` at once. The job fails with `revert_conflict` |
 | `POST /api/board/cards/{ref}/status` `{status: "todo", keep_code: true, comment}` on a landed subtask | S6 | Reopen without reverting code. Without `keep_code`: 409 `invalid`, "Revert #n instead" |
+| `GET /api/board/projects/{id}/merge` | S6 | The merge preview: `{branch, base_ref, items}`, each landing and revert `base_ref` lacks, oldest first, with its card, its epic and whether the landing changed tests or build files |
 | `POST /api/board/projects/{id}/merge` | S6 | Retry merge, or an early merge; the normal merge is automatic (§5.8). 202 `{job_id}`, job kind `merge`. The job fails with `merge_conflict`, `local_changes` or `git_busy` |
 
 New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `land_conflict`, `land_stale`, `merge_conflict`, `local_changes`, `revert_conflict`, `revert_running`, `git_too_old` and `no_git_identity`.
@@ -616,7 +617,7 @@ The dialog posts the listed ids with the revisions it rendered. On `stale` it na
 - Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs. As built, the run summary and the provider wait show on the epic's Tree row (compact: "Running 2 of 2" with the rest as screen-reader text) and in its card panel; the Board has no epic row, so it shows neither.
 - A card's Attempts list adds the branch, the landed sha and the reverted sha.
 - The Planner header shows "uam-plan-x · 5 ahead of main" and the merge state: "Merge waiting: `<reason>`", or "Merge blocked" with Retry merge (S6). The merge job shows progress.
-- Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.
+- Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed. Retry merge and Merge now list what the merge carries, by epic, naming the epics not finished and the landings that changed tests or build files.
 - Under an approved epic the Tree's "+N suggested" fold loses its per-row Confirm; Dismiss stays.
 
 ## 9. Decisions (2026-10-06)

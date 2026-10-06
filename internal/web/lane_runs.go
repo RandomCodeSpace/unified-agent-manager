@@ -963,7 +963,8 @@ func (m *Manager) noteCard(ctx context.Context, id, body string) {
 // the merges uam left in lanes whose Task is not working, sweeps the lanes
 // no attempt or active Task has, names on its card each landing on an
 // integration branch whose request was not accepted, and merges the
-// integration branch of a Project with a finished approved epic (§5.8).
+// integration branch of a Project whose base branch lacks work of a
+// finished approved epic (§5.8).
 func (m *Manager) recoverLanes(ctx context.Context) {
 	var held []board.Card
 	if err := m.withBoard(func(st *board.Store) error {

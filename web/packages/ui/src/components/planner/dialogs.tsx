@@ -1,7 +1,7 @@
 import { useApi } from '../../ApiContext';
 import { Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type BoardProject, type Card, type CardKind, type DoneGuard, type Meta, type RevertPreview, type Settings, type TaskDefaults } from '../../api';
+import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type BoardProject, type Card, type CardKind, type DoneGuard, type MergePreview, type Meta, type RevertPreview, type Settings, type TaskDefaults } from '../../api';
 import { KIND_LABEL, cardPath, childIndex, isStarted, leavesUnder, waitsOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Note, useApp } from '../common';
@@ -25,6 +25,8 @@ export interface ReasonAsk {
   danger?: boolean;
   /** A comment is required (Cancel, Restore); optional otherwise (Release). */
   required: boolean;
+  /** What else the action should say, above the comment: Reopen's subtasks that stay landed. */
+  detail?: ReactNode;
   initial?: string;
   run: (text: string) => Promise<unknown>;
 }
@@ -61,6 +63,7 @@ export function ReasonDialog({ ask, onClose }: Readonly<{ ask: ReasonAsk | null;
   return (
     <Dialog open={!!ask} onOpenChange={(o) => !o && onClose()} onClosed={() => setShown(null)} initialFocus={field} title={shown?.title ?? ''} description={shown?.description}>
       <form id="planner-reason" className="flex flex-col gap-2" onSubmit={(e) => void submit(e)}>
+        {shown?.detail}
         <Field id="planner-reason-text" label={shown?.label ?? 'Comment'}>
           <textarea id="planner-reason-text" ref={field} className={areaClass} required={shown?.required} value={text} onChange={(e) => setText(e.target.value)} />
         </Field>
@@ -946,5 +949,93 @@ export function RevertPanel({ card, onClose, onStarted, onReopen }: Readonly<{ c
       )}
       {error && <p role="alert" className="mt-1 text-caption text-error">{error}</p>}
     </AlertDialog>
+  );
+}
+
+/**
+ * The subtasks that landed on top of the landed subtask `card`, as recorded when each started (ADR 0006
+ * §5.7): what its Revert would take along, and what Reopen without reverting code leaves landed. Read from
+ * the Revert preview; its plain sentence stands in while it reads or when it cannot.
+ */
+export function LandedOnTop({ card }: Readonly<{ card: Card }>) {
+  const api = useApi();
+  const { cards } = useShownBoard();
+  const [ids, setIds] = useState<string[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.planner
+      .revertPreview(card.id)
+      .then((p) => alive && setIds(p.cards.filter((id) => id !== card.id)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, card.id]);
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const landed = (ids ?? []).map((id) => byId.get(id)).filter((c): c is Card => !!c);
+  if (!landed.length) return <p className="text-caption text-muted">{ids ? 'Nothing landed on top of it.' : 'What landed on top of it stays landed.'}</p>;
+  return (
+    <div className="flex flex-col gap-1 text-caption">
+      <p className="text-muted">These landed on top of it and stay landed:</p>
+      <ul aria-label="Stays landed" className="flex max-h-40 flex-col gap-0.5 overflow-y-auto text-body">
+        {landed.map((c) => (
+          <li key={c.id} className="truncate">
+            #{c.seq} {c.title}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * What a merge of the Project's integration branch carries into its base branch (ADR 0006 §5.8), in the
+ * Retry merge and Merge now confirmations: each landing and revert the base branch lacks, by epic, naming
+ * the epics not finished, whose work an early merge takes along, and the landings that changed tests or
+ * build files.
+ */
+export function MergeCarried({ project, cards }: Readonly<{ project: string; cards: Card[] }>) {
+  const api = useApi();
+  const [preview, setPreview] = useState<MergePreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.planner
+      .mergePreview(project)
+      .then((p) => alive && setPreview(p))
+      .catch((e: unknown) => alive && setError(plannerErrorText(e)));
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, project]);
+  if (error) return <p role="alert" className="mt-1 text-caption text-error">{error}</p>;
+  if (!preview) return <p className="mt-1 text-caption text-muted">Reading what it carries…</p>;
+  if (!preview.items.length) return <p className="mt-1 text-caption text-muted">{preview.base_ref} has everything {preview.branch} carries.</p>;
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const epics = [...new Set(preview.items.map((i) => i.epic_id))];
+  return (
+    <ul aria-label="What it carries" className="mt-1 flex max-h-60 flex-col gap-1.5 overflow-y-auto text-caption">
+      {epics.map((id) => {
+        const epic = byId.get(id);
+        return (
+          <li key={id} className="flex min-w-0 flex-col">
+            <span className="truncate text-body">
+              {epic ? `#${epic.seq} ${epic.title}` : 'An epic no longer shown'}
+              {epic && epic.status !== 'done' && <span className="text-muted"> · not finished</span>}
+            </span>
+            <ul className="flex flex-col">
+              {preview.items
+                .filter((i) => i.epic_id === id)
+                .map((i, n) => (
+                  <li key={n} className="truncate text-muted">
+                    {i.revert ? 'The revert of ' : ''}#{i.seq} {i.title}
+                    {i.flagged && ' · changed tests or build files'}
+                  </li>
+                ))}
+            </ul>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

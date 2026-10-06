@@ -322,6 +322,50 @@ func TestRevertWritesTheStoreFirst(t *testing.T) {
 	}
 }
 
+// A revert that went through stays as it is when the planner opens again,
+// whatever became of the integration branch since: deleted once merged, or
+// reset by hand to before the reverted landing. uam cannot tell whether
+// such a branch ever took the revert, so it neither withdraws the revert
+// nor moves the branch.
+func TestRecoveryKeepsAFinishedRevert(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(r *laneRun, landed string) string
+	}{
+		{"branch deleted", func(r *laneRun, _ string) string {
+			gitIn(r.t, r.repo, "update-ref", "-d", "refs/heads/"+r.integ())
+			return ""
+		}},
+		{"branch reset by hand", func(r *laneRun, landed string) string {
+			before := gitOutput(r.t, r.repo, "rev-parse", landed+"^")
+			gitIn(r.t, r.repo, "update-ref", "refs/heads/"+r.integ(), before)
+			return before
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLaneRun(t, "true", "Add b")
+			landed := r.landWith(0, "b.txt", "b\n")
+			if end := r.revert(r.leaves[0].ID, revertBody(nil, r.leaves[0].ID)); end.Status != jobDone {
+				t.Fatalf("revert job = %+v", end)
+			}
+			commit := r.tip()
+			want := tc.edit(r, landed)
+			r.reboot()
+			r.reverted(0, landed, commit)
+			if want == "" {
+				if gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+r.integ()) == nil {
+					t.Fatal("boot brought the deleted integration branch back")
+				}
+			} else if r.tip() != want {
+				t.Fatalf("after boot the integration branch is at %s, want %s", r.tip(), want)
+			}
+			if slices.ContainsFunc(comments(r.card(r.leaves[0].ID)), func(c string) bool { return strings.HasPrefix(c, "uam: revert not applied") }) {
+				t.Fatal("boot withdrew a revert that went through")
+			}
+		})
+	}
+}
+
 // A reverted subtask waits, paused, until the owner resumes it; its next
 // attempt starts from the integration tip without the reverted change, and
 // lands again.
@@ -389,7 +433,7 @@ func TestBackToTodoRefusedOnLanded(t *testing.T) {
 	r.landWith(1, "c.txt", "c\n")
 	leaf, status := r.leaves[0], "/api/board/cards/"+r.leaves[0].ID+"/status"
 	tip := r.tip()
-	reply := r.refused(http.MethodPost, status, `{"status":"todo"}`, http.StatusBadRequest, string(board.CodeInvalid))
+	reply := r.refused(http.MethodPost, status, `{"status":"todo"}`, http.StatusConflict, string(board.CodeInvalid))
 	if !strings.Contains(string(reply["error"]), fmt.Sprintf("Revert #%d instead", leaf.Seq)) {
 		t.Fatalf("refusal = %s", reply["error"])
 	}

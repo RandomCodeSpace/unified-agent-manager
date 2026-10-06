@@ -302,7 +302,7 @@ func (r *laneRepo) baseHasAny(ctx context.Context, base string, landings []board
 
 // recoverReverts finishes the reverts a crash interrupted (ADR 0006 §4.7):
 // the integration branch is fast-forwarded to a revert commit it is behind,
-// and a revert it moved away from, or cannot take, is withdrawn.
+// and a revert it moved on from, or cannot take, is withdrawn.
 func (m *Manager) recoverReverts(ctx context.Context) {
 	var cards []board.Card
 	if err := m.withBoard(func(st *board.Store) error {
@@ -313,20 +313,38 @@ func (m *Manager) recoverReverts(ctx context.Context) {
 		log.Warn("read the reverts to recover failed", "error", err)
 		return
 	}
-	done := map[string]bool{}
+	type revert struct {
+		project  string
+		landings []string
+	}
+	reverts := map[string]*revert{}
+	var commits []string
 	for _, c := range cards {
-		if done[c.Lane.RevertedSHA] {
-			continue
+		rv := reverts[c.Lane.RevertedSHA]
+		if rv == nil {
+			rv = &revert{project: c.ProjectID}
+			reverts[c.Lane.RevertedSHA] = rv
+			commits = append(commits, c.Lane.RevertedSHA)
 		}
-		done[c.Lane.RevertedSHA] = true
-		if err := m.recoverRevert(ctx, c.ProjectID, c.Lane.RevertedSHA); err != nil && !plannerDown(err) {
-			log.Warn("recover a revert failed", "card", c.ID, "commit", c.Lane.RevertedSHA, "error", err)
+		rv.landings = append(rv.landings, c.Lane.LandedSHA)
+	}
+	for _, commit := range commits {
+		rv := reverts[commit]
+		if err := m.recoverRevert(ctx, rv.project, commit, rv.landings); err != nil && !plannerDown(err) {
+			log.Warn("recover a revert failed", "project", rv.project, "commit", commit, "error", err)
 		}
 	}
 }
 
-// recoverRevert finishes the revert in commit of the Project project.
-func (m *Manager) recoverRevert(ctx context.Context, project, commit string) error {
+// recoverRevert finishes the revert in commit of the Project project, which
+// reverted the landings. Only an integration branch that still has the
+// landings can tell an interrupted revert: one behind commit is
+// fast-forwarded to it, and one that moved on without it has the revert
+// withdrawn, so its subtasks are Landed again as the branch has them. A
+// branch that is gone, or lacks the landings, was deleted or rewritten
+// since, maybe long after the revert went through; the revert stays as
+// recorded, and nothing moves (§5.9).
+func (m *Manager) recoverRevert(ctx context.Context, project, commit string, landings []string) error {
 	dir, err := m.boardDir(ctx, project)
 	if err != nil {
 		return err
@@ -342,6 +360,18 @@ func (m *Manager) recoverRevert(ctx context.Context, project, commit string) err
 	}
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
 	defer cancel()
+	tip, err := repo.tipOf(cctx, repo.integ)
+	if err != nil || tip == "" {
+		return err
+	}
+	for _, l := range landings {
+		if exists, err := repo.hasCommit(cctx, l); err != nil || !exists {
+			return err
+		}
+		if on, err := repo.isAncestor(cctx, l, tip); err != nil || !on {
+			return err
+		}
+	}
 	on, err := repo.finishOnInteg(cctx, commit)
 	switch {
 	case err == nil && on:

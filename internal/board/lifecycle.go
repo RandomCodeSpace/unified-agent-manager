@@ -56,7 +56,8 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 		// integration branch: Revert moves both, and Reopen keeps the code
 		// knowingly.
 		if to == StatusTodo && n.landed() {
-			return invalid("%s has landed: Revert %s instead, or reopen it without reverting code", n.ref(), n.ref())
+			return &Error{Code: CodeInvalid, Refs: []string{n.ref()}, Message: fmt.Sprintf(
+				"%s has landed: Revert %s instead, or reopen it without reverting code", n.ref(), n.ref())}
 		}
 		switch to {
 		case StatusDone:

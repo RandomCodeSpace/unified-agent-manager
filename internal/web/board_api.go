@@ -19,6 +19,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/board/projects/{id}", s.handleBoardProject)
 	mux.HandleFunc("PATCH /api/board/projects/{id}", s.handleUpdateBoardProject)
 	mux.HandleFunc("GET /api/board/executor", s.handleBoardExecutor)
+	mux.HandleFunc("GET /api/board/projects/{id}/merge", s.handleMergePreview)
 	mux.HandleFunc("POST /api/board/projects/{id}/merge", s.handleMergeProject)
 	mux.HandleFunc("POST /api/board/cards", s.handleCreateCard)
 	mux.HandleFunc("GET /api/board/cards/{ref}", s.handleCard)
@@ -46,7 +47,8 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 		if body.KeepCode {
 			return reopenKeepingCode(ctx, st, a, ref, body)
 		}
-		return st.SetStatus(ctx, a, ref, body.Status, body.Comment, body.Force)
+		c, err := st.SetStatus(ctx, a, ref, body.Status, body.Comment, body.Force)
+		return c, conflictWithRefs(err)
 	}))
 	mux.HandleFunc("POST /api/board/cards/{ref}/restore", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, body commentBody) (board.Card, error) {
 		return st.Restore(ctx, a, ref, body.Comment)
@@ -500,6 +502,17 @@ func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
+}
+
+// handleMergePreview lists what a merge of a Project's integration branch
+// into its base branch would carry.
+func (s *Server) handleMergePreview(w http.ResponseWriter, r *http.Request) {
+	p, err := s.m.PreviewMerge(r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
 }
 
 // handleMergeProject is the owner's Retry merge, or early merge, of a

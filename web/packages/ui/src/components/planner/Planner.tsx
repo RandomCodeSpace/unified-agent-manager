@@ -20,6 +20,7 @@ import { PanelHeader, SidePanel } from '../Subagents';
 import { BoardView } from './BoardView';
 import { CardPanel } from './CardPanel';
 import { INITIAL_UI, PlannerContext, usePlanner, type PlannerContextValue, type PlannerNotice, type PlannerUi, type PlannerViewKind } from './context';
+import { MergeCarried } from './dialogs';
 import { MapView } from './MapView';
 import { NoticeBar } from './parts';
 import { InboxList } from './Requests';
@@ -390,7 +391,9 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             setMergeAsk(null);
           }
         }}
-      />
+      >
+        <MergeCarried project={key} cards={cards ?? []} />
+      </AlertDialog>
       <AlertDialog
         open={purging}
         onOpenChange={(o) => !o && setPurging(false)}

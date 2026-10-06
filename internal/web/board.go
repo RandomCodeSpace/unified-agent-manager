@@ -759,11 +759,18 @@ func (m *Manager) ApproveCard(ref string, req ApproveRequest) (BoardCard, error)
 		c, err = st.Approve(ctx, a, ref, run, items, base)
 		return err
 	})
+	return boardCard(c), conflictWithRefs(err)
+}
+
+// conflictWithRefs answers 409 for an invalid refusal that names cards:
+// their state refuses the request, which is well formed (ADR 0006 §7).
+func conflictWithRefs(err error) error {
+	err = boardError(err)
 	var refusal *Error
 	if errors.As(err, &refusal) && refusal.Code == string(board.CodeInvalid) && len(refusal.Refs) > 0 {
 		refusal.Status = http.StatusConflict
 	}
-	return boardCard(c), err
+	return err
 }
 
 // CommentCard adds the owner's comment to the card ref.

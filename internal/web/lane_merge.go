@@ -18,12 +18,13 @@ import (
 // 0006 §5.8). Approving an epic authorizes it, so events start it, not a
 // click: a landing that finishes its approved epic, the owner's Revert of
 // work the base branch already has, and the first pass after the planner
-// opens, for approved epics that are done. Each starts the merge job only
-// while the base lacks something the integration branch carries. The
-// owner's Retry merge starts it too, also to merge an unfinished epic's
-// work early. A merge that waits on the owner's working tree or git is
-// tried again with backoff; one that conflicts, or fails otherwise, waits
-// for Retry merge or new tips.
+// opens, for unmerged work of approved epics that are done. Each starts
+// the merge job only while the base lacks something the integration branch
+// carries. The owner's Retry merge starts it too, also to merge an
+// unfinished epic's work early. A merge that waits on the owner's working
+// tree or git, a lock another git process holds included, is tried again
+// with backoff; one that conflicts, or fails otherwise, waits for Retry
+// merge or new tips.
 
 const (
 	// jobMerge is the merge job (board_ai.go); it runs on a Project.
@@ -120,19 +121,20 @@ func (m *Manager) mergeWhenFinished(ctx context.Context, id string) {
 	}
 }
 
-// mergeFinished merges the Project's integration branch when one of its
-// approved epics derives done: the first pass after the planner opens.
+// mergeFinished merges the Project's integration branch when its base
+// branch lacks work of an approved epic that derives done: the first pass
+// after the planner opens, which finishes a merge a restart interrupted.
+// Work of an epic still running waits for its epic, as it does without a
+// restart, even beside an epic that finished and was merged long ago.
 func (m *Manager) mergeFinished(ctx context.Context, project string) {
-	var epics []board.Card
-	if err := m.withBoard(func(st *board.Store) error {
-		var err error
-		epics, err = st.List(ctx, project, board.Filter{Kind: board.KindEpic, Status: board.StatusDone})
-		return err
-	}); err != nil {
-		log.Warn("read a project's finished epics failed", "project", project, "error", err)
+	_, items, err := m.carriedItems(ctx, project)
+	if err != nil {
+		if !plannerDown(err) && ctx.Err() == nil {
+			log.Warn("read what a project's merge would carry failed", "project", project, "error", err)
+		}
 		return
 	}
-	if slices.ContainsFunc(epics, func(c board.Card) bool { return c.Run != nil }) {
+	if slices.ContainsFunc(items, func(it mergeItem) bool { return it.epic.Run != nil && it.epic.Status == board.StatusDone }) {
 		m.autoMerge(ctx, project)
 	}
 }
@@ -198,6 +200,67 @@ func (r *laneRepo) mergeTips(ctx context.Context, base string) (string, string, 
 	}
 	tip, err := r.tipOf(ctx, r.integ)
 	return baseTip, tip, err
+}
+
+// MergePreview is what a merge of a Project's integration branch into its
+// base branch would carry: each landing and revert the base lacks, oldest
+// first.
+type MergePreview struct {
+	Branch  string         `json:"branch"`
+	BaseRef string         `json:"base_ref"`
+	Items   []MergeCarried `json:"items"`
+}
+
+// MergeCarried is a landing, or a revert, a merge carries: its subtask, the
+// subtask's epic, and whether the landing changed tests or build files.
+type MergeCarried struct {
+	CardID  string `json:"card_id"`
+	Seq     int64  `json:"seq"`
+	Title   string `json:"title"`
+	EpicID  string `json:"epic_id"`
+	Revert  bool   `json:"revert"`
+	Flagged bool   `json:"flagged"`
+}
+
+// PreviewMerge lists what merging the Project id's integration branch into
+// its base branch would carry, for the owner's Retry merge or Merge now.
+func (m *Manager) PreviewMerge(id string) (MergePreview, error) {
+	if _, err := m.boardOwner(m.ctx, id); err != nil {
+		return MergePreview{}, err
+	}
+	base, items, err := m.carriedItems(m.ctx, id)
+	if err != nil {
+		return MergePreview{}, err
+	}
+	out := MergePreview{Branch: integBranch(id), BaseRef: base, Items: []MergeCarried{}}
+	for _, it := range items {
+		out.Items = append(out.Items, MergeCarried{CardID: it.card.ID, Seq: it.card.Seq, Title: it.card.Title, EpicID: it.epic.ID, Revert: it.revert, Flagged: it.flagged})
+	}
+	return out, nil
+}
+
+// carriedItems returns the Project's base branch, "" while no approval
+// named one, and lists, oldest first, the landings and reverts on the
+// integration branch that the base branch lacks; none once the base has
+// everything the integration branch carries, or when either branch is not
+// there.
+func (m *Manager) carriedItems(ctx context.Context, project string) (string, []mergeItem, error) {
+	repo, base, err := m.mergeRepo(ctx, project)
+	if err != nil || repo == nil {
+		return "", nil, err
+	}
+	baseTip, tip, err := repo.mergeTips(ctx, base)
+	if err != nil || tip == "" || baseTip == "" {
+		return base, nil, err
+	}
+	if has, err := repo.hasAll(ctx, baseTip, tip); err != nil || has {
+		return base, nil, err
+	}
+	commits, err := repo.carried(ctx, baseTip, tip)
+	if err != nil {
+		return base, nil, err
+	}
+	return base, m.mergeItems(ctx, commits), nil
 }
 
 // MergeProject is the owner's Retry merge of the Project id, or an early
@@ -345,8 +408,9 @@ func (a mergeAttempt) String() string {
 
 // mergeOutcome records how the merge attempt went and says so, once per
 // outcome, on each epic whose work it carries: merged, with what it
-// carried; waiting on git or the owner's working tree, tried again after
-// the next backoff; or, failed otherwise, blocked for these tips.
+// carried; waiting on git, its locks or the owner's working tree, tried
+// again after the next backoff; or, failed otherwise, blocked for these
+// tips.
 func (m *Manager) mergeOutcome(ctx context.Context, project string, items []mergeItem, at mergeAttempt, merged string, err error) {
 	var body string
 	reason := ""
@@ -362,7 +426,7 @@ func (m *Manager) mergeOutcome(ctx context.Context, project string, items []merg
 		if merged != "" {
 			body = mergedText(at.base, merged, items)
 		}
-	case code == codeGitBusy || code == codeLocalChanges:
+	case code == codeGitBusy || code == codeLocalChanges || gitLocked(err):
 		wait := mergeBackoff[min(tries, len(mergeBackoff)-1)]
 		retryAt := time.Now().Add(wait)
 		pm.shown, pm.tries = BoardMerge{State: mergeWaiting, Reason: reason, RetryAt: &retryAt}, tries+1
@@ -379,6 +443,13 @@ func (m *Manager) mergeOutcome(ctx context.Context, project string, items []merg
 	for _, epic := range epicsOf(items) {
 		m.noteCard(ctx, epic.ID, body)
 	}
+}
+
+// gitLocked reports whether git refused because a lock file was there:
+// another git process, such as an editor's, holds the index or a ref, for
+// now.
+func gitLocked(err error) bool {
+	return strings.Contains(err.Error(), ".lock': File exists")
 }
 
 // carriedCommit is a landing or a revert on the integration branch: the

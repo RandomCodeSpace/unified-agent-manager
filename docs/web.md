@@ -1377,8 +1377,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   again from the integration branch without the reverted change. When a
   revert cannot apply, **Reopen without reverting code** moves the
   subtask back to To do, paused ("Reopened, code kept"), and leaves its
-  commit on the integration branch; what landed on top of it stays landed.
-  A plain move back to To do is refused on a landed subtask.
+  commit on the integration branch; what landed on top of it stays landed,
+  and the confirmation names those subtasks. A plain move back to To do is
+  refused on a landed subtask.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
   and removes the lane; a landed attempt's branch goes too, and the
@@ -1395,15 +1396,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   already has is merged the same way, and so is a finished epic uam finds
   unmerged when it starts. Where the base branch is checked out, the merge
   runs there as your Commit does, with your git hooks; while another git
-  action runs there, a Task there works, or the merge would overwrite a
-  change you have not committed, it waits ("Merge waiting" and the reason
-  beside the branch) and uam tries again after 1, 2, 4, 8, then every 15
-  minutes. A base branch checked out nowhere just moves. A merge that
+  action runs there, a Task there works, another git program holds a lock
+  the merge needs, or the merge would overwrite a change you have not
+  committed, it waits ("Merge waiting" and the reason beside the branch)
+  and uam tries again after 1, 2, 4, 8, then every 15 minutes. A base branch checked out nowhere just moves. A merge that
   conflicts, or that a hook refuses, shows "Merge blocked" and waits until
   either branch moves or you choose **Retry merge**; resolve it in
   Terminal, or revert the subtask it conflicts with. **Merge into main
   now** (named after your base branch), in the Planner's menu, merges what
-  landed before the epic finishes. Each outcome is said once on the epic, and uam never pushes.
+  landed before the epic finishes. Its confirmation, like Retry merge's,
+  lists what the merge carries, by epic, naming the epics not finished and
+  the subtasks that changed test or build files. Each outcome is said once
+  on the epic, and uam never pushes.
   A lane Task that ends its
   turn without a done request is reminded once; ending again without one
   archives it, which ends the attempt without landing. One whose provider
