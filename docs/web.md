@@ -922,7 +922,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   least one model the provider lists must stay visible, and a provider can
   hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
   lists is kept. Hiding is only a display preference: a Task or Project
-  already on a hidden model keeps it.
+  already on a hidden model keeps it. **UAM** (General) shows the version
+  the service runs and, once another version is installed at the binary it
+  started from, **Restart**; see
+  [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
   including Task titles, completed subagent result lines, suggested replies
   and the opening phrase of outcome lines. Pick the cheapest
@@ -1701,6 +1704,37 @@ provider conversation IDs are kept. After `uam web` starts again, sending a prom
 session reopens the same provider conversation. The Task's selected model,
 effort and context size are restored before the prompt is sent. If Copilot
 cannot apply them, UAM reports the failure without sending the prompt.
+
+## Restart onto a new version
+
+UAM never downloads itself. Install a new version the usual way, while the
+service runs: `go install` (directly or through a Go module proxy such as
+Nexus or Artifactory), `make install`, or a package manager. The service
+resolves the path of its binary once, when it starts (symlinks followed), and
+looks at that file every 30 seconds and when Settings opens: when its size,
+modification time or inode changed, it runs `<binary> version` (10 second
+limit, only `PATH` in the environment). A version other than the running one
+shows in Settings → General → **UAM** as "UAM <installed> is installed
+(running <running>)" with **Restart**, and the Settings gear and the General
+tab carry an amber dot. A binary that is missing or whose `version` fails
+shows the reason instead, and offers no restart. Nothing restarts until
+**Restart** is chosen.
+
+Restart waits until no Task works or waits for anything (a turn, an answer,
+queued prompts, subagents or background tasks); meanwhile Settings says
+"Restarts when no task is working or waiting." Then the service stops the
+way `uam web stop` does, with nothing running, and runs the installed binary
+in the same process: the PID, the flags (`--listen`, `--public-origin`,
+`--log-headers`), the environment and the access token stay, and signed-in
+browsers stay signed in. An open page reconnects and reloads onto the new
+version (or offers Reload while it holds a draft or a popup). If the new
+binary cannot be started, the service logs why and exits; run `uam web`
+again. `GET /api/service` returns `{"running": "v0.15.4", "installed":
+"v0.15.5", "restart": "available"}` (`restart` is `none`, `available`,
+`pending` or `restarting`, with `error` when the binary cannot be read), and
+`POST /api/service/restart` asks for the restart; `/api/meta` carries the
+same status as `service`. With connected instances, Settings restarts the
+instance on screen.
 
 ## Listen beyond loopback
 

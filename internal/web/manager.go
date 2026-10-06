@@ -226,6 +226,10 @@ type Manager struct {
 	routines routineState
 	// exec is the executor, which runs approved epics (executor.go).
 	exec executorState
+	// binary follows the uam binary on disk for a restart onto a new one
+	// (restart.go); nil when the service cannot restart itself. RunDaemon
+	// sets it before Start.
+	binary *binaryWatch
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -714,6 +718,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if len(cliNames) > 0 {
 		m.wg.Add(1)
 		go m.cliLoop(cliNames)
+	}
+	if m.binary != nil {
+		m.wg.Add(1)
+		go m.binaryLoop()
 	}
 	go m.imageLoop()
 	if err := m.flush(); err != nil {
@@ -1879,9 +1887,14 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	if after == before && !durable && !queue {
 		return
 	}
+	// A Task that stops working may be the last one a pending CLI or uam
+	// restart waits for.
 	select {
 	case m.cliKick <- struct{}{}:
 	default:
+	}
+	if m.binary != nil {
+		m.binary.nudge()
 	}
 	// updated_at is Task activity, which is what the durable part records:
 	// turn state (including waiting for input), detail, name, title, model
@@ -4261,10 +4274,25 @@ func interactionOpen(ix *interaction) error {
 // recorded as interrupted, conversations are closed, and every provider is
 // asked to stop the runtimes it started.
 func (m *Manager) Shutdown(ctx context.Context) error {
+	_, err := m.shutdown(ctx, false)
+	return err
+}
+
+// shutdownIfIdle is Shutdown unless a Task works or waits, decided under mu,
+// so no turn starts in between. It reports whether the manager is shut down.
+func (m *Manager) shutdownIfIdle(ctx context.Context) (bool, error) {
+	return m.shutdown(ctx, true)
+}
+
+func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
-		return nil
+		return true, nil
+	}
+	if idleOnly && m.busyTasksLocked() > 0 {
+		m.mu.Unlock()
+		return false, nil
 	}
 	m.closed = true
 	for _, s := range m.sessions {
@@ -4317,7 +4345,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
 	m.closeBoard()
-	return firstErr
+	return true, firstErr
 }
 
 // wait waits for wg until ctx ends.
