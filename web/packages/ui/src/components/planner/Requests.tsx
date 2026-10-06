@@ -375,7 +375,7 @@ function PlansToApprove({ plans }: Readonly<{ plans: PlanToApprove[] }>) {
                 #{epic.seq} {epic.title}
               </button>
             </div>
-            <p className="text-caption text-muted">{epic.run ? `Approved before; ${proposals === 1 ? 'a proposal was' : `${proposals} proposals were`} added since and wait for you.` : `A proposed epic with ${proposals} ${proposals === 1 ? 'card' : 'cards'}. Nothing in it runs before you approve it.`}</p>
+            <p className="text-caption text-muted">{epic.run ? `Approved before; ${proposals === 1 ? 'a proposal was added since and waits' : `${proposals} proposals were added since and wait`} for you.` : `A proposed epic with ${proposals} ${proposals === 1 ? 'card' : 'cards'}. Nothing in it runs before you approve it.`}</p>
             <div className="flex justify-end">
               <Button size="sm" variant="primary" onClick={() => setApproving({ epic })}>
                 <BadgeCheck />

@@ -1367,6 +1367,7 @@ describe('approving an epic (ADR 0006)', () => {
     const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
     expect(plans.getByRole('button', { name: '#18 Release automation' })).toBeTruthy();
     expect(plans.getByText('1 to approve')).toBeTruthy();
+    expect(plans.getByText('Approved before; a proposal was added since and waits for you.')).toBeTruthy();
   });
 
   test('a change request moving a card names both parents and the approved epics it leaves and enters, with their runs', async () => {
