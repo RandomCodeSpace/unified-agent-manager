@@ -671,6 +671,29 @@ func TestAgentMoveOutOfPausedIsAChangeRequest(t *testing.T) {
 	}
 }
 
+// A pause set before approval survives an agent's moves: the only moves
+// that drop pauses, out of every epic, are beyond an agent (the root is
+// the owner's, and a story outside any epic is outside its scope).
+func TestAgentMoveOutOfEpicKeepsPauses(t *testing.T) {
+	f := newFixture(t)
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	loose := f.create(owner, "", KindStory, "Loose")
+	_, err := f.s.Edit(f.ctx, owner, p.b.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+
+	root := ""
+	for _, to := range []string{root, loose.ID} {
+		res, err := f.s.Edit(f.ctx, planner, p.b.ID, Patch{ParentID: &to})
+		if err == nil && res.Request == nil {
+			t.Fatalf("an agent moved #%s out of every epic: %+v", p.b.ID, res)
+		}
+	}
+	if c := f.card(p.b.ID); c.ParentID != p.one.ID || c.Paused != PausedOwner {
+		t.Fatalf("after the agent's moves: parent %s, paused %q", c.ParentID, c.Paused)
+	}
+}
+
 // Accepting a blocked request flags a proposal under an approved epic but
 // leaves it a proposal: only approving the epic confirms it.
 func TestAcceptBlockedKeepsAProposalUnderApprovedEpic(t *testing.T) {
