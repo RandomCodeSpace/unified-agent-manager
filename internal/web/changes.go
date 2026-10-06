@@ -35,8 +35,8 @@ const (
 )
 
 // gitBase is prepended to every git invocation: read-only, no fsmonitor, no
-// hooks, and no external diff or textconv programs.
-var gitBase = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"}
+// hooks, no signature checks, and no external diff or textconv programs.
+var gitBase = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "log.showSignature=false"}
 
 // Changes lists changed files for a session in the requested scope. It
 // also re-reads the branch of the session's Project.

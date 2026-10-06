@@ -758,21 +758,37 @@ func TestBootSweepsLanesNoAttemptHas(t *testing.T) {
 	}
 }
 
-// uam's own git work for lanes runs no hook, even with a hooks path set in
-// the repository's shared configuration from a lane: not in a lane start, a
+// uam's own git work for lanes runs no hook and no fsmonitor a lane sets in
+// the repository's shared configuration: no hook in a hooks directory and
+// none defined in configuration, under any name. Not in a lane start, a
 // landing with leftovers or a merge, a lane removal, or the boot sweep.
-// Hooks still run for git the owner runs.
+// They still run for git the owner runs.
 func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	r := newLaneRun(t, "true", "First", "Second")
 	one, l1 := r.start(0)
 	ran, hooks := filepath.Join(t.TempDir(), "ran"), t.TempDir()
-	for _, name := range []string{"reference-transaction", "post-checkout", "pre-commit", "prepare-commit-msg", "commit-msg",
-		"post-commit", "pre-merge-commit", "post-merge", "post-index-change"} {
-		if err := os.WriteFile(filepath.Join(hooks, name), fmt.Appendf(nil, "#!/bin/sh\necho %s >> '%s'\n", name, ran), 0o755); err != nil {
+	note := func(label string) string { return fmt.Sprintf("echo %s >> '%s'", label, ran) }
+	events := []string{"reference-transaction", "post-checkout", "pre-commit", "prepare-commit-msg", "commit-msg",
+		"post-commit", "pre-merge-commit", "post-merge", "post-index-change"}
+	for _, name := range append(events, "fsmonitor") {
+		label := "hooks-dir"
+		if name == "fsmonitor" {
+			label = name
+		}
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte("#!/bin/sh\n"+note(label)+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	gitIn(t, l1.dir, "config", "core.hooksPath", hooks)
+	gitIn(t, l1.dir, "config", "core.fsmonitor", filepath.Join(hooks, "fsmonitor"))
+	// A plain name, a name -c cannot spell, and the hook with no name.
+	planted := map[string]string{"plain": "hook.plain", "a=b": "hook.a=b", "unnamed": "hook"}
+	for label, section := range planted {
+		gitIn(t, l1.dir, "config", section+".command", note(label))
+		for _, event := range events {
+			gitIn(t, l1.dir, "config", "--add", section+".event", event)
+		}
+	}
 	noHooks := func(step string) {
 		t.Helper()
 		if out, err := os.ReadFile(ran); err == nil {
@@ -803,9 +819,10 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	if err != nil || err2 != nil {
 		t.Fatal(err, err2)
 	}
-	gitIn(t, r.repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-q", "-b", orphan.branch, orphan.dir, r.integ())
+	gitIn(t, r.repo, "worktree", "add", "-q", "-b", orphan.branch, orphan.dir, r.integ())
 	writeRepoFile(t, orphan.dir, "left.txt", "left\n")
-	gitIn(t, r.repo, "-c", "core.hooksPath=/dev/null", "branch", stray.branch, r.integ())
+	gitIn(t, r.repo, "branch", stray.branch, r.integ())
+	_ = os.Remove(ran) // what the setup's own git ran
 	r.m.closeBoard()
 	if err := r.m.openBoard(context.Background()); err != nil {
 		t.Fatal(err)
@@ -816,8 +833,12 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	noHooks("the boot sweep")
 
 	gitIn(t, r.repo, "branch", "probe")
-	if _, err := os.Stat(ran); err != nil {
-		t.Fatal("the planted hooks do not run for the owner's git either, so this test proves nothing")
+	gitIn(t, r.repo, "status", "--porcelain")
+	out, _ := os.ReadFile(ran)
+	for _, label := range []string{"hooks-dir", "fsmonitor", "plain", "a=b", "unnamed"} {
+		if !strings.Contains("\n"+string(out), "\n"+label) {
+			t.Errorf("the planted %s does not run for the owner's git either, so this test proves nothing for it", label)
+		}
 	}
 }
 

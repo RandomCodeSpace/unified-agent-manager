@@ -82,11 +82,56 @@ func (a gitAt) argv(args ...string) []string {
 }
 
 // runLaneGit runs one git write uam makes for lanes at a: runGitWrite with
-// hooks and fsmonitor off, as runGit has them, so uam's unattended writes
-// run no hook the repository's configuration names. The owner's own Commit,
-// Pull and Push run the repository's hooks.
+// hooks and fsmonitor off, as runGit has them, and every hook the
+// configuration at a defines turned off too (see hooksOff), so uam's
+// unattended writes run no hook the repository's configuration names. The
+// owner's own Commit, Pull and Push run the repository's hooks.
 func runLaneGit(ctx context.Context, a gitAt, args ...string) (string, error) {
-	return runGitWrite(ctx, a.dir, nil, append(slices.Clone(gitBase), a.argv(args...)...)...)
+	env, err := hooksOff(ctx, a)
+	if err != nil {
+		return "", err
+	}
+	return runGitWriteEnv(ctx, a.dir, nil, env, append(slices.Clone(gitBase), a.argv(args...)...)...)
+}
+
+// hooksOff is the environment that turns off, for one git command at a,
+// each hook the configuration there defines: git 2.54 and later also run
+// the hooks named by hook.<name>.command, whatever core.hooksPath says, and
+// only hook.<name>.enabled turns one off. The settings go in through
+// GIT_CONFIG_COUNT, which outranks every configuration file and, unlike -c,
+// takes any name.
+func hooksOff(ctx context.Context, a gitAt) ([]string, error) {
+	git, err := lookGit()
+	if err != nil {
+		return nil, err
+	}
+	out, code, stderr, err := runGit(ctx, git, a.dir, maxStatusBytes, a.argv("config", "-z", "--name-only", "--get-regexp", `^hook\.`)...)
+	switch {
+	case err != nil:
+		return nil, err
+	case code == 1:
+		return nil, nil // no hook.* settings
+	case code != 0:
+		return nil, newError(http.StatusBadGateway, "git config failed: %s", gitMessage(stderr))
+	case len(out) >= maxStatusBytes:
+		return nil, newError(http.StatusBadGateway, "the git configuration holds too many hook settings")
+	}
+	base, _ := strconv.Atoi(os.Getenv("GIT_CONFIG_COUNT"))
+	var env []string
+	seen := map[string]bool{}
+	for _, key := range nulRecords(out) {
+		off := "hook.enabled" // hook.command and hook.event: the hook with no name
+		if rest := strings.TrimPrefix(key, "hook."); strings.Contains(rest, ".") {
+			off = "hook." + rest[:strings.LastIndexByte(rest, '.')] + ".enabled"
+		}
+		if seen[off] {
+			continue
+		}
+		seen[off] = true
+		i := base + len(seen) - 1
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, off), fmt.Sprintf("GIT_CONFIG_VALUE_%d=false", i))
+	}
+	return append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", base+len(seen))), nil
 }
 
 // lanesRoot is where lane worktrees live: next to sessions.json, never in a
@@ -287,7 +332,10 @@ func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed boo
 		if _, err := r.commitLeftovers(ctx, l, seq); err != nil {
 			return err
 		}
-		if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "worktree", "remove", l.dir); err != nil {
+		// Pinned to the lane, as git checks it is clean with a git status
+		// run there: the hooks the lane's own configuration defines are off
+		// too.
+		if _, err := runLaneGit(ctx, gitAt{dir: r.top, pin: a.pin}, "worktree", "remove", l.dir); err != nil {
 			return gitFailed("git worktree remove failed", err)
 		}
 	}
@@ -303,27 +351,37 @@ func (r *laneRepo) removeLane(ctx context.Context, l lane, seq int64, landed boo
 	return nil
 }
 
-// commitLeftovers commits what the attempt left uncommitted, hooks
-// skipped, and reports whether there was anything.
+// commitLeftovers commits what the attempt left uncommitted to the
+// attempt's branch, by compare-and-swap, and reports whether there was
+// anything. Like laneHead it refuses unless the lane has that branch
+// checked out.
 func (r *laneRepo) commitLeftovers(ctx context.Context, l lane, seq int64) (bool, error) {
 	a, err := r.laneAt(l)
+	if err != nil {
+		return false, err
+	}
+	head, err := r.headAt(ctx, a, l)
 	if err != nil {
 		return false, err
 	}
 	if _, err := runLaneGit(ctx, a, "add", "-A"); err != nil {
 		return false, gitFailed("git add failed", err)
 	}
-	_, code, stderr, err := runGit(ctx, r.git, a.dir, 4096, a.argv("diff", "--cached", "--quiet")...)
-	switch {
-	case err != nil:
-		return false, err
-	case code == 0:
-		return false, nil
-	case code != 1:
-		return false, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
+	// write-tree rewrites the index, which runs post-index-change hooks.
+	out, err := runLaneGit(ctx, a, "write-tree")
+	if err != nil {
+		return false, gitFailed("git write-tree failed", err)
 	}
-	if _, err := runLaneGit(ctx, a, "commit", "--quiet", "--no-verify", "--cleanup=verbatim", "-m", fmt.Sprintf("#%d: work in progress", seq)); err != nil {
-		return false, gitFailed("git commit failed", err)
+	tree := out[strings.LastIndexByte(out, '\n')+1:]
+	if was, err := r.output(ctx, r.top, "rev-parse", head+"^{tree}"); err != nil || was == tree {
+		return false, err
+	}
+	commit, err := r.commitTree(ctx, tree, fmt.Sprintf("#%d: work in progress\n", seq), head)
+	if err != nil {
+		return false, err
+	}
+	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "update-ref", "-m", "uam", "refs/heads/"+l.branch, commit, head); err != nil {
+		return false, gitFailed("git update-ref failed", err)
 	}
 	return true, nil
 }
@@ -412,7 +470,7 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 	if err := r.notMerging(ctx, l); err != nil {
 		return err
 	}
-	head, err := r.laneHead(ctx, l)
+	head, err := r.headAt(ctx, a, l)
 	if err != nil {
 		return err
 	}
@@ -420,7 +478,7 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 		return err
 	}
 	msg := fmt.Sprintf("Merge %s\n\n%s: %s\n", r.integ, trailerMerge, tip)
-	_, mergeErr := runLaneGit(ctx, a, "merge", "--ff", "--no-edit", "--no-verify", "-m", msg, tip)
+	_, mergeErr := runLaneGit(ctx, a, "merge", "--ff", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures", "-m", msg, tip)
 	if mergeErr == nil {
 		return nil
 	}
@@ -659,28 +717,62 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 // laneAt is where uam runs git in the lane l: its directory, with git pinned
 // to its worktree and to the git directory git made for it under the
 // repository's common directory when uam added it, never to what the .git
-// file in the agent's directory names. It refuses while that git directory
-// is missing or names another worktree, and leaves the lane where it is.
+// file in the agent's directory names. It refuses while the lane's
+// directory is a symbolic link, or that git directory is missing or names
+// another worktree or repository, and leaves the lane where it is.
 func (r *laneRepo) laneAt(l lane) (gitAt, error) {
 	gitDir := filepath.Join(r.common, "worktrees", filepath.Base(l.dir))
-	back, err := os.ReadFile(filepath.Join(gitDir, "gitdir")) // #nosec G304 -- a file git keeps in the repository's own git directory.
-	dotGit := strings.TrimSpace(string(back))
-	if dotGit != "" && !filepath.IsAbs(dotGit) {
-		dotGit = filepath.Join(gitDir, dotGit) // written by worktree.useRelativePaths
-	}
-	if err != nil || filepath.Base(dotGit) != ".git" || realPath(filepath.Dir(dotGit)) != realPath(l.dir) {
-		return gitAt{}, newError(http.StatusConflict, "%s is not a lane worktree of this repository: its git directory is missing or names another worktree", displaytext.Sanitize(l.dir))
+	dotGit, err := adminPath(gitDir, "gitdir")
+	common, cerr := adminPath(gitDir, "commondir")
+	info, lerr := os.Lstat(l.dir)
+	if err != nil || cerr != nil || lerr != nil || !info.IsDir() || filepath.Base(dotGit) != ".git" ||
+		realPath(filepath.Dir(dotGit)) != realPath(l.dir) || realPath(common) != realPath(r.common) {
+		return gitAt{}, newError(http.StatusConflict, "%s is not a lane worktree of this repository: it is a symbolic link, or its git directory is missing or names another worktree or repository", displaytext.Sanitize(l.dir))
 	}
 	return gitAt{dir: l.dir, pin: []string{"--git-dir=" + gitDir, "--work-tree=" + l.dir}}, nil
 }
 
-// laneHead is the commit the lane l has checked out.
+// adminPath is the path the file name in a lane's git directory gitDir
+// holds, a relative one taken from gitDir (worktree.useRelativePaths).
+func adminPath(gitDir, name string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(gitDir, name)) // #nosec G304 -- a file git keeps in the repository's own git directory.
+	path := strings.TrimSpace(string(b))
+	if err == nil && path == "" {
+		err = fmt.Errorf("%s is empty", name)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(gitDir, path)
+	}
+	return path, err
+}
+
+// laneHead is the commit the lane l has checked out: its branch's tip. It
+// refuses unless the lane's HEAD names that branch, so uam never commits or
+// merges onto another branch, nor lands one.
 func (r *laneRepo) laneHead(ctx context.Context, l lane) (string, error) {
 	a, err := r.laneAt(l)
 	if err != nil {
 		return "", err
 	}
-	return r.outputAt(ctx, a, "rev-parse", "--verify", "HEAD^{commit}")
+	return r.headAt(ctx, a, l)
+}
+
+// headAt is laneHead for the lane l at a.
+func (r *laneRepo) headAt(ctx context.Context, a gitAt, l lane) (string, error) {
+	ref, code, stderr, err := runGit(ctx, r.git, a.dir, 4096, a.argv("symbolic-ref", "--quiet", "HEAD")...)
+	switch {
+	case err != nil:
+		return "", err
+	case code != 0 && code != 1:
+		return "", newError(http.StatusBadGateway, "git symbolic-ref failed: %s", gitMessage(stderr))
+	case code == 1 || strings.TrimSpace(string(ref)) != "refs/heads/"+l.branch:
+		return "", newError(http.StatusConflict, "the lane at %s does not have its branch %s checked out; switch back to it", displaytext.Sanitize(l.dir), l.branch)
+	}
+	head, err := r.tipOf(ctx, l.branch)
+	if err == nil && head == "" {
+		err = newError(http.StatusConflict, "there is no branch %s", l.branch)
+	}
+	return head, err
 }
 
 // tipOf is the commit branch names, "" when there is no such branch.

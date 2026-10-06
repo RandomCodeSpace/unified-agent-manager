@@ -957,6 +957,95 @@ func TestLaneInARepositoryWithRelativeWorktreePaths(t *testing.T) {
 	}
 }
 
+// uam refuses a lane that is no longer the lane it made: its HEAD names
+// another branch, its git directory names another repository, or its
+// directory is a symbolic link. Nothing it refuses changes the owner's
+// branches, index or files, or the lane's branch.
+func TestLaneRefusesARedirectedLane(t *testing.T) {
+	f := newLaneFixture(t)
+	head, common, link := f.start(1), f.start(2), f.start(3)
+	mover := f.start(4)
+	commitFile(t, mover.dir, "d.txt", "moved\n")
+	tip := f.land(mover, 4)
+	for _, l := range []lane{head, common, link} {
+		writeRepoFile(t, l.dir, "b.txt", "lane\n")
+	}
+	other := branchRepo(t)
+	target := t.TempDir()
+	writeRepoFile(t, target, "keep.txt", "keep\n")
+
+	gitIn(t, head.dir, "symbolic-ref", "HEAD", "refs/heads/main")
+	admin := filepath.Join(f.top, ".git", "worktrees", filepath.Base(common.dir), "commondir")
+	if err := os.WriteFile(admin, []byte(filepath.Join(other, ".git")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(link.dir, link.dir+".moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link.dir); err != nil {
+		t.Fatal(err)
+	}
+	refs, index, otherRefs := f.refs(), gitOutput(t, f.top, "ls-files", "--stage"), gitOutput(t, other, "for-each-ref")
+
+	for name, l := range map[string]lane{"a HEAD on main": head, "a git directory of another repository": common, "a symbolic link": link} {
+		if _, err := f.r.commitLeftovers(f.ctx, l, 1); err == nil {
+			t.Errorf("commitLeftovers ran in a lane with %s", name)
+		}
+		if err := f.r.mergeTip(f.ctx, l, tip); err == nil {
+			t.Errorf("mergeTip ran in a lane with %s", name)
+		}
+		if _, err := f.r.squashLane(f.ctx, l, tip, "x"); err == nil {
+			t.Errorf("squashLane ran in a lane with %s", name)
+		}
+		if err := f.r.removeLane(f.ctx, l, 1, true); err == nil {
+			t.Errorf("removeLane ran in a lane with %s", name)
+		}
+		if f.refs() != refs || gitOutput(t, f.top, "ls-files", "--stage") != index || gitOutput(t, other, "for-each-ref") != otherRefs {
+			t.Fatalf("a lane with %s changed a branch or the owner's index", name)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(target, "keep.txt")); err != nil || string(got) != "keep\n" {
+		t.Fatalf("the link's target lost keep.txt: %q, %v", got, err)
+	}
+}
+
+// uam's own commits and merges in a lane sign nothing and check no
+// signature, whatever the repository's configuration asks, so they run no
+// signing program.
+func TestLaneGitRunsNoSigningProgram(t *testing.T) {
+	f := newLaneFixture(t)
+	first, second := f.start(1), f.start(2)
+	ran := filepath.Join(t.TempDir(), "ran")
+	gpg := filepath.Join(t.TempDir(), "gpg")
+	if err := os.WriteFile(gpg, fmt.Appendf(nil, "#!/bin/sh\necho gpg >> '%s'\nexit 1\n", ran), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, second.dir, "config", "commit.gpgSign", "true")
+	gitIn(t, second.dir, "config", "gpg.program", gpg)
+	gitIn(t, second.dir, "config", "merge.verifySignatures", "true")
+	gitIn(t, second.dir, "config", "log.showSignature", "true")
+
+	// The first lane's commit carries a signature, so a git log that shows
+	// signatures checks it.
+	commitFile(t, first.dir, "b.txt", "one\n")
+	raw := gitOutput(t, first.dir, "cat-file", "commit", "HEAD")
+	signed := filepath.Join(t.TempDir(), "signed")
+	sig := "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n xx\n -----END PGP SIGNATURE-----\n\n"
+	if err := os.WriteFile(signed, []byte(strings.Replace(raw, "\n\n", sig, 1)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, first.dir, "update-ref", "refs/heads/"+first.branch, gitOutput(t, first.dir, "hash-object", "-t", "commit", "-w", signed))
+	f.land(first, 1)
+	writeRepoFile(t, second.dir, "c.txt", "two\n")
+	landed := f.land(second, 2)
+	if got := gitOutput(t, f.top, "show", "--format=", "--name-only", landed); got != "c.txt" {
+		t.Fatalf("landed files = %q", got)
+	}
+	if out, err := os.ReadFile(ran); err == nil {
+		t.Fatalf("a signing program ran:\n%s", out)
+	}
+}
+
 func TestLaneGitFailuresAreErrors(t *testing.T) {
 	f := newLaneFixture(t)
 	tip := f.tip()

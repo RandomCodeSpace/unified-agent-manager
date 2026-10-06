@@ -702,6 +702,11 @@ func containsAny(s string, subs ...string) bool {
 // on a terminal. It returns the tail of git's combined output, made safe to
 // show; a non-zero exit is a *gitError.
 func runGitWrite(ctx context.Context, dir string, stdin io.Reader, args ...string) (string, error) {
+	return runGitWriteEnv(ctx, dir, stdin, nil, args...)
+}
+
+// runGitWriteEnv is runGitWrite with env added to git's environment.
+func runGitWriteEnv(ctx context.Context, dir string, stdin io.Reader, env []string, args ...string) (string, error) {
 	git, err := lookGit()
 	if err != nil {
 		return "", err
@@ -711,8 +716,8 @@ func runGitWrite(ctx context.Context, dir string, stdin io.Reader, args ...strin
 	argv := append([]string{"-C", dir, "-c", "core.fsmonitor=false", "--literal-pathspecs"}, args...)
 	cmd := exec.CommandContext(ctx, git, argv...) // #nosec G204 G702 -- resolved git binary, fixed commands, user paths after --, no shell.
 	cmd.Stdin = stdin
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
-		"LC_ALL=C", "GIT_PAGER=cat", "GIT_LITERAL_PATHSPECS=1", "SSH_ASKPASS_REQUIRE=never")
+	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
+		"LC_ALL=C", "GIT_PAGER=cat", "GIT_LITERAL_PATHSPECS=1", "SSH_ASKPASS_REQUIRE=never"), env...)
 	tail := &tailBuffer{limit: maxGitOutput}
 	cmd.Stdout, cmd.Stderr = tail, tail
 	cmd.WaitDelay = time.Second
