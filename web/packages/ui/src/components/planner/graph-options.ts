@@ -9,7 +9,7 @@ export const MAP_GRAPH_GUTTER = 120;
 type Drawing = GraphicComponentOption;
 type MapLayout = { nodes: MapNode[]; edges: MapEdge[]; width: number; height: number };
 
-/** SVG still uses the app's one theme; resolve tokens before ECharts processes colours. */
+/** Tokens resolved in the current scheme before ECharts processes colours; callers rebuild on a scheme change. */
 function theme() {
   const css = getComputedStyle(document.documentElement);
   return {

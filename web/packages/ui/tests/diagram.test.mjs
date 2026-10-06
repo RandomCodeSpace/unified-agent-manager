@@ -113,7 +113,7 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   const globals = { window: globalThis.window, document: globalThis.document, getComputedStyle: globalThis.getComputedStyle };
   Object.assign(globalThis, {
     window: page,
-    document: { createElement: () => new Frame(), body: { append: (frame) => frames.push(frame) } },
+    document: { documentElement: { dataset: {} }, createElement: () => new Frame(), body: { append: (frame) => frames.push(frame) } },
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
   });
   t.after(() => Object.assign(globalThis, globals));

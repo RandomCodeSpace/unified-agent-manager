@@ -6,6 +6,7 @@ import { EChart } from '../EChart';
 import { Button } from '../ui/button';
 import { useShownBoard } from './context';
 import { MAP_GRAPH_GUTTER, mapGraphOption, mapNodeMeta } from './graph-options';
+import { useScheme } from '../../lib/theme';
 
 const PAD = 24;
 
@@ -32,7 +33,9 @@ export function MapView() {
   const gesture = useRef<{ x: number; y: number; vx: number; vy: number; moved: boolean; distance?: number; k?: number } | null>(null);
   const dragged = useRef(false);
   const opened = useRef<string | null>(null);
-  const option = useMemo(() => mapGraphOption(layout, ui.selected), [layout, ui.selected]);
+  const scheme = useScheme();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the option reads token colours from the page, which change with the scheme.
+  const option = useMemo(() => mapGraphOption(layout, ui.selected), [layout, ui.selected, scheme]);
 
   const paint = useCallback(() => {
     frame.current = 0;

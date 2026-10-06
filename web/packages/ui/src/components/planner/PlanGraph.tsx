@@ -6,6 +6,7 @@ import { EChart } from '../EChart';
 import { Button } from '../ui/button';
 import { WaitList, type TaskPlan } from './TaskPlan';
 import { PLAN_GRAPH_PAD, planGraphOption, planNodeLabel } from './graph-options';
+import { useScheme } from '../../lib/theme';
 
 const KIND_WORDS = { epic: 'epics', story: 'stories', subtask: 'subtasks' } as const;
 
@@ -64,7 +65,9 @@ export function PlanGraph({ plan, level, selected, onLevel, onSelect, details }:
   const tb = useMemo(() => layoutLevel(cards, 'tb'), [cards]);
   const layout = lr.width + PLAN_GRAPH_PAD * 2 <= room ? lr : tb;
   const path = container ? cardPath(container, plan.byId) : [];
-  const option = useMemo(() => planGraphOption(layout, plan, selected), [layout, plan, selected]);
+  const scheme = useScheme();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the option reads token colours from the page, which change with the scheme.
+  const option = useMemo(() => planGraphOption(layout, plan, selected), [layout, plan, selected, scheme]);
   const shown = selected ? cards.find((c) => c.id === selected && c.kind === 'subtask') : undefined;
   const waits = container ? waitsOf(container, plan.byId) : [];
   const kinds = [...new Set(cards.map((c) => c.kind))].map((k) => KIND_WORDS[k]).join(' and ');

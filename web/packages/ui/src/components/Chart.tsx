@@ -7,6 +7,7 @@ import { chartCsv, chartHeight, chartOption, formatNumber, headline, seriesColor
 import { chartTable, type ChartTable } from '../lib/chart-table';
 import { DataTable, useRovingFocus } from './DataTable';
 import { useCopied } from '../lib/clipboard';
+import { useScheme } from '../lib/theme';
 import { cn } from '../lib/cn';
 import { EChart } from './EChart';
 import { Note, Skeleton, Spinner, timeAgo, useMedia } from './common';
@@ -28,7 +29,9 @@ const SWATCHES = ['bg-badge-blue', 'bg-badge-orange', 'bg-badge-teal', 'bg-badge
 /** The chart's data is rendered directly, with the same drawing used for pinned sparklines. */
 export function ChartImage({ chart, look: { width, height, spark }, className, hidden, zoomControls = true, controlsContainer, legend }: Readonly<{ chart: ChartRows; look: ChartLook; className?: string; hidden?: ReadonlySet<string>; zoomControls?: boolean; controlsContainer?: HTMLElement | null; legend?: ReactNode }>) {
   const compact = legend !== undefined;
-  const option = useMemo(() => chartOption(chart, { width, height, spark, compact }, hidden), [chart, width, height, spark, compact, hidden]);
+  const scheme = useScheme();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the option reads token colours from the page, which change with the scheme.
+  const option = useMemo(() => chartOption(chart, { width, height, spark, compact }, hidden), [chart, width, height, spark, compact, hidden, scheme]);
   const label = chart.kind === 'echarts' ? `Chart: ${chart.title}` : `${chart.kind === 'bar' ? 'Bar' : 'Line'} chart: ${chart.title}, ${chart.labels.length} ${chart.labels.length === 1 ? 'point' : 'points'}`;
   return <EChart option={option} width={width} height={height} label={label} className={className} zoomControls={zoomControls && !spark} controlsContainer={controlsContainer} legend={legend} />;
 }

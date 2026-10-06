@@ -1,6 +1,7 @@
-/* Tailwind v4 theme built from DESIGN.md. One cool light theme (reference direction, 2026-09-24):
-   a near-white canvas, quiet gray rail and bubbles, white raised controls.
-   Every colour, size, radius and shadow in the app is one of these tokens. */
+/* Tailwind v4 theme built from DESIGN.md. Two schemes on one token set: Light, the cool near-white
+   theme (reference direction, 2026-09-24), and Dark, the same monochrome ladder on pure black
+   (`:root[data-theme='dark']` below, lib/theme.ts). Every colour, size, radius and shadow in the
+   app is one of these tokens; the light values are here, the dark ones override them. */
 
 @import 'tailwindcss' source('.');
 
@@ -122,14 +123,16 @@
 
   /* Elevation (DESIGN.md Elevation & Depth): surfaces float on cool ink shadows instead of drawn borders.
      Every level is two layers at most: a near-invisible 1px ring (0 blur, the crisp edge) and one soft
-     shadow. `well` is the inset ring of a sunken surface; `focus` lifts a focused field (it turns `raised` and rises, no coloured edge); `focus-float` the composer's deeper neutral shadow. */
+     shadow. `well` is the inset ring of a sunken surface; `focus` lifts a focused field (it turns `raised` and rises, no coloured edge); `focus-float` the composer's deeper neutral shadow.
+     The values are the `--elevation-*` properties in the base layer, one set per scheme: Tailwind copies a
+     literal shadow into each utility, where the dark scheme could not override it. */
   --shadow-*: initial;
-  --shadow-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
-  --shadow-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
-  --shadow-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
-  --shadow-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
-  --shadow-focus: 0 0 0 1px rgba(20, 28, 45, 0.08), 0 2px 8px rgba(20, 28, 45, 0.1);
-  --shadow-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
+  --shadow-raised: var(--elevation-raised);
+  --shadow-float: var(--elevation-float);
+  --shadow-modal: var(--elevation-modal);
+  --shadow-well: var(--elevation-well);
+  --shadow-focus: var(--elevation-focus);
+  --shadow-focus-float: var(--elevation-focus-float);
 
   /* Durations are the bare duration-100/160/240 utilities (DESIGN.md fast/base/slow); only the easing is a token. */
   --ease-app: cubic-bezier(0.2, 0, 0, 1);
@@ -218,6 +221,74 @@
     color-scheme: light;
     /* View transitions (React <ViewTransition>): the page itself never snapshots (see the view transition rules below). */
     view-transition-name: none;
+    --elevation-raised: 0 0 0 1px rgba(20, 28, 45, 0.05), 0 2px 6px rgba(20, 28, 45, 0.07);
+    --elevation-float: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 6px 20px rgba(20, 28, 45, 0.1);
+    --elevation-modal: 0 0 0 1px rgba(20, 28, 45, 0.06), 0 20px 48px rgba(20, 28, 45, 0.18);
+    --elevation-well: inset 0 0 0 1px rgba(20, 28, 45, 0.05);
+    --elevation-focus: 0 0 0 1px rgba(20, 28, 45, 0.08), 0 2px 8px rgba(20, 28, 45, 0.1);
+    --elevation-focus-float: 0 0 0 1px rgba(20, 28, 45, 0.1), 0 10px 28px rgba(20, 28, 45, 0.14);
+  }
+  /* Dark (DESIGN.md Colors): pure black canvas and rail, near-black raised controls, the ink ladder
+     inverted, the one blue accent, no added colour. Every text pair keeps its light value's AA
+     contrast. Shadows do not show on black, so each level's edge is a white 1px ring. */
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --color-rail: #000000;
+    --color-canvas: #000000;
+    --color-surface: #1a1a1a;
+    --color-raised: #121212;
+    --color-sunken: #0a0a0a;
+    --color-bubble: #171717;
+    --color-ink: #ededed;
+    --color-body: #c2c2c2;
+    --color-muted: #969696;
+    --color-faint: #6f6f6f;
+    --color-hairline: #1f1f1f;
+    --color-hairline-strong: #3a3a3a;
+    --color-primary: #ededed;
+    --color-on-primary: #000000;
+    --color-accent: #7aa5ff;
+    --color-on-accent: #000000;
+    --color-accent-wash: #14264a;
+    --color-focus: #7aa5ff;
+    --color-selection: #213a6b;
+    --color-attention: #ff9d5c;
+    --color-attention-wash: #2e1a0c;
+    --color-success: #4fd18b;
+    --color-success-wash: #0b2818;
+    --color-warning: #e6b84a;
+    --color-warning-wash: #2b2209;
+    --color-error: #ff7a70;
+    --color-error-wash: #331210;
+    --color-info: #7aa5ff;
+    --color-info-wash: #14264a;
+    --color-code-bg: #0a0a0a;
+    --color-diff-add-bg: #0d2a1a;
+    --color-diff-add-text: #9be6bb;
+    --color-diff-del-bg: #36130f;
+    --color-diff-del-text: #ffb3ab;
+    --color-backdrop: rgba(0, 0, 0, 0.6);
+    --color-scrim: rgba(0, 0, 0, 0.85);
+    --color-tint-hover: #1a1a1a;
+    --color-tint-selected: #111a2c;
+    --color-tint-well: #0e0e0e;
+    /* Badge fills under `on-primary` (black here), each at least 4.5:1. */
+    --color-badge-red: #f2867c;
+    --color-badge-orange: #f0a065;
+    --color-badge-amber: #e3be5a;
+    --color-badge-lime: #a8cf5c;
+    --color-badge-green: #6fcf8f;
+    --color-badge-teal: #4fd1bf;
+    --color-badge-cyan: #5cc8e6;
+    --color-badge-blue: #86a6ff;
+    --color-badge-violet: #b39cff;
+    --color-badge-pink: #f08cc4;
+    --elevation-raised: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.5);
+    --elevation-float: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 6px 20px rgba(0, 0, 0, 0.6);
+    --elevation-modal: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 20px 48px rgba(0, 0, 0, 0.7);
+    --elevation-well: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --elevation-focus: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 2px 8px rgba(0, 0, 0, 0.5);
+    --elevation-focus-float: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 10px 28px rgba(0, 0, 0, 0.6);
   }
   html,
   body,
@@ -778,12 +849,12 @@
   /* The terminal's scrollbar slider (components/Terminal.tsx): xterm.js puts these colours in a <style>
      element the CSP blocks (DESIGN.md CSP constraints), so they live here, from its foreground `ink`. */
   .xterm .xterm-scrollable-element > .scrollbar > .slider {
-    background: #25262b33;
+    background: color-mix(in srgb, var(--color-ink) 20%, transparent);
   }
   .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
-    background: #25262b66;
+    background: color-mix(in srgb, var(--color-ink) 40%, transparent);
   }
   .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
-    background: #25262b80;
+    background: color-mix(in srgb, var(--color-ink) 50%, transparent);
   }
 }

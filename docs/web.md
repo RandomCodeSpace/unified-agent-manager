@@ -1473,8 +1473,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
   - With no Task open, the main pane shows only the UAM mark with its wordmark and one line;
-    New task and Add project are in the sidebar. There is one theme; it does
-    not follow the system.
+    New task and Add project are in the sidebar. Settings → This browser →
+    Theme picks Light, Dark or Match system (the default, which follows the
+    OS as it changes); the choice is kept per browser.
 
 States shown for each session:
 
