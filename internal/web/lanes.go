@@ -839,7 +839,7 @@ const maxGitFile = 64 << 10
 // a regular file, opened without following a symbolic link or waiting on a
 // FIFO, of which it reads at most maxGitFile bytes.
 func readGitFile(path string) (string, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- a path git names inside its own directory.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 G703 -- a path git names inside its own directory.
 	if err != nil {
 		return "", err
 	}
