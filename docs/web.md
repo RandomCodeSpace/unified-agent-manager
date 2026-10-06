@@ -1360,7 +1360,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   running lane's subtask: its done request lands it, and Stop releases it.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
-  and removes the lane; a landed attempt's branch goes too. The acceptance
+  and removes the lane; a landed attempt's branch goes too, and the
+  Project's folder of lanes once it is empty, as when the Project is
+  removed. The acceptance
   runs of a Project, its lanes' included, run one at a time unless the
   Project allows up to 4 (Acceptance runs at a time, in the Approve
   dialog). The Planner names the integration branch beside its filters,

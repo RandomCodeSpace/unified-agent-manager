@@ -1303,12 +1303,14 @@ var errProjectNotFound = newError(http.StatusNotFound, "project not found")
 // RemoveProject deletes a Project and its Task records. It is refused unless
 // every Task in it is archived. Conversations are never deleted at the
 // provider, and the directory is not touched. The Project's planner cards
-// move to Unassigned.
+// move to Unassigned, and the directory uam made for its lanes goes when
+// empty.
 func (m *Manager) RemoveProject(id string) error {
 	if err := m.removeProject(id); err != nil {
 		return err
 	}
 	m.unassignBoard(id)
+	m.dropLanesDir(id)
 	return nil
 }
 

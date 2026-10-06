@@ -419,7 +419,8 @@ When a lane Task is archived or deleted, or found orphaned at boot:
 1. abort any merge in progress, since the Task is gone;
 2. commit leftovers to the attempt branch (`--no-verify`);
 3. `git worktree remove`;
-4. delete the attempt branch if its hold landed, and keep it otherwise.
+4. delete the attempt branch if its hold landed, and keep it otherwise;
+5. remove `<lanes root>/<project-id>/` once it is empty, which also happens when the Project is removed. uam never removes it while it holds anything. Recovery (§4.7) still sweeps and cross-checks a Project whose directory is gone once its base branch is recorded.
 
 The transcript stays readable after the worktree is gone, because reading a Copilot history needs only the conversation ID. The recent-folders list leaves out workdirs under the lanes root, so lane directories never push the owner's folders out of the picker.
 
