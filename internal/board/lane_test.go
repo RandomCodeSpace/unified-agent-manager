@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -872,6 +873,51 @@ func TestAcceptedSplitUnderApprovedEpicMakesProposals(t *testing.T) {
 		if c.Title == "Half" && !c.Confirmed() {
 			t.Fatalf("a part outside approved epics = %+v", c)
 		}
+	}
+}
+
+// Under an approved epic the owner's Accept of an agent's split request,
+// whose parts are proposals, is refused when it would close a story before
+// they are approved, as the agent's own split would be; the owner's split
+// keeps the parts confirmed and goes through.
+func TestAcceptedSplitThatWouldCloseAStoryIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	epic, story, one, two := f.tree()
+	other := f.create(owner, epic.ID, KindStory, "Other")
+	f.create(owner, other.ID, KindSubtask, "Three")
+	f.approveRun(epic.ID, laneRun)
+	_, err := f.s.SetStatus(f.ctx, owner, two.ID, StatusDone, "shipped", false)
+	f.must(err)
+	f.lane(one.ID, "run")
+	res, err := f.s.Split(f.ctx, Agent("run", ""), one.ID, []SplitChild{{Title: "Lex"}, {Title: "Scan"}})
+	f.must(err)
+	_, err = f.s.ReleaseHold(f.ctx, owner, one.ID, ReleaseOwner, "")
+	f.must(err)
+
+	before := f.revision()
+	_, err = f.s.Accept(f.ctx, owner, res.Request.ID, "")
+	wantRefusal(t, err, CodeInvalid, story.ref())
+	if want := fmt.Sprintf("accepting would close %s before its parts are approved; split %s yourself instead", story.ref(), one.ref()); err.Error() != want {
+		t.Fatalf("refusal = %q, want %q", err, want)
+	}
+	if c := f.card(one.ID); f.revision() != before || c.Kind != KindSubtask || c.Status != StatusTodo || c.PendingRequests != 1 {
+		t.Fatalf("the refused accept wrote: %+v", c)
+	}
+
+	split, err := f.s.Split(f.ctx, owner, one.ID, []SplitChild{{Title: "Lex"}, {Title: "Scan"}})
+	f.must(err)
+	if split.Card.Status != StatusCancelled {
+		t.Fatalf("the owner's split = %+v", split)
+	}
+	for _, c := range f.children(story.ID) {
+		if (c.Title == "Lex" || c.Title == "Scan") && !c.Confirmed() {
+			t.Fatalf("the owner's part = %+v", c)
+		}
+	}
+	wantStatus(t, f.card(story.ID), StatusDoing)
+	if r := f.detail(one.ID).Requests; len(r) != 1 || r[0].Status != RequestWithdrawn {
+		t.Fatalf("the split request after the owner's split = %+v", r)
 	}
 }
 

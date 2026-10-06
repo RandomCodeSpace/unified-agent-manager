@@ -243,11 +243,12 @@ func (o *outline) above(n *node) map[string]Status {
 	return out
 }
 
-// closesNone refuses the agent write on n in progress, naming them, when it
+// closesNone refuses the write on n in progress (an agent's, or the owner's
+// Accept of an agent's split under an approved epic), naming them, when it
 // brought a container above n to done or cancelled: that would cancel the
 // container's proposals and release its dependents. before is o.above(n)
-// from before the write; format gets n's ref and the closed containers, as
-// "#3 done, #1 done".
+// from before the write; format gets n's ref, the closed containers, as
+// "#3 done, #1 done", and their refs alone, as "#3, #1".
 func (t *txn) closesNone(project string, n *node, before map[string]Status, format string) error {
 	after, err := t.outline(project)
 	if err != nil {
@@ -263,7 +264,7 @@ func (t *txn) closesNone(project string, n *node, before map[string]Status, form
 	if len(refs) == 0 {
 		return nil
 	}
-	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(format, n.ref(), strings.Join(closed, ", "))}
+	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(format, n.ref(), strings.Join(closed, ", "), strings.Join(refs, ", "))}
 }
 
 // awaited refuses deleting the cards of tree while a started subtask waits

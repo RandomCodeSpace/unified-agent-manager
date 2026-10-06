@@ -1320,7 +1320,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   of the epic drops its pause. An agent's move into or out of an approved
   epic, or out from under a pause, reaches the Inbox as a change request
   that names both parents and the run of each approved epic it leaves or
-  enters. Restoring a cancelled card there brings it
+  enters. Accepting an agent's split request there is refused when it would
+  close a story or epic before its parts, which are proposals, are approved;
+  split the subtask yourself instead. Restoring a cancelled card there brings it
   back as a proposal, the epic itself excepted. Approve also readies git for
   the run: it refuses when the server's git is older than 2.40 or has no
   committer identity, and when the Project's base branch (the branch checked

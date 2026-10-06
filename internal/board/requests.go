@@ -732,8 +732,10 @@ func (t *txn) copyLinks(o *outline, n *node, made []*node) ([]Card, error) {
 // it for a ticked item) and the finishing guard to pass; the claim text
 // becomes the close comment and the acceptance is an owner touch. A lane's
 // done request is accepted only by landing it (AcceptLanded), and an
-// accepted blocked request ends a lane's attempt. comment is the owner's
-// decision note.
+// accepted blocked request ends a lane's attempt. Under an approved epic a
+// split request, whose parts are proposals, is refused when it would bring
+// a container to done or cancelled, as an agent's split is. comment is the
+// owner's decision note.
 func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Request, error) {
 	if err := permit(a, opDecide, ""); err != nil {
 		return Request{}, err
@@ -792,8 +794,14 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			if err := checkSplit(o, n, p.Children); err != nil {
 				return err
 			}
-			_, err := t.applySplit(o, a, r.TaskID, n, p.Children, true)
-			return err
+			// Under an approved epic the parts are proposals, which
+			// derivation ignores: a split that closes a container there
+			// would release its dependents before they are approved.
+			run, above := o.approved(n) != nil, o.above(n)
+			if _, err := t.applySplit(o, a, r.TaskID, n, p.Children, true); err != nil || !run {
+				return err
+			}
+			return t.closesNone(o.project, n, above, "accepting would close %[3]s before its parts are approved; split %[1]s yourself instead")
 		}
 		if n.stored == StatusCancelled || p.Patch == nil {
 			return invalid("%s can no longer change", n.ref())
