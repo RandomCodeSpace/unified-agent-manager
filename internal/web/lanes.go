@@ -24,7 +24,7 @@ import (
 // the store before a ref moves.
 const (
 	lanesDir    = "lanes"
-	integPrefix = "uam/plan-"
+	integPrefix = "uam-plan-"
 
 	// The trailers uam writes: a landing names its card and request, a
 	// revert its card, and uam's merge of the integration tip into a lane
@@ -41,7 +41,6 @@ const (
 	codeLocalChanges   = "local_changes"
 	codeGitTooOld      = "git_too_old"
 	codeNoGitIdentity  = "no_git_identity"
-	codeBranchClash    = "branch_clash"
 
 	// maxNamedFiles is how many paths a refusal names.
 	maxNamedFiles = 10
@@ -122,8 +121,7 @@ func openLanes(ctx context.Context, projectID, dir string) (*laneRepo, error) {
 }
 
 // preflight checks what lanes need: git 2.40 or later for merge-tree
-// --write-tree, a committer identity, a commit, the base branch, and no
-// branch where uam's branches go.
+// --write-tree, a committer identity, a commit, and the base branch.
 func (r *laneRepo) preflight(ctx context.Context, base string) error {
 	version, err := r.output(ctx, r.top, "version")
 	if err != nil {
@@ -153,14 +151,7 @@ func (r *laneRepo) preflight(ctx context.Context, base string) error {
 	if tip == "" {
 		return newError(http.StatusConflict, "there is no branch %s", displaytext.Sanitize(base))
 	}
-	// git keeps a branch as a file, so a branch named uam leaves no room for
-	// the branches under uam/.
-	root, _, _ := strings.Cut(integPrefix, "/")
-	if clash, err := r.tipOf(ctx, root); err != nil || clash == "" {
-		return err
-	}
-	return &Error{Status: http.StatusConflict, Code: codeBranchClash,
-		Message: fmt.Sprintf("a branch named %s stops git from creating %s and the other branches under %s/; rename or delete it", root, r.integ, root)}
+	return nil
 }
 
 // gitAtLeast reports whether `git version` printed a version at least
@@ -591,13 +582,20 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (str
 }
 
 // mergeIn runs git merge of tip in the worktree at dir and returns its new
-// HEAD. A merge it started and could not finish, for example when a hook
-// refuses the commit, is aborted, so dir is never left mid-merge by uam.
+// HEAD. It refuses local_changes while dir is in the middle of a git
+// operation or has unmerged paths. A merge it started and could not finish,
+// for example when a hook refuses the commit, is aborted, so dir is never
+// left mid-merge by uam.
 func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (string, error) {
-	if merging, err := r.mergeHead(ctx, dir); err != nil {
+	if op, err := r.inProgress(ctx, dir); err != nil {
 		return "", err
-	} else if merging {
-		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("a merge is in progress in %s; finish or abort it first", displaytext.Sanitize(dir))}
+	} else if op != "" {
+		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s is in progress in %s; finish or abort it first", op, displaytext.Sanitize(dir))}
+	}
+	if files, err := r.unmerged(ctx, dir); err != nil {
+		return "", err
+	} else if len(files) > 0 {
+		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s has unmerged paths: %s; resolve and commit them first", displaytext.Sanitize(dir), fileList(files))}
 	}
 	_, mergeErr := runGitWrite(ctx, dir, nil, "merge", "--no-ff", "--no-edit", "-m", message, tip)
 	if mergeErr == nil {
@@ -679,20 +677,102 @@ func (r *laneRepo) hasAll(ctx context.Context, a, b string) (bool, error) {
 }
 
 // checkedOut is the worktree that has branch checked out, "" when none has.
+// Like git, it counts a worktree in the middle of a rebase or a bisect that
+// started from branch, which git lists as detached.
 func (r *laneRepo) checkedOut(ctx context.Context, branch string) (string, error) {
 	out, err := r.output(ctx, r.top, "worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return "", err
 	}
 	var dir string
+	var detached []string
 	for _, line := range strings.Split(out, "\x00") {
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
 			dir = path
 		} else if line == "branch refs/heads/"+branch {
 			return dir, nil
+		} else if line == "detached" {
+			detached = append(detached, dir)
+		}
+	}
+	for _, dir := range detached {
+		if _, err := os.Stat(dir); err != nil {
+			continue // its directory is gone, so nothing can go on there
+		}
+		if from, err := r.startedFrom(ctx, dir, branch); err != nil {
+			return "", err
+		} else if from {
+			return dir, nil
 		}
 	}
 	return "", nil
+}
+
+// startedFrom reports whether the worktree at dir is in the middle of a
+// rebase or a bisect that started from branch, from the files git keeps
+// for each, as git itself checks before it moves a branch.
+func (r *laneRepo) startedFrom(ctx context.Context, dir, branch string) (bool, error) {
+	paths, err := r.gitPaths(ctx, dir, "rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START")
+	if err != nil {
+		return false, err
+	}
+	for _, path := range paths {
+		name, err := os.ReadFile(path) // #nosec G304 -- a path git names inside its own directory.
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if strings.TrimPrefix(strings.TrimSpace(string(name)), "refs/heads/") == branch {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// inProgress names the git operation the worktree at dir is in the middle
+// of, "" when none.
+func (r *laneRepo) inProgress(ctx context.Context, dir string) (string, error) {
+	for _, op := range []struct{ ref, name string }{{"MERGE_HEAD", "a merge"}, {"CHERRY_PICK_HEAD", "a cherry-pick"}, {"REVERT_HEAD", "a revert"}} {
+		_, code, _, err := runGit(ctx, r.git, dir, 4096, "rev-parse", "--verify", "--quiet", op.ref)
+		if err != nil {
+			return "", err
+		}
+		if code == 0 {
+			return op.name, nil
+		}
+	}
+	paths, err := r.gitPaths(ctx, dir, "rebase-merge", "rebase-apply", "BISECT_LOG")
+	if err != nil {
+		return "", err
+	}
+	for i, name := range []string{"a rebase", "a rebase or am", "a bisect"} {
+		if _, err := os.Lstat(paths[i]); err == nil {
+			return name, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
+// gitPaths is where the worktree at dir keeps each of the files git names
+// relative to its git directory.
+func (r *laneRepo) gitPaths(ctx context.Context, dir string, names ...string) ([]string, error) {
+	args := []string{"rev-parse", "--path-format=absolute"}
+	for _, name := range names {
+		args = append(args, "--git-path", name)
+	}
+	out, err := r.output(ctx, dir, args...)
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.Split(out, "\n")
+	if len(paths) != len(names) {
+		return nil, newError(http.StatusBadGateway, "git rev-parse --git-path named %d paths for %d files", len(paths), len(names))
+	}
+	return paths, nil
 }
 
 // mergeTree merges as objects only and returns the tree, or the

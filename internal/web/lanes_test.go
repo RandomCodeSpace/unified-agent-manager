@@ -469,6 +469,15 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 	l := f.start(1)
 	commitFile(t, l.dir, "b.txt", "lane\n")
 	f.land(l, 1)
+	// needsMerge is the driver's merge fact (plan §5.8): !hasAll(base, integ).
+	needsMerge := func() bool {
+		t.Helper()
+		has, err := f.r.hasAll(f.ctx, gitOutput(t, f.top, "rev-parse", "main"), gitOutput(t, f.top, "rev-parse", f.r.integ))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return !has
+	}
 	settled := func(when string) {
 		t.Helper()
 		before := f.refs()
@@ -477,10 +486,16 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 			if merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil || merged != "" {
 				t.Fatalf("%s: merging again = %q, %v", when, merged, err)
 			}
+			if needsMerge() {
+				t.Fatalf("%s: main still needs a merge", when)
+			}
 		}
 		if got := f.refs(); got != before {
 			t.Fatalf("%s: sync and merge wrote commits that change nothing:\n%s\nwant\n%s", when, got, before)
 		}
+	}
+	if !needsMerge() {
+		t.Fatal("main has the landing before any merge")
 	}
 	if _, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil {
 		t.Fatal(err)
@@ -488,11 +503,15 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 	settled("after a merge")
 
 	// The owner's commit reaches integ through a sync merge, and the merge
-	// back would bring nothing.
+	// back would bring nothing, though integ is no ancestor of main.
 	integ := gitOutput(t, f.top, "rev-parse", f.r.integ)
-	commitFile(t, f.top, "c.txt", "owner\n")
-	if f.tip() == integ {
+	owner := commitFile(t, f.top, "c.txt", "owner\n")
+	synced := f.tip()
+	if synced == integ {
 		t.Fatal("the owner's commit did not reach integ")
+	}
+	if on, err := f.r.isAncestor(f.ctx, synced, owner); err != nil || on {
+		t.Fatalf("integ is an ancestor of main (%v, %v); the sync merge did not happen", on, err)
 	}
 	settled("after the owner's commit")
 }
@@ -543,7 +562,7 @@ func TestLaneAttemptNamesNeverRepeat(t *testing.T) {
 			t.Fatalf("attempt name repeated: %s", l.branch)
 		}
 		seen[l.branch], seen[l.dir] = true, true
-		if !strings.HasPrefix(l.branch, "uam/plan-3f2a9c41-7-") || filepath.Dir(l.dir) != filepath.Join(f.root, laneProject) {
+		if !strings.HasPrefix(l.branch, "uam-plan-3f2a9c41-7-") || filepath.Dir(l.dir) != filepath.Join(f.root, laneProject) {
 			t.Fatalf("lane = %+v", l)
 		}
 		if again, err := laneOf(f.root, laneProject, l.branch); err != nil || again != l {
@@ -556,10 +575,10 @@ func TestLaneAttemptNamesNeverRepeat(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := strings.Count(gitOutput(t, f.top, "for-each-ref", "--format=%(refname)", "refs/heads/uam/"), "\n") + 1; got != 4 {
+	if got := strings.Count(gitOutput(t, f.top, "for-each-ref", "--format=%(refname)", "refs/heads/uam-plan-*"), "\n") + 1; got != 4 {
 		t.Fatalf("uam branches = %d, want integ and 3 attempts", got)
 	}
-	for _, bad := range []string{f.r.integ, f.r.integ + "-7-../../x1234567", "uam/plan-00000000-7-1a2b3c4d", f.r.integ + "-7-1A2B3C4D"} {
+	for _, bad := range []string{f.r.integ, f.r.integ + "-7-../../x1234567", "uam-plan-00000000-7-1a2b3c4d", f.r.integ + "-7-1A2B3C4D"} {
 		if _, err := laneOf(f.root, laneProject, bad); err == nil {
 			t.Fatalf("laneOf accepted %q", bad)
 		}
@@ -704,6 +723,100 @@ func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	}
 }
 
+func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	f.land(l, 1)
+	// A side commit that conflicts with main on c.txt, which the plan never
+	// touches, so the merge itself is clean.
+	gitIn(t, f.top, "checkout", "-q", "-b", "side")
+	side := commitFile(t, f.top, "c.txt", "side\n")
+	gitIn(t, f.top, "checkout", "-q", "main")
+	commitFile(t, f.top, "c.txt", "main\n")
+	head := commitFile(t, f.top, "d.txt", "main\n")
+	refused := func(want string) {
+		t.Helper()
+		_, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan")
+		if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, want) {
+			t.Fatalf("refusal = %q, want %q", e.Message, want)
+		}
+		if got := gitOutput(t, f.top, "rev-parse", "main"); got != head {
+			t.Fatalf("a refused merge moved main to %s", got)
+		}
+	}
+
+	if _, err := runGitWrite(f.ctx, f.top, nil, "cherry-pick", side); err == nil {
+		t.Fatal("cherry-pick did not conflict")
+	}
+	refused("a cherry-pick is in progress")
+	gitIn(t, f.top, "cherry-pick", "--quit")
+	refused("unmerged paths: c.txt")
+	gitIn(t, f.top, "reset", "-q", "--hard")
+
+	// A rebase of main detaches HEAD, yet main is still the owner's here.
+	if _, err := runGitWrite(f.ctx, f.top, nil, "rebase", "--exec", "false", "HEAD~1"); err == nil {
+		t.Fatal("rebase did not stop")
+	}
+	refused("a rebase is in progress")
+	gitIn(t, f.top, "rebase", "--abort")
+	if merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil || merged == "" {
+		t.Fatalf("merge after the owner finished = %q, %v", merged, err)
+	}
+}
+
+func TestLaneBranchMidRebaseOrBisectCountsAsCheckedOut(t *testing.T) {
+	f := newLaneFixture(t)
+	tip := f.tip()
+	view := filepath.Join(t.TempDir(), "view")
+	gitIn(t, f.top, "worktree", "add", "-q", "-b", "side", view, "main")
+	commitFile(t, view, "b.txt", "one\n")
+	side := commitFile(t, view, "c.txt", "two\n")
+	// A worktree whose directory is gone holds nothing up.
+	gone := filepath.Join(t.TempDir(), "gone")
+	gitIn(t, f.top, "worktree", "add", "-q", "--detach", gone, "main")
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	busy := func(op string) {
+		t.Helper()
+		if got := gitOutput(t, f.top, "worktree", "list", "--porcelain"); strings.Contains(got, "branch refs/heads/side") {
+			t.Fatalf("%s: git lists side as checked out; the case needs a detached HEAD", op)
+		}
+		if dir, err := f.r.checkedOut(f.ctx, "side"); err != nil || realPath(dir) != realPath(view) {
+			t.Fatalf("%s: checkedOut = %q, %v; want %s", op, dir, err, view)
+		}
+		_ = wantCode(t, f.r.moveBranch(f.ctx, "side", tip, side), codeGitBusy)
+	}
+
+	if _, err := runGitWrite(f.ctx, view, nil, "rebase", "--exec", "false", "HEAD~1"); err == nil {
+		t.Fatal("rebase did not stop")
+	}
+	busy("rebase")
+	gitIn(t, view, "rebase", "--abort")
+	gitIn(t, view, "bisect", "start", "HEAD", "HEAD~2")
+	busy("bisect")
+	gitIn(t, view, "bisect", "reset")
+
+	// Detached with neither in progress, the branch is free to move.
+	gitIn(t, view, "switch", "-q", "--detach")
+	if err := f.r.moveBranch(f.ctx, "side", tip, side); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLaneBranchesBesideABranchNamedUam(t *testing.T) {
+	f := newLaneFixture(t)
+	gitIn(t, f.top, "branch", "uam")
+	if err := f.r.preflight(f.ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	l := f.start(1)
+	for _, branch := range []string{"uam", f.r.integ, l.branch} {
+		gitIn(t, f.top, "rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	}
+}
+
 func TestLanePreflight(t *testing.T) {
 	f := newLaneFixture(t)
 	if err := f.r.preflight(f.ctx, "main"); err != nil {
@@ -715,12 +828,6 @@ func TestLanePreflight(t *testing.T) {
 	if err := f.r.preflight(f.ctx, "main@{1}"); err == nil {
 		t.Fatal("a base that is no branch name passed")
 	}
-	// A branch named uam stops git from creating any branch under uam/.
-	gitIn(t, f.top, "branch", "uam")
-	if e := wantCode(t, f.r.preflight(f.ctx, "main"), codeBranchClash); !strings.Contains(e.Message, "branch named uam") {
-		t.Fatalf("refusal = %q", e.Message)
-	}
-	gitIn(t, f.top, "branch", "-D", "-q", "uam")
 	empty := t.TempDir()
 	gitIn(t, empty, "init", "-q", "-b", "main")
 	r, err := openLanes(f.ctx, laneProject, empty)
