@@ -256,6 +256,9 @@ type txn struct {
 	// they reached done: a Restore under an approved epic brings their
 	// cards back as proposals to approve, which closing would cancel.
 	keepOpen map[string]bool
+	// landing lists the cards this write may move though their landing is
+	// under way (notLanding): the write that finishes the landing.
+	landing map[string]bool
 }
 
 type changeSet struct {
@@ -326,6 +329,7 @@ func (s *Store) newTxn(ctx context.Context, tx *sql.Tx) *txn {
 		changes:  map[string]*changeSet{},
 		scopes:   map[string]*scope{},
 		keepOpen: map[string]bool{},
+		landing:  map[string]bool{},
 	}
 }
 

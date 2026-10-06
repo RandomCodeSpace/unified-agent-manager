@@ -53,18 +53,20 @@ type createTaskArgs struct {
 
 // taskToolsLocked is the Manager's hostTools: the planner tools the Task
 // gets (taskHostToolsLocked), uam_create_task unless spawned (that tool or a
-// routine's run created the Task), and uam_chart (charts.go). Its CallTool runs each call by the tool's
-// name. The caller holds mu.
-func (m *Manager) taskToolsLocked(taskID, projectID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
-	tools, board := m.taskHostToolsLocked(taskID, projectID)
-	if !spawned {
+// routine's run created the Task) or a lane Task (it runs one subtask of an
+// approved epic), and uam_chart (charts.go). Its CallTool runs each call by
+// the tool's name. The caller holds mu.
+func (m *Manager) taskToolsLocked(taskID, projectID string, spawned, lane bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+	tools, board := m.taskHostToolsLocked(taskID, projectID, lane)
+	creates := !spawned && !lane
+	if creates {
 		tools = append(tools, createTaskTool)
 	}
 	return append(tools, chartTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
 		case call.Name == chartToolName:
 			return m.chartCall(ctx, taskID, call)
-		case call.Name == createTaskToolName && !spawned:
+		case call.Name == createTaskToolName && creates:
 			return m.createTask(ctx, taskID, call)
 		case board == nil:
 			return agentapi.HostToolResult{Text: fmt.Sprintf("there is no uam tool %q", call.Name), Failed: true}

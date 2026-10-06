@@ -32,6 +32,8 @@ type plannerFixture struct {
 
 func newPlanner(t *testing.T) *plannerFixture {
 	t.Helper()
+	// Approve checks that git can commit (ADR 0006 §5.2).
+	gitIdentity(t)
 	ts := newTestServer(t, ServerConfig{})
 	repo := branchRepo(t)
 	f := &plannerFixture{t: t, ts: ts, m: ts.m, repo: repo, project: addProject(t, ts.m, repo)}
@@ -499,11 +501,12 @@ func TestApproveRoute(t *testing.T) {
 		t.Fatalf("a subtask's JSON = %s", w.Body)
 	}
 
+	// A subtask's Launch starts a lane (lane_runs_test.go); nothing else
+	// starts by hand.
 	for _, route := range []struct{ path, body string }{
 		{"/api/board/cards/" + other.ID + "/confirm", ``},
-		{"/api/board/cards/" + leaf.ID + "/launch", `{"provider":"fake","model":"luna"}`},
-		{"/api/board/cards/" + leaf.ID + "/launch", `{"provider":"fake","model":"luna","confirm":true}`},
 		{"/api/board/cards/" + story.ID + "/launch", `{}`},
+		{"/api/board/cards/" + story.ID + "/launch", `{"confirm":true}`},
 	} {
 		f.refused(http.MethodPost, route.path, route.body, http.StatusConflict, string(board.CodeRunOwned))
 	}
@@ -529,7 +532,7 @@ func TestPlannerProjectSettings(t *testing.T) {
 	f := newPlanner(t)
 	var p BoardProject
 	f.call(http.MethodGet, "/api/board/projects/"+f.project, "", http.StatusOK, &p)
-	if p != (BoardProject{}) {
+	if p != (BoardProject{AcceptParallel: 1}) {
 		t.Fatalf("project settings = %+v", p)
 	}
 	f.call(http.MethodPatch, "/api/board/projects/"+f.project, `{"accept_cmd":"make test"}`, http.StatusOK, &p)

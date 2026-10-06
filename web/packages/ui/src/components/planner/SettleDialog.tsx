@@ -12,9 +12,13 @@ export interface SettleAsk {
   settle: (holds: Record<string, HoldDecision>) => Promise<void>;
 }
 
+/** A subtask held in a lane: nobody works in its lane once the Task is settled, so it is not kept (ADR 0006 §4.6). */
+const inLane = (c: Card) => !!c.lane?.branch;
+
 /**
  * Settle a Task that holds subtasks (ADR 0005 §5): for each, keep it held (it resumes after
  * Reopen), release it to To do, or cancel it with a comment. Opened by 409 `holds_undecided`.
+ * A lane's subtask is stopped (released and paused) or cancelled; it is never kept.
  */
 export function SettleDialog({ ask, onClose }: Readonly<{ ask: SettleAsk | null; onClose: () => void }>) {
   const [shown, setShown] = useState(ask);
@@ -23,7 +27,7 @@ export function SettleDialog({ ask, onClose }: Readonly<{ ask: SettleAsk | null;
   const [busy, setBusy] = useState(false);
   if (ask && ask !== shown) {
     setShown(ask);
-    setDecisions(Object.fromEntries(ask.cards.map((c) => [c.id, { action: 'keep', comment: '' }])));
+    setDecisions(Object.fromEntries(ask.cards.map((c) => [c.id, { action: inLane(c) ? 'release' : 'keep', comment: '' }])));
     setError(null);
   }
   const incomplete = !!shown?.cards.some((c) => decisions[c.id]?.action === 'cancel' && !decisions[c.id].comment.trim());
@@ -52,7 +56,8 @@ export function SettleDialog({ ask, onClose }: Readonly<{ ask: SettleAsk | null;
     >
       <form id="settle-holds" className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         {shown?.cards.map((c) => {
-          const d = decisions[c.id] ?? { action: 'keep', comment: '' };
+          const lane = inLane(c);
+          const d = decisions[c.id] ?? { action: lane ? 'release' : 'keep', comment: '' };
           return (
             <fieldset key={c.id} className="flex flex-col gap-2 rounded-md bg-tint-well px-3 py-2.5">
               <legend className="sr-only">#{c.seq} {c.title}</legend>
@@ -67,14 +72,14 @@ export function SettleDialog({ ask, onClose }: Readonly<{ ask: SettleAsk | null;
                 value={d.action}
                 onValueChange={(v) => set(c.id, { action: v as HoldDecision['action'] })}
                 items={[
-                  { value: 'keep', label: 'Keep held' },
-                  { value: 'release', label: 'Release' },
+                  ...(lane ? [] : [{ value: 'keep', label: 'Keep held' }]),
+                  { value: 'release', label: lane ? 'Stop' : 'Release' },
                   { value: 'cancel', label: 'Cancel' },
                 ]}
               />
               <p className="text-caption text-muted">
                 {d.action === 'keep' && 'The hold stays; the task picks the subtask up again after Reopen.'}
-                {d.action === 'release' && 'The subtask goes back to To do for another attempt.'}
+                {d.action === 'release' && (lane ? `The subtask goes back to To do, paused; its branch ${c.lane!.branch} is kept.` : 'The subtask goes back to To do for another attempt.')}
                 {d.action === 'cancel' && 'The subtask is cancelled; say why.'}
               </p>
               {d.action !== 'keep' && (

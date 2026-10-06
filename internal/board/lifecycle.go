@@ -9,9 +9,11 @@ import (
 
 // SetStatus is the owner's direct status change. On a subtask: done needs a
 // comment and passes the finishing guard unless force is set; cancelled
-// needs a comment; todo marks a planned or done subtask ready, or releases a
-// doing one. On a container only cancelled is allowed, as a cascade over its
-// subtree; force exists on subtasks only.
+// needs a comment; todo marks a planned or done subtask ready, or releases
+// a doing one. Done and todo are refused while a lane holds the subtask: its
+// done request lands it, and Stop releases it. On a container only
+// cancelled is allowed, as a cascade over its subtree; force exists on
+// subtasks only.
 func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, comment string, force bool) (Card, error) {
 	o := map[Status]op{StatusDone: opDone, StatusCancelled: opCancel, StatusTodo: opReady}[to]
 	if o == "" {
@@ -43,6 +45,11 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			if err := o.runOwned(n); err != nil {
 				return err
 			}
+		}
+		// Marked done, a lane's work would never land; moved to To do, its
+		// Task would work on with no hold. Stop releases a lane.
+		if to != StatusCancelled && n.HeldBy != "" && n.Lane != nil {
+			return invalid("%s runs in a lane: accept its done request or Stop it", n.ref())
 		}
 		switch to {
 		case StatusDone:
@@ -236,11 +243,12 @@ func (o *outline) above(n *node) map[string]Status {
 	return out
 }
 
-// closesNone refuses the agent write on n in progress, naming them, when it
+// closesNone refuses the write on n in progress (an agent's, or the owner's
+// Accept of an agent's split under an approved epic), naming them, when it
 // brought a container above n to done or cancelled: that would cancel the
 // container's proposals and release its dependents. before is o.above(n)
-// from before the write; format gets n's ref and the closed containers, as
-// "#3 done, #1 done".
+// from before the write; format gets n's ref, the closed containers, as
+// "#3 done, #1 done", and their refs alone, as "#3, #1".
 func (t *txn) closesNone(project string, n *node, before map[string]Status, format string) error {
 	after, err := t.outline(project)
 	if err != nil {
@@ -256,7 +264,7 @@ func (t *txn) closesNone(project string, n *node, before map[string]Status, form
 	if len(refs) == 0 {
 		return nil
 	}
-	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(format, n.ref(), strings.Join(closed, ", "))}
+	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(format, n.ref(), strings.Join(closed, ", "), strings.Join(refs, ", "))}
 }
 
 // awaited refuses deleting the cards of tree while a started subtask waits

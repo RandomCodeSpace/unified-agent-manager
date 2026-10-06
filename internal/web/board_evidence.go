@@ -111,6 +111,9 @@ type AcceptResult struct {
 	Tail    string    `json:"tail"`
 	RanAt   time.Time `json:"ran_at"`
 	Stale   bool      `json:"stale"`
+
+	// timedOut is set when the timeout killed the command.
+	timedOut bool
 }
 
 // EvidenceTranscript is the span of the claiming Task's transcript. Partial
@@ -152,6 +155,20 @@ func acceptCmdOf(ctx context.Context, st *board.Store, c board.Card, defaults ma
 		defaults[c.ProjectID] = cmd
 	}
 	return cmd, err
+}
+
+// acceptIn is the runner of the Project project's acceptance runs, as many
+// at a time as its settings allow; one when they cannot be read.
+func (m *Manager) acceptIn(ctx context.Context, project string) acceptRunner {
+	limit := 1
+	_ = m.withBoard(func(st *board.Store) error {
+		ps, err := st.ProjectSettings(ctx, project)
+		if err == nil {
+			limit = ps.AcceptParallel
+		}
+		return err
+	})
+	return m.accept.inProject(project, limit)
 }
 
 // requestViews is list as the API sends it. A done request's acceptance
@@ -248,6 +265,7 @@ func (m *Manager) CheckCard(ref string) (string, error) {
 	if cmd == "" {
 		return "", invalidBoard("#%d has no acceptance command; set one on it or on its project", c.Seq)
 	}
+	runner := m.acceptIn(m.ctx, c.ProjectID)
 	m.mu.Lock()
 	job, err := m.startJobLocked(jobCheck, c)
 	if err == nil {
@@ -257,16 +275,16 @@ func (m *Manager) CheckCard(ref string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	go m.runCheck(job, dir, cmd)
+	go m.runCheck(job, runner, dir, cmd)
 	return job.id, nil
 }
 
 // runCheck runs one check job to its end, bound to the service rather than
 // to the request that started it.
-func (m *Manager) runCheck(job *boardJob, dir, cmd string) {
+func (m *Manager) runCheck(job *boardJob, runner acceptRunner, dir, cmd string) {
 	ctx, cancel := m.bound(context.Background())
 	defer cancel()
-	res, err := m.accept.run(ctx, dir, cmd)
+	res, err := runner.run(ctx, dir, cmd)
 	switch {
 	case err == nil, errors.Is(err, errAcceptanceNotRun):
 		// A shell that did not start is a result too: exit -1, and why.
@@ -780,14 +798,26 @@ type acceptRunner interface {
 	run(ctx context.Context, dir, cmd string) (AcceptResult, error)
 }
 
-// acceptRunners runs acceptance commands one at a time per Project
-// directory. The zero value is ready to use.
+// acceptRunners runs acceptance commands one at a time per directory and,
+// through inProject, as many at a time per Project as it allows (ADR 0006
+// §5.4). The zero value is ready to use.
 type acceptRunners struct {
-	// timeout bounds a run, and a caller's wait for its directory's runner;
-	// zero means acceptTimeout.
+	// timeout bounds a run, and a caller's wait for its directory's runner
+	// or its Project's; zero means acceptTimeout.
 	timeout time.Duration
 	mu      sync.Mutex
 	slots   map[string]chan struct{}
+	// projects holds each Project's runs in flight, counted against the
+	// limit each run brings, so a change of limit counts the runs started
+	// before it.
+	projects map[string]*projectRuns
+}
+
+// projectRuns is a Project's acceptance runs in flight, and a channel
+// closed when one ends.
+type projectRuns struct {
+	running int
+	ended   chan struct{}
 }
 
 func (r *acceptRunners) slot(dir string) chan struct{} {
@@ -802,6 +832,90 @@ func (r *acceptRunners) slot(dir string) chan struct{} {
 		r.slots[dir] = s
 	}
 	return s
+}
+
+// takeProject waits, as take does, until fewer than limit of the Project
+// project's acceptance runs are in flight, and returns the release of the
+// place it took.
+func (r *acceptRunners) takeProject(ctx context.Context, project string, limit int) (func(), error) {
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	wait := time.NewTimer(cmp.Or(r.timeout, acceptTimeout))
+	defer wait.Stop()
+	for {
+		r.mu.Lock()
+		if r.projects == nil {
+			r.projects = map[string]*projectRuns{}
+		}
+		p := r.projects[project]
+		if p == nil {
+			p = &projectRuns{ended: make(chan struct{})}
+			r.projects[project] = p
+		}
+		if p.running < limit {
+			p.running++
+			r.mu.Unlock()
+			return func() {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				p.running--
+				close(p.ended)
+				p.ended = make(chan struct{})
+			}, nil
+		}
+		ended := p.ended
+		r.mu.Unlock()
+		select {
+		case <-ended:
+		case <-wait.C:
+			return nil, errAcceptanceBusy
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		}
+	}
+}
+
+// take waits for a place in slots, at most the timeout, after which it
+// refuses with acceptance_busy, and returns its release. When ctx ends it
+// returns ctx's cause.
+func (r *acceptRunners) take(ctx context.Context, slots chan struct{}) (func(), error) {
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	wait := time.NewTimer(cmp.Or(r.timeout, acceptTimeout))
+	defer wait.Stop()
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-wait.C:
+		return nil, errAcceptanceBusy
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
+}
+
+// inProject is the runner of the Project project's acceptance runs, in
+// its directory and in its lanes alike: each first takes one of the
+// Project's limit places (takeProject), then its directory's runner.
+func (r *acceptRunners) inProject(project string, limit int) acceptRunner {
+	return projectRunner{runners: r, project: project, limit: max(1, limit)}
+}
+
+// projectRunner runs one Project's acceptance runs (inProject).
+type projectRunner struct {
+	runners *acceptRunners
+	project string
+	limit   int
+}
+
+func (p projectRunner) run(ctx context.Context, dir, cmd string) (AcceptResult, error) {
+	release, err := p.runners.takeProject(ctx, p.project, p.limit)
+	if err != nil {
+		return AcceptResult{}, err
+	}
+	defer release()
+	return p.runners.run(ctx, dir, cmd)
 }
 
 // run runs the acceptance command cmd as `$SHELL -lc cmd` in dir, in its
@@ -819,21 +933,11 @@ func (r *acceptRunners) run(ctx context.Context, dir, cmd string) (AcceptResult,
 		return AcceptResult{}, &board.Error{Code: board.CodeInvalid, Message: "no acceptance command is set"}
 	}
 	timeout := cmp.Or(r.timeout, acceptTimeout)
-	if ctx.Err() != nil {
-		return AcceptResult{}, context.Cause(ctx)
+	release, err := r.take(ctx, r.slot(filepath.Clean(dir)))
+	if err != nil {
+		return AcceptResult{}, err
 	}
-	slot := r.slot(filepath.Clean(dir))
-	wait := time.NewTimer(timeout)
-	select {
-	case slot <- struct{}{}:
-		wait.Stop()
-	case <-wait.C:
-		return AcceptResult{}, errAcceptanceBusy
-	case <-ctx.Done():
-		wait.Stop()
-		return AcceptResult{}, context.Cause(ctx)
-	}
-	defer func() { <-slot }()
+	defer release()
 
 	res := AcceptResult{Cmd: cmd, CmdHash: commandHash(cmd), Exit: -1, RanAt: time.Now().UTC()}
 	if base, err := baseline(ctx, dir); err == nil {
@@ -872,6 +976,7 @@ func (r *acceptRunners) run(ctx context.Context, dir, cmd string) (AcceptResult,
 	}
 	res.Exit = exitCode(c.ProcessState)
 	if res.Exit != 0 && runCtx.Err() != nil {
+		res.timedOut = true
 		_, _ = fmt.Fprintf(tail, "\n[uam] the command did not finish within %s, so its process group was killed.\n", timeout)
 	}
 	res.Tail = tail.String()
@@ -912,7 +1017,7 @@ type claimStore interface {
 type claimInput struct {
 	Actor board.Actor
 	Ref   string
-	// Dir is the Project directory.
+	// Dir is the Project directory, or the lane's for a lane's claim.
 	Dir string
 	// Comment is the claim text. ProposedAcceptCmd is a command the owner
 	// may copy into the subtask; it never runs before that.
@@ -925,6 +1030,14 @@ type claimInput struct {
 	// claiming Task's; nil means none. It is called before the run.
 	OtherHolds func(ctx context.Context, card board.Card) ([]heldFiles, error)
 	Transcript *EvidenceTranscript
+	// Prepare, when set, runs once the guard passed and the hold is found,
+	// and returns the baseline the evidence is measured from instead of the
+	// hold's: a lane's claim readies its lane and measures from the
+	// integration tip (ADR 0006 §5.4).
+	Prepare func(ctx context.Context, card board.Card) (board.Baseline, error)
+	// Lane marks a lane's claim, whose run the timeout killed is filed
+	// flagged acceptance_could_not_run rather than refused as red.
+	Lane bool
 }
 
 // claimResult is an evaluated claim: the subtask, its evidence, and the
@@ -964,6 +1077,11 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 		return out, &board.Error{Code: board.CodeNotHeld, Message: fmt.Sprintf("#%d is not held by this Task", fin.Card.Seq)}
 	}
 	base := detail.Holds[i].Baseline
+	if in.Prepare != nil {
+		if base, err = in.Prepare(ctx, fin.Card); err != nil {
+			return out, err
+		}
+	}
 
 	// The evidence is the Task's work, gathered before the run so files the
 	// command writes (build output, lockfiles) are not counted as the Task's.
@@ -994,6 +1112,8 @@ func evaluateClaim(ctx context.Context, st claimStore, runner acceptRunner, in c
 			notRun = true
 		case err != nil:
 			return out, err
+		case in.Lane && res.timedOut:
+			notRun = true
 		}
 		ev.Accept = &res
 		out.Evidence = ev

@@ -162,7 +162,10 @@ type Card struct {
 	// the card (ADR 0006 §4.6). Only a card under an approved epic is paused.
 	Paused string
 	// Run is an approved epic's run; nil on every other card.
-	Run             *Run
+	Run *Run
+	// Lane is the git state of the subtask's latest attempt when that
+	// attempt ran in a lane; nil otherwise.
+	Lane            *Lane
 	PendingRequests int
 	Revision        int64
 	CreatedAt       time.Time
@@ -229,6 +232,22 @@ type Hold struct {
 	Baseline  Baseline
 	EndedAt   *time.Time
 	EndReason ReleaseReason
+	// Lane is the attempt's git state; zero for an attempt in the Project
+	// directory.
+	Lane Lane
+	// WaitedOn lists the IDs of the done subtasks a lane attempt waited on
+	// when it started (ADR 0006 §5.3).
+	WaitedOn []string
+}
+
+// Lane is a lane attempt's git state (ADR 0006 §5.1). Branch, the attempt
+// branch, marks the attempt as a lane's. LandedSHA is the landing intent
+// while the attempt is open and the commit it landed as once it ended;
+// RevertedSHA is the commit that reverted it.
+type Lane struct {
+	Branch      string
+	LandedSHA   string
+	RevertedSHA string
 }
 
 // ReleaseReason is why a hold ended. Every hold ends through ReleaseHold's
@@ -245,6 +264,8 @@ const (
 	ReleaseOwner     ReleaseReason = "released"  // owner Release → todo
 	ReleaseCancelled ReleaseReason = "cancelled" // owner cancel or cascade → cancelled
 	ReleaseSplit     ReleaseReason = "split"     // the subtask became a story; the hold moved (holds before split needed a release)
+	ReleaseAborted   ReleaseReason = "aborted"   // a lane start failed after its hold was written → todo
+	ReleaseBlocked   ReleaseReason = "blocked"   // a blocked request accepted on a lane hold → todo
 )
 
 // Stage is a Task's lifecycle stage as Reconcile sees it. A Task absent from
@@ -286,6 +307,13 @@ const (
 	// CodeStale refuses an approval whose listed cards changed since the
 	// dialog showed them; Refs lists them.
 	CodeStale Code = "stale"
+	// CodeNotReady refuses a run start of a subtask that is not ready, or
+	// that no lane slot is free for (ADR 0006 §4.1); Refs lists what holds
+	// it back.
+	CodeNotReady Code = "not_ready"
+	// CodeLanding refuses a write that would change the status or end the
+	// hold of a subtask whose landing is under way (ADR 0006 §4.4).
+	CodeLanding Code = "landing"
 	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
 	// acceptance: the Project's runner stayed busy past the timeout, or the
 	// command exited non-zero.

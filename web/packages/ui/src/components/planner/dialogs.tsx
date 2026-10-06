@@ -1,7 +1,7 @@
 import { useApi } from '../../ApiContext';
 import { Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type Card, type CardKind, type DoneGuard, type Meta, type Settings, type TaskDefaults } from '../../api';
+import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type BoardProject, type Card, type CardKind, type DoneGuard, type Meta, type Settings, type TaskDefaults } from '../../api';
 import { KIND_LABEL, childIndex, isStarted, leavesUnder, waitsOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Note, useApp } from '../common';
@@ -241,10 +241,11 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   const [retake, setRetake] = useState(false);
   const [picked, setPicked] = useState<TaskDefaults | null>(null);
   const [parallel, setParallel] = useState('2');
-  // The Project's default acceptance command, once loaded for the Project shown.
-  const [loaded, setLoaded] = useState<{ project: string; cmd: string } | null>(null);
+  // The Project's planner settings (its default acceptance command among them), once loaded for the Project shown.
+  const [loaded, setLoaded] = useState<{ project: string; settings: BoardProject } | null>(null);
   const [cmdDraft, setCmdDraft] = useState<string | null>(null);
   const [savingCmd, setSavingCmd] = useState(false);
+  const [savingLimit, setSavingLimit] = useState(false);
   const [changed, setChanged] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -266,12 +267,13 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
-    api.planner.project(projectId).then((p) => alive && setLoaded({ project: projectId, cmd: p.accept_cmd })).catch(() => {});
+    api.planner.project(projectId).then((p) => alive && setLoaded({ project: projectId, settings: p })).catch(() => {});
     return () => {
       alive = false;
     };
   }, [api.planner, projectId]);
-  const projectCmd = loaded?.project === projectId ? loaded.cmd : null;
+  const project = loaded?.project === projectId ? loaded.settings : null;
+  const projectCmd = project ? project.accept_cmd : null;
 
   const epic = snap.list[0] ?? shown?.epic;
   const selection = picked ?? (epic ? runStart(epic, meta, settings) : null);
@@ -283,10 +285,20 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
     const cmd = c.accept_cmd ?? projectCmd;
     return c.kind === 'subtask' && !isStarted(c) && cmd !== null && !cmd.trim();
   };
-  const held = subtasks.filter((c) => !!c.held_by);
+  // Held by hand, outside a lane: a lane's attempt is the approval's own and runs on.
+  const handHeld = (c: Card) => !!c.held_by && !c.lane;
+  const held = subtasks.filter(handHeld);
   const empty = snap.list.filter((c) => c.kind !== 'subtask' && leavesUnder(c.id, index).length === 0);
   const noCmd = subtasks.filter(noCommand);
-  const refused = held.length + empty.length + noCmd.length > 0;
+  // A done container comes back open once the approval confirms a proposal under it, and a lane
+  // running meanwhile that waits on one, itself or through a parent, would wait again (§6.3 rule 2).
+  const reopened = new Map<string, Card>();
+  for (const c of snap.list) if (c.kind !== 'subtask' && c.status === 'done' && leavesUnder(c.id, index).some((l) => !l.confirmed)) reopened.set(c.id, { ...c, status: 'todo' });
+  const after = new Map([...byId, ...reopened]);
+  const stalled = new Map(cards.filter((c) => c.held_by && c.lane).map((c) => [c.id, [...new Set(waitsOf(c, after).map((w) => w.card).filter((b) => reopened.has(b.id)))]] as const).filter(([, on]) => on.length > 0));
+  const stalledCards = cards.filter((c) => stalled.has(c.id));
+  const stalledOn = [...new Set([...stalled.values()].flat())];
+  const refused = held.length + empty.length + noCmd.length + stalled.size > 0;
   const unapproved = epic ? epic.blocked_by.map((id) => byId.get(id)).filter((b): b is Card => !!b && b.kind === 'epic' && !b.run && b.status !== 'done' && b.status !== 'cancelled') : [];
   // Grouped by story: the subtasks right under the epic first, then each story's.
   const groups = epic ? [epic, ...(index.get(epic.id) ?? []).filter((c) => c.kind === 'story')].map((head) => ({ head, items: (index.get(head.id) ?? []).filter((c) => c.kind === 'subtask') })).filter((g) => g.head !== epic || g.items.length > 0) : [];
@@ -298,7 +310,10 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
     if (c.paused) words.push({ text: c.paused === 'uam' ? 'paused by uam' : 'paused' });
     const waits = waitsOf(c, byId).filter((w) => !w.via);
     if (waits.length) words.push({ text: `waits on ${seqs(waits.map((w) => w.card))}` });
-    if (c.held_by) words.push({ text: 'held by a task', refused: true });
+    if (handHeld(c)) words.push({ text: 'held by a task', refused: true });
+    else if (c.held_by) words.push({ text: 'running' });
+    const on = stalled.get(c.id);
+    if (on) words.push({ text: `would wait on ${seqs(on)} again`, refused: true });
     if (noCommand(c)) words.push({ text: 'no acceptance command', refused: true });
     if (c.kind !== 'subtask' && empty.includes(c)) words.push({ text: 'no subtask', refused: true });
     return words.map((w) => (
@@ -314,13 +329,26 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
     setSavingCmd(true);
     setError(null);
     try {
-      await api.planner.setProject(projectId, cmdDraft.trim());
-      setLoaded({ project: projectId, cmd: cmdDraft.trim() });
+      const saved = await api.planner.setProject(projectId, { accept_cmd: cmdDraft.trim() });
+      setLoaded({ project: projectId, settings: saved });
       setCmdDraft(null);
     } catch (err) {
       setError(plannerErrorText(err));
     } finally {
       setSavingCmd(false);
+    }
+  };
+  // The acceptance limit is the Project's, saved as it is picked: it holds for every epic there.
+  const saveLimit = async (v: string) => {
+    setSavingLimit(true);
+    setError(null);
+    try {
+      const saved = await api.planner.setProject(projectId, { accept_parallel: Number(v) });
+      setLoaded({ project: projectId, settings: saved });
+    } catch (err) {
+      setError(plannerErrorText(err));
+    } finally {
+      setSavingLimit(false);
     }
   };
   const submit = async (e: SubmitEvent) => {
@@ -389,6 +417,11 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
             {held.length > 0 && <p>{seqs(held)} {isAre(held.length)} held by a task: finish or release {held.length === 1 ? 'it' : 'them'} first, as work started by hand and approved work never mix.</p>}
             {empty.length > 0 && <p>{seqs(empty)} {isAre(empty.length)} without a subtask, and a card with none never finishes: add one or cancel {empty.length === 1 ? 'it' : 'them'}.</p>}
             {noCmd.length > 0 && <p>{seqs(noCmd)} {noCmd.length === 1 ? 'has' : 'have'} no acceptance command, so done would always wait for you: set one on {noCmd.length === 1 ? 'it' : 'them'} or a Project default below.</p>}
+            {stalledCards.length > 0 && (
+              <p>
+                {seqs(stalledCards)} {stalledCards.length === 1 ? 'runs in a lane' : 'run in lanes'} and would wait on {seqs(stalledOn)} again, which this approval reopens: Stop {stalledCards.length === 1 ? 'it first, or approve once it has' : 'them first, or approve once they have'} landed.
+              </p>
+            )}
           </div>
         )}
         {unapproved.length > 0 && <Note tone="warn">{seq} waits on {seqs(unapproved)}, not approved yet: nothing here runs before {unapproved.length === 1 ? 'it is' : 'they are'} done.</Note>}
@@ -433,11 +466,23 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
         {selection && <TaskDefaultsFields prefix="planner-approve" value={selection} disabled={busy} onChange={setPicked} />}
         {selection && !selection.model && <Note tone="warn">Pick a model: an approved run never falls back to a default one.</Note>}
         {selection?.mode === 'safe' && <Note tone="warn">In Safe mode a permission prompt stops unattended work until you answer it.</Note>}
-        <div className="flex flex-col gap-1">
-          <span id="planner-approve-parallel" className="text-caption text-muted">Subtasks at a time</span>
-          <Segmented aria-labelledby="planner-approve-parallel" className="w-40" value={parallel} disabled={busy} onValueChange={setParallel} items={PARALLEL_ITEMS} />
+        <div className="flex flex-wrap gap-x-6 gap-y-3">
+          <div className="flex flex-col gap-1">
+            <span id="planner-approve-parallel" className="text-caption text-muted">Subtasks at a time</span>
+            <Segmented aria-labelledby="planner-approve-parallel" className="w-40" value={parallel} disabled={busy} onValueChange={setParallel} items={PARALLEL_ITEMS} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span id="planner-approve-accept-limit" className="text-caption text-muted">Acceptance runs at a time</span>
+            <Segmented aria-labelledby="planner-approve-accept-limit" className="w-40" value={String(project?.accept_parallel ?? 1)} disabled={!project || busy || savingLimit} onValueChange={(v) => void saveLimit(v)} items={PARALLEL_ITEMS} />
+          </div>
         </div>
-        <Note>Nothing runs until execution ships; manual starts are not offered under an approved epic.</Note>
+        <Note>
+          {project?.integration
+            ? `Subtasks run in their own worktrees made from ${project.integration.branch}, which follows ${project.integration.base_ref}`
+            : 'Subtasks run in their own worktrees made from the branch checked out in the project now'}
+          ; uncommitted changes are not included. Their work lands on the integration branch.
+        </Note>
+        <Note>Nothing starts by itself yet: Launch a ready subtask to start it in its lane.</Note>
         {error && <p role="alert" className="text-caption text-error">{error}</p>}
         <div className="mt-2 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
           <Button variant="secondary" onClick={onClose}>

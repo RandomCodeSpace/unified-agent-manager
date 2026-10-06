@@ -1,4 +1,4 @@
-import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
+import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, shownProgress } from '../../lib/board';
@@ -106,8 +106,9 @@ export function TaskChip({ taskId, className }: Readonly<{ taskId: string; class
 
 /**
  * The quiet markers a card row carries: an approved epic and the proposals waiting for its next
- * approval (`toApprove`), its pause (`pause`, from `pauseLabel`), pending requests, staleness,
- * blocked (`blockers`: its open blockers, from `openBlockerSeqs`).
+ * approval (`toApprove`), its pause (`pause`, from `pauseLabel`), a lane subtask landing or landed
+ * (ADR 0006 §3.2), pending requests, staleness, blocked (`blockers`: its open blockers, from
+ * `openBlockerSeqs`).
  */
 export function CardMarkers({ card, blockers, pause = '', toApprove = 0, compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; compact?: boolean }>) {
   const marks: ReactNode[] = [];
@@ -136,6 +137,24 @@ export function CardMarkers({ card, blockers, pause = '', toApprove = 0, compact
       <Chip key="paused" tone={pause.startsWith('Paused by uam') ? 'warning' : undefined} title={pause}>
         <Pause aria-hidden="true" className="size-3" />
         {compact && !own ? <span className="sr-only">{pause}</span> : pause}
+      </Chip>,
+    );
+  }
+  const lane = card.lane;
+  if (lane?.landed_sha && card.held_by) {
+    // The landing intent is stored and the branch move is under way: a static glyph, as doing is (one ring per place).
+    marks.push(
+      <Chip key="landing" tone="accent" title={`Landing as ${lane.landed_sha.slice(0, 7)} on its integration branch`}>
+        <GitMerge aria-hidden="true" className="size-3" />
+        Landing
+      </Chip>,
+    );
+  } else if (lane?.landed_sha && card.status === 'done' && !lane.reverted_sha) {
+    marks.push(
+      <Chip key="landed" tone="success" title={`Landed on its integration branch as ${lane.landed_sha}`}>
+        <GitCommitHorizontal aria-hidden="true" className="size-3" />
+        {'Landed '}
+        <span className={cn('font-mono', compact && 'sr-only')}>{lane.landed_sha.slice(0, 7)}</span>
       </Chip>,
     );
   }

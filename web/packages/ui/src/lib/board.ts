@@ -125,6 +125,25 @@ export function pauseLabel(card: Card, byId: ReadonlyMap<string, Card>): string 
   return at === card ? who : `${who} via #${at.seq}`;
 }
 
+/**
+ * Whether Launch may start the subtask `card` in a lane under its approved epic (ADR 0006 §3.2
+ * Ready): confirmed with its parents, planned or to do, unheld, no pending request, not under a
+ * cancelled card, not paused at or above, not flagged blocked and waiting on nothing open. The
+ * service also counts the epic's free slots, which it says when it refuses.
+ */
+export function laneReady(card: Card, byId: ReadonlyMap<string, Card>): boolean {
+  if (card.kind !== 'subtask' || card.held_by || card.blocked || card.pending_requests > 0) return false;
+  if (card.status !== 'planned' && card.status !== 'todo') return false;
+  const path = cardPath(card, byId);
+  if (path.some((c) => !c.confirmed || c.status === 'cancelled')) return false;
+  return !pausedOn(card, byId) && waitsOf(card, byId).length === 0;
+}
+
+/** The subtasks under `card` (itself for one) held in a lane: what Stop stops. */
+export function runningLanes(card: Card, byId: ReadonlyMap<string, Card>): Card[] {
+  return [...byId.values()].filter((x) => x.kind === 'subtask' && !!x.held_by && !!x.lane && cardPath(x, byId).includes(card));
+}
+
 /** The live proposals under `parent`, at any depth: what approving its epic again would confirm. */
 export function proposalsUnder(parent: string, index: ReadonlyMap<string, Card[]>): Card[] {
   const out: Card[] = [];

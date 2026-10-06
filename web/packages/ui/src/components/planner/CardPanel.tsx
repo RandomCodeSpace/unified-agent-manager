@@ -1,5 +1,5 @@
 import { useApi } from '../../ApiContext';
-import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, FolderInput, GitBranch, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
 import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
@@ -92,6 +92,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   // Check at HEAD is a job, started here or from a row's menu: its run arrives in the job's last board_job frame.
   const checking = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'check').at(-1);
   const check = checking?.status === 'done' ? checking.accept : undefined;
+  // The owner's Accept of a lane's done request lands it as a job (ADR 0006 §5.5).
+  const landing = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'land').at(-1);
 
   // The trail (comments, requests, holds) follows the card: fetched again on each of its revisions.
   useEffect(() => {
@@ -162,6 +164,8 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
           {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}
           {checking?.status === 'failed' && <Note tone="error">Check at HEAD failed{checking.error ? `: ${checking.error}` : '.'}</Note>}
+          {landing?.status === 'running' && <Note tone="muted">Landing on the integration branch…</Note>}
+          {landing?.status === 'failed' && <Note tone="error">Landing failed{landing.error ? `: ${landing.error}` : '.'}</Note>}
         </div>
 
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (
@@ -247,6 +251,9 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
                   <TaskChip taskId={h.task_id} />
                   <span>from {h.baseline_head.slice(0, 7)}, {timeAgo(h.started_at)}</span>
                   <span>{h.ended_at ? `ended ${timeAgo(h.ended_at)}${h.end_reason ? `: ${h.end_reason}` : ''}` : 'holding'}</span>
+                  {h.branch && <span className="flex min-w-0 items-center gap-1" title="Its attempt branch"><GitBranch aria-hidden="true" className="size-3 shrink-0" /><span className="truncate font-mono">{h.branch}</span></span>}
+                  {h.landed_sha && <span className={cn('font-mono', h.ended_at ? 'text-success' : 'text-accent')} title={h.ended_at ? 'The commit it landed as' : 'Landing as this commit'}>{h.ended_at ? 'landed' : 'landing'} {h.landed_sha.slice(0, 7)}</span>}
+                  {h.reverted_sha && <span className="font-mono" title="The commit that reverted it">reverted {h.reverted_sha.slice(0, 7)}</span>}
                 </li>
               ))}
             </ol>

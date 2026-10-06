@@ -1,7 +1,7 @@
 import { useApi } from '../../ApiContext';
-import { Ellipsis, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
+import { Ellipsis, GitBranch, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { plannerErrorText, type BoardJob, type Project } from '../../api';
+import { plannerErrorText, type BoardIntegration, type BoardJob, type Project } from '../../api';
 import { boardOf, childIndex, epicOf, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
@@ -129,6 +129,21 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   return { value };
 }
 
+/** The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `landed` changes; null for none. */
+function useIntegration(project: string, landed: number): BoardIntegration | null {
+  const api = useApi();
+  const [shown, setShown] = useState<{ project: string; integration: BoardIntegration | null } | null>(null);
+  useEffect(() => {
+    if (!project) return;
+    let alive = true;
+    api.planner.project(project).then((p) => alive && setShown({ project, integration: p.integration ?? null })).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, project, landed]);
+  return shown?.project === project ? shown.integration : null;
+}
+
 const VIEW_ITEMS = [
   { value: 'tree', label: 'Tree' },
   { value: 'board', label: 'Board' },
@@ -163,6 +178,9 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic' && (c.status !== 'cancelled' || c.id === ui.epic)) : []), [cards, ui.epic]);
   const stale = cards?.filter((c) => c.stale).length ?? 0;
   const cancelled = cards?.filter((c) => c.status === 'cancelled').length ?? 0;
+  // The integration branch's line, read again as landings change what it carries.
+  const landed = cards?.filter((c) => c.status === 'done' && c.lane?.landed_sha).length ?? 0;
+  const integration = useIntegration(key && key !== 'unassigned' && !project?.no_git ? key : '', landed);
   // The Inbox holds the plans to approve too (ADR 0006 §6.1).
   const pending = (board?.data?.requests.length ?? 0) + (cards ? plansToApprove(cards).length : 0);
   const panelPresence = usePresence(!!ui.panel);
@@ -275,6 +293,16 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
               <span aria-hidden="true">Show cancelled</span>
             </span>
             {stale > 0 && <span className="text-caption text-warning">{stale} stale</span>}
+            {integration && (
+              <span
+                className="flex min-w-0 items-center gap-1 text-caption text-muted"
+                title={`${integration.branch} carries ${integration.ahead} ${integration.ahead === 1 ? 'landing' : 'landings'} not in ${integration.base_ref} yet${integration.behind ? `; ${integration.base_ref} has ${integration.behind} ${integration.behind === 1 ? 'commit' : 'commits'} it does not` : ''}`}
+              >
+                <GitBranch aria-hidden="true" className="size-3 shrink-0" />
+                <span className="truncate font-mono">{integration.branch}</span>
+                <span className="shrink-0">· {integration.ahead} ahead of {integration.base_ref}</span>
+              </span>
+            )}
             {board?.loading && board.data && <span className="text-caption text-muted">Refreshing…</span>}
           </div>
           <NoticeBar className="mx-3 mb-1" />

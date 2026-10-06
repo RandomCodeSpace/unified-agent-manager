@@ -582,6 +582,42 @@ func TestAcceptRunnerBusy(t *testing.T) {
 	}
 }
 
+// A Project's acceptance limit counts every run in flight, those started
+// under an earlier limit included, and a run waiting for a place takes the
+// first one given back.
+func TestAcceptRunnerProjectLimitHoldsAcrossAChange(t *testing.T) {
+	r := acceptRunners{timeout: 100 * time.Millisecond}
+	ctx := context.Background()
+	busy := func(limit int) {
+		t.Helper()
+		if _, err := r.takeProject(ctx, "p", limit); board.CodeOf(err) != board.CodeAcceptanceBusy {
+			t.Fatalf("a run past limit %d = %v, want acceptance busy", limit, err)
+		}
+	}
+	take := func(project string, limit int) func() {
+		t.Helper()
+		release, err := r.takeProject(ctx, project, limit)
+		if err != nil {
+			t.Fatalf("a run in %s under limit %d = %v", project, limit, err)
+		}
+		return release
+	}
+	first := take("p", 1)
+	busy(1)
+	// Raised to 2 while the first runs: one more, not two.
+	second := take("p", 2)
+	busy(2)
+	take("other", 1)()
+	// Lowered to 1 while two run: none starts until both are done.
+	busy(1)
+	first()
+	busy(1)
+	second()
+	held := take("p", 1)
+	time.AfterFunc(20*time.Millisecond, held)
+	take("p", 1)()
+}
+
 func TestAcceptRunnerTailKeepsTheLast64KiB(t *testing.T) {
 	acceptEnv(t)
 	repo := branchRepo(t)

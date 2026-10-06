@@ -1,10 +1,11 @@
 import { useApi } from '../../ApiContext';
-import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
+import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkedReason, pendingUnder, startedUnderReason } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, laneReady, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
+import { AlertDialog, useConfirm } from '../ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
 import { useShownBoard } from './context';
 import { ApproveDialog, BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
@@ -48,6 +49,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   const [brief, setBrief] = useState<BriefAsk | null>(null);
   const [launching, setLaunching] = useState<LaunchAsk | null>(null);
   const [approving, setApproving] = useState<ApproveAsk | null>(null);
+  // Stop (ADR 0006 §4.6): a lane subtask, or a container with the lane subtasks running under it.
+  const stopping = useConfirm<{ card: Card; lanes: Card[] }>();
 
   async function run<T>(card: string, key: string, verb: string, op: () => Promise<T>): Promise<T | undefined> {
     setBusy({ card, key });
@@ -69,7 +72,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   /**
    * A card's actions as it stands (§10); none for an Unassigned card, which only moves into a
    * Project. Under an approved epic (ADR 0006 §8) the approval owns starting and confirming work:
-   * Confirm, Launch and Do whole story give way to Pause and Resume.
+   * Confirm, Launch and Do whole story give way to Pause and Resume, Launch of a ready subtask
+   * starts it in a lane with the epic's run, and Stop ends the lane attempts at or under a card.
    */
   function actionsOf(c: Card): CardAction[] {
     if (!c.project_id) return [];
@@ -103,6 +107,13 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     }
     if (!c.confirmed && !approved) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
     if (leaf && !approved && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => launch(false) });
+    // The approval picked its model and mode: Launch starts the lane with them, nothing to ask.
+    if (leaf && approved?.run && laneReady(c, byId)) {
+      const r = approved.run;
+      actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: true, title: `Start it in its own lane, on ${r.model}, ${r.mode === 'yolo' ? 'Yolo' : 'Safe'}, as #${approved.seq}'s approval set.`, onClick: () => void run(c.id, 'launch', 'launch the subtask', () => api.planner.launch(c.id)).then((res) => res && launched(res)) });
+    }
+    const lanes = approved && c.status !== 'done' && c.status !== 'cancelled' ? runningLanes(c, byId) : [];
+    if (lanes.length > 0) actions.push({ key: 'stop', label: 'Stop', icon: <Square />, danger: true, title: leaf ? 'Stop its task and pause it.' : 'Pause it and stop the subtasks running under it.', onClick: () => stopping.ask({ card: c, lanes }) });
     // A story's launch starts one of its confirmed subtasks waiting to start; with none, the service refuses it.
     if (c.kind === 'story' && !approved && c.status !== 'done' && c.status !== 'cancelled') {
       const reason = pendingUnder(c, byId).length ? undefined : 'No confirmed subtask is waiting to start: confirm or add one first.';
@@ -114,10 +125,11 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     }
     if (leaf && c.status !== 'done' && c.status !== 'cancelled') {
       // Done confirms the subtask, which under an approved epic only the approval does.
-      const reason = approved && !c.confirmed ? `Approve #${approved.seq} again to confirm it first: under an approved epic only the approval confirms a card.` : undefined;
+      // Marked done, a lane's work would never land.
+      const reason = approved && !c.confirmed ? `Approve #${approved.seq} again to confirm it first: under an approved epic only the approval confirms a card.` : c.held_by && c.lane?.branch ? 'It runs in a lane: accept its done request, or Stop it.' : undefined;
       actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, reason, onClick: () => open(c, 'done') });
     }
-    if (leaf && c.status === 'doing') actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
+    if (leaf && c.status === 'doing' && !c.lane?.branch) actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
     // Not under a cancelled card: the service refuses it until that is restored.
     if (leaf && c.status === 'done' && !cardPath(c, byId).some((a) => a.status === 'cancelled')) {
       actions.push({ key: 'todo', label: 'Back to To do', icon: <ListRestart />, onClick: () => setReason({ title: `Move #${c.seq} back to To do?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Back to To do', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
@@ -179,8 +191,40 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   }
 
   const shown = target ? byId.get(target) : undefined;
+  const stop = stopping.target;
+  // A container is paused first, so nothing new starts under it while its lanes stop.
+  const stopAll = async ({ card: c, lanes }: { card: Card; lanes: Card[] }) => {
+    if (c.kind !== 'subtask' && !c.paused) await api.planner.pause(c.id, true);
+    for (const l of lanes) await api.planner.release(l.id, '');
+  };
   const dialogs = (
     <>
+      <AlertDialog
+        {...stopping.props}
+        title={stop?.card.kind === 'subtask' ? `Stop #${stop.card.seq}?` : `Stop #${stop?.card.seq ?? ''} and what runs under it?`}
+        description={
+          stop?.card.kind === 'subtask'
+            ? 'Its task stops and is archived, and the subtask goes back to To do, paused. The attempt branch is kept.'
+            : `#${stop?.card.seq ?? ''} is paused, so nothing new starts under it; the tasks of the subtasks running under it stop and are archived, and each goes back to To do, paused. Their attempt branches are kept.`
+        }
+        confirmLabel="Stop"
+        busy={busy?.key === 'stop'}
+        onConfirm={() => {
+          if (!stop) return;
+          stopping.close();
+          void run(stop.card.id, 'stop', 'stop the work', () => stopAll(stop));
+        }}
+      >
+        {stop && stop.card.kind !== 'subtask' && (
+          <ul className="mt-1 flex flex-col gap-0.5 text-caption text-body">
+            {stop.lanes.map((l) => (
+              <li key={l.id} className="truncate">
+                #{l.seq} {l.title}
+              </li>
+            ))}
+          </ul>
+        )}
+      </AlertDialog>
       <ReasonDialog ask={reason} onClose={() => setReason(null)} />
       <BriefDialog ask={brief} onClose={() => setBrief(null)} />
       <LaunchDialog ask={launching} onClose={() => setLaunching(null)} />

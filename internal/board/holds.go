@@ -58,7 +58,7 @@ func (s *Store) Launch(ctx context.Context, a Actor, ref, taskID string, base Ba
 			if err := t.setScope(taskID, project, scopeID, true); err != nil {
 				return err
 			}
-			return t.startHold(o, leaf, taskID, base)
+			return t.startHold(o, leaf, taskID, base, Lane{}, nil)
 		})
 		if err != nil {
 			return err
@@ -159,7 +159,7 @@ func (s *Store) Attach(ctx context.Context, a Actor, ref, taskID, title string, 
 			if err := t.setScope(taskID, project, scopeID, true); err != nil {
 				return err
 			}
-			return t.startHold(o, leaf, taskID, base)
+			return t.startHold(o, leaf, taskID, base, Lane{}, nil)
 		})
 		if err != nil {
 			return err
@@ -265,7 +265,7 @@ func (s *Store) Claim(ctx context.Context, a Actor, ref string, base Baseline) (
 		if open > 0 {
 			return refuse(CodeLimit, "the Task already holds a subtask without a pending request")
 		}
-		return t.startHold(o, n, a.TaskID, base)
+		return t.startHold(o, n, a.TaskID, base, Lane{}, nil)
 	})
 }
 
@@ -326,8 +326,9 @@ func (s *Store) ReleaseHold(ctx context.Context, a Actor, ref string, reason Rel
 // startHold records taskID's new attempt at n and moves n to doing. Every
 // hold starts here, so it refuses while n or an ancestor is unconfirmed:
 // agents plan on proposals, and work starts only on what the owner
-// confirmed.
-func (t *txn) startHold(o *outline, n *node, taskID string, base Baseline) error {
+// confirmed. A lane attempt has lane's branch and the done subtasks it
+// waited on; any other attempt passes the zero Lane and nil.
+func (t *txn) startHold(o *outline, n *node, taskID string, base Baseline, lane Lane, waited []string) error {
 	if un := o.unconfirmed(n); len(un) > 0 {
 		return unconfirmedRefusal(un, "work on %[1]s starts only once the owner confirms %[1]s")
 	}
@@ -339,24 +340,41 @@ func (t *txn) startHold(o *outline, n *node, taskID string, base Baseline) error
 	if blobs == nil {
 		blobs = map[string]string{}
 	}
-	if err := t.exec(`INSERT INTO holds (id, card_id, task_id, attempt, started_at, baseline_head, baseline_status, baseline_blobs)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, t.s.newID(), n.ID, taskID, attempt, stamp(t.now), base.Head, encode(orEmpty(base.Dirty)), encode(blobs)); err != nil {
+	if err := t.exec(`INSERT INTO holds (id, card_id, task_id, attempt, started_at, baseline_head, baseline_status, baseline_blobs,
+		branch, waited_on) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, t.s.newID(), n.ID, taskID, attempt, stamp(t.now), base.Head,
+		encode(orEmpty(base.Dirty)), encode(blobs), lane.Branch, encode(orEmpty(waited))); err != nil {
 		return err
 	}
-	return t.setStatus(n, StatusDoing, taskID, "")
+	if err := t.setStatus(n, StatusDoing, taskID, ""); err != nil {
+		return err
+	}
+	n.Lane = nil
+	if lane.Branch != "" {
+		n.Lane = &Lane{Branch: lane.Branch}
+	}
+	return nil
 }
 
 // releaseHold is the single path by which a hold ends (ADR 0005 §5): it
 // closes the attempt on the held subtask n with reason and moves n to status
-// to. A subtask that is still unconfirmed when released, one held before
-// holds needed confirmed cards, is given a fresh expiry.
+// to. A lane attempt that ended without landing pauses n (laneEnded). A
+// subtask that is still unconfirmed when released, one held before holds
+// needed confirmed cards, is given a fresh expiry.
 func (t *txn) releaseHold(n *node, reason ReleaseReason, to Status, cascade string) error {
-	if err := t.exec(`UPDATE holds SET ended_at = ?, end_reason = ? WHERE card_id = ? AND ended_at = ''`,
-		stamp(t.now), string(reason), n.ID); err != nil {
+	hold, err := t.openHold(n)
+	if err != nil {
+		return err
+	}
+	if err := t.exec(`UPDATE holds SET ended_at = ?, end_reason = ? WHERE id = ?`, stamp(t.now), string(reason), hold.ID); err != nil {
 		return err
 	}
 	if err := t.setStatus(n, to, "", cascade); err != nil {
 		return err
+	}
+	if hold.Lane.Branch != "" {
+		if err := t.laneEnded(n, hold, reason); err != nil {
+			return err
+		}
 	}
 	if n.Confirmed() || to.terminal() {
 		return nil
@@ -364,6 +382,52 @@ func (t *txn) releaseHold(n *node, reason ReleaseReason, to Status, cascade stri
 	expires := t.now.Add(ExpiryWindow)
 	n.ExpiresAt = &expires
 	return t.updateCard(n)
+}
+
+// laneEnded pauses the lane subtask n, whose attempt h ended for reason,
+// and says so (ADR 0006 §4.5): uam pauses it when the attempt ended or was
+// rejected without landing, unless a card at or above it is paused
+// already, and the owner's pause stands when the owner stopped it, so it
+// never relaunches by itself. Only a card under an approved epic is
+// paused. Every other reason pauses nothing and says nothing.
+func (t *txn) laneEnded(n *node, h Hold, reason ReleaseReason) error {
+	var pause, ended string
+	switch reason {
+	case ReleaseEnded, ReleaseRejected:
+		pause, ended = PausedUAM, "ended without landing"
+	case ReleaseOwner, ReleaseSettled:
+		pause, ended = PausedOwner, "stopped"
+	default:
+		return nil
+	}
+	o, err := t.outline(n.ProjectID)
+	if err != nil {
+		return err
+	}
+	if m := o.byID[n.ID]; m == nil || o.approved(m) == nil || (pause == PausedUAM && o.pausedAt(m) != nil) {
+		pause = ""
+	}
+	body := fmt.Sprintf("attempt #%d %s; branch %s kept", h.Attempt, ended, h.Lane.Branch)
+	if pause != "" {
+		n.Paused = pause
+		if err := t.updateCard(n); err != nil {
+			return err
+		}
+		body = "paused: " + body
+	}
+	_, err = t.addComment(n, AuthorUAM, "", body, true, false)
+	return err
+}
+
+// notLanding refuses changing the status of n, or ending its hold, while
+// its open lane attempt carries a landing intent (ADR 0006 §4.4): its
+// commit may already be on the integration branch. Only the write that
+// finishes the landing, or one the caller marked in t.landing, passes.
+func (t *txn) notLanding(n *node) error {
+	if n.HeldBy == "" || n.Lane == nil || n.Lane.LandedSHA == "" || t.landing[n.ID] {
+		return nil
+	}
+	return refuse(CodeLanding, "%s is landing on its integration branch; retry once it has landed", n.ref())
 }
 
 // openHold returns n's current attempt.
@@ -438,17 +502,23 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, asOf time
 				if err != nil {
 					return err
 				}
-				if !hold.StartedAt.Before(asOf) {
+				// A landing is left for recovery to finish.
+				if !hold.StartedAt.Before(asOf) || hold.Lane.LandedSHA != "" {
 					return nil
 				}
 				if err := t.releaseHold(n, ReleaseEnded, StatusTodo, ""); err != nil {
 					return err
 				}
+				released++
+				// A lane's release says itself how it ended; the working
+				// tree read is the Project directory's, not the lane's.
+				if hold.Lane.Branch != "" {
+					return nil
+				}
 				body := fmt.Sprintf("attempt #%d ended", hold.Attempt)
 				if paths, ok := uncommitted[h.project]; ok {
 					body += ", uncommitted: " + listOrNone(paths)
 				}
-				released++
 				_, err = t.addComment(n, AuthorUAM, "", body, true, false)
 				return err
 			})
@@ -464,7 +534,7 @@ func (s *Store) Reconcile(ctx context.Context, tasks map[string]Stage, asOf time
 // holds lists a card's attempts, oldest first.
 func (t *txn) holds(cardID string) ([]Hold, error) {
 	rows, err := t.tx.QueryContext(t.ctx, `SELECT id, task_id, attempt, started_at, baseline_head, baseline_status,
-		baseline_blobs, ended_at, end_reason FROM holds WHERE card_id = ? ORDER BY attempt`, cardID)
+		baseline_blobs, ended_at, end_reason, branch, landed_sha, reverted_sha, waited_on FROM holds WHERE card_id = ? ORDER BY attempt`, cardID)
 	if err != nil {
 		return nil, fmt.Errorf("board: list holds: %w", err)
 	}
@@ -472,8 +542,9 @@ func (t *txn) holds(cardID string) ([]Hold, error) {
 	var out []Hold
 	for rows.Next() {
 		h := Hold{CardID: cardID}
-		var started, dirty, blobs, ended, reason string
-		if err := rows.Scan(&h.ID, &h.TaskID, &h.Attempt, &started, &h.Baseline.Head, &dirty, &blobs, &ended, &reason); err != nil {
+		var started, dirty, blobs, ended, reason, waited string
+		if err := rows.Scan(&h.ID, &h.TaskID, &h.Attempt, &started, &h.Baseline.Head, &dirty, &blobs, &ended, &reason,
+			&h.Lane.Branch, &h.Lane.LandedSHA, &h.Lane.RevertedSHA, &waited); err != nil {
 			return nil, fmt.Errorf("board: scan hold: %w", err)
 		}
 		h.EndReason = ReleaseReason(reason)
@@ -482,6 +553,9 @@ func (t *txn) holds(cardID string) ([]Hold, error) {
 		}
 		if err := json.Unmarshal([]byte(blobs), &h.Baseline.Blobs); err != nil {
 			return nil, fmt.Errorf("board: hold %s baseline: %w", h.ID, err)
+		}
+		if err := json.Unmarshal([]byte(waited), &h.WaitedOn); err != nil {
+			return nil, fmt.Errorf("board: hold %s waited on: %w", h.ID, err)
 		}
 		if err := parseStamps([]string{started}, &h.StartedAt); err != nil {
 			return nil, fmt.Errorf("board: hold %s: %w", h.ID, err)

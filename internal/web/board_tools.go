@@ -336,10 +336,19 @@ var boardToolSet = []boardTool{
 		}), (*Manager).toolRequest),
 }
 
-// isBoardTool reports whether name is one of the planner tools.
-func isBoardTool(name string) bool {
-	return slices.ContainsFunc(boardToolSet, func(t boardTool) bool { return t.Name == name })
+// boardToolNames are the planner tools' names. They are read from
+// boardToolSet once it is initialized: a lane's done claim reaches the
+// transcript code, which asks isBoardTool.
+var boardToolNames = map[string]bool{}
+
+func init() {
+	for _, t := range boardToolSet {
+		boardToolNames[t.Name] = true
+	}
 }
+
+// isBoardTool reports whether name is one of the planner tools.
+func isBoardTool(name string) bool { return boardToolNames[name] }
 
 // boardHostTools returns the named planner tools, every one when names is
 // empty, and the CallTool that runs their calls, each in the scope scope
@@ -383,18 +392,23 @@ func (m *Manager) boardToolsLocked(projectID string) bool {
 
 // taskHostToolsLocked is the planner's part of the Manager's hostTools
 // (taskToolsLocked): every planner tool, for a Task of a Project with Git
-// while the planner is on (boardToolsLocked).
+// while the planner is on (boardToolsLocked); for a lane Task, only
+// runTools.
 // Both are read when the conversation opens; a Task whose conversation
 // opened with another answer reopens on its next prompt (send), and every
 // call checks both again. Each call is tied to the Task while it runs
 // (startCall). The caller holds mu; the store is used only by the calls.
-func (m *Manager) taskHostToolsLocked(taskID, projectID string) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+func (m *Manager) taskHostToolsLocked(taskID, projectID string, lane bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 	if !m.boardToolsLocked(projectID) {
 		return nil, nil
 	}
+	var names []string
+	if lane {
+		names = runTools
+	}
 	tools, run := m.boardHostTools(func(ctx context.Context, call agentapi.HostToolCall) (boardScope, error) {
 		return m.taskScope(ctx, taskID, call)
-	})
+	}, names...)
 	return tools, func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		ctx, end, err := m.startCall(ctx, taskID)
 		if err != nil {
@@ -416,17 +430,17 @@ func (m *Manager) taskHostToolsLocked(taskID, projectID string) ([]agentapi.Host
 
 // taskScope is the scope of a call from the Task taskID, which startCall
 // found active: its agent, or the subagent that made the call, on its
-// Project's Board. It refuses while the planner is off or the Project has no
-// Git.
+// Project's Board, working in the Project directory or, for a lane Task, in
+// its lane. It refuses while the planner is off or the Project has no Git.
 func (m *Manager) taskScope(ctx context.Context, taskID string, call agentapi.HostToolCall) (boardScope, error) {
 	if call.TaskID != taskID {
 		return boardScope{}, invalidBoard("the call does not belong to this task")
 	}
 	m.mu.Lock()
 	s := m.sessions[taskID]
-	var project string
+	var project, workdir string
 	if s != nil {
-		project = s.projectID
+		project, workdir = s.projectID, s.workdir
 	}
 	m.mu.Unlock()
 	if s == nil {
@@ -438,6 +452,10 @@ func (m *Manager) taskScope(ctx context.Context, taskID string, call agentapi.Ho
 	dir, err := m.boardDir(ctx, project)
 	if err != nil {
 		return boardScope{}, err
+	}
+	// A lane Task's work is in its lane, not in the Project directory.
+	if m.inLanes(workdir) {
+		dir = workdir
 	}
 	return boardScope{actor: board.Agent(taskID, call.AgentID), project: project, dir: dir}, nil
 }
@@ -804,15 +822,18 @@ func (m *Manager) toolEdit(ctx context.Context, sc boardScope, in editArgs) (too
 		}
 		switch {
 		case res.AcrossRun:
-			reply = cardReply(res.Card, "Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.OutOfPause:
-			reply = cardReply(res.Card, "Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.Request != nil && res.Card.Status != board.StatusDoing && res.Card.Status != board.StatusDone:
-			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.Request != nil:
-			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the edit was filed as a change request, which the owner can apply once it is released. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the edit was filed as a change request, which the owner can apply once it is released.", res.Card.Seq)
 		default:
 			reply = cardReply(res.Card, "Updated #%d.", res.Card.Seq)
+		}
+		if res.Replaced {
+			reply.Text += " It replaces your earlier pending one."
 		}
 		return nil
 	})
@@ -1038,26 +1059,28 @@ func (m *Manager) toolRequest(ctx context.Context, sc boardScope, in requestArgs
 // evidence and runs the subtask's acceptance command, then the request is
 // filed, and accepted at once when the command passed (decision 5). Like
 // every call of the Task it ends when the Task is settled or archived
-// (startCall): the run is killed and nothing is filed.
+// (startCall): the run is killed and nothing is filed. A claim in a lane
+// lands instead (laneDone).
 func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs) (toolReply, error) {
 	task := sc.actor.TaskID
 	var c board.Card
-	var since time.Time
+	var hold board.Hold
 	err := m.withBoard(func(st *board.Store) error {
 		var err error
 		if c, err = sc.card(ctx, st, in.Ref); err != nil {
 			return err
 		}
 		d, err := st.Detail(ctx, c.ID)
-		if h, ok := openHold(d.Holds, task); ok {
-			since = h.StartedAt
-		}
+		hold, _ = openHold(d.Holds, task)
 		return err
 	})
+	if err == nil && hold.Lane.Branch != "" {
+		return m.laneDone(ctx, sc, in, c, hold)
+	}
 	var res claimResult
 	if err == nil {
-		touched, span := m.taskWork(task, since)
-		res, err = evaluateClaim(ctx, boardClaims{m}, &m.accept, claimInput{
+		touched, span := m.taskWork(task, hold.StartedAt)
+		res, err = evaluateClaim(ctx, boardClaims{m}, m.acceptIn(ctx, sc.project), claimInput{
 			Actor: sc.actor, Ref: c.ID, Dir: sc.dir, Comment: in.Comment, ProposedAcceptCmd: in.ProposedAcceptCmd,
 			Touched: touched, OtherHolds: m.otherHolds(task), Transcript: span,
 		})
@@ -1079,6 +1102,12 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 	if filed.Request.Status == board.RequestAccepted {
 		return cardReply(c, "#%d is done; the acceptance command passed. Claim the next pending subtask, if any.", c.Seq), nil
 	}
+	return cardReply(c, "%s", waitingText(c, filed, res)), nil
+}
+
+// waitingText is a done claim's reply when its request waits for the
+// owner: why, and its evidence.
+func waitingText(c board.Card, filed board.FiledRequest, res claimResult) string {
 	ev := res.Evidence
 	byTask := 0
 	for _, f := range ev.Diff.Files {
@@ -1098,7 +1127,7 @@ func (m *Manager) requestDone(ctx context.Context, sc boardScope, in requestArgs
 	if ev.Transcript != nil && ev.Transcript.Partial {
 		text += " The transcript uam holds does not reach back to the hold's start, so the files touched by this task may be incomplete."
 	}
-	return cardReply(c, "%s", text), nil
+	return text
 }
 
 // flagReasons says why each flag leaves a done request for the owner.
@@ -1264,7 +1293,8 @@ func (m *Manager) taskWork(id string, since time.Time) ([]string, *EvidenceTrans
 }
 
 // otherHolds lists the live holds in a card's Project other than the Task
-// task's, each with the files its Task touched since its hold started.
+// task's and the lanes', each with the files its Task touched since its
+// hold started.
 func (m *Manager) otherHolds(task string) func(context.Context, board.Card) ([]heldFiles, error) {
 	return func(ctx context.Context, card board.Card) ([]heldFiles, error) {
 		var out []heldFiles
@@ -1275,7 +1305,8 @@ func (m *Manager) otherHolds(task string) func(context.Context, board.Card) ([]h
 				return err
 			}
 			for _, h := range held {
-				if h.ProjectID != card.ProjectID || h.HeldBy == task {
+				// A lane's work is in its own worktree, so it overlaps nothing.
+				if h.ProjectID != card.ProjectID || h.HeldBy == task || h.Lane != nil {
 					continue
 				}
 				d, err := st.Detail(ctx, h.ID)

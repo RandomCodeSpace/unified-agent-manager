@@ -147,6 +147,18 @@ Planner on and the Project is a git repository.
   `board_get` shows the approval and any pause; nothing at or under a
   paused card starts, and moving a card out from under one becomes a
   change request too.
+- **Lanes**: under an approved epic each subtask runs in a Task of its own,
+  in its own git worktree, on a branch made from the Project's integration
+  branch (`uam-plan-…`); other subtasks run beside it in theirs. That Task
+  has only `board_get`, `board_list`, `board_checklist`, `board_comment` and
+  `board_request`, and works on its one subtask, in its directory, on its
+  branch: uam alone pushes, pulls and switches branches there. Finish with
+  `board_request` done: uam commits what you left, merges the integration
+  tip into your lane, runs the acceptance command and lands your work as one
+  commit. Commit any merge you start before filing done. When the tip's
+  merge conflicts, the reply names the files: run `git merge uam-plan-…`,
+  resolve them, commit, and file done again. Once the reply says the work
+  landed, or that landing is queued, end your turn.
 - **Planning**: until a subtask starts (held, doing or done) you plan it
   directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
   `board_link`, `board_unlink`, `board_split` and `board_delete`. A started

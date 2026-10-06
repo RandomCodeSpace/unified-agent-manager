@@ -73,7 +73,8 @@ func newFixture(t *testing.T) *fixture {
 
 // invariants checks ADR 0005's stored invariants: doing ⇔ held_by, one open
 // attempt per hold, no pending request on a terminal card, no confirmed card
-// under an unconfirmed one, and no open subtask under a cancelled card.
+// under an unconfirmed one outside approved epics (where only the approval
+// confirms, ADR 0006 §6.2), and no open subtask under a cancelled card.
 func (f *fixture) invariants() {
 	f.t.Helper()
 	for _, q := range []struct{ name, sql string }{
@@ -84,8 +85,11 @@ func (f *fixture) invariants() {
 			SELECT 1 FROM cards c WHERE c.id = h.card_id AND c.held_by = h.task_id)`},
 		{"pending on terminal", `SELECT COUNT(*) FROM requests r JOIN cards c ON c.id = r.card_id
 			WHERE r.status = 'pending' AND c.status IN ('done', 'cancelled')`},
-		{"confirmed under unconfirmed", `SELECT COUNT(*) FROM cards c JOIN cards p ON p.id = c.parent_id
-			WHERE c.expires_at IS NULL AND p.expires_at IS NOT NULL`},
+		{"confirmed under unconfirmed", `WITH RECURSIVE top(id, epic) AS (
+			SELECT id, id FROM cards WHERE parent_id = ''
+			UNION ALL SELECT c.id, top.epic FROM cards c JOIN top ON c.parent_id = top.id)
+			SELECT COUNT(*) FROM cards c JOIN cards p ON p.id = c.parent_id JOIN top ON top.id = c.id
+			WHERE c.expires_at IS NULL AND p.expires_at IS NOT NULL AND top.epic NOT IN (SELECT epic_id FROM runs)`},
 		{"container status", `SELECT COUNT(*) FROM cards WHERE kind <> 'subtask' AND status NOT IN ('planned', 'cancelled')`},
 		{"open under cancelled", `WITH RECURSIVE up(id, parent) AS (
 			SELECT id, parent_id FROM cards WHERE kind = 'subtask' AND status NOT IN ('done', 'cancelled')

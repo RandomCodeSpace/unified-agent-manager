@@ -67,11 +67,13 @@ func (p Patch) ownerOnly() bool {
 // instead when an agent's edit needs the owner. AcrossRun says it was filed
 // because the move changes the card's epic while one of them is approved,
 // OutOfPause because the move takes the card out from under a pause.
+// Replaced says it withdrew the Task's earlier pending change request.
 type EditResult struct {
 	Card       Card
 	Request    *Request
 	AcrossRun  bool
 	OutOfPause bool
+	Replaced   bool
 }
 
 // ChecklistEdit ticks, unticks and appends checklist items; indexes are
@@ -353,10 +355,10 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (EditResult, error) {
 		if err := permit(a, opChange, ""); err != nil {
 			return EditResult{}, err
 		}
-		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
-		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started()}, err
+		req, replaced, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
+		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started(), Replaced: replaced}, err
 	}
-	return EditResult{}, t.applyEdit(o, a, n, p, plan)
+	return EditResult{}, t.applyEdit(o, a, n, p, plan, false)
 }
 
 // editPlan is a validated edit: the card after it and where it will sit.
@@ -476,7 +478,9 @@ func (t *txn) checkParent(o *outline, a Actor, n *node, parent string) error {
 	return nil
 }
 
-func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) error {
+// applyEdit writes the planned edit of n; accepted is set when the owner
+// accepts an agent's change request.
+func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan, accepted bool) error {
 	oldParent := n.ParentID
 	c := plan.card
 	n.Title, n.Desc, n.WinCondition, n.Prio, n.Due, n.Effort = c.Title, c.Desc, c.WinCondition, c.Prio, c.Due, c.Effort
@@ -500,7 +504,11 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 		}
 	}
 	if a.owner() {
-		if err := t.planned(o, a, n); err != nil {
+		planned := t.planned
+		if accepted {
+			planned = t.plannedByRequest
+		}
+		if err := planned(o, a, n); err != nil {
 			return err
 		}
 	}
@@ -554,7 +562,7 @@ func (t *txn) moveIn(a Actor, from, id, project string, p Patch) error {
 		t.removed(from, m.ID)
 		t.changed(project, m.ID)
 	}
-	return t.applyEdit(o, a, &moved, p, plan)
+	return t.applyEdit(o, a, &moved, p, plan, false)
 }
 
 // place puts n under parent at index rank among its siblings, rewriting the
@@ -764,6 +772,23 @@ func (t *txn) planned(o *outline, a Actor, n *node) error {
 	return t.rearmAncestors(o, n.ParentID)
 }
 
+// plannedByRequest is planned for the owner's acceptance of an agent's
+// request that plans n. Under an approved epic only approving the epic
+// confirms a proposal (ADR 0006 §6.2): n keeps its own confirmation,
+// re-pinned when it has one, and the proposals above it stay proposals with
+// a fresh expiry.
+func (t *txn) plannedByRequest(o *outline, a Actor, n *node) error {
+	if o.approved(n) == nil {
+		return t.planned(o, a, n)
+	}
+	if n.Confirmed() {
+		touch(a, n)
+	} else {
+		rearm(t.now, n)
+	}
+	return t.rearmAncestors(o, n.ParentID)
+}
+
 // rearmAncestors gives every unconfirmed card from parentID up to the root
 // a fresh expiry and writes it.
 func (t *txn) rearmAncestors(o *outline, parentID string) error {
@@ -844,11 +869,11 @@ func (t *txn) insertCard(o *outline, n *node) error {
 	labels, checklist, paths := encode(orEmpty(n.Labels)), encode(orEmpty(n.Checklist)), encode(orEmpty(n.Paths))
 	if err := t.exec(`INSERT INTO cards (id, seq, project_id, kind, parent_id, rank, title, "desc", win_condition,
 		status, prio, due, effort, labels, checklist, blocked, expires_at, held_by, pinned_sha, accept_cmd, paths,
-		cascade_id, created_by, created_at, updated_at, moved_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		paused, cascade_id, created_by, created_at, updated_at, moved_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.Seq, n.ProjectID, string(n.Kind), n.ParentID, n.Rank, n.Title, n.Desc, n.WinCondition,
 		string(n.stored), n.Prio, n.Due, n.Effort, labels, checklist, boolInt(n.Blocked), nullTime(n), n.HeldBy,
-		n.PinnedSHA, nullString(n.AcceptCmd), paths, n.CascadeID, n.CreatedBy,
+		n.PinnedSHA, nullString(n.AcceptCmd), paths, n.Paused, n.CascadeID, n.CreatedBy,
 		stamp(n.CreatedAt), stamp(n.UpdatedAt), stamp(n.MovedAt)); err != nil {
 		return err
 	}
@@ -874,8 +899,12 @@ func (t *txn) updateCard(n *node) error {
 }
 
 // setStatus is the only writer of a card's status, hold and cascade. Any
-// status change withdraws the card's pending requests.
+// status change withdraws the card's pending requests, so none is made
+// while the card is landing.
 func (t *txn) setStatus(n *node, to Status, heldBy, cascade string) error {
+	if err := t.notLanding(n); err != nil {
+		return err
+	}
 	n.stored, n.HeldBy, n.CascadeID, n.MovedAt, n.UpdatedAt = to, heldBy, cascade, t.now, t.now
 	if !n.container() {
 		n.Status = to

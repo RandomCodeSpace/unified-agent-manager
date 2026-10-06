@@ -1301,7 +1301,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   proposals, paused cards and what each waits on. It says inline what the
   service would refuse (a held subtask, a story or epic with no subtask, a
   subtask without an acceptance command, with the Project's command
-  editable in place) and asks for the run's model (none is picked unless
+  editable in place, and a running lane that would wait again on a done
+  story the approval reopens by confirming a proposal under it) and asks
+  for the run's model (none is picked unless
   Settings → New tasks names one), mode (Safe warns that a permission prompt
   stops unattended work) and subtasks at a time (1 to 4, 2 by default).
   Approving confirms every card it showed and records the run; when a card
@@ -1310,15 +1312,57 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   approve" on the epic) until the epic is approved again. Under an approved
   epic nothing is confirmed or started card by card: Confirm, Launch, Do
   whole story and adding a Task to its stories are not offered, Mark done
-  on a proposal waits for the next approval, Triage's Re-pin gives way to
+  on a proposal waits for the next approval, accepting an agent's request
+  confirms no proposal (a card moved under one waits with it for the next
+  approval), Triage's Re-pin gives way to
   approving the epic again, which re-pins the cards it lists, and Pause
   and Resume block or free a card and everything under it; a card moved out
   of the epic drops its pause. An agent's move into or out of an approved
   epic, or out from under a pause, reaches the Inbox as a change request
   that names both parents and the run of each approved epic it leaves or
-  enters. Restoring a cancelled card there brings it
-  back as a proposal, the epic itself excepted. Nothing runs yet: execution
-  comes later.
+  enters. Accepting an agent's split request there is refused when it would
+  close a story or epic before its parts, which are proposals, are approved;
+  split the subtask yourself instead. Restoring a cancelled card there brings it
+  back as a proposal, the epic itself excepted. Approve also readies git for
+  the run: it refuses when the server's git is older than 2.40 or has no
+  committer identity, and when the Project's base branch (the branch checked
+  out at the first approval) does not merge cleanly into the Project's
+  integration branch `uam-plan-<id>`, which it creates or brings up to date.
+  Uncommitted changes in the Project folder are not part of the run.
+  **Launch** on a ready subtask of an approved epic starts it in a lane: a
+  new Task with the run's model and mode, in its own git worktree beside
+  uam's settings (never in the Project folder, so it never holds up your
+  Commit, Pull or Push), on its own branch made from the integration branch.
+  Launch shows only on a ready subtask; the service refuses, naming why, one
+  that waits on another, is paused, flagged blocked or a proposal, and one
+  past the epic's subtasks at a time or 4 across the server. Do whole story
+  and adding a Task stay unavailable. The lane's Task gets only the planner tools to read the
+  board, tick its checklist, comment and file requests, and its git panel
+  neither pushes nor pulls. Its done request commits what it left, merges
+  the integration tip into the lane (a conflict refuses it with the files
+  and the steps), runs the acceptance command there and lands the lane on
+  the integration branch as one commit whose trailers name the card and the
+  request: the card shows **Landing**, then **Landed** with the commit. A
+  change to test or build files is flagged on its request, not held for you. A done
+  request that waits for you (nothing changed, or the command could not run
+  or outran its time limit) lands when you Accept it, as a job whose
+  progress shows on the request; when the integration branch moved since the
+  claim, the job merges it in and runs the command again, and a failure
+  rejects the request and tells the Task why. Accept is refused while the
+  Task works. **Stop** on a running subtask (its Release) asks first, then
+  pauses the subtask, stops and archives its Task and removes the lane,
+  keeping its branch; on a story or epic, Stop pauses it first and then
+  stops each subtask running under it. Settle offers Stop or Cancel for a
+  lane, not Keep held. Mark done and a move back to To do are refused on a
+  running lane's subtask: its done request lands it, and Stop releases it.
+  An attempt that ends without landing pauses its subtask ("Paused by
+  uam"). Archiving a lane's Task commits what the lane left to its branch
+  and removes the lane; a landed attempt's branch goes too. The acceptance
+  runs of a Project, its lanes' included, run one at a time unless the
+  Project allows up to 4 (Acceptance runs at a time, in the Approve
+  dialog). The Planner names the integration branch beside its filters,
+  with how many landings the base branch lacks. Nothing starts by itself, and nothing
+  merges into the base branch, yet.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named

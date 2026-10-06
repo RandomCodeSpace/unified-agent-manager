@@ -1,6 +1,8 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, test, vi } from 'vitest';
-import { api } from '../../src/api';
+import { api, type Card } from '../../src/api';
+import { SettleDialog } from '../../src/components/planner/SettleDialog';
 import { openMenu, renderApp, sidebar, type User } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
@@ -1112,6 +1114,27 @@ describe('parity with the service', () => {
     expect(await panel.findByText('Accepted automatically: the acceptance command passed')).toBeTruthy();
   });
 
+  test('a request accepted automatically still shows its tests-or-build flag, as a landed lane’s does', async () => {
+    const { user, tree } = await openPlanner();
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.endsWith('/api/board/cards/cp1-4'),
+      async (real) => {
+        const data = await (await real()).json();
+        const requests = data.requests.map((r: { kind: string }) => (r.kind === 'done' ? { ...r, flags: ['tests_or_build_changed'] } : r));
+        return reply(200, { ...data, requests });
+      },
+    );
+    try {
+      const panel = await openCard(user, tree, 4);
+      const trail = within(await panel.findByRole('region', { name: 'Evidence trail' }));
+      const request = within(await trail.findByRole('article', { name: 'Done request on #4' }));
+      expect(request.getByText('Accepted automatically')).toBeTruthy();
+      expect(request.getByText('Tests or build files changed')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('Purge reports how many cards went', async () => {
     const { user } = await openPlanner();
     const menu = await openMenu(user, 'Planner actions');
@@ -1230,16 +1253,24 @@ describe('approving an epic (ADR 0006)', () => {
       expect(dialog.getByRole('combobox', { name: 'Model' }).textContent).toContain('Pick a model');
       expect(dialog.getByText('Pick a model: an approved run never falls back to a default one.')).toBeTruthy();
       expect(dialog.getByText('In Safe mode a permission prompt stops unattended work until you answer it.')).toBeTruthy();
-      expect(dialog.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true');
+      const runs = within(dialog.getByRole('radiogroup', { name: 'Subtasks at a time' }));
+      expect(runs.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true');
       // notes-site has no acceptance command, so #35 would wait for the owner: refused inline until one is set.
       expect(await within(dialog.getByRole('region', { name: '#33 Alt text for every image' })).findByText(/no acceptance command/)).toBeTruthy();
       expect(dialog.getByRole('alert').textContent).toContain('#35 has no acceptance command');
+      // The Project's settings have loaded: its acceptance limit, 1 by default, is saved as it is picked.
+      const limit = within(dialog.getByRole('radiogroup', { name: 'Acceptance runs at a time' }));
+      expect(limit.getByRole('radio', { name: '1' }).getAttribute('aria-checked')).toBe('true');
+      await user.click(limit.getByRole('radio', { name: '2' }));
+      await waitFor(() => expect(limit.getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true'));
+      expect((await api.planner.project('p3')).accept_parallel).toBe(2);
+      expect(dialog.getByText(/uncommitted changes are not included/)).toBeTruthy();
       await user.click(dialog.getByRole('button', { name: 'Edit' }));
       await user.type(dialog.getByRole('textbox', { name: 'Project acceptance command' }), 'npm test{Enter}');
       await waitFor(() => expect(dialog.queryByRole('alert')).toBeNull());
       expect(button.disabled).toBe(true);
       await pick(user, dialog, 'Model', /GPT-5 mini/);
-      await user.click(dialog.getByRole('radio', { name: '3' }));
+      await user.click(runs.getByRole('radio', { name: '3' }));
       expect(button.disabled).toBe(false);
       // A Task edits #35 while the dialog shows it: the approval is stale.
       const shown = (await api.planner.board('p3')).cards.find((c) => c.seq === 35)!.revision;
@@ -1336,6 +1367,7 @@ describe('approving an epic (ADR 0006)', () => {
     const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
     expect(plans.getByRole('button', { name: '#18 Release automation' })).toBeTruthy();
     expect(plans.getByText('1 to approve')).toBeTruthy();
+    expect(plans.getByText('Approved before; a proposal was added since and waits for you.')).toBeTruthy();
   });
 
   test('a change request moving a card names both parents and the approved epics it leaves and enters, with their runs', async () => {
@@ -1366,6 +1398,34 @@ describe('approving an epic (ADR 0006)', () => {
     }
   });
 
+  test('the dialog refuses inline what would make a running lane wait again: a proposal under a done story it waits on', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const at = (seq: number) => data.cards.find((c: { seq: number }) => c.seq === seq);
+        // #33 is done; #91, proposed under it since, reopens it once approved. #93 runs in a lane under #92, which waits on #33.
+        const cards = data.cards.map((c: { seq: number }) => (c.seq === 33 || c.seq === 35 ? { ...c, status: 'done' } : c));
+        const proposal = { ...at(35), id: 'cp3-91', seq: 91, rank: 91, title: 'Alt text on video posters', status: 'planned', confirmed: false, expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString() };
+        const story = { ...at(33), id: 'cp3-92', seq: 92, rank: 92, title: 'Readable code blocks', status: 'doing', blocked_by: ['cp3-33'] };
+        const running = { ...at(35), id: 'cp3-93', seq: 93, parent_id: 'cp3-92', rank: 93, title: 'Contrast for code tokens', status: 'doing', held_by: 't9', lane: { branch: 'uam-plan-p3-93-1', landed_sha: '', reverted_sha: '' } };
+        return reply(200, { ...data, cards: [...cards, proposal, story, running] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: /^#32 Accessible post template/ });
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const row = within(dialog.getByRole('region', { name: '#92 Readable code blocks' })).getByText(/^#93 /);
+      expect(row.textContent).toContain('running · would wait on #33 again');
+      expect(dialog.getByRole('alert').textContent).toContain('#93 runs in a lane and would wait on #33 again, which this approval reopens: Stop it first, or approve once it has landed.');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('under an approved epic Triage offers no Re-pin and says approving the epic again re-pins', async () => {
     const { user, tree } = await openPlanner();
     await approve('cp1-1');
@@ -1385,5 +1445,99 @@ describe('approving an epic (ADR 0006)', () => {
     const panel = await openCard(user, tree, 11);
     expect((panel.getByRole('button', { name: 'Mark done' }) as HTMLButtonElement).disabled).toBe(true);
     expect(panel.getByText('Approve #1 again to confirm it first: under an approved epic only the approval confirms a card.')).toBeTruthy();
+  });
+});
+
+describe('lanes (ADR 0006 §5)', () => {
+  /** Approves notes-site's epic #32 through the service, as the dialog would. */
+  const approve = () => act(() => api.planner.approve('cp3-32', { provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode: 'yolo', parallel: 2, items: [] }));
+  /** notes-site's plan, with #32 approved. */
+  async function lanePlanner() {
+    const rendered = renderApp('#planner=p3');
+    const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+    await tree.findByRole('treeitem', { name: /^#35 / });
+    await approve();
+    await waitFor(() => expect(tree.getByRole('treeitem', { name: /^#32 / }).textContent).toContain('Approved'));
+    return { ...rendered, tree };
+  }
+  // The Inbox and the card panel are overlays at this width, which hide the Tree from the accessibility tree.
+  const row = (tree: ReturnType<typeof within>, seq: number) => tree.getByRole('treeitem', { name: new RegExp(`^#${seq} `), hidden: true });
+
+  test('Launch starts a ready subtask in its lane; Accept lands its done request as a job, Landing and then Landed, in words', async () => {
+    const { user, tree } = await lanePlanner();
+    const launch = vi.spyOn(api.planner, 'launch');
+    try {
+      // The approval picked the model and mode: Launch asks nothing more.
+      await user.click((await openMenu(user, 'Actions for #35')).getByRole('menuitem', { name: 'Launch' }));
+      await waitFor(() => expect(launch).toHaveBeenCalledWith('cp3-35'));
+    } finally {
+      launch.mockRestore();
+    }
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, Doing$/));
+    // The lane's Task files its done request; its acceptance run timed out, so it waits for the owner.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Inbox, [1-9]/ })).toBeTruthy());
+    await user.click(screen.getByRole('button', { name: /^Inbox, / }));
+    const request = within(await screen.findByRole('article', { name: 'Done request on #35' }));
+    await user.click(request.getByRole('button', { name: 'Accept' }));
+    // The land job says how it goes, in words and with no spinner; the card is Landing meanwhile.
+    expect((await request.findByRole('status')).textContent).toBe('Landing #35 on the integration branch…');
+    expect(request.queryByRole('button', { name: 'Accept' })).toBeNull();
+    await waitFor(() => expect(row(tree, 35).textContent).toContain('Landing'));
+    // Landed: done, with the commit it landed as, and the integration branch one landing ahead.
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, Done$/));
+    expect(row(tree, 35).textContent).toContain('Landed 9f3e2c4');
+    expect(row(tree, 35).textContent).not.toContain('Landing');
+    expect(await screen.findByText('· 1 ahead of main')).toBeTruthy();
+    expect(screen.getByText('uam-plan-p3')).toBeTruthy();
+  });
+
+  test('Stop on a lane subtask asks beside the button, then releases it, paused, and the attempt keeps its branch', async () => {
+    const { user, tree } = await lanePlanner();
+    await act(() => api.planner.launch('cp3-35'));
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, Doing$/));
+    const panel = await openCard(user, tree, 35);
+    // A lane's subtask is stopped, not released by hand, and Mark done says why it is off.
+    expect(panel.queryByRole('button', { name: 'Release' })).toBeNull();
+    expect((panel.getByRole('button', { name: 'Mark done' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(panel.getByText('It runs in a lane: accept its done request, or Stop it.')).toBeTruthy();
+    expect(await panel.findByText('uam-plan-p3-35-1')).toBeTruthy();
+    const release = vi.spyOn(api.planner, 'release');
+    try {
+      await user.click(panel.getByRole('button', { name: 'Stop' }));
+      const confirm = await screen.findByRole('alertdialog', { name: 'Stop #35?' });
+      // Anchored to the button that asked: a popover beside it, not the centred dialog over a backdrop.
+      expect(confirm.closest('[data-side]')).toBeTruthy();
+      expect(confirm.textContent).toContain('The attempt branch is kept.');
+      await user.click(within(confirm).getByRole('button', { name: 'Stop' }));
+      await waitFor(() => expect(release).toHaveBeenCalledWith('cp3-35', ''));
+    } finally {
+      release.mockRestore();
+    }
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, To do$/));
+    expect(row(tree, 35).textContent).toContain('Paused');
+    expect(await panel.findByText('paused: attempt #1 stopped; branch uam-plan-p3-35-1 kept')).toBeTruthy();
+  });
+
+  test('Settle offers a lane’s subtask Stop or Cancel, never Keep held', async () => {
+    const user = userEvent.setup();
+    const held = (seq: number, over: Partial<Card> = {}): Card => ({
+      id: `c${seq}`, seq, project_id: 'p3', kind: 'subtask', parent_id: null, rank: seq, title: `Card ${seq}`, desc: '', win_condition: '', status: 'doing', prio: 3, labels: [], checklist: [],
+      blocked: false, blocked_by: [], blocks: [], confirmed: true, held_by: 't9', pinned_sha: '', accept_cmd: null, paths: [], pending_requests: 0, revision: 1, created_at: '', updated_at: '', moved_at: '', ...over,
+    });
+    const lane = held(35, { lane: { branch: 'uam-plan-p3-35-1', landed_sha: '', reverted_sha: '' } });
+    const plain = held(34);
+    const settle = vi.fn(async () => {});
+    // As the app mounts it: closed, then asked when a settle answers holds_undecided.
+    const view = render(<SettleDialog ask={null} onClose={() => {}} />);
+    view.rerender(<SettleDialog ask={{ taskName: 'the lane task', cards: [lane, plain], settle }} onClose={() => {}} />);
+    const dialog = within(await screen.findByRole('dialog', { name: 'Settle the lane task?' }));
+    const laneChoice = within(dialog.getByRole('radiogroup', { name: 'What happens to #35' }));
+    expect(laneChoice.getAllByRole('radio').map((r) => r.textContent)).toEqual(['Stop', 'Cancel']);
+    expect(laneChoice.getByRole('radio', { name: 'Stop' }).getAttribute('aria-checked')).toBe('true');
+    expect(dialog.getByText('The subtask goes back to To do, paused; its branch uam-plan-p3-35-1 is kept.')).toBeTruthy();
+    const plainChoice = within(dialog.getByRole('radiogroup', { name: 'What happens to #34' }));
+    expect(plainChoice.getAllByRole('radio').map((r) => r.textContent)).toEqual(['Keep held', 'Release', 'Cancel']);
+    await user.click(dialog.getByRole('button', { name: 'Settle' }));
+    expect(settle).toHaveBeenCalledWith({ [lane.id]: { action: 'release', comment: '' }, [plain.id]: { action: 'keep', comment: '' } });
   });
 });

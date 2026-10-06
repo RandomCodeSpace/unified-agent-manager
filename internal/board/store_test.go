@@ -342,6 +342,7 @@ func TestQueryPlans(t *testing.T) {
 			   OR blocker_id IN (SELECT id FROM cards WHERE project_id = ?1)
 			ORDER BY blocker_id, blocked_id`, []any{proj}, "links_blocked"},
 		{workedByQuery, []any{proj}, "holds_card"},
+		{lanesQuery, nil, "holds_open"},
 		{`SELECT COUNT(*) FROM cards WHERE created_by = ?`, []any{"task:x"}, "cards_created_by"},
 		{`SELECT COUNT(*) FROM comments WHERE card_id = ? AND author = ? AND automatic = 0`, []any{"x", "a"}, "comments_card"},
 		{`SELECT id FROM requests WHERE card_id = ? AND task_id = ? AND kind = ? AND status = 'pending'`, []any{"x", "t", "done"}, "requests_card"},

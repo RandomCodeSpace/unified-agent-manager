@@ -119,6 +119,9 @@ type payload struct {
 	// item; it needs no hold.
 	SplitOf string `json:"split_of,omitempty"`
 	Tick    string `json:"tick,omitempty"`
+	// Landing marks a lane's done request that waits only to land (ADR
+	// 0006 §5.4).
+	Landing bool `json:"landing,omitempty"`
 }
 
 // SplitResult is a split's outcome: the card as the split left it (a story,
@@ -190,7 +193,8 @@ func (t *txn) acceptCmd(n *node) (string, error) {
 // older pending one. A done request whose PassedCmd is the command the
 // subtask resolves to is accepted at once, as the owner's Accept would
 // accept it, and is returned accepted, unless something holds it back (see
-// WaitReason).
+// WaitReason); a lane's waits to land instead. Nothing is filed on a card
+// whose landing is under way.
 func (s *Store) FileRequest(ctx context.Context, a Actor, ref string, in RequestInput) (Request, error) {
 	f, err := s.FileRequestDetail(ctx, a, ref, in)
 	return f.Request, err
@@ -216,6 +220,9 @@ const (
 	// WaitClosesWithProposals: accepting it would close containers that
 	// still have proposals.
 	WaitClosesWithProposals WaitReason = "closes_with_proposals"
+	// WaitLanding: a lane's done request that nothing else holds back waits
+	// to land on the integration branch, which accepts it (ADR 0006 §5.4).
+	WaitLanding WaitReason = "landing"
 )
 
 // FiledRequest is a filed request, with Wait saying why a done request was
@@ -248,6 +255,9 @@ func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in R
 		} else if err := permit(a, opRequest, n.stored); err != nil {
 			return err
 		}
+		if err := t.notLanding(n); err != nil {
+			return err
+		}
 		switch in.Kind {
 		case RequestDone:
 			if err := t.finishable(o, a, n); err != nil {
@@ -266,20 +276,26 @@ func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in R
 			}
 		}
 		out = FiledRequest{}
-		out.Request, err = t.fileRequest(o, a, n, f)
-		if err != nil || in.Kind != RequestDone {
+		if in.Kind == RequestDone {
+			cmd, err := t.acceptCmd(n)
+			if err != nil {
+				return err
+			}
+			// The open hold is the latest, so n.Lane is its lane.
+			lane := n.Lane != nil
+			out.Wait = waitReason(f, in.PassedCmd, cmd, lane)
+			if out.Wait == WaitNone {
+				if out.Closes, out.Proposals = o.closesWithProposals(n); len(out.Closes) > 0 {
+					out.Wait = WaitClosesWithProposals
+				}
+			}
+			if out.Wait == WaitNone && lane {
+				out.Wait, f.payload.Landing = WaitLanding, true
+			}
+		}
+		out.Request, _, err = t.fileRequest(o, a, n, f)
+		if err != nil || in.Kind != RequestDone || out.Wait != WaitNone {
 			return err
-		}
-		cmd, err := t.acceptCmd(n)
-		if err != nil {
-			return err
-		}
-		if out.Wait = waitReason(f, in.PassedCmd, cmd); out.Wait != WaitNone {
-			return nil
-		}
-		if out.Closes, out.Proposals = o.closesWithProposals(n); len(out.Closes) > 0 {
-			out.Wait = WaitClosesWithProposals
-			return nil
 		}
 		return t.acceptPassed(o, a, n, &out.Request)
 	})
@@ -289,14 +305,19 @@ func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in R
 // waitReason is why the done request f, whose caller saw passed exit 0 on a
 // subtask that now resolves to cmd, can't be accepted as it is filed, before
 // the containers it would close are looked at; WaitNone when nothing there
-// holds it back.
-func waitReason(f requestFiling, passed, cmd string) WaitReason {
+// holds it back. A lane's change to tests or build files is recorded but
+// holds nothing back (ADR 0006 §2 item 9).
+func waitReason(f requestFiling, passed, cmd string, lane bool) WaitReason {
+	flags := f.flags
+	if lane {
+		flags = slices.DeleteFunc(slices.Clone(flags), func(flag string) bool { return flag == FlagTestsOrBuildChanged })
+	}
 	switch {
 	case cmd == "":
 		return WaitNoCommand
-	case slices.Contains(f.flags, FlagAcceptanceCouldNotRun):
+	case slices.Contains(flags, FlagAcceptanceCouldNotRun):
 		return WaitCouldNotRun
-	case len(f.flags) > 0:
+	case len(flags) > 0:
 		return WaitFlagged
 	case passed != cmd:
 		return WaitCommandChanged
@@ -403,16 +424,17 @@ func checkInput(in RequestInput) (requestFiling, error) {
 }
 
 // fileRequest writes a pending request from a's Task on n, withdrawing the
-// Task's older pending request of the same kind on n.
-func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Request, error) {
+// Task's older pending request of the same kind on n; replaced says it
+// withdrew one.
+func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (_ Request, replaced bool, _ error) {
 	ids, err := t.ids(`SELECT id FROM requests WHERE card_id = ? AND task_id = ? AND kind = ? AND status = 'pending'`,
 		n.ID, a.TaskID, string(f.kind))
 	if err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
 	for _, id := range ids {
 		if err := t.exec(`UPDATE requests SET status = 'withdrawn', decided_at = ? WHERE id = ?`, stamp(t.now), id); err != nil {
-			return Request{}, err
+			return Request{}, false, err
 		}
 		t.requestChanged(o.project, id)
 	}
@@ -425,11 +447,11 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 		base_revision, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
 		r.ID, r.CardID, r.TaskID, r.AgentID, string(r.Kind), r.Comment, string(r.Payload), string(r.Evidence), encode(r.Flags),
 		r.BaseRevision, stamp(t.now)); err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
 	t.requestChanged(o.project, r.ID)
 	t.changed(o.project, n.ID)
-	return r, nil
+	return r, len(ids) > 0, nil
 }
 
 // Split splits the subtask ref. Under an epic or at the root it becomes a
@@ -479,7 +501,7 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 			if err := t.caps(o, a, n.ID, count, 0); err != nil {
 				return err
 			}
-			req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestSplit, payload: payload{Children: children}})
+			req, _, err := t.fileRequest(o, a, n, requestFiling{kind: RequestSplit, payload: payload{Children: children}})
 			out.Request = &req
 			return err
 		}
@@ -576,12 +598,18 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	checklist := n.Checklist
 	// The owner's parts take n's confirmation: a split plans, so it confirms
 	// no proposal (decision 10), and a confirmed n has confirmed ancestors.
-	confirmed := a.owner() && n.Confirmed()
+	// An agent's parts the owner accepts under an approved epic are
+	// proposals: only approving the epic again confirms work there.
+	confirmed := a.owner() && n.Confirmed() && (!accept || o.approved(n) == nil)
 	switch {
 	case !siblings:
 		n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
+		planned := t.planned
+		if accept {
+			planned = t.plannedByRequest
+		}
 		if a.owner() {
-			if err := t.planned(o, a, n); err != nil {
+			if err := planned(o, a, n); err != nil {
 				return nil, err
 			}
 		}
@@ -608,13 +636,19 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	if accept {
 		createdBy = TaskAuthor(requester)
 	}
+	// Siblings take n's own pause, as they take its place: a split never
+	// lets paused work start. A story's parts sit under n, which keeps it.
+	paused := ""
+	if siblings {
+		paused = n.Paused
+	}
 	sibs := slices.Clone(o.kids[parent])
 	var made []*node
 	for _, p := range list {
 		kid := &node{stored: StatusPlanned, Card: Card{
 			ProjectID: n.ProjectID, Kind: KindSubtask, ParentID: parent, Title: p.child.Title,
 			WinCondition: p.child.WinCondition, Status: StatusPlanned, Prio: PrioDefault, Effort: DefaultEffort,
-			CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
+			Paused: paused, CreatedBy: createdBy, CreatedAt: t.now, UpdatedAt: t.now, MovedAt: t.now,
 		}}
 		if confirmed {
 			kid.PinnedSHA = a.Head
@@ -629,7 +663,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		if !p.tick {
 			continue
 		}
-		req, err := t.fileRequest(o, Agent(requester, ""), kid, requestFiling{
+		req, _, err := t.fileRequest(o, Agent(requester, ""), kid, requestFiling{
 			kind: RequestDone, comment: fmt.Sprintf("ticked on %s before the split: %s", n.ref(), p.child.Title),
 			payload: payload{SplitOf: n.ID, Tick: p.child.Title},
 		})
@@ -697,8 +731,12 @@ func (t *txn) copyLinks(o *outline, n *node, made []*node) ([]Card, error) {
 // Accept accepts the pending request id. Accepting a done request needs
 // the subtask doing and held by the requesting Task (unless a split filed
 // it for a ticked item) and the finishing guard to pass; the claim text
-// becomes the close comment and the acceptance is an owner touch. comment
-// is the owner's decision note.
+// becomes the close comment and the acceptance is an owner touch. A lane's
+// done request is accepted only by landing it (AcceptLanded), and an
+// accepted blocked request ends a lane's attempt. Under an approved epic a
+// split request, whose parts are proposals, is refused when it would bring
+// a container to done or cancelled, as an agent's split is. comment is the
+// owner's decision note.
 func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Request, error) {
 	if err := permit(a, opDecide, ""); err != nil {
 		return Request{}, err
@@ -709,6 +747,9 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		}
 		switch r.Kind {
 		case RequestDone:
+			if n.HeldBy != "" && n.Lane != nil {
+				return invalid("%s runs in a lane: its done request is accepted by landing it", n.ref())
+			}
 			return t.acceptDone(o, a, n, r, p.SplitOf != "")
 		case RequestCancel:
 			if n.stored == StatusCancelled || n.Status == StatusDone {
@@ -730,6 +771,13 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			} else {
 				n.Blocked = true
 			}
+			// The flag or the link holds a lane's subtask back, so its
+			// attempt ends, with no pause: clearing it is the go-ahead.
+			if n.HeldBy != "" && n.Lane != nil {
+				if err := t.releaseHold(n, ReleaseBlocked, StatusTodo, ""); err != nil {
+					return err
+				}
+			}
 			// Under an approved epic only its approval confirms a proposal.
 			if o.approved(n) == nil {
 				if err := t.confirm(o, a, n); err != nil {
@@ -747,8 +795,14 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			if err := checkSplit(o, n, p.Children); err != nil {
 				return err
 			}
-			_, err := t.applySplit(o, a, r.TaskID, n, p.Children, true)
-			return err
+			// Under an approved epic the parts are proposals, which
+			// derivation ignores: a split that closes a container there
+			// would release its dependents before they are approved.
+			run, above := o.approved(n) != nil, o.above(n)
+			if _, err := t.applySplit(o, a, r.TaskID, n, p.Children, true); err != nil || !run {
+				return err
+			}
+			return t.closesNone(o.project, n, above, "accepting would close %[3]s before its parts are approved; split %[1]s yourself instead")
 		}
 		if n.stored == StatusCancelled || p.Patch == nil {
 			return invalid("%s can no longer change", n.ref())
@@ -762,7 +816,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		if err != nil {
 			return err
 		}
-		return t.applyEdit(o, a, n, *p.Patch, plan)
+		return t.applyEdit(o, a, n, *p.Patch, plan, true)
 	})
 }
 
@@ -783,7 +837,8 @@ func (t *txn) acceptDone(o *outline, a Actor, n *node, r *Request, split bool) e
 }
 
 // markDone marks the subtask n done by accepting r: the claim text becomes the
-// close comment, the hold ends, and the acceptance confirms n.
+// close comment, the hold ends, and the acceptance confirms n, except under
+// an approved epic, where only approving the epic confirms a proposal.
 func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	author := AuthorUAM
 	if r.TaskID != "" {
@@ -799,8 +854,10 @@ func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	} else if err := t.setStatus(n, StatusDone, "", ""); err != nil {
 		return err
 	}
-	if err := t.confirm(o, a, n); err != nil {
-		return err
+	if o.approved(n) == nil {
+		if err := t.confirm(o, a, n); err != nil {
+			return err
+		}
 	}
 	return t.updateCard(n)
 }
@@ -808,7 +865,8 @@ func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 // Reject rejects the pending request id with a reason. When the requesting
 // Task holds the card and is not Active, the hold is released to todo with
 // the reason as a comment; while it is Active the hold stays and the caller
-// sends the reason to the Task.
+// sends the reason to the Task. Nothing is rejected on a card whose landing
+// is under way.
 func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderActive bool) (Request, error) {
 	if err := permit(a, opDecide, ""); err != nil {
 		return Request{}, err
@@ -818,6 +876,9 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 		return Request{}, invalid("a rejection needs a reason")
 	}
 	return s.decideWrite(ctx, a, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
+		if err := t.notLanding(n); err != nil {
+			return err
+		}
 		if err := t.decide(r, RequestRejected, DecidedByOwner, body); err != nil {
 			return err
 		}
@@ -831,6 +892,156 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 		return err
 	})
 }
+
+// The landing of a lane's done request (ADR 0006 §4.4, §5.4) rolls
+// forward: MarkLanding stores the commit as the intent before the
+// integration branch moves, and AcceptLanded finishes it once the branch
+// has the commit. ClearLanding withdraws an intent whose branch did not
+// move, and LandFailed ends a landing that cannot apply. These are uam's
+// writes, so they take no actor.
+
+// MarkLanding stores sha, the commit the pending lane done request id lands
+// as, as the landing intent on its open attempt, once the finishing guard
+// passes. From then on nothing changes the subtask's status or ends its
+// hold (CodeLanding) until AcceptLanded or ClearLanding. Marking the same
+// sha again does nothing.
+func (s *Store) MarkLanding(ctx context.Context, id, sha string) error {
+	if err := checkSHA(sha); err != nil {
+		return err
+	}
+	_, err := s.decideWrite(ctx, Actor{}, id, func(t *txn, o *outline, n *node, r *Request, _ payload) error {
+		h, err := t.laneDone(n, r)
+		switch {
+		case err != nil:
+			return err
+		case h.Lane.LandedSHA == sha:
+			return nil
+		case h.Lane.LandedSHA != "":
+			return refuse(CodeLanding, "%s is landing as %s already", n.ref(), shortSHA(h.Lane.LandedSHA))
+		}
+		if err := t.guard(o, n); err != nil {
+			return err
+		}
+		return t.setLanded(n, h, sha)
+	})
+	return err
+}
+
+// ClearLanding withdraws the landing intent of the pending lane done
+// request id, whose integration branch did not move; the request stays
+// pending.
+func (s *Store) ClearLanding(ctx context.Context, id string) error {
+	_, err := s.decideWrite(ctx, Actor{}, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
+		h, err := t.laneDone(n, r)
+		if err != nil || h.Lane.LandedSHA == "" {
+			return err
+		}
+		return t.setLanded(n, h, "")
+	})
+	return err
+}
+
+// AcceptLanded accepts the pending lane done request id, whose commit sha,
+// stored by MarkLanding, is now on the integration branch integ: the
+// subtask is done and its attempt keeps sha. by decides it, with the
+// owner's note comment when the owner's Accept landed it. The commit has
+// landed, so the finishing guard is not run again.
+func (s *Store) AcceptLanded(ctx context.Context, id, sha, integ string, by DecidedBy, comment string) (Request, error) {
+	if by != DecidedByOwner && by != DecidedByUAM {
+		return Request{}, invalid("unknown decider %q", by)
+	}
+	if err := checkLine("integration branch", integ); err != nil {
+		return Request{}, err
+	}
+	return s.decideWrite(ctx, Actor{}, id, func(t *txn, o *outline, n *node, r *Request, _ payload) error {
+		h, err := t.laneDone(n, r)
+		if err != nil {
+			return err
+		}
+		if h.Lane.LandedSHA == "" || h.Lane.LandedSHA != sha {
+			return invalid("%s is not landing as %s; mark it landing first", n.ref(), shortSHA(sha))
+		}
+		t.landing[n.ID] = true
+		if err := t.decide(r, RequestAccepted, by, strings.TrimSpace(comment)); err != nil {
+			return err
+		}
+		if err := t.markDone(o, n, r, Actor{}); err != nil {
+			return err
+		}
+		_, err = t.addComment(n, AuthorUAM, "", fmt.Sprintf("Landed on %s as %s", integ, shortSHA(sha)), true, false)
+		return err
+	})
+}
+
+// LandFailed rejects the pending lane done request id, which cannot land,
+// with reason as uam's decision, and says so on the card (ADR 0006 §4.5).
+// While its Task is live the attempt stays held for it to try again;
+// otherwise the hold is released as rejected, which pauses the subtask. It
+// refuses with landing while a landing intent is stored: the caller clears
+// it first (ClearLanding).
+func (s *Store) LandFailed(ctx context.Context, id, reason string, holderActive bool) (Request, error) {
+	body, err := checkComment(reason)
+	if err != nil {
+		return Request{}, invalid("a failed landing needs a reason")
+	}
+	return s.decideWrite(ctx, Actor{}, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
+		if _, err := t.laneDone(n, r); err != nil {
+			return err
+		}
+		if err := t.notLanding(n); err != nil {
+			return err
+		}
+		if err := t.decide(r, RequestRejected, DecidedByUAM, body); err != nil {
+			return err
+		}
+		if _, err := t.addComment(n, AuthorUAM, "", "landing failed: "+body, true, false); err != nil {
+			return err
+		}
+		if holderActive {
+			return nil
+		}
+		return t.releaseHold(n, ReleaseRejected, StatusTodo, "")
+	})
+}
+
+// laneDone returns the open lane attempt the done request r on n would
+// land, refusing any other request.
+func (t *txn) laneDone(n *node, r *Request) (Hold, error) {
+	if r.Kind != RequestDone {
+		return Hold{}, invalid("the request is a %s request; only a done request lands", r.Kind)
+	}
+	if n.stored != StatusDoing || n.HeldBy != r.TaskID {
+		return Hold{}, refuse(CodeNotHeld, "%s is not held by the requesting Task", n.ref())
+	}
+	h, err := t.openHold(n)
+	if err != nil {
+		return Hold{}, err
+	}
+	if h.Lane.Branch == "" {
+		return Hold{}, invalid("%s does not run in a lane; accept its done request instead", n.ref())
+	}
+	return h, nil
+}
+
+// setLanded stores sha as the landing intent on n's open attempt h.
+func (t *txn) setLanded(n *node, h Hold, sha string) error {
+	if err := t.exec(`UPDATE holds SET landed_sha = ? WHERE id = ?`, sha, h.ID); err != nil {
+		return err
+	}
+	t.changed(n.ProjectID, n.ID)
+	return nil
+}
+
+// checkSHA refuses what can't be a commit name.
+func checkSHA(sha string) error {
+	if sha == "" || strings.Trim(sha, "0123456789abcdef") != "" || len(sha) > 64 {
+		return invalid("invalid commit %q", sha)
+	}
+	return nil
+}
+
+// shortSHA abbreviates a commit name for a message.
+func shortSHA(sha string) string { return sha[:min(len(sha), 7)] }
 
 // decideWrite loads the pending request id and its card inside one write by
 // a to the card's Project, runs fn, and returns the request afterwards.
@@ -953,11 +1164,19 @@ func (t *txn) queryRequests(query string, args ...any) ([]Request, error) {
 }
 
 // ProjectSettings holds a Project's planner settings. AcceptCmd is the
-// default acceptance command, "" for none.
+// default acceptance command, "" for none. BaseRef is the branch its
+// integration branch follows, "" until set, and AcceptParallel how many
+// acceptance runs it allows at a time (ADR 0006 §3.1).
 type ProjectSettings struct {
-	ProjectID string
-	AcceptCmd string
+	ProjectID      string
+	AcceptCmd      string
+	BaseRef        string
+	AcceptParallel int
 }
+
+// MaxAcceptParallel is the most acceptance runs a Project may allow at a
+// time.
+const MaxAcceptParallel = 4
 
 // ProjectSettings returns projectID's settings.
 func (s *Store) ProjectSettings(ctx context.Context, projectID string) (ProjectSettings, error) {
@@ -971,12 +1190,51 @@ func (s *Store) ProjectSettings(ctx context.Context, projectID string) (ProjectS
 }
 
 func (t *txn) settings(projectID string) (ProjectSettings, error) {
-	out := ProjectSettings{ProjectID: projectID}
-	err := t.tx.QueryRowContext(t.ctx, `SELECT accept_cmd FROM project_settings WHERE project_id = ?`, projectID).Scan(&out.AcceptCmd)
+	out := ProjectSettings{ProjectID: projectID, AcceptParallel: 1}
+	err := t.tx.QueryRowContext(t.ctx, `SELECT accept_cmd, base_ref, accept_parallel FROM project_settings WHERE project_id = ?`, projectID).
+		Scan(&out.AcceptCmd, &out.BaseRef, &out.AcceptParallel)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return out, fmt.Errorf("board: read project settings: %w", err)
 	}
 	return out, nil
+}
+
+// SetProjectBaseRef sets the branch projectID's integration branch follows,
+// trimmed; "" unsets it. Whether the branch exists is the caller's to check.
+func (s *Store) SetProjectBaseRef(ctx context.Context, a Actor, projectID, ref string) error {
+	ref = strings.TrimSpace(ref)
+	if err := checkLine("base branch", ref); err != nil {
+		return err
+	}
+	return s.setProject(ctx, a, projectID, `INSERT INTO project_settings (project_id, base_ref) VALUES (?, ?)
+		ON CONFLICT(project_id) DO UPDATE SET base_ref = excluded.base_ref`, ref)
+}
+
+// SetProjectAcceptParallel sets how many acceptance runs projectID allows
+// at a time, 1 to MaxAcceptParallel.
+func (s *Store) SetProjectAcceptParallel(ctx context.Context, a Actor, projectID string, n int) error {
+	if n < 1 || n > MaxAcceptParallel {
+		return invalid("acceptance runs at a time must be 1 to %d, not %d", MaxAcceptParallel, n)
+	}
+	return s.setProject(ctx, a, projectID, `INSERT INTO project_settings (project_id, accept_parallel) VALUES (?, ?)
+		ON CONFLICT(project_id) DO UPDATE SET accept_parallel = excluded.accept_parallel`, n)
+}
+
+// setProject writes one of projectID's settings as the owner, with upsert
+// taking the Project ID and the value. A setting is part of the Project's
+// Board, so the revision moves and a change is reported.
+func (s *Store) setProject(ctx context.Context, a Actor, projectID, upsert string, v any) error {
+	if err := permit(a, opSettings, ""); err != nil {
+		return err
+	}
+	if projectID == "" {
+		return errReadOnly
+	}
+	_, err := s.write(ctx, func(t *txn) error {
+		t.set(projectID)
+		return t.exec(upsert, projectID, v)
+	})
+	return err
 }
 
 // SetProjectAcceptCmd sets projectID's default acceptance command, trimmed;

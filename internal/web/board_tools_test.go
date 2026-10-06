@@ -1328,6 +1328,30 @@ func TestBoardToolSubsetInAContainer(t *testing.T) {
 	}
 }
 
+// A change request's reply says it replaces the Task's earlier pending one
+// only when filing it withdrew one.
+func TestChangeRequestReplySaysWhenItReplacesOne(t *testing.T) {
+	f := newPlanner(t)
+	task := f.newTask(f.project).ID
+	epic := f.toolOK(task, "board_create", `{"kind":"epic","title":"Calculator"}`).Card
+	story := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Parse"}`, epic.ID)).Card
+	leaf := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"subtask","parent":%q,"title":"Tokens"}`, story.ID)).Card
+	f.call(http.MethodPost, "/api/board/cards/"+leaf.ID+"/confirm", ``, http.StatusOK, nil)
+	later := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Later"}`, epic.ID)).Card
+	other := f.toolOK(task, "board_create", fmt.Sprintf(`{"kind":"story","parent":%q,"title":"Other"}`, epic.ID)).Card
+
+	filed := fmt.Sprintf("#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide.", leaf.Seq)
+	if r := f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, leaf.ID, later.ID)); r.Text != filed {
+		t.Fatalf("the first change request = %q, want %q", r.Text, filed)
+	}
+	if r, want := f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, leaf.ID, other.ID)), filed+" It replaces your earlier pending one."; r.Text != want {
+		t.Fatalf("the second change request = %q, want %q", r.Text, want)
+	}
+	if reqs := f.card(leaf.ID).Requests; len(reqs) != 2 || reqs[0].Status != board.RequestWithdrawn || reqs[1].Status != board.RequestPending {
+		t.Fatalf("requests = %+v", reqs)
+	}
+}
+
 // The hand-off and an approved epic as the tools see it (ADR 0006 §6.1,
 // §6.4): board_create on an epic asks for the approval; under the approved
 // epic a new card waits for the next one, board_get names the approval and
@@ -1352,7 +1376,7 @@ func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
 			}
 			items = append(items, board.ApproveItem{ID: c.ID, Revision: c.Revision})
 		}
-		_, err := st.Approve(ctx, board.Owner(""), epic.ID, board.RunSettings{Provider: "fake", Model: "luna", Mode: "safe", Parallel: 2}, items)
+		_, err := st.Approve(ctx, board.Owner(""), epic.ID, board.RunSettings{Provider: "fake", Model: "luna", Mode: "safe", Parallel: 2}, items, "")
 		return err
 	})
 
@@ -1372,14 +1396,14 @@ func TestBoardToolsUnderAnApprovedEpic(t *testing.T) {
 	}
 	f.toolRefused(task, "board_claim", fmt.Sprintf(`{"ref":%q}`, leaf.ID), string(board.CodeRunOwned))
 	r = f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, sibling.ID, freeStory.ID))
-	if want := fmt.Sprintf("Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", sibling.Seq); r.Text != want {
+	if want := fmt.Sprintf("Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide.", sibling.Seq); r.Text != want {
 		t.Fatalf("move out of the approved epic = %q, want %q", r.Text, want)
 	}
 	if c := f.card(sibling.ID).Card; *c.ParentID != story.ID {
 		t.Fatalf("the move applied: %+v", c)
 	}
 	r = f.toolOK(task, "board_edit", fmt.Sprintf(`{"ref":%q,"parent":%q}`, leaf.ID, epic.ID))
-	if want := fmt.Sprintf("Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", leaf.Seq); r.Text != want {
+	if want := fmt.Sprintf("Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide.", leaf.Seq); r.Text != want {
 		t.Fatalf("move out from under the pause = %q, want %q", r.Text, want)
 	}
 	if c := f.card(leaf.ID).Card; *c.ParentID != story.ID {
