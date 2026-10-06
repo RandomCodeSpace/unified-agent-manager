@@ -103,6 +103,8 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
   const check = checking?.status === 'done' ? checking.accept : undefined;
   // The owner's Accept of a lane's done request lands it as a job (ADR 0006 §5.5).
   const landing = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'land').at(-1);
+  // So is a Revert started from this card (§5.7).
+  const reverting = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'revert').at(-1);
 
   // The trail (comments, requests, holds) follows the card: fetched again on each of its revisions.
   useEffect(() => {
@@ -176,6 +178,8 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
           {checking?.status === 'failed' && <Note tone="error">Check at HEAD failed{checking.error ? `: ${checking.error}` : '.'}</Note>}
           {landing?.status === 'running' && <Note tone="muted">Landing on the integration branch…</Note>}
           {landing?.status === 'failed' && <Note tone="error">Landing failed{landing.error ? `: ${landing.error}` : '.'}</Note>}
+          {reverting?.status === 'running' && <Note tone="muted">Reverting on the integration branch…</Note>}
+          {reverting?.status === 'failed' && <Note tone="error">Revert failed{reverting.error ? `: ${reverting.error}` : '.'}</Note>}
         </div>
 
         {unassigned ? <MoveToProject card={c} projects={projects} /> : actions.length > 0 && (

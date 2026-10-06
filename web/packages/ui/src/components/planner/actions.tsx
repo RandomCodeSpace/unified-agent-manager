@@ -2,13 +2,13 @@ import { useApi } from '../../ApiContext';
 import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
+import { approvedEpicOf, cardPath, isLanded, isStarted, landedUnder, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { AlertDialog, useConfirm } from '../ui/dialog';
 import { ContextMenu, Menu, type ActionItem } from '../ui/menu';
 import { useShownBoard } from './context';
-import { ApproveDialog, BriefDialog, DoneDialog, LaunchDialog, MoveDialog, ReasonDialog, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
+import { ApproveDialog, BriefDialog, DoneDialog, LandedOnTop, LaunchDialog, MoveDialog, ReasonDialog, RevertPanel, SplitDialog, moveTargets, type ApproveAsk, type BriefAsk, type LaunchAsk, type ReasonAsk } from './dialogs';
 
 export interface TriageResult {
   verdict: TriageVerdict;
@@ -51,6 +51,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   const [approving, setApproving] = useState<ApproveAsk | null>(null);
   // Stop (ADR 0006 §4.6): a lane subtask, or a container with the lane subtasks running under it.
   const stopping = useConfirm<{ card: Card; lanes: Card[] }>();
+  // Revert (ADR 0006 §5.7): the card it starts from.
+  const [reverting, setReverting] = useState<Card | null>(null);
 
   async function run<T>(card: string, key: string, verb: string, op: () => Promise<T>): Promise<T | undefined> {
     setBusy({ card, key });
@@ -124,9 +126,14 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       const reason = approved && !c.confirmed ? `Approve #${approved.seq} again to confirm it first: under an approved epic only the approval confirms a card.` : c.held_by && c.lane?.branch ? 'It runs in a lane: accept its done request, or Stop it.' : undefined;
       actions.push({ key: 'done', label: 'Mark done', icon: <CheckCheck />, reason, onClick: () => open(c, 'done') });
     }
+    // Landed work goes back with its code (Revert) or keeps it (Reopen); never by a plain move back to To do.
+    if (c.status !== 'cancelled' && (leaf ? isLanded(c) : landedUnder(c, byId).length > 0)) {
+      actions.push({ key: 'revert', label: 'Revert…', icon: <Undo2 />, danger: true, title: leaf ? 'Revert its landing on the integration branch, and what landed on top of it.' : 'Revert every subtask that landed under it, and what landed on top of them.', onClick: () => setReverting(c) });
+    }
+    if (leaf && isLanded(c)) actions.push({ key: 'reopen', label: 'Reopen without reverting code', icon: <ListRestart />, onClick: () => reopen(c) });
     if (leaf && c.status === 'doing' && !c.lane?.branch) actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
     // Not under a cancelled card: the service refuses it until that is restored.
-    if (leaf && c.status === 'done' && !cardPath(c, byId).some((a) => a.status === 'cancelled')) {
+    if (leaf && c.status === 'done' && !isLanded(c) && !cardPath(c, byId).some((a) => a.status === 'cancelled')) {
       actions.push({ key: 'todo', label: 'Back to To do', icon: <ListRestart />, onClick: () => setReason({ title: `Move #${c.seq} back to To do?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Back to To do', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
     }
     if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') {
@@ -185,6 +192,19 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     return [{ key: 'open', label: 'Open', icon: <PanelRightOpen />, onSelect: () => openCard(c.id) }, ...lead, ...acts, ...trail];
   }
 
+  /** Reopen without reverting code: the landed subtask back to To do, paused, its commit kept on the integration branch. */
+  function reopen(c: Card) {
+    setReason({
+      title: `Reopen #${c.seq} without reverting code?`,
+      description: `It goes back to To do, paused, and its commit ${c.lane?.landed_sha.slice(0, 7) ?? ''} stays on the integration branch. Fix the code by hand, or leave it to its next attempt.`,
+      label: 'Comment (optional)',
+      confirm: 'Reopen',
+      required: false,
+      detail: <LandedOnTop card={c} />,
+      run: (t) => api.planner.reopen(c.id, t),
+    });
+  }
+
   const shown = target ? byId.get(target) : undefined;
   const stop = stopping.target;
   // A container is paused first, so nothing new starts under it while its lanes stop.
@@ -224,6 +244,16 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       <BriefDialog ask={brief} onClose={() => setBrief(null)} />
       <LaunchDialog ask={launching} onClose={() => setLaunching(null)} />
       <ApproveDialog ask={approving} onClose={() => setApproving(null)} />
+      <RevertPanel
+        card={reverting}
+        onClose={() => setReverting(null)}
+        // The card panel says how its revert job goes.
+        onStarted={(card) => openCard(card.id)}
+        onReopen={(card) => {
+          setReverting(null);
+          reopen(card);
+        }}
+      />
       {shown && (
         <>
           <DoneDialog card={shown} byId={byId} open={dialog === 'done'} onClose={() => setDialog(null)} />

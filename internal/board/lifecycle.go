@@ -11,7 +11,8 @@ import (
 // comment and passes the finishing guard unless force is set; cancelled
 // needs a comment; todo marks a planned or done subtask ready, or releases
 // a doing one. Done and todo are refused while a lane holds the subtask: its
-// done request lands it, and Stop releases it. On a container only
+// done request lands it, and Stop releases it. Todo is refused on a landed
+// subtask, which is reverted or reopened instead (Reopen). On a container only
 // cancelled is allowed, as a cascade over its subtree; force exists on
 // subtasks only.
 func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, comment string, force bool) (Card, error) {
@@ -50,6 +51,13 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 		// Task would work on with no hold. Stop releases a lane.
 		if to != StatusCancelled && n.HeldBy != "" && n.Lane != nil {
 			return invalid("%s runs in a lane: accept its done request or Stop it", n.ref())
+		}
+		// Moved to To do, a landed subtask's code would stay on the
+		// integration branch: Revert moves both, and Reopen keeps the code
+		// knowingly.
+		if to == StatusTodo && n.landed() {
+			return &Error{Code: CodeInvalid, Refs: []string{n.ref()}, Message: fmt.Sprintf(
+				"%s has landed: Revert %s instead, or reopen it without reverting code", n.ref(), n.ref())}
 		}
 		switch to {
 		case StatusDone:

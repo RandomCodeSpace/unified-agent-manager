@@ -221,7 +221,6 @@ type Step struct {
 	Nudge, Cancel, Retire, Abort []Act
 	Land                         []string
 	ProviderFailed               []string
-	Merge                        []string // project IDs (§5.8)
 }
 func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 ```
@@ -259,7 +258,7 @@ Retire archives the Task. Archive's reconcile releases any hold left, which for 
 `internal/web/executor.go` runs a loop shaped like the routine loop: the Manager's wait group, a 30-second ticker, and a kick channel with a buffer of one. Kicks come after every committed board write, when a lane Task's turn leaves Working, after reconcile on Task stage moves, at the end of opening the board, and at the end of every land, revert and merge job.
 
 Each pass:
-1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. Also after the lock is released, each Project with a `runs` row gets the merge fact of §5.8: whether `base_ref` already has everything the integration branch carries. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
+1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
 2. Call `RunFacts`, then `Next`.
 3. Apply the step:
    - **Start** runs in a goroutine with a `Starting` reservation, under the Project land mutex (§5.3).
@@ -269,7 +268,8 @@ Each pass:
    - **Abort** calls `AbortRun`, discards the Task and removes the lane.
    - **Land** runs `landAndAccept` (§5.4) in a goroutine, with the card in `Landing` until it returns.
    - **ProviderFailed** updates the provider's breaker (§4.5).
-   - **Merge** runs the merge job (§5.8) in a goroutine.
+
+Merges are not a step: events start them (§5.8).
 
 The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their card in `Landing` before they start, so `Next` never lands a request that another call is already landing.
 
@@ -383,7 +383,7 @@ A `board_request` done on a lane hold works in the Task's workdir:
 2. Refuse `land_conflict` while the lane has a merge in progress (`MERGE_HEAD`) or unmerged paths (`ls-files -u`), naming the files: "finish your merge of uam-plan-x and commit, then file done again". Leftovers are never committed with conflict markers in them.
 3. Commit leftovers in the lane: `add -A`, then `commit --no-verify -m "#seq: work in progress"`.
 4. Read the integration tip. Refuse `land_stale` when `rev-list <tip>..HEAD` holds a commit with a `Uam-Request` or `Uam-Revert` trailer: the lane carries integration commits the branch no longer has. The reply tells the agent to end its turn, the nudge-then-retire rows end the attempt, and Resume starts fresh. With roll-forward only a hand edit of the integration branch causes this.
-5. If the tip is not an ancestor of the lane's HEAD, run `git merge --no-edit --no-verify -m "Merge uam-plan-x\n\nUam-Merge: <tip>" <tip>` in the lane. On a conflict, collect the conflicted files and the landed cards that touched them (from the `Uam-Card` trailers on `base..tip`), run `merge --abort`, and refuse `land_conflict` with "run `git merge uam-plan-x` in your directory, resolve a.go, commit, file done again".
+5. If the tip is not an ancestor of the lane's HEAD, run `git merge --commit --no-autostash -s ort --no-edit --no-verify -m "Merge uam-plan-x\n\nUam-Merge: <tip>" <tip>` in the lane. The command line pins the merge: `merge.autoStash` and `pull.twohead` cannot stash or pick another strategy. git takes `branch.<name>.mergeOptions` before the command line and tries a strategy named there besides the pinned one, so uam clears that key for the command (through `GIT_CONFIG_COUNT`, which takes any branch name) and it cannot stop before the commit or pick another strategy either. On a conflict, collect the conflicted files and the landed cards that touched them (from the `Uam-Card` trailers on `base..tip`), run `merge --abort`, and refuse `land_conflict` with "run `git merge uam-plan-x` in your directory, resolve a.go, commit, file done again".
 6. Collect evidence against the baseline `{Head: tip}`: the diff and commits are exactly this subtask on top of the current tip. No overlap is computed.
 7. Run the acceptance command in the lane, first under the Project's acceptance limit (shared with manual runs in the Project directory), then under the directory's runner slot. A non-zero exit refuses, as before. A run the timeout kills is filed with `acceptance_could_not_run`, so it waits for the owner instead of counting as red.
 8. Mark the card in `Landing`, then file the request. When it would otherwise be accepted automatically, a lane done stays pending with the wait `landing` and `payload.landing = true`. Every other wait reason still applies.
@@ -395,7 +395,7 @@ A `board_request` done on a lane hold works in the Task's workdir:
 Preparation, on the caller's context:
 1. Re-read the request and stop unless it is pending. If the open hold already has `landed_sha`, go to step 7 and finish it with the rule of §4.4.
 2. Outside the holder's own tool call, stop as transient while the holder's turn is Working.
-3. Check the lane as in claim steps 2 and 4. A failure is a content failure.
+3. When the lane's HEAD holds commits of `base_ref` that the integration tip lacks (a best common ancestor of the two that the tip does not have), as after the agent merged `base_ref` into its lane, sync the integration branch with `base_ref` first (§5.2; skipped on a conflict). A lane that still holds such commits is refused `land_stale` with the steps: take that merge out and merge uam-plan-x instead. So a landing is the lane's own work alone, and a later Revert of it never takes `base_ref`'s own commits out of `base_ref`. Then check the lane as in claim steps 2 and 4. A failure is a content failure.
 4. If the tip moved since the claim, merge the new tip into the lane as in claim step 5 and re-run acceptance under the acceptance limit. A conflict, a red run or a timeout is a content failure.
 5. `S := commit-tree <lane HEAD>^{tree} -p <tip>`, with the message `<title> (#seq)\n\n<claim>\n\nUam-Card: #seq\nUam-Request: <id>`.
 
@@ -445,7 +445,7 @@ Commit phase, on `context.WithoutCancel`:
 4. `Store.Revert(owner, items, expect, C = cur, comment)`, in one transaction: each card goes from done to todo with `paused='owner'`, `reverted_sha = C` on its landed hold, and the comment "reverted in `<C>`: `<reason>`". It refuses if the closure differs from `expect`.
 5. One `update-ref integ C tip`. If the integration branch is checked out in a worktree, or the compare-and-swap fails, `Store.UndoRevert(items, C)` puts the cards back to done, clears `reverted_sha` and `paused`, and adds the comment "revert not applied: `<reason>`". The job fails with that reason.
 
-Between the store write and the ref move nothing can start those cards: they are paused, and lane starts wait on the mutex. Recovery finishes a revert whose `reverted_sha` is not on the integration branch with the rule of §4.4: a fast-forward when the branch is an ancestor of C, `UndoRevert` otherwise.
+Between the store write and the ref move nothing can start those cards: they are paused, and lane starts wait on the mutex. Recovery finishes a revert whose `reverted_sha` is not on the integration branch with the rule of §4.4: a fast-forward when the branch is an ancestor of C, `UndoRevert` otherwise. Only a branch that still has the reverted landings can tell an interrupted revert. A branch that is gone, or lacks those landings, was deleted or rewritten since, maybe long after the revert went through, so recovery leaves that revert as recorded and moves nothing (§5.9).
 
 **Reopen without reverting code.** The way out when Revert cannot apply, for example on a conflict with commits no card owns (sync merges, the owner's own commits) or after a hand edit of the integration branch. On a landed subtask, `POST /cards/{ref}/status {status: "todo", keep_code: true, comment}` sets todo and `paused='owner'`, leaves `reverted_sha` empty, and adds the comment "reopened without reverting `<landed sha>`; the code stays on uam-plan-x". It moves no ref and runs the owner integrity check (§6.3 rule 2). Its landed dependents stay landed, and the dialog lists them. The owner fixes the code by hand, in Terminal or on their own branch once the work is merged, or leaves it to the next attempt.
 
@@ -455,25 +455,33 @@ Between the store write and the ref move nothing can start those cards: they are
 
 On 2026-10-06 the owner decided: "Merge also needs to be approval based only. I approve epic for approval." Approving an epic also authorizes merging its landed work into `base_ref`. There is no separate merge approval, and the normal flow needs no Merge click.
 
-**Triggers.** `Next` returns `Merge` with the Projects to merge. It stays pure: besides `RunFacts` it takes one git fact per Project, read by the driver, whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2). A merge fires when:
-- an approved epic derives done and `!hasAll(base, integ)`;
-- an owner Revert job ended and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it.
+**Triggers.** Events start the merge job, not a `Next` step, so the merge does not depend on the executor (decided 2026-10-06 while S5 and S6 were built side by side). Each trigger first checks whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2), and starts nothing when it has. A merge fires:
+- after any write under an approved epic that derives done, and at boot in `recoverLanes`, for each Project whose `base_ref` lacks a landing or revert of an approved epic that derives done. The landing that finished the epic is such a write, and so is the owner's cancel or done of its last open subtask, so the merge never waits for a restart; at boot it finishes a merge a restart interrupted. The landed work of an epic still running waits for its epic. While a merge waits, writes leave it to its retry timer;
+- when an owner Revert job ends and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it;
+- from a per-Project retry timer, for a merge that waits (below).
 
-The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plain ancestry is not used, because after a sync merge brings an owner commit into the integration branch, that branch is not an ancestor of base even when nothing is left to merge. The Planner header's "N ahead" count and the revert preview's "already merged" flag use the same fact, counting landed commits that `base_ref` lacks rather than integration commits. A merge carries everything on the integration branch, including the landed subtasks of other approved epics in the Project. Each of those was approved under its own epic and passed acceptance. Proposals never land, so nothing unapproved reaches `base_ref` through uam.
+While a merge job runs, a trigger makes it run once more when it ends.
+
+The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plain ancestry is not used, because after a sync merge brings an owner commit into the integration branch, that branch is not an ancestor of base even when nothing is left to merge. The Planner header's "N ahead" count and the revert preview's "already merged" flag use the same fact: "N ahead" counts the landings and reverts on the integration branch's first-parent line that `base_ref` lacks, not integration commits, and is 0 once `hasAll(base, integ)` holds. A merge carries everything on the integration branch, including the landed subtasks of other approved epics in the Project. Each of those was approved under its own epic and passed acceptance. Proposals never land, so nothing unapproved reaches `base_ref` through uam.
 
 **The merge job** has job kind `merge` and carries the Project instead of a card. It runs under the land mutex, with the commit phase on `context.WithoutCancel`, and first stops with nothing to do when `hasAll(base, integ)` holds.
 1. **`base_ref` checked out** in the Project directory or another worktree that is not a lane:
    1. Begin a git write there, as the owner's Commit does. Lane Tasks never count as busy; any other busy Task in the repo answers `git_busy`.
    2. `merge-tree --write-tree HEAD integ`. A conflict answers `merge_conflict` with the files.
-   3. `git merge --no-ff --no-edit -m "Merge uam-plan-x: <epic title> (#seq)" <integ>` through the owner's git write path, so hooks run and git refuses to overwrite local changes (`local_changes`, with the files).
+   3. Right before the merge, check the target: that worktree's `symbolic-ref HEAD` is `refs/heads/<base_ref>`, its `HEAD` is the base tip of step 2, and its `--git-common-dir` is the repository's. Otherwise `git_busy`, which retries with backoff.
+   4. `git merge --no-commit --no-autostash -s ort --no-ff --no-edit -m "Merge uam-plan-x: <epic title> (#seq)" <integ>` there, so git refuses to overwrite local changes (`local_changes`, with the files). The merge is pinned as in a lane (§5.4 step 5). uam commits it only when the index's tree (`write-tree`) is the tree of step 2, so no setting or merge driver makes it merge other content; otherwise it aborts the merge (step 5). The commit is `commit-tree` of that tree with the old base tip and the integration tip as parents, never `git commit`, which would read the index and `HEAD` again later; `base_ref` moves to it by a compare-and-swap `update-ref` from the old base tip, answering `git_busy` when the base moved meanwhile, after undoing its merge against the old base tip (`read-tree -m -u`), which keeps the owner's uncommitted changes, and `git merge --quit` then drops the merge state, keeping the index and working tree, which hold the commit's content. It runs no hooks (step 6).
+   5. A merge git started and could not finish is aborted only when `MERGE_HEAD` is the integration tip and `MERGE_MSG` carries uam's message. uam never aborts a merge it did not start, such as the owner's own: it leaves it as it is and answers `local_changes`.
 2. **`base_ref` not checked out anywhere:** `merge-tree --write-tree base integ`, `commit-tree -p base -p integ`, then a compare-and-swap `update-ref refs/heads/<base_ref>`. No working tree changes.
-3. **`base_ref` checked out in a lane:** `git_busy`. uam never runs the merge of step 1 in a lane.
+3. **`base_ref` checked out in a lane, or in more than one worktree:** `git_busy`. uam never runs the merge of step 1 in a lane, nor in one of several checkouts, which would leave the others' files behind the branch.
 4. uam never pushes and never force-moves `base_ref`.
+5. **Commits uam did not make** block the merge first, in either mode: each first-parent commit on `base_ref..integ` must be a landing the store records (`landed_sha`), a commit of a revert it records (`reverted_sha` is a revert's last commit, and the commits before it on the line, one per reverted landing, are its own), or a merge whose second parent `base_ref` has and whose tree is the clean `merge-tree --write-tree` of its two parents, as uam's sync merges are. A merge made by hand that adds or drops content is not one. Any other answers `merge_blocked`, naming the commits. uam then merges the two tips it checked: when either branch moved after the check, it answers `git_busy`, and the retry checks the new tips.
+6. uam's merge does not run repository hooks, in either mode. It runs unattended, and agents can write the repository's shared configuration. Its git commands go through the hardened runner lanes use (§5.9): no hooks, whether from a hooks directory or defined in configuration (`hook.<name>.enabled=false` for each), no fsmonitor, and no signing program; the merge commit is not signed and no signature is checked, as with `commit-tree`. The owner's Retry merge and early merge run the same job, so they run no hooks either.
 
 **Outcomes.**
 - Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).
-- `git_busy` and `local_changes` retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
-- `merge_conflict` is not retried on its own for the same pair of integration and base tips. The executor keeps that pair in memory, so after a restart it is tried once more. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
+- `git_busy`, `local_changes`, and a lock file another git process holds (`index.lock`, or a ref's lock) retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
+- `merge_conflict` is not retried on its own for the same pair of integration and base tips. uam keeps that pair in memory, so after a restart it is tried once more. `merge_blocked`, and a merge that fails for any other reason, is blocked the same way; the comment on `merge_blocked` names the commits uam did not make. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
+- Once `hasAll(base, integ)` holds, as after the owner merged by hand in Terminal, uam forgets a waiting or blocked merge, stops its retry, and the header no longer shows it.
 
 **Retry merge.** `POST /projects/{id}/merge` stays as an owner action: Retry merge after a blocked or waiting merge, and an early merge of an unfinished epic's landed work. It answers 202 `{job_id}` and runs the same job.
 
@@ -482,7 +490,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 - An unlinked semantic dependency, for example later code calling a reverted function, reverts cleanly but breaks the build. Revert does not run acceptance. The epic shows the new tip, and Check stays available.
 - If the integration branch is rewritten by hand, the stored shas are no longer ancestors and Revert refuses. It never reverts partially. Reopen without reverting code is the way out; uam does not resolve revert conflicts.
 - Lanes separate work by directory. Work an agent does outside its worktree is not isolated; the preamble tells it to stay in its directory, and nothing else holds it there.
-- Lanes are not a security sandbox. Agents run as the owner's OS user. uam hardens its own git operations for lanes: they run no hooks, whether from a hooks directory or defined in configuration (`hook.<name>.command`), no fsmonitor, and no signing program; they sign nothing and check no signature. Each command in a lane is pinned to the git directory git made for that lane, never the one its `.git` file names. uam refuses a lane whose directory is a symbolic link, whose git directory names another worktree or repository, or whose HEAD does not name its own branch, and it commits a lane's leftovers to that branch by compare-and-swap. Content filters and merge drivers still run, from any configuration: checkouts, adds and merges need them for the right content, for example Git LFS. An agent with shell access can still change the owner's repository directly, as before lanes existed. The owner's Commit, Pull and Push, and the merge into a checked-out `base_ref` (§5.8), still run the repository's hooks.
+- Lanes are not a security sandbox. Agents run as the owner's OS user. uam hardens its own git operations for lanes: they run no hooks, whether from a hooks directory or defined in configuration (`hook.<name>.command`), no fsmonitor, and no signing program; they sign nothing and check no signature, and never recurse into submodules (`submodule.recurse=false`). Its merges are pinned on the command line (`--no-autostash -s ort`), with the branch's `mergeOptions` cleared, and its merge into `base_ref` is committed only with the tree it computed as objects (§5.4 and §5.8). The files git keeps that uam reads, `MERGE_HEAD`, `MERGE_MSG` and a rebase's or bisect's start, are read only as regular files of at most 64 KiB. Each command in a lane is pinned to the git directory git made for that lane, never the one its `.git` file names. uam refuses a lane whose directory is a symbolic link, whose git directory names another worktree or repository, or whose HEAD does not name its own branch, and it commits a lane's leftovers to that branch by compare-and-swap. Content filters and merge drivers still run, from any configuration: checkouts, adds and merges need them for the right content, for example Git LFS. An agent with shell access can still change the owner's repository directly, as before lanes existed. The owner's Commit, Pull and Push still run the repository's hooks; uam's merge into `base_ref` (§5.8) runs none.
 
 ## 6. Planning, agent writes and approval
 
@@ -581,9 +589,10 @@ Owner-only unless noted, behind the existing sign-in, cross-origin and JSON chec
 | `GET /api/board/cards/{ref}/revert` | S6 | The preview |
 | `POST /api/board/cards/{ref}/revert` `{include: [ref], expect: [ref], comment}` | S6 | 202 `{job_id}`, job kind `revert`. 409 `stale` (the closure differs from `expect`) or `revert_running` at once. The job fails with `revert_conflict` |
 | `POST /api/board/cards/{ref}/status` `{status: "todo", keep_code: true, comment}` on a landed subtask | S6 | Reopen without reverting code. Without `keep_code`: 409 `invalid`, "Revert #n instead" |
-| `POST /api/board/projects/{id}/merge` | S6 | Retry merge, or an early merge; the normal merge is automatic (§5.8). 202 `{job_id}`, job kind `merge`. The job fails with `merge_conflict`, `local_changes` or `git_busy` |
+| `GET /api/board/projects/{id}/merge` | S6 | The merge preview: `{branch, base_ref, items}`, each landing and revert `base_ref` lacks, oldest first, with its card, its epic and whether the landing changed tests or build files |
+| `POST /api/board/projects/{id}/merge` | S6 | Retry merge, or an early merge; the normal merge is automatic (§5.8). 202 `{job_id}`, job kind `merge`. The job fails with `merge_conflict`, `merge_blocked`, `local_changes` or `git_busy` |
 
-New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `land_conflict`, `land_stale`, `merge_conflict`, `local_changes`, `revert_conflict`, `revert_running`, `git_too_old` and `no_git_identity`.
+New error codes: `not_ready`, `run_owned`, `stale`, `landing`, `task_working`, `land_conflict`, `land_stale`, `merge_conflict`, `merge_blocked`, `local_changes`, `revert_conflict`, `revert_running`, `git_too_old` and `no_git_identity`.
 
 ## 8. UI
 
@@ -612,7 +621,7 @@ The dialog posts the listed ids with the revisions it rendered. On `stale` it na
 - Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs. As built, the run summary and the provider wait show on the epic's Tree row (compact: "Running 2 of 2" with the rest as screen-reader text) and in its card panel; the Board has no epic row, so it shows neither.
 - A card's Attempts list adds the branch, the landed sha and the reverted sha.
 - The Planner header shows "uam-plan-x · 5 ahead of main" and the merge state: "Merge waiting: `<reason>`", or "Merge blocked" with Retry merge (S6). The merge job shows progress.
-- Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.
+- Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed. Retry merge and Merge now list what the merge carries, by epic, naming the epics not finished and the landings that changed tests or build files.
 - Under an approved epic the Tree's "+N suggested" fold loses its per-row Confirm; Dismiss stays.
 
 ## 9. Decisions (2026-10-06)
@@ -699,7 +708,7 @@ Each item is a store, tool, web or UI test. Every ADR 0005 invariant still holds
 25. A revert writes the store before the ref. A failed compare-and-swap undoes the store, and a crash between the two is finished at boot. A conflict writes nothing and names the later cards that touched the files; including them then succeeds.
 26. A reverted subtask waits for Resume, then reruns without the change.
 27. Reopen without reverting code leaves the integration branch unchanged, keeps the landed sha and the dependents landed, and runs the owner integrity check. "Back to To do" without it is refused on a landed subtask.
-28. An approved epic that finishes is merged into `base_ref` with no click, and nothing fires again once `base_ref` has everything the integration branch carries (`hasAll`), after a sync merge of an owner commit too. Sync skips a base that brings nothing new. An owner Revert of merged work merges again. A merge into a checked-out `base_ref` runs hooks, waits with backoff on local changes or a busy git write, and on a conflict stays blocked until Retry merge or a new tip; a `base_ref` not checked out gets only a ref move. Revert and merge run as jobs.
+28. An approved epic that finishes is merged into `base_ref` with no click, and nothing fires again once `base_ref` has everything the integration branch carries (`hasAll`), after a sync merge of an owner commit too. Sync skips a base that brings nothing new. An owner Revert of merged work merges again. uam's merge runs no repository hooks, in either mode. A merge into a checked-out `base_ref` waits with backoff on local changes or a busy git write, and on a conflict stays blocked until Retry merge or a new tip; a `base_ref` not checked out gets only a ref move. Revert and merge run as jobs.
 
 **Restart and migrations**
 

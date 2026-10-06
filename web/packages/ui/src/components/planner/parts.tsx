@@ -1,4 +1,4 @@
-import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Hourglass, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
+import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Hourglass, Layers, Link2, ListRestart, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, Undo2, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, runText, shownProgress, type RunSummary } from '../../lib/board';
@@ -108,7 +108,8 @@ export function TaskChip({ taskId, className }: Readonly<{ taskId: string; class
  * The quiet markers a card row carries: an approved epic, how its run stands (`run`, ADR 0006
  * §3.2), the provider its run waits for (`waiting`: "Waiting for Copilot: rate limited", §4.5) and
  * the proposals waiting for its next approval (`toApprove`), its pause (`pause`, from
- * `pauseLabel`), a lane subtask landing or landed (§3.2), pending requests, staleness, blocked
+ * `pauseLabel`), a lane subtask landing, landed, reverted or reopened with its code kept (§3.2),
+ * pending requests, staleness, blocked
  * (`blockers`: its open blockers, from `openBlockerSeqs`).
  */
 export function CardMarkers({ card, blockers, pause = '', toApprove = 0, run, waiting = '', compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; run?: RunSummary; waiting?: string; compact?: boolean }>) {
@@ -182,6 +183,20 @@ export function CardMarkers({ card, blockers, pause = '', toApprove = 0, run, wa
         <GitCommitHorizontal aria-hidden="true" className="size-3" />
         {'Landed '}
         <span className={cn('font-mono', compact && 'sr-only')}>{lane.landed_sha.slice(0, 7)}</span>
+      </Chip>,
+    );
+  } else if (lane?.reverted_sha && card.status !== 'done') {
+    marks.push(
+      <Chip key="reverted" title={`Its landing ${lane.landed_sha.slice(0, 7)} was reverted in ${lane.reverted_sha.slice(0, 7)} on its integration branch`}>
+        <Undo2 aria-hidden="true" className="size-3" />
+        Reverted
+      </Chip>,
+    );
+  } else if (lane?.landed_sha && card.status !== 'done' && card.status !== 'cancelled') {
+    marks.push(
+      <Chip key="reopened" title={`Reopened without reverting code: its landing ${lane.landed_sha.slice(0, 7)} stays on its integration branch`}>
+        <ListRestart aria-hidden="true" className="size-3" />
+        Reopened, code kept
       </Chip>,
     );
   }

@@ -261,6 +261,54 @@ func TestExecutorBootFinishesALanding(t *testing.T) {
 	}
 }
 
+// The executor landing an approved epic's last subtask, a done request whose
+// landing was queued, merges the epic into main with no click (ADR 0006
+// §5.8), once: the passes after it, the landed Tasks' retirement and a
+// restart merge nothing again.
+func TestExecutorFinishedEpicMergesOnce(t *testing.T) {
+	r := planLaneRun(t, "true", "A", "B")
+	move := r.runExec()
+	r.approve()
+	a, la := r.running(0)
+	b, lb := r.running(1)
+	commitFile(t, la.dir, "from-a.txt", "a\n")
+	r.landed(a, 0)
+	main := gitOutput(t, r.repo, "rev-parse", "main")
+	sub := r.subscribe()
+	commitFile(t, lb.dir, "from-b.txt", "b\n")
+	r.queueLanding(func() { r.toolOK(b.ID, "board_request", r.doneArgs(1)) })
+	if c := r.card(r.leaves[1].ID).Card; c.Status == board.StatusDone {
+		t.Fatalf("B landed in its own call: %+v", c)
+	}
+	// The executor lands it once its Task ends its turn and the retry is due.
+	r.idle(b.ID)
+	move(16 * time.Minute)
+	if end := r.nextMerge(sub); end.Status != jobDone {
+		t.Fatalf("merge job = %+v", end)
+	}
+	if d := r.card(r.leaves[1].ID); d.Card.Status != board.StatusDone || d.Requests[0].DecidedBy != board.DecidedByUAM {
+		t.Fatalf("B = %+v, request %+v", d.Card, d.Requests[0])
+	}
+	merged := gitOutput(t, r.repo, "rev-parse", "main")
+	if got := gitOutput(t, r.repo, "rev-list", "--parents", "-n1", merged); got != merged+" "+main+" "+r.tip() {
+		t.Fatalf("main = %q, want the merge of main and %s", got, r.tip())
+	}
+	r.idle(a.ID)
+	for _, task := range []SessionSummary{a, b} {
+		waitUntil(t, "the landed Task to be retired", func() bool { s, _ := r.m.Summary(task.ID); return s.Stage == StageArchived })
+	}
+	move(16 * time.Minute)
+	r.m.executorPass()
+	r.reboot()
+	r.noMerge(sub)
+	if got := gitOutput(t, r.repo, "rev-parse", "main"); got != merged {
+		t.Fatalf("main moved again, to %s", got)
+	}
+	if got := r.epicComments("uam: Merged"); len(got) != 1 {
+		t.Fatalf("merge comments = %q, want one", got)
+	}
+}
+
 // A start whose Task cannot be made fails on the provider (ADR 0006 §4.5):
 // the lane goes, nothing is paused, and nothing more starts on that
 // provider until it has backed off, which the Project reports as a wait

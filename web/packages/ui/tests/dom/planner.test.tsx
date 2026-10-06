@@ -1609,4 +1609,166 @@ describe('lanes (ADR 0006 §5)', () => {
     await user.click(dialog.getByRole('button', { name: 'Settle' }));
     expect(settle).toHaveBeenCalledWith({ [lane.id]: { action: 'release', comment: '' }, [plain.id]: { action: 'keep', comment: '' } });
   });
+
+  /** Lands #seq through the service: the approval started it, then the owner's Accept of its done request. */
+  async function land(tree: ReturnType<typeof within>, seq: number) {
+    let request = '';
+    await waitFor(async () => {
+      const b = await api.planner.board('p3');
+      request = b.requests.find((r) => r.card_id === `cp3-${seq}` && r.kind === 'done')?.id ?? '';
+      expect(request).not.toBe('');
+    });
+    await act(() => api.planner.accept(request, ''));
+    await waitFor(() => expect(row(tree, seq).getAttribute('aria-label')).toMatch(/, Done$/));
+  }
+
+  test('Revert on a landed subtask shows what it takes along, its commits and files, then reverts it as a job: Reverted, in words', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    const panel = await openCard(user, tree, 35);
+    // A landed subtask goes back with its code or keeps it; a plain move back to To do is not offered.
+    expect(panel.queryByRole('button', { name: 'Back to To do' })).toBeNull();
+    expect(panel.getByRole('button', { name: 'Reopen without reverting code' })).toBeTruthy();
+    const revert = vi.spyOn(api.planner, 'revert');
+    try {
+      await user.click(panel.getByRole('button', { name: 'Revert…' }));
+      const confirm = await screen.findByRole('alertdialog', { name: 'Revert #35?' });
+      // Anchored to the button that asked, as every confirmation is.
+      expect(confirm.closest('[data-side]')).toBeTruthy();
+      const what = within(await within(confirm).findByRole('list', { name: 'What it reverts' }));
+      const [landing] = what.getAllByRole('listitem');
+      expect(landing.textContent).toContain('#35');
+      expect(landing.textContent).toContain('9f3e2c4');
+      expect(landing.textContent).toContain('notes/35.md');
+      expect(confirm.textContent).toContain('uam-plan-p3');
+      await user.type(within(confirm).getByRole('textbox', { name: 'Why (optional)' }), 'it broke the build');
+      await user.click(within(confirm).getByRole('button', { name: 'Revert' }));
+      await waitFor(() => expect(revert).toHaveBeenCalledWith('cp3-35', { include: [], expect: ['cp3-35'], comment: 'it broke the build' }));
+    } finally {
+      revert.mockRestore();
+    }
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, To do$/));
+    expect(row(tree, 35).textContent).toContain('Reverted');
+    expect(row(tree, 35).textContent).toContain('Paused');
+    expect(row(tree, 35).textContent).not.toContain('Landed');
+  });
+
+  test('a revert that would not apply says why beside its button, offering the later cards and Reopen without reverting code, which keeps the code', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    const preview = vi.spyOn(api.planner, 'revertPreview').mockResolvedValue({
+      branch: 'uam-plan-p3', cards: ['cp3-35'], running: [], merged: false,
+      landings: [{ card_id: 'cp3-35', seq: 35, title: 'Post template', sha: '9f3e2c4', files: ['notes/35.md'] }],
+      conflict: { code: 'revert_conflict', error: 'reverting #35 conflicts in notes/35.md (changed by #36); include those cards or reopen #35 without reverting code', refs: ['#36'] },
+    });
+    try {
+      const panel = await openCard(user, tree, 35);
+      await user.click(panel.getByRole('button', { name: 'Revert…' }));
+      const confirm = within(await screen.findByRole('alertdialog', { name: 'Revert #35?' }));
+      expect((await confirm.findByRole('alert')).textContent).toContain('notes/35.md');
+      expect((confirm.getByRole('button', { name: 'Revert' }) as HTMLButtonElement).disabled).toBe(true);
+      // The later card that changed the same files can come along: the preview is read again with it.
+      await user.click(confirm.getByRole('button', { name: 'Revert #36 too' }));
+      await waitFor(() => expect(preview).toHaveBeenLastCalledWith('cp3-35', ['#36']));
+      await user.click(confirm.getByRole('button', { name: 'Reopen without reverting code' }));
+    } finally {
+      preview.mockRestore();
+    }
+    const reopen = vi.spyOn(api.planner, 'reopen');
+    try {
+      const dialog = within(await screen.findByRole('dialog', { name: 'Reopen #35 without reverting code?' }));
+      await user.click(dialog.getByRole('button', { name: 'Reopen' }));
+      await waitFor(() => expect(reopen).toHaveBeenCalledWith('cp3-35', ''));
+    } finally {
+      reopen.mockRestore();
+    }
+    await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, To do$/));
+    expect(row(tree, 35).textContent).toContain('Reopened, code kept');
+    expect(row(tree, 35).textContent).toContain('Paused');
+  });
+
+  test('Merge now lists what the merge carries, by epic, naming an epic not finished, a revert, and a landing that changed tests or build files', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    // Reverted, #35 leaves its epic unfinished; the base branch lacks both its landing and its revert.
+    await act(() => api.planner.revert('cp3-35', { include: [], expect: ['cp3-35'], comment: '' }));
+    await waitFor(() => expect(row(tree, 35).textContent).toContain('Reverted'));
+    const real = api.planner.mergePreview;
+    const preview = vi.spyOn(api.planner, 'mergePreview').mockImplementation(async (project) => {
+      const p = await real(project);
+      return { ...p, items: p.items.map((i) => (i.revert ? i : { ...i, flagged: true })) };
+    });
+    try {
+      await user.click((await openMenu(user, 'Planner actions')).getByRole('menuitem', { name: 'Merge into main now…' }));
+      const confirm = await screen.findByRole('alertdialog', { name: 'Merge into main now?' });
+      const carried = await within(confirm).findByRole('list', { name: 'What it carries' });
+      const [epic] = within(carried).getAllByRole('listitem');
+      expect(epic.textContent).toMatch(/^#32 Accessible post template · not finished/);
+      expect(within(epic).getAllByRole('listitem').map((i) => i.textContent)).toEqual([
+        '#35 Fail the build on an image without alt text · changed tests or build files',
+        'The revert of #35 Fail the build on an image without alt text',
+      ]);
+      expect(preview).toHaveBeenCalledWith('p3');
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
+  test('Reopen without reverting code names the subtasks that landed on top of it, which stay landed', async () => {
+    const { user, tree } = await lanePlanner();
+    await land(tree, 35);
+    const preview = vi.spyOn(api.planner, 'revertPreview').mockResolvedValue({
+      branch: 'uam-plan-p3', cards: ['cp3-35', 'cp3-34'], running: [], merged: false,
+      landings: [{ card_id: 'cp3-35', seq: 35, title: 'Fail the build on an image without alt text', sha: '9f3e2c4', files: [] }],
+    });
+    try {
+      const panel = await openCard(user, tree, 35);
+      await user.click(panel.getByRole('button', { name: 'Reopen without reverting code' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Reopen #35 without reverting code?' }));
+      const stays = within(await dialog.findByRole('list', { name: 'Stays landed' }));
+      expect(stays.getAllByRole('listitem').map((i) => i.textContent)).toEqual(['#34 Add an alt field to the front matter']);
+      expect(preview).toHaveBeenCalledWith('cp3-35');
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
+  test('the header says, in words, a merge is blocked or waits, and Retry merge asks first, then merges as a job', async () => {
+    const { user, tree } = await lanePlanner();
+    let merge: { state: 'waiting' | 'blocked'; reason: string } = { state: 'blocked', reason: 'uam-plan-p3 does not merge cleanly into main: notes/35.md conflict (changed by #35)' };
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.endsWith('/api/board/projects/p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        return reply(200, { ...data, integration: data.integration && { ...data.integration, merge } });
+      },
+    );
+    try {
+      await land(tree, 35);
+      expect((await screen.findByText('· Merge blocked')).getAttribute('title')).toContain('notes/35.md conflict');
+      // Once retried, the merge waits on the owner's uncommitted change.
+      merge = { state: 'waiting', reason: 'merging uam-plan-p3 would overwrite uncommitted changes in /srv/notes; commit or stash them:\nnotes/35.md' };
+      const merging = vi.spyOn(api.planner, 'merge');
+      try {
+        await user.click(screen.getByRole('button', { name: 'Retry merge' }));
+        const confirm = await screen.findByRole('alertdialog', { name: 'Retry the merge into main?' });
+        expect(confirm.closest('[data-side]')).toBeTruthy();
+        // It says what the merge carries, by epic.
+        const carried = await within(confirm).findByRole('list', { name: 'What it carries' });
+        expect(carried.textContent).toContain('#32 Accessible post template');
+        expect(carried.textContent).toContain('#35 Fail the build on an image without alt text');
+        await user.click(within(confirm).getByRole('button', { name: 'Merge' }));
+        await waitFor(() => expect(merging).toHaveBeenCalledWith('p3'));
+      } finally {
+        merging.mockRestore();
+      }
+      // The job runs: the header says so in words, with no spinner, and offers no Retry meanwhile.
+      expect(await screen.findByText('· Merging into main…')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Retry merge' })).toBeNull();
+      expect(await screen.findByText('· Merge waiting: merging uam-plan-p3 would overwrite uncommitted changes in /srv/notes; commit or stash them:')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Retry merge' })).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });

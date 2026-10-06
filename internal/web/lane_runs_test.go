@@ -31,10 +31,25 @@ type laneRun struct {
 	epic   BoardCard
 	story  BoardCard
 	leaves []BoardCard
+	// later is a second story and its paused subtask, which keep the epic
+	// from finishing, so uam never merges it into main (§5.8); none in a
+	// run that finishes.
+	later []BoardCard
 }
 
-// newLaneRun is planLaneRun with its epic approved.
+// newLaneRun is planLaneRun with its epic approved and kept open by later.
 func newLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
+	t.Helper()
+	r := planLaneRun(t, cmd, titles...)
+	story := r.create(board.KindStory, r.epic.ID, "Later")
+	r.later = []BoardCard{story, r.create(board.KindSubtask, story.ID, "Keeps the epic open")}
+	r.approve()
+	return r
+}
+
+// newFinishingRun is planLaneRun with its epic approved: once the given
+// subtasks land it finishes, and uam merges it into main.
+func newFinishingRun(t *testing.T, cmd string, titles ...string) *laneRun {
 	t.Helper()
 	r := planLaneRun(t, cmd, titles...)
 	r.approve()
@@ -65,10 +80,13 @@ func planLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
 func (r *laneRun) approve() {
 	r.t.Helper()
 	refs := []string{r.epic.ID, r.story.ID}
-	for _, l := range r.leaves {
+	for _, l := range slices.Concat(r.leaves, r.later) {
 		refs = append(refs, l.ID)
 	}
 	r.call(http.MethodPost, "/api/board/cards/"+r.epic.ID+"/approve", r.approveBody("luna", refs...), http.StatusOK, nil)
+	if len(r.later) > 0 {
+		r.call(http.MethodPatch, "/api/board/cards/"+r.later[1].ID, `{"paused":true}`, http.StatusOK, nil)
+	}
 }
 
 // start starts the lane of subtask i, as the executor does, and returns its
@@ -958,7 +976,11 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	if _, err := repo.revertChain(ctx, tip, []revertItem{{sha: landed, seq: r.leaves[1].Seq, title: "Second"}}); err != nil {
 		t.Fatal(err)
 	}
-	if merged, err := repo.mergeIntoBase(ctx, r.m.lanesRoot(), "main", "Merge plan"); err != nil || merged == "" {
+	baseTip, tip, err := repo.mergeTips(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged, err := repo.mergeIntoBase(ctx, r.m.lanesRoot(), "main", baseTip, tip, "Merge plan"); err != nil || merged == "" {
 		t.Fatalf("merge = %q, %v", merged, err)
 	}
 	noHooks("uam's git that writes objects only")

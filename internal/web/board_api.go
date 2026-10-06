@@ -19,6 +19,8 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/board/projects/{id}", s.handleBoardProject)
 	mux.HandleFunc("PATCH /api/board/projects/{id}", s.handleUpdateBoardProject)
 	mux.HandleFunc("GET /api/board/executor", s.handleBoardExecutor)
+	mux.HandleFunc("GET /api/board/projects/{id}/merge", s.handleMergePreview)
+	mux.HandleFunc("POST /api/board/projects/{id}/merge", s.handleMergeProject)
 	mux.HandleFunc("POST /api/board/cards", s.handleCreateCard)
 	mux.HandleFunc("GET /api/board/cards/{ref}", s.handleCard)
 	mux.HandleFunc("PATCH /api/board/cards/{ref}", s.handleEditCard)
@@ -42,7 +44,11 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 		return res.Card, err
 	}))
 	mux.HandleFunc("POST /api/board/cards/{ref}/status", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, body statusBody) (board.Card, error) {
-		return st.SetStatus(ctx, a, ref, body.Status, body.Comment, body.Force)
+		if body.KeepCode {
+			return reopenKeepingCode(ctx, st, a, ref, body)
+		}
+		c, err := st.SetStatus(ctx, a, ref, body.Status, body.Comment, body.Force)
+		return c, conflictWithRefs(err)
 	}))
 	mux.HandleFunc("POST /api/board/cards/{ref}/restore", cardAction(s, func(ctx context.Context, st *board.Store, a board.Actor, ref string, body commentBody) (board.Card, error) {
 		return st.Restore(ctx, a, ref, body.Comment)
@@ -52,6 +58,8 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 		return res.Card, err
 	}))
 	mux.HandleFunc("POST /api/board/cards/{ref}/release", s.handleRelease)
+	mux.HandleFunc("GET /api/board/cards/{ref}/revert", s.handleRevertPreview)
+	mux.HandleFunc("POST /api/board/cards/{ref}/revert", s.handleRevert)
 	mux.HandleFunc("POST /api/board/cards/{ref}/comments", s.handleCommentCard)
 	mux.HandleFunc("POST /api/board/cards/{ref}/launch", s.handleLaunch)
 	mux.HandleFunc("POST /api/board/cards/{ref}/attach", s.handleAttach)
@@ -77,10 +85,13 @@ type moveBody struct {
 	Rank     *int            `json:"rank"`
 }
 
+// statusBody is the owner's status change. keep_code with status todo
+// reopens a landed subtask without reverting its code.
 type statusBody struct {
-	Status  board.Status `json:"status"`
-	Comment string       `json:"comment"`
-	Force   bool         `json:"force"`
+	Status   board.Status `json:"status"`
+	Comment  string       `json:"comment"`
+	Force    bool         `json:"force"`
+	KeepCode bool         `json:"keep_code"`
 }
 
 type splitBody struct {
@@ -465,6 +476,58 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// handleRevertPreview previews the owner's Revert of a card, with the
+// cards each include query value adds.
+func (s *Server) handleRevertPreview(w http.ResponseWriter, r *http.Request) {
+	p, err := s.m.PreviewRevert(r.PathValue("ref"), r.URL.Query()["include"])
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+// handleRevert starts the owner's Revert of a card: 202 {job_id}, then
+// board_job frames as it reverts.
+func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
+	var req RevertRequest
+	if !decodeOptionalBody(w, r, &req) {
+		return
+	}
+	id, err := s.m.RevertCard(r.PathValue("ref"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
+}
+
+// handleMergePreview lists what a merge of a Project's integration branch
+// into its base branch would carry.
+func (s *Server) handleMergePreview(w http.ResponseWriter, r *http.Request) {
+	p, err := s.m.PreviewMerge(r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+// handleMergeProject is the owner's Retry merge, or early merge, of a
+// Project's integration branch into its base: 202 {job_id}, then board_job
+// frames as it merges.
+func (s *Server) handleMergeProject(w http.ResponseWriter, r *http.Request) {
+	if !decodeOptionalBody(w, r, &struct{}{}) {
+		return
+	}
+	id, err := s.m.MergeProject(r.PathValue("id"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
 }
 
 func (s *Server) handleRejectRequest(w http.ResponseWriter, r *http.Request) {

@@ -200,9 +200,10 @@ type boardEvent struct {
 }
 
 // boardChanged turns each committed write of st into a board frame for
-// everyone, and kicks the executor. The store calls it after the commit,
-// from the writer's goroutine, with no lock of this service held; it reads
-// the changed cards and requests before taking mu.
+// everyone, merges an approved epic the write left done (ADR 0006 §5.8)
+// and kicks the executor. The store calls it after the commit, from the
+// writer's goroutine, with no lock of this service held; it reads the
+// changed cards and requests before taking mu.
 func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 	return func(c board.Change) {
 		defer m.kickExecutor()
@@ -223,6 +224,7 @@ func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 		}
 		var requests []BoardRequest
 		if err == nil {
+			m.mergeOnChange(c.ProjectID, cards)
 			requests, err = requestViews(ctx, st, list, cards)
 		}
 		m.mu.Lock()
@@ -542,6 +544,9 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 	if err == nil && noGit == "" && ps.BaseRef != "" {
 		out.Integration = integration(m.ctx, id, dir, ps.BaseRef)
 	}
+	if out.Integration != nil {
+		out.Integration.Merge = m.mergeShown(m.ctx, id)
+	}
 	return out, err
 }
 
@@ -756,11 +761,18 @@ func (m *Manager) ApproveCard(ref string, req ApproveRequest) (BoardCard, error)
 		c, err = st.Approve(ctx, a, ref, run, items, base)
 		return err
 	})
+	return boardCard(c), conflictWithRefs(err)
+}
+
+// conflictWithRefs answers 409 for an invalid refusal that names cards:
+// their state refuses the request, which is well formed (ADR 0006 §7).
+func conflictWithRefs(err error) error {
+	err = boardError(err)
 	var refusal *Error
 	if errors.As(err, &refusal) && refusal.Code == string(board.CodeInvalid) && len(refusal.Refs) > 0 {
 		refusal.Status = http.StatusConflict
 	}
-	return boardCard(c), err
+	return err
 }
 
 // CommentCard adds the owner's comment to the card ref.

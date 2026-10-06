@@ -4,7 +4,7 @@
 // staleness markers (§9) and the import (§11). Not part of the production bundle.
 
 import { LIVE, type BoardRequest, type Card, type CardComment, type CardKind, type CardStatus, type ChecklistItem, type Evidence, type Hold, type Project, type SessionSummary, type Settings } from '../api';
-import { cardPath, childIndex, deriveBoard, laneReady, leavesUnder, linkedReason, lockedReason, startedUnderReason } from '../lib/board';
+import { cardPath, childIndex, deriveBoard, isLanded, landedUnder, laneReady, leavesUnder, linkedReason, lockedReason, startedUnderReason } from '../lib/board';
 
 type Json = Record<string, unknown>;
 
@@ -250,11 +250,14 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
   // Each Project's acceptance limit, and the base branch its first approval named (ADR 0006 §5.2).
   const acceptLimits: Record<string, number> = {};
   const baseRefs: Record<string, string> = {};
+  // The landings and reverts each base branch has (ADR 0006 §5.8).
+  const merged = new Set<string>();
+  const unmerged = (pid: string) => cards.flatMap((c) => (c.project_id === pid && c.lane ? [c.lane.landed_sha, c.lane.reverted_sha] : [])).filter((sha) => sha && !merged.has(sha));
   const projectSettings = (pid: string, git: string) => ({
     accept_cmd: acceptDefaults[pid] ?? '',
     git,
     accept_parallel: acceptLimits[pid] ?? 1,
-    integration: baseRefs[pid] ? { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid], ahead: cards.filter((c) => c.project_id === pid && c.lane?.landed_sha && c.status === 'done').length, behind: 0 } : null,
+    integration: baseRefs[pid] ? { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid], ahead: new Set(unmerged(pid)).size, behind: 0 } : null,
     // The mock's providers never fail, so its executor waits for nothing.
     executor: null,
   });
@@ -547,6 +550,42 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     return json(202, { job_id: job });
   }
 
+  /**
+   * Revert (ADR 0006 §5.7): GET is its preview, POST its job. The mock reverts what landed at or
+   * under the card and the cards `include` adds; nothing lands on top of anything here.
+   */
+  function revert(c: Card, method: string, url: URL, body: Json): Response {
+    const map = new Map(cards.map((x) => [x.id, x]));
+    const include = method === 'GET' ? url.searchParams.getAll('include') : Array.isArray(body.include) ? body.include.map(String) : [];
+    const seeds = [c, ...include.map(find).filter((x): x is Card => !!x)];
+    const closure = cards.filter((x) => seeds.some((s) => landedUnder(s, map).includes(x)));
+    if (!closure.length) return refuse('invalid', `#${c.seq} has no landed work to revert`);
+    const ids = closure.map((x) => x.id);
+    if (method === 'GET') {
+      const landings = closure.map((x) => ({ card_id: x.id, seq: x.seq, title: x.title, sha: x.lane!.landed_sha, files: [`notes/${x.seq}.md`] }));
+      return json(200, { branch: `uam-plan-${c.project_id}`, cards: ids, running: [], landings, merged: landings.some((l) => merged.has(l.sha)) });
+    }
+    const expect = Array.isArray(body.expect) ? body.expect.map(String) : [];
+    if (expect.length !== ids.length || ids.some((x) => !expect.includes(x))) return refuse('stale', 'what this reverts changed since it was shown; look again and revert what is there now');
+    const job = id('job');
+    const sha = (0x5e1f00d + c.seq).toString(16);
+    host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'revert', status: 'running' });
+    window.setTimeout(() => {
+      commit(() => {
+        for (const x of closure) {
+          x.status = 'todo';
+          x.paused = 'owner';
+          x.lane = { ...x.lane!, reverted_sha: sha };
+          const last = holds[x.id]?.at(-1);
+          if (last) last.reverted_sha = sha;
+          say(x, 'uam', `reverted in ${sha}${String(body.comment ?? '').trim() ? `: ${String(body.comment).trim()}` : ''}`, true);
+        }
+      });
+      host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'revert', status: 'done' });
+    }, 300);
+    return json(202, { job_id: job });
+  }
+
   /** A lane attempt ended without landing (ADR 0006 §4.5): the owner's Stop or Settle pauses it as theirs, anything else as uam's. */
   const laneEnded = (c: Card, reason: string, comment?: string) => {
     const attempt = holds[c.id]?.length ?? 1;
@@ -669,6 +708,33 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     }
     // The mock's providers never fail, so its executor waits for nothing.
     if (path === '/api/board/executor' && method === 'GET') return json(200, { providers: [] });
+    if ((m = path.match(/^\/api\/board\/projects\/([^/]+)\/merge$/)) && method === 'GET') {
+      // What a merge would carry: the landings and reverts the base branch lacks, by subtask and epic.
+      const pid = decodeURIComponent(m[1]);
+      if (!project(pid)) return refuse('not_found', 'project not found');
+      const map = new Map(cards.map((x) => [x.id, x]));
+      const lacks = unmerged(pid);
+      const items = cards.flatMap((c) =>
+        c.project_id === pid && c.lane
+          ? [c.lane.landed_sha, c.lane.reverted_sha]
+              .filter((sha) => sha && lacks.includes(sha))
+              .map((sha) => ({ card_id: c.id, seq: c.seq, title: c.title, epic_id: cardPath(c, map)[0]?.id ?? c.id, revert: sha === c.lane!.reverted_sha, flagged: false }))
+          : [],
+      );
+      return json(200, { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid] ?? '', items });
+    }
+    if ((m = path.match(/^\/api\/board\/projects\/([^/]+)\/merge$/)) && method === 'POST') {
+      // Retry merge, or an early merge: a job on the Project that merges what the base branch lacks.
+      const pid = decodeURIComponent(m[1]);
+      if (!project(pid)) return refuse('not_found', 'project not found');
+      const job = id('job');
+      host.broadcast('board_job', { job_id: job, card_id: '', project_id: pid, kind: 'merge', status: 'running' });
+      window.setTimeout(() => {
+        for (const sha of unmerged(pid)) merged.add(sha);
+        host.broadcast('board_job', { job_id: job, card_id: '', project_id: pid, kind: 'merge', status: 'done' });
+      }, 300);
+      return json(202, { job_id: job });
+    }
     if ((m = path.match(/^\/api\/board\/projects\/([^/]+)$/))) {
       const pid = decodeURIComponent(m[1]);
       const p = project(pid);
@@ -792,6 +858,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       return refuse('in_progress', locked);
     }
     const approved = approvedOf(c);
+    if (action === 'revert') return revert(c, method, url, body);
     if (approved && ['POST confirm', 'POST attach', 'POST launch'].includes(`${method} ${action}`)) return runOwned(c, approved);
     switch (`${method} ${action}`) {
       case 'PATCH ': {
@@ -855,6 +922,19 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       }
       case 'POST status': {
         const status = body.status as CardStatus;
+        // A landed subtask is reverted, or reopened keeping its code (ADR 0006 §5.7).
+        if (body.keep_code === true) {
+          if (status !== 'todo') return refuse('invalid', 'keep_code goes only with status todo');
+          if (!isLanded(c)) return refuse('invalid', `#${c.seq} has no landed work to keep; only a landed subtask is reopened without reverting its code`);
+          return done(commit(() => {
+            touch(c);
+            c.status = 'todo';
+            c.paused = 'owner';
+            say(c, 'uam', `reopened without reverting ${c.lane!.landed_sha.slice(0, 7)}; the code stays on uam-plan-${c.project_id}`, true);
+            if (comment) say(c, 'owner', comment);
+          }), ok);
+        }
+        if (status === 'todo' && isLanded(c)) return refuse('invalid', `#${c.seq} landed on uam-plan-${c.project_id}: Revert #${c.seq} instead, or reopen it without reverting code`);
         if (!comment && status !== 'todo') return refuse('invalid', 'a comment is required');
         if (c.kind !== 'subtask') {
           if (status !== 'cancelled') return refuse('invalid', "a container's status is derived");

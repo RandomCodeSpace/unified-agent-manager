@@ -314,6 +314,9 @@ const (
 	// CodeLanding refuses a write that would change the status or end the
 	// hold of a subtask whose landing is under way (ADR 0006 §4.4).
 	CodeLanding Code = "landing"
+	// CodeRevertRunning refuses a revert while an attempt that started on
+	// top of what it reverts still runs (ADR 0006 §5.7); Refs lists them.
+	CodeRevertRunning Code = "revert_running"
 	// The acceptance refusals (ADR 0005 §6), raised by the caller that runs
 	// acceptance: the Project's runner stayed busy past the timeout, or the
 	// command exited non-zero.
