@@ -559,6 +559,21 @@ export interface BoardProject {
   accept_parallel: number;
   /** Its integration branch, once an approval named the base branch it follows; null before. */
   integration: BoardIntegration | null;
+  /** What uam's executor waits for before it starts or nudges anything more (ADR 0006 §4.5); null for nothing. */
+  executor?: BoardExecutor | null;
+}
+
+/** `GET /api/board/executor`, also in `BoardProject`: the providers nothing starts on now, backing off after a failure until `until`, or signed out (`until` null). */
+export interface BoardExecutor {
+  providers: ProviderWait[];
+}
+
+export interface ProviderWait {
+  provider: string;
+  /** The provider's display name. */
+  name: string;
+  detail: string;
+  until: string | null;
 }
 
 /** A Project's integration branch: `ahead` landings not yet in `base_ref`, which is `behind` commits past it. */
@@ -1720,6 +1735,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     return {
       board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
       project: (id: string) => call<BoardProject>('GET', `/api/board/projects/${enc(id)}`),
+      /** What uam's executor waits for, read with no git, unlike `project`. */
+      executor: () => call<BoardExecutor>('GET', '/api/board/executor'),
       /** Changes the given settings only. */
       setProject: (id: string, patch: { accept_cmd?: string; base_ref?: string; accept_parallel?: number }) => call<BoardProject>('PATCH', `/api/board/projects/${enc(id)}`, patch),
       card: (ref: string, signal?: AbortSignal) => call<CardDetail>('GET', card(ref), undefined, false, signal),

@@ -3,7 +3,7 @@
 // Task's place in the plan with the per-level graph its Plan panel draws.
 // No runtime imports, so the node test suite loads it as it is.
 
-import type { BoardData, BoardFrame, BoardRequest, Card, CardKind, CardProgress, CardStatus } from '../api';
+import type { BoardData, BoardFrame, BoardRequest, Card, CardKind, CardProgress, CardStatus, ProviderWait } from '../api';
 
 /** The Board's columns, in order; `cancelled` joins them only when shown. */
 export const BOARD_COLUMNS: readonly CardStatus[] = ['planned', 'todo', 'doing', 'done'];
@@ -126,10 +126,10 @@ export function pauseLabel(card: Card, byId: ReadonlyMap<string, Card>): string 
 }
 
 /**
- * Whether Launch may start the subtask `card` in a lane under its approved epic (ADR 0006 §3.2
+ * Whether uam may start the subtask `card` in a lane under its approved epic (ADR 0006 §3.2
  * Ready): confirmed with its parents, planned or to do, unheld, no pending request, not under a
- * cancelled card, not paused at or above, not flagged blocked and waiting on nothing open. The
- * service also counts the epic's free slots, which it says when it refuses.
+ * cancelled card, not paused at or above, not flagged blocked and waiting on nothing open. It
+ * starts once the epic has a free slot.
  */
 export function laneReady(card: Card, byId: ReadonlyMap<string, Card>): boolean {
   if (card.kind !== 'subtask' || card.held_by || card.blocked || card.pending_requests > 0) return false;
@@ -137,6 +137,47 @@ export function laneReady(card: Card, byId: ReadonlyMap<string, Card>): boolean 
   const path = cardPath(card, byId);
   if (path.some((c) => !c.confirmed || c.status === 'cancelled')) return false;
   return !pausedOn(card, byId) && waitsOf(card, byId).length === 0;
+}
+
+/** An approved epic's run (ADR 0006 §3.2): lanes running of its parallel limit, subtasks ready to start, and subtasks waiting on open work or flagged blocked. */
+export interface RunSummary {
+  running: number;
+  parallel: number;
+  ready: number;
+  waiting: number;
+}
+
+/**
+ * The run of the approved epic `epic`, close to how the service counts its slots: a lane whose
+ * request waits for the owner is not running (the service frees the slot of a done, blocked or
+ * split one). Paused and proposed subtasks are neither ready nor waiting.
+ */
+export function runSummary(epic: Card, byId: ReadonlyMap<string, Card>): RunSummary {
+  const out = { running: 0, parallel: epic.run?.parallel ?? 0, ready: 0, waiting: 0 };
+  for (const c of byId.values()) {
+    if (c.kind !== 'subtask' || !cardPath(c, byId).includes(epic)) continue;
+    if (c.held_by && c.lane) {
+      if (c.pending_requests === 0) out.running++;
+    } else if (laneReady(c, byId)) out.ready++;
+    else if ((c.status === 'planned' || c.status === 'todo') && !c.held_by && cardPath(c, byId).every((x) => x.confirmed && x.status !== 'cancelled') && !pausedOn(c, byId) && (c.blocked || waitsOf(c, byId).length > 0)) out.waiting++;
+  }
+  return out;
+}
+
+/** An approved epic's run in words: "Running 2 of 2 · Ready 3 · Waiting 4". */
+export function runText(r: RunSummary): string {
+  return `Running ${r.running} of ${r.parallel} · Ready ${r.ready} · Waiting ${r.waiting}`;
+}
+
+/** Whether the approved epic `c` runs now: approved, and neither done nor cancelled. */
+export function runsNow(c: Card): boolean {
+  return !!c.run && c.status !== 'done' && c.status !== 'cancelled';
+}
+
+/** "Waiting for Copilot: rate limited" when the provider the approved epic `c` runs on waits among `waits` (ADR 0006 §4.5); '' otherwise. */
+export function providerWait(c: Card, waits: readonly ProviderWait[]): string {
+  const w = c.run && waits.find((x) => x.provider === c.run!.provider);
+  return w ? `Waiting for ${w.name || w.provider}: ${w.detail}` : '';
 }
 
 /** The subtasks under `card` (itself for one) held in a lane: what Stop stops. */

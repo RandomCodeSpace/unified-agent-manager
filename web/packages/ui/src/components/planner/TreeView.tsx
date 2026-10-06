@@ -1,8 +1,8 @@
 import { useApi } from '../../ApiContext';
 import { Check, ChevronRight, ListPlus, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, type Card, type CardKind } from '../../api';
-import { KIND_LABEL, STATUS_LABEL, approvedEpicOf, buildOutline, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, type OutlineNode } from '../../lib/board';
+import { plannerErrorText, type Card, type CardKind, type ProviderWait } from '../../api';
+import { KIND_LABEL, STATUS_LABEL, approvedEpicOf, buildOutline, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, type OutlineNode, type RunSummary } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -63,10 +63,11 @@ interface RowActions {
  * Dismiss. Arrow keys move and fold, Enter opens the card, F2 edits its title and win condition
  * in place (a save confirms nothing). Containers add stories and subtasks under them;
  * the root takes a subtask too (§3). Each row's "…" button and context menu hold its card's
- * actions. Rows are
+ * actions. An approved epic's row says how its run stands and the provider it waits for among
+ * `waits` (ADR 0006 §3.2, §4.5). Rows are
  * memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
  */
-export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>) {
+export function TreeView({ readOnly = false, waits = NO_WAITS }: Readonly<{ readOnly?: boolean; waits?: readonly ProviderWait[] }>) {
   const api = useApi();
   const { ui, setUi, cards, openCard, notify } = useShownBoard();
   // Check at HEAD shows its run in the card panel, so a row's check opens the card there.
@@ -76,6 +77,8 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
   const outline = useMemo(() => buildOutline(cards, { epic: ui.epic, showCancelled: ui.showCancelled }), [cards, ui.epic, ui.showCancelled]);
   // The proposals each approved epic waits to approve again ("N to approve" on its row).
   const toApprove = useMemo(() => new Map(plansToApprove(cards).filter((p) => p.epic.run).map((p) => [p.epic.id, p.proposals])), [cards]);
+  // Each running epic's run ("Running 2 of 2 · Ready 3 · Waiting 4" on its row).
+  const runs = useMemo(() => new Map(cards.filter((c) => c.kind === 'epic' && runsNow(c)).map((c) => [c.id, runSummary(c, byId)])), [cards, byId]);
   const creating = readOnly ? null : ui.creating;
   const rows = useMemo(() => flatten(outline.roots, outline.suggested, ui.folded, ui.suggestedOpen, creating), [outline, ui.folded, ui.suggestedOpen, creating]);
   const [focus, setFocus] = useState<string | null>(null);
@@ -251,6 +254,8 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
         approved={!!approvedEpicOf(c, byId)}
         pause={pauseLabel(c, byId)}
         toApprove={toApprove.get(c.id) ?? 0}
+        run={runs.get(c.id)}
+        waiting={runs.has(c.id) ? providerWait(c, waits) : ''}
         readOnly={readOnly}
         actions={actions}
       />
@@ -273,6 +278,8 @@ export function TreeView({ readOnly = false }: Readonly<{ readOnly?: boolean }>)
     </div>
   );
 }
+
+const NO_WAITS: readonly ProviderWait[] = [];
 
 const indentOf = (level: number) => ({ paddingLeft: `${(level - 1) * 20 + 8}px` });
 
@@ -312,7 +319,7 @@ const SuggestedRow = memo(function SuggestedRow({ rowKey, count, level, open, ta
  * focus (always on a touch screen, and while the menu is open), so a long outline stays quiet. Under
  * an approved epic (`approved`) a suggestion is confirmed by approving the epic again, not on its row.
  */
-const CardRow = memo(function CardRow({ card: c, level, selected, folded, suggestion, tabbable, busy, blockers, approved, pause, toApprove, readOnly, actions }: Readonly<{
+const CardRow = memo(function CardRow({ card: c, level, selected, folded, suggestion, tabbable, busy, blockers, approved, pause, toApprove, run, waiting, readOnly, actions }: Readonly<{
   card: Card;
   level: number;
   selected: boolean;
@@ -324,6 +331,8 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
   approved: boolean;
   pause: string;
   toApprove: number;
+  run: RunSummary | undefined;
+  waiting: string;
   readOnly: boolean;
   actions: RowActions;
 }>) {
@@ -389,7 +398,7 @@ const CardRow = memo(function CardRow({ card: c, level, selected, folded, sugges
             <span className="max-sm:sr-only">Suggested</span>
           </Chip>
         )}
-        <CardMarkers card={c} blockers={blockers} pause={pause} toApprove={toApprove} compact />
+        <CardMarkers card={c} blockers={blockers} pause={pause} toApprove={toApprove} run={run} waiting={waiting} compact />
         {c.held_by && <TaskChip taskId={c.held_by} className="max-sm:max-w-24" />}
         {!c.confirmed && !readOnly && <SuggestionActions busy={busy} title={c.title} onConfirm={approved ? undefined : () => actions.confirm(c.id)} onDismiss={() => actions.dismiss(c.id)} />}
         {(adds.length > 0 || menu) && (

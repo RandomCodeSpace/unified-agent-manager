@@ -109,7 +109,7 @@ func invalidBoard(format string, args ...any) *Error {
 // openBoard opens board.db beside sessions.json, runs the expiry sweep and
 // Reconcile, moves the cards of Projects removed meanwhile to Unassigned, and
 // only then takes planner calls (ADR 0005 §5, §8, §11, §13). It then
-// recovers the lanes (ADR 0006 §4.7).
+// recovers the lanes (ADR 0006 §4.7) and kicks the executor.
 func (m *Manager) openBoard(ctx context.Context) error {
 	st, err := board.Open(filepath.Join(filepath.Dir(m.store.Path()), board.FileName), board.Options{})
 	if err != nil {
@@ -136,6 +136,10 @@ func (m *Manager) openBoard(ctx context.Context) error {
 	m.board.st, m.board.broken = st, false
 	m.board.mu.Unlock()
 	m.recoverLanes(ctx)
+	// The executor's first pass after boot nudges the lane Tasks a restart
+	// interrupted and lands the done requests that waited to land (ADR
+	// 0006 §4.7).
+	m.kickExecutor()
 	return nil
 }
 
@@ -196,11 +200,12 @@ type boardEvent struct {
 }
 
 // boardChanged turns each committed write of st into a board frame for
-// everyone. The store calls it after the commit, from the writer's goroutine,
-// with no lock of this service held; it reads the changed cards and requests
-// before taking mu.
+// everyone, and kicks the executor. The store calls it after the commit,
+// from the writer's goroutine, with no lock of this service held; it reads
+// the changed cards and requests before taking mu.
 func (m *Manager) boardChanged(st *board.Store) func(board.Change) {
 	return func(c board.Change) {
+		defer m.kickExecutor()
 		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 		defer cancel()
 		cards, err := st.Cards(ctx, c.Cards)
@@ -262,14 +267,7 @@ func (m *Manager) boardsLocked() map[string]int64 {
 func (m *Manager) taskStagesLocked() map[string]board.Stage {
 	out := make(map[string]board.Stage, len(m.sessions))
 	for id, s := range m.sessions {
-		switch s.stage {
-		case StageSettled:
-			out[id] = board.StageSettled
-		case StageArchived:
-			out[id] = board.StageArchived
-		default:
-			out[id] = board.StageActive
-		}
+		out[id] = boardStage(s.stage)
 	}
 	return out
 }
@@ -316,13 +314,14 @@ func (m *Manager) reconcileWith(ctx context.Context, st *board.Store) error {
 }
 
 // reconcileBoard reconciles after a Task transition: Settle, Reopen, Archive,
-// Delete, or a planner Task discarded after a failed launch. It does nothing
-// while the planner is off.
+// Delete, or a planner Task discarded after a failed launch, then kicks the
+// executor. It does nothing while the planner is off.
 func (m *Manager) reconcileBoard() {
 	err := m.withBoard(func(st *board.Store) error { return m.reconcileWith(m.ctx, st) })
 	if err != nil && !plannerDown(err) {
 		log.Warn("reconcile planner holds failed", "error", err)
 	}
+	m.kickExecutor()
 }
 
 // unassignBoard moves a removed Project's cards to Unassigned (ADR 0005 §11);
@@ -505,6 +504,8 @@ type BoardProject struct {
 	Git            string            `json:"git"`
 	AcceptParallel int               `json:"accept_parallel"`
 	Integration    *BoardIntegration `json:"integration"`
+	// Executor is what the executor waits for; null for nothing.
+	Executor *BoardExecutor `json:"executor"`
 }
 
 // BoardProjectPatch is the owner's change of a Project's planner settings;
@@ -537,7 +538,7 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 		ps, err = st.ProjectSettings(m.ctx, id)
 		return err
 	})
-	out := BoardProject{AcceptCmd: ps.AcceptCmd, Git: noGit, AcceptParallel: ps.AcceptParallel}
+	out := BoardProject{AcceptCmd: ps.AcceptCmd, Git: noGit, AcceptParallel: ps.AcceptParallel, Executor: m.executorWaits()}
 	if err == nil && noGit == "" && ps.BaseRef != "" {
 		out.Integration = integration(m.ctx, id, dir, ps.BaseRef)
 	}
@@ -648,7 +649,10 @@ func (m *Manager) CreateCard(in board.NewCard) (BoardCard, error) {
 
 // EditCard is the owner's edit of any field. It confirms no proposal; it
 // re-pins a confirmed card and re-arms a proposal's expiry. Moving an
-// Unassigned card into a Project pins it to that Project's HEAD.
+// Unassigned card into a Project pins it to that Project's HEAD. Resuming a
+// paused approved epic lets uam start its subtasks, so it runs Approve's git
+// checks first and refuses as Approve does (ADR 0006 §4.6); the first in a
+// Project with no base branch recorded records the branch checked out.
 func (m *Manager) EditCard(ref string, p board.Patch) (BoardCard, error) {
 	a, c, err := m.cardOwner(m.ctx, ref)
 	if err == nil && p.ProjectID != nil && *p.ProjectID != "" && *p.ProjectID != c.ProjectID {
@@ -657,10 +661,24 @@ func (m *Manager) EditCard(ref string, p board.Patch) (BoardCard, error) {
 	if err != nil {
 		return BoardCard{}, err
 	}
+	base := ""
+	if p.Paused != nil && !*p.Paused && c.Kind == board.KindEpic && c.Run != nil && c.Paused != "" {
+		var unlock func()
+		if base, unlock, err = m.approvePreflight(m.ctx, c.ProjectID); err != nil {
+			return BoardCard{}, err
+		}
+		defer unlock()
+	}
 	var res board.EditResult
 	err = m.withBoard(func(st *board.Store) error {
-		res, err = st.Edit(m.ctx, a, ref, p)
-		return err
+		if res, err = st.Edit(m.ctx, a, ref, p); err != nil || base == "" {
+			return err
+		}
+		ps, err := st.ProjectSettings(m.ctx, c.ProjectID)
+		if err != nil || ps.BaseRef != "" {
+			return err
+		}
+		return st.SetProjectBaseRef(m.ctx, a, c.ProjectID, base)
 	})
 	return boardCard(res.Card), err
 }
@@ -938,8 +956,8 @@ type LaunchRequest struct {
 
 // Launch starts a Task on the card ref (ADR 0005 §5). On a subtask it holds
 // that subtask; on a container it is "Do whole story" and holds the first
-// pending one. Under an approved epic a subtask starts a lane instead (ADR
-// 0006 §5.3). It returns the held subtask and the Task.
+// pending one. Under an approved epic it is refused: uam starts the work
+// there (ADR 0006 §4). It returns the held subtask and the Task.
 func (m *Manager) Launch(ref string, req LaunchRequest) (BoardCard, SessionSummary, error) {
 	c, summary, err := m.startBoardTask(ref, req, false)
 	return boardCard(c), summary, err
@@ -1014,19 +1032,10 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 	ctx := m.ctx
 	var c board.Card
 	var pending []board.Card
-	var run *board.Card
 	err := m.withBoard(func(st *board.Store) error {
 		var err error
 		if c, err = st.Card(ctx, ref); err != nil {
 			return err
-		}
-		if !plan && c.Kind == board.KindSubtask && c.ProjectID != "" {
-			// Under an approved epic a subtask starts a lane with the
-			// run's settings, not the request's (ADR 0006 §5.3).
-			if e, err := epicOf(ctx, st, c); err != nil || (e != nil && e.Run != nil) {
-				run = e
-				return err
-			}
 		}
 		if !plan && c.ProjectID != "" {
 			// An unconfirmed launch, and one under an approved epic, is
@@ -1048,8 +1057,6 @@ func (m *Manager) startBoardTask(ref string, req LaunchRequest, plan bool) (boar
 		return c, SessionSummary{}, err
 	case c.ProjectID == "":
 		return c, SessionSummary{}, errUnassigned
-	case run != nil:
-		return m.startLane(c, *run)
 	}
 	dir, err := m.boardDir(ctx, c.ProjectID)
 	if err != nil {

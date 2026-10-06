@@ -137,7 +137,8 @@ Planner on and the Project is a git repository.
 - **Approval**: an epic runs on the owner's one approval of it in the
   Planner. When your plan for an epic is complete, ask the owner to approve
   it there and end your turn; nothing runs before that. Under an approved
-  epic the approval owns the work: `board_claim` answers `run_owned`, and a
+  epic the approval owns the work: uam starts its subtasks, each in a lane,
+  so leave claiming to it (`board_claim` answers `run_owned`), and a
   card you add, or one the owner restores, stays a proposal until the owner
   approves the epic again, which you ask for the same way. Moving a card
   into or out of an approved epic becomes a change request for the owner.

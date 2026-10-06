@@ -1329,14 +1329,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   out at the first approval) does not merge cleanly into the Project's
   integration branch `uam-plan-<id>`, which it creates or brings up to date.
   Uncommitted changes in the Project folder are not part of the run.
-  **Launch** on a ready subtask of an approved epic starts it in a lane: a
-  new Task with the run's model and mode, in its own git worktree beside
-  uam's settings (never in the Project folder, so it never holds up your
-  Commit, Pull or Push), on its own branch made from the integration branch.
-  Launch shows only on a ready subtask; the service refuses, naming why, one
-  that waits on another, is paused, flagged blocked or a proposal, and one
-  past the epic's subtasks at a time or 4 across the server. Do whole story
-  and adding a Task stay unavailable. The lane's Task gets only the planner tools to read the
+  The dialog's action reads **Approve and run**: uam then starts each ready
+  subtask of the epic in a lane by itself, a ready one being confirmed, not
+  paused, not flagged blocked and waiting on nothing open, up to the epic's
+  subtasks at a time and 4 across the server. A lane is a new Task with the
+  run's model and mode, in its own git worktree beside uam's settings (never
+  in the Project folder, so it never holds up your Commit, Pull or Push), on
+  its own branch made from the integration branch. Launch, Do whole story
+  and adding a Task are not offered under an approved epic, and the service
+  refuses them. The epic's row in the Tree and its card panel say how its
+  run stands in words, "Running 2 of 2 · Ready 1 · Waiting 3", and, while its
+  provider backs off or is signed out, "Waiting for <provider>: <why>". The lane's Task gets only the planner tools to read the
   board, tick its checklist, comment and file requests, and its git panel
   neither pushes nor pulls. Its done request commits what it left, merges
   the integration tip into the lane (a conflict refuses it with the files
@@ -1357,12 +1360,29 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   running lane's subtask: its done request lands it, and Stop releases it.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
-  and removes the lane; a landed attempt's branch goes too. The acceptance
+  and removes the lane; a landed attempt's branch goes too, and the
+  Project's folder of lanes once it is empty, as when the Project is
+  removed. The acceptance
   runs of a Project, its lanes' included, run one at a time unless the
   Project allows up to 4 (Acceptance runs at a time, in the Approve
   dialog). The Planner names the integration branch beside its filters,
-  with how many landings the base branch lacks. Nothing starts by itself, and nothing
-  merges into the base branch, yet.
+  with how many landings the base branch lacks. A lane Task that ends its
+  turn without a done request is reminded once; ending again without one
+  archives it, which ends the attempt without landing. One whose provider
+  failed before it changed anything goes, and its subtask starts again
+  later. A provider that fails a start or a lane's turn gets no new starts
+  for 1 minute, doubling up to 15, after which the lane Task whose turn
+  failed is asked to continue; any completed turn on that provider ends the
+  wait. A signed-out provider waits until you sign in. A
+  done request waiting to land when uam stops lands when it starts again,
+  and a lane Task that was working is told to continue; one that cannot
+  take that message is archived, which ends the attempt without landing. A
+  lane that cannot start for git or the planner's database backs its epic
+  off and comments why; the third failure in a row pauses the epic
+  ("Paused by uam").
+  Resume on a paused approved epic runs Approve's git checks again first.
+  Epics approved before automatic runs come back paused: Resume runs them.
+  Nothing merges into the base branch yet.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named

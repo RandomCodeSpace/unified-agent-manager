@@ -378,7 +378,7 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
       onOpenChange={(o) => !o && onClose()}
       onClosed={() => setShown(null)}
       title={`Approve ${seq}?`}
-      description={`Approving confirms the cards below and authorizes them to run with these settings. A card added under ${seq} later stays a proposal until you approve again.`}
+      description={`Approving confirms the cards below and runs them with these settings. A card added under ${seq} later stays a proposal until you approve again.`}
     >
       <form aria-label={`Approve ${seq}`} className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         {changed.length > 0 && (
@@ -482,14 +482,14 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
             : 'Subtasks run in their own worktrees made from the branch checked out in the project now'}
           ; uncommitted changes are not included. Their work lands on the integration branch.
         </Note>
-        <Note>Nothing starts by itself yet: Launch a ready subtask to start it in its lane.</Note>
+        <Note>uam starts each subtask in its lane once nothing it waits on is open, up to the subtasks at a time above, and never one under a paused card.</Note>
         {error && <p role="alert" className="text-caption text-error">{error}</p>}
         <div className="mt-2 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
           <Button type="submit" variant="primary" loading={busy} disabled={!selection?.model || refused || retake || cmdDraft !== null}>
-            Approve
+            Approve and run
           </Button>
         </div>
       </form>
