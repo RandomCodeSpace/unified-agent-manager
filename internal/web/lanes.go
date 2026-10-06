@@ -842,6 +842,13 @@ func (r *laneRepo) commitMergeIn(ctx context.Context, dir, base, baseTip, tip, t
 	}
 	if _, err := runLaneGit(ctx, gitAt{dir: r.top}, "update-ref", "-m", "uam", "refs/heads/"+base, merged, baseTip); err != nil {
 		if now, terr := r.tipOf(ctx, base); terr == nil && now != baseTip {
+			// Undo the merge against the tip it was made on, not the moved
+			// HEAD git merge --abort would reset to, which can refuse over
+			// the owner's uncommitted change. On failure the caller's
+			// abort still runs.
+			if _, err := runLaneGit(ctx, gitAt{dir: dir}, "read-tree", "-m", "-u", tree, baseTip); err == nil {
+				_, _ = runLaneGit(ctx, gitAt{dir: dir}, "merge", "--quit")
+			}
 			return "", &Error{Status: http.StatusConflict, Code: codeGitBusy, Message: fmt.Sprintf("%s moved while uam was merging into it", displaytext.Sanitize(base))}
 		}
 		return "", gitFailed("git update-ref failed", err)

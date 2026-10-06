@@ -1013,27 +1013,45 @@ func TestMergeInCommitsOnlyTheMergeUamChecked(t *testing.T) {
 
 // uam commits its merge in the owner's checkout only onto the base tip it
 // checked: when base moves while the merge waits for its commit, nothing
-// is committed on top of the new tip, and the merge waits.
+// is committed on top of the new tip, and the merge waits. uam's merge is
+// undone against the tip it merged onto, so the checkout is left as it was
+// before the merge, the owner's uncommitted change included, even where
+// the new tip changed the same file.
 func TestMergeInCommitsOnlyOntoTheBaseUamChecked(t *testing.T) {
 	f := newLaneFixture(t)
 	l := f.start(1)
 	commitFile(t, l.dir, "b.txt", "lane\n")
 	tip := f.land(l, 1)
-	main := gitOutput(t, f.top, "rev-parse", "main")
+	main := commitFile(t, f.top, "a.txt", "base\n")
 	tree, conflicts, err := f.r.mergeTree(f.ctx, main, tip)
 	if err != nil || len(conflicts) > 0 {
 		t.Fatalf("mergeTree = %v, %v", conflicts, err)
 	}
+	writeRepoFile(t, f.top, "a.txt", "mine\n")
 	if _, err := runLaneMerge(f.ctx, gitAt{dir: f.top}, "main", "--no-commit", "--no-ff", "-m", "Merge plan", tip); err != nil {
 		t.Fatal(err)
 	}
-	moved := strings.TrimSpace(gitOutput(t, f.top, "commit-tree", "-p", main, "-m", "moved meanwhile", main+"^{tree}"))
+	other := filepath.Join(t.TempDir(), "other")
+	gitIn(t, f.top, "worktree", "add", "-q", "--detach", other, main)
+	moved := commitFile(t, other, "a.txt", "theirs\n")
 	gitIn(t, f.top, "update-ref", "refs/heads/main", moved, main)
 
 	merged, err := f.r.commitMergeIn(f.ctx, f.top, "main", main, tip, tree, "Merge plan")
 	_ = wantCode(t, err, codeGitBusy)
 	if now := gitOutput(t, f.top, "rev-parse", "main"); now != moved {
 		t.Fatalf("main = %s (merge %s), want it left at %s", now, merged, moved)
+	}
+	if err := f.r.abortOwnMergeIn(f.ctx, f.top, tip, "Merge plan"); err != nil {
+		t.Fatalf("after the refused merge: %v", err)
+	}
+	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
+		t.Fatal("the owner's directory was left mid-merge")
+	}
+	if got, err := os.ReadFile(filepath.Join(f.top, "a.txt")); err != nil || string(got) != "mine\n" {
+		t.Fatalf("the owner's change to a.txt = %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(f.top, "b.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uam's merged b.txt was left in the owner's directory: %v", err)
 	}
 }
 
