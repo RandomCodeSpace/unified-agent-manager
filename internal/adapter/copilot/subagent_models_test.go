@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"maps"
+	"strings"
 	"testing"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -111,7 +112,7 @@ func TestPreToolUseRewritesModel(t *testing.T) {
 				t.Fatalf("preToolUse = %+v, %v", out, err)
 			}
 			got, ok := out.ModifiedArgs.(map[string]any)
-			if !ok || !maps.Equal(got, tc.want) || out.PermissionDecision != "" {
+			if !ok || !maps.Equal(got, tc.want) || out.PermissionDecision != "" || !strings.Contains(out.AdditionalContext, "do not start it again") {
 				t.Fatalf("output = %+v, want args %v", out, tc.want)
 			}
 			if m, ok := tc.args.(map[string]any); ok && !maps.Equal(m, before) {
