@@ -592,12 +592,37 @@ export interface ProviderWait {
   until: string | null;
 }
 
-/** A Project's integration branch: `ahead` landings not yet in `base_ref`, which is `behind` commits past it. */
+/**
+ * A Project's integration branch: `ahead` landings and reverts not yet in `base_ref`, which is `behind`
+ * commits past it, and its last merge into `base_ref` that did not go through (ADR 0006 §5.8).
+ */
 export interface BoardIntegration {
   branch: string;
   base_ref: string;
   ahead: number;
   behind: number;
+  merge?: BoardMerge;
+}
+
+/** A merge that did not go through: waiting (uam tries it again at `retry_at`), or blocked until Retry merge or new tips. */
+export interface BoardMerge {
+  state: 'waiting' | 'blocked';
+  reason: string;
+  retry_at?: string;
+}
+
+/**
+ * What a Revert would do (ADR 0006 §5.7): the integration branch, the ids of the cards it reverts (posted
+ * back as `expect`) and of the running subtasks to Stop first, each landing it reverts with its files,
+ * whether the base branch has one of them, and why it would not apply.
+ */
+export interface RevertPreview {
+  branch: string;
+  cards: string[];
+  running: string[];
+  landings: { card_id: string; seq: number; title: string; sha: string; files: string[] }[];
+  merged: boolean;
+  conflict?: { code: string; error: string; refs?: string[] };
 }
 
 /** The Approve dialog's post (ADR 0006 §7): the cards it showed, at the revisions it showed, and the run's settings. */
@@ -1391,8 +1416,12 @@ export type UpdateData =
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
   /** One committed planner write, to everyone (§15); `project_id` is empty for the Unassigned list. */
   | { name: 'board'; seq: number; project_id: string; revision: number; cards: Card[]; removed: string[]; requests: BoardRequest[] }
-  /** A planner job on a card: a suggestion, or a Check at HEAD whose last frame carries its run (`accept`). */
-  | { name: 'board_job'; seq: number; job_id: string; card_id: string; kind: 'suggest' | 'check' | 'land'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
+  /**
+   * A planner job on a card: a suggestion, a Check at HEAD whose last frame carries its run (`accept`), a
+   * lane's landing or a Revert (ADR 0006); or on a Project (`project_id`, `card_id` empty): a merge of its
+   * integration branch into its base branch.
+   */
+  | { name: 'board_job'; seq: number; job_id: string; card_id: string; project_id?: string; kind: 'suggest' | 'check' | 'land' | 'revert' | 'merge'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1779,6 +1808,14 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       /** Makes an existing Task work on the subtask `ref`, or on a new subtask under the story or epic `ref` (titled `title`, else after the Task). */
       attach: (ref: string, body: { task_id: string; title?: string; confirm?: boolean }) => call<Card>('POST', card(ref, 'attach'), body),
       plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
+      /** What reverting `ref`, with the cards `include` adds, would take along (ADR 0006 §5.7). */
+      revertPreview: (ref: string, include: string[] = []) => call<RevertPreview>('GET', `${card(ref, 'revert')}${include.length ? `?${include.map((r) => `include=${enc(r)}`).join('&')}` : ''}`),
+      /** Reverts what the preview showed (`expect`): a job (202), its `board_job` frames of kind `revert`. */
+      revert: (ref: string, body: { include: string[]; expect: string[]; comment: string }) => call<{ job_id: string }>('POST', card(ref, 'revert'), body),
+      /** Reopen without reverting code: a landed subtask back to To do, paused, its commit kept on the integration branch. */
+      reopen: (ref: string, comment: string) => call<Card>('POST', card(ref, 'status'), { status: 'todo', keep_code: true, comment }),
+      /** Retry merge, or an early merge, of the Project's integration branch into its base branch: a job (202), its `board_job` frames of kind `merge`. */
+      merge: (project: string) => call<{ job_id: string }>('POST', `/api/board/projects/${enc(project)}/merge`),
       /** On a subtask held in a lane it is Stop: the subtask is paused, and its Task stops and is archived. */
       release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
       /** Starts Check at HEAD; its `board_job` frames carry the run. */

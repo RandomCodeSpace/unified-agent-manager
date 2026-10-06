@@ -1,5 +1,5 @@
 import { useApi } from '../../ApiContext';
-import { Ellipsis, GitBranch, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
+import { Ellipsis, GitBranch, GitMerge, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type BoardIntegration, type BoardJob, type Project, type ProviderWait } from '../../api';
 import { boardOf, childIndex, epicOf, plansToApprove } from '../../lib/board';
@@ -130,13 +130,13 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
 }
 
 /**
- * The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `landed`
+ * The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `version`
  * changes, and the providers uam's executor waits for (§4.5), read again as `revision` changes:
  * each Board revision while an epic runs. Only the first runs git on the service, so a Board change
  * reads the waits alone. A wait ends with no Board change, so the first to end reads them again too.
  * Null and none until they load.
  */
-function useProjectRun(project: string, landed: string, revision: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
+function useProjectRun(project: string, version: string, revision: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
   const api = useApi();
   const [integration, setIntegration] = useState<{ project: string; value: BoardIntegration | null } | null>(null);
   const [waits, setWaits] = useState<ProviderWait[] | null>(null);
@@ -151,7 +151,7 @@ function useProjectRun(project: string, landed: string, revision: string): { int
     return () => {
       alive = false;
     };
-  }, [api.planner, project, landed]);
+  }, [api.planner, project, version]);
   useEffect(() => {
     if (!project) return;
     let alive = true;
@@ -192,13 +192,16 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const api = useApi();
   const p = usePlanner();
   const { narrow } = useApp();
-  const { ui, setUi, projects, boards } = p;
+  const { ui, setUi, projects, boards, jobs } = p;
   const unassigned = boards.unassigned?.data?.cards.length ?? 0;
   const project = projects.find((x) => x.id === ui.project);
   const key = ui.project ?? '';
   const board = key ? boards[key] : undefined;
   const [purging, setPurging] = useState(false);
   const [purgeBusy, setPurgeBusy] = useState(false);
+  // Retry merge, or an early Merge now (ADR 0006 §5.8), asks first.
+  const [mergeAsk, setMergeAsk] = useState<'retry' | 'early' | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
 
   // A Board to show: the one asked for, else the default (the filtered or most recent git Project).
   useEffect(() => {
@@ -211,11 +214,18 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic' && (c.status !== 'cancelled' || c.id === ui.epic)) : []), [cards, ui.epic]);
   const stale = cards?.filter((c) => c.stale).length ?? 0;
   const cancelled = cards?.filter((c) => c.status === 'cancelled').length ?? 0;
-  // The integration branch's line, read again as landings change what it carries, and what the
-  // executor waits for, read again on each change while an approved epic runs.
+  // The integration branch's line, read again as landings change what it carries and as merge and
+  // revert jobs end, and what the executor waits for, read again on each change while an approved epic runs.
   const landed = cards?.filter((c) => c.status === 'done' && c.lane?.landed_sha).length ?? 0;
+  const lastJob = Object.values(jobs).filter((j) => (j.kind === 'merge' && j.project_id === key) || j.kind === 'revert').at(-1);
+  const merging = Object.values(jobs).some((j) => j.kind === 'merge' && j.project_id === key && j.status === 'running');
   const running = cards?.some((c) => c.kind === 'epic' && c.run && !c.paused && c.status !== 'done' && c.status !== 'cancelled') ?? false;
-  const { integration, waits } = useProjectRun(key && key !== 'unassigned' && !project?.no_git ? key : '', String(landed), running ? String(board?.data?.revision) : '');
+  const { integration, waits } = useProjectRun(
+    key && key !== 'unassigned' && !project?.no_git ? key : '',
+    `${landed} ${lastJob?.job_id ?? ''} ${lastJob?.status ?? ''}`,
+    running ? String(board?.data?.revision) : '',
+  );
+  const merge = integration?.merge;
   // The Inbox holds the plans to approve too (ADR 0006 §6.1).
   const pending = (board?.data?.requests.length ?? 0) + (cards ? plansToApprove(cards).length : 0);
   const panelPresence = usePresence(!!ui.panel);
@@ -263,6 +273,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   }
 
   const menuItems = [
+    ...(integration ? [{ key: 'merge', label: `Merge into ${integration.base_ref} now…`, icon: <GitMerge />, disabled: !integration.ahead || merging, reason: merging ? 'A merge is running.' : !integration.ahead ? `${integration.base_ref} has everything ${integration.branch} carries.` : undefined, onSelect: () => setMergeAsk('early') }] : []),
     { key: 'purge', label: `Purge cancelled${cancelled ? ` (${cancelled})` : ''}`, icon: <Trash2 />, danger: true, disabled: !cancelled || key === 'unassigned', reason: !cancelled ? 'No cancelled cards on this board.' : undefined, onSelect: () => setPurging(true) },
   ];
 
@@ -331,12 +342,24 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             {integration && (
               <span
                 className="flex min-w-0 items-center gap-1 text-caption text-muted"
-                title={`${integration.branch} carries ${integration.ahead} ${integration.ahead === 1 ? 'landing' : 'landings'} not in ${integration.base_ref} yet${integration.behind ? `; ${integration.base_ref} has ${integration.behind} ${integration.behind === 1 ? 'commit' : 'commits'} it does not` : ''}`}
+                title={`${integration.branch} carries ${integration.ahead} ${integration.ahead === 1 ? 'landing or revert' : 'landings and reverts'} not in ${integration.base_ref} yet${integration.behind ? `; ${integration.base_ref} has ${integration.behind} ${integration.behind === 1 ? 'commit' : 'commits'} it does not` : ''}`}
               >
                 <GitBranch aria-hidden="true" className="size-3 shrink-0" />
                 <span className="truncate font-mono">{integration.branch}</span>
                 <span className="shrink-0">· {integration.ahead} ahead of {integration.base_ref}</span>
+                {merging && <span className="shrink-0">· Merging into {integration.base_ref}…</span>}
+                {!merging && merge && (
+                  // In words, the colour only adds: waiting goes on by itself, blocked waits for the owner.
+                  <span className={cn('min-w-0 truncate', merge.state === 'blocked' ? 'text-error' : 'text-warning')} title={merge.reason}>
+                    · {merge.state === 'blocked' ? 'Merge blocked' : `Merge waiting: ${merge.reason.split('\n')[0]}`}
+                  </span>
+                )}
               </span>
+            )}
+            {integration && !merging && merge && (
+              <Button size="sm" variant="secondary" onClick={() => setMergeAsk('retry')}>
+                Retry merge
+              </Button>
             )}
             {board?.loading && board.data && <span className="text-caption text-muted">Refreshing…</span>}
           </div>
@@ -348,6 +371,26 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
         {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} />}
         {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       </div>
+      <AlertDialog
+        open={!!mergeAsk && !!integration}
+        onOpenChange={(o) => !o && setMergeAsk(null)}
+        title={mergeAsk === 'retry' ? `Retry the merge into ${integration?.base_ref ?? ''}?` : `Merge into ${integration?.base_ref ?? ''} now?`}
+        description={`${integration?.branch ?? ''} goes into ${integration?.base_ref ?? ''} with everything that landed on it, epics not finished included. Where ${integration?.base_ref ?? ''} is checked out the merge runs there, with its hooks; uam never pushes.`}
+        confirmLabel="Merge"
+        danger={false}
+        busy={mergeBusy}
+        onConfirm={async () => {
+          setMergeBusy(true);
+          try {
+            await api.planner.merge(key);
+          } catch (e) {
+            p.notify({ tone: 'error', text: `Could not merge: ${plannerErrorText(e)}` });
+          } finally {
+            setMergeBusy(false);
+            setMergeAsk(null);
+          }
+        }}
+      />
       <AlertDialog
         open={purging}
         onOpenChange={(o) => !o && setPurging(false)}

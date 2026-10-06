@@ -52,12 +52,14 @@ var runTools = []string{"board_get", "board_list", "board_checklist", "board_com
 
 // laneState is the web side of lanes. land holds each Project's land mutex,
 // which serializes every read-then-write of its integration branch; landing
-// marks the cards a land call is in flight for; wg counts the lane work
+// marks the cards a land call is in flight for; merges holds each Project's
+// merge into its base branch (lane_merge.go); wg counts the lane work
 // running in the background, which Shutdown waits for.
 type laneState struct {
 	mu      sync.Mutex
 	land    map[string]chan struct{}
 	landing map[string]bool
+	merges  map[string]*projectMerge
 	wg      sync.WaitGroup
 }
 
@@ -719,6 +721,9 @@ func (m *Manager) finishLanding(ctx context.Context, repo *laneRepo, r board.Req
 	return landOutcome{sha: sha}, true, nil
 }
 
+// acceptLanded records that the request id landed as sha on integ. A
+// landing that finishes its approved epic has the integration branch merged
+// into its base (ADR 0006 §5.8).
 func (m *Manager) acceptLanded(ctx context.Context, id, sha, integ string, by board.DecidedBy, comment string) (board.Request, error) {
 	var r board.Request
 	err := m.withBoard(func(st *board.Store) error {
@@ -728,8 +733,10 @@ func (m *Manager) acceptLanded(ctx context.Context, id, sha, integ string, by bo
 	})
 	if err != nil {
 		log.Warn("record a landing failed; recovery finishes it", "request", id, "error", err)
+		return r, err
 	}
-	return r, err
+	m.mergeWhenFinished(ctx, r.CardID)
+	return r, nil
 }
 
 // acceptLane starts the owner's Accept of the lane's done request r on c
@@ -954,8 +961,9 @@ func (m *Manager) noteCard(ctx context.Context, id, body string) {
 // recoverLanes is the first lane pass after the planner opens (ADR 0006
 // §4.7): it finishes the landings and reverts a crash interrupted, aborts
 // the merges uam left in lanes whose Task is not working, sweeps the lanes
-// no attempt or active Task has, and names on its card each landing on an
-// integration branch whose request was not accepted.
+// no attempt or active Task has, names on its card each landing on an
+// integration branch whose request was not accepted, and merges the
+// integration branch of a Project with a finished approved epic (§5.8).
 func (m *Manager) recoverLanes(ctx context.Context) {
 	var held []board.Card
 	if err := m.withBoard(func(st *board.Store) error {
@@ -990,6 +998,7 @@ func (m *Manager) recoverLanes(ctx context.Context) {
 		if err := m.sweepLanes(ctx, p.id, p.dir, open); err != nil {
 			log.Warn("sweep a project's lanes failed", "project", p.id, "error", err)
 		}
+		m.mergeFinished(ctx, p.id)
 	}
 }
 
@@ -1205,13 +1214,15 @@ func (m *Manager) crossCheck(ctx context.Context, repo *laneRepo, project string
 }
 
 // BoardIntegration is a Project's integration branch (ADR 0006 §3.2): the
-// branch it follows, how many landings it has that the base lacks, and
-// how many commits the base has that it lacks.
+// branch it follows, how many landings and reverts it has that the base
+// lacks, how many commits the base has that it lacks, and its last merge
+// into the base that did not go through.
 type BoardIntegration struct {
-	Branch  string `json:"branch"`
-	BaseRef string `json:"base_ref"`
-	Ahead   int    `json:"ahead"`
-	Behind  int    `json:"behind"`
+	Branch  string      `json:"branch"`
+	BaseRef string      `json:"base_ref"`
+	Ahead   int         `json:"ahead"`
+	Behind  int         `json:"behind"`
+	Merge   *BoardMerge `json:"merge,omitempty"`
 }
 
 // integration reads the Project's integration branch in dir; nil before
@@ -1230,8 +1241,12 @@ func integration(ctx context.Context, project, dir, base string) *BoardIntegrati
 	if err != nil || baseTip == "" {
 		return out
 	}
-	if landings, err := repo.output(ctx, repo.top, "log", "--first-parent", "--format=%(trailers:key="+trailerRequest+",valueonly)", baseTip+".."+tip, "--"); err == nil {
-		out.Ahead = len(strings.Fields(landings))
+	// What the base lacks: nothing once a merge would bring nothing, as
+	// after a sync merge of the base's own commits.
+	if has, err := repo.hasAll(ctx, baseTip, tip); err == nil && !has {
+		if commits, err := repo.carried(ctx, baseTip, tip); err == nil {
+			out.Ahead = len(commits)
+		}
 	}
 	if behind, err := repo.output(ctx, repo.top, "rev-list", "--count", tip+".."+baseTip, "--"); err == nil {
 		out.Behind, _ = strconv.Atoi(behind)

@@ -1376,9 +1376,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   subtasks go back to To do, paused ("Reverted"); resumed, a subtask runs
   again from the integration branch without the reverted change. When a
   revert cannot apply, **Reopen without reverting code** moves the
-  subtask back to To do, paused, and leaves its commit on the integration
-  branch; what landed on top of it stays landed. A plain move back to To
-  do is refused on a landed subtask.
+  subtask back to To do, paused ("Reopened, code kept"), and leaves its
+  commit on the integration branch; what landed on top of it stays landed.
+  A plain move back to To do is refused on a landed subtask.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
   and removes the lane; a landed attempt's branch goes too, and the
@@ -1387,7 +1387,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   runs of a Project, its lanes' included, run one at a time unless the
   Project allows up to 4 (Acceptance runs at a time, in the Approve
   dialog). The Planner names the integration branch beside its filters,
-  with how many landings the base branch lacks. A lane Task that ends its
+  with how many landings and reverts the base branch lacks. When the last
+  subtask of an approved epic lands, uam merges the integration branch
+  into the base branch with no click, since the approval covers it, and
+  the epic's comment lists what the merge carried, marking the subtasks
+  that changed test or build files. A Revert of work the base branch
+  already has is merged the same way, and so is a finished epic uam finds
+  unmerged when it starts. Where the base branch is checked out, the merge
+  runs there as your Commit does, with your git hooks; while another git
+  action runs there, a Task there works, or the merge would overwrite a
+  change you have not committed, it waits ("Merge waiting" and the reason
+  beside the branch) and uam tries again after 1, 2, 4, 8, then every 15
+  minutes. A base branch checked out nowhere just moves. A merge that
+  conflicts, or that a hook refuses, shows "Merge blocked" and waits until
+  either branch moves or you choose **Retry merge**; resolve it in
+  Terminal, or revert the subtask it conflicts with. **Merge into main
+  now** (named after your base branch), in the Planner's menu, merges what
+  landed before the epic finishes. Each outcome is said once on the epic, and uam never pushes.
+  A lane Task that ends its
   turn without a done request is reminded once; ending again without one
   archives it, which ends the attempt without landing. One whose provider
   failed before it changed anything goes, and its subtask starts again
@@ -1403,7 +1420,6 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   ("Paused by uam").
   Resume on a paused approved epic runs Approve's git checks again first.
   Epics approved before automatic runs come back paused: Resume runs them.
-  Nothing merges into the base branch yet.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole
   Project. "Add to a story" picks a story and either a new subtask, named

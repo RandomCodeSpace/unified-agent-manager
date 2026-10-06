@@ -1,13 +1,13 @@
 import { useApi } from '../../ApiContext';
 import { Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type BoardProject, type Card, type CardKind, type DoneGuard, type Meta, type Settings, type TaskDefaults } from '../../api';
-import { KIND_LABEL, childIndex, isStarted, leavesUnder, waitsOf } from '../../lib/board';
+import { plannerErrorText, doneGuard, errorCode, errorRefs, resolveTaskDefaults, type BoardProject, type Card, type CardKind, type DoneGuard, type Meta, type RevertPreview, type Settings, type TaskDefaults } from '../../api';
+import { KIND_LABEL, cardPath, childIndex, isStarted, leavesUnder, waitsOf } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Note, useApp } from '../common';
 import { Field, TaskDefaultsFields } from '../TaskDefaults';
 import { Button } from '../ui/button';
-import { Dialog } from '../ui/dialog';
+import { AlertDialog, Dialog } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { Segmented } from '../ui/segmented';
 import { Select } from '../ui/select';
@@ -817,5 +817,134 @@ export function SplitDialog({ card, byId, open, onClose }: Readonly<{ card: Card
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** How many files of a landing the Revert panel names. */
+const MAX_REVERT_FILES = 5;
+
+/**
+ * Revert (ADR 0006 §5.7), in the anchored confirmation: what reverting `card` takes along, from the
+ * service's dry run — the subtasks, those that landed on top of it marked, each landing's commit and
+ * files — and the revert itself, a job (`onStarted` once it runs). A subtask that started on top of it
+ * and still runs is named to Stop first. A revert that would not apply says why, offers to take along
+ * the later cards that changed the same files, and, on a subtask, Reopen without reverting code
+ * (`onReopen`).
+ */
+export function RevertPanel({ card, onClose, onStarted, onReopen }: Readonly<{ card: Card | null; onClose: () => void; onStarted: (card: Card) => void; onReopen: (card: Card) => void }>) {
+  const api = useApi();
+  const { cards } = useShownBoard();
+  const [shown, setShown] = useState(card);
+  const [include, setInclude] = useState<string[]>([]);
+  const [preview, setPreview] = useState<RevertPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
+  const [busy, setBusy] = useState(false);
+  // Read again after a refusal says what it reverts changed.
+  const [round, setRound] = useState(0);
+  if (card && card !== shown) {
+    if (card.id !== shown?.id) {
+      setInclude([]);
+      setPreview(null);
+      setComment('');
+    }
+    setShown(card);
+    setError(null);
+  }
+  const id = card?.id;
+  useEffect(() => {
+    if (!id) return;
+    let alive = true;
+    api.planner
+      .revertPreview(id, include)
+      .then((p) => alive && setPreview(p))
+      .catch((e: unknown) => alive && setError(plannerErrorText(e)));
+    return () => {
+      alive = false;
+    };
+  }, [api.planner, id, include, round]);
+
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  const p = preview;
+  const leaf = shown?.kind === 'subtask';
+  // What it takes along besides what was asked: landed on top of it, as recorded when each started.
+  const along = (x: Card | undefined) => !!x && !!shown && !cardPath(x, byId).includes(byId.get(shown.id) ?? shown) && !include.includes(`#${x.seq}`);
+  const running = (p?.running ?? []).map((r) => byId.get(r)).filter((x): x is Card => !!x);
+  const conflict = p?.conflict;
+  const submit = async () => {
+    if (!shown || !p) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.planner.revert(shown.id, { include, expect: p.cards, comment: comment.trim() });
+      onStarted(shown);
+      onClose();
+    } catch (e) {
+      setError(plannerErrorText(e));
+      if (errorCode(e) === 'stale') setRound((n) => n + 1);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <AlertDialog
+      open={!!card}
+      onOpenChange={(o) => !o && onClose()}
+      onClosed={() => setShown(null)}
+      title={leaf ? `Revert #${shown?.seq ?? ''}?` : `Revert what landed under #${shown?.seq ?? ''}?`}
+      description={`Each landing gets a revert commit on ${p?.branch ?? 'the integration branch'}, newest first, and its subtask goes back to To do, paused.`}
+      confirmLabel="Revert"
+      busy={busy}
+      disabled={!p || !!conflict || running.length > 0}
+      onConfirm={() => void submit()}
+    >
+      {!p && !error && <p className="text-caption text-muted">Reading what it takes along…</p>}
+      {p && (
+        <ul aria-label="What it reverts" className="mt-1 flex max-h-60 flex-col gap-1.5 overflow-y-auto text-caption">
+          {p.landings.map((l) => (
+            <li key={l.sha} className="flex min-w-0 flex-col">
+              <span className="truncate text-body">
+                #{l.seq} {l.title}
+                {along(byId.get(l.card_id)) && <span className="text-muted"> · landed on top of it</span>}
+              </span>
+              <span className="truncate text-muted">
+                <span className="font-mono">{l.sha.slice(0, 7)}</span>
+                {l.files.length > 0 && ` · ${l.files.slice(0, MAX_REVERT_FILES).join(', ')}${l.files.length > MAX_REVERT_FILES ? ` and ${l.files.length - MAX_REVERT_FILES} more` : ''}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {p?.merged && <p className="mt-1 text-caption text-body">The base branch already has some of this: uam merges the revert into it too.</p>}
+      {running.length > 0 && (
+        <p role="alert" className="mt-1 text-caption text-error">
+          Stop {running.map((r) => `#${r.seq}`).join(', ')} first: {running.length === 1 ? 'it started' : 'they started'} on top of this and {running.length === 1 ? 'runs' : 'run'}.
+        </p>
+      )}
+      {conflict && (
+        <div className="mt-1 flex flex-col gap-1.5">
+          <p role="alert" className="text-caption text-error">It would not apply: {conflict.error}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {conflict.refs?.some((r) => !include.includes(r)) && (
+              <Button size="sm" variant="secondary" onClick={() => setInclude((inc) => [...inc, ...(conflict.refs ?? []).filter((r) => !inc.includes(r))])}>
+                Revert {conflict.refs.join(', ')} too
+              </Button>
+            )}
+            {leaf && shown && (
+              <Button size="sm" variant="secondary" onClick={() => onReopen(shown)}>
+                Reopen without reverting code
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {p && !conflict && running.length === 0 && (
+        <label className="mt-1 flex flex-col gap-1 text-caption text-muted">
+          Why (optional)
+          <textarea className={cn(areaClass, 'min-h-12')} value={comment} onChange={(e) => setComment(e.target.value)} />
+        </label>
+      )}
+      {error && <p role="alert" className="mt-1 text-caption text-error">{error}</p>}
+    </AlertDialog>
   );
 }

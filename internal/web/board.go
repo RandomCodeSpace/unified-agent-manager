@@ -542,6 +542,9 @@ func (m *Manager) BoardProject(id string) (BoardProject, error) {
 	if err == nil && noGit == "" && ps.BaseRef != "" {
 		out.Integration = integration(m.ctx, id, dir, ps.BaseRef)
 	}
+	if out.Integration != nil {
+		out.Integration.Merge = m.mergeShown(id)
+	}
 	return out, err
 }
 

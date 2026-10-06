@@ -288,32 +288,52 @@ const (
 )
 
 // boardJobEvent is the board_job frame (ADR 0005 §15): a planner job on a
-// card started, finished or failed. Accept is a finished check's run; Error
-// says why a job failed.
+// card, or on a Project for a merge, started, finished or failed. Accept is
+// a finished check's run; Error says why a job failed.
 type boardJobEvent struct {
-	Seq    uint64        `json:"seq"`
-	JobID  string        `json:"job_id"`
-	CardID string        `json:"card_id"`
-	Kind   string        `json:"kind"`
-	Status string        `json:"status"`
-	Error  string        `json:"error,omitempty"`
-	Accept *AcceptResult `json:"accept,omitempty"`
+	Seq       uint64        `json:"seq"`
+	JobID     string        `json:"job_id"`
+	CardID    string        `json:"card_id"`
+	ProjectID string        `json:"project_id,omitempty"`
+	Kind      string        `json:"kind"`
+	Status    string        `json:"status"`
+	Error     string        `json:"error,omitempty"`
+	Accept    *AcceptResult `json:"accept,omitempty"`
 }
 
-// boardJob is one running planner job: its ID, its kind and its card.
+// boardJob is one running planner job: its ID, its kind and its card, or
+// for a merge its Project.
 type boardJob struct {
 	id, kind string
 	card     board.Card
+	project  string
+}
+
+// key is what the job runs on, one job at a time: its card, or its Project.
+func (j *boardJob) key() string {
+	if j.card.ID != "" {
+		return j.card.ID
+	}
+	return "project:" + j.project
 }
 
 // startJobLocked registers a job of kind on the card c, one job per card,
 // and counts it in titles so Shutdown waits for it. It is refused while the
 // service shuts down. The caller holds mu, and ends the job with endJob.
 func (m *Manager) startJobLocked(kind string, c board.Card) (*boardJob, error) {
+	return m.registerJobLocked(&boardJob{kind: kind, card: c})
+}
+
+// startProjectJobLocked is startJobLocked for a job on the Project project.
+func (m *Manager) startProjectJobLocked(kind, project string) (*boardJob, error) {
+	return m.registerJobLocked(&boardJob{kind: kind, project: project})
+}
+
+func (m *Manager) registerJobLocked(job *boardJob) (*boardJob, error) {
 	switch {
 	case m.closed:
 		return nil, errShuttingDown
-	case m.boardJobs[c.ID] != "":
+	case m.boardJobs[job.key()] != "":
 		return nil, errJobBusy
 	}
 	id, err := newUUID()
@@ -323,17 +343,18 @@ func (m *Manager) startJobLocked(kind string, c board.Card) (*boardJob, error) {
 	if m.boardJobs == nil {
 		m.boardJobs = map[string]string{}
 	}
-	m.boardJobs[c.ID] = id
+	job.id = id
+	m.boardJobs[job.key()] = id
 	m.titles.Add(1)
-	return &boardJob{id: id, kind: kind, card: c}, nil
+	return job, nil
 }
 
-// endJob frees the job's card and, unless status is "", sends the job's
-// last frame. Nothing of the job runs after it.
+// endJob frees the job's card or Project and, unless status is "", sends
+// the job's last frame. Nothing of the job runs after it.
 func (m *Manager) endJob(job *boardJob, status, msg string, accept *AcceptResult) {
 	m.mu.Lock()
-	if m.boardJobs[job.card.ID] == job.id {
-		delete(m.boardJobs, job.card.ID)
+	if m.boardJobs[job.key()] == job.id {
+		delete(m.boardJobs, job.key())
 	}
 	if status != "" {
 		m.broadcastJobLocked(job, status, msg, accept)
@@ -343,7 +364,7 @@ func (m *Manager) endJob(job *boardJob, status, msg string, accept *AcceptResult
 }
 
 func (m *Manager) broadcastJobLocked(job *boardJob, status, msg string, accept *AcceptResult) {
-	ev := boardJobEvent{JobID: job.id, CardID: job.card.ID, Kind: job.kind, Status: status, Error: msg, Accept: accept}
+	ev := boardJobEvent{JobID: job.id, CardID: job.card.ID, ProjectID: job.project, Kind: job.kind, Status: status, Error: msg, Accept: accept}
 	m.broadcastLocked("board_job", "", func(seq uint64) any { ev.Seq = seq; return ev })
 }
 

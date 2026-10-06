@@ -349,10 +349,33 @@ func TestRevertedSubtaskWaitsForResumeThenRerunsWithoutTheChange(t *testing.T) {
 // board_job frames.
 func TestRevertAndMergeAreJobs(t *testing.T) {
 	r := newLaneRun(t, "true", "Leaf")
+	sub := r.subscribe()
 	r.landWith(0, "b.txt", "b\n")
 	leaf := r.leaves[0]
+
+	// The epic is not finished: the owner merges what landed early.
+	var job struct {
+		JobID string `json:"job_id"`
+	}
+	r.call(http.MethodPost, "/api/board/projects/"+r.project+"/merge", `{}`, http.StatusAccepted, &job)
+	if end := r.nextMerge(sub); end.JobID != job.JobID || end.Status != jobDone || end.CardID != "" {
+		t.Fatalf("merge job = %+v, want job %s", end, job.JobID)
+	}
+	if gone(filepath.Join(r.repo, "b.txt")) {
+		t.Fatal("the early merge did not reach main")
+	}
+	// Merging again finds main has it all, and moves nothing.
+	main := gitOutput(t, r.repo, "rev-parse", "main")
+	r.call(http.MethodPost, "/api/board/projects/"+r.project+"/merge", `{}`, http.StatusAccepted, &job)
+	if end := r.nextMerge(sub); end.JobID != job.JobID || end.Status != jobDone || gitOutput(t, r.repo, "rev-parse", "main") != main {
+		t.Fatalf("merge with nothing left = %+v", end)
+	}
+
 	if end := r.revert(leaf.ID, revertBody(nil, leaf.ID)); end.Status != jobDone || end.CardID != leaf.ID || end.Kind != jobRevert {
 		t.Fatalf("revert job = %+v", end)
+	}
+	if end := r.nextMerge(sub); end.Status != jobDone || !gone(filepath.Join(r.repo, "b.txt")) {
+		t.Fatalf("merge of the revert = %+v", end)
 	}
 }
 

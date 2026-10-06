@@ -221,7 +221,6 @@ type Step struct {
 	Nudge, Cancel, Retire, Abort []Act
 	Land                         []string
 	ProviderFailed               []string
-	Merge                        []string // project IDs (§5.8)
 }
 func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 ```
@@ -259,7 +258,7 @@ Retire archives the Task. Archive's reconcile releases any hold left, which for 
 `internal/web/executor.go` runs a loop shaped like the routine loop: the Manager's wait group, a 30-second ticker, and a kick channel with a buffer of one. Kicks come after every committed board write, when a lane Task's turn leaves Working, after reconcile on Task stage moves, at the end of opening the board, and at the end of every land, revert and merge job.
 
 Each pass:
-1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. Also after the lock is released, each Project with a `runs` row gets the merge fact of §5.8: whether `base_ref` already has everything the integration branch carries. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
+1. Snapshot the TaskFacts of every lane Task under the Manager lock. A Task is a lane Task when its workdir is under the lanes root. A cancelled turn is OwnerCancelled when its detail is empty and UAMCancelled otherwise, since uam's cancels store their reason as the detail. For Failed holders, `Worked` is computed after the lock is released, from `git status --porcelain` and `rev-list --count <base>..HEAD` in the lane. The pass never holds the Manager lock across SQL or git (ADR 0005 §12).
 2. Call `RunFacts`, then `Next`.
 3. Apply the step:
    - **Start** runs in a goroutine with a `Starting` reservation, under the Project land mutex (§5.3).
@@ -269,7 +268,8 @@ Each pass:
    - **Abort** calls `AbortRun`, discards the Task and removes the lane.
    - **Land** runs `landAndAccept` (§5.4) in a goroutine, with the card in `Landing` until it returns.
    - **ProviderFailed** updates the provider's breaker (§4.5).
-   - **Merge** runs the merge job (§5.8) in a goroutine.
+
+Merges are not a step: events start them (§5.8).
 
 The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their card in `Landing` before they start, so `Next` never lands a request that another call is already landing.
 
@@ -455,11 +455,15 @@ Between the store write and the ref move nothing can start those cards: they are
 
 On 2026-10-06 the owner decided: "Merge also needs to be approval based only. I approve epic for approval." Approving an epic also authorizes merging its landed work into `base_ref`. There is no separate merge approval, and the normal flow needs no Merge click.
 
-**Triggers.** `Next` returns `Merge` with the Projects to merge. It stays pure: besides `RunFacts` it takes one git fact per Project, read by the driver, whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2). A merge fires when:
-- an approved epic derives done and `!hasAll(base, integ)`;
-- an owner Revert job ended and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it.
+**Triggers.** Events start the merge job, not a `Next` step, so the merge does not depend on the executor (decided 2026-10-06 while S5 and S6 were built side by side). Each trigger first checks whether `base_ref` already has everything the integration branch carries (`hasAll(base, integ)`, §5.2), and starts nothing when it has. A merge fires:
+- after `AcceptLanded`, when that landing makes its approved epic derive done;
+- when an owner Revert job ends and `base_ref` already had one of the reverted landings. The owner's Revert is the approval for merging it;
+- at boot, in `recoverLanes`, for each Project with an approved epic that derives done;
+- from a per-Project retry timer, for a merge that waits (below).
 
-The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plain ancestry is not used, because after a sync merge brings an owner commit into the integration branch, that branch is not an ancestor of base even when nothing is left to merge. The Planner header's "N ahead" count and the revert preview's "already merged" flag use the same fact, counting landed commits that `base_ref` lacks rather than integration commits. A merge carries everything on the integration branch, including the landed subtasks of other approved epics in the Project. Each of those was approved under its own epic and passed acceptance. Proposals never land, so nothing unapproved reaches `base_ref` through uam.
+While a merge job runs, a trigger makes it run once more when it ends.
+
+The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plain ancestry is not used, because after a sync merge brings an owner commit into the integration branch, that branch is not an ancestor of base even when nothing is left to merge. The Planner header's "N ahead" count and the revert preview's "already merged" flag use the same fact: "N ahead" counts the landings and reverts on the integration branch's first-parent line that `base_ref` lacks, not integration commits, and is 0 once `hasAll(base, integ)` holds. A merge carries everything on the integration branch, including the landed subtasks of other approved epics in the Project. Each of those was approved under its own epic and passed acceptance. Proposals never land, so nothing unapproved reaches `base_ref` through uam.
 
 **The merge job** has job kind `merge` and carries the Project instead of a card. It runs under the land mutex, with the commit phase on `context.WithoutCancel`, and first stops with nothing to do when `hasAll(base, integ)` holds.
 1. **`base_ref` checked out** in the Project directory or another worktree that is not a lane:
@@ -473,7 +477,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 **Outcomes.**
 - Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).
 - `git_busy` and `local_changes` retry with backoff (1, 2, 4, 8, then 15 minutes), and the epic shows "Merge waiting: `<reason>`".
-- `merge_conflict` is not retried on its own for the same pair of integration and base tips. The executor keeps that pair in memory, so after a restart it is tried once more. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
+- `merge_conflict` is not retried on its own for the same pair of integration and base tips. uam keeps that pair in memory, so after a restart it is tried once more. A merge that fails for any other reason, for example a hook that refuses the merge commit, is blocked the same way. The epic gets one comment per distinct pair, naming the files and the landed cards that touched them, and shows "Merge blocked" with Retry merge. The owner resolves it in Terminal or reverts the offending subtask, and that revert then merges.
 
 **Retry merge.** `POST /projects/{id}/merge` stays as an owner action: Retry merge after a blocked or waiting merge, and an early merge of an unfinished epic's landed work. It answers 202 `{job_id}` and runs the same job.
 

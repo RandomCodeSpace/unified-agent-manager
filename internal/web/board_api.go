@@ -19,6 +19,7 @@ func (s *Server) boardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/board/projects/{id}", s.handleBoardProject)
 	mux.HandleFunc("PATCH /api/board/projects/{id}", s.handleUpdateBoardProject)
 	mux.HandleFunc("GET /api/board/executor", s.handleBoardExecutor)
+	mux.HandleFunc("POST /api/board/projects/{id}/merge", s.handleMergeProject)
 	mux.HandleFunc("POST /api/board/cards", s.handleCreateCard)
 	mux.HandleFunc("GET /api/board/cards/{ref}", s.handleCard)
 	mux.HandleFunc("PATCH /api/board/cards/{ref}", s.handleEditCard)
@@ -494,6 +495,21 @@ func (s *Server) handleRevert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := s.m.RevertCard(r.PathValue("ref"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
+}
+
+// handleMergeProject is the owner's Retry merge, or early merge, of a
+// Project's integration branch into its base: 202 {job_id}, then board_job
+// frames as it merges.
+func (s *Server) handleMergeProject(w http.ResponseWriter, r *http.Request) {
+	if !decodeOptionalBody(w, r, &struct{}{}) {
+		return
+	}
+	id, err := s.m.MergeProject(r.PathValue("id"))
 	if err != nil {
 		writeFailure(w, err)
 		return

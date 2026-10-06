@@ -198,52 +198,67 @@ func (m *Manager) RevertCard(ref string, req RevertRequest) (string, error) {
 }
 
 // runRevert runs one revert job to its end, bound to the service rather
-// than to the request that started it.
+// than to the request that started it. A revert of work the base branch
+// already has is merged into the base once the job ends: the owner's
+// Revert approves that merge (ADR 0006 §5.8).
 func (m *Manager) runRevert(job *boardJob, a board.Actor, req RevertRequest) {
 	ctx, cancel := m.bound(context.Background())
 	defer cancel()
-	if err := m.revertLanded(ctx, a, job.card, req); err != nil {
+	merged, err := m.revertLanded(ctx, a, job.card, req)
+	if err != nil {
 		m.endJob(job, jobFailed, clipRunes(displaytext.Sanitize(err.Error()), maxDetailRunes), nil)
 		return
 	}
 	m.endJob(job, jobDone, "", nil)
+	if merged {
+		m.autoMerge(ctx, job.card.ProjectID)
+	}
 }
 
 // revertLanded reverts what reverting the card c takes along, under the
-// Project's land mutex. On ctx it checks the closure again and builds the
+// Project's land mutex, and reports whether the base branch had one of the
+// reverted landings. On ctx it checks the closure again and builds the
 // chain of revert commits on the integration tip as objects only, which a
 // conflict refuses with nothing written. Then, whatever happens to ctx, the
 // store records the revert and the branch moves by compare-and-swap; when
 // it cannot move, the store's record is withdrawn.
-func (m *Manager) revertLanded(ctx context.Context, a board.Actor, c board.Card, req RevertRequest) error {
+func (m *Manager) revertLanded(ctx context.Context, a board.Actor, c board.Card, req RevertRequest) (bool, error) {
 	dir, err := m.boardDir(ctx, c.ProjectID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	unlock, err := m.lockLand(ctx, c.ProjectID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 	var closure board.Closure
+	var ps board.ProjectSettings
 	if err := m.withBoard(func(st *board.Store) error {
 		var err error
-		closure, err = st.CheckRevert(ctx, a, c.ID, req.Include, req.Expect)
+		if closure, err = st.CheckRevert(ctx, a, c.ID, req.Include, req.Expect); err != nil {
+			return err
+		}
+		ps, err = st.ProjectSettings(ctx, c.ProjectID)
 		return err
 	}); err != nil {
-		return err
+		return false, err
 	}
 	repo, err := openLanes(ctx, c.ProjectID, dir)
 	if err != nil {
-		return err
+		return false, err
 	}
 	tip, err := repo.integTip(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	commit, err := repo.revertChain(ctx, tip, revertItems(closure.Landings))
 	if err != nil {
-		return err
+		return false, err
+	}
+	merged, err := repo.baseHasAny(ctx, ps.BaseRef, closure.Landings)
+	if err != nil {
+		return false, err
 	}
 
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
@@ -252,7 +267,7 @@ func (m *Manager) revertLanded(ctx context.Context, a board.Actor, c board.Card,
 		_, err := st.Revert(cctx, a, c.ID, req.Include, req.Expect, commit, req.Comment)
 		return err
 	}); err != nil {
-		return err
+		return false, err
 	}
 	if m.landHook != nil {
 		m.landHook(revertIntent)
@@ -262,9 +277,27 @@ func (m *Manager) revertLanded(ctx context.Context, a board.Actor, c board.Card,
 		if uerr := m.withBoard(func(st *board.Store) error { return st.UndoRevert(cctx, commit, reason) }); uerr != nil {
 			log.Warn("withdraw a revert failed; recovery finishes it", "commit", commit, "error", uerr)
 		}
-		return &Error{Status: http.StatusConflict, Code: apiCode(err), Message: "revert not applied: " + reason}
+		return false, &Error{Status: http.StatusConflict, Code: apiCode(err), Message: "revert not applied: " + reason}
 	}
-	return nil
+	return merged, nil
+}
+
+// baseHasAny reports whether the branch base ("" for none) has one of the
+// landings.
+func (r *laneRepo) baseHasAny(ctx context.Context, base string, landings []board.Landing) (bool, error) {
+	if base == "" {
+		return false, nil
+	}
+	baseTip, err := r.tipOf(ctx, base)
+	if err != nil || baseTip == "" {
+		return false, err
+	}
+	for _, l := range landings {
+		if merged, err := r.isAncestor(ctx, l.SHA, baseTip); err != nil || merged {
+			return merged, err
+		}
+	}
+	return false, nil
 }
 
 // recoverReverts finishes the reverts a crash interrupted (ADR 0006 §4.7):

@@ -185,6 +185,16 @@ export function runningLanes(card: Card, byId: ReadonlyMap<string, Card>): Card[
   return [...byId.values()].filter((x) => x.kind === 'subtask' && !!x.held_by && !!x.lane && cardPath(x, byId).includes(card));
 }
 
+/** Whether a subtask's latest attempt landed and no revert undid it (ADR 0006 §3.2 Landed). */
+export function isLanded(c: Card): boolean {
+  return c.kind === 'subtask' && c.status === 'done' && !!c.lane?.landed_sha && !c.lane.reverted_sha;
+}
+
+/** The landed subtasks under `card` (itself for one): what a Revert of it starts from. */
+export function landedUnder(card: Card, byId: ReadonlyMap<string, Card>): Card[] {
+  return [...byId.values()].filter((x) => isLanded(x) && cardPath(x, byId).includes(card));
+}
+
 /** The live proposals under `parent`, at any depth: what approving its epic again would confirm. */
 export function proposalsUnder(parent: string, index: ReadonlyMap<string, Card[]>): Card[] {
   const out: Card[] = [];
