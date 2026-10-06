@@ -46,6 +46,13 @@ const (
 	maxNamedFiles = 10
 )
 
+// pinnedMerge is how uam runs git merge, in a lane or in the owner's
+// checkout of a base branch: a commit by the ort strategy that stashes
+// nothing, runs no hook and signs nothing, whatever merge.autoStash,
+// branch.<name>.mergeOptions or pull.twohead say, since the command line
+// outranks them.
+var pinnedMerge = []string{"merge", "--commit", "--no-autostash", "-s", "ort", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures"}
+
 var (
 	// attemptPart is an attempt branch's part after the integration branch:
 	// <seq>-<id8>.
@@ -479,7 +486,7 @@ func (r *laneRepo) mergeTip(ctx context.Context, l lane, tip string) error {
 		return err
 	}
 	msg := fmt.Sprintf("Merge %s\n\n%s: %s\n", r.integ, trailerMerge, tip)
-	_, mergeErr := runLaneGit(ctx, a, "merge", "--ff", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures", "-m", msg, tip)
+	_, mergeErr := runLaneGit(ctx, a, slices.Concat(pinnedMerge, []string{"--ff", "-m", msg, tip})...)
 	if mergeErr == nil {
 		return nil
 	}
@@ -674,7 +681,7 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 			Message: fmt.Sprintf("%s is checked out in the lane %s; uam merges into it only where you have it checked out", displaytext.Sanitize(base), displaytext.Sanitize(dir))}
 	}
 	if dir != "" {
-		return r.mergeIn(ctx, dir, tip, message)
+		return r.mergeIn(ctx, dir, baseTip, tip, message)
 	}
 	merged, err := r.commitTree(ctx, tree, message, baseTip, tip)
 	if err != nil {
@@ -686,14 +693,16 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message strin
 	return merged, nil
 }
 
-// mergeIn runs git merge of tip in the worktree at dir and returns its new
-// HEAD, through runLaneGit: no hooks and no fsmonitor, and it signs nothing
-// and checks no signature, as the merge as objects does. It refuses
+// mergeIn runs git merge of tip into baseTip, checked out in the worktree
+// at dir, and returns the merge commit, through runLaneGit: no hooks and no
+// fsmonitor, and it signs nothing and checks no signature, as the merge as
+// objects does. The merge is pinned (pinnedMerge), and only a merge commit
+// whose parents are baseTip and tip counts as merged. It refuses
 // local_changes while dir is in the middle of a git operation or has
 // unmerged paths. A merge it started and could not finish, for example
 // behind another git process's lock, is aborted, so dir is never left
 // mid-merge by uam.
-func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (string, error) {
+func (r *laneRepo) mergeIn(ctx context.Context, dir, baseTip, tip, message string) (string, error) {
 	if op, err := r.inProgress(ctx, dir); err != nil {
 		return "", err
 	} else if op != "" {
@@ -704,9 +713,16 @@ func (r *laneRepo) mergeIn(ctx context.Context, dir, tip, message string) (strin
 	} else if len(files) > 0 {
 		return "", &Error{Status: http.StatusConflict, Code: codeLocalChanges, Message: fmt.Sprintf("%s has unmerged paths: %s; resolve and commit them first", displaytext.Sanitize(dir), fileList(files))}
 	}
-	_, mergeErr := runLaneGit(ctx, gitAt{dir: dir}, "merge", "--no-ff", "--no-edit", "--no-verify", "--no-gpg-sign", "--no-verify-signatures", "-m", message, tip)
+	_, mergeErr := runLaneGit(ctx, gitAt{dir: dir}, slices.Concat(pinnedMerge, []string{"--no-ff", "-m", message, tip})...)
 	if mergeErr == nil {
-		return r.output(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		line, err := r.output(ctx, dir, "rev-list", "--parents", "-n1", "HEAD", "--")
+		if err != nil {
+			return "", err
+		}
+		if f := strings.Fields(line); len(f) == 3 && f[1] == baseTip && f[2] == tip {
+			return f[0], nil
+		}
+		mergeErr = newError(http.StatusConflict, "git merge in %s did not make a merge of %s and %s", displaytext.Sanitize(dir), shortSHA(baseTip), shortSHA(tip))
 	}
 	if started, err := r.mergeHead(ctx, gitAt{dir: dir}); err != nil {
 		return "", err

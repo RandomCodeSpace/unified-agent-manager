@@ -700,6 +700,128 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	}
 }
 
+// noStash fails when the repository at dir has a stash entry.
+func noStash(t *testing.T, dir string) {
+	t.Helper()
+	if gitTry(t, dir, "rev-parse", "-q", "--verify", "refs/stash") == nil {
+		t.Fatalf("a stash entry was made: %s", gitOutput(t, dir, "stash", "list"))
+	}
+}
+
+// uam's merge into a checked-out base is a real merge commit by the ort
+// strategy that stashes nothing, whatever merge.autoStash,
+// branch.<base>.mergeOptions or pull.twohead say: an agent can write them.
+func TestMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
+	// landed is a fixture whose integration branch changes a.txt to "lane",
+	// with the merge's configuration key set to value.
+	landed := func(t *testing.T, key, value string) (*laneFixture, string) {
+		t.Helper()
+		f := newLaneFixture(t)
+		l := f.start(1)
+		commitFile(t, l.dir, "a.txt", "lane\n")
+		tip := f.land(l, 1)
+		gitIn(t, f.top, "config", key, value)
+		return f, tip
+	}
+	t.Run("merge.autoStash", func(t *testing.T) {
+		f, _ := landed(t, "merge.autoStash", "true")
+		writeRepoFile(t, f.top, "a.txt", "owner, uncommitted\n")
+		head := gitOutput(t, f.top, "rev-parse", "HEAD")
+		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		_ = wantCode(t, err, codeLocalChanges)
+		if got, _ := os.ReadFile(filepath.Join(f.top, "a.txt")); string(got) != "owner, uncommitted\n" {
+			t.Fatalf("the owner's a.txt = %q", got)
+		}
+		if gitOutput(t, f.top, "rev-parse", "HEAD") != head {
+			t.Fatal("a refused merge moved main")
+		}
+		noStash(t, f.top)
+	})
+	t.Run("branch.main.mergeOptions", func(t *testing.T) {
+		f, tip := landed(t, "branch.main.mergeOptions", "--no-commit")
+		main := gitOutput(t, f.top, "rev-parse", "main")
+		merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+		if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
+			t.Fatal("the owner's directory was left mid-merge")
+		}
+		if err != nil {
+			if gitOutput(t, f.top, "rev-parse", "main") != main {
+				t.Fatal("a failed merge moved main")
+			}
+			return
+		}
+		if got := gitOutput(t, f.top, "rev-list", "--parents", "-n1", "main"); got != merged+" "+main+" "+tip {
+			t.Fatalf("main = %q, want %s, the merge of %s and %s", got, merged, main, tip)
+		}
+	})
+	t.Run("pull.twohead", func(t *testing.T) {
+		f, _ := landed(t, "pull.twohead", "ours")
+		if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil {
+			t.Fatal(err)
+		}
+		if got := gitOutput(t, f.top, "show", "main:a.txt"); got != "lane" {
+			t.Fatalf("main's a.txt = %q, want the integration branch's", got)
+		}
+	})
+}
+
+// uam's merge of the integration tip into a lane is pinned as the merge
+// into the base is: the lane's configuration cannot stash, stop before the
+// commit, or pick another strategy.
+func TestLaneTipMergeIgnoresAutostashAndMergeOptions(t *testing.T) {
+	// moved is a fixture with a lane at #1 that committed c.txt, and an
+	// integration tip, which the lane lacks, that changes a.txt to "tip".
+	moved := func(t *testing.T) (*laneFixture, lane, string) {
+		t.Helper()
+		f := newLaneFixture(t)
+		l := f.start(1)
+		commitFile(t, l.dir, "c.txt", "lane\n")
+		other := f.start(2)
+		commitFile(t, other.dir, "a.txt", "tip\n")
+		return f, l, f.land(other, 2)
+	}
+	t.Run("merge.autoStash", func(t *testing.T) {
+		f, l, tip := moved(t)
+		gitIn(t, f.top, "config", "merge.autoStash", "true")
+		writeRepoFile(t, l.dir, "a.txt", "agent, uncommitted\n")
+		head := gitOutput(t, f.top, "rev-parse", l.branch)
+		if err := f.r.mergeTip(f.ctx, l, tip); err == nil {
+			t.Fatal("the merge went over the lane's uncommitted a.txt")
+		}
+		if got, _ := os.ReadFile(filepath.Join(l.dir, "a.txt")); string(got) != "agent, uncommitted\n" {
+			t.Fatalf("the lane's a.txt = %q", got)
+		}
+		if gitOutput(t, f.top, "rev-parse", l.branch) != head {
+			t.Fatal("a refused merge moved the lane")
+		}
+		noStash(t, f.top)
+	})
+	for _, tc := range []struct{ name, key, value string }{
+		{"mergeOptions", "mergeOptions", "--no-commit"},
+		{"pull.twohead", "pull.twohead", "ours"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, l, tip := moved(t)
+			key := tc.key
+			if key == "mergeOptions" {
+				key = "branch." + l.branch + ".mergeOptions"
+			}
+			gitIn(t, f.top, "config", key, tc.value)
+			head := gitOutput(t, f.top, "rev-parse", l.branch)
+			if err := f.r.mergeTip(f.ctx, l, tip); err != nil {
+				t.Fatal(err)
+			}
+			got := gitOutput(t, f.top, "rev-list", "--parents", "-n1", l.branch)
+			if f := strings.Fields(got); len(f) != 3 || f[1] != head || f[2] != tip {
+				t.Fatalf("the lane = %q, want the merge of %s and %s", got, head, tip)
+			}
+			if got := gitOutput(t, f.top, "show", l.branch+":a.txt"); got != "tip" {
+				t.Fatalf("the lane's a.txt = %q, want the tip's", got)
+			}
+		})
+	}
+}
+
 func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	f := newLaneFixture(t)
 	main := gitOutput(t, f.top, "rev-parse", "main")
