@@ -1610,9 +1610,8 @@ describe('lanes (ADR 0006 §5)', () => {
     expect(settle).toHaveBeenCalledWith({ [lane.id]: { action: 'release', comment: '' }, [plain.id]: { action: 'keep', comment: '' } });
   });
 
-  /** Lands #seq through the service: Launch, then the owner's Accept of its done request. */
+  /** Lands #seq through the service: the approval started it, then the owner's Accept of its done request. */
   async function land(tree: ReturnType<typeof within>, seq: number) {
-    await act(() => api.planner.launch(`cp3-${seq}`));
     let request = '';
     await waitFor(async () => {
       const b = await api.planner.board('p3');

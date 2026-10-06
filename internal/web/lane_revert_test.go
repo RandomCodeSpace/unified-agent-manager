@@ -14,12 +14,6 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 )
 
-// link makes subtask i wait on subtask j.
-func (r *laneRun) link(j, i int) {
-	r.t.Helper()
-	r.call(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, r.leaves[j].ID, r.leaves[i].ID), http.StatusNoContent, nil)
-}
-
 // landWith starts subtask i's lane, commits name in it and lands it, and
 // returns the landing commit.
 func (r *laneRun) landWith(i int, name, text string) string {
@@ -376,7 +370,12 @@ func TestRevertedSubtaskWaitsForResumeThenRerunsWithoutTheChange(t *testing.T) {
 	if end := r.revert(leaf.ID, revertBody(nil, leaf.ID)); end.Status != jobDone {
 		t.Fatalf("revert job = %+v", end)
 	}
-	r.refused(http.MethodPost, "/api/board/cards/"+leaf.ID+"/launch", `{}`, http.StatusConflict, string(board.CodeNotReady))
+	r.store(func(ctx context.Context, st *board.Store) error {
+		if err := st.CanStart(ctx, leaf.ID); apiCode(err) != string(board.CodeNotReady) {
+			t.Fatalf("start of the reverted subtask = %v, want not_ready", err)
+		}
+		return nil
+	})
 	r.call(http.MethodPatch, "/api/board/cards/"+leaf.ID, `{"paused":false}`, http.StatusOK, nil)
 	task, l := r.start(0)
 	if !gone(filepath.Join(l.dir, "b.txt")) {
