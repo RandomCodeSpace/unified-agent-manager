@@ -1,14 +1,15 @@
 import { useApi } from '../ApiContext';
 import { useFederation } from '../FederationContext';
 import { LogOut, X } from 'lucide-react';
-import { useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { PlannerContext } from './planner/context';
 import { DEFAULT_COMPACT_THRESHOLD, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
+import { CopilotCli } from './CopilotCli';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
-import { Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
+import { Dot, Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { cn } from '../lib/cn';
 import { byCodeUnit } from '../lib/order';
 
@@ -562,6 +563,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [motion, setMotion] = useState(loadMotion);
   const [density, setDensity] = useState(loadDensity);
   const [scrolled, sentinel] = useScrolled();
+  // A provider's CLI has an update: the Providers tab carries the Settings button's dot on to its card.
+  const cliUpdate = meta?.providers.some((p) => p.cli_update);
+  const cliUpdateId = useId();
 
   async function save(patch: Partial<Settings>) {
     const sequence = ++saveSequence.current;
@@ -644,10 +648,12 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <div className="relative min-w-0 shrink-0">
         <nav aria-label="Settings sections" className="flex min-w-0 flex-wrap gap-1 py-2 pl-4 pr-4 md:px-6">
           {SETTINGS_SECTIONS.filter(item => item.id !== 'connections' || Boolean(connections)).map((item) => (
-            <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
+            <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} aria-describedby={item.id === 'providers' && cliUpdate ? cliUpdateId : undefined} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
               {item.label}
+              {item.id === 'providers' && cliUpdate && <Dot tone="warning" className="size-1.5" />}
             </Button>
           ))}
+          {cliUpdate && <span id={cliUpdateId} className="sr-only">Copilot CLI update available</span>}
         </nav>
       </div>
       <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
@@ -659,6 +665,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           {(meta?.providers ?? []).filter((p) => p.capabilities.account).map((p) => (
             <Section hidden={section !== 'providers'} key={p.name} id={`account-${p.name}`} title={p.display_name}>
               {api.supports('provider-accounts-v1') ? <CopilotAccount provider={p} /> : <Unsupported what="provider sign-in" />}
+              {p.capabilities.cli_update && <CopilotCli provider={p} />}
             </Section>
           ))}
           {!loaded && (

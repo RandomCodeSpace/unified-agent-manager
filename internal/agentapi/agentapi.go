@@ -86,6 +86,8 @@ type Capabilities struct {
 	// MCP is true when the provider implements MCPConfigurer and its
 	// conversations implement MCPController.
 	MCP bool `json:"mcp,omitempty"`
+	// CLIUpdate is true when the provider implements CLIUpdater.
+	CLIUpdate bool `json:"cli_update,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.

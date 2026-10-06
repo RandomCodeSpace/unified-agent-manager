@@ -330,6 +330,9 @@ type webProvider struct {
 	shut            bool
 	importSupported bool
 	importProbed    bool
+	// updating is closed when a CLI update releases the install; starts
+	// wait for it meanwhile. nil while no update holds it.
+	updating chan struct{}
 
 	// Guarded by mu; invoked outside the lock before a session can send.
 	usageSessionRecorder func(string, bool) error
@@ -355,20 +358,30 @@ func newWebProvider(newClient func() (sdkClient, error), pingEvery time.Duration
 	return &webProvider{newClient: newClient, pingEvery: pingEvery, kick: make(chan struct{}, 1), convs: map[*conversation]struct{}{}}
 }
 
-// newSDKClient points the SDK at the installed CLI, retaining the user's login
-// and configuration. Disable shell history in the runtime and its children
-// without changing the service environment or the manual web terminal.
+// newSDKClient points the SDK at the installed CLI.
 func newSDKClient() (sdkClient, error) {
 	path, err := resolveCopilot()
 	if err != nil {
 		return nil, err
 	}
+	return sdkClientAt(path, true), nil
+}
+
+// sdkClientAt points the SDK at the CLI at path, retaining the user's login
+// and configuration. Disable shell history in the runtime and its children
+// without changing the service environment or the manual web terminal.
+// export adds the local usage export; a client that runs no model leaves it
+// out, so it creates no export file.
+func sdkClientAt(path string, export bool) sdkClient {
 	env := append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
-	telemetry, err := usageTelemetry(env, os.UserHomeDir)
-	if err != nil {
-		log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
+	var telemetry *copilot.TelemetryConfig
+	if export {
+		var err error
+		if telemetry, err = usageTelemetry(env, os.UserHomeDir); err != nil {
+			log.Warn("copilot local usage export unavailable; SDK usage remains enabled")
+		}
 	}
-	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}, nil
+	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
 }
 
 func resolveCopilot() (string, error) {
@@ -400,7 +413,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -1447,6 +1460,20 @@ func (p *webProvider) InUse(ctx context.Context, ids []string) ([]string, error)
 func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// An update is replacing the CLI under the running client: wait for the
+	// new one instead of failing.
+	for p.updating != nil {
+		updating := p.updating
+		p.mu.Unlock()
+		select {
+		case <-updating:
+		case <-ctx.Done():
+		}
+		p.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("wait for the Copilot CLI update: %w", err)
+		}
+	}
 	if p.shut {
 		return nil, agentapi.ErrClosed
 	}
