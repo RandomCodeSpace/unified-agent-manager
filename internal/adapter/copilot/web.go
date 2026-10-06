@@ -828,7 +828,7 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 // attribution. Task sessions also set CoauthorEnabled false, which drops the
 // CLI's own co-author tool and commit-trailer instructions. Utility sessions
 // replace the message.
-const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)".
+const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 
 Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.`
 
@@ -2451,11 +2451,15 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 		r.err = errDeclined
 		in.State = agentapi.InteractionRejected
 	} else {
-		if len(ans.Answers) != 1 || len(ans.Answers[0]) != 1 || ans.Answers[0][0] == "" {
+		if len(ans.Answers) != 1 || len(ans.Answers[0]) == 0 || slices.Contains(ans.Answers[0], "") {
+			return errors.New("copilot: a question needs an answer")
+		}
+		if len(ans.Answers[0]) > 1 && !q.Multiple {
 			return errors.New("copilot: a question needs exactly one answer")
 		}
-		a := ans.Answers[0][0]
-		chosen := slices.Contains(q.Choices, a)
+		// The CLI takes one string back: several chosen options go joined, as a free-form answer.
+		a := strings.Join(ans.Answers[0], ", ")
+		chosen := len(ans.Answers[0]) == 1 && slices.Contains(q.Choices, a)
 		if !chosen && !q.Custom {
 			return errors.New("copilot: the answer must be one of the offered choices")
 		}
@@ -2798,6 +2802,22 @@ func takesFollowUps(t *rpc.TaskAgentInfo) bool {
 	return t != nil && t.Status == rpc.TaskStatusIdle && t.ExecutionMode != nil && *t.ExecutionMode == rpc.TaskExecutionModeSync
 }
 
+// multipleChoice marks a question whose options may be chosen together: the agent ends
+// its text with "(Choose any that apply)" (the taskSystem convention; "select" and "pick",
+// "all" and a bare "any" read the same). The marker leaves the text the owner reads.
+var multipleChoice = regexp.MustCompile(`(?i)\s*\((?:choose|select|pick)\s+(?:any|all)(?:\s+that\s+apply)?\)\s*$`)
+
+// questionOf is the owner's question for an ask_user request. The owner may always type
+// their own answer, so Custom is set even when the agent sent allowFreeform false.
+func questionOf(req copilot.UserInputRequest) agentapi.Question {
+	q := agentapi.Question{Text: req.Question, Choices: req.Choices, Custom: true}
+	if multipleChoice.MatchString(q.Text) {
+		q.Text = strings.TrimSpace(multipleChoice.ReplaceAllString(q.Text, ""))
+		q.Multiple = true
+	}
+	return q
+}
+
 // askUser is the SDK's ask_user callback. It runs on its own goroutine and
 // blocks until the user answers or the conversation ends. The owner may always
 // type their own answer, even when the agent sent allowFreeform false: the CLI
@@ -2808,7 +2828,7 @@ func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInput
 			ID:        "question-" + rand.Text(),
 			Kind:      agentapi.InteractionQuestion,
 			Title:     "Question from Copilot",
-			Questions: []agentapi.Question{{Text: req.Question, Choices: req.Choices, Custom: true}},
+			Questions: []agentapi.Question{questionOf(req)},
 			State:     agentapi.InteractionPending,
 			Time:      time.Now(),
 		},

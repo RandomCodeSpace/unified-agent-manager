@@ -7,13 +7,11 @@ import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
-import { AppContext, Dot, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
+import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { Home } from './components/Home';
 import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
-import { SettingsView } from './components/Settings';
-import { RoutinesView } from './components/Routines';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
 import { staleReviewKeys } from './lib/review';
@@ -40,6 +38,9 @@ import { TooltipProvider } from './components/ui/tooltip';
 
 /** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
 const TerminalPanel = lazy(() => import('./components/Terminal'));
+/** Settings and Routines are off the first paint: each loads with its first open and stays. */
+const SettingsView = lazy(() => import('./components/Settings').then((m) => ({ default: m.SettingsView })));
+const RoutinesView = lazy(() => import('./components/Routines').then((m) => ({ default: m.RoutinesView })));
 
 type Auth = 'checking' | 'in' | 'out';
 type ProjectDialog = { kind: 'add' } | { kind: 'edit'; project: Project } | null;
@@ -1438,7 +1439,7 @@ export default function App() {
               <div className="relative flex min-h-0 flex-1 flex-col">
                 {/* A cached page is presentation only; actions and typing wait for confirmation. */}
                 <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
-                  {pane}
+                  <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
                 </div>
                 {/* Settings, the planner, routines and a new Task do not wait on the stream. */}
                 <LoadingVeil show={loading && !settingsOpen && !mismatched && !plannerShown && !routinesShown && !newTask} />
@@ -1591,6 +1592,16 @@ function LoadingVeil({ show }: Readonly<{ show: boolean }>) {
         Loading…
       </output>
     </Appear>
+  );
+}
+
+/** While a view's code loads for its first open (Settings, Routines): the header keeps its height and its leading control over the quiet loading word. */
+function ViewLoading({ leading }: Readonly<{ leading: React.ReactNode }>) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col" aria-busy="true">
+      <header className="pane-header flex h-header shrink-0 items-center gap-2 px-3">{leading}</header>
+      <Loading className="px-6" />
+    </div>
   );
 }
 

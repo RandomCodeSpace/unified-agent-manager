@@ -6,7 +6,7 @@ describe('model token prices', () => {
   test('defaults to models without prices and can show all catalog models', async () => {
     const { user } = renderApp('#settings');
     await sidebar();
-    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Models', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'Token costs' }));
     await section.findByText('Unpriced. Add input and output prices to estimate cost.');
     const showAll = section.getByRole('checkbox', { name: 'Show all models' });
@@ -30,7 +30,7 @@ describe('model token prices', () => {
   test('saves input/output prices without cache, persists on reopening, and recalculates Usage', async () => {
     const { user } = renderApp('#settings');
     await sidebar();
-    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Models', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'Token costs' }));
     await section.findByText('Unpriced. Add input and output prices to estimate cost.');
     const save = section.getByRole('button', { name: 'Save token prices' });
@@ -50,7 +50,7 @@ describe('model token prices', () => {
     expect(popover.queryByRole('link', { name: 'Add prices' })).toBeNull();
     await user.click(popover.getByRole('button', { name: 'Close usage' }));
     await user.click(screen.getByRole('button', { name: 'General', exact: true }));
-    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Models', exact: true }));
     const reopened = within(await screen.findByRole('region', { name: 'Token costs' }));
     await reopened.findByText('All models have prices. Select Show all models to edit them.');
     await user.click(reopened.getByRole('checkbox', { name: 'Show all models' }));

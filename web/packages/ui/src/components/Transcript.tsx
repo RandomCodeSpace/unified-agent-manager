@@ -13,7 +13,7 @@ import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, typ
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
-import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Dot, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { usePlannerOpenCard } from './planner/context';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -519,7 +519,8 @@ export function WorkingLabel({ working, compacting = false, since, items, identi
     <Appear show={working}>
       {working && <output className="sr-only">{compacting ? 'Compacting the conversation' : 'Busy'}</output>}
       <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
-        <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />
+        {/* The breath: the pulsing dot (opacity only), not a ring. */}
+        <Dot tone="accent" pulse className={cn('size-1.5', compacting && 'bg-badge-violet')} />
         <span className={cn('whitespace-nowrap', compacting && 'text-badge-violet')}>{compacting ? 'Compacting the conversation' : turnVerb(turnId)}…</span>
         {/* Under an hour the time is at most three characters wide: the slot holds them all. */}
         {elapsed && <span className="min-w-[3ch] text-right tabular-nums text-faint">{elapsed}</span>}
@@ -719,7 +720,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -737,7 +738,7 @@ function Copyable({ text, read, label, className, side = 'right', children, extr
 
   return (
     <div
-      className={cn('group/copy relative', className)}
+      className={cn('group/copy flex flex-col', side === 'left' && 'items-end', className)}
       style={{ WebkitTouchCallout: 'none' }}
       onContextMenu={event => menuEvents(event)?.onContextMenu?.(event)}
       onTouchStart={event => menuEvents(event)?.onTouchStart?.(event)}
@@ -746,17 +747,19 @@ function Copyable({ text, read, label, className, side = 'right', children, extr
       onTouchCancel={menuReady ? event => menuEvents(event)?.onTouchCancel?.(event) : undefined}
     >
       {children}
-      <Tip label={copied ? 'Copied' : label}>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label={copied ? 'Copied' : label}
-          className={cn('absolute top-0 text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100', side === 'right' ? '-right-1' : '-left-7', copied && 'opacity-100 text-success')}
-          onClick={run}
-        >
-          {copied ? <Check /> : <Copy />}
-        </Button>
-      </Tip>
+      {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
+      <div className={cn('mt-0.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'flex-row-reverse -mr-1' : '-ml-1', copied && 'opacity-100')}>
+        <Tip label={copied ? 'Copied' : label}>
+          <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
+            {copied ? <Check /> : <Copy />}
+          </Button>
+        </Tip>
+        {at && (
+          <time dateTime={at} title={dateTime(at)} className="whitespace-nowrap">
+            {clockTime(at)}
+          </time>
+        )}
+      </div>
       {menuReady && (
         <ContextMenu.Root>
           <ContextMenu.Trigger render={<CopyableMenuTarget handlersRef={menuHandlers} />} className="contents" />
@@ -799,7 +802,7 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
       {/* A message without text has nothing to copy: its chips alone. */}
       {text ? (
-        <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" className={width}>
+        <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" at={item.time} className={width}>
           {bubble}
         </Copyable>
       ) : (
@@ -811,7 +814,7 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
 
 function assistantMessage({ item, text, streaming = false, className, whole }: MessageParts) {
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" className={cn('pr-6', className)}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={item.time} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}

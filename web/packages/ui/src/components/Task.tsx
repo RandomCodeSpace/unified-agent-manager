@@ -2,14 +2,14 @@ import { useApi } from '../ApiContext';
 import { ArrowDown, ChartLine, Ellipsis, FolderTree, ListTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
+import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { showsFinish, shownState } from '../lib/tasks';
-import { ChangesSheet, defaultScope, type ChangesTurn } from './Changes';
+import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
 import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
@@ -39,6 +39,8 @@ import { PlanButton, PlanPanel, StoryStrip, useTaskPlan, type PlanFocus } from '
 
 /** The Files sheet loads with its first opening, never with the Task. */
 const FilesSheet = lazy(() => import('./Files'));
+/** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
+const ChangesSheet = lazy(() => import('./Changes').then((m) => ({ default: m.ChangesSheet })));
 
 interface Props {
   session: SessionDetail;
@@ -646,6 +648,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+  // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
+  useEffect(() => {
+    const timer = window.setTimeout(() => void import('./Changes'), 2000);
+    return () => window.clearTimeout(timer);
+  }, []);
   const labels = !phone && room === 'wide';
   const fold = phone || room === 'tight';
   // The plan this Task sits in (ADR 0005 §10): the story strip, the Plan button and panel, and card links that open there.
@@ -876,7 +883,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         </div>
       </div>
 
-      {sheetPresence.mounted && <ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} />}
+      {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
       {/* The Task's name only seeds "Add to a story": a Task with a card passes none, so its title arriving does not render the panel. */}
       {planPresence.mounted && plan && <PlanPanel plan={plan} taskId={session.id} taskName={plan.mine ? '' : name} focus={planFocus ?? lastPlanFocus} inline={sidePanelInline} open={planOpen} onClose={closePlan} onClosed={onPlanClosed} />}

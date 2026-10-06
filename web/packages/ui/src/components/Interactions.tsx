@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
-import { useId, useState, type SubmitEvent } from 'react';
+import { useId, useState, type SubmitEvent , type ReactNode } from 'react';
 import { describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
@@ -126,18 +126,27 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
 
 /**
  * One choice as a selectable row: a radio or checkbox per `multiple`, 44px on a coarse pointer.
- * A radio cannot be unchecked natively; `clearable` lets a click on the chosen one clear it (a
- * radio's click fires either way, its change only when it turns on).
+ * A radio's change fires only when it turns on; `again` takes the click on the chosen one too
+ * (a radio's click fires either way), and `hint` sits at the chosen row's end to say what it does.
  */
-function ChoiceRow({ name, choice, multiple, on, clearable = false, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; clearable?: boolean; onToggle: () => void }>) {
-  const change = !multiple && clearable ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
+function ChoiceRow({ name, choice, multiple, on, again = false, hint, onToggle }: Readonly<{ name: string; choice: string; multiple: boolean; on: boolean; again?: boolean; hint?: ReactNode; onToggle: () => void }>) {
+  const change = !multiple && again ? { onClick: onToggle, readOnly: true } : { onChange: onToggle };
   return (
     <label className={cn('flex min-h-8 cursor-pointer items-center gap-2.5 rounded-sm px-2 text-ui transition-colors hover:bg-tint-hover pointer-coarse:min-h-11', on && 'bg-tint-hover text-ink')}>
       <input type={multiple ? 'checkbox' : 'radio'} name={name} checked={on} className="size-3.5 accent-accent" {...change} />
-      {choice}
+      <span className="min-w-0 flex-1">{choice}</span>
+      {on && hint && <span aria-hidden="true" className="shrink-0 text-caption text-muted animate-fade-in">{hint}</span>}
     </label>
   );
 }
+
+/** What a second click on the chosen option does, worded for the pointer in use. */
+const AGAIN_HINT = (
+  <>
+    <span className="pointer-coarse:hidden">Click again to answer</span>
+    <span className="hidden pointer-coarse:inline">Tap again to answer</span>
+  </>
+);
 
 /**
  * A question with one question as the composer's extension (DESIGN.md Composer, answer mode):
@@ -145,11 +154,13 @@ function ChoiceRow({ name, choice, multiple, on, clearable = false, onToggle }: 
  * in place. The text, the files, Decline and Answer are the composer's. A long question or
  * many options scroll inside a capped box, so the surface never outgrows the pane.
  */
-export function ComposerQuestion({ interactionId, question, chosen, disabled, onChoose }: Readonly<{ interactionId: string; question: Question; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void }>) {
+export function ComposerQuestion({ interactionId, question, chosen, disabled, onChoose, onAnswer }: Readonly<{ interactionId: string; question: Question; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void; /** Sends the staged answer: a second click on the chosen option of a single-choice question. */ onAnswer: () => void }>) {
   const labelId = useId();
+  // One choice: a click stages it, a click on the staged one answers with it. Several: clicks toggle; Answer sends.
   function toggle(choice: string) {
     if (question.multiple) onChoose(chosen.includes(choice) ? chosen.filter((c) => c !== choice) : [...chosen, choice]);
-    else onChoose(chosen.includes(choice) ? [] : [choice]);
+    else if (chosen.includes(choice)) onAnswer();
+    else onChoose([choice]);
   }
   return (
     <div className="flex flex-col gap-1.5 px-3.5 pt-3">
@@ -158,6 +169,7 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
           <MessageCircleQuestion aria-hidden="true" className="size-3.5" />
           Needs answer
         </Chip>
+        {question.multiple && <span className="text-caption text-muted">Choose any that apply</span>}
       </div>
       <div className="max-h-[min(240px,30dvh)] overflow-y-auto overflow-x-hidden">
         <div id={labelId} className="text-ui text-ink">
@@ -167,7 +179,7 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
         {(question.choices?.length ?? 0) > 0 && (
           <fieldset aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled}>
             {question.choices!.map((c) => (
-              <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={chosen.includes(c)} clearable onToggle={() => toggle(c)} />
+              <ChoiceRow key={c} name={`q-${interactionId}-0`} choice={c} multiple={!!question.multiple} on={chosen.includes(c)} again hint={question.multiple ? undefined : AGAIN_HINT} onToggle={() => toggle(c)} />
             ))}
           </fieldset>
         )}
