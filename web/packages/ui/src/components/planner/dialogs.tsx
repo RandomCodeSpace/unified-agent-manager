@@ -290,7 +290,15 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
   const held = subtasks.filter(handHeld);
   const empty = snap.list.filter((c) => c.kind !== 'subtask' && leavesUnder(c.id, index).length === 0);
   const noCmd = subtasks.filter(noCommand);
-  const refused = held.length + empty.length + noCmd.length > 0;
+  // A done container comes back open once the approval confirms a proposal under it, and a lane
+  // running meanwhile that waits on one, itself or through a parent, would wait again (§6.3 rule 2).
+  const reopened = new Map<string, Card>();
+  for (const c of snap.list) if (c.kind !== 'subtask' && c.status === 'done' && leavesUnder(c.id, index).some((l) => !l.confirmed)) reopened.set(c.id, { ...c, status: 'todo' });
+  const after = new Map([...byId, ...reopened]);
+  const stalled = new Map(cards.filter((c) => c.held_by && c.lane).map((c) => [c.id, [...new Set(waitsOf(c, after).map((w) => w.card).filter((b) => reopened.has(b.id)))]] as const).filter(([, on]) => on.length > 0));
+  const stalledCards = cards.filter((c) => stalled.has(c.id));
+  const stalledOn = [...new Set([...stalled.values()].flat())];
+  const refused = held.length + empty.length + noCmd.length + stalled.size > 0;
   const unapproved = epic ? epic.blocked_by.map((id) => byId.get(id)).filter((b): b is Card => !!b && b.kind === 'epic' && !b.run && b.status !== 'done' && b.status !== 'cancelled') : [];
   // Grouped by story: the subtasks right under the epic first, then each story's.
   const groups = epic ? [epic, ...(index.get(epic.id) ?? []).filter((c) => c.kind === 'story')].map((head) => ({ head, items: (index.get(head.id) ?? []).filter((c) => c.kind === 'subtask') })).filter((g) => g.head !== epic || g.items.length > 0) : [];
@@ -304,6 +312,8 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
     if (waits.length) words.push({ text: `waits on ${seqs(waits.map((w) => w.card))}` });
     if (handHeld(c)) words.push({ text: 'held by a task', refused: true });
     else if (c.held_by) words.push({ text: 'running' });
+    const on = stalled.get(c.id);
+    if (on) words.push({ text: `would wait on ${seqs(on)} again`, refused: true });
     if (noCommand(c)) words.push({ text: 'no acceptance command', refused: true });
     if (c.kind !== 'subtask' && empty.includes(c)) words.push({ text: 'no subtask', refused: true });
     return words.map((w) => (
@@ -407,6 +417,11 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
             {held.length > 0 && <p>{seqs(held)} {isAre(held.length)} held by a task: finish or release {held.length === 1 ? 'it' : 'them'} first, as work started by hand and approved work never mix.</p>}
             {empty.length > 0 && <p>{seqs(empty)} {isAre(empty.length)} without a subtask, and a card with none never finishes: add one or cancel {empty.length === 1 ? 'it' : 'them'}.</p>}
             {noCmd.length > 0 && <p>{seqs(noCmd)} {noCmd.length === 1 ? 'has' : 'have'} no acceptance command, so done would always wait for you: set one on {noCmd.length === 1 ? 'it' : 'them'} or a Project default below.</p>}
+            {stalledCards.length > 0 && (
+              <p>
+                {seqs(stalledCards)} {stalledCards.length === 1 ? 'runs in a lane' : 'run in lanes'} and would wait on {seqs(stalledOn)} again, which this approval reopens: Stop {stalledCards.length === 1 ? 'it first, or approve once it has' : 'them first, or approve once they have'} landed.
+              </p>
+            )}
           </div>
         )}
         {unapproved.length > 0 && <Note tone="warn">{seq} waits on {seqs(unapproved)}, not approved yet: nothing here runs before {unapproved.length === 1 ? 'it is' : 'they are'} done.</Note>}

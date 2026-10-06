@@ -1376,6 +1376,34 @@ describe('approving an epic (ADR 0006)', () => {
     }
   });
 
+  test('the dialog refuses inline what would make a running lane wait again: a proposal under a done story it waits on', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const at = (seq: number) => data.cards.find((c: { seq: number }) => c.seq === seq);
+        // #33 is done; #91, proposed under it since, reopens it once approved. #93 runs in a lane under #92, which waits on #33.
+        const cards = data.cards.map((c: { seq: number }) => (c.seq === 33 || c.seq === 35 ? { ...c, status: 'done' } : c));
+        const proposal = { ...at(35), id: 'cp3-91', seq: 91, rank: 91, title: 'Alt text on video posters', status: 'planned', confirmed: false, expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString() };
+        const story = { ...at(33), id: 'cp3-92', seq: 92, rank: 92, title: 'Readable code blocks', status: 'doing', blocked_by: ['cp3-33'] };
+        const running = { ...at(35), id: 'cp3-93', seq: 93, parent_id: 'cp3-92', rank: 93, title: 'Contrast for code tokens', status: 'doing', held_by: 't9', lane: { branch: 'uam-plan-p3-93-1', landed_sha: '', reverted_sha: '' } };
+        return reply(200, { ...data, cards: [...cards, proposal, story, running] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: /^#32 Accessible post template/ });
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+      const row = within(dialog.getByRole('region', { name: '#92 Readable code blocks' })).getByText(/^#93 /);
+      expect(row.textContent).toContain('running · would wait on #33 again');
+      expect(dialog.getByRole('alert').textContent).toContain('#93 runs in a lane and would wait on #33 again, which this approval reopens: Stop it first, or approve once it has landed.');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('under an approved epic Triage offers no Re-pin and says approving the epic again re-pins', async () => {
     const { user, tree } = await openPlanner();
     await approve('cp1-1');

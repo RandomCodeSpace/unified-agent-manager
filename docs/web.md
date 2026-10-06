@@ -1301,7 +1301,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   proposals, paused cards and what each waits on. It says inline what the
   service would refuse (a held subtask, a story or epic with no subtask, a
   subtask without an acceptance command, with the Project's command
-  editable in place) and asks for the run's model (none is picked unless
+  editable in place, and a running lane that would wait again on a done
+  story the approval reopens by confirming a proposal under it) and asks
+  for the run's model (none is picked unless
   Settings → New tasks names one), mode (Safe warns that a permission prompt
   stops unattended work) and subtasks at a time (1 to 4, 2 by default).
   Approving confirms every card it showed and records the run; when a card
