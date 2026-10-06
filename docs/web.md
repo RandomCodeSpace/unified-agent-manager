@@ -1327,10 +1327,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   new Task with the run's model and mode, in its own git worktree beside
   uam's settings (never in the Project folder, so it never holds up your
   Commit, Pull or Push), on its own branch made from the integration branch.
-  Launch is refused, naming why, on a subtask that waits on another, is
-  paused, flagged blocked or a proposal, and past the epic's subtasks at a
-  time or 4 across the server; Do whole story and adding a Task stay
-  unavailable. The lane's Task gets only the planner tools to read the
+  Launch shows only on a ready subtask; the service refuses, naming why, one
+  that waits on another, is paused, flagged blocked or a proposal, and one
+  past the epic's subtasks at a time or 4 across the server. Do whole story
+  and adding a Task stay unavailable. The lane's Task gets only the planner tools to read the
   board, tick its checklist, comment and file requests, and its git panel
   neither pushes nor pulls. Its done request commits what it left, merges
   the integration tip into the lane (a conflict refuses it with the files
@@ -1345,14 +1345,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   rejects the request and tells the Task why. Accept is refused while the
   Task works. **Stop** on a running subtask (its Release) asks first, then
   pauses the subtask, stops and archives its Task and removes the lane,
-  keeping its branch. Settle offers release or cancel for a lane, not keep.
+  keeping its branch; on a story or epic, Stop pauses it first and then
+  stops each subtask running under it. Settle offers Stop or Cancel for a
+  lane, not Keep held.
   An attempt that ends without landing pauses its subtask ("Paused by
   uam"). Archiving a lane's Task commits what the lane left to its branch
   and removes the lane; a landed attempt's branch goes too. The acceptance
   runs of a Project, its lanes' included, run one at a time unless the
   Project allows up to 4 (Acceptance runs at a time, in the Approve
-  dialog). The Planner header names the integration branch and how many
-  landings the base branch lacks. Nothing starts by itself, and nothing
+  dialog). The Planner names the integration branch beside its filters,
+  with how many landings the base branch lacks. Nothing starts by itself, and nothing
   merges into the base branch, yet.
   Card links in the conversation open the card here and never leave the
   Task; the Planner itself is in the sidebar, for planning the whole

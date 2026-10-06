@@ -235,12 +235,15 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
   onDismiss?: () => void;
 }>) {
   const api = useApi();
-  const { openCard, notify } = useShownBoard();
+  const { openCard, notify, jobs } = useShownBoard();
   const { sessions } = usePlannerTasks();
   const card = byId.get(r.card_id);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  // Accept of a lane's done request lands it as a job: its board_job frames say how it goes.
+  const [landJob, setLandJob] = useState<string | null>(null);
+  const landing = landJob ? jobs[landJob] : undefined;
   const pending = r.status === 'pending';
   const auto = r.decided_by === 'uam';
 
@@ -308,13 +311,25 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
           </Button>
         </div>
       )}
-      {pending && !rejecting && (
+      {landing?.status === 'failed' && <p role="alert" className="text-caption text-error">Could not land #{card?.seq ?? '?'}{landing.error ? `: ${landing.error}` : '.'}</p>}
+      {pending && landing?.status === 'running' && <p role="status" className="pt-1 text-right text-caption text-muted">Landing #{card?.seq ?? '?'} on the integration branch…</p>}
+      {pending && !rejecting && landing?.status !== 'running' && (
         <div className="flex flex-wrap justify-end gap-2 pt-1">
           <Button size="sm" variant="danger" disabled={busy} onClick={() => setRejecting(true)}>
             <X />
             Reject
           </Button>
-          <Button size="sm" variant="primary" loading={busy} onClick={() => void decide(() => api.planner.accept(r.id, ''), 'accept the request')}>
+          <Button
+            size="sm"
+            variant="primary"
+            loading={busy}
+            onClick={() =>
+              void decide(async () => {
+                const res = await api.planner.accept(r.id, '');
+                if (res && 'job_id' in res) setLandJob(res.job_id);
+              }, 'accept the request')
+            }
+          >
             <Check />
             Accept
           </Button>

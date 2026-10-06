@@ -517,6 +517,8 @@ export interface Card {
   paused?: '' | 'owner' | 'uam';
   /** An approved epic's run: what its approval authorizes its subtasks to run with. Absent on every other card. */
   run?: CardRun;
+  /** A subtask whose latest attempt ran in a lane (ADR 0006 §5.1): that attempt's git state. */
+  lane?: CardLane;
   pending_requests: number;
   revision: number;
   created_at: string;
@@ -534,6 +536,37 @@ export interface CardRun {
   /** How many of its subtasks may run at a time, 1 to 4. */
   parallel: number;
   approved_at: string;
+}
+
+/**
+ * A lane attempt's git state: its attempt branch, and `landed_sha`, the landing intent while the
+ * attempt is open (Landing) and the commit it landed as once it ended (Landed); `reverted_sha`
+ * the commit that reverted it. Empty strings when there is none.
+ */
+export interface CardLane {
+  branch: string;
+  landed_sha: string;
+  reverted_sha: string;
+}
+
+/** `GET /api/board/projects/{id}`: a Project's planner settings. */
+export interface BoardProject {
+  /** The default acceptance command, `''` for none. */
+  accept_cmd: string;
+  /** Why the Project has no git (`not_installed`, `not_repository`), `''` when it has. */
+  git: string;
+  /** How many acceptance runs of this Project run at a time, 1 to 4. */
+  accept_parallel: number;
+  /** Its integration branch, once an approval named the base branch it follows; null before. */
+  integration: BoardIntegration | null;
+}
+
+/** A Project's integration branch: `ahead` landings not yet in `base_ref`, which is `behind` commits past it. */
+export interface BoardIntegration {
+  branch: string;
+  base_ref: string;
+  ahead: number;
+  behind: number;
 }
 
 /** The Approve dialog's post (ADR 0006 §7): the cards it showed, at the revisions it showed, and the run's settings. */
@@ -611,6 +644,10 @@ export interface Hold {
   baseline_dirty: string[];
   ended_at?: string;
   end_reason?: string;
+  /** A lane attempt's branch, and what it landed as and was reverted by (CardLane); absent for an attempt outside a lane. */
+  branch?: string;
+  landed_sha?: string;
+  reverted_sha?: string;
 }
 
 /** `GET /api/board`: one Project's cards, its pending requests and its revision. */
@@ -1326,7 +1363,7 @@ export type UpdateData =
   /** One committed planner write, to everyone (§15); `project_id` is empty for the Unassigned list. */
   | { name: 'board'; seq: number; project_id: string; revision: number; cards: Card[]; removed: string[]; requests: BoardRequest[] }
   /** A planner job on a card: a suggestion, or a Check at HEAD whose last frame carries its run (`accept`). */
-  | { name: 'board_job'; seq: number; job_id: string; card_id: string; kind: 'suggest' | 'check'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
+  | { name: 'board_job'; seq: number; job_id: string; card_id: string; kind: 'suggest' | 'check' | 'land'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1682,8 +1719,9 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     type TaskSettings = Partial<TaskDefaults>;
     return {
       board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
-      project: (id: string) => call<{ accept_cmd: string; git: string }>('GET', `/api/board/projects/${enc(id)}`),
-      setProject: (id: string, accept_cmd: string) => call<unknown>('PATCH', `/api/board/projects/${enc(id)}`, { accept_cmd }),
+      project: (id: string) => call<BoardProject>('GET', `/api/board/projects/${enc(id)}`),
+      /** Changes the given settings only. */
+      setProject: (id: string, patch: { accept_cmd?: string; base_ref?: string; accept_parallel?: number }) => call<BoardProject>('PATCH', `/api/board/projects/${enc(id)}`, patch),
       card: (ref: string, signal?: AbortSignal) => call<CardDetail>('GET', card(ref), undefined, false, signal),
       create: (body: { project_id: string; kind: CardKind; parent_id: string | null; title: string; desc?: string; win_condition?: string; prio?: number; effort?: string; due?: string; labels?: string[]; checklist?: ChecklistItem[] }) => call<Card>('POST', '/api/board/cards', body),
       edit: (ref: string, patch: CardPatch) => call<unknown>('PATCH', card(ref), patch),
@@ -1710,12 +1748,14 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       /** Makes an existing Task work on the subtask `ref`, or on a new subtask under the story or epic `ref` (titled `title`, else after the Task). */
       attach: (ref: string, body: { task_id: string; title?: string; confirm?: boolean }) => call<Card>('POST', card(ref, 'attach'), body),
       plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
+      /** On a subtask held in a lane it is Stop: the subtask is paused, and its Task stops and is archived. */
       release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
       /** Starts Check at HEAD; its `board_job` frames carry the run. */
       check: (ref: string) => call<{ job_id: string }>('POST', card(ref, 'check')),
       triage: (ref: string) => call<{ verdict: TriageVerdict; sentence: string; head: string }>('POST', card(ref, 'triage')),
       suggest: (ref: string, body: { brief: string; document: string; max: number }) => call<{ job_id: string }>('POST', card(ref, 'suggest'), body),
-      accept: (id: string, comment: string) => call<unknown>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
+      /** A lane's done request lands as a job (202, its `board_job` frames of kind `land`); any other is decided at once. */
+      accept: (id: string, comment: string) => call<BoardRequest | { job_id: string }>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
       reject: (id: string, reason: string) => call<Rejection>('POST', `/api/board/requests/${enc(id)}/reject`, { reason }),
       purge: (project_id: string) => call<{ purged: number }>('POST', '/api/board/purge', { project_id }),
       import: (dir: string) => call<ImportReport>('POST', '/api/board/import', { dir }),

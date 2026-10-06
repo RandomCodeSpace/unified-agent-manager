@@ -4,7 +4,7 @@
 // staleness markers (§9) and the import (§11). Not part of the production bundle.
 
 import { LIVE, type BoardRequest, type Card, type CardComment, type CardKind, type CardStatus, type ChecklistItem, type Evidence, type Hold, type Project, type SessionSummary, type Settings } from '../api';
-import { cardPath, childIndex, deriveBoard, leavesUnder, linkedReason, lockedReason, startedUnderReason } from '../lib/board';
+import { cardPath, childIndex, deriveBoard, laneReady, leavesUnder, linkedReason, lockedReason, startedUnderReason } from '../lib/board';
 
 type Json = Record<string, unknown>;
 
@@ -247,6 +247,15 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
   const holds = seeded.holds;
   const revisions: Record<string, number> = { p1: 1, p3: 1, '': 1 };
   const acceptDefaults: Record<string, string> = { p1: 'make test', p3: '' };
+  // Each Project's acceptance limit, and the base branch its first approval named (ADR 0006 §5.2).
+  const acceptLimits: Record<string, number> = {};
+  const baseRefs: Record<string, string> = {};
+  const projectSettings = (pid: string, git: string) => ({
+    accept_cmd: acceptDefaults[pid] ?? '',
+    git,
+    accept_parallel: acceptLimits[pid] ?? 1,
+    integration: baseRefs[pid] ? { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid], ahead: cards.filter((c) => c.project_id === pid && c.lane?.landed_sha && c.status === 'done').length, behind: 0 } : null,
+  });
   let nextSeq = Math.max(...cards.map((c) => c.seq)) + 1;
   let counter = 100;
   const id = (prefix: string) => `${prefix}${++counter}`;
@@ -464,6 +473,69 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     return json(201, { card: leaf, session });
   }
 
+  /**
+   * Launch under an approved epic (ADR 0006 §5.3): a ready subtask starts in its own lane with the
+   * epic's run, while the epic has a free slot. The mock's lane Task files its done request soon
+   * after, its acceptance run timed out, so it waits for the owner's Accept, which lands it.
+   */
+  function laneLaunch(c: Card, epic: Card): Response {
+    const map = new Map(cards.map((x) => [x.id, x]));
+    if (c.kind !== 'subtask') return runOwned(c, epic);
+    if (!laneReady(c, map)) return refuse('not_ready', `#${c.seq} is not ready to start: it waits, is paused or is not confirmed`, { refs: [`#${c.seq}`] });
+    const running = cards.filter((x) => x.held_by && x.lane && cardPath(x, map).includes(epic)).length;
+    if (running >= (epic.run?.parallel ?? 1)) return refuse('not_ready', `#${epic.seq} runs ${epic.run?.parallel ?? 1} at a time, and that many run now`, { refs: [`#${c.seq}`] });
+    const session = host.createTask(c.project_id, `#${c.seq} ${c.title}`, `${preamble(c)}\nYou work only on #${c.seq}, in your own git worktree.`);
+    const attempt = (holds[c.id]?.length ?? 0) + 1;
+    const branch = `uam-plan-${c.project_id}-${c.seq}-${attempt}`;
+    commit(() => {
+      c.status = 'doing';
+      c.held_by = session.id;
+      c.worked_by = session.id;
+      c.lane = { branch, landed_sha: '', reverted_sha: '' };
+      (holds[c.id] ??= []).push({ id: id('ho'), task_id: session.id, started_at: now(), baseline_head: head(c), baseline_dirty: [], branch });
+    });
+    window.setTimeout(() => {
+      const leaf = byId(c.id);
+      if (leaf?.held_by !== session.id) return;
+      commit(() => {
+        requests.push({ id: id('rq'), card_id: leaf.id, task_id: session.id, agent_id: '', kind: 'done', comment: `#${leaf.seq} is done in its lane.`, payload: {}, evidence: { baseline: { head: head(leaf), dirty: [] }, commits: [{ sha: 'a1b2c3d', subject: `feat: ${leaf.title.toLowerCase()}` }] }, flags: ['acceptance_could_not_run'], base_revision: leaf.revision, status: 'pending', created_at: now() });
+      });
+    }, 300);
+    return json(201, { card: c, session });
+  }
+
+  /** The owner's Accept of a lane's done request (ADR 0006 §5.5): a land job, Landing while it runs, Landed once it moved the branch. */
+  function land(r: BoardRequest, c: Card, comment: string): Response {
+    const job = id('job');
+    const sha = (0x9f3e2a1 + c.seq).toString(16);
+    host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'land', status: 'running' });
+    commit(() => {
+      c.lane = { ...c.lane!, landed_sha: sha };
+      const open = holds[c.id]?.find((h) => !h.ended_at);
+      if (open) open.landed_sha = sha;
+    });
+    window.setTimeout(() => {
+      if (r.status !== 'pending') return;
+      commit(() => {
+        Object.assign(r, { status: 'accepted', decided_at: now(), decision_comment: comment, decided_by: 'owner' });
+        releaseHold(c, 'done', 'accepted');
+        say(c, 'uam', `landed on uam-plan-${c.project_id} as ${sha}`, true);
+      });
+      host.broadcast('board_job', { job_id: job, card_id: c.id, kind: 'land', status: 'done' });
+    }, 600);
+    return json(202, { job_id: job });
+  }
+
+  /** A lane attempt ended without landing (ADR 0006 §4.5): the owner's Stop or Settle pauses it as theirs, anything else as uam's. */
+  const laneEnded = (c: Card, reason: string, comment?: string) => {
+    const attempt = holds[c.id]?.length ?? 1;
+    const branch = c.lane?.branch ?? '';
+    const owner = reason === 'released' || reason === 'settled';
+    releaseHold(c, 'todo', reason, comment);
+    c.paused = owner ? 'owner' : 'uam';
+    say(c, 'uam', `paused: attempt #${attempt} ${owner ? 'stopped' : 'ended without landing'}; branch ${branch} kept`, true);
+  };
+
   /** An existing Task works on the subtask `c`, or on a new one under the story or epic `c` (the service's attach). */
   function attach(c: Card, body: Json): Response {
     const taskId = String(body.task_id ?? '');
@@ -578,10 +650,16 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const pid = decodeURIComponent(m[1]);
       const p = project(pid);
       if (!p) return refuse('not_found', 'project not found');
-      if (method === 'GET') return json(200, { accept_cmd: acceptDefaults[pid] ?? '', git: p.no_git ?? '' });
+      if (method === 'GET') return json(200, projectSettings(pid, p.no_git ?? ''));
       if (method === 'PATCH') {
-        acceptDefaults[pid] = String(body.accept_cmd ?? '');
-        return json(200, { accept_cmd: acceptDefaults[pid], git: p.no_git ?? '' });
+        if ('accept_parallel' in body) {
+          const n = Number(body.accept_parallel);
+          if (!Number.isInteger(n) || n < 1 || n > 4) return refuse('invalid', 'acceptance runs at a time is 1 to 4');
+          acceptLimits[pid] = n;
+        }
+        if ('accept_cmd' in body) acceptDefaults[pid] = String(body.accept_cmd ?? '');
+        if ('base_ref' in body) baseRefs[pid] = String(body.base_ref ?? '');
+        return json(200, projectSettings(pid, p.no_git ?? ''));
       }
     }
     if (path === '/api/board/cards' && method === 'POST') {
@@ -628,7 +706,11 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     if ((m = path.match(/^\/api\/board\/requests\/([^/]+)\/(accept|reject)$/)) && method === 'POST') {
       const r = requests.find((x) => x.id === decodeURIComponent(m![1]));
       if (!r || r.status !== 'pending') return refuse('not_found', 'no pending request');
-      if (m[2] === 'accept') return accept(r, String(body.comment ?? '').trim()) ?? json(200, r);
+      if (m[2] === 'accept') {
+        const c = byId(r.card_id);
+        if (c && r.kind === 'done' && c.lane?.branch && c.held_by === r.task_id) return land(r, c, String(body.comment ?? '').trim());
+        return accept(r, String(body.comment ?? '').trim()) ?? json(200, r);
+      }
       const reason = String(body.reason ?? '').trim();
       if (!reason) return refuse('invalid', 'a rejection needs a reason');
       const c = byId(r.card_id)!;
@@ -687,7 +769,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       return refuse('in_progress', locked);
     }
     const approved = approvedOf(c);
-    if (approved && ['POST confirm', 'POST launch', 'POST attach'].includes(`${method} ${action}`)) return runOwned(c, approved);
+    if (approved && method === 'POST' && action === 'launch') return laneLaunch(c, approved);
+    if (approved && ['POST confirm', 'POST attach'].includes(`${method} ${action}`)) return runOwned(c, approved);
     switch (`${method} ${action}`) {
       case 'PATCH ': {
         if (typeof body.project_id === 'string' && body.project_id !== c.project_id) {
@@ -715,6 +798,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
           confirmAndPin(c);
           c.paused = '';
           c.run = { provider: String(body.provider), model: String(body.model), effort: String(body.effort ?? ''), context_size: String(body.context_size || 'default'), mode: body.mode === 'yolo' ? 'yolo' : 'safe', parallel: Number(body.parallel), approved_at: now() };
+          baseRefs[c.project_id] ||= 'main';
         }), ok);
       }
       case 'POST confirm':
@@ -820,6 +904,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       }
       case 'POST release':
         if (c.status !== 'doing') return refuse('not_held', 'the subtask is not held');
+        // On a lane's subtask Release is Stop (ADR 0006 §4.6).
+        if (c.lane?.branch && c.held_by) return done(commit(() => laneEnded(c, 'released', comment || undefined)), ok);
         return done(commit(() => releaseHold(c, 'todo', 'released', comment || undefined)), ok);
       case 'POST check': {
         const cmd = c.accept_cmd ?? acceptDefaults[c.project_id] ?? '';
@@ -870,10 +956,13 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     const decisions = (body.holds ?? {}) as Record<string, { action?: string; comment?: string }>;
     if (held.some((c) => !decisions[c.id]?.action)) return refuse('holds_undecided', 'decide what happens to the subtasks this task holds', { cards: held });
     if (held.some((c) => decisions[c.id].action === 'cancel' && !decisions[c.id].comment?.trim())) return refuse('invalid', 'cancelling a subtask needs a comment');
+    const kept = held.find((c) => c.lane?.branch && decisions[c.id].action === 'keep');
+    if (kept) return refuse('invalid', `#${kept.seq} runs in a lane, which nobody works in once the task is settled: release it, which stops the attempt, or cancel it`);
     commit(() => {
       for (const c of held) {
         const d = decisions[c.id];
-        if (d.action === 'release') releaseHold(c, 'todo', 'settled', d.comment?.trim() || undefined);
+        if (d.action === 'release' && c.lane?.branch) laneEnded(c, 'settled', d.comment?.trim() || undefined);
+        else if (d.action === 'release') releaseHold(c, 'todo', 'settled', d.comment?.trim() || undefined);
         else if (d.action === 'cancel') releaseHold(c, 'cancelled', 'cancelled', d.comment!.trim());
         // keep: the hold stays, and resumes after Reopen.
       }
@@ -886,7 +975,10 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     const held = cards.filter((c) => c.held_by === taskId);
     if (!held.length) return;
     commit(() => {
-      for (const c of held) releaseHold(c, 'todo', 'archived', `attempt #${holds[c.id]?.length ?? 1} ended, uncommitted: nothing`, 'uam');
+      for (const c of held) {
+        if (c.lane?.branch) laneEnded(c, 'ended');
+        else releaseHold(c, 'todo', 'archived', `attempt #${holds[c.id]?.length ?? 1} ended, uncommitted: nothing`, 'uam');
+      }
     });
   }
 
