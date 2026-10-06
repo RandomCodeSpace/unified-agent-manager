@@ -58,7 +58,7 @@ describe('messages', () => {
     expect(within(bubble).getByRole('time').parentElement!.textContent).not.toContain('tokens');
   });
 
-  test('a turn still working shows no token count under its replies; the count lands once, under the last reply, when the turn ends', () => {
+  test('only the last reply of an ended turn has a foot: the end time and the turn\'s tokens; earlier replies and a working turn have none', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
       { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
@@ -72,17 +72,17 @@ describe('messages', () => {
       { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed' as const, input_tokens: 1000, output_tokens: 940, generation_ms: 4000 },
       { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' as const, input_tokens: 2000, output_tokens: 610, generation_ms: 3000 },
     ];
-    const foot = (view: ReturnType<typeof render>, text: string) => within(view.getByText(text).closest('[data-history-anchor]')!.parentElement as HTMLElement).getByRole('time').parentElement!.textContent;
+    const foot = (view: ReturnType<typeof render>, text: string) => within(view.getByText(text).closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent ?? null;
     const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
-    // The ended turn: its count once, under its last reply only.
-    expect(foot(view, 'Looking.')).not.toContain('tokens');
-    expect(foot(view, 'Found it.')).toContain('940 tokens · 235 tok/s');
-    // The working turn: nothing yet, under either reply, however many tokens have been counted so far.
-    expect(foot(view, 'On it.')).not.toContain('tokens');
-    expect(foot(view, 'Patching.')).not.toContain('tokens');
-    // Once it ends, the whole turn's count lands under its last reply.
+    // The ended turn: one foot, under its last reply, with the time the turn ended and its count.
+    expect(foot(view, 'Looking.')).toBeNull();
+    expect(foot(view, 'Found it.')).toContain(`${new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })} · 940 tokens · 235 tok/s`);
+    // The working turn: no foot under either reply, however many tokens have been counted so far.
+    expect(foot(view, 'On it.')).toBeNull();
+    expect(foot(view, 'Patching.')).toBeNull();
+    // Once it ends, the foot lands under its last reply with the whole turn's count.
     view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
-    expect(foot(view, 'On it.')).not.toContain('tokens');
+    expect(foot(view, 'On it.')).toBeNull();
     expect(foot(view, 'Patching.')).toContain('1.2K tokens · 242 tok/s');
   });
 
