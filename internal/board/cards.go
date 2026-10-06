@@ -67,11 +67,13 @@ func (p Patch) ownerOnly() bool {
 // instead when an agent's edit needs the owner. AcrossRun says it was filed
 // because the move changes the card's epic while one of them is approved,
 // OutOfPause because the move takes the card out from under a pause.
+// Replaced says it withdrew the Task's earlier pending change request.
 type EditResult struct {
 	Card       Card
 	Request    *Request
 	AcrossRun  bool
 	OutOfPause bool
+	Replaced   bool
 }
 
 // ChecklistEdit ticks, unticks and appends checklist items; indexes are
@@ -353,8 +355,8 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (EditResult, error) {
 		if err := permit(a, opChange, ""); err != nil {
 			return EditResult{}, err
 		}
-		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
-		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started()}, err
+		req, replaced, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
+		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started(), Replaced: replaced}, err
 	}
 	return EditResult{}, t.applyEdit(o, a, n, p, plan, false)
 }

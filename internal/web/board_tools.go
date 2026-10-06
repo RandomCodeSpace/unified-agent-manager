@@ -822,15 +822,18 @@ func (m *Manager) toolEdit(ctx context.Context, sc boardScope, in editArgs) (too
 		}
 		switch {
 		case res.AcrossRun:
-			reply = cardReply(res.Card, "Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "Moving #%d into or out of an approved epic changes what it runs under, so the move was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.OutOfPause:
-			reply = cardReply(res.Card, "Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "Moving #%d out from under a pause would let it start, so the move was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.Request != nil && res.Card.Status != board.StatusDoing && res.Card.Status != board.StatusDone:
-			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "#%d is confirmed and the move puts it under a proposal, so the edit was filed as a change request for the owner to decide.", res.Card.Seq)
 		case res.Request != nil:
-			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the edit was filed as a change request, which the owner can apply once it is released. It replaces your earlier pending one.", res.Card.Seq)
+			reply = cardReply(res.Card, "#%d is in progress, so its plan is locked: the edit was filed as a change request, which the owner can apply once it is released.", res.Card.Seq)
 		default:
 			reply = cardReply(res.Card, "Updated #%d.", res.Card.Seq)
+		}
+		if res.Replaced {
+			reply.Text += " It replaces your earlier pending one."
 		}
 		return nil
 	})

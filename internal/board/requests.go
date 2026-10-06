@@ -293,7 +293,7 @@ func (s *Store) FileRequestDetail(ctx context.Context, a Actor, ref string, in R
 				out.Wait, f.payload.Landing = WaitLanding, true
 			}
 		}
-		out.Request, err = t.fileRequest(o, a, n, f)
+		out.Request, _, err = t.fileRequest(o, a, n, f)
 		if err != nil || in.Kind != RequestDone || out.Wait != WaitNone {
 			return err
 		}
@@ -424,16 +424,17 @@ func checkInput(in RequestInput) (requestFiling, error) {
 }
 
 // fileRequest writes a pending request from a's Task on n, withdrawing the
-// Task's older pending request of the same kind on n.
-func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Request, error) {
+// Task's older pending request of the same kind on n; replaced says it
+// withdrew one.
+func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (_ Request, replaced bool, _ error) {
 	ids, err := t.ids(`SELECT id FROM requests WHERE card_id = ? AND task_id = ? AND kind = ? AND status = 'pending'`,
 		n.ID, a.TaskID, string(f.kind))
 	if err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
 	for _, id := range ids {
 		if err := t.exec(`UPDATE requests SET status = 'withdrawn', decided_at = ? WHERE id = ?`, stamp(t.now), id); err != nil {
-			return Request{}, err
+			return Request{}, false, err
 		}
 		t.requestChanged(o.project, id)
 	}
@@ -446,11 +447,11 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 		base_revision, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
 		r.ID, r.CardID, r.TaskID, r.AgentID, string(r.Kind), r.Comment, string(r.Payload), string(r.Evidence), encode(r.Flags),
 		r.BaseRevision, stamp(t.now)); err != nil {
-		return Request{}, err
+		return Request{}, false, err
 	}
 	t.requestChanged(o.project, r.ID)
 	t.changed(o.project, n.ID)
-	return r, nil
+	return r, len(ids) > 0, nil
 }
 
 // Split splits the subtask ref. Under an epic or at the root it becomes a
@@ -500,7 +501,7 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 			if err := t.caps(o, a, n.ID, count, 0); err != nil {
 				return err
 			}
-			req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestSplit, payload: payload{Children: children}})
+			req, _, err := t.fileRequest(o, a, n, requestFiling{kind: RequestSplit, payload: payload{Children: children}})
 			out.Request = &req
 			return err
 		}
@@ -662,7 +663,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		if !p.tick {
 			continue
 		}
-		req, err := t.fileRequest(o, Agent(requester, ""), kid, requestFiling{
+		req, _, err := t.fileRequest(o, Agent(requester, ""), kid, requestFiling{
 			kind: RequestDone, comment: fmt.Sprintf("ticked on %s before the split: %s", n.ref(), p.child.Title),
 			payload: payload{SplitOf: n.ID, Tick: p.child.Title},
 		})
