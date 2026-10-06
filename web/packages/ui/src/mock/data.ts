@@ -739,7 +739,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       turn_timings: [
         { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed', input_tokens: 23400, output_tokens: 940, generation_ms: 18800 },
         { id: 'tt-2', user_item_id: 'u2', started_at: ago(14), ended_at: ago(13.5), state: 'completed' },
-        { id: 'tt-3', user_item_id: 'u3', started_at: ago(12), state: 'working' },
+        { id: 'tt-3', user_item_id: 'u3', started_at: ago(12), state: 'working', input_tokens: 31200, output_tokens: 610, generation_ms: 9400 },
       ],
       items: (() => {
         let min = 24;
