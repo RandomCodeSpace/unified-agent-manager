@@ -566,6 +566,62 @@ func TestAcceptBlockedKeepsAProposalUnderApprovedEpic(t *testing.T) {
 	}
 }
 
+// An agent's split never turns a confirmed subtask under an approved epic
+// into a story of proposals, which would never finish.
+func TestAgentSplitUnderApprovedEpicKeepsItFinishable(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	direct := f.create(planner, p.epic.ID, KindSubtask, "Docs")
+	f.approve(p.epic.ID, append(p.ids(), direct.ID)...)
+	before := f.revision()
+	_, err := f.s.Split(f.ctx, planner, direct.ID, []SplitChild{{Title: "Guide"}, {Title: "Reference"}})
+	wantRefusal(t, err, CodeInvalid, direct.ref())
+	if c := f.card(direct.ID); c.Kind != KindSubtask || f.revision() != before {
+		t.Fatalf("the refused split wrote: %+v", c)
+	}
+	// A proposal there splits, and so does a confirmed subtask under a
+	// story, whose parts join the story beside its other confirmed work.
+	later := f.create(planner, p.epic.ID, KindSubtask, "Later")
+	if _, err := f.s.Split(f.ctx, planner, later.ID, []SplitChild{{Title: "Half"}, {Title: "Other half"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Split(f.ctx, planner, p.a.ID, []SplitChild{{Title: "Lex"}, {Title: "Scan"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Restore under an approved epic leaves a card a proposal when the only
+// confirmed work under it was cancelled before, and that work becomes a
+// proposal with it: the card plans again, and approving the epic again
+// confirms what the dialog shows.
+func TestRestoreUnderApprovedEpicSkipsCancelledWork(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	epic, story, one, two := f.tree()
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
+	for _, c := range []Card{one, story} {
+		_, err := f.s.SetStatus(f.ctx, owner, c.ID, StatusCancelled, "not now", false)
+		f.must(err)
+	}
+	_, err := f.s.Restore(f.ctx, owner, story.ID, "after all")
+	f.must(err)
+	if got := f.card(story.ID); got.Confirmed() || got.Status != StatusPlanned {
+		t.Fatalf("a story with only proposals live under it = %+v", got)
+	}
+	if got := f.card(two.ID); got.Confirmed() {
+		t.Fatalf("restored subtask = %+v", got)
+	}
+	if got := f.card(one.ID); got.Confirmed() || got.Status != StatusCancelled {
+		t.Fatalf("cancelled subtask under the restored story = %+v", got)
+	}
+	f.approve(epic.ID, epic.ID, story.ID, two.ID)
+	if !f.card(story.ID).Confirmed() || !f.card(two.ID).Confirmed() {
+		t.Fatal("approving again left the restored cards proposals")
+	}
+}
+
 // The owner's done or To do on a proposal under an approved epic would
 // confirm it card by card: it is refused, and a confirmed subtask there
 // still takes it.

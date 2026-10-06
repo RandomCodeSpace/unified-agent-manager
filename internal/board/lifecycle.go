@@ -330,12 +330,13 @@ func (t *txn) drop(o *outline, n *node, author, agentID, body string) error {
 // Restore reopens exactly the cards cancelled with the card ref, in one
 // cascade, and confirms each, with its unconfirmed ancestors. Under an
 // approved epic each card but the epic itself comes back as a proposal with
-// a fresh expiry instead, to approve again (ADR 0006 §6.3), unless confirmed
-// work outside the cascade sits under it; and a container the restore
-// brings to done stays open with them. A subtask with an earlier attempt
-// reopens as todo, one without as planned. It needs a comment, and is
-// refused while a card of the cascade sits under a cancelled card outside
-// it.
+// a fresh expiry instead, to approve again (ADR 0006 §6.3), unless live
+// confirmed work outside the cascade sits under it; cancelled work under
+// such a card becomes a proposal with it, as no confirmed card sits under a
+// proposal; and a container the restore brings to done stays open with
+// them. A subtask with an earlier attempt reopens as todo, one without as
+// planned. It needs a comment, and is refused while a card of the cascade
+// sits under a cancelled card outside it.
 func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card, error) {
 	if err := permit(a, opRestore, ""); err != nil {
 		return Card{}, err
@@ -389,6 +390,14 @@ func (s *Store) Restore(ctx context.Context, a Actor, ref, comment string) (Card
 			}
 			if e != nil && e != m && !confirmedUnder(o, m, in) {
 				rearm(t.now, m)
+				for _, c := range o.subtree(m)[1:] {
+					if !in[c.ID] && c.Confirmed() {
+						rearm(t.now, c)
+						if err := t.updateCard(c); err != nil {
+							return err
+						}
+					}
+				}
 			} else if err := t.confirm(o, a, m); err != nil {
 				return err
 			}
@@ -442,10 +451,13 @@ func (s *Store) Purge(ctx context.Context, a Actor, projectID string) (int, erro
 	return count, err
 }
 
-// confirmedUnder reports whether a confirmed card outside set sits under n:
-// n then stays confirmed, as no confirmed card sits under a proposal.
+// confirmedUnder reports whether a live confirmed card outside set sits
+// under n: n then stays confirmed, as no confirmed card sits under a
+// proposal.
 func confirmedUnder(o *outline, n *node, set map[string]bool) bool {
-	return slices.ContainsFunc(o.subtree(n)[1:], func(m *node) bool { return !set[m.ID] && m.Confirmed() })
+	return slices.ContainsFunc(o.subtree(n)[1:], func(m *node) bool {
+		return !set[m.ID] && m.Confirmed() && m.stored != StatusCancelled
+	})
 }
 
 func allCancelled(tree []*node) bool {
