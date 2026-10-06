@@ -741,7 +741,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, ch
 
   return (
     <div
-      className={cn('group/copy flex flex-col', side === 'left' && 'items-end', className)}
+      className={cn('group/copy relative flex flex-col', side === 'left' && 'items-end', className)}
       style={{ WebkitTouchCallout: 'none' }}
       onContextMenu={event => menuEvents(event)?.onContextMenu?.(event)}
       onTouchStart={event => menuEvents(event)?.onTouchStart?.(event)}
@@ -751,7 +751,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, ch
     >
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
-      <div className={cn('mt-0.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'flex-row-reverse -mr-1' : '-ml-1', copied && 'opacity-100')}>
+      <div className={cn('absolute top-full z-[1] -mt-1.5 flex h-6 items-center gap-1 text-stamp tabular-nums text-muted opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
         <Tip label={copied ? 'Copied' : label}>
           <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
             {copied ? <Check /> : <Copy />}
@@ -796,7 +796,7 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
   );
 }
 
-/** The timing of each turn, keyed by the turn's last assistant message, so the reply's foot carries it once. */
+/** The timing of each ended turn, keyed by the turn's last assistant message, so the reply's foot carries it once: the count covers the whole turn, from the user's message to the agent stopping, so a turn still working shows nothing yet. */
 function replyTimings(items: Item[], timings: TurnTiming[]): ReadonlyMap<string, TurnTiming> | undefined {
   if (!timings.length) return undefined;
   const lastReply = new Map<string, string>();
@@ -808,7 +808,7 @@ function replyTimings(items: Item[], timings: TurnTiming[]): ReadonlyMap<string,
   }
   const out = new Map<string, TurnTiming>();
   for (const t of timings) {
-    const id = t.user_item_id && lastReply.get(t.user_item_id);
+    const id = t.state !== 'working' && t.user_item_id && lastReply.get(t.user_item_id);
     if (id && t.output_tokens) out.set(id, t);
   }
   return out;

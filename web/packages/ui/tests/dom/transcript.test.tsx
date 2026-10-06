@@ -38,7 +38,8 @@ describe('messages', () => {
     const foot = time.parentElement!;
     expect(within(foot).getByRole('button', { name: 'Copy message' })).toBeTruthy();
     expect(bubble.querySelector('.bg-bubble')!.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // Hover only: the row keeps its height and fades in with the pointer over the block.
+    // Hover only, out of the flow: the row sits on the gap under the block and fades in with the pointer over the block.
+    expect(foot.className).toContain('absolute');
     expect(foot.className).toContain('opacity-0');
     expect(foot.className).toContain('group-hover/copy:opacity-100');
   });
@@ -55,6 +56,34 @@ describe('messages', () => {
     // The user's bubble carries the time alone.
     const bubble = log().getByText('Add a line to', { exact: false }).closest('[data-history-anchor]') as HTMLElement;
     expect(within(bubble).getByRole('time').parentElement!.textContent).not.toContain('tokens');
+  });
+
+  test('a turn still working shows no token count under its replies; the count lands once, under the last reply, when the turn ends', () => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const items: Item[] = [
+      { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
+      { id: 'a1', kind: 'assistant', time: at(2), text: 'Looking.' },
+      { id: 'a2', kind: 'assistant', time: at(5), text: 'Found it.' },
+      { id: 'u2', kind: 'user', time: at(10), text: 'Fix it' },
+      { id: 'a3', kind: 'assistant', time: at(12), text: 'On it.' },
+      { id: 'a4', kind: 'assistant', time: at(15), text: 'Patching.' },
+    ];
+    const turnTimings = [
+      { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed' as const, input_tokens: 1000, output_tokens: 940, generation_ms: 4000 },
+      { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' as const, input_tokens: 2000, output_tokens: 610, generation_ms: 3000 },
+    ];
+    const foot = (view: ReturnType<typeof render>, text: string) => within(view.getByText(text).closest('[data-history-anchor]')!.parentElement as HTMLElement).getByRole('time').parentElement!.textContent;
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={turnTimings} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
+    // The ended turn: its count once, under its last reply only.
+    expect(foot(view, 'Looking.')).not.toContain('tokens');
+    expect(foot(view, 'Found it.')).toContain('940 tokens · 235 tok/s');
+    // The working turn: nothing yet, under either reply, however many tokens have been counted so far.
+    expect(foot(view, 'On it.')).not.toContain('tokens');
+    expect(foot(view, 'Patching.')).not.toContain('tokens');
+    // Once it ends, the whole turn's count lands under its last reply.
+    view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
+    expect(foot(view, 'On it.')).not.toContain('tokens');
+    expect(foot(view, 'Patching.')).toContain('1.2K tokens · 242 tok/s');
   });
 
   test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {
