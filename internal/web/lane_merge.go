@@ -392,14 +392,14 @@ func (m *Manager) mergeInto(ctx context.Context, repo *laneRepo, base, message s
 		return "", err
 	}
 	if dir == "" {
-		return repo.mergeIntoBase(ctx, base, message)
+		return repo.mergeIntoBase(ctx, m.lanesRoot(), base, message)
 	}
 	end, err := m.beginWrite(dir)
 	if err != nil {
 		return "", err
 	}
 	defer end()
-	merged, err := repo.mergeIntoBase(ctx, base, message)
+	merged, err := repo.mergeIntoBase(ctx, m.lanesRoot(), base, message)
 	if merged != "" {
 		m.kickDiffsIn(dir)
 	}
