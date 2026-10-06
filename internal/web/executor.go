@@ -334,9 +334,13 @@ func (m *Manager) executorMemory(facts board.RunFacts, tasks map[string]board.Ta
 			delete(e.failed, id)
 		}
 	}
-	for _, id := range slices.Collect(maps.Keys(e.nudged)) {
+	for id := range e.nudged {
 		if _, ok := tasks[id]; !ok {
 			delete(e.nudged, id)
+		}
+	}
+	for id := range e.seen {
+		if _, ok := tasks[id]; !ok {
 			delete(e.seen, id)
 		}
 	}
@@ -345,7 +349,7 @@ func (m *Manager) executorMemory(facts board.RunFacts, tasks map[string]board.Ta
 		if starting[l.CardID] != "" || e.starting[l.CardID] != "" {
 			delete(tasks, l.TaskID)
 		}
-		if l.Landing {
+		if l.Landing || l.Intent != "" {
 			waiting[l.Request] = true
 		}
 	}
@@ -552,6 +556,9 @@ func (m *Manager) startPick(p board.Pick) {
 // error, and the third in a row pauses it.
 func (m *Manager) started(ctx context.Context, p board.Pick, err error) {
 	var fault providerFault
+	// Classified before the executor's mu: isClosed takes Manager.mu, which
+	// is never taken while that is held.
+	quiet := err != nil && (apiCode(err) == string(board.CodeNotReady) || plannerDown(err) || m.isClosed() || errors.Is(err, context.Canceled))
 	m.exec.mu.Lock()
 	delete(m.exec.starting, p.Card.ID)
 	switch {
@@ -560,7 +567,7 @@ func (m *Manager) started(ctx context.Context, p board.Pick, err error) {
 		delete(m.exec.epicBackoff, p.Epic.ID)
 		m.exec.mu.Unlock()
 		return
-	case apiCode(err) == string(board.CodeNotReady), plannerDown(err), m.isClosed(), errors.Is(err, context.Canceled):
+	case quiet:
 		m.exec.mu.Unlock()
 		return
 	case errors.As(err, &fault):

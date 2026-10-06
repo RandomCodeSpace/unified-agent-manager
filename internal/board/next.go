@@ -336,7 +336,8 @@ const maxFailedNudges = 3
 //
 // Each open lane attempt, in #seq order, takes the first row that applies:
 //
-//	a landing intent, no land call in flight                  land
+//	a landing intent, no land call in flight, its retry
+//	  time passed                                             land
 //	a done waiting to land, no land call in flight, its
 //	  retry time passed, holder not working or waiting        land
 //	any other pending done, blocked or split from the holder  nothing: the owner decides
@@ -379,7 +380,7 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step {
 		a := Act{Task: l.TaskID, CardID: l.CardID, Seq: l.Seq, Provider: tf.Provider}
 		switch {
 		case l.Intent != "":
-			if !mem.Landing[l.CardID] {
+			if !mem.Landing[l.CardID] && !mem.Now.Before(mem.LandRetry[l.Request]) {
 				st.Land = append(st.Land, l.Request)
 			}
 			continue

@@ -441,7 +441,7 @@ func TestExecutorNudgesOnceThenRetires(t *testing.T) {
 
 // A lane Task whose turn fails before it did any work ends its attempt as
 // aborted (ADR 0006 §4.5): the subtask is back to do, not paused, its Task
-// and lane go, and its provider backs off.
+// and lane go, its provider backs off, and the executor forgets the Task.
 func TestExecutorAbortsAnAttemptThatFailedBeforeWork(t *testing.T) {
 	r := planLaneRun(t, "true", "Leaf")
 	r.runExec()
@@ -461,6 +461,13 @@ func TestExecutorAbortsAnAttemptThatFailedBeforeWork(t *testing.T) {
 	if p.Executor == nil || !strings.Contains(p.Executor.Providers[0].Detail, "model unavailable") {
 		t.Fatalf("executor = %+v", p.Executor)
 	}
+	r.m.kickExecutor()
+	waitUntil(t, "the executor to forget the Task", func() bool {
+		r.m.exec.mu.Lock()
+		defer r.m.exec.mu.Unlock()
+		_, seen := r.m.exec.seen[task.ID]
+		return !seen
+	})
 }
 
 // A lane Task's turn that fails after it did work counts against its
@@ -544,4 +551,55 @@ func TestExecutorWaitsWhileSignedOut(t *testing.T) {
 	signOut(false)
 	r.m.kickExecutor()
 	r.running(0)
+}
+
+// A lane start that failed is recorded without waiting for mu while it
+// holds the executor's lock: a turn that ends at that moment holds mu and
+// takes the executor's lock (ADR 0006 §4.3), so that order would deadlock.
+func TestExecutorStartFailureKeepsTheLockOrder(t *testing.T) {
+	r := planLaneRun(t, "true", "Leaf")
+	pick := board.Pick{Epic: board.Card{ID: r.epic.ID, Seq: r.epic.Seq}, Card: board.Card{ID: r.leaves[0].ID, Seq: r.leaves[0].Seq}}
+	recorded := make(chan struct{})
+	r.m.mu.Lock()
+	go func() {
+		defer close(recorded)
+		r.m.started(context.Background(), pick, errors.New("no space left on device"))
+	}()
+	// Time for the failed start to reach its locks before the turn takes
+	// the executor's.
+	time.Sleep(50 * time.Millisecond)
+	took := make(chan struct{})
+	go func() {
+		// What a completed turn records, with mu held.
+		r.m.exec.mu.Lock()
+		r.m.exec.completed["fake"] = r.m.exec.clock()
+		r.m.exec.mu.Unlock()
+		close(took)
+	}()
+	select {
+	case <-took:
+		r.m.mu.Unlock()
+	case <-time.After(2 * time.Second):
+		r.m.mu.Unlock()
+		<-recorded
+		t.Fatal("a failed lane start held the executor's lock while it waited for mu")
+	}
+	<-recorded
+	if n := startFailures(r.m, r.epic.ID); n != 1 {
+		t.Fatalf("start failures = %d", n)
+	}
+}
+
+// A landing intent waits out its retry time as a done waiting to land does
+// (ADR 0006 §4.5), so the executor keeps that time while the intent is
+// stored, also for a done the owner's Accept began to land.
+func TestExecutorKeepsALandingIntentsRetryTime(t *testing.T) {
+	m := &Manager{exec: newExecutorState()}
+	at := time.Now().Add(time.Minute)
+	m.exec.landRetry["r1"], m.exec.landTries["r1"] = at, 1
+	facts := board.RunFacts{Lanes: []board.LaneFacts{{CardID: "c1", Seq: 1, TaskID: "t1", Pending: board.RequestDone, Request: "r1", Intent: "abc1234"}}}
+	_, mem := m.executorMemory(facts, map[string]board.TaskFact{}, map[string]laneTask{}, nil, nil, nil)
+	if !mem.LandRetry["r1"].Equal(at) || m.exec.landTries["r1"] != 1 {
+		t.Fatalf("retry = %v, tries %d", mem.LandRetry["r1"], m.exec.landTries["r1"])
+	}
 }

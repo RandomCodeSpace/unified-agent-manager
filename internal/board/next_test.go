@@ -340,13 +340,14 @@ func TestNext(t *testing.T) {
 			want:  Step{Start: []Pick{{Epic: epicRun("E", "copilot", 1, 0).Epic, Card: leafCard("x1", 4, 3)}}},
 		},
 		{
-			name: "a landing intent lands unless a land call is in flight",
+			name: "a landing intent lands unless a land call is in flight or its retry time has not passed",
 			facts: RunFacts{Lanes: []LaneFacts{
 				{CardID: "h1", Seq: 1, TaskID: "t1", Pending: RequestDone, Request: "r1", Landing: true, Intent: landedSHA},
 				{CardID: "h2", Seq: 2, TaskID: "t2", Pending: RequestDone, Request: "r2", Landing: true, Intent: landedSHA},
+				{CardID: "h3", Seq: 3, TaskID: "t3", Pending: RequestDone, Request: "r3", Intent: landedSHA},
 			}},
-			tasks: map[string]TaskFact{"t1": turn("copilot", TurnWorking), "t2": idle("copilot")},
-			mem:   Memory{Now: nextAt, Landing: map[string]bool{"h2": true}, LandRetry: map[string]time.Time{"r1": nextAt.Add(time.Hour)}},
+			tasks: map[string]TaskFact{"t1": turn("copilot", TurnWorking), "t2": idle("copilot"), "t3": idle("copilot")},
+			mem:   Memory{Now: nextAt, Landing: map[string]bool{"h2": true}, LandRetry: map[string]time.Time{"r1": nextAt, "r3": nextAt.Add(time.Second)}},
 			want:  Step{Land: []string{"r1"}},
 		},
 		{

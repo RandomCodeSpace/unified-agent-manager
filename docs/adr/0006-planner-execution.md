@@ -123,7 +123,7 @@ ALTER TABLE project_settings ADD COLUMN accept_parallel INTEGER NOT NULL DEFAULT
 ```sql
 UPDATE cards SET paused = 'owner' WHERE kind = 'epic' AND paused = '' AND id IN (SELECT epic_id FROM runs);
 ```
-Every epic approved before the executor existed comes back paused, so the deploy that brings the executor starts nothing on its own. Those approvals may be weeks old, in yolo mode, and made before the git preflight existed. Resume on such an epic runs the Approve preflight (§4.6).
+Every epic approved before the executor existed comes back paused, so the deploy that brings the executor starts nothing on its own. Those approvals may be weeks old, in yolo mode, and made before the git preflight existed. Resume on such an epic runs the Approve preflight (§4.6). As built, v7 also adds an automatic comment by `uam` on each epic it pauses, before the UPDATE, saying why and that Resume runs the Approve checks.
 
 **Left out on purpose:**
 - No `holds.workdir`. The worktree path derives from the lanes root, the Project ID and the attempt name in `holds.branch` (§5.1).
@@ -232,7 +232,7 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 
 | Holder | Action |
 |---|---|
-| Open hold has a landing intent, no land call in flight | Land: finish it (§5.4) |
+| Open hold has a landing intent, no land call in flight, retry time passed | Land: finish it (§5.4) |
 | Pending done marked `landing`, no land call in flight, retry time passed | Land |
 | Another pending done, blocked or split from the holder | None: the owner decides. The slot is free |
 | Working or Waiting | None |
