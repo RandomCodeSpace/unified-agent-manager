@@ -608,6 +608,10 @@ type WebSettings struct {
 	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
 	// a display preference, never a check on requests.
 	HiddenModels map[string][]string `json:"hidden_models,omitempty"`
+	// SubagentModels lists, by provider, the model IDs its subagents may use,
+	// the fallback first: without duplicates, valid as hidden model IDs are,
+	// at most MaxHiddenModels each. A provider without an entry is not limited.
+	SubagentModels map[string][]string `json:"subagent_models,omitempty"`
 	// TitleModel maps a provider to its Utility model: the model UAM uses for
 	// its own small AI jobs, such as titling new Tasks. The key keeps its
 	// first name, title_model. A provider without an entry uses its cheapest
@@ -788,6 +792,39 @@ func cleanHiddenModels(w *WebSettings) {
 	}
 }
 
+// cleanSubagentModels keeps the valid entries of loaded subagent models as
+// cleanHiddenModels does, in their stored order.
+func cleanSubagentModels(w *WebSettings) {
+	for provider, ids := range w.SubagentModels {
+		clean := UniqueModelIDs(slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !ValidHiddenModel(id) }))
+		if len(clean) > MaxHiddenModels {
+			clean = clean[:MaxHiddenModels]
+		}
+		if len(clean) != len(ids) {
+			log.Warn("cleaning stored subagent models", "provider", provider)
+		}
+		if provider == "" || hasControlChar(provider) || len(provider) > maxWebModelBytes || len(clean) == 0 {
+			delete(w.SubagentModels, provider)
+			continue
+		}
+		w.SubagentModels[provider] = clean
+	}
+	if len(w.SubagentModels) == 0 {
+		w.SubagentModels = nil
+	}
+}
+
+// UniqueModelIDs returns ids in order, each once.
+func UniqueModelIDs(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // cleanTitleModels drops loaded title models whose provider or model ID is
 // empty, too long or holds a control character.
 func cleanTitleModels(w *WebSettings) {
@@ -820,6 +857,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"terminal":            {},
 	"planner":             {},
 	"hidden_models":       {},
+	"subagent_models":     {},
 	"title_model":         {},
 	"custom_models":       {},
 	"task_defaults":       {},
@@ -1067,6 +1105,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	dropInvalidProjects(&cfg)
 	dropInvalidRoutines(&cfg)
 	cleanHiddenModels(&cfg.WebSettings)
+	cleanSubagentModels(&cfg.WebSettings)
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
 	cleanTaskDefaults(&cfg.WebSettings)
