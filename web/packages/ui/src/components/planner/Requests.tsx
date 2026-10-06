@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { BadgeCheck, Check, ChevronRight, FileDiff, GitCommitHorizontal, MessageSquareText, SquareCheck, SquareTerminal, Undo2, X } from 'lucide-react';
 import { useMemo, useState, type ReactNode, type SubmitEvent } from 'react';
 import { plannerErrorText, type BoardRequest, type Card, type Evidence, type Rejection, type RequestFlag, type RequestKind, type SessionSummary } from '../../api';
-import { plansToApprove, type PlanToApprove } from '../../lib/board';
+import { approvedEpicOf, plansToApprove, type PlanToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { dateTime, relTime, timeAgo } from '../common';
 import { Button } from '../ui/button';
@@ -134,6 +134,27 @@ export function splitSentence(card: Card | undefined, byId: ReadonlyMap<string, 
   return parent?.kind === 'story' ? `Adds ${n} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.${hold}` : `Turns #${card?.seq} into a story with ${n}.${hold}`;
 }
 
+/** A parent as the owner reads it: "#seq title", or the root. */
+function parentText(id: unknown, byId: ReadonlyMap<string, Card>): string {
+  if (!id) return 'the root';
+  const p = byId.get(String(id));
+  return p ? `#${p.seq} ${p.title}` : 'a card not on this Board';
+}
+
+/**
+ * The approved epics a move of `card` under `to` leaves and enters, each with its run (ADR 0006
+ * §6.3 rule 5): accepting it changes what the card runs under.
+ */
+function runCrossing(card: Card | undefined, to: unknown, byId: ReadonlyMap<string, Card>): string[] {
+  if (!card) return [];
+  const parent = to ? byId.get(String(to)) : undefined;
+  const from = approvedEpicOf(card, byId);
+  const into = parent ? approvedEpicOf(parent, byId) : undefined;
+  if (from?.id === into?.id) return [];
+  const runs = (e: Card) => `#${e.seq} ${e.title}, which runs in ${e.run!.mode} mode, ${e.run!.parallel} ${e.run!.parallel === 1 ? 'subtask' : 'subtasks'} at a time.`;
+  return [...(from ? [`Out of approved epic ${runs(from)}`] : []), ...(into ? [`Into approved epic ${runs(into)}`] : [])];
+}
+
 /** What a split or change request proposes. */
 function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; card: Card | undefined; byId: ReadonlyMap<string, Card> }>) {
   if (r.kind === 'split') {
@@ -163,18 +184,32 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
     const patch = r.payload.patch && typeof r.payload.patch === 'object' ? (r.payload.patch as Record<string, unknown>) : {};
     const fields = Object.entries(patch);
     if (typeof r.payload.proposed_accept_cmd === 'string' && r.payload.proposed_accept_cmd) fields.push(['proposed acceptance command', r.payload.proposed_accept_cmd]);
+    // A move names both parents, and the approved epics it leaves or enters.
+    const crossing = 'parent_id' in patch ? runCrossing(card, patch.parent_id, byId) : [];
     return (
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-caption">
-        {fields.map(([k, v]) => (
-          <div key={k} className="contents">
-            <dt className="text-muted">{k.replaceAll('_', ' ')}</dt>
-            <dd className="min-w-0">
-              {card && k in card && <span className="text-muted line-through">{String((card as unknown as Record<string, unknown>)[k] ?? '')}</span>}
-              <span className="block text-ink">{String(v)}</span>
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <div className="flex flex-col gap-0.5">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-caption">
+          {fields.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted">{k === 'parent_id' ? 'parent' : k.replaceAll('_', ' ')}</dt>
+              <dd className="min-w-0">
+                {k === 'parent_id' ? (
+                  <>
+                    {card && <span className="text-muted line-through">{parentText(card.parent_id, byId)}</span>}
+                    <span className="block text-ink">{parentText(v, byId)}</span>
+                  </>
+                ) : (
+                  <>
+                    {card && k in card && <span className="text-muted line-through">{String((card as unknown as Record<string, unknown>)[k] ?? '')}</span>}
+                    <span className="block text-ink">{String(v)}</span>
+                  </>
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {crossing.map((line) => <p key={line} className="text-caption text-ink">{line}</p>)}
+      </div>
     );
   }
   if (r.kind === 'blocked' && typeof r.payload.blocker === 'string') {

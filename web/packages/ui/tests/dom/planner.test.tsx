@@ -1335,4 +1335,53 @@ describe('approving an epic (ADR 0006)', () => {
     expect(plans.getByRole('button', { name: '#18 Release automation' })).toBeTruthy();
     expect(plans.getByText('1 to approve')).toBeTruthy();
   });
+
+  test('a change request moving a card names both parents and the approved epics it leaves and enters, with their runs', async () => {
+    const { user } = renderApp('#planner=p1');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p1'),
+      async (real) => {
+        const data = await (await real()).json();
+        const run = (mode: string, parallel: number) => ({ provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode, parallel, approved_at: new Date().toISOString() });
+        const cards = data.cards.map((c: { id: string }) => (c.id === 'cp1-1' ? { ...c, run: run('safe', 2) } : c.id === 'cp1-18' ? { ...c, run: run('yolo', 3) } : c));
+        const requests = data.requests.map((r: { id: string }) => (r.id === 'rq3' ? { ...r, payload: { patch: { parent_id: 'cp1-19' } } } : r));
+        return reply(200, { ...data, cards, requests });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: /^#1 Faster first load of long transcripts/ });
+      await user.click(screen.getByRole('button', { name: /^Inbox, \d+ pending$/ }));
+      const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+      const change = within(inbox.getByRole('article', { name: 'Change request on #9' }));
+      expect(change.getByText('parent')).toBeTruthy();
+      expect(change.getByText('#7 Trim the snapshot payload')).toBeTruthy();
+      expect(change.getByText('#19 Cross-compile the release matrix')).toBeTruthy();
+      expect(change.getByText('Out of approved epic #1 Faster first load of long transcripts, which runs in safe mode, 2 subtasks at a time.')).toBeTruthy();
+      expect(change.getByText('Into approved epic #18 Release automation, which runs in yolo mode, 3 subtasks at a time.')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('under an approved epic Triage offers no Re-pin and says approving the epic again re-pins', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-1');
+    const panel = await openCard(user, tree, 6);
+    await user.click(panel.getByRole('button', { name: 'Triage' }));
+    const repin = (await panel.findByRole('button', { name: /^Re-pin at / })) as HTMLButtonElement;
+    expect(repin.disabled).toBe(true);
+    expect(panel.getByText('Under approved epic #1, approving it again re-pins its cards at HEAD.')).toBeTruthy();
+  });
+
+  test('under an approved epic Mark done on a proposal is not offered, as only the approval confirms it', async () => {
+    const { user, tree } = await openPlanner();
+    await approve('cp1-1');
+    // #11 folds after #9, its story's last confirmed subtask shown.
+    const last = tree.getByRole('treeitem', { name: /^#9 / });
+    await user.click(tree.getAllByRole('treeitem', { name: '+1 suggested' }).find((r) => r.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_PRECEDING)!);
+    const panel = await openCard(user, tree, 11);
+    expect((panel.getByRole('button', { name: 'Mark done' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(panel.getByText('Approve #1 again to confirm it first: under an approved epic only the approval confirms a card.')).toBeTruthy();
+  });
 });

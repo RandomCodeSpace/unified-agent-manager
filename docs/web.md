@@ -1298,13 +1298,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Settings → New tasks names one), mode (Safe warns that a permission prompt
   stops unattended work) and subtasks at a time (1 to 4, 2 by default).
   Approving confirms every card it showed and records the run; when a card
-  changed meanwhile, the dialog names it, shows it as it is now and asks
-  again. A card added under an approved epic stays a proposal ("1 to
+  changed or was added meanwhile, the dialog names it, shows it as it is
+  now and asks again. A card added under an approved epic stays a proposal ("1 to
   approve" on the epic) until the epic is approved again. Under an approved
   epic nothing is confirmed or started card by card: Confirm, Launch, Do
-  whole story and adding a Task to its stories are not offered, and Pause
+  whole story and adding a Task to its stories are not offered, Mark done
+  on a proposal waits for the next approval, Triage's Re-pin gives way to
+  approving the epic again, which re-pins the cards it lists, and Pause
   and Resume block or free a card and everything under it; a card moved out
-  of the epic drops its pause. Restoring a cancelled card there brings it
+  of the epic drops its pause. An agent's move into or out of an approved
+  epic, or out from under a pause, reaches the Inbox as a change request
+  that names both parents and the run of each approved epic it leaves or
+  enters. Restoring a cancelled card there brings it
   back as a proposal, the epic itself excepted. Nothing runs yet: execution
   comes later.
   Card links in the conversation open the card here and never leave the

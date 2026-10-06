@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
-import { cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -86,6 +86,7 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
   const leaf = c.kind === 'subtask';
   // A started subtask keeps its plan (ADR 0005 decision 8); ticks and the owner's own fields go on.
   const locked = lockedReason(c);
+  const approved = approvedEpicOf(c, byId);
   const path = cardPath(c, byId).slice(0, -1);
   const job = Object.values(jobs).filter((j) => j.card_id === c.id && j.kind === 'suggest').at(-1);
   // Check at HEAD is a job, started here or from a row's menu: its run arrives in the job's last board_job frame.
@@ -190,10 +191,12 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
               <span className="font-medium capitalize">{triage.verdict}</span>: {triage.sentence}
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {triage.verdict === 'valid' && <Button size="sm" variant="secondary" onClick={() => void run('repin', 're-pin the subtask', () => api.planner.confirm(c.id)).then(() => setTriage(null))}>Re-pin at {triage.head}</Button>}
+              {triage.verdict === 'valid' && <Button size="sm" variant="secondary" disabled={!!approved} aria-describedby={approved ? 'planner-repin-reason' : undefined} onClick={() => void run('repin', 're-pin the subtask', () => api.planner.confirm(c.id)).then(() => setTriage(null))}>Re-pin at {triage.head}</Button>}
               {triage.verdict === 'moot' && <Button size="sm" variant="danger" onClick={() => cardActions.ask({ title: `Cancel #${c.seq}?`, label: 'Why (required)', confirm: 'Cancel card', danger: true, required: true, initial: triage.sentence, run: (t) => api.planner.status(c.id, 'cancelled', t) })}>Cancel with this comment</Button>}
               {triage.verdict === 'conflicts' && <Button size="sm" variant="secondary" onClick={() => setComment(triage.sentence)}>Add as a comment</Button>}
             </div>
+            {/* Re-pin confirms the card, which under an approved epic only its approval does; that approval pins every card it lists. */}
+            {triage.verdict === 'valid' && approved && <Note id="planner-repin-reason">Under approved epic #{approved.seq}, approving it again re-pins its cards at HEAD.</Note>}
           </div>
         )}
 
