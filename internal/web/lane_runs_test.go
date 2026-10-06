@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // laneRun is a planner whose Project holds a.txt on main and an approved
@@ -738,5 +740,35 @@ func TestBootSweepsLanesNoAttemptHas(t *testing.T) {
 	}
 	if got := comments(r.card(r.leaves[0].ID)); strings.Count(strings.Join(got, "\n"), want) != 1 {
 		t.Fatalf("a second boot noted again: %q", got)
+	}
+}
+
+// Recovery leaves a Project that never had a lane alone: git keeps the
+// worktrees it lists there, a missing one included, and a Project that is
+// not a git repository logs nothing.
+func TestBootLeavesProjectsWithoutLanesAlone(t *testing.T) {
+	f := newPlanner(t)
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	away := filepath.Join(parent, "away")
+	gitIn(t, f.repo, "worktree", "add", "-q", "--detach", away)
+	if err := os.RemoveAll(away); err != nil {
+		t.Fatal(err)
+	}
+	addProject(t, f.m, t.TempDir())
+	logs := &lockedBuffer{}
+	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+	f.m.closeBoard()
+	if err := f.m.openBoard(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if list := gitOutput(t, f.repo, "worktree", "list", "--porcelain"); !strings.Contains(list, away) {
+		t.Fatalf("worktrees = %s, want %s kept", list, away)
+	}
+	if strings.Contains(logs.String(), "lanes failed") {
+		t.Fatalf("logs = %s", logs)
 	}
 }

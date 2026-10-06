@@ -1032,7 +1032,8 @@ func (r *laneRepo) abortOwnMerge(ctx context.Context, l lane) error {
 // forgets worktrees whose directory is gone, attempt branches no attempt
 // has and that hold no commit of their own are deleted, and each landing on
 // the integration branch whose request is not accepted is named on its
-// card.
+// card. A Project that never had a lane is left alone, git not run: its
+// repository's worktrees are the owner's.
 func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[string]bool) error {
 	m.mu.Lock()
 	var active []string
@@ -1043,7 +1044,10 @@ func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[
 	}
 	m.mu.Unlock()
 	entries, err := os.ReadDir(filepath.Join(m.lanesRoot(), project))
-	if err != nil && !os.IsNotExist(err) {
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	for _, e := range entries {
