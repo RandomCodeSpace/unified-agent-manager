@@ -190,3 +190,19 @@ test.each(Object.entries(examples))('%s draws actual series geometry determinist
   drawing.getZr().flush();
   expect(paths()).toEqual(first);
 });
+
+test('a drawing the library rejects shows its reason, and the failed instance is dropped before unmount', async () => {
+  const chart = { title: 'Broken', kind: 'echarts' as const, labels: [], series: [], options: { xAxis: { type: 'category', data: ['Mon'] }, yAxis: { type: 'value' }, series: [{ type: 'line', data: { Mon: 1 } }] } as never };
+  const { rerender, unmount } = render(<EChart option={chartOption(chart, { width: 480, height: 240 })} width={480} height={240} label="Broken chart" />);
+  const note = await screen.findByRole('status');
+  expect(note.textContent).toMatch(/^The chart could not be drawn: .+/);
+  const host = screen.getByRole('img', { name: 'Broken chart' });
+  expect(getInstanceByDom(host)).toBeUndefined();
+  // The library's own message names what is missing; a fresh drawing takes the next option.
+  rerender(<EChart option={chartOption({ ...chart, options: { series: [{ type: 'bar', data: [1, 2] }] } as never }, { width: 480, height: 240 })} width={480} height={240} label="Broken chart" />);
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe('The chart could not be drawn: xAxis "0" not found'));
+  rerender(<EChart option={chartOption({ ...chart, options: { xAxis: { type: 'category', data: ['Mon'] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [1] }] } as never }, { width: 480, height: 240 })} width={480} height={240} label="Broken chart" />);
+  await waitFor(() => expect(host.querySelector('svg path')).toBeTruthy());
+  expect(screen.queryByRole('status')).toBeNull();
+  unmount();
+});

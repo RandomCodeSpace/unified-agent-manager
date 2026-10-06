@@ -142,6 +142,27 @@ describe('charts', () => {
     }
   });
 
+  test('a chart the drawing library rejects says why, and its data still opens', async () => {
+    const chart: Chart = {
+      title: 'Spend by day', kind: 'echarts', x: '', y: [], labels: [], series: [], at: '2026-10-03T12:00:00Z',
+      // A model's series data as an object: ECharts throws while drawing and again when disposed.
+      options: { xAxis: { type: 'category', data: ['Mon'] }, yAxis: { type: 'value' }, series: [{ type: 'line', data: { Mon: 1 } }] } as never,
+    };
+    const read = vi.spyOn(api, 'chart').mockResolvedValue(chart);
+    const user = userEvent.setup();
+    try {
+      render(<ChartCard sessionId="chart-task" callId="broken" />);
+      const figure = within(await screen.findByRole('figure', { name: 'Chart: Spend by day' }));
+      expect((await figure.findByRole('status')).textContent).toMatch(/^The chart could not be drawn: .+/);
+      await user.click(figure.getByRole('button', { name: 'Chart tools' }));
+      const tools = within(await screen.findByRole('dialog', { name: 'Chart tools' }));
+      await user.click(tools.getByRole('button', { name: 'Data' }));
+      expect(figure.getByRole('region', { name: 'Data for Spend by day' }).textContent).toContain('"type": "line"');
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   test('series controls toggle the actual drawing and keep their names available to the keyboard', async () => {
     const { user } = await openTask('t-chart');
     const figure = within(await screen.findByRole('figure', { name: 'Chart: Changes per week, by area' }));
