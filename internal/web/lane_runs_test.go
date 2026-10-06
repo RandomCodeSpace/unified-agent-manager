@@ -803,7 +803,7 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	r.landed(one, 0)
 	noHooks("a landing with leftovers")
 	writeRepoFile(t, l2.dir, "c.txt", "c\n")
-	r.landed(two, 1)
+	landed := r.landed(two, 1)
 	noHooks("a landing that merges the moved tip")
 	r.idle(one.ID)
 	if _, err := r.m.Archive(one.ID); err != nil {
@@ -831,6 +831,28 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 		t.Fatal("the boot sweep did not run")
 	}
 	noHooks("the boot sweep")
+
+	// uam's git that writes objects only: a sync merge of the owner's
+	// commit, a revert chain, and a merge into a base nobody has checked out.
+	commitFile(t, r.repo, "d.txt", "d\n")
+	gitIn(t, r.repo, "switch", "-q", "-c", "owner")
+	_ = os.Remove(ran)
+	ctx := context.Background()
+	repo, err := openLanes(ctx, r.project, r.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip, err := repo.syncInteg(ctx, "main")
+	if err != nil || tip == landed {
+		t.Fatalf("sync = %s, %v; want a sync merge", tip, err)
+	}
+	if _, err := repo.revertChain(ctx, tip, []revertItem{{sha: landed, seq: r.leaves[1].Seq, title: "Second"}}); err != nil {
+		t.Fatal(err)
+	}
+	if merged, err := repo.mergeIntoBase(ctx, r.m.lanesRoot(), "main", "Merge plan"); err != nil || merged == "" {
+		t.Fatalf("merge = %q, %v", merged, err)
+	}
+	noHooks("uam's git that writes objects only")
 
 	gitIn(t, r.repo, "branch", "probe")
 	gitIn(t, r.repo, "status", "--porcelain")

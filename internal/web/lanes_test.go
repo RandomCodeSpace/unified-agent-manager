@@ -483,7 +483,7 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 		before := f.refs()
 		for range 2 {
 			f.tip()
-			if merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil || merged != "" {
+			if merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil || merged != "" {
 				t.Fatalf("%s: merging again = %q, %v", when, merged, err)
 			}
 			if needsMerge() {
@@ -497,7 +497,7 @@ func TestLaneSyncAndMergeSettle(t *testing.T) {
 	if !needsMerge() {
 		t.Fatal("main has the landing before any merge")
 	}
-	if _, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil {
+	if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil {
 		t.Fatal(err)
 	}
 	settled("after a merge")
@@ -636,7 +636,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	commitFile(t, l.dir, "b.txt", "lane\n")
 	landed := f.land(l, 1)
 
-	merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan: Epic (#1)")
+	merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan: Epic (#1)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +649,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(f.top, "b.txt")); err != nil {
 		t.Fatal("the owner's working tree lacks the merged file")
 	}
-	if again, err := f.r.mergeIntoBase(f.ctx, "main", "again"); err != nil || again != "" {
+	if again, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "again"); err != nil || again != "" {
 		t.Fatalf("merging again = %q, %v", again, err)
 	}
 
@@ -660,7 +660,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	f.land(next, 2)
 	writeRepoFile(t, f.top, "a.txt", "owner, uncommitted\n")
 	head := gitOutput(t, f.top, "rev-parse", "HEAD")
-	_, err = f.r.mergeIntoBase(f.ctx, "main", "Merge")
+	_, err = f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge")
 	if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, "a.txt") {
 		t.Fatalf("refusal = %q", e.Message)
 	}
@@ -674,7 +674,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.r.mergeIntoBase(f.ctx, "main", "Merge"); err == nil {
+	if _, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge"); err == nil {
 		t.Fatal("merge ran past a refusing hook")
 	}
 	if merging, _ := f.r.mergeHead(f.ctx, gitAt{dir: f.top}); merging {
@@ -690,7 +690,7 @@ func TestLaneMergeIntoACheckedOutBase(t *testing.T) {
 	// A conflict with the owner's committed work refuses before git merge.
 	commitFile(t, f.top, "a.txt", "owner\n")
 	head = gitOutput(t, f.top, "rev-parse", "HEAD")
-	_, err = f.r.mergeIntoBase(f.ctx, "main", "Merge")
+	_, err = f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge")
 	if e := wantCode(t, err, codeMergeConflict); !strings.Contains(e.Message, "a.txt") || !slices.Equal(e.Refs, []string{"#2"}) {
 		t.Fatalf("refusal = %q refs %v", e.Message, e.Refs)
 	}
@@ -708,7 +708,7 @@ func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	gitIn(t, f.top, "checkout", "-q", "-b", "owner")
 	writeRepoFile(t, f.top, "b.txt", "owner, uncommitted\n")
 
-	merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan")
+	merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,6 +720,26 @@ func TestLaneMergeIntoABaseNobodyHasCheckedOut(t *testing.T) {
 	}
 	if got := gitOutput(t, f.top, "status", "--porcelain"); got != "?? b.txt" {
 		t.Fatalf("the owner's working tree changed: %q", got)
+	}
+}
+
+// uam merges into base only where the owner has it checked out: a lane with
+// base checked out holds the merge up git_busy, and uam runs no git there.
+func TestLaneMergeWaitsForALaneWithTheBaseCheckedOut(t *testing.T) {
+	f := newLaneFixture(t)
+	l := f.start(1)
+	commitFile(t, l.dir, "b.txt", "lane\n")
+	f.land(l, 1)
+	gitIn(t, f.top, "switch", "-q", "-c", "owner")
+	gitIn(t, l.dir, "switch", "-q", "main")
+	refs := f.refs()
+
+	_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
+	if e := wantCode(t, err, codeGitBusy); !strings.Contains(e.Message, realPath(l.dir)) {
+		t.Fatalf("refusal = %q", e.Message)
+	}
+	if f.refs() != refs || !gone(filepath.Join(l.dir, "b.txt")) {
+		t.Fatal("a merge ran in the lane")
 	}
 }
 
@@ -737,7 +757,7 @@ func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	head := commitFile(t, f.top, "d.txt", "main\n")
 	refused := func(want string) {
 		t.Helper()
-		_, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan")
+		_, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan")
 		if e := wantCode(t, err, codeLocalChanges); !strings.Contains(e.Message, want) {
 			t.Fatalf("refusal = %q, want %q", e.Message, want)
 		}
@@ -760,7 +780,7 @@ func TestLaneMergeWaitsForTheOwnersGitOperation(t *testing.T) {
 	}
 	refused("a rebase is in progress")
 	gitIn(t, f.top, "rebase", "--abort")
-	if merged, err := f.r.mergeIntoBase(f.ctx, "main", "Merge plan"); err != nil || merged == "" {
+	if merged, err := f.r.mergeIntoBase(f.ctx, f.root, "main", "Merge plan"); err != nil || merged == "" {
 		t.Fatalf("merge after the owner finished = %q, %v", merged, err)
 	}
 }
@@ -1066,7 +1086,7 @@ func TestLaneGitFailuresAreErrors(t *testing.T) {
 	_, failures["squashLane"] = f.r.squashLane(ctx, l, tip, "x")
 	_, failures["finishOnInteg"] = f.r.finishOnInteg(ctx, tip)
 	_, failures["revertChain"] = f.r.revertChain(ctx, tip, nil)
-	_, failures["mergeIntoBase"] = f.r.mergeIntoBase(ctx, "main", "x")
+	_, failures["mergeIntoBase"] = f.r.mergeIntoBase(ctx, f.root, "main", "x")
 	for name, err := range failures {
 		if err == nil {
 			t.Errorf("%s succeeded without git", name)

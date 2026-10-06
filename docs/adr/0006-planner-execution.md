@@ -466,7 +466,8 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
    2. `merge-tree --write-tree HEAD integ`. A conflict answers `merge_conflict` with the files.
    3. `git merge --no-ff --no-edit -m "Merge uam-plan-x: <epic title> (#seq)" <integ>` through the owner's git write path, so hooks run and git refuses to overwrite local changes (`local_changes`, with the files).
 2. **`base_ref` not checked out anywhere:** `merge-tree --write-tree base integ`, `commit-tree -p base -p integ`, then a compare-and-swap `update-ref refs/heads/<base_ref>`. No working tree changes.
-3. uam never pushes and never force-moves `base_ref`.
+3. **`base_ref` checked out in a lane:** `git_busy`. uam never runs the merge of step 1 in a lane.
+4. uam never pushes and never force-moves `base_ref`.
 
 **Outcomes.**
 - Success: the epic gets the comment "Merged into `<base_ref>` as `<sha>`", which lists the landed subtasks it carried and marks those that changed tests or build files (§9 decision 3).

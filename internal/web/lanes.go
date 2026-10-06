@@ -634,10 +634,11 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 // so uam's sync merges never come back to base as merges that change
 // nothing. Where a worktree has base checked out it runs git merge there, so
 // hooks run and git refuses to overwrite local changes; otherwise it merges
-// as objects and moves base by compare-and-swap. A conflict refuses
-// merge_conflict before anything is touched. The caller holds the land
-// mutex, and beginWrite when base is checked out.
-func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (string, error) {
+// as objects and moves base by compare-and-swap. A lane under lanes, the
+// lanes root, with base checked out refuses git_busy: uam runs no git merge
+// in a lane. A conflict refuses merge_conflict before anything is touched.
+// The caller holds the land mutex, and beginWrite when base is checked out.
+func (r *laneRepo) mergeIntoBase(ctx context.Context, lanes, base, message string) (string, error) {
 	baseTip, err := r.tipOf(ctx, base)
 	if err != nil {
 		return "", err
@@ -664,6 +665,10 @@ func (r *laneRepo) mergeIntoBase(ctx context.Context, base, message string) (str
 	dir, err := r.checkedOut(ctx, base)
 	if err != nil {
 		return "", err
+	}
+	if dir != "" && inDir(realPath(lanes), realPath(dir)) {
+		return "", &Error{Status: http.StatusConflict, Code: codeGitBusy,
+			Message: fmt.Sprintf("%s is checked out in the lane %s; uam merges into it only where you have it checked out", displaytext.Sanitize(base), displaytext.Sanitize(dir))}
 	}
 	if dir != "" {
 		return r.mergeIn(ctx, dir, tip, message)
