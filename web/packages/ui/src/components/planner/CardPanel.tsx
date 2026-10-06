@@ -1,8 +1,8 @@
 import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitBranch, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { plannerErrorText, type Card, type CardDetail, type ChecklistItem } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove } from '../../lib/board';
+import { plannerErrorText, type Card, type CardDetail, type ChecklistItem, type ProviderWait } from '../../api';
+import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, runSummary } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -34,9 +34,11 @@ function Group({ title, children, action }: Readonly<{ title: string; children: 
 /**
  * The card detail (ADR 0005 §10): a side panel with the card's fields, win condition,
  * checklist, blocker links, its evidence trail (every request, decided ones included), hold
- * history, comments, the owner-only acceptance command and paths, and the card's actions.
+ * history, comments, the owner-only acceptance command and paths, and the card's actions. An
+ * approved epic says how its run stands, and the provider it waits for among `waits` (ADR 0006
+ * §3.2).
  */
-export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void }>) {
+export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; waits?: readonly ProviderWait[] }>) {
   const { ui, cards, openCard } = useShownBoard();
   const { narrow } = useApp();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
@@ -65,12 +67,29 @@ export function CardPanel({ inline, open, onClose, onClosed }: Readonly<{ inline
           </Button>
         )}
       </PanelHeader>
-      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
+      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} waits={waits} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
     </SidePanel>
   );
 }
 
-function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void }>) {
+const NO_WAITS: readonly ProviderWait[] = [];
+
+/** "Waiting for Copilot: rate limited" when the provider the epic `c` runs on waits; '' otherwise. */
+function providerWait(c: Card, waits: readonly ProviderWait[]): string {
+  const w = c.run && waits.find((x) => x.provider === c.run!.provider);
+  return w ? `Waiting for ${w.name || w.provider}: ${w.detail}` : '';
+}
+
+/** An approved epic's run in words, with no spinner (one ring per place): "Running 2 of 2 · Ready 3 · Waiting 4". */
+function RunLine({ summary: r }: Readonly<{ summary: ReturnType<typeof runSummary> }>) {
+  return (
+    <p className="text-caption text-muted tabular-nums">
+      Running {r.running} of {r.parallel} · Ready {r.ready} · Waiting {r.waiting}
+    </p>
+  );
+}
+
+function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[] }>) {
   const api = useApi();
   const { projects, jobs, cards } = useShownBoard();
   const { sessions } = usePlannerTasks();
@@ -153,12 +172,13 @@ function CardBody({ card: c, byId, onOpen }: Readonly<{ card: Card; byId: Readon
             {!leaf && <ProgressText card={c} long />}
             {!c.confirmed && <Chip><Sparkles aria-hidden="true" className="size-3" />Suggested, {expiresIn(c.expires_at)}</Chip>}
             {c.held_by && <TaskChip taskId={c.held_by} />}
-            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} />
+            <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} waiting={providerWait(c, waits)} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
             {c.due && <span>Due {c.due}</span>}
             {c.labels.map((l) => <Chip key={l} fill="well">{l}</Chip>)}
           </div>
+          {c.run && c.status !== 'done' && c.status !== 'cancelled' && <RunLine summary={runSummary(c, byId)} />}
           {locked && !unassigned && <Note tone="muted">{locked}</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}

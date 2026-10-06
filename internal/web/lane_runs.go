@@ -34,6 +34,9 @@ const (
 	// landIntent is the landing step after the intent is stored and before
 	// the integration branch moves, for landHook.
 	landIntent = "intent"
+	// laneCreated is the lane start step after the lane's Task is made and
+	// before its attempt starts, for landHook.
+	laneCreated = "created"
 	// laneStopWait bounds how long Stop waits for the stopped Task's turn to
 	// end before archiving it.
 	laneStopWait = 2 * time.Minute
@@ -215,12 +218,14 @@ func (m *Manager) approvePreflight(ctx context.Context, project string) (string,
 	return base, unlock, nil
 }
 
-// startLane starts a lane at the subtask c of the approved epic (ADR 0006
-// §5.3): under the Project's land mutex it syncs the integration branch,
-// checks the subtask is ready, adds the lane at the integration tip, makes
-// the Task in it with the run's settings, and starts the hold; then it
-// sends the run's preamble. A start that fails after the Task exists ends
-// the attempt as aborted, discards the Task, and removes the lane.
+// startLane is the executor's start of a lane at the subtask c of the
+// approved epic (ADR 0006 §5.3): under the Project's land mutex it syncs
+// the integration branch, checks the subtask is ready, adds the lane at the
+// integration tip, makes the Task in it with the run's settings, and starts
+// the hold; then it sends the run's preamble. A start that fails after the
+// Task exists ends the attempt as aborted, discards the Task, and removes
+// the lane. A Task that cannot be made or does not take its preamble is a
+// providerFault.
 func (m *Manager) startLane(c, epic board.Card) (board.Card, SessionSummary, error) {
 	ctx := m.ctx
 	dir, err := m.boardDir(ctx, c.ProjectID)
@@ -238,7 +243,9 @@ func (m *Manager) startLane(c, epic board.Card) (board.Card, SessionSummary, err
 	}
 	prompt, err := m.runPreamble(ctx, held, start)
 	if err == nil {
-		err = m.sendFirstPrompt(summary.ID, prompt)
+		if err = m.sendFirstPrompt(summary.ID, prompt); err != nil {
+			err = providerFault{err}
+		}
 	}
 	if err != nil {
 		m.abortLane(held, summary.ID, err)
@@ -294,9 +301,12 @@ func (m *Manager) startLaneLocked(ctx context.Context, c, epic board.Card, dir s
 	summary, err := m.Create(create)
 	if err != nil {
 		m.dropLane(ctx, repo, c.ProjectID, l)
-		return c, SessionSummary{}, laneStart{}, err
+		return c, SessionSummary{}, laneStart{}, providerFault{err}
 	}
 	m.titleBoardTask(summary.ID, create.Name)
+	if m.landHook != nil {
+		m.landHook(laneCreated)
+	}
 	var held board.Card
 	err = m.withBoard(func(st *board.Store) error {
 		var err error
@@ -750,6 +760,7 @@ func (m *Manager) acceptLane(r board.Request, c board.Card, comment string) (str
 func (m *Manager) runLand(job *boardJob, id, comment string) {
 	ctx, cancel := m.bound(context.Background())
 	defer cancel()
+	defer m.kickExecutor()
 	defer m.unmarkLanding(job.card.ID)
 	out, err := m.landAndAccept(ctx, id, board.DecidedByOwner, comment, false)
 	switch {

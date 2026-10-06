@@ -552,7 +552,7 @@ export function CardDetails({ card: c, plan, taskId, className }: Readonly<{ car
           {approve && (
             <Button size="sm" variant="primary" disabled={!!busy} onClick={approve.onClick}>
               <BadgeCheck />
-              Approve…
+              Approve and run…
             </Button>
           )}
           {!locked && (

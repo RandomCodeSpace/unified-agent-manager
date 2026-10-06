@@ -191,8 +191,8 @@ type Manager struct {
 	// a time as it allows (board_evidence.go).
 	accept acceptRunners
 	// lanes holds each Project's land mutex and the lane work in progress
-	// (lane_runs.go). landHook, when set, runs at each landing step; tests
-	// set it before the landings.
+	// (lane_runs.go). landHook, when set, runs at each landing step and
+	// lane start step; tests set it before them.
 	lanes    laneState
 	landHook func(stage string)
 	// calls are each Task's host tool calls in progress, which settling or
@@ -224,6 +224,8 @@ type Manager struct {
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).
 	routines routineState
+	// exec is the executor, which runs approved epics (executor.go).
+	exec executorState
 }
 
 // NewManager builds a manager for providers. Start must run before use.
@@ -258,6 +260,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		summaryJobs: make(chan subagentSummaryJob, maxSubagents),
 		imageJobs:   make(chan imageJob, maxImageJobs),
 		reads:       make(chan struct{}, maxHistoryReads),
+		exec:        newExecutorState(),
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -704,10 +707,11 @@ func (m *Manager) Start(ctx context.Context) error {
 			_ = m.verifyAccount(name, true)
 		}
 	}
-	m.wg.Add(4)
+	m.wg.Add(5)
 	go m.persistLoop()
 	go m.sweepLoop()
 	go m.routineLoop()
+	go m.executorLoop()
 	if usage {
 		m.wg.Add(1)
 		go m.usageLoop()
@@ -2241,6 +2245,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickSignedOutLocked(s, detail)
 	}
 	if turn.State != agentapi.TurnWorking {
+		m.turnLeftWorkingLocked(s, turn.State)
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
 		m.kickQuotaLocked(s.provider)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason, taskCard, waitsOf, nextSubtask, layoutLevel, wrapText, GRAPH_NODE, shownProgress } from '../src/lib/board.ts';
+import { applyBoardFrame, boardOf, buildOutline, deriveBoard, deriveContainer, fitView, layoutMap, MAP_MAX_K, MAP_MIN_K, MAP_ROW, openBlockerSeqs, openingView, pendingRequests, linkTargets, isStarted, lockedReason, taskCard, waitsOf, nextSubtask, layoutLevel, wrapText, GRAPH_NODE, shownProgress, runSummary } from '../src/lib/board.ts';
 import { initialState, reducer } from '../src/state.ts';
 
 let seq = 0;
@@ -412,4 +412,22 @@ test('graph titles wrap between words and end in an ellipsis when cut', () => {
   assert.deepEqual(wrapText('#3 Short', 24, 2), ['#3 Short']);
   assert.deepEqual(wrapText('#9 Supercalifragilisticexpialidocious', 12, 2), ['#9', 'Supercalifr…']);
   assert.deepEqual(wrapText('', 24, 2), []);
+});
+
+test('a run counts lanes at work, subtasks ready to start and subtasks waiting, and nothing paused or proposed', () => {
+  const epic = card({ kind: 'epic', run: { provider: 'copilot', model: 'm', effort: '', context_size: 'default', mode: 'yolo', parallel: 2, approved_at: '' } });
+  const story = card({ kind: 'story', parent_id: epic.id });
+  const lane = { branch: 'uam-plan-x', landed_sha: '', reverted_sha: '' };
+  const working = card({ parent_id: story.id, status: 'doing', held_by: 't1', lane });
+  const asking = card({ parent_id: story.id, status: 'doing', held_by: 't2', lane, pending_requests: 1 });
+  const ready = card({ parent_id: story.id });
+  const after = card({ parent_id: story.id, blocked_by: [ready.id] });
+  const flagged = card({ parent_id: story.id, blocked: true });
+  const proposed = card({ parent_id: story.id, confirmed: false });
+  const pausedStory = card({ kind: 'story', parent_id: epic.id, paused: 'owner' });
+  const held = card({ parent_id: pausedStory.id });
+  const done = card({ parent_id: story.id, status: 'done' });
+  const other = card({});
+  const byId = new Map([epic, story, working, asking, ready, after, flagged, proposed, pausedStory, held, done, other].map((c) => [c.id, c]));
+  assert.deepEqual(runSummary(epic, byId), { running: 1, parallel: 2, ready: 1, waiting: 2 });
 });

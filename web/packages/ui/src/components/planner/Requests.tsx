@@ -379,7 +379,7 @@ function PlansToApprove({ plans }: Readonly<{ plans: PlanToApprove[] }>) {
             <div className="flex justify-end">
               <Button size="sm" variant="primary" onClick={() => setApproving({ epic })}>
                 <BadgeCheck />
-                Approve…
+                Approve and run…
               </Button>
             </div>
           </li>

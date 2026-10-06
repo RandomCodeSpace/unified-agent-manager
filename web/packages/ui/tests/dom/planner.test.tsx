@@ -1246,9 +1246,9 @@ describe('approving an epic (ADR 0006)', () => {
     await noDefaultModel();
     const post = vi.spyOn(api.planner, 'approve');
     try {
-      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve…' }));
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
       const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
-      const button = dialog.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
+      const button = dialog.getByRole('button', { name: 'Approve and run' }) as HTMLButtonElement;
       // No model is picked for the run: Settings names none, and no fallback stands in.
       expect(dialog.getByRole('combobox', { name: 'Model' }).textContent).toContain('Pick a model');
       expect(dialog.getByText('Pick a model: an approved run never falls back to a default one.')).toBeTruthy();
@@ -1351,7 +1351,7 @@ describe('approving an epic (ADR 0006)', () => {
       const plans = within(await screen.findByRole('region', { name: 'Plans to approve' }));
       expect(plans.getByRole('button', { name: '#90 Offline reading' })).toBeTruthy();
       expect(plans.getByText('New plan')).toBeTruthy();
-      await user.click(plans.getByRole('button', { name: 'Approve…' }));
+      await user.click(plans.getByRole('button', { name: 'Approve and run…' }));
       expect(await screen.findByRole('dialog', { name: 'Approve #90?' })).toBeTruthy();
     } finally {
       spy.mockRestore();
@@ -1416,7 +1416,7 @@ describe('approving an epic (ADR 0006)', () => {
     try {
       const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
       await tree.findByRole('treeitem', { name: /^#32 Accessible post template/ });
-      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve…' }));
+      await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
       const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
       const row = within(dialog.getByRole('region', { name: '#92 Readable code blocks' })).getByText(/^#93 /);
       expect(row.textContent).toContain('running · would wait on #33 again');
@@ -1463,16 +1463,9 @@ describe('lanes (ADR 0006 §5)', () => {
   // The Inbox and the card panel are overlays at this width, which hide the Tree from the accessibility tree.
   const row = (tree: ReturnType<typeof within>, seq: number) => tree.getByRole('treeitem', { name: new RegExp(`^#${seq} `), hidden: true });
 
-  test('Launch starts a ready subtask in its lane; Accept lands its done request as a job, Landing and then Landed, in words', async () => {
+  test('uam starts a ready subtask in its lane once the epic is approved; Accept lands its done request as a job, Landing and then Landed, in words', async () => {
     const { user, tree } = await lanePlanner();
-    const launch = vi.spyOn(api.planner, 'launch');
-    try {
-      // The approval picked the model and mode: Launch asks nothing more.
-      await user.click((await openMenu(user, 'Actions for #35')).getByRole('menuitem', { name: 'Launch' }));
-      await waitFor(() => expect(launch).toHaveBeenCalledWith('cp3-35'));
-    } finally {
-      launch.mockRestore();
-    }
+    // Nobody launches it: the approval runs it, with the model and mode it picked.
     await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, Doing$/));
     // The lane's Task files its done request; its acceptance run timed out, so it waits for the owner.
     await waitFor(() => expect(screen.getByRole('button', { name: /^Inbox, [1-9]/ })).toBeTruthy());
@@ -1493,7 +1486,6 @@ describe('lanes (ADR 0006 §5)', () => {
 
   test('Stop on a lane subtask asks beside the button, then releases it, paused, and the attempt keeps its branch', async () => {
     const { user, tree } = await lanePlanner();
-    await act(() => api.planner.launch('cp3-35'));
     await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, Doing$/));
     const panel = await openCard(user, tree, 35);
     // A lane's subtask is stopped, not released by hand, and Mark done says why it is off.
@@ -1516,6 +1508,51 @@ describe('lanes (ADR 0006 §5)', () => {
     await waitFor(() => expect(row(tree, 35).getAttribute('aria-label')).toMatch(/, To do$/));
     expect(row(tree, 35).textContent).toContain('Paused');
     expect(await panel.findByText('paused: attempt #1 stopped; branch uam-plan-p3-35-1 kept')).toBeTruthy();
+  });
+
+  test('an approved epic says how its run stands in words, with no spinner, and offers no Launch under it', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        const at = (seq: number) => data.cards.find((c: Card) => c.seq === seq) as Card;
+        const run = { provider: 'copilot', model: 'gpt-5-mini', effort: '', context_size: 'default', mode: 'yolo' as const, parallel: 2, approved_at: new Date().toISOString() };
+        const lane = (seq: number) => ({ branch: `uam-plan-p3-${seq}-1`, landed_sha: '', reverted_sha: '' });
+        const leaf = (seq: number, title: string, over: Partial<Card>): Card => ({ ...at(35), id: `cp3-${seq}`, seq, rank: seq, title, ...over });
+        // #35 and #93 run in lanes, two of two; #94 is ready and waits for a slot; #95 waits on #94.
+        const cards = data.cards.map((c: Card) => (c.seq === 32 ? { ...c, run } : c.seq === 35 ? { ...c, status: 'doing', held_by: 't9', lane: lane(35) } : c));
+        const more = [leaf(93, 'Contrast for code tokens', { status: 'doing', held_by: 't8', lane: lane(93) }), leaf(94, 'Focus ring on links', { status: 'todo', blocks: ['cp3-95'] }), leaf(95, 'Skip link', { status: 'todo', blocked_by: ['cp3-94'] })];
+        return reply(200, { ...data, cards: [...cards, ...more] });
+      },
+    );
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: /^#94 / });
+      expect(itemsOf(await openMenu(user, 'Actions for #94'))).not.toContain('Launch');
+      await user.keyboard('{Escape}');
+      const panel = await openCard(user, tree, 32);
+      expect(panel.getByText('Running 2 of 2 · Ready 1 · Waiting 1')).toBeTruthy();
+      expect(screen.getByLabelText('Card #32').querySelector('.animate-spin')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('an approved epic whose provider backs off says so on a chip, in words', async () => {
+    const { user, tree } = await lanePlanner();
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board/projects/p3'),
+      async (real) => reply(200, { ...(await (await real()).json()), executor: { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(Date.now() + 60_000).toISOString() }] } }),
+    );
+    try {
+      // A Board change reads the Project again while the epic runs.
+      await act(() => api.planner.comment('cp3-33', 'Looking at the template now.'));
+      const panel = await openCard(user, tree, 32);
+      expect(await panel.findByText('Waiting for GitHub Copilot: rate limited')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('Settle offers a lane’s subtask Stop or Cancel, never Keep held', async () => {

@@ -497,6 +497,31 @@ func (s *Store) AbortRun(ctx context.Context, ref, taskID, detail string) (Card,
 	})
 }
 
+// PauseRun pauses the approved epic ref as uam after its lane starts kept
+// failing on git or the store (ADR 0006 §4.5), and says why in an automatic
+// comment, cut to one line's length: the owner resumes it. An epic paused
+// already keeps its pause and gets no comment.
+func (s *Store) PauseRun(ctx context.Context, ref, reason string) (Card, error) {
+	body := strings.TrimSpace(reason)
+	if len(body) > maxLineBytes {
+		body = strings.ToValidUTF8(body[:maxLineBytes], "") + "…"
+	}
+	return s.ownerWrite(ctx, Actor{}, ref, func(t *txn, o *outline, n *node) error {
+		if o.approved(n) != n {
+			return invalid("%s is not an approved epic", n.ref())
+		}
+		if n.Paused != "" {
+			return nil
+		}
+		n.Paused = PausedUAM
+		if err := t.updateCard(n); err != nil {
+			return err
+		}
+		_, err := t.addComment(n, AuthorUAM, "", "paused: "+body, true, false)
+		return err
+	})
+}
+
 // startable refuses a run start of n, as StartRun does, and returns its
 // approved epic: n must be a subtask under an approved epic, ready, with a
 // slot free under the epic's parallel limit and under MaxLanes.

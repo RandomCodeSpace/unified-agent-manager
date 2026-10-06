@@ -559,6 +559,21 @@ export interface BoardProject {
   accept_parallel: number;
   /** Its integration branch, once an approval named the base branch it follows; null before. */
   integration: BoardIntegration | null;
+  /** What uam's executor waits for before it starts or nudges anything more (ADR 0006 §4.5); null for nothing. */
+  executor?: BoardExecutor | null;
+}
+
+/** The providers nothing starts on now: backing off after a failure until `until`, or signed out (`until` null). */
+export interface BoardExecutor {
+  providers: ProviderWait[];
+}
+
+export interface ProviderWait {
+  provider: string;
+  /** The provider's display name. */
+  name: string;
+  detail: string;
+  until: string | null;
 }
 
 /** A Project's integration branch: `ahead` landings not yet in `base_ref`, which is `behind` commits past it. */

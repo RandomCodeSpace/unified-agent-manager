@@ -560,3 +560,43 @@ func describeStep(s Step) string {
 	}
 	return b.String()
 }
+
+// When an approved epic's lane starts keep failing on git or the store, uam
+// pauses the epic itself and says why (ADR 0006 §4.5); the owner resumes
+// it. An epic paused already, by uam or the owner, keeps its pause and gets
+// no second comment, and only an approved epic is paused this way.
+func TestPauseRunPausesTheEpicOnce(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	epic, story, _, _ := f.tree()
+	f.approveRun(epic.ID, testRun)
+	const why = "lanes could not start 3 times: git worktree add failed"
+	for range 2 {
+		got, err := f.s.PauseRun(f.ctx, epic.ID, why)
+		if err != nil || got.Paused != PausedUAM {
+			t.Fatalf("pause run = %+v, %v", got, err)
+		}
+	}
+	notes := 0
+	for _, c := range f.comments(epic.ID) {
+		if c == "uam: paused: "+why {
+			notes++
+		}
+	}
+	if notes != 1 {
+		t.Fatalf("comments = %q, want one pause note", f.comments(epic.ID))
+	}
+
+	owned, _, _, _ := f.tree2()
+	f.approveRun(owned.ID, testRun)
+	_, err := f.s.Edit(f.ctx, owner, owned.ID, Patch{Paused: ptr(true)})
+	f.must(err)
+	if got, err := f.s.PauseRun(f.ctx, owned.ID, why); err != nil || got.Paused != PausedOwner || hasComment(f.comments(owned.ID), why) {
+		t.Fatalf("pause run of an epic the owner paused = %+v, %v, comments %q", got, err, f.comments(owned.ID))
+	}
+	_, err = f.s.PauseRun(f.ctx, story.ID, why)
+	wantCode(t, err, CodeInvalid)
+	plain := f.create(owner, "", KindEpic, "Plain")
+	_, err = f.s.PauseRun(f.ctx, plain.ID, why)
+	wantCode(t, err, CodeInvalid)
+}

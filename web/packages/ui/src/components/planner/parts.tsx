@@ -1,4 +1,4 @@
-import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
+import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Hourglass, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
 import { KIND_LABEL, STATUS_LABEL, shownProgress } from '../../lib/board';
@@ -105,12 +105,13 @@ export function TaskChip({ taskId, className }: Readonly<{ taskId: string; class
 }
 
 /**
- * The quiet markers a card row carries: an approved epic and the proposals waiting for its next
- * approval (`toApprove`), its pause (`pause`, from `pauseLabel`), a lane subtask landing or landed
- * (ADR 0006 §3.2), pending requests, staleness, blocked (`blockers`: its open blockers, from
+ * The quiet markers a card row carries: an approved epic, the provider its run waits for
+ * (`waiting`: "Waiting for Copilot: rate limited", ADR 0006 §4.5) and the proposals waiting for its
+ * next approval (`toApprove`), its pause (`pause`, from `pauseLabel`), a lane subtask landing or
+ * landed (ADR 0006 §3.2), pending requests, staleness, blocked (`blockers`: its open blockers, from
  * `openBlockerSeqs`).
  */
-export function CardMarkers({ card, blockers, pause = '', toApprove = 0, compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; compact?: boolean }>) {
+export function CardMarkers({ card, blockers, pause = '', toApprove = 0, waiting = '', compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; waiting?: string; compact?: boolean }>) {
   const marks: ReactNode[] = [];
   if (card.run) {
     const r = card.run;
@@ -118,6 +119,15 @@ export function CardMarkers({ card, blockers, pause = '', toApprove = 0, compact
       <Chip key="approved" title={`Approved to run on ${r.model}, ${r.mode === 'yolo' ? 'Yolo' : 'Safe'}, ${r.parallel} at a time`}>
         <BadgeCheck aria-hidden="true" className="size-3" />
         <span className={cn(compact && 'max-sm:sr-only')}>Approved</span>
+      </Chip>,
+    );
+  }
+  if (waiting) {
+    // Nothing starts on the provider for now: a word, not a ring (one ring per place).
+    marks.push(
+      <Chip key="waiting" tone="warning" title={waiting}>
+        <Hourglass aria-hidden="true" className="size-3" />
+        {compact ? <span className="sr-only">{waiting}</span> : waiting}
       </Chip>,
     );
   }

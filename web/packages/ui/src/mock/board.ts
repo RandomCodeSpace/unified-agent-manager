@@ -255,6 +255,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
     git,
     accept_parallel: acceptLimits[pid] ?? 1,
     integration: baseRefs[pid] ? { branch: `uam-plan-${pid}`, base_ref: baseRefs[pid], ahead: cards.filter((c) => c.project_id === pid && c.lane?.landed_sha && c.status === 'done').length, behind: 0 } : null,
+    // The mock's providers never fail, so its executor waits for nothing.
+    executor: null,
   });
   let nextSeq = Math.max(...cards.map((c) => c.seq)) + 1;
   let counter = 100;
@@ -423,6 +425,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       for (const c of f.cards) c.updated_at = now();
       host.broadcast('board', { project_id: project, revision, cards: f.cards, removed: f.removed, requests: f.requests });
     }
+    if (frames.size) runApproved();
   }
 
   /**
@@ -474,16 +477,35 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
   }
 
   /**
-   * Launch under an approved epic (ADR 0006 §5.3): a ready subtask starts in its own lane with the
-   * epic's run, while the epic has a free slot. The mock's lane Task files its done request soon
-   * after, its acceptance run timed out, so it waits for the owner's Accept, which lands it.
+   * The executor (ADR 0006 §4): after each write, every approved epic that is not paused starts its
+   * ready subtasks in lanes, up to its parallel limit; a lane whose request waits for the owner
+   * frees its slot. A start is a write too, so none starts inside another.
    */
-  function laneLaunch(c: Card, epic: Card): Response {
-    const map = new Map(cards.map((x) => [x.id, x]));
-    if (c.kind !== 'subtask') return runOwned(c, epic);
-    if (!laneReady(c, map)) return refuse('not_ready', `#${c.seq} is not ready to start: it waits, is paused or is not confirmed`, { refs: [`#${c.seq}`] });
-    const running = cards.filter((x) => x.held_by && x.lane && cardPath(x, map).includes(epic)).length;
-    if (running >= (epic.run?.parallel ?? 1)) return refuse('not_ready', `#${epic.seq} runs ${epic.run?.parallel ?? 1} at a time, and that many run now`, { refs: [`#${c.seq}`] });
+  let executing = false;
+  function runApproved() {
+    if (executing) return;
+    executing = true;
+    try {
+      const map = new Map(cards.map((x) => [x.id, x]));
+      for (const epic of cards.filter((e) => e.kind === 'epic' && e.run && !e.paused && e.status !== 'done' && e.status !== 'cancelled')) {
+        const under = cards.filter((x) => x.kind === 'subtask' && cardPath(x, map).includes(epic));
+        let free = epic.run!.parallel - under.filter((x) => x.held_by && x.lane && x.pending_requests === 0).length;
+        for (const c of under.filter((x) => laneReady(x, map))) {
+          if (free-- <= 0) break;
+          startLane(c);
+        }
+      }
+    } finally {
+      executing = false;
+    }
+  }
+
+  /**
+   * A lane start (ADR 0006 §5.3): the ready subtask starts in its own lane with the epic's run. The
+   * mock's lane Task files its done request soon after, its acceptance run timed out, so it waits
+   * for the owner's Accept, which lands it.
+   */
+  function startLane(c: Card) {
     const session = host.createTask(c.project_id, `#${c.seq} ${c.title}`, `${preamble(c)}\nYou work only on #${c.seq}, in your own git worktree.`);
     const attempt = (holds[c.id]?.length ?? 0) + 1;
     const branch = `uam-plan-${c.project_id}-${c.seq}-${attempt}`;
@@ -501,7 +523,6 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         requests.push({ id: id('rq'), card_id: leaf.id, task_id: session.id, agent_id: '', kind: 'done', comment: `#${leaf.seq} is done in its lane.`, payload: {}, evidence: { baseline: { head: head(leaf), dirty: [] }, commits: [{ sha: 'a1b2c3d', subject: `feat: ${leaf.title.toLowerCase()}` }] }, flags: ['acceptance_could_not_run'], base_revision: leaf.revision, status: 'pending', created_at: now() });
       });
     }, 300);
-    return json(201, { card: c, session });
   }
 
   /** The owner's Accept of a lane's done request (ADR 0006 §5.5): a land job, Landing while it runs, Landed once it moved the branch. */
@@ -769,8 +790,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       return refuse('in_progress', locked);
     }
     const approved = approvedOf(c);
-    if (approved && method === 'POST' && action === 'launch') return laneLaunch(c, approved);
-    if (approved && ['POST confirm', 'POST attach'].includes(`${method} ${action}`)) return runOwned(c, approved);
+    if (approved && ['POST confirm', 'POST attach', 'POST launch'].includes(`${method} ${action}`)) return runOwned(c, approved);
     switch (`${method} ${action}`) {
       case 'PATCH ': {
         if (typeof body.project_id === 'string' && body.project_id !== c.project_id) {

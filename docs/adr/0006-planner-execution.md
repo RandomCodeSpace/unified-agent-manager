@@ -168,7 +168,7 @@ Nothing is stored beyond the columns above.
 - `paused` on every card.
 - `run` on an epic: `{provider, model, effort, context_size, mode, parallel, approved_at}`.
 - `lane` on a subtask, from its latest hold: `{branch, landed_sha, reverted_sha}`.
-- `GET /api/board/projects/{id}` adds `integration {branch, base_ref, ahead, behind}` and `accept_parallel` (S4), and `executor {providers: [{provider, detail, until}]}` (S5).
+- `GET /api/board/projects/{id}` adds `integration {branch, base_ref, ahead, behind}` and `accept_parallel` (S4), and `executor {providers: [{provider, detail, until}]}` (S5). As built, each provider also carries its display `name`, `until` is null while it is signed out, and `executor` is null when nothing waits.
 
 ## 4. Executor
 

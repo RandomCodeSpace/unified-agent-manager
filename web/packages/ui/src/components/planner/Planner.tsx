@@ -1,7 +1,7 @@
 import { useApi } from '../../ApiContext';
 import { Ellipsis, GitBranch, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { plannerErrorText, type BoardIntegration, type BoardJob, type Project } from '../../api';
+import { plannerErrorText, type BoardIntegration, type BoardJob, type Project, type ProviderWait } from '../../api';
 import { boardOf, childIndex, epicOf, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
@@ -129,20 +129,29 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   return { value };
 }
 
-/** The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `landed` changes; null for none. */
-function useIntegration(project: string, landed: number): BoardIntegration | null {
+/**
+ * The Project's integration branch (ADR 0006 §5.2) and the providers uam's executor waits for
+ * (§4.5), fetched for `project` and again as `key` changes: the landings, and while an epic runs,
+ * each Board revision. Null and none until it loads.
+ */
+function useProjectRun(project: string, key: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
   const api = useApi();
-  const [shown, setShown] = useState<{ project: string; integration: BoardIntegration | null } | null>(null);
+  const [shown, setShown] = useState<{ project: string; integration: BoardIntegration | null; waits: ProviderWait[] } | null>(null);
   useEffect(() => {
     if (!project) return;
     let alive = true;
-    api.planner.project(project).then((p) => alive && setShown({ project, integration: p.integration ?? null })).catch(() => {});
+    api.planner
+      .project(project)
+      .then((p) => alive && setShown({ project, integration: p.integration ?? null, waits: p.executor?.providers ?? [] }))
+      .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [api.planner, project, landed]);
-  return shown?.project === project ? shown.integration : null;
+  }, [api.planner, project, key]);
+  return shown?.project === project ? shown : { integration: null, waits: NO_WAITS };
 }
+
+const NO_WAITS: ProviderWait[] = [];
 
 const VIEW_ITEMS = [
   { value: 'tree', label: 'Tree' },
@@ -178,9 +187,11 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const epics = useMemo(() => (cards ? (childIndex(cards).get('') ?? []).filter((c) => c.kind === 'epic' && (c.status !== 'cancelled' || c.id === ui.epic)) : []), [cards, ui.epic]);
   const stale = cards?.filter((c) => c.stale).length ?? 0;
   const cancelled = cards?.filter((c) => c.status === 'cancelled').length ?? 0;
-  // The integration branch's line, read again as landings change what it carries.
+  // The integration branch's line, read again as landings change what it carries, and what the
+  // executor waits for, read again on each change while an approved epic runs.
   const landed = cards?.filter((c) => c.status === 'done' && c.lane?.landed_sha).length ?? 0;
-  const integration = useIntegration(key && key !== 'unassigned' && !project?.no_git ? key : '', landed);
+  const running = cards?.some((c) => c.kind === 'epic' && c.run && !c.paused && c.status !== 'done' && c.status !== 'cancelled') ?? false;
+  const { integration, waits } = useProjectRun(key && key !== 'unassigned' && !project?.no_git ? key : '', `${landed}:${running ? board?.data?.revision : ''}`);
   // The Inbox holds the plans to approve too (ADR 0006 §6.1).
   const pending = (board?.data?.requests.length ?? 0) + (cards ? plansToApprove(cards).length : 0);
   const panelPresence = usePresence(!!ui.panel);
@@ -310,7 +321,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             {body}
           </div>
         </div>
-        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
+        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} />}
         {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       </div>
       <AlertDialog

@@ -22,16 +22,27 @@ import (
 	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-// laneRun is a planner whose Project holds a.txt on main and an approved
-// epic, parallel 2, whose one story holds the given subtasks: each Launch
-// of one starts a lane (ADR 0006 §5.3).
+// laneRun is a planner whose Project holds a.txt on main and an epic,
+// parallel 2, whose one story holds the given subtasks. Its executor is off
+// unless a test runs it: start starts a lane by hand, as the executor does
+// (ADR 0006 §5.3).
 type laneRun struct {
 	*plannerFixture
 	epic   BoardCard
+	story  BoardCard
 	leaves []BoardCard
 }
 
+// newLaneRun is planLaneRun with its epic approved.
 func newLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
+	t.Helper()
+	r := planLaneRun(t, cmd, titles...)
+	r.approve()
+	return r
+}
+
+// planLaneRun is a laneRun whose epic is not approved yet.
+func planLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
 	t.Helper()
 	acceptEnv(t)
 	f := newPlanner(t)
@@ -43,21 +54,40 @@ func newLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
 	f.m.mu.Unlock()
 	f.setAcceptCmd(cmd)
 	r := &laneRun{plannerFixture: f, epic: f.create(board.KindEpic, "", "Epic")}
-	story := f.create(board.KindStory, r.epic.ID, "Story")
-	refs := []string{r.epic.ID, story.ID}
+	r.story = f.create(board.KindStory, r.epic.ID, "Story")
 	for _, title := range titles {
-		leaf := f.create(board.KindSubtask, story.ID, title)
-		r.leaves = append(r.leaves, leaf)
-		refs = append(refs, leaf.ID)
+		r.leaves = append(r.leaves, f.create(board.KindSubtask, r.story.ID, title))
 	}
-	f.call(http.MethodPost, "/api/board/cards/"+r.epic.ID+"/approve", f.approveBody("luna", refs...), http.StatusOK, nil)
 	return r
 }
 
-// start launches the lane of subtask i and returns its Task and lane.
+// approve approves the epic as the Approve dialog shows it now.
+func (r *laneRun) approve() {
+	r.t.Helper()
+	refs := []string{r.epic.ID, r.story.ID}
+	for _, l := range r.leaves {
+		refs = append(refs, l.ID)
+	}
+	r.call(http.MethodPost, "/api/board/cards/"+r.epic.ID+"/approve", r.approveBody("luna", refs...), http.StatusOK, nil)
+}
+
+// start starts the lane of subtask i, as the executor does, and returns its
+// Task and lane.
 func (r *laneRun) start(i int) (SessionSummary, lane) {
 	r.t.Helper()
-	c, task := r.launch(r.leaves[i].ID)
+	var leaf, epic board.Card
+	r.store(func(ctx context.Context, st *board.Store) error {
+		var err error
+		if leaf, err = st.Card(ctx, r.leaves[i].ID); err == nil {
+			epic, err = st.Card(ctx, r.epic.ID)
+		}
+		return err
+	})
+	held, task, err := r.m.startLane(leaf, epic)
+	if err != nil {
+		r.t.Fatalf("start #%d: %v", leaf.Seq, err)
+	}
+	c := boardCard(held)
 	if c.Lane == nil || c.Lane.Branch == "" || c.Status != board.StatusDoing || c.HeldBy != task.ID {
 		r.t.Fatalf("lane start = %+v, lane %+v", c, c.Lane)
 	}

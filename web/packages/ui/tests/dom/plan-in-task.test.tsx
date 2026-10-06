@@ -162,7 +162,7 @@ describe('the Plan panel under an approved epic (ADR 0006)', () => {
     expect(proposal.queryByRole('button', { name: 'Launch' })).toBeNull();
     expect(proposal.getByRole('button', { name: 'Discard' })).toBeTruthy();
     await user.click(outline.getByRole('button', { name: /^#18 Release automation/ }));
-    await user.click(within(panel.getByRole('region', { name: '#18 details' })).getByRole('button', { name: 'Approve…' }));
+    await user.click(within(panel.getByRole('region', { name: '#18 details' })).getByRole('button', { name: 'Approve and run…' }));
     expect(await screen.findByRole('dialog', { name: 'Approve #18?' })).toBeTruthy();
   });
 

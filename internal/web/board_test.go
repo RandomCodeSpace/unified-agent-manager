@@ -35,6 +35,9 @@ func newPlanner(t *testing.T) *plannerFixture {
 	// Approve checks that git can commit (ADR 0006 §5.2).
 	gitIdentity(t)
 	ts := newTestServer(t, ServerConfig{})
+	// The tests that run approved epics turn the executor on; the others
+	// start, idle and end lane Tasks themselves (executor_test.go).
+	ts.m.runExecutor(false)
 	repo := branchRepo(t)
 	f := &plannerFixture{t: t, ts: ts, m: ts.m, repo: repo, project: addProject(t, ts.m, repo)}
 	f.call(http.MethodPatch, "/api/settings", `{"planner":true}`, http.StatusOK, nil)
@@ -501,10 +504,11 @@ func TestApproveRoute(t *testing.T) {
 		t.Fatalf("a subtask's JSON = %s", w.Body)
 	}
 
-	// A subtask's Launch starts a lane (lane_runs_test.go); nothing else
-	// starts by hand.
+	// uam starts the subtasks (executor_test.go); nothing starts by hand.
 	for _, route := range []struct{ path, body string }{
 		{"/api/board/cards/" + other.ID + "/confirm", ``},
+		{"/api/board/cards/" + leaf.ID + "/launch", `{}`},
+		{"/api/board/cards/" + leaf.ID + "/launch", `{"confirm":true}`},
 		{"/api/board/cards/" + story.ID + "/launch", `{}`},
 		{"/api/board/cards/" + story.ID + "/launch", `{"confirm":true}`},
 	} {
