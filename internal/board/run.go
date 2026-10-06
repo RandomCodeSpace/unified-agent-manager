@@ -16,6 +16,10 @@ import (
 // MaxParallel is the most subtasks of one epic that may run at a time.
 const MaxParallel = 4
 
+// MaxLanes is the most lane attempts that take a slot at a time, over every
+// Project (ADR 0006 §4.4).
+const MaxLanes = 4
+
 // The run modes, as a Task's.
 const (
 	ModeSafe = "safe"
@@ -74,9 +78,9 @@ func (r RunSettings) check() error {
 // approved before, and its own pause is cleared. It refuses, writing
 // nothing, unless the epic is live and not done; every item is a live card
 // under it; every card the dialog shows (shown) is listed at its current
-// revision (stale otherwise); no subtask under it is held; every live story
-// and the epic keep a live subtask that is confirmed or listed; and every
-// such subtask not started resolves to an acceptance command.
+// revision (stale otherwise); no subtask under it is held but by a lane; every
+// live story and the epic keep a live subtask that is confirmed or listed;
+// and every such subtask not started resolves to an acceptance command.
 func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSettings, items []ApproveItem) (Card, error) {
 	if err := permit(a, opApprove, ""); err != nil {
 		return Card{}, err
@@ -182,7 +186,7 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 			}
 			continue
 		}
-		if m.HeldBy != "" {
+		if m.HeldBy != "" && m.Lane == nil {
 			held = append(held, m.ref())
 		}
 		if !runs(m) || m.started() {
@@ -383,4 +387,250 @@ func (t *txn) noneEmptied(project string, before map[string]bool) error {
 	}
 	return &Error{Code: CodeInvalid, Refs: refs, Message: fmt.Sprintf(
 		"This would leave %s with no confirmed subtask, and approved work with none never finishes: keep one there, or ask the owner", strings.Join(refs, ", "))}
+}
+
+// StartRun starts a lane attempt at the subtask ref under an approved epic
+// for the new Task taskID (ADR 0006 §4.4, §5.3): it refuses with
+// CodeNotReady unless the subtask is ready and a slot is free under both
+// the epic's parallel limit and MaxLanes, scopes the Task to the subtask
+// alone, records the done subtasks it waited on, and starts the hold on
+// lane's branch from base, the integration branch's tip. The subtask is
+// confirmed already, so nothing is confirmed or pinned. A ref outside
+// approved epics, or a container, is refused as invalid.
+func (s *Store) StartRun(ctx context.Context, a Actor, ref, taskID string, base Baseline, lane Lane) (Card, error) {
+	if err := permit(a, opLaunch, ""); err != nil {
+		return Card{}, err
+	}
+	if strings.TrimSpace(taskID) == "" {
+		return Card{}, invalid("a run start needs a Task")
+	}
+	if strings.TrimSpace(lane.Branch) == "" || lane.LandedSHA != "" || lane.RevertedSHA != "" {
+		return Card{}, invalid("a run start needs its attempt branch, and nothing landed yet")
+	}
+	if err := checkLine("branch", lane.Branch); err != nil {
+		return Card{}, err
+	}
+	return s.ownerWrite(ctx, a, ref, func(t *txn, o *outline, n *node) error {
+		e, err := t.startable(o, n)
+		if err != nil {
+			return err
+		}
+		if err := t.setScope(taskID, o.project, n.ID, true); err != nil {
+			return err
+		}
+		if err := t.startHold(o, n, taskID, base, Lane{Branch: lane.Branch}, o.waitedOn(n)); err != nil {
+			return err
+		}
+		_, err = t.addComment(n, AuthorUAM, "", "started by the run of "+e.ref(), true, false)
+		return err
+	})
+}
+
+// CanStart refuses, without writing, a run start of the subtask ref that
+// StartRun would refuse, so a lane start checks before it makes a worktree
+// and a Task. StartRun checks again in its own write.
+func (s *Store) CanStart(ctx context.Context, ref string) error {
+	return s.read(ctx, func(t *txn) error {
+		o, n, err := t.find(ref)
+		if err != nil {
+			return err
+		}
+		if o.project == "" {
+			return errReadOnly
+		}
+		_, err = t.startable(o, n)
+		return err
+	})
+}
+
+// AbortRun ends taskID's lane attempt at the subtask ref, which never
+// started its work: the start failed after the hold was written (ADR 0006
+// §4.5). The subtask returns to todo with no pause, and detail, when given,
+// is said in an automatic comment, cut to one line's length.
+func (s *Store) AbortRun(ctx context.Context, ref, taskID, detail string) (Card, error) {
+	body := strings.TrimSpace(detail)
+	if len(body) > maxLineBytes {
+		body = strings.ToValidUTF8(body[:maxLineBytes], "") + "…"
+	}
+	return s.ownerWrite(ctx, Actor{}, ref, func(t *txn, _ *outline, n *node) error {
+		if n.container() || n.HeldBy != taskID || n.Lane == nil {
+			return refuse(CodeNotHeld, "%s is not in a lane attempt of this Task", n.ref())
+		}
+		hold, err := t.openHold(n)
+		if err != nil {
+			return err
+		}
+		if err := t.releaseHold(n, ReleaseAborted, StatusTodo, ""); err != nil {
+			return err
+		}
+		note := fmt.Sprintf("attempt #%d aborted", hold.Attempt)
+		if body != "" {
+			note += ": " + body
+		}
+		_, err = t.addComment(n, AuthorUAM, "", note, true, false)
+		return err
+	})
+}
+
+// startable refuses a run start of n, as StartRun does, and returns its
+// approved epic: n must be a subtask under an approved epic, ready, with a
+// slot free under the epic's parallel limit and under MaxLanes.
+func (t *txn) startable(o *outline, n *node) (*node, error) {
+	if n.container() {
+		return nil, invalid("%s is a %s; only subtasks run", n.ref(), n.Kind)
+	}
+	e := o.approved(n)
+	if e == nil {
+		return nil, invalid("%s is not under an approved epic", n.ref())
+	}
+	if err := t.ready(o, n); err != nil {
+		return nil, err
+	}
+	lanes, err := t.lanesInUse()
+	if err != nil {
+		return nil, err
+	}
+	var mine []string
+	for _, l := range lanes {
+		if m := o.byID[l.id]; m != nil && o.epicOf(m) == e {
+			mine = append(mine, l.ref())
+		}
+	}
+	if len(mine) >= e.Run.Parallel {
+		return nil, &Error{Code: CodeNotReady, Refs: mine, Message: fmt.Sprintf(
+			"%s runs %d at a time, and %s %s running", e.ref(), e.Run.Parallel, strings.Join(mine, ", "), isAre(len(mine)))}
+	}
+	if len(lanes) >= MaxLanes {
+		refs := make([]string, len(lanes))
+		for i, l := range lanes {
+			refs[i] = l.ref()
+		}
+		return nil, &Error{Code: CodeNotReady, Refs: refs, Message: fmt.Sprintf(
+			"At most %d subtasks run at a time, and %s %s running", MaxLanes, strings.Join(refs, ", "), isAre(len(refs)))}
+	}
+	return e, nil
+}
+
+// ready refuses with CodeNotReady, naming what holds it back, a run start
+// of the subtask n (ADR 0006 §4.1): it must be planned or todo, unheld,
+// with no pending request, confirmed with its ancestors, under no
+// cancelled or paused card, not flagged blocked, and waiting on nothing
+// open, its own blockers and its ancestors' included.
+func (t *txn) ready(o *outline, n *node) error {
+	notReady := func(refs []*node, format string, args ...any) error {
+		e := refuse(CodeNotReady, format, args...)
+		for _, m := range refs {
+			e.Refs = append(e.Refs, m.ref())
+		}
+		return e
+	}
+	switch {
+	case n.HeldBy != "" || n.stored == StatusDoing:
+		return notReady([]*node{n}, "%s is in progress", n.ref())
+	case n.stored == StatusDone || n.stored == StatusCancelled:
+		return notReady([]*node{n}, "%s is %s", n.ref(), n.stored)
+	case n.PendingRequests > 0:
+		return notReady([]*node{n}, "%s has a request waiting for the owner", n.ref())
+	}
+	if un := o.unconfirmed(n); len(un) > 0 {
+		return notReady(un, "%s %s not approved; approve the epic again to run it", refList(un), isAre(len(un)))
+	}
+	for p := o.byID[n.ParentID]; p != nil; p = o.byID[p.ParentID] {
+		if p.stored == StatusCancelled {
+			return notReady([]*node{p}, "%s is under cancelled %s", n.ref(), p.ref())
+		}
+	}
+	if p := o.pausedAt(n); p != nil {
+		return notReady([]*node{p}, "%s is paused", p.ref())
+	}
+	if n.Blocked {
+		return notReady([]*node{n}, "%s is flagged blocked", n.ref())
+	}
+	waits, err := t.waitsOn(o, n)
+	if err != nil {
+		return err
+	}
+	if len(waits) > 0 {
+		blockers := make([]*node, len(waits))
+		named := make([]string, len(waits))
+		for i, w := range waits {
+			blockers[i], named[i] = w.blocker, w.named()
+		}
+		return notReady(blockers, "%s waits on %s", n.ref(), strings.Join(named, ", "))
+	}
+	return nil
+}
+
+func refList(nodes []*node) string {
+	refs := make([]string, len(nodes))
+	for i, m := range nodes {
+		refs[i] = m.ref()
+	}
+	return strings.Join(refs, ", ")
+}
+
+// laneSlot is a subtask whose lane attempt takes a slot.
+type laneSlot struct {
+	id  string
+	seq int64
+}
+
+func (l laneSlot) ref() string { return fmt.Sprintf("#%d", l.seq) }
+
+// lanesQuery lists, over every Project in #seq order, the subtasks whose
+// open lane attempt takes a slot: one with a pending done, blocked or split
+// request from its Task frees it, as for the one-hold cap (openHoldsQuery).
+const lanesQuery = `SELECT c.id, c.seq FROM holds h JOIN cards c ON c.id = h.card_id
+	WHERE h.ended_at = '' AND h.branch <> '' AND NOT EXISTS (
+	SELECT 1 FROM requests r WHERE r.card_id = h.card_id AND r.task_id = h.task_id AND r.status = 'pending'
+	AND r.kind IN ('done', 'blocked', 'split'))
+	ORDER BY c.seq`
+
+// lanesInUse is the one count of lane slots in use (ADR 0006 §4.1), read
+// from the stored holds alone, whatever their Tasks' stages.
+func (t *txn) lanesInUse() ([]laneSlot, error) {
+	rows, err := t.tx.QueryContext(t.ctx, lanesQuery)
+	if err != nil {
+		return nil, fmt.Errorf("board: count lanes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []laneSlot
+	for rows.Next() {
+		var l laneSlot
+		if err := rows.Scan(&l.id, &l.seq); err != nil {
+			return nil, fmt.Errorf("board: count lanes: %w", err)
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("board: count lanes: %w", err)
+	}
+	return out, nil
+}
+
+// waitedOn lists, in outline order, the done subtasks at or under a blocker
+// of n or of one of its ancestors: what a lane attempt at n starts on top
+// of (ADR 0006 §5.3).
+func (o *outline) waitedOn(n *node) []string {
+	done := map[string]bool{}
+	for m := n; m != nil; m = o.byID[m.ParentID] {
+		for _, id := range m.BlockedBy {
+			b := o.byID[id]
+			if b == nil {
+				continue
+			}
+			for _, x := range o.subtree(b) {
+				if !x.container() && x.stored == StatusDone {
+					done[x.ID] = true
+				}
+			}
+		}
+	}
+	out := []string{}
+	for _, x := range o.order {
+		if done[x.ID] {
+			out = append(out, x.ID)
+		}
+	}
+	return out
 }

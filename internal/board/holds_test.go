@@ -86,6 +86,11 @@ func TestHoldFromBeforeBaselineBlobs(t *testing.T) {
 	f := newFixture(t)
 	_, _, one, _ := f.tree()
 	f.launch(one.ID, "task-1")
+	for _, col := range []string{"branch", "landed_sha", "reverted_sha", "waited_on"} {
+		f.raw(`ALTER TABLE holds DROP COLUMN ` + col)
+	}
+	f.raw(`ALTER TABLE project_settings DROP COLUMN base_ref`)
+	f.raw(`ALTER TABLE project_settings DROP COLUMN accept_parallel`)
 	f.raw(`ALTER TABLE holds DROP COLUMN baseline_blobs`)
 	f.raw(`DROP TABLE import_refs`)
 	f.raw(`ALTER TABLE requests DROP COLUMN decided_by`)

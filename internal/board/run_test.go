@@ -463,7 +463,7 @@ func TestMigrateV4ToV5(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version string
-	if err := s.db.QueryRow(`SELECT v FROM meta WHERE k = 'schema_version'`).Scan(&version); err != nil || version != "5" || version != strconv.Itoa(len(migrations)) {
+	if err := s.db.QueryRow(`SELECT v FROM meta WHERE k = 'schema_version'`).Scan(&version); err != nil || version != strconv.Itoa(len(migrations)) {
 		t.Fatalf("schema_version = %q, %v", version, err)
 	}
 	got, err := s.Card(ctx, epic.ID)

@@ -168,10 +168,10 @@ func (t *txn) loadCounts(o *outline) error {
 }
 
 // workedByQuery lists the attempts on a Project's cards, each card's latest last.
-const workedByQuery = `SELECT h.card_id, h.task_id FROM holds h JOIN cards c ON c.id = h.card_id
+const workedByQuery = `SELECT h.card_id, h.task_id, h.branch, h.landed_sha, h.reverted_sha FROM holds h JOIN cards c ON c.id = h.card_id
 	WHERE c.project_id = ? ORDER BY h.card_id, h.attempt`
 
-// loadWorkedBy fills each card's WorkedBy from its latest attempt.
+// loadWorkedBy fills each card's WorkedBy and Lane from its latest attempt.
 func (t *txn) loadWorkedBy(o *outline) error {
 	rows, err := t.tx.QueryContext(t.ctx, workedByQuery, o.project)
 	if err != nil {
@@ -179,12 +179,16 @@ func (t *txn) loadWorkedBy(o *outline) error {
 	}
 	for rows.Next() {
 		var id, task string
-		if err := rows.Scan(&id, &task); err != nil {
+		var lane Lane
+		if err := rows.Scan(&id, &task, &lane.Branch, &lane.LandedSHA, &lane.RevertedSHA); err != nil {
 			_ = rows.Close()
 			return fmt.Errorf("board: load attempts: %w", err)
 		}
 		if n := o.byID[id]; n != nil {
-			n.WorkedBy = task
+			n.WorkedBy, n.Lane = task, nil
+			if lane.Branch != "" {
+				n.Lane = &lane
+			}
 		}
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
@@ -609,10 +613,10 @@ func (t *txn) atRoot(a Actor) error {
 
 // mutate runs fn as a's write to project: it sweeps expired cards first when
 // sweep is set, and afterwards settles every container fn brought to done and
-// refuses the write if it gave started work a new open blocker (holdBacks)
-// or, for an agent, left approved work with no confirmed subtask
-// (staffedApproved). uam's own writes, such as reconcile and the sweep, pass
-// the zero Actor.
+// refuses the write if it gave started work a new open blocker or the
+// blocked flag (holdBacks) or, for an agent, left approved work with no
+// confirmed subtask (staffedApproved). uam's own writes, such as reconcile
+// and the sweep, pass the zero Actor.
 func (t *txn) mutate(a Actor, project string, sweep bool, fn func() error) error {
 	if sweep {
 		if _, err := t.sweep(project); err != nil {
@@ -635,30 +639,37 @@ func (t *txn) mutate(a Actor, project string, sweep bool, fn func() error) error
 	if err := t.settle(project, before); err != nil {
 		return err
 	}
-	if err := t.noNewBlockers(project, held); err != nil {
+	if err := t.noNewBlockers(a, project, held); err != nil {
 		return err
 	}
 	return t.noneEmptied(project, staffed)
 }
 
-// holdBacks snapshots the open blockers each subtask a's write must not add
-// to (ADR 0006), by subtask ID: those it waits on, its own and its
-// ancestors'. An agent's write covers every started subtask of the Project,
-// held or done. Other writes are not checked.
+// holdBacks snapshots what holds back each subtask a's write must not hold
+// back further (ADR 0006 §6.3 rule 2), by subtask ID: the open blockers it
+// waits on, its own and its ancestors', and the subtask itself when it is
+// flagged blocked. An agent's write covers every started subtask of the
+// Project, held or done; the owner's covers every running lane, which only
+// approved epics have. uam's writes are not checked.
 func (t *txn) holdBacks(a Actor, o *outline) (map[string]map[string]bool, error) {
-	if a.Role != RoleAgent {
+	covered := (*node).started
+	switch a.Role {
+	case RoleAgent:
+	case RoleOwner:
+		covered = func(n *node) bool { return n.HeldBy != "" && n.Lane != nil }
+	default:
 		return nil, nil
 	}
 	out := map[string]map[string]bool{}
 	for _, n := range o.order {
-		if !n.started() {
+		if !covered(n) {
 			continue
 		}
 		waits, err := t.waitsOn(o, n)
 		if err != nil {
 			return nil, err
 		}
-		out[n.ID] = map[string]bool{}
+		out[n.ID] = map[string]bool{n.ID: n.Blocked}
 		for _, w := range waits {
 			out[n.ID][w.blocker.ID] = true
 		}
@@ -666,10 +677,10 @@ func (t *txn) holdBacks(a Actor, o *outline) (map[string]map[string]bool, error)
 	return out, nil
 }
 
-// noNewBlockers refuses the write, naming the subtasks, when a subtask in
-// before now waits on an open blocker it did not: work that has started
-// keeps what it waits on.
-func (t *txn) noNewBlockers(project string, before map[string]map[string]bool) error {
+// noNewBlockers refuses a's write, naming the subtasks, when a subtask in
+// before that is still started now waits on an open blocker, or is flagged
+// blocked, as it was not: work that has started keeps what it waits on.
+func (t *txn) noNewBlockers(a Actor, project string, before map[string]map[string]bool) error {
 	if len(before) == 0 {
 		return nil
 	}
@@ -680,26 +691,36 @@ func (t *txn) noNewBlockers(project string, before map[string]map[string]bool) e
 	var refs, named []string
 	for _, n := range o.order {
 		was, ok := before[n.ID]
-		if !ok {
+		if !ok || !n.started() {
 			continue
 		}
 		waits, err := t.waitsOn(o, n)
 		if err != nil {
 			return err
 		}
-		var gained []string
+		var blockers, gained []string
 		for _, w := range waits {
 			if !was[w.blocker.ID] {
-				gained = append(gained, w.named())
+				blockers = append(blockers, w.named())
 			}
+		}
+		if len(blockers) > 0 {
+			gained = append(gained, "would wait on "+strings.Join(blockers, ", "))
+		}
+		if n.Blocked && !was[n.ID] {
+			gained = append(gained, "would be flagged blocked")
 		}
 		if len(gained) > 0 {
 			refs = append(refs, n.ref())
-			named = append(named, fmt.Sprintf("%s would wait on %s", n.ref(), strings.Join(gained, ", ")))
+			named = append(named, fmt.Sprintf("%s %s", n.ref(), strings.Join(gained, " and ")))
 		}
 	}
 	if len(refs) == 0 {
 		return nil
+	}
+	if a.owner() {
+		return &Error{Code: CodeInProgress, Refs: refs, Message: fmt.Sprintf(
+			"This would hold back work that is running: %s. Stop %s first, or wait for it to land.", strings.Join(named, "; "), strings.Join(refs, ", "))}
 	}
 	return &Error{Code: CodeInProgress, Refs: refs, Message: fmt.Sprintf(
 		"This would give work that has started a new open blocker: %s. Started work keeps what it waits on.", strings.Join(named, "; "))}

@@ -192,4 +192,19 @@ CREATE TABLE runs (
   approved_at  TEXT NOT NULL
 );
 `,
+	// v6 (ADR 0006 §3.1): a lane attempt's git state on its hold. A
+	// non-empty branch marks a lane hold, and the worktree path derives from
+	// it. landed_sha is the landing intent while the hold is open and the
+	// landed commit once it ended; reverted_sha likewise for a revert.
+	// waited_on lists, as JSON IDs, the done subtasks the attempt waited on
+	// when it started. The Project gets the base branch its integration
+	// branch follows and how many acceptance runs it allows at a time.
+	`
+ALTER TABLE holds ADD COLUMN branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE holds ADD COLUMN landed_sha TEXT NOT NULL DEFAULT '';
+ALTER TABLE holds ADD COLUMN reverted_sha TEXT NOT NULL DEFAULT '';
+ALTER TABLE holds ADD COLUMN waited_on TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE project_settings ADD COLUMN base_ref TEXT NOT NULL DEFAULT '';
+ALTER TABLE project_settings ADD COLUMN accept_parallel INTEGER NOT NULL DEFAULT 1 CHECK (accept_parallel BETWEEN 1 AND 4);
+`,
 }

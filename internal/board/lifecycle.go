@@ -8,10 +8,11 @@ import (
 )
 
 // SetStatus is the owner's direct status change. On a subtask: done needs a
-// comment and passes the finishing guard unless force is set; cancelled
-// needs a comment; todo marks a planned or done subtask ready, or releases a
-// doing one. On a container only cancelled is allowed, as a cascade over its
-// subtree; force exists on subtasks only.
+// comment and passes the finishing guard unless force is set, and is
+// refused while a lane holds the subtask; cancelled needs a comment; todo
+// marks a planned or done subtask ready, or releases a doing one. On a
+// container only cancelled is allowed, as a cascade over its subtree; force
+// exists on subtasks only.
 func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, comment string, force bool) (Card, error) {
 	o := map[Status]op{StatusDone: opDone, StatusCancelled: opCancel, StatusTodo: opReady}[to]
 	if o == "" {
@@ -48,6 +49,10 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 		case StatusDone:
 			if err := permit(a, opDone, n.stored); err != nil {
 				return err
+			}
+			// Marked done, a lane's work would never land.
+			if n.HeldBy != "" && n.Lane != nil {
+				return invalid("%s runs in a lane: accept its done request or Stop it", n.ref())
 			}
 			if !force {
 				if err := t.guard(o, n); err != nil {

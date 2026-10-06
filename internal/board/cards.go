@@ -874,8 +874,12 @@ func (t *txn) updateCard(n *node) error {
 }
 
 // setStatus is the only writer of a card's status, hold and cascade. Any
-// status change withdraws the card's pending requests.
+// status change withdraws the card's pending requests, so none is made
+// while the card is landing.
 func (t *txn) setStatus(n *node, to Status, heldBy, cascade string) error {
+	if err := t.notLanding(n); err != nil {
+		return err
+	}
 	n.stored, n.HeldBy, n.CascadeID, n.MovedAt, n.UpdatedAt = to, heldBy, cascade, t.now, t.now
 	if !n.container() {
 		n.Status = to
