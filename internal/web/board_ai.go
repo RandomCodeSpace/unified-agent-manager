@@ -40,6 +40,7 @@ const (
 	maxSuggestBrief    = 8 << 10
 	maxSuggestDocument = 64 << 10
 	defaultSuggestMax  = 5
+	maxSuggest         = 20 // the most cards one suggestion may create
 )
 
 var (
@@ -406,8 +407,8 @@ func (m *Manager) Suggest(ref string, req SuggestRequest) (string, error) {
 		return "", invalidBoard("the brief and the document must be UTF-8 text")
 	case limit == 0:
 		limit = defaultSuggestMax
-	case limit < 0 || limit > board.CapCreated:
-		return "", invalidBoard("max must be 1 to %d", board.CapCreated)
+	case limit < 0 || limit > maxSuggest:
+		return "", invalidBoard("max must be 1 to %d", maxSuggest)
 	}
 	var c board.Card
 	err := m.withBoard(func(st *board.Store) error {

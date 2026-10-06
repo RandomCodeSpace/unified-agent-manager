@@ -93,7 +93,7 @@ func toolNames(tools []agentapi.HostTool) []string {
 	return out
 }
 
-var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_unlink", "board_dismiss", "board_claim", "board_split", "board_request"}
+var allBoardTools = []string{"board_get", "board_list", "board_create", "board_edit", "board_checklist", "board_comment", "board_link", "board_unlink", "board_delete", "board_claim", "board_split", "board_request"}
 
 // plannerTaskTools are the tools of a Task that gets the planner's:
 // uam_create_task and uam_chart follow them.
@@ -709,15 +709,44 @@ func TestBoardToolsLinkProposalsButClaimOnlyConfirmed(t *testing.T) {
 	if c := f.card("#4").Card; c.HeldBy != "" || c.Confirmed {
 		t.Fatalf("a refused claim wrote %+v", c)
 	}
-	// It unlinks and dismisses while planning, never a confirmed card.
+	// It unlinks and deletes while planning, a confirmed card too, never
+	// the subtask it holds; deleting a blocker names what it released.
 	if r := f.toolOK(task.ID, "board_unlink", `{"ref":"#3","blocker":"#5"}`); r.Text != "Removed the link between #5 and #3." {
 		t.Fatalf("unlink = %+v", r)
 	}
 	f.toolRefused(task.ID, "board_unlink", `{"ref":"#3","blocker":"#5"}`, string(board.CodeNotFound))
-	if r := f.toolOK(task.ID, "board_dismiss", `{"ref":"#5"}`); r.Card == nil || r.Card.Status != board.StatusCancelled {
-		t.Fatalf("dismiss = %+v", r)
+	if r := f.toolOK(task.ID, "board_delete", `{"ref":"#4"}`); r.Card == nil || r.Card.Status != board.StatusCancelled ||
+		r.Text != "Deleted #4 and everything under it. The owner can restore it. It no longer blocks #5." {
+		t.Fatalf("delete = %+v", r)
 	}
-	f.toolRefused(task.ID, "board_dismiss", `{"ref":"#3"}`, string(board.CodeInvalid))
+	if r := f.toolOK(task.ID, "board_delete", `{"ref":"#3"}`); r.Text != "Deleted #3 and everything under it. The owner can restore it." {
+		t.Fatalf("delete of a confirmed card = %+v", r)
+	}
+	f.toolRefused(task.ID, "board_delete", `{"ref":"#2"}`, string(board.CodeInProgress))
+}
+
+// Work that has started keeps what it waits on: a split into siblings
+// says which started subtask its parts do not block, and the links of a
+// story with started work are the owner's, the refusal naming that work.
+func TestBoardToolsKeepStartedWorkWaiting(t *testing.T) {
+	f := newPlanner(t)
+	epic := f.create(board.KindEpic, "", "Epic")
+	story := f.create(board.KindStory, epic.ID, "Story")
+	first := f.create(board.KindSubtask, story.ID, "First")
+	second := f.create(board.KindSubtask, story.ID, "Second")
+	other := f.create(board.KindStory, epic.ID, "Other")
+	f.create(board.KindSubtask, other.ID, "Other one")
+	f.call(http.MethodPost, "/api/board/links", fmt.Sprintf(`{"blocker":%q,"blocked":%q}`, first.ID, second.ID), http.StatusNoContent, nil)
+	f.launch(second.ID)
+	plan := f.planTask(epic.ID)
+	r := f.toolOK(plan, "board_split", fmt.Sprintf(`{"ref":%q,"children":[{"title":"A"},{"title":"B"}]}`, first.ID))
+	if want := fmt.Sprintf("Split #%d into new subtasks after it; #%d was cancelled, and they took over its links. They do not block #%d, which already started.", first.Seq, first.Seq, second.Seq); r.Text != want {
+		t.Fatalf("split = %q, want %q", r.Text, want)
+	}
+	r = f.toolRefused(plan, "board_link", fmt.Sprintf(`{"ref":%q,"blocker":%q}`, story.ID, other.ID), string(board.CodeInProgress))
+	if !slices.Equal(r.Refs, []string{fmt.Sprintf("#%d", second.Seq)}) {
+		t.Fatalf("link onto started work = %+v", r)
+	}
 }
 
 // Split applies at once to a subtask that has not started and is a request on a

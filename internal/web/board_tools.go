@@ -272,7 +272,8 @@ var boardToolSet = []boardTool{
 		}), (*Manager).toolCreate),
 	defineTool("board_edit", "Change a card's fields or move it. A card that has not started changes at once, confirmed or not. "+
 		"A subtask in progress or done keeps its plan: the edit is filed as a change request, which the owner can apply once it is released. "+
-		"Moving a confirmed card under a proposal is also filed as a change request.",
+		"Moving a confirmed card under a proposal is also filed as a change request. "+
+		"Work that has started keeps what it waits on: a move that would make it wait on an open card, such as a confirmed subtask into a done story that started work waits on, is refused.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref":           refProp,
 			"title":         stringProp("One line."),
@@ -296,18 +297,23 @@ var boardToolSet = []boardTool{
 		toolSchema([]string{"ref", "body"}, map[string]any{"ref": refProp, "body": stringProp("The comment, in Markdown.")}), (*Manager).toolComment),
 	defineTool("board_link", "Record that another card blocks a card: it can't be finished, nor can anything under it, until the blocker is done or cancelled. "+
 		"Links map dependencies one level at a time: epics with epics, stories with stories of the same epic, subtasks with subtasks of the same story. "+
-		"Either card may be a proposal, so you can map dependencies while you plan; neither may be in progress or done.",
+		"Either card may be a proposal, so you can map dependencies while you plan. Neither may be in progress or done, and the blocked card may not be a story or epic with work in progress or done under it.",
 		toolSchema([]string{"ref", "blocker"}, map[string]any{"ref": stringProp("The card that is blocked. " + refDesc), "blocker": stringProp("The card that blocks it. " + refDesc)}),
 		(*Manager).toolLink),
-	defineTool("board_unlink", "Remove the link between two cards, whichever way it points. Neither may be in progress or done.",
+	defineTool("board_unlink", "Remove the link between two cards, whichever way it points. Neither may be in progress or done, and the blocked card may not be a story or epic with work in progress or done under it.",
 		toolSchema([]string{"ref", "blocker"}, map[string]any{"ref": stringProp("The card that is blocked. " + refDesc), "blocker": stringProp("The card that blocks it. " + refDesc)}),
 		(*Manager).toolUnlink),
-	defineTool("board_dismiss", "Drop a proposal in your scope, with everything under it: it is cancelled with the comment \"dismissed\", and the owner can restore it. Confirmed cards are the owner's to cancel.",
-		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolDismiss),
+	defineTool("board_delete", "Delete a card in your scope with everything under it, confirmed or not: it is cancelled with the comment \"deleted\", and the owner can restore it. "+
+		"Refused while anything in it is in progress or done, while started work waits on it, and when it would leave the story or epic above it done or cancelled. "+
+		"Deleting a blocker releases what waits on it, so link the replacement first. "+
+		fmt.Sprintf("A deleted card frees its place among the %d live cards you created, but still counts toward the %d you may create in all.", board.CapCreated, board.CapCreatedTotal),
+		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolDelete),
 	defineTool("board_claim", "Start work on a planned or todo subtask in your scope that the owner confirmed: a proposal, or a subtask under one, waits for the owner. You may hold one subtask at a time without a pending request on it.",
 		toolSchema([]string{"ref"}, map[string]any{"ref": refProp}), (*Manager).toolClaim),
 	defineTool("board_split", "Split a subtask into new subtasks: the given children, then its checklist items. A subtask that has not started splits at once; "+
-		"one in progress keeps its plan, and the split is filed as a request, which the owner can accept once it is released.",
+		"one in progress keeps its plan, and the split is filed as a request, which the owner can accept once it is released. "+
+		"Under a story the new subtasks become its siblings and take over its links, both ways, except to a subtask already in progress or done. "+
+		"Your new subtasks are proposals, so the split is refused when it would leave the story or epic above it done or cancelled: edit the subtask into the first part and create the others instead.",
 		toolSchema([]string{"ref"}, map[string]any{
 			"ref": refProp,
 			"children": listProp("The new subtasks.", toolSchema([]string{"title"}, map[string]any{
@@ -846,17 +852,21 @@ func (m *Manager) toolUnlink(ctx context.Context, sc boardScope, in linkArgs) (t
 	return reply, err
 }
 
-func (m *Manager) toolDismiss(ctx context.Context, sc boardScope, in refArgs) (toolReply, error) {
+func (m *Manager) toolDelete(ctx context.Context, sc boardScope, in refArgs) (toolReply, error) {
 	var reply toolReply
 	err := m.withBoard(func(st *board.Store) error {
 		c, err := sc.card(ctx, st, in.Ref)
 		if err != nil {
 			return err
 		}
-		if c, err = st.Dismiss(ctx, sc.actor, c.ID); err != nil {
+		res, err := st.Delete(ctx, sc.actor, c.ID)
+		if err != nil {
 			return err
 		}
-		reply = cardReply(c, "Dismissed #%d and everything under it. The owner can restore it.", c.Seq)
+		reply = cardReply(res.Card, "Deleted #%d and everything under it. The owner can restore it.", res.Card.Seq)
+		if len(res.Released) > 0 {
+			reply.Text += fmt.Sprintf(" It no longer blocks %s.", seqList(res.Released))
+		}
 		return nil
 	})
 	return reply, err
@@ -908,7 +918,10 @@ func (m *Manager) toolSplit(ctx context.Context, sc boardScope, in splitArgs) (t
 		case res.Card.Kind == board.KindStory:
 			reply = cardReply(res.Card, "Split #%d: it is now a story holding the new subtasks.", c.Seq)
 		default:
-			reply = cardReply(res.Card, "Split #%d into new subtasks after it; #%d was cancelled.", c.Seq, c.Seq)
+			reply = cardReply(res.Card, "Split #%d into new subtasks after it; #%d was cancelled, and they took over its links.", c.Seq, c.Seq)
+			if len(res.NotLinked) > 0 {
+				reply.Text += fmt.Sprintf(" They do not block %s, which already started.", seqList(res.NotLinked))
+			}
 		}
 		return nil
 	})

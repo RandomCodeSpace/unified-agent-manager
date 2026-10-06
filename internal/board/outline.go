@@ -478,10 +478,7 @@ func (t *txn) guard(o *outline, n *node) error {
 		refs := make([]string, len(waits))
 		named := make([]string, len(waits))
 		for i, w := range waits {
-			refs[i], named[i] = w.blocker.ref(), w.blocker.ref()
-			if w.via != nil {
-				named[i] += fmt.Sprintf(" (via its %s %s)", w.via.Kind, w.via.ref())
-			}
+			refs[i], named[i] = w.blocker.ref(), w.named()
 		}
 		return &Error{Code: CodeGuardBlockers, Refs: refs,
 			Message: fmt.Sprintf("%s still waits on %s", n.ref(), strings.Join(named, ", "))}
@@ -493,6 +490,14 @@ func (t *txn) guard(o *outline, n *node) error {
 // via, one of an ancestor's.
 type waiting struct {
 	blocker, via *node
+}
+
+// named renders the blocker for a message: "#5", or "#5 (via its story #3)".
+func (w waiting) named() string {
+	if w.via == nil {
+		return w.blocker.ref()
+	}
+	return fmt.Sprintf("%s (via its %s %s)", w.blocker.ref(), w.via.Kind, w.via.ref())
 }
 
 // waitsOn lists the open blockers n waits on: its own, then each
@@ -599,9 +604,11 @@ func (t *txn) atRoot(a Actor) error {
 	return nil
 }
 
-// mutate runs fn as one write to project: it sweeps expired cards first when
-// sweep is set, and afterwards settles every container fn brought to done.
-func (t *txn) mutate(project string, sweep bool, fn func() error) error {
+// mutate runs fn as a's write to project: it sweeps expired cards first when
+// sweep is set, and afterwards settles every container fn brought to done and
+// refuses the write if it gave started work a new open blocker (holdBacks).
+// uam's own writes, such as reconcile and the sweep, pass the zero Actor.
+func (t *txn) mutate(a Actor, project string, sweep bool, fn func() error) error {
 	if sweep {
 		if _, err := t.sweep(project); err != nil {
 			return err
@@ -612,10 +619,101 @@ func (t *txn) mutate(project string, sweep bool, fn func() error) error {
 		return err
 	}
 	before := o.statuses()
+	held, err := t.holdBacks(a, o)
+	if err != nil {
+		return err
+	}
 	if err := fn(); err != nil {
 		return err
 	}
-	return t.settle(project, before)
+	if err := t.settle(project, before); err != nil {
+		return err
+	}
+	return t.noNewBlockers(project, held)
+}
+
+// holdBacks snapshots the open blockers each subtask a's write must not add
+// to (ADR 0006), by subtask ID: those it waits on, its own and its
+// ancestors'. An agent's write covers every started subtask of the Project,
+// held or done. Other writes are not checked.
+func (t *txn) holdBacks(a Actor, o *outline) (map[string]map[string]bool, error) {
+	if a.Role != RoleAgent {
+		return nil, nil
+	}
+	out := map[string]map[string]bool{}
+	for _, n := range o.order {
+		if !n.started() {
+			continue
+		}
+		waits, err := t.waitsOn(o, n)
+		if err != nil {
+			return nil, err
+		}
+		out[n.ID] = map[string]bool{}
+		for _, w := range waits {
+			out[n.ID][w.blocker.ID] = true
+		}
+	}
+	return out, nil
+}
+
+// noNewBlockers refuses the write, naming the subtasks, when a subtask in
+// before now waits on an open blocker it did not: work that has started
+// keeps what it waits on.
+func (t *txn) noNewBlockers(project string, before map[string]map[string]bool) error {
+	if len(before) == 0 {
+		return nil
+	}
+	o, err := t.outline(project)
+	if err != nil {
+		return err
+	}
+	var refs, named []string
+	for _, n := range o.order {
+		was, ok := before[n.ID]
+		if !ok {
+			continue
+		}
+		waits, err := t.waitsOn(o, n)
+		if err != nil {
+			return err
+		}
+		var gained []string
+		for _, w := range waits {
+			if !was[w.blocker.ID] {
+				gained = append(gained, w.named())
+			}
+		}
+		if len(gained) > 0 {
+			refs = append(refs, n.ref())
+			named = append(named, fmt.Sprintf("%s would wait on %s", n.ref(), strings.Join(gained, ", ")))
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return &Error{Code: CodeInProgress, Refs: refs, Message: fmt.Sprintf(
+		"This would give work that has started a new open blocker: %s. Started work keeps what it waits on.", strings.Join(named, "; "))}
+}
+
+// startedWork refuses an agent's link or unlink whose blocked side is the
+// container n with started or done subtasks under it, naming them: that
+// work keeps what it waits on, so its links are the owner's to change.
+func (o *outline) startedWork(n *node) error {
+	if !n.container() {
+		return nil
+	}
+	var refs []string
+	for _, m := range o.subtree(n) {
+		if m.started() {
+			refs = append(refs, m.ref())
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	return &Error{Code: CodeInProgress, Refs: refs, Message: fmt.Sprintf(
+		"%s has work started under it (%s), so its links are the owner's to change", n.ref(), strings.Join(refs, ", "))}
 }
 
 // settle closes every container that reached done since before, deepest
