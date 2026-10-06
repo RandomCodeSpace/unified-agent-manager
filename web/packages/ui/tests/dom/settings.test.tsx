@@ -390,14 +390,21 @@ describe('settings', () => {
     expect(models.queryByRole('form')).toBeNull();
   });
 
-  test('the terminal switch and this browser\'s motion and activity settings', async () => {
+  test('the terminal switch and this browser\'s theme, motion and activity settings', async () => {
     const { user } = await openSettings();
     const shell = await section('Shell access');
     await user.click(shell.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(shell.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
     await user.click(screen.getByRole('button', { name: 'This browser', exact: true }));
     const browser = await section('This browser');
-    await user.click(browser.getByRole('radio', { name: 'Match system' }));
+    const theme = within(browser.getByRole('radiogroup', { name: 'Theme' }));
+    expect(theme.getByRole('radio', { name: 'Match system' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(theme.getByRole('radio', { name: 'Dark' }));
+    expect(localStorage.getItem('uam.theme')).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    await user.click(theme.getByRole('radio', { name: 'Light' }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    await user.click(within(browser.getByRole('radiogroup', { name: 'Motion' })).getByRole('radio', { name: 'Match system' }));
     expect(localStorage.getItem('uam.motion')).toBe('system');
     await user.click(browser.getByRole('radio', { name: 'Detailed' }));
     expect(localStorage.getItem('uam.activity')).toBe('detailed');

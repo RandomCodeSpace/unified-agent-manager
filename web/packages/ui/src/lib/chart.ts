@@ -33,12 +33,14 @@ export function seriesColorIndexes(series: readonly { name: string }[]): number[
   return [(hash >>> 0) % SERIES_TOKENS.length];
 }
 
-let tokens: Record<string, string> | null = null;
-/** A colour token's value from the live page, or the fallback (node tests have no page). */
+let tokens: { scheme: string | undefined; values: Record<string, string> } | null = null;
+/** A colour token's value from the live page in its current scheme, or the fallback (node tests have no page). */
 function token(name: string, fallback: string): string {
-  tokens ??= {};
-  if (!(name in tokens)) tokens[name] = (typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim()) || fallback;
-  return tokens[name];
+  const scheme = typeof document === 'undefined' ? undefined : document.documentElement.dataset.theme;
+  if (!tokens || tokens.scheme !== scheme) tokens = { scheme, values: {} };
+  const values = tokens.values;
+  if (!(name in values)) values[name] = (typeof document === 'undefined' ? '' : getComputedStyle(document.documentElement).getPropertyValue(`--color-${name}`).trim()) || fallback;
+  return values[name];
 }
 const seriesColors = () => SERIES_TOKENS.map((name, i) => token(name, SERIES_FALLBACK[i]));
 

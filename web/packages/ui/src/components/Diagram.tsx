@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
 import { usePreview } from '../lib/previewContext';
+import { useScheme } from '../lib/theme';
 import { Lightbox } from './Attachments';
 import { CodeBlock, Note, Spinner } from './common';
 import { Button } from './ui/button';
@@ -20,6 +21,8 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
   const [result, setResult] = useState<{ source: string; rendered?: Rendered; error?: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(false);
+  // The SVG carries the scheme's colours, so a scheme change renders it again.
+  const scheme = useScheme();
 
   useEffect(() => {
     if (!ready) return;
@@ -31,7 +34,7 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
     return () => {
       on = false;
     };
-  }, [source, ready]);
+  }, [source, ready, scheme]);
 
   const rendered = result?.source === source ? result.rendered : undefined;
   const error = result?.source === source ? result.error : undefined;

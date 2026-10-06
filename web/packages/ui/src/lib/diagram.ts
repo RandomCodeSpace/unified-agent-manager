@@ -214,11 +214,12 @@ const THEME_TOKENS: Record<string, string> = {
  */
 export const DIAGRAM_FONT = "'Figtree Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
-let theme: Record<string, string> | null = null;
+let theme: { scheme: string | undefined; variables: Record<string, string> } | null = null;
 
-/** Theme variables from the live tokens; a token that is not emitted is left to Mermaid's default. */
+/** Theme variables from the live tokens in the current scheme; a token that is not emitted is left to Mermaid's default. */
 export function diagramTheme(): Record<string, string> {
-  if (theme) return theme;
+  const scheme = document.documentElement.dataset.theme;
+  if (theme && theme.scheme === scheme) return theme.variables;
   const style = getComputedStyle(document.documentElement);
   // 14px, matched by the sequence sizes in the frame: Mermaid measures with the theme size and
   // draws sequence text with its own, and a mismatch overflows the boxes.
@@ -227,7 +228,7 @@ export function diagramTheme(): Record<string, string> {
     const value = style.getPropertyValue(`--color-${token}`).trim();
     if (value) out[variable] = value;
   }
-  theme = out;
+  theme = { scheme, variables: out };
   return out;
 }
 
@@ -293,15 +294,16 @@ function ensureFrame(): { queue: DiagramQueue; loaded: Promise<void> } {
   return { queue: q, loaded };
 }
 
-/** Renders Mermaid source to an SVG string; the same source renders once per page. */
+/** Renders Mermaid source to an SVG string; the same source renders once per page and scheme. */
 export function renderDiagram(source: string): Promise<Rendered> {
-  const hit = cache.get(source);
+  const key = `${document.documentElement.dataset.theme ?? ''}\n${source}`;
+  const hit = cache.get(key);
   if (hit) return hit;
   const { queue: q, loaded: ready } = ensureFrame();
   const p = ready.then(() => q.render(source, diagramTheme()));
-  cache.set(source, p);
+  cache.set(key, p);
   p.catch((err: unknown) => {
-    if (err instanceof DiagramError && err.transient) cache.delete(source);
+    if (err instanceof DiagramError && err.transient) cache.delete(key);
   });
   return p;
 }

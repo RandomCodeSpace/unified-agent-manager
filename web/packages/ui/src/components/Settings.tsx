@@ -20,6 +20,7 @@ import { TokenPricing } from './TokenPricing';
 import { byModelName, cheapestLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
+import { loadTheme, saveTheme, type Theme } from '../lib/theme';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Select } from './ui/select';
@@ -592,6 +593,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
+  const [theme, setTheme] = useState(loadTheme);
   const [density, setDensity] = useState(loadDensity);
   const [scrolled, sentinel] = useScrolled();
   // A provider's CLI has an update: the Providers tab carries the Settings button's dot on to its card.
@@ -833,6 +835,22 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           <Section hidden={section !== 'browser'} id="browser" title="This browser">
             {api.owner && <Note>Kept in this browser, not on {api.owner.label}: these apply whichever instance is on screen.</Note>}
             <NotifyRow />
+            <Row id="theme" label="Theme" help="Match system follows your OS's light or dark setting as it changes.">
+              <Segmented
+                aria-labelledby="theme-label"
+                aria-describedby="theme-help"
+                value={theme}
+                onValueChange={(v) => {
+                  setTheme(v as Theme);
+                  saveTheme(v as Theme);
+                }}
+                items={[
+                  { value: 'light', label: 'Light' },
+                  { value: 'dark', label: 'Dark' },
+                  { value: 'system', label: 'Match system' },
+                ]}
+              />
+            </Row>
             <Row id="motion" label="Motion" help="Always on animates even when the OS asks for reduced motion; Match system follows your OS setting.">
               <Segmented
                 aria-labelledby="motion-label"

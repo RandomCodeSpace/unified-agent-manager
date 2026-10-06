@@ -7,6 +7,7 @@ import { RotateCcw, SquareTerminal, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient, Project } from '../api';
 import { exitCode, mouseClipboard, type ClipboardNotice } from '../lib/terminal';
+import { currentScheme, subscribeScheme, type Scheme } from '../lib/theme';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 
@@ -115,12 +116,12 @@ function Screen({ projectId, onStatus, onNotice }: Readonly<{ projectId: string;
 }
 
 /**
- * The one theme (DESIGN.md Terminal): the panel's `canvas` under `ink`, and sixteen ANSI colours
- * at 5:1 or more on `canvas`, taken from the signal and badge tokens where one fits.
+ * A theme per scheme (DESIGN.md Terminal): the panel's `canvas` under `ink`, and sixteen ANSI
+ * colours at 5:1 or more on `canvas`, taken from the signal and badge tokens where one fits.
  */
-const THEME: ITheme = {
+const LIGHT: ITheme = {
   background: '#fcfcfd', // canvas
-  foreground: '#25262b', // ink; index.css repeats it for the scrollbar slider
+  foreground: '#25262b', // ink, as is index.css's scrollbar slider
   cursor: '#25262b',
   cursorAccent: '#fcfcfd',
   selectionBackground: '#cfdaf3', // selection
@@ -141,6 +142,30 @@ const THEME: ITheme = {
   brightCyan: '#13756b', // badge-teal
   brightWhite: '#25262b', // ink
 };
+const DARK: ITheme = {
+  background: '#000000', // canvas
+  foreground: '#ededed', // ink
+  cursor: '#ededed',
+  cursorAccent: '#000000',
+  selectionBackground: '#213a6b', // selection
+  black: '#969696', // muted: a true black would vanish on the canvas
+  red: '#ff7a70', // error
+  green: '#4fd18b', // success
+  yellow: '#e6b84a', // warning
+  blue: '#7aa5ff', // accent
+  magenta: '#c792ea',
+  cyan: '#5cc8e6', // badge-cyan
+  white: '#c2c2c2', // body
+  brightBlack: '#969696', // muted
+  brightRed: '#f2867c', // badge-red
+  brightGreen: '#6fcf8f', // badge-green
+  brightYellow: '#e3be5a', // badge-amber
+  brightBlue: '#86a6ff', // badge-blue
+  brightMagenta: '#f08cc4', // badge-pink
+  brightCyan: '#4fd1bf', // badge-teal
+  brightWhite: '#ededed', // ink
+};
+const THEMES: Record<Scheme, ITheme> = { light: LIGHT, dark: DARK };
 /** index.css `--font-mono`. */
 const FONT = "'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace";
 const FONT_SIZE = 14;
@@ -183,7 +208,7 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
   }
   probe.getExtension('WEBGL_lose_context')?.loseContext();
   // Right-click pastes (mouseClipboard), so it does not select a word first as on macOS by default.
-  const term = new Terminal({ theme: THEME, fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, rightClickSelectsWord: false });
+  const term = new Terminal({ theme: THEMES[currentScheme()], fontFamily: FONT, fontSize: FONT_SIZE, lineHeight: LINE_HEIGHT, rightClickSelectsWord: false });
   const fit = new FitAddon();
   term.loadAddon(fit);
   try {
@@ -247,6 +272,9 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
   });
   observer.observe(host);
   const unclip = mouseClipboard(term, host, MAC, onNotice);
+  const unscheme = subscribeScheme(() => {
+    term.options.theme = THEMES[currentScheme()];
+  });
   term.focus();
 
   let stopped = false;
@@ -256,6 +284,7 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
     cancelAnimationFrame(frame);
     observer.disconnect();
     unclip();
+    unscheme();
     ws.onclose = null;
     ws.close();
     term.dispose();
