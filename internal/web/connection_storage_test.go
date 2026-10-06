@@ -4,37 +4,56 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestConnectionStorageDirectoryProtection(t *testing.T) {
+func TestConnectionStorageMakesItsDirectoryPrivateAndIgnoresAncestors(t *testing.T) {
 	// Directly below the sticky OS temp root, so no private testing ancestor
-	// masks the exposed directory permissions this case is verifying.
+	// masks the exposed permissions this case sets up.
 	base, err := os.MkdirTemp("", "uam-connection-permissions-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(base, 0o700); _ = os.RemoveAll(base) })
-	if err := os.Chmod(base, 0o755); err != nil {
+	// A group- and world-writable uam directory is uam's to fix: it opens and ends up private.
+	if err := os.Chmod(base, 0o777); err != nil {
 		t.Fatal(err)
 	}
 	r, err := openConnectionRegistry(context.Background(), base, testToken)
 	if err != nil {
-		t.Fatalf("owned0755 directory rejected: %v", err)
+		t.Fatalf("writable registry directory refused: %v", err)
 	}
 	r.close()
+	if info, err := os.Stat(base); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("registry directory mode = %v, %v; want 0700", info.Mode().Perm(), err)
+	}
+	// A writable ancestor is the user's setup; the uam directory under it still opens, and is still made private.
 	if err := os.Chmod(base, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openConnectionRegistry(context.Background(), base, testToken); err == nil {
-		t.Fatal("exposed writable registry directory accepted")
-	}
-	child := filepath.Join(base, "owned-child")
-	if err := os.Mkdir(child, 0o700); err != nil {
+	child := filepath.Join(base, "uam")
+	if err := os.Mkdir(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openConnectionRegistry(context.Background(), child, testToken); err == nil {
-		t.Fatal("writable ancestor allowed pathname replacement")
+	r, err = openConnectionRegistry(context.Background(), child, testToken)
+	if err != nil {
+		t.Fatalf("registry under a writable ancestor refused: %v", err)
+	}
+	r.close()
+	if info, err := os.Stat(child); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("child mode = %v, %v; want 0700", info.Mode().Perm(), err)
+	}
+	if info, err := os.Stat(base); err != nil || info.Mode().Perm() != 0o777 {
+		t.Fatalf("ancestor mode = %v, %v; want left alone", info.Mode().Perm(), err)
+	}
+	// A regular file in the directory's place is refused by name.
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openConnectionRoot(file); err == nil || !strings.Contains(err.Error(), file) {
+		t.Fatalf("file accepted as registry directory: %v", err)
 	}
 }
 

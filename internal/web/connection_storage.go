@@ -2,70 +2,42 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/google/uuid"
 )
 
-// Pin the actual configuration directory. A group-writable parent could replace
-// a checked pathname, so walk from the filesystem root through owned descriptors.
-// Sticky shared roots such as /tmp are allowed only for an owned child.
+// openConnectionRoot opens the configuration directory, which uam creates and
+// owns, pinned by descriptor so a later rename cannot redirect a save. The
+// directory is made private (0700) when it is not, since uam is its owner;
+// only a directory owned by another user is refused, by name. Ancestors are
+// not inspected: a shared home or a group-writable parent is the user's
+// setup, not a reason for uam web not to start.
 func openConnectionRoot(dir string) (*os.Root, error) {
 	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := filepath.EvalSymlinks(absolute)
+	info, err := os.Stat(absolute)
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(string(filepath.Separator))
-	if err != nil {
-		return nil, err
+	if !info.IsDir() {
+		return nil, fmt.Errorf("connection storage: %s is not a directory", absolute)
 	}
-	fail := func() (*os.Root, error) {
-		_ = root.Close()
-		return nil, errors.New("connection storage requires an owned directory protected from replacement")
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int64(st.Uid) != int64(os.Geteuid()) {
+		return nil, fmt.Errorf("connection storage: %s is owned by another user; run uam as its owner or point UAM_CONFIG_DIR at a directory of your own", absolute)
 	}
-	parts := strings.Split(strings.TrimPrefix(canonical, string(filepath.Separator)), string(filepath.Separator))
-	stickyParent := false
-	privateAncestor := false
-	for i := -1; i < len(parts); i++ {
-		if i >= 0 && parts[i] != "" {
-			next, openErr := root.OpenRoot(parts[i])
-			if openErr != nil {
-				_ = root.Close()
-				return nil, openErr
-			}
-			_ = root.Close()
-			root = next
+	if info.Mode().Perm()&0o077 != 0 {
+		if err := os.Chmod(absolute, 0o700); err != nil { // #nosec G302 -- a directory needs the execute bit; 0700 is the private mode uam creates it with.
+			return nil, fmt.Errorf("connection storage: make %s private: %w", absolute, err)
 		}
-		info, statErr := root.Stat(".")
-		if statErr != nil || !info.IsDir() {
-			return fail()
-		}
-		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fail()
-		}
-		owned := int64(st.Uid) == int64(os.Geteuid())
-		if (!owned && st.Uid != 0) || (stickyParent && !owned) {
-			return fail()
-		}
-		writable := info.Mode().Perm()&0o022 != 0
-		stickyParent = writable && info.Mode()&os.ModeSticky != 0
-		if writable && !stickyParent && !privateAncestor {
-			return fail()
-		}
-		if i == len(parts)-1 && (!owned || (writable && !privateAncestor)) {
-			return fail()
-		}
-		privateAncestor = privateAncestor || (owned && info.Mode().Perm()&0o077 == 0)
 	}
-	return root, nil
+	return os.OpenRoot(absolute)
 }
 
 func privateConnectionFile(info os.FileInfo) bool {
