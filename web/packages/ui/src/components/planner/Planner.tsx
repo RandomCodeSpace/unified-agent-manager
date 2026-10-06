@@ -132,11 +132,13 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
 /**
  * The Project's integration branch (ADR 0006 §5.2) and the providers uam's executor waits for
  * (§4.5), fetched for `project` and again as `key` changes: the landings, and while an epic runs,
- * each Board revision. Null and none until it loads.
+ * each Board revision. A wait ends with no Board change, so the first to end reads it again too.
+ * Null and none until it loads.
  */
 function useProjectRun(project: string, key: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
   const api = useApi();
   const [shown, setShown] = useState<{ project: string; integration: BoardIntegration | null; waits: ProviderWait[] } | null>(null);
+  const [ended, setEnded] = useState(0);
   useEffect(() => {
     if (!project) return;
     let alive = true;
@@ -147,9 +149,18 @@ function useProjectRun(project: string, key: string): { integration: BoardIntegr
     return () => {
       alive = false;
     };
-  }, [api.planner, project, key]);
+  }, [api.planner, project, key, ended]);
+  useEffect(() => {
+    const ends = shown?.waits.map((w) => Date.parse(w.until ?? '')).filter(Number.isFinite) ?? [];
+    if (!ends.length) return;
+    // A little after the service's time, so it says the wait ended; each read sets the next.
+    const timer = setTimeout(() => setEnded((n) => n + 1), Math.max(0, Math.min(...ends) - Date.now()) + WAIT_SLACK_MS);
+    return () => clearTimeout(timer);
+  }, [shown]);
   return shown?.project === project ? shown : { integration: null, waits: NO_WAITS };
 }
+
+const WAIT_SLACK_MS = 500;
 
 const NO_WAITS: ProviderWait[] = [];
 
@@ -231,7 +242,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
       </div>
     );
   } else if (ui.view === 'tree') {
-    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} /></div>;
+    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} waits={waits} /></div>;
   } else if (ui.view === 'board') {
     body = <BoardView />;
   } else {

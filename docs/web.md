@@ -1337,9 +1337,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in the Project folder, so it never holds up your Commit, Pull or Push), on
   its own branch made from the integration branch. Launch, Do whole story
   and adding a Task are not offered under an approved epic, and the service
-  refuses them. The epic's card panel says how its run stands in words,
-  "Running 2 of 2 · Ready 1 · Waiting 3", and, while its provider backs off
-  or is signed out, "Waiting for <provider>: <why>". The lane's Task gets only the planner tools to read the
+  refuses them. The epic's row in the Tree and its card panel say how its
+  run stands in words, "Running 2 of 2 · Ready 1 · Waiting 3", and, while its
+  provider backs off or is signed out, "Waiting for <provider>: <why>". The lane's Task gets only the planner tools to read the
   board, tick its checklist, comment and file requests, and its git panel
   neither pushes nor pulls. Its done request commits what it left, merges
   the integration tip into the lane (a conflict refuses it with the files

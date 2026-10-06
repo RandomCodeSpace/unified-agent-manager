@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitBranch, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem, type ProviderWait } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, runSummary } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, runText } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -74,19 +74,9 @@ export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS }:
 
 const NO_WAITS: readonly ProviderWait[] = [];
 
-/** "Waiting for Copilot: rate limited" when the provider the epic `c` runs on waits; '' otherwise. */
-function providerWait(c: Card, waits: readonly ProviderWait[]): string {
-  const w = c.run && waits.find((x) => x.provider === c.run!.provider);
-  return w ? `Waiting for ${w.name || w.provider}: ${w.detail}` : '';
-}
-
 /** An approved epic's run in words, with no spinner (one ring per place): "Running 2 of 2 · Ready 3 · Waiting 4". */
-function RunLine({ summary: r }: Readonly<{ summary: ReturnType<typeof runSummary> }>) {
-  return (
-    <p className="text-caption text-muted tabular-nums">
-      Running {r.running} of {r.parallel} · Ready {r.ready} · Waiting {r.waiting}
-    </p>
-  );
+function RunLine({ summary }: Readonly<{ summary: ReturnType<typeof runSummary> }>) {
+  return <p className="text-caption text-muted tabular-nums">{runText(summary)}</p>;
 }
 
 function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[] }>) {
@@ -178,7 +168,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
             {c.due && <span>Due {c.due}</span>}
             {c.labels.map((l) => <Chip key={l} fill="well">{l}</Chip>)}
           </div>
-          {c.run && c.status !== 'done' && c.status !== 'cancelled' && <RunLine summary={runSummary(c, byId)} />}
+          {runsNow(c) && <RunLine summary={runSummary(c, byId)} />}
           {locked && !unassigned && <Note tone="muted">{locked}</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}

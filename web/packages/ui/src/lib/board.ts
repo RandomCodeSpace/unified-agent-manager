@@ -3,7 +3,7 @@
 // Task's place in the plan with the per-level graph its Plan panel draws.
 // No runtime imports, so the node test suite loads it as it is.
 
-import type { BoardData, BoardFrame, BoardRequest, Card, CardKind, CardProgress, CardStatus } from '../api';
+import type { BoardData, BoardFrame, BoardRequest, Card, CardKind, CardProgress, CardStatus, ProviderWait } from '../api';
 
 /** The Board's columns, in order; `cancelled` joins them only when shown. */
 export const BOARD_COLUMNS: readonly CardStatus[] = ['planned', 'todo', 'doing', 'done'];
@@ -162,6 +162,22 @@ export function runSummary(epic: Card, byId: ReadonlyMap<string, Card>): RunSumm
     else if ((c.status === 'planned' || c.status === 'todo') && !c.held_by && cardPath(c, byId).every((x) => x.confirmed && x.status !== 'cancelled') && !pausedOn(c, byId) && (c.blocked || waitsOf(c, byId).length > 0)) out.waiting++;
   }
   return out;
+}
+
+/** An approved epic's run in words: "Running 2 of 2 · Ready 3 · Waiting 4". */
+export function runText(r: RunSummary): string {
+  return `Running ${r.running} of ${r.parallel} · Ready ${r.ready} · Waiting ${r.waiting}`;
+}
+
+/** Whether the approved epic `c` runs now: approved, and neither done nor cancelled. */
+export function runsNow(c: Card): boolean {
+  return !!c.run && c.status !== 'done' && c.status !== 'cancelled';
+}
+
+/** "Waiting for Copilot: rate limited" when the provider the approved epic `c` runs on waits among `waits` (ADR 0006 §4.5); '' otherwise. */
+export function providerWait(c: Card, waits: readonly ProviderWait[]): string {
+  const w = c.run && waits.find((x) => x.provider === c.run!.provider);
+  return w ? `Waiting for ${w.name || w.provider}: ${w.detail}` : '';
 }
 
 /** The subtasks under `card` (itself for one) held in a lane: what Stop stops. */

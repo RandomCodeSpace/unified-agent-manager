@@ -1529,6 +1529,9 @@ describe('lanes (ADR 0006 §5)', () => {
     try {
       const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
       await tree.findByRole('treeitem', { name: /^#94 / });
+      // The epic's row says it too, so the Tree shows the run without opening the card.
+      expect(row(tree, 32).textContent).toContain('Running 2 of 2 · Ready 1 · Waiting 1');
+      expect(row(tree, 32).querySelector('.animate-spin')).toBeNull();
       expect(itemsOf(await openMenu(user, 'Actions for #94'))).not.toContain('Launch');
       await user.keyboard('{Escape}');
       const panel = await openCard(user, tree, 32);
@@ -1548,8 +1551,32 @@ describe('lanes (ADR 0006 §5)', () => {
     try {
       // A Board change reads the Project again while the epic runs.
       await act(() => api.planner.comment('cp3-33', 'Looking at the template now.'));
+      // On the epic's row, in words a screen reader reads where the row has no room for them.
+      await waitFor(() => expect(row(tree, 32).textContent).toContain('Waiting for GitHub Copilot: rate limited'));
       const panel = await openCard(user, tree, 32);
       expect(await panel.findByText('Waiting for GitHub Copilot: rate limited')).toBeTruthy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a provider wait leaves the epic once its time passes, with no Board change', async () => {
+    const { tree } = await lanePlanner();
+    let until = 0;
+    const spy = serviceReply(
+      (url, method) => method === 'GET' && url.includes('/api/board/projects/p3'),
+      async (real) => {
+        const data = await (await real()).json();
+        until ||= Date.now() + 500;
+        // As the service does: the provider waits until then, and not after.
+        return Date.now() < until ? reply(200, { ...data, executor: { providers: [{ provider: 'copilot', name: 'GitHub Copilot', detail: 'rate limited', until: new Date(until).toISOString() }] } }) : reply(200, data);
+      },
+    );
+    try {
+      await act(() => api.planner.comment('cp3-33', 'Looking at the template now.'));
+      await waitFor(() => expect(row(tree, 32).textContent).toContain('Waiting for GitHub Copilot'));
+      // Nothing on the Board changes as the wait ends: the Planner reads the Project again when it does.
+      await waitFor(() => expect(row(tree, 32).textContent).not.toContain('Waiting for'), { timeout: 4000 });
     } finally {
       spy.mockRestore();
     }

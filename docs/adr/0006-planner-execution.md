@@ -608,7 +608,7 @@ The dialog posts the listed ids with the revisions it rendered. On `stale` it na
 **Elsewhere.**
 - The Inbox gets a **Plans to approve** section above the requests, and Needs-you counts it. The Accept job shows progress (S4).
 - The Settle dialog offers release (labelled Stop) and cancel for a lane hold, not keep (S4).
-- Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs.
+- Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs. As built, the run summary and the provider wait show on the epic's Tree row (compact: "Running 2 of 2" with the rest as screen-reader text) and in its card panel; the Board has no epic row, so it shows neither.
 - A card's Attempts list adds the branch, the landed sha and the reverted sha.
 - The Planner header shows "uam-plan-x · 5 ahead of main" and the merge state: "Merge waiting: `<reason>`", or "Merge blocked" with Retry merge (S6). The merge job shows progress.
 - Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.

@@ -1,7 +1,7 @@
 import { BadgeCheck, Bot, Check, Circle, CircleDashed, CircleDot, GitCommitHorizontal, GitMerge, Hourglass, Layers, Link2, ListTree, Lock, Minus, Pause, SquareCheck, TriangleAlert, X } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 import { taskName, type Card, type CardKind, type CardStatus } from '../../api';
-import { KIND_LABEL, STATUS_LABEL, shownProgress } from '../../lib/board';
+import { KIND_LABEL, STATUS_LABEL, runText, shownProgress, type RunSummary } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
@@ -105,13 +105,13 @@ export function TaskChip({ taskId, className }: Readonly<{ taskId: string; class
 }
 
 /**
- * The quiet markers a card row carries: an approved epic, the provider its run waits for
- * (`waiting`: "Waiting for Copilot: rate limited", ADR 0006 §4.5) and the proposals waiting for its
- * next approval (`toApprove`), its pause (`pause`, from `pauseLabel`), a lane subtask landing or
- * landed (ADR 0006 §3.2), pending requests, staleness, blocked (`blockers`: its open blockers, from
- * `openBlockerSeqs`).
+ * The quiet markers a card row carries: an approved epic, how its run stands (`run`, ADR 0006
+ * §3.2), the provider its run waits for (`waiting`: "Waiting for Copilot: rate limited", §4.5) and
+ * the proposals waiting for its next approval (`toApprove`), its pause (`pause`, from
+ * `pauseLabel`), a lane subtask landing or landed (§3.2), pending requests, staleness, blocked
+ * (`blockers`: its open blockers, from `openBlockerSeqs`).
  */
-export function CardMarkers({ card, blockers, pause = '', toApprove = 0, waiting = '', compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; waiting?: string; compact?: boolean }>) {
+export function CardMarkers({ card, blockers, pause = '', toApprove = 0, run, waiting = '', compact = false }: Readonly<{ card: Card; blockers: string; pause?: string; toApprove?: number; run?: RunSummary; waiting?: string; compact?: boolean }>) {
   const marks: ReactNode[] = [];
   if (card.run) {
     const r = card.run;
@@ -119,6 +119,23 @@ export function CardMarkers({ card, blockers, pause = '', toApprove = 0, waiting
       <Chip key="approved" title={`Approved to run on ${r.model}, ${r.mode === 'yolo' ? 'Yolo' : 'Safe'}, ${r.parallel} at a time`}>
         <BadgeCheck aria-hidden="true" className="size-3" />
         <span className={cn(compact && 'max-sm:sr-only')}>Approved</span>
+      </Chip>,
+    );
+  }
+  if (run) {
+    // Words and counts, no ring (one ring per place); a compact row shows the lanes running and
+    // names the rest for a screen reader.
+    marks.push(
+      <Chip key="run" title={runText(run)}>
+        {compact ? (
+          <span className="tabular-nums">
+            <span className="max-sm:sr-only">Running </span>
+            {run.running} of {run.parallel}
+            <span className="sr-only">{` · Ready ${run.ready} · Waiting ${run.waiting}`}</span>
+          </span>
+        ) : (
+          <span className="tabular-nums">{runText(run)}</span>
+        )}
       </Chip>,
     );
   }
