@@ -31,7 +31,9 @@ export function EChart({ option, width, height, className, label, zoomControls =
 }>) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<EChartsType | null>(null);
-  const [error, setError] = useState(false);
+  // The drawing library's reason when it rejected the option; null while the drawing stands.
+  const [failure, setFailure] = useState<string | null>(null);
+  const error = failure !== null;
   const [ready, setReady] = useState(false);
   const [hasControls, setHasControls] = useState(false);
   const [menuRanges, setMenuRanges] = useState<MenuRange[]>([]);
@@ -47,6 +49,15 @@ export function EChart({ option, width, height, className, label, zoomControls =
     if (!element) return;
     let active = true;
     let observer: ResizeObserver | undefined;
+    // A drawing that threw on a saved option throws again when disposed, which would
+    // take the page down on unmount: drop it now, quietly, and show the library's reason.
+    // The next option or size starts a fresh drawing.
+    const fail = (cause: unknown) => {
+      try { chart.current?.dispose(); } catch { /* already broken */ }
+      chart.current = null;
+      setReady(false);
+      setFailure(cause instanceof Error && cause.message ? cause.message.split('\n')[0] : 'the drawing library rejected its options');
+    };
     void import('../lib/echarts').then(({ init }) => {
       if (!active) return;
       try {
@@ -59,14 +70,15 @@ export function EChart({ option, width, height, className, label, zoomControls =
         resize();
         drawing.setOption(option, { notMerge: true });
         syncControls();
-        observer = new ResizeObserver(resize);
+        // Some options draw once and fail on the layout a resize runs again.
+        observer = new ResizeObserver(() => { try { resize(); } catch (cause) { observer?.disconnect(); fail(cause); } });
         observer.observe(element);
-        setError(false);
+        setFailure(null);
         setReady(true);
-      } catch {
-        setError(true);
+      } catch (cause) {
+        fail(cause);
       }
-    }, () => { if (active) setError(true); });
+    }, () => { if (active) fail(new Error('the drawing library did not load')); });
     return () => {
       active = false;
       observer?.disconnect();
@@ -74,7 +86,7 @@ export function EChart({ option, width, height, className, label, zoomControls =
   }, [option, width, height]);
 
   useEffect(() => () => {
-    chart.current?.dispose();
+    try { chart.current?.dispose(); } catch { /* a drawing that failed may not dispose cleanly */ }
     chart.current = null;
   }, []);
 
@@ -196,7 +208,7 @@ export function EChart({ option, width, height, className, label, zoomControls =
       <div ref={host} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} className={cn('min-h-0 w-full', !footer && 'flex-1')} style={footer ? { height } : undefined} />
       {externalControls ? controlsContainer && createPortal(<>{navigation}{series}</>, controlsContainer) : navigation}
       {legend !== undefined && <div className="pt-1 pl-2">{legend}</div>}
-      {error && <Note role="status" className="absolute inset-0 bg-raised px-1 py-2">The chart could not be drawn. Try reopening it.</Note>}
+      {error && <Note role="status" className="absolute inset-0 overflow-y-auto bg-raised px-1 py-2 [overflow-wrap:anywhere]">The chart could not be drawn: {failure}</Note>}
     </div>
   );
 }
