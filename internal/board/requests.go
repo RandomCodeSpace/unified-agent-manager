@@ -123,10 +123,12 @@ type payload struct {
 
 // SplitResult is a split's outcome: the card as the split left it (a story,
 // or cancelled after a split into siblings), and the split request filed
-// instead when it did not apply.
+// instead when it did not apply. NotLinked are the started dependents of a
+// subtask split into siblings, which the siblings were not linked to.
 type SplitResult struct {
-	Card    Card
-	Request *Request
+	Card      Card
+	Request   *Request
+	NotLinked []Card
 }
 
 // Finishable is a subtask that passed the finishing guard, with the
@@ -438,7 +440,9 @@ func (t *txn) fileRequest(o *outline, a Actor, n *node, f requestFiling) (Reques
 // back and leaves the siblings. Unticked items become planned subtasks and
 // ticked ones subtasks with a pending done request that cites the tick: a
 // split never creates a done subtask. A subtask that has not started splits
-// at once, for the owner and for an agent in scope. A started one keeps its
+// at once, for the owner and for an agent in scope; an agent's parts are
+// proposals, so its split is refused, as a delete is, when it would bring a
+// container above the subtask to done or cancelled. A started one keeps its
 // plan (lock.go): the owner's split is refused, and an agent's is filed as
 // one split request, which the owner can accept once the subtask is
 // released.
@@ -488,7 +492,13 @@ func (s *Store) Split(ctx context.Context, a Actor, ref string, children []Split
 		if err := t.caps(o, a, parent, count, unconfirmed); err != nil {
 			return err
 		}
-		return t.applySplit(o, a, a.TaskID, n, children, false)
+		above := o.above(n)
+		var err error
+		if out.NotLinked, err = t.applySplit(o, a, a.TaskID, n, children, false); err != nil || a.owner() {
+			return err
+		}
+		return t.closesNone(o.project, n, above,
+			"Splitting %[1]s would make %[2]s, and a split closes no other card: edit %[1]s into the first part and create the others instead, or ask the owner to split it")
 	})
 	out.Card = card
 	return out, err
@@ -543,8 +553,11 @@ func splitTitles(n *node, children []SplitChild) []string {
 
 // applySplit applies the split of n (see Split). requester is the Task the
 // ticked items' done requests are filed for; accept accepts them at once, as
-// accepting a split request does.
-func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, children []SplitChild, accept bool) error {
+// accepting a split request does. Siblings take n's place in the plan: n's
+// links are copied to each of them, both ways, except to a dependent that
+// has started, which keeps what it waits on (ADR 0006). It returns those
+// dependents.
+func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, children []SplitChild, accept bool) ([]Card, error) {
 	// A started subtask keeps its plan (lock.go), so n is never held here.
 	siblings := o.splitsIntoSiblings(n)
 	parent, to, cascade := n.ID, StatusPlanned, ""
@@ -552,7 +565,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		parent, to, cascade = n.ParentID, StatusCancelled, t.s.newID()
 	}
 	if err := t.setStatus(n, to, "", cascade); err != nil {
-		return err
+		return nil, err
 	}
 	checklist := n.Checklist
 	// The owner's parts take n's confirmation: a split plans, so it confirms
@@ -563,15 +576,15 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
 		if a.owner() {
 			if err := t.planned(o, a, n); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if err := t.updateCard(n); err != nil {
-			return err
+			return nil, err
 		}
 	case a.owner() && !confirmed:
 		if err := t.rearmAncestors(o, parent); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	type planned struct {
@@ -603,7 +616,7 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			rearm(t.now, kid)
 		}
 		if err := t.insertCard(o, kid); err != nil {
-			return err
+			return nil, err
 		}
 		o.kids[parent] = append(o.kids[parent], kid)
 		made = append(made, kid)
@@ -615,14 +628,14 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 			payload: payload{SplitOf: n.ID, Tick: p.child.Title},
 		})
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if accept {
 			if err := t.decide(&req, RequestAccepted, DecidedByOwner, ""); err != nil {
-				return err
+				return nil, err
 			}
 			if err := t.markDone(o, kid, &req, a); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -630,17 +643,49 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 		at := slices.Index(sibs, n) + 1
 		o.kids[parent] = slices.Concat(sibs[:at], made, sibs[at:])
 		if err := t.rerank(o, o.kids[parent], nil); err != nil {
-			return err
+			return nil, err
 		}
 		refs := make([]string, len(made))
 		for i, m := range made {
 			refs[i] = m.ref()
 		}
 		if _, err := t.addComment(n, AuthorUAM, "", "split into "+strings.Join(refs, ", "), true, false); err != nil {
-			return err
+			return nil, err
+		}
+		return t.copyLinks(o, n, made)
+	}
+	return nil, nil
+}
+
+// copyLinks links the subtasks made from n as n is linked: each waits on
+// n's blockers and blocks n's dependents, except a dependent that has
+// started, which it returns. The made subtasks are new and at n's level, so
+// no level or cycle check is needed.
+func (t *txn) copyLinks(o *outline, n *node, made []*node) ([]Card, error) {
+	var pairs [][2]string
+	var skipped []Card
+	for _, id := range n.BlockedBy {
+		for _, m := range made {
+			pairs = append(pairs, [2]string{id, m.ID})
 		}
 	}
-	return nil
+	for _, id := range n.Blocks {
+		if d := o.byID[id]; d != nil && d.started() {
+			skipped = append(skipped, d.Card)
+			continue
+		}
+		for _, m := range made {
+			pairs = append(pairs, [2]string{m.ID, id})
+		}
+	}
+	for _, p := range pairs {
+		if err := t.exec(`INSERT INTO links (blocker_id, blocked_id) VALUES (?, ?) ON CONFLICT(blocker_id, blocked_id) DO NOTHING`, p[0], p[1]); err != nil {
+			return nil, err
+		}
+		t.changed(o.project, p[0])
+		t.changed(o.project, p[1])
+	}
+	return skipped, nil
 }
 
 // Accept accepts the pending request id. Accepting a done request needs
@@ -652,7 +697,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 	if err := permit(a, opDecide, ""); err != nil {
 		return Request{}, err
 	}
-	return s.decideWrite(ctx, id, func(t *txn, o *outline, n *node, r *Request, p payload) error {
+	return s.decideWrite(ctx, a, id, func(t *txn, o *outline, n *node, r *Request, p payload) error {
 		if err := t.decide(r, RequestAccepted, DecidedByOwner, strings.TrimSpace(comment)); err != nil {
 			return err
 		}
@@ -693,7 +738,8 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			if err := checkSplit(o, n, p.Children); err != nil {
 				return err
 			}
-			return t.applySplit(o, a, r.TaskID, n, p.Children, true)
+			_, err := t.applySplit(o, a, r.TaskID, n, p.Children, true)
+			return err
 		}
 		if n.stored == StatusCancelled || p.Patch == nil {
 			return invalid("%s can no longer change", n.ref())
@@ -762,7 +808,7 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 	if err != nil {
 		return Request{}, invalid("a rejection needs a reason")
 	}
-	return s.decideWrite(ctx, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
+	return s.decideWrite(ctx, a, id, func(t *txn, _ *outline, n *node, r *Request, _ payload) error {
 		if err := t.decide(r, RequestRejected, DecidedByOwner, body); err != nil {
 			return err
 		}
@@ -777,9 +823,9 @@ func (s *Store) Reject(ctx context.Context, a Actor, id, reason string, holderAc
 	})
 }
 
-// decideWrite loads the pending request id and its card inside one write
-// to the card's Project, runs fn, and returns the request afterwards.
-func (s *Store) decideWrite(ctx context.Context, id string, fn func(*txn, *outline, *node, *Request, payload) error) (Request, error) {
+// decideWrite loads the pending request id and its card inside one write by
+// a to the card's Project, runs fn, and returns the request afterwards.
+func (s *Store) decideWrite(ctx context.Context, a Actor, id string, fn func(*txn, *outline, *node, *Request, payload) error) (Request, error) {
 	var out Request
 	_, err := s.write(ctx, func(t *txn) error {
 		r, err := t.request(id)
@@ -800,7 +846,7 @@ func (s *Store) decideWrite(ctx context.Context, id string, fn func(*txn, *outli
 		if project == "" {
 			return errReadOnly
 		}
-		err = t.mutate(project, true, func() error {
+		err = t.mutate(a, project, true, func() error {
 			o, n, err := t.cardIn(project, r.CardID)
 			if err != nil {
 				return err

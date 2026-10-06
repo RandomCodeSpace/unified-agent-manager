@@ -197,14 +197,16 @@ func TestAgentRootEpics(t *testing.T) {
 			t.Fatalf("%s under the swept epic = %+v", c.Title, c)
 		}
 	}
-	// And they count toward the created cap: with nothing left to confirm,
-	// the Task's 21st card is refused.
-	for i := range CapCreated - 12 {
-		f.create(free, "", KindEpic, fmt.Sprintf("Late %d", i))
+	// Expired, they give their places under the created cap back: of the
+	// Task's 12 cards only the confirmed epic still counts.
+	for i := range CapCreated - 1 {
+		c := f.create(free, "", KindEpic, fmt.Sprintf("Late %d", i))
+		_, err := f.s.Confirm(f.ctx, owner, c.ID)
+		f.must(err)
 	}
 	_, err = f.s.Create(f.ctx, free, NewCard{ProjectID: proj, Kind: KindEpic, Title: "Past the cap"})
 	wantCode(t, err, CodeLimit)
-	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards", CapCreated)) {
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d live cards", CapCreated)) {
 		t.Fatalf("past the created cap: %v", err)
 	}
 }
@@ -329,11 +331,25 @@ func TestCaps(t *testing.T) {
 	// Another Task has its own count.
 	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "other"))
 	f.create(Agent("other", ""), story.ID, KindSubtask, "other's")
-	// The created cap spans containers.
+	// The created cap spans containers and counts live cards: the owner
+	// confirms each story, so only the created cap binds.
+	var stories []Card
 	for i := range CapCreated - CapUnconfirmed {
-		f.create(main, epic.ID, KindStory, "story "+string(rune('a'+i)))
+		c := f.create(main, epic.ID, KindStory, fmt.Sprintf("story %d", i))
+		_, err := f.s.Confirm(f.ctx, owner, c.ID)
+		f.must(err)
+		stories = append(stories, c)
 	}
 	_, err = f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: epic.ID, Title: "one more"})
+	wantCode(t, err, CodeLimit)
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d live cards", CapCreated)) {
+		t.Fatalf("past the created cap: %v", err)
+	}
+	// A deleted card gives its place back.
+	_, err = f.s.Delete(f.ctx, sub, stories[0].ID)
+	f.must(err)
+	f.create(main, epic.ID, KindSubtask, "one more")
+	_, err = f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: epic.ID, Title: "and another"})
 	wantCode(t, err, CodeLimit)
 	// Comments: CapComments per card per Task, automatic ones exempt.
 	for i := range CapComments {
@@ -352,6 +368,45 @@ func TestCaps(t *testing.T) {
 	f.must(err)
 	_, err = f.s.AddComment(f.ctx, owner, story.ID, " ")
 	wantCode(t, err, CodeInvalid)
+}
+
+// A deleted card frees its live place but still counts toward the Task's
+// lifetime ceiling, so creating and deleting stops there. Purge removes the
+// rows, which frees their places.
+func TestCapsCountDeletedCardsTowardTheLifetimeCeiling(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, _ := f.tree()
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	main, sub := Agent("planner", ""), Agent("planner", "sub-1")
+	// One live card at a time, so the live cap never binds.
+	cycle := func(a Actor, title string) Card {
+		t.Helper()
+		c := f.create(a, story.ID, KindSubtask, title)
+		_, err := f.s.Delete(f.ctx, a, c.ID)
+		f.must(err)
+		return c
+	}
+	first := cycle(main, "first")
+	// Copies of the deleted card stand for the Task deleting it again and
+	// again: hundreds of real writes take half a minute under -race.
+	f.raw(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+		INSERT INTO cards (id, seq, project_id, kind, parent_id, rank, title, status, cascade_id, created_by, created_at, updated_at, moved_at)
+		SELECT c.id || '-' || n.i, 10000 + n.i, c.project_id, c.kind, c.parent_id, c.rank, c.title || ' ' || n.i, c.status,
+			c.cascade_id, c.created_by, c.created_at, c.updated_at, c.moved_at FROM n, cards c WHERE c.id = ?`, CapCreatedTotal-2, first.ID)
+	cycle(sub, "last")
+	_, err := f.s.Create(f.ctx, main, NewCard{ProjectID: proj, Kind: KindSubtask, ParentID: story.ID, Title: "one more"})
+	wantCode(t, err, CodeLimit)
+	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d cards in its lifetime", CapCreatedTotal)) {
+		t.Fatalf("past the lifetime ceiling: %v", err)
+	}
+	_, err = f.s.Split(f.ctx, sub, one.ID, []SplitChild{{Title: "part"}})
+	wantCode(t, err, CodeLimit)
+	n, err := f.s.Purge(f.ctx, owner, proj)
+	f.must(err)
+	if n != CapCreatedTotal {
+		t.Fatalf("purged %d cards, want %d", n, CapCreatedTotal)
+	}
+	f.create(main, story.ID, KindSubtask, "after the purge")
 }
 
 func TestEditOwner(t *testing.T) {

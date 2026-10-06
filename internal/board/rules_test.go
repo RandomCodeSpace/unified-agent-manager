@@ -38,8 +38,8 @@ func TestDeriveTable(t *testing.T) {
 
 func TestActorTable(t *testing.T) {
 	agentOps := map[op]bool{opCreate: true, opCreateEpic: true, opEdit: true, opChange: true, opChecklist: true, opComment: true,
-		opLink: true, opUnlink: true, opDismiss: true, opClaim: true, opRequest: true, opSplit: true}
-	ownerless := map[op]bool{opClaim: true, opRequest: true}
+		opLink: true, opUnlink: true, opDelete: true, opClaim: true, opRequest: true, opSplit: true}
+	ownerless := map[op]bool{opClaim: true, opRequest: true, opDelete: true}
 	agent := Agent("task", "sub")
 	for o := range actorTable {
 		if err := permit(agent, o, ""); (err == nil) != agentOps[o] {
@@ -98,7 +98,7 @@ func TestAgentLimits(t *testing.T) {
 	_, err = f.s.Accept(f.ctx, agent, "r", "")
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.Dismiss(f.ctx, agent, one.ID)
-	wantCode(t, err, CodeInvalid) // an agent dismisses proposals only
+	wantCode(t, err, CodeForbidden) // agents delete; dismissing is the owner's
 	_, err = f.s.Confirm(f.ctx, agent, one.ID)
 	wantCode(t, err, CodeForbidden)
 	_, err = f.s.ReleaseHold(f.ctx, agent, one.ID, ReleaseOwner, "")
