@@ -328,6 +328,20 @@ export interface Meta {
   /** Syntax-only temporary-file eligibility; availability is checked only on Open. */
   temp_root?: string;
   temp_root_aliases?: string[];
+  /** The UAM installed at the service's binary path and the restart onto it, as last read; absent on a service that cannot restart itself. */
+  service?: ServiceStatus;
+}
+
+/**
+ * The UAM the service runs and the one installed at its binary's path (`go install`, `make install`, a package
+ * manager). A different one installed offers a restart onto it, which waits until no Task works or waits.
+ */
+export interface ServiceStatus {
+  running: string;
+  /** The version at the binary's path; absent while it cannot be read (`error` says why). */
+  installed?: string;
+  restart: 'none' | 'available' | 'pending' | 'restarting';
+  error?: string;
 }
 
 export interface FileGrant {
@@ -1827,6 +1841,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     login: (token: string) => homeCall<void>('POST', '/api/login', { token }),
     logout: () => homeCall<void>('POST', '/api/logout'),
     meta: () => call<Meta>('GET', '/api/meta'),
+    /** The running and installed UAM; the service looks at its binary first, at most every few seconds. */
+    service: () => call<ServiceStatus>('GET', '/api/service'),
+    /** Restarts the service onto the installed UAM now, or once no Task works or waits. */
+    restartService: () => call<ServiceStatus>('POST', '/api/service/restart', {}),
     account: (provider: string) => call<ProviderAccount>('GET', `/api/providers/${enc(provider)}/account`),
     /** The token goes to the provider's runtime only; nothing here keeps it. */
     signIn: (provider: string, token: string) => call<ProviderAccount>('POST', `/api/providers/${enc(provider)}/account/sign-in`, { token }),

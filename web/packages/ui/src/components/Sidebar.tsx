@@ -14,6 +14,7 @@ import { Collapse } from './ui/collapse';
 import { ContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './Usage';
+import { restartNotice } from './UamService';
 
 /** Project-level navigation and actions. */
 export interface WorkspaceActions {
@@ -160,8 +161,10 @@ function FooterButton({ label, icon, pressed, onClick, side, notice }: Readonly<
 }
 
 function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
-  const cliUpdate = useApp().meta?.providers.some((p) => p.cli_update);
-  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={cliUpdate ? 'Copilot CLI update available' : undefined} />;
+  const meta = useApp().meta;
+  const cliUpdate = meta?.providers.some((p) => p.cli_update);
+  const notice = [restartNotice(meta?.service), cliUpdate && 'Copilot CLI update available'].filter(Boolean).join('; ');
+  return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={notice || undefined} />;
 }
 
 function PlannerButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {

@@ -210,6 +210,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/providers/{provider}/account/sign-out", s.handleSignOut)
 	mux.HandleFunc("GET /api/providers/{provider}/cli", s.handleProviderCLI)
 	mux.HandleFunc("POST /api/providers/{provider}/cli/update", s.handleUpdateProviderCLI)
+	mux.HandleFunc("GET /api/service", s.handleService)
+	mux.HandleFunc("POST /api/service/restart", s.handleRestartService)
 	mux.HandleFunc("GET /api/utility", s.handleUtility)
 	mux.HandleFunc("GET /api/push", s.handlePushKey)
 	mux.HandleFunc("POST /api/push/subscribe", s.handlePushSubscribe)
@@ -508,7 +510,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	s.m.RefreshModels()
 	descriptor := s.federationDescriptor()
-	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs()}
+	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs(), Service: s.m.serviceMeta()}
 	if roots, err := s.grants.rootsForUse(); err == nil {
 		meta.TempRoot, meta.TempRootAliases = roots.canonical, roots.aliases
 	}

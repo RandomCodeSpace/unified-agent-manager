@@ -7,6 +7,7 @@ import { DEFAULT_COMPACT_THRESHOLD, describeError, plannerErrorText, resolveTask
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
+import { restartOffered, UamService } from './UamService';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { Dot, Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
@@ -599,6 +600,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // A provider's CLI has an update: the Providers tab carries the Settings button's dot on to its card.
   const cliUpdate = meta?.providers.some((p) => p.cli_update);
   const cliUpdateId = useId();
+  // A newer UAM is installed: the General tab carries the dot on to its UAM card.
+  const restart = restartOffered(meta?.service);
+  const restartId = useId();
 
   async function save(patch: Partial<Settings>) {
     const sequence = ++saveSequence.current;
@@ -683,12 +687,14 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <div className="relative min-w-0 shrink-0">
         <nav aria-label="Settings sections" className="flex min-w-0 flex-wrap gap-1 py-2 pl-4 pr-4 md:px-6">
           {SETTINGS_SECTIONS.filter(item => item.id !== 'connections' || Boolean(connections)).map((item) => (
-            <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} aria-describedby={item.id === 'providers' && cliUpdate ? cliUpdateId : undefined} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
+            <Button key={item.id} size="sm" className="md:h-8 md:px-3 md:after:inset-0 md:pointer-coarse:min-h-11 md:pointer-coarse:after:inset-0" aria-current={section === item.id ? 'page' : undefined} variant={section === item.id ? 'secondary' : 'ghost'} aria-describedby={item.id === 'providers' && cliUpdate ? cliUpdateId : item.id === 'general' && restart ? restartId : undefined} onClick={() => { setSection(item.id); setVisited((before) => new Set([...before, item.id])); if (scrollArea.current) scrollArea.current.scrollTop = 0; }}>
               {item.label}
               {item.id === 'providers' && cliUpdate && <Dot tone="warning" className="size-1.5" />}
+              {item.id === 'general' && restart && <Dot tone="warning" className="size-1.5" />}
             </Button>
           ))}
           {cliUpdate && <span id={cliUpdateId} className="sr-only">Copilot CLI update available</span>}
+          {restart && <span id={restartId} className="sr-only">Restart available</span>}
         </nav>
       </div>
       <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
@@ -821,6 +827,10 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
             </Row> : <Unsupported what="the terminal" />}
+          </Section>}
+          {/* A service too old to report its binary has no card: nothing to show or restart. */}
+          {meta?.service && <Section hidden={section !== 'general'} id="uam" title="UAM">
+            <UamService />
           </Section>}
           {onLogout && <Section hidden={section !== 'general'} id="session" title="Session">
             <div className="flex flex-wrap items-center justify-between gap-3">

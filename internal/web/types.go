@@ -228,6 +228,9 @@ type Meta struct {
 	RecentWorkdirs  []string       `json:"recent_workdirs"`
 	TempRoot        string         `json:"temp_root,omitempty"`
 	TempRootAliases []string       `json:"temp_root_aliases,omitempty"`
+	// Service is the uam installed at the service's binary path and the
+	// restart onto it (GET /api/service), as last read.
+	Service *ServiceStatus `json:"service,omitempty"`
 }
 
 // SessionSummary is one web session (a Task) as listed.

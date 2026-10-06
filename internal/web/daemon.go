@@ -80,6 +80,12 @@ type DaemonConfig struct {
 	Version       string
 	// LogHeaders logs every request's headers (see ServerConfig).
 	LogHeaders bool
+	// Executable is the real path of the uam binary, which Settings offers
+	// to restart onto once another version is installed there. RunDaemon
+	// resolves it when empty; runDaemon without one cannot restart.
+	Executable string
+	// executableErr is why the binary's path could not be resolved.
+	executableErr error
 }
 
 // ValidateListen accepts an IP literal (loopback, unspecified or an interface
@@ -352,7 +358,10 @@ func Stop(ctx context.Context, dir string) (bool, error) {
 }
 
 // RunDaemon is `uam __web`: it serves until SIGTERM or SIGINT, then shuts
-// down gracefully. Startup errors are reported on the readiness pipe.
+// down gracefully. Startup errors are reported on the readiness pipe. A
+// restart requested in Settings shuts down the same way, then runs the
+// binary installed at the service's path in this process, with the same
+// arguments and environment; when that fails it returns the error.
 func RunDaemon(cfg DaemonConfig) error {
 	var ready *os.File
 	if os.Getenv(readyEnv) == "3" {
@@ -363,7 +372,16 @@ func RunDaemon(cfg DaemonConfig) error {
 		syscall.CloseOnExec(3)
 		_ = os.Unsetenv(readyEnv)
 	}
+	// Resolved before anything can replace the file: afterwards the running
+	// binary's link names a deleted file.
+	if cfg.Executable == "" {
+		cfg.Executable, cfg.executableErr = resolveExecutable()
+	}
+	env := os.Environ()
 	err := runDaemon(cfg, ready)
+	if errors.Is(err, errRestart) {
+		return restartService(cfg.Executable, os.Args[1:], env)
+	}
 	if err != nil && ready != nil {
 		_, _ = fmt.Fprintf(ready, "error: %v\n", err)
 		_ = ready.Close()
@@ -405,6 +423,9 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	mgr.usageHome, err = os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("locate harness usage: %w", err)
+	}
+	if cfg.Executable != "" || cfg.executableErr != nil {
+		mgr.binary = newBinaryWatch(cfg.Executable, cfg.Version, cfg.executableErr)
 	}
 	if err := mgr.Start(context.Background()); err != nil {
 		return err
@@ -456,9 +477,25 @@ func runDaemon(cfg DaemonConfig, ready *os.File) error {
 	log.Info("uam web started", "pid", state.PID, "listen", state.Listen)
 
 	var runErr error
+	restart := false
 wait:
 	for {
 		select {
+		case <-mgr.restartRequests():
+			// Decided under the manager's lock: no Task starts in between.
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			stopped, err := mgr.shutdownIfIdle(ctx)
+			cancel()
+			if !stopped {
+				mgr.binary.postpone()
+				continue
+			}
+			if err != nil {
+				log.Warn("uam web manager shutdown", "error", err)
+			}
+			log.Info("uam web stopping to restart")
+			restart = true
+			break wait
 		case sig := <-signals:
 			if sig == syscall.SIGHUP {
 				log.Info("uam web ignoring SIGHUP")
@@ -484,5 +521,8 @@ wait:
 		log.Warn("uam web manager shutdown", "error", err)
 	}
 	log.Info("uam web stopped", "pid", state.PID)
+	if restart && runErr == nil {
+		return errRestart
+	}
 	return runErr
 }
