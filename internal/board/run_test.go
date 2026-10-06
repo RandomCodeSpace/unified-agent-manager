@@ -573,6 +573,62 @@ func TestAcceptBlockedKeepsAProposalUnderApprovedEpic(t *testing.T) {
 	}
 }
 
+// Under an approved epic only its approval confirms a proposal. Accepting
+// a change request that moves a confirmed subtask under a proposal story
+// leaves the story a proposal, and the subtask keeps its confirmation but
+// waits for the next approval to run; accepting the done request of a
+// ticked part split off a proposal confirms neither the part nor the story
+// the proposal became.
+func TestAcceptUnderApprovedEpicConfirmsNoProposal(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	f.approve(p.epic.ID, p.ids()...)
+
+	later := f.create(planner, p.epic.ID, KindStory, "Later")
+	res, err := f.s.Edit(f.ctx, planner, p.a.ID, Patch{ParentID: &later.ID})
+	f.must(err)
+	if res.Request == nil {
+		t.Fatalf("moving a confirmed subtask under a proposal = %+v", res)
+	}
+	_, err = f.s.Accept(f.ctx, Owner("head-3"), res.Request.ID, "")
+	f.must(err)
+	if c := f.card(later.ID); c.Confirmed() {
+		t.Fatalf("the accepted move confirmed the story: %+v", c)
+	}
+	if c := f.card(p.a.ID); !c.Confirmed() || c.ParentID != later.ID {
+		t.Fatalf("the moved subtask = %+v", c)
+	}
+	wantRefusal(t, f.s.CanStart(f.ctx, p.a.ID), CodeNotReady, later.ref())
+
+	docs := f.create(planner, p.epic.ID, KindSubtask, "Docs")
+	_, err = f.s.Checklist(f.ctx, owner, docs.ID, ChecklistEdit{Add: []string{"Guide", "Reference"}})
+	f.must(err)
+	_, err = f.s.Checklist(f.ctx, owner, docs.ID, ChecklistEdit{Tick: []int{0}})
+	f.must(err)
+	_, err = f.s.Split(f.ctx, planner, docs.ID, nil)
+	f.must(err)
+	var guide Card
+	for _, c := range f.children(docs.ID) {
+		if c.Title == "Guide" {
+			guide = c
+		}
+	}
+	reqs := f.detail(guide.ID).Requests
+	if len(reqs) != 1 || reqs[0].Kind != RequestDone || reqs[0].Status != RequestPending {
+		t.Fatalf("the ticked part's requests = %+v", reqs)
+	}
+	_, err = f.s.Accept(f.ctx, owner, reqs[0].ID, "")
+	f.must(err)
+	if c := f.card(guide.ID); c.Status != StatusDone || c.Confirmed() {
+		t.Fatalf("the accepted part = %+v", c)
+	}
+	if c := f.card(docs.ID); c.Kind != KindStory || c.Confirmed() {
+		t.Fatalf("the story the proposal became = %+v", c)
+	}
+}
+
 // An agent's split never turns a confirmed subtask under an approved epic
 // into a story of proposals, which would never finish.
 func TestAgentSplitUnderApprovedEpicKeepsItFinishable(t *testing.T) {

@@ -1312,7 +1312,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   approve" on the epic) until the epic is approved again. Under an approved
   epic nothing is confirmed or started card by card: Confirm, Launch, Do
   whole story and adding a Task to its stories are not offered, Mark done
-  on a proposal waits for the next approval, Triage's Re-pin gives way to
+  on a proposal waits for the next approval, accepting an agent's request
+  confirms no proposal (a card moved under one waits with it for the next
+  approval), Triage's Re-pin gives way to
   approving the epic again, which re-pins the cards it lists, and Pause
   and Resume block or free a card and everything under it; a card moved out
   of the epic drops its pause. An agent's move into or out of an approved

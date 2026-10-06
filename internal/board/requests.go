@@ -603,8 +603,12 @@ func (t *txn) applySplit(o *outline, a Actor, requester string, n *node, childre
 	switch {
 	case !siblings:
 		n.Kind, n.Checklist, n.Progress = KindStory, nil, &Progress{}
+		planned := t.planned
+		if accept {
+			planned = t.plannedByRequest
+		}
 		if a.owner() {
-			if err := t.planned(o, a, n); err != nil {
+			if err := planned(o, a, n); err != nil {
 				return nil, err
 			}
 		}
@@ -803,7 +807,7 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 		if err != nil {
 			return err
 		}
-		return t.applyEdit(o, a, n, *p.Patch, plan)
+		return t.applyEdit(o, a, n, *p.Patch, plan, true)
 	})
 }
 
@@ -824,7 +828,8 @@ func (t *txn) acceptDone(o *outline, a Actor, n *node, r *Request, split bool) e
 }
 
 // markDone marks the subtask n done by accepting r: the claim text becomes the
-// close comment, the hold ends, and the acceptance confirms n.
+// close comment, the hold ends, and the acceptance confirms n, except under
+// an approved epic, where only approving the epic confirms a proposal.
 func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	author := AuthorUAM
 	if r.TaskID != "" {
@@ -840,8 +845,10 @@ func (t *txn) markDone(o *outline, n *node, r *Request, a Actor) error {
 	} else if err := t.setStatus(n, StatusDone, "", ""); err != nil {
 		return err
 	}
-	if err := t.confirm(o, a, n); err != nil {
-		return err
+	if o.approved(n) == nil {
+		if err := t.confirm(o, a, n); err != nil {
+			return err
+		}
 	}
 	return t.updateCard(n)
 }

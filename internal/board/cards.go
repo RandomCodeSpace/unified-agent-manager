@@ -356,7 +356,7 @@ func (t *txn) edit(a Actor, project, id string, p Patch) (EditResult, error) {
 		req, err := t.fileRequest(o, a, n, requestFiling{kind: RequestChange, payload: payload{Patch: &p}})
 		return EditResult{Request: &req, AcrossRun: across && !n.started(), OutOfPause: unpaused && !n.started()}, err
 	}
-	return EditResult{}, t.applyEdit(o, a, n, p, plan)
+	return EditResult{}, t.applyEdit(o, a, n, p, plan, false)
 }
 
 // editPlan is a validated edit: the card after it and where it will sit.
@@ -476,7 +476,9 @@ func (t *txn) checkParent(o *outline, a Actor, n *node, parent string) error {
 	return nil
 }
 
-func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) error {
+// applyEdit writes the planned edit of n; accepted is set when the owner
+// accepts an agent's change request.
+func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan, accepted bool) error {
 	oldParent := n.ParentID
 	c := plan.card
 	n.Title, n.Desc, n.WinCondition, n.Prio, n.Due, n.Effort = c.Title, c.Desc, c.WinCondition, c.Prio, c.Due, c.Effort
@@ -500,7 +502,11 @@ func (t *txn) applyEdit(o *outline, a Actor, n *node, p Patch, plan editPlan) er
 		}
 	}
 	if a.owner() {
-		if err := t.planned(o, a, n); err != nil {
+		planned := t.planned
+		if accepted {
+			planned = t.plannedByRequest
+		}
+		if err := planned(o, a, n); err != nil {
 			return err
 		}
 	}
@@ -554,7 +560,7 @@ func (t *txn) moveIn(a Actor, from, id, project string, p Patch) error {
 		t.removed(from, m.ID)
 		t.changed(project, m.ID)
 	}
-	return t.applyEdit(o, a, &moved, p, plan)
+	return t.applyEdit(o, a, &moved, p, plan, false)
 }
 
 // place puts n under parent at index rank among its siblings, rewriting the
@@ -761,6 +767,23 @@ func (t *txn) planned(o *outline, a Actor, n *node) error {
 		return t.confirm(o, a, n)
 	}
 	rearm(t.now, n)
+	return t.rearmAncestors(o, n.ParentID)
+}
+
+// plannedByRequest is planned for the owner's acceptance of an agent's
+// request that plans n. Under an approved epic only approving the epic
+// confirms a proposal (ADR 0006 §6.2): n keeps its own confirmation,
+// re-pinned when it has one, and the proposals above it stay proposals with
+// a fresh expiry.
+func (t *txn) plannedByRequest(o *outline, a Actor, n *node) error {
+	if o.approved(n) == nil {
+		return t.planned(o, a, n)
+	}
+	if n.Confirmed() {
+		touch(a, n)
+	} else {
+		rearm(t.now, n)
+	}
 	return t.rearmAncestors(o, n.ParentID)
 }
 

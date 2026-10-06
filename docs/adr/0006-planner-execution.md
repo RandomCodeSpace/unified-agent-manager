@@ -507,7 +507,7 @@ It refuses unless all of these hold:
 
 On success it confirms and pins each listed id, confirming ancestors as an owner touch does; upserts the `runs` row; clears the epic's own `paused`; and from S4 sets `base_ref` when it is empty. A proposal that was not listed stays a proposal. Approving again updates the settings and confirms new additions. Attempts already running keep their Task's settings.
 
-From S2 the store refuses, under an approved epic, per-card Confirm and every manual start with `run_owned`. S4 reopens Launch there as a lane start gated by ready, and S5 refuses it again. So approved epics never collect non-lane holds or per-card confirmations before the executor arrives, and v7 pauses every approval made before S5.
+From S2 the store refuses, under an approved epic, per-card Confirm and every manual start with `run_owned`. Accepting an agent's request there confirms no proposal either: an accepted move, split or done leaves each card its own confirmation, so a confirmed card moved under a proposal story waits, with the story, for the next approval. S4 reopens Launch there as a lane start gated by ready, and S5 refuses it again. So approved epics never collect non-lane holds or per-card confirmations before the executor arrives, and v7 pauses every approval made before S5.
 
 ### 6.3 Agent writes (R7)
 
