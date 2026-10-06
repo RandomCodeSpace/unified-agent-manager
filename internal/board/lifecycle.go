@@ -37,6 +37,13 @@ func (s *Store) SetStatus(ctx context.Context, a Actor, ref string, to Status, c
 			}
 			return t.cancel(o, n, body, AuthorOwner)
 		}
+		// Done and To do confirm the subtask, which under an approved epic
+		// only the epic's approval does.
+		if to != StatusCancelled && !n.Confirmed() {
+			if err := o.runOwned(n); err != nil {
+				return err
+			}
+		}
 		switch to {
 		case StatusDone:
 			if err := permit(a, opDone, n.stored); err != nil {

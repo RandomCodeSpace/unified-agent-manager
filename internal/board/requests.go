@@ -724,8 +724,11 @@ func (s *Store) Accept(ctx context.Context, a Actor, id, comment string) (Reques
 			} else {
 				n.Blocked = true
 			}
-			if err := t.confirm(o, a, n); err != nil {
-				return err
+			// Under an approved epic only its approval confirms a proposal.
+			if o.approved(n) == nil {
+				if err := t.confirm(o, a, n); err != nil {
+					return err
+				}
 			}
 			return t.updateCard(n)
 		case RequestSplit:

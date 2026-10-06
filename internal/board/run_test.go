@@ -547,3 +547,46 @@ func TestAgentMoveOutOfPausedIsAChangeRequest(t *testing.T) {
 		t.Fatalf("a move keeping its own pause = %+v, %v", res, err)
 	}
 }
+
+// Accepting a blocked request flags a proposal under an approved epic but
+// leaves it a proposal: only approving the epic confirms it.
+func TestAcceptBlockedKeepsAProposalUnderApprovedEpic(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	f.approve(p.epic.ID, p.ids()...)
+	later := f.create(planner, p.one.ID, KindSubtask, "Errors")
+	req, err := f.s.FileRequest(f.ctx, planner, later.ID, RequestInput{Kind: RequestBlocked, Comment: "waits on the lexer"})
+	f.must(err)
+	_, err = f.s.Accept(f.ctx, owner, req.ID, "")
+	f.must(err)
+	if c := f.card(later.ID); c.Confirmed() || !c.Blocked {
+		t.Fatalf("after the accepted blocked request = %+v", c)
+	}
+}
+
+// The owner's done or To do on a proposal under an approved epic would
+// confirm it card by card: it is refused, and a confirmed subtask there
+// still takes it.
+func TestSetStatusRefusesAProposalUnderApprovedEpic(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	planner := Agent("planner", "")
+	p := f.agentPlan(planner)
+	f.approve(p.epic.ID, p.ids()...)
+	later := f.create(planner, p.one.ID, KindSubtask, "Errors")
+	before := f.revision()
+	for _, to := range []Status{StatusDone, StatusTodo} {
+		_, err := f.s.SetStatus(f.ctx, owner, later.ID, to, "by hand", to == StatusDone)
+		if CodeOf(err) != CodeRunOwned || !strings.Contains(err.Error(), p.epic.ref()) {
+			t.Fatalf("%s on a proposal = %v, want run_owned naming %s", to, err, p.epic.ref())
+		}
+	}
+	if c := f.card(later.ID); c.Confirmed() || f.revision() != before {
+		t.Fatalf("refused status changes wrote: %+v", c)
+	}
+	if _, err := f.s.SetStatus(f.ctx, owner, p.a.ID, StatusDone, "shipped", false); err != nil {
+		t.Fatal(err)
+	}
+}
