@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/board"
@@ -34,6 +36,9 @@ const (
 	// landIntent is the landing step after the intent is stored and before
 	// the integration branch moves, for landHook.
 	landIntent = "intent"
+	// laneCreated is the lane start step after the lane's Task is made and
+	// before its attempt starts, for landHook.
+	laneCreated = "created"
 	// laneStopWait bounds how long Stop waits for the stopped Task's turn to
 	// end before archiving it.
 	laneStopWait = 2 * time.Minute
@@ -215,12 +220,14 @@ func (m *Manager) approvePreflight(ctx context.Context, project string) (string,
 	return base, unlock, nil
 }
 
-// startLane starts a lane at the subtask c of the approved epic (ADR 0006
-// §5.3): under the Project's land mutex it syncs the integration branch,
-// checks the subtask is ready, adds the lane at the integration tip, makes
-// the Task in it with the run's settings, and starts the hold; then it
-// sends the run's preamble. A start that fails after the Task exists ends
-// the attempt as aborted, discards the Task, and removes the lane.
+// startLane is the executor's start of a lane at the subtask c of the
+// approved epic (ADR 0006 §5.3): under the Project's land mutex it syncs
+// the integration branch, checks the subtask is ready, adds the lane at the
+// integration tip, makes the Task in it with the run's settings, and starts
+// the hold; then it sends the run's preamble. A start that fails after the
+// Task exists ends the attempt as aborted, discards the Task, and removes
+// the lane. A Task that cannot be made or does not take its preamble is a
+// providerFault.
 func (m *Manager) startLane(c, epic board.Card) (board.Card, SessionSummary, error) {
 	ctx := m.ctx
 	dir, err := m.boardDir(ctx, c.ProjectID)
@@ -238,7 +245,9 @@ func (m *Manager) startLane(c, epic board.Card) (board.Card, SessionSummary, err
 	}
 	prompt, err := m.runPreamble(ctx, held, start)
 	if err == nil {
-		err = m.sendFirstPrompt(summary.ID, prompt)
+		if err = m.sendFirstPrompt(summary.ID, prompt); err != nil {
+			err = providerFault{err}
+		}
 	}
 	if err != nil {
 		m.abortLane(held, summary.ID, err)
@@ -294,9 +303,12 @@ func (m *Manager) startLaneLocked(ctx context.Context, c, epic board.Card, dir s
 	summary, err := m.Create(create)
 	if err != nil {
 		m.dropLane(ctx, repo, c.ProjectID, l)
-		return c, SessionSummary{}, laneStart{}, err
+		return c, SessionSummary{}, laneStart{}, providerFault{err}
 	}
 	m.titleBoardTask(summary.ID, create.Name)
+	if m.landHook != nil {
+		m.landHook(laneCreated)
+	}
 	var held board.Card
 	err = m.withBoard(func(st *board.Store) error {
 		var err error
@@ -750,6 +762,7 @@ func (m *Manager) acceptLane(r board.Request, c board.Card, comment string) (str
 func (m *Manager) runLand(job *boardJob, id, comment string) {
 	ctx, cancel := m.bound(context.Background())
 	defer cancel()
+	defer m.kickExecutor()
 	defer m.unmarkLanding(job.card.ID)
 	out, err := m.landAndAccept(ctx, id, board.DecidedByOwner, comment, false)
 	switch {
@@ -853,8 +866,10 @@ func (m *Manager) cleanLaneErr(ctx context.Context, project string, l lane) erro
 	return m.cleanLaneLocked(ctx, repo, project, l)
 }
 
-// cleanLaneLocked is cleanLane for a caller holding the land mutex.
+// cleanLaneLocked is cleanLane for a caller holding the land mutex. The
+// Project's lanes directory goes with its last lane.
 func (m *Manager) cleanLaneLocked(ctx context.Context, repo *laneRepo, project string, l lane) error {
+	defer m.dropLanesDir(project)
 	var hold board.Hold
 	err := m.withBoard(func(st *board.Store) error {
 		var err error
@@ -880,6 +895,20 @@ func (m *Manager) cleanLaneLocked(ctx context.Context, repo *laneRepo, project s
 		return nil
 	}
 	return repo.removeLane(ctx, l, seq, hold.Lane.LandedSHA != "" || hold.EndReason == board.ReleaseAborted)
+}
+
+// dropLanesDir removes the directory uam made for the Project project's
+// lanes once it is empty. rmdir removes only an empty directory, never a
+// file or a link, so one that holds anything stays.
+func (m *Manager) dropLanesDir(project string) {
+	root := m.lanesRoot()
+	dir := filepath.Join(root, project)
+	if filepath.Dir(dir) != root {
+		return
+	}
+	if err := syscall.Rmdir(dir); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
+		log.Warn("remove a project's empty lanes directory failed", "project", project, "error", err)
+	}
 }
 
 // deleteBranch deletes branch, when there is one.
@@ -1036,8 +1065,9 @@ func (r *laneRepo) abortOwnMerge(ctx context.Context, l lane) error {
 // forgets worktrees whose directory is gone, attempt branches no attempt
 // has and that hold no commit of their own are deleted, and each landing on
 // the integration branch whose request is not accepted is named on its
-// card. A Project that never had a lane is left alone, git not run: its
-// repository's worktrees are the owner's.
+// card. A Project with no lanes directory and no base branch recorded is
+// left alone, git not run: it never had a lane, as Approve records the base
+// before the first, and its repository's worktrees are the owner's.
 func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[string]bool) error {
 	m.mu.Lock()
 	var active []string
@@ -1048,10 +1078,13 @@ func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[
 	}
 	m.mu.Unlock()
 	entries, err := os.ReadDir(filepath.Join(m.lanesRoot(), project))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+	switch {
+	case os.IsNotExist(err):
+		// The directory goes with the last lane (dropLanesDir).
+		if had, err := m.baseRecorded(ctx, project); err != nil || !had {
+			return err
+		}
+	case err != nil:
 		return err
 	}
 	for _, e := range entries {
@@ -1077,6 +1110,18 @@ func (m *Manager) sweepLanes(ctx context.Context, project, dir string, open map[
 		return err
 	}
 	return m.crossCheck(ctx, repo, project)
+}
+
+// baseRecorded reports whether the Project project has a base branch
+// recorded for its integration branch.
+func (m *Manager) baseRecorded(ctx context.Context, project string) (bool, error) {
+	var ps board.ProjectSettings
+	err := m.withBoard(func(st *board.Store) error {
+		var err error
+		ps, err = st.ProjectSettings(ctx, project)
+		return err
+	})
+	return ps.BaseRef != "", err
 }
 
 // sweepBranches deletes the attempt branches a crash left between adding a

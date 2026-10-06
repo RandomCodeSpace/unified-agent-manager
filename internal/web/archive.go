@@ -698,9 +698,13 @@ func (s *Server) handleSubagents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, page)
 }
 
+// maxSubagentTailRunes bounds a subagent's last message kept from a
+// transcript that is not retained.
+const maxSubagentTailRunes = 4000
+
 // subagentTail is what a subagent's list entry shows from a transcript that
-// is not retained: its last message, the summary input bounded as summaries
-// bound it, and its latest preview.
+// is not retained: its last message, bounded by maxSubagentTailRunes, and
+// its latest preview.
 type subagentTail struct {
 	lastAssistant agentapi.Item
 	preview       string
@@ -716,7 +720,7 @@ func archiveSubagentItems(items []agentapi.Item) ([]agentapi.Item, map[string]su
 		}
 		tail := tails[it.AgentID]
 		if it.Kind == agentapi.ItemAssistant {
-			it.Text = clipRunesExact(it.Text, maxSummaryInputRunes)
+			it.Text = clipRunesExact(it.Text, maxSubagentTailRunes)
 			tail.lastAssistant = it
 		}
 		if p := itemPreview(it); p != "" {

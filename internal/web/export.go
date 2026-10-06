@@ -34,7 +34,6 @@ type exportTask struct {
 	items                                                []agentapi.Item
 	truncated                                            bool
 	subagents                                            map[string]agentapi.Subagent // by parent tool call
-	summaries                                            map[string]string            // by subagent ID
 	pager                                                agentapi.HistoryPager
 	read                                                 agentapi.ReadRequest
 }
@@ -52,8 +51,8 @@ func (m *Manager) ExportMarkdown(ctx context.Context, id string) ([]byte, string
 		id: s.id, name: cleanTitle(s.name), provider: s.provider, model: s.model, mode: string(s.mode), stage: s.stage,
 		created: s.createdAt, spawnedBy: s.spawnedBy, rerunOf: s.rerunOf, routineID: s.routineID,
 		items: s.agentItems(""), truncated: s.truncated,
-		subagents: map[string]agentapi.Subagent{}, summaries: map[string]string{},
-		pager: m.pagerLocked(s), read: agentapi.ReadRequest{ConversationID: s.convID, Workdir: s.workdir},
+		subagents: map[string]agentapi.Subagent{},
+		pager:     m.pagerLocked(s), read: agentapi.ReadRequest{ConversationID: s.convID, Workdir: s.workdir},
 	}
 	if t.name == "" {
 		t.name = s.title
@@ -64,9 +63,6 @@ func (m *Manager) ExportMarkdown(ctx context.Context, id string) ([]byte, string
 	for _, sa := range s.subagents {
 		if sa.ParentToolCallID != "" {
 			t.subagents[sa.ParentToolCallID] = *sa
-		}
-		if text := s.generatedSubagentSummary(*sa); text != "" {
-			t.summaries[sa.ID] = text
 		}
 	}
 	m.mu.Unlock()
@@ -161,7 +157,7 @@ func writeBlock(b *bytes.Buffer, lang, text string) {
 }
 
 // toolSummary is the one line a tool call folds into, as HTML.
-func toolSummary(tc *agentapi.ToolCall, sa *agentapi.Subagent, summary string) string {
+func toolSummary(tc *agentapi.ToolCall, sa *agentapi.Subagent) string {
 	name := strings.ToLower(tc.Name)
 	status := ""
 	switch tc.Status {
@@ -183,9 +179,6 @@ func toolSummary(tc *agentapi.ToolCall, sa *agentapi.Subagent, summary string) s
 		line := "Subagent: " + html.EscapeString(oneLine(label, 200)) + " · " + string(sa.Status)
 		if n := len(sa.Runs); n > 1 {
 			line += fmt.Sprintf(" · %d runs", n)
-		}
-		if summary != "" {
-			line += " · " + html.EscapeString(oneLine(summary, 300))
 		}
 		return line + status
 	}
@@ -272,11 +265,7 @@ func renderExport(t exportTask, note string, now time.Time) []byte {
 			if v, ok := t.subagents[it.ID]; ok {
 				sa = &v
 			}
-			summary := ""
-			if sa != nil {
-				summary = t.summaries[sa.ID]
-			}
-			fmt.Fprintf(&b, "<details><summary>%s</summary>\n\n", toolSummary(it.Tool, sa, summary))
+			fmt.Fprintf(&b, "<details><summary>%s</summary>\n\n", toolSummary(it.Tool, sa))
 			if !commandTools[strings.ToLower(it.Tool.Name)] && strings.TrimSpace(it.Tool.Input) != "" {
 				writeBlock(&b, "json", it.Tool.Input)
 			} else if cmd := toolCommand(it.Tool); strings.Contains(cmd, "\n") {

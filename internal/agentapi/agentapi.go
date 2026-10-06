@@ -131,21 +131,6 @@ type Titler interface {
 	Title(ctx context.Context, req TitleRequest) (string, error)
 }
 
-// SubagentSummarizer writes a brief summary of a completed subagent result.
-// Like Titler, it uses a throwaway conversation without tools or discovered
-// configuration and deletes that conversation on every outcome.
-type SubagentSummarizer interface {
-	SummarizeSubagent(context.Context, SubagentSummaryRequest) (string, error)
-}
-
-// SubagentSummaryRequest contains only bounded, sanitized result text.
-type SubagentSummaryRequest struct {
-	Model, Workdir      string
-	Description, Result string
-	// OnUsage is as in UtilityRequest.
-	OnUsage func(UtilityUsage)
-}
-
 // UtilityRunner is implemented by a provider whose Capabilities.HostTools is
 // true. RunUtility asks req.Model to answer req.Prompt in a throwaway
 // conversation whose whole system message is req.System and whose only

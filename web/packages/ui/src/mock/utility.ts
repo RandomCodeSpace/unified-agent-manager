@@ -21,7 +21,7 @@ export function seedUtility(limit: number): UtilityCall[] {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const tasks = ['t1', 't2', 't3', 't4', 't5'];
-  const purposes = ['title', 'subagent-summary', 'subagent-summary', 'title', 'planner-triage'];
+  const purposes = ['title', 'suggest-replies', 'outcome', 'title', 'planner-triage'];
   const day = (back: number, count: number, extra: (c: UtilityCall, i: number) => void) => {
     const base = new Date(start);
     base.setDate(base.getDate() - back);

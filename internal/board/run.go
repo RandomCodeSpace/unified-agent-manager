@@ -497,6 +497,31 @@ func (s *Store) AbortRun(ctx context.Context, ref, taskID, detail string) (Card,
 	})
 }
 
+// PauseRun pauses the approved epic ref as uam after its lane starts kept
+// failing on git or the store (ADR 0006 §4.5), and says why in an automatic
+// comment, cut to one line's length: the owner resumes it. An epic paused
+// already keeps its pause and gets no comment.
+func (s *Store) PauseRun(ctx context.Context, ref, reason string) (Card, error) {
+	body := strings.TrimSpace(reason)
+	if len(body) > maxLineBytes {
+		body = strings.ToValidUTF8(body[:maxLineBytes], "") + "…"
+	}
+	return s.ownerWrite(ctx, Actor{}, ref, func(t *txn, o *outline, n *node) error {
+		if o.approved(n) != n {
+			return invalid("%s is not an approved epic", n.ref())
+		}
+		if n.Paused != "" {
+			return nil
+		}
+		n.Paused = PausedUAM
+		if err := t.updateCard(n); err != nil {
+			return err
+		}
+		_, err := t.addComment(n, AuthorUAM, "", "paused: "+body, true, false)
+		return err
+	})
+}
+
 // startable refuses a run start of n, as StartRun does, and returns its
 // approved epic: n must be a subtask under an approved epic, ready, with a
 // slot free under the epic's parallel limit and under MaxLanes.
@@ -516,10 +541,8 @@ func (t *txn) startable(o *outline, n *node) (*node, error) {
 		return nil, err
 	}
 	var mine []string
-	for _, l := range lanes {
-		if m := o.byID[l.id]; m != nil && o.epicOf(m) == e {
-			mine = append(mine, l.ref())
-		}
+	for _, l := range o.lanesUnder(e, lanes) {
+		mine = append(mine, l.ref())
 	}
 	if len(mine) >= e.Run.Parallel {
 		return nil, &Error{Code: CodeNotReady, Refs: mine, Message: fmt.Sprintf(
@@ -631,6 +654,17 @@ func (t *txn) lanesInUse() ([]laneSlot, error) {
 		return nil, fmt.Errorf("board: count lanes: %w", err)
 	}
 	return out, nil
+}
+
+// lanesUnder lists the lanes, of those in use, that run under the epic e.
+func (o *outline) lanesUnder(e *node, lanes []laneSlot) []laneSlot {
+	var out []laneSlot
+	for _, l := range lanes {
+		if m := o.byID[l.id]; m != nil && o.epicOf(m) == e {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // waitedOn lists, in outline order, the done subtasks at or under a blocker

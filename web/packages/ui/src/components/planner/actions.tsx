@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, laneReady, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
+import { approvedEpicOf, cardPath, isStarted, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { AlertDialog, useConfirm } from '../ui/dialog';
@@ -72,8 +72,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   /**
    * A card's actions as it stands (§10); none for an Unassigned card, which only moves into a
    * Project. Under an approved epic (ADR 0006 §8) the approval owns starting and confirming work:
-   * Confirm, Launch and Do whole story give way to Pause and Resume, Launch of a ready subtask
-   * starts it in a lane with the epic's run, and Stop ends the lane attempts at or under a card.
+   * uam starts each ready subtask itself, so Confirm, Launch and Do whole story give way to Pause
+   * and Resume, and Stop ends the lane attempts at or under a card.
    */
   function actionsOf(c: Card): CardAction[] {
     if (!c.project_id) return [];
@@ -97,7 +97,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       setLaunching({ card: c, whole, confirms, waits, run: (body) => api.planner.launch(c.id, confirms.length ? { ...body, confirm: true } : body).then(launched) });
     };
     const actions: CardAction[] = [];
-    if (c.kind === 'epic' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'approve', label: 'Approve…', icon: <BadgeCheck />, onClick: () => setApproving({ epic: c }) });
+    if (c.kind === 'epic' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'approve', label: 'Approve and run…', icon: <BadgeCheck />, onClick: () => setApproving({ epic: c }) });
     if (approved && c.status !== 'done' && c.status !== 'cancelled') {
       actions.push(
         c.paused
@@ -107,11 +107,6 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
     }
     if (!c.confirmed && !approved) actions.push({ key: 'confirm', label: 'Confirm', icon: <Check />, primary: true, onClick: () => void run(c.id, 'confirm', 'confirm the card', () => api.planner.confirm(c.id)) });
     if (leaf && !approved && (c.status === 'planned' || c.status === 'todo')) actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: c.confirmed, onClick: () => launch(false) });
-    // The approval picked its model and mode: Launch starts the lane with them, nothing to ask.
-    if (leaf && approved?.run && laneReady(c, byId)) {
-      const r = approved.run;
-      actions.push({ key: 'launch', label: 'Launch', icon: <Play />, primary: true, title: `Start it in its own lane, on ${r.model}, ${r.mode === 'yolo' ? 'Yolo' : 'Safe'}, as #${approved.seq}'s approval set.`, onClick: () => void run(c.id, 'launch', 'launch the subtask', () => api.planner.launch(c.id)).then((res) => res && launched(res)) });
-    }
     const lanes = approved && c.status !== 'done' && c.status !== 'cancelled' ? runningLanes(c, byId) : [];
     if (lanes.length > 0) actions.push({ key: 'stop', label: 'Stop', icon: <Square />, danger: true, title: leaf ? 'Stop its task and pause it.' : 'Pause it and stop the subtasks running under it.', onClick: () => stopping.ask({ card: c, lanes }) });
     // A story's launch starts one of its confirmed subtasks waiting to start; with none, the service refuses it.

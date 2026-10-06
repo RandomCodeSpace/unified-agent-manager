@@ -22,16 +22,27 @@ import (
 	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-// laneRun is a planner whose Project holds a.txt on main and an approved
-// epic, parallel 2, whose one story holds the given subtasks: each Launch
-// of one starts a lane (ADR 0006 §5.3).
+// laneRun is a planner whose Project holds a.txt on main and an epic,
+// parallel 2, whose one story holds the given subtasks. Its executor is off
+// unless a test runs it: start starts a lane by hand, as the executor does
+// (ADR 0006 §5.3).
 type laneRun struct {
 	*plannerFixture
 	epic   BoardCard
+	story  BoardCard
 	leaves []BoardCard
 }
 
+// newLaneRun is planLaneRun with its epic approved.
 func newLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
+	t.Helper()
+	r := planLaneRun(t, cmd, titles...)
+	r.approve()
+	return r
+}
+
+// planLaneRun is a laneRun whose epic is not approved yet.
+func planLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
 	t.Helper()
 	acceptEnv(t)
 	f := newPlanner(t)
@@ -43,21 +54,40 @@ func newLaneRun(t *testing.T, cmd string, titles ...string) *laneRun {
 	f.m.mu.Unlock()
 	f.setAcceptCmd(cmd)
 	r := &laneRun{plannerFixture: f, epic: f.create(board.KindEpic, "", "Epic")}
-	story := f.create(board.KindStory, r.epic.ID, "Story")
-	refs := []string{r.epic.ID, story.ID}
+	r.story = f.create(board.KindStory, r.epic.ID, "Story")
 	for _, title := range titles {
-		leaf := f.create(board.KindSubtask, story.ID, title)
-		r.leaves = append(r.leaves, leaf)
-		refs = append(refs, leaf.ID)
+		r.leaves = append(r.leaves, f.create(board.KindSubtask, r.story.ID, title))
 	}
-	f.call(http.MethodPost, "/api/board/cards/"+r.epic.ID+"/approve", f.approveBody("luna", refs...), http.StatusOK, nil)
 	return r
 }
 
-// start launches the lane of subtask i and returns its Task and lane.
+// approve approves the epic as the Approve dialog shows it now.
+func (r *laneRun) approve() {
+	r.t.Helper()
+	refs := []string{r.epic.ID, r.story.ID}
+	for _, l := range r.leaves {
+		refs = append(refs, l.ID)
+	}
+	r.call(http.MethodPost, "/api/board/cards/"+r.epic.ID+"/approve", r.approveBody("luna", refs...), http.StatusOK, nil)
+}
+
+// start starts the lane of subtask i, as the executor does, and returns its
+// Task and lane.
 func (r *laneRun) start(i int) (SessionSummary, lane) {
 	r.t.Helper()
-	c, task := r.launch(r.leaves[i].ID)
+	var leaf, epic board.Card
+	r.store(func(ctx context.Context, st *board.Store) error {
+		var err error
+		if leaf, err = st.Card(ctx, r.leaves[i].ID); err == nil {
+			epic, err = st.Card(ctx, r.epic.ID)
+		}
+		return err
+	})
+	held, task, err := r.m.startLane(leaf, epic)
+	if err != nil {
+		r.t.Fatalf("start #%d: %v", leaf.Seq, err)
+	}
+	c := boardCard(held)
 	if c.Lane == nil || c.Lane.Branch == "" || c.Status != board.StatusDoing || c.HeldBy != task.ID {
 		r.t.Fatalf("lane start = %+v, lane %+v", c, c.Lane)
 	}
@@ -602,6 +632,50 @@ func TestArchivedLaneIsCommittedAndRemoved(t *testing.T) {
 	}
 }
 
+// The directory uam makes for a Project's lanes goes once it is empty: when
+// the last lane is cleaned up, and when the Project is removed. While it
+// holds anything it stays.
+func TestLanesDirOfAProjectGoesOnceEmpty(t *testing.T) {
+	r := newLaneRun(t, "true", "First", "Second")
+	one, l1 := r.start(0)
+	two, l2 := r.start(1)
+	dir := filepath.Join(r.m.lanesRoot(), r.project)
+	end := func(task SessionSummary, l lane) {
+		t.Helper()
+		r.idle(task.ID)
+		if _, err := r.m.Archive(task.ID); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, "the lane to be removed", func() bool { return gone(l.dir) })
+	}
+	end(one, l1)
+	if gone(dir) {
+		t.Fatal("the Project's lanes directory went while it held a lane")
+	}
+	end(two, l2)
+	waitUntil(t, "the Project's lanes directory to go with its last lane", func() bool { return gone(dir) })
+
+	// An empty one, as a lane start whose worktree git did not add leaves
+	// it, and one holding a file uam did not make.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := addProject(t, r.m, branchRepo(t))
+	kept := filepath.Join(r.m.lanesRoot(), other)
+	writeRepoFile(t, kept, "left.txt", "left\n")
+	for _, id := range []string{r.project, other} {
+		if err := r.m.RemoveProject(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !gone(dir) {
+		t.Fatal("the removed Project's empty lanes directory was kept")
+	}
+	if got, err := os.ReadFile(filepath.Join(kept, "left.txt")); err != nil || string(got) != "left\n" {
+		t.Fatalf("a removed Project's lanes directory lost what it held: %q, %v", got, err)
+	}
+}
+
 // Lanes sit outside the Project directory, so a lane Task at work never
 // blocks the owner's commit.
 func TestOwnerCommitNotBlockedByLaneTasks(t *testing.T) {
@@ -755,6 +829,41 @@ func TestBootSweepsLanesNoAttemptHas(t *testing.T) {
 	}
 	if got := comments(r.card(r.leaves[0].ID)); strings.Count(strings.Join(got, "\n"), want) != 1 {
 		t.Fatalf("a second boot noted again: %q", got)
+	}
+}
+
+// The boot's cross-check still runs for an approved Project whose lanes
+// directory went with its last lane: a landing moved onto the integration
+// branch by hand is noted on its card.
+func TestBootCrossChecksAProjectWithNoLaneLeft(t *testing.T) {
+	r := newLaneRun(t, "true", "Leaf")
+	task, l := r.start(0)
+	commitFile(t, l.dir, "b.txt", "b\n")
+	r.queueLanding(func() { r.toolOK(task.ID, "board_request", r.doneArgs(0)) })
+	req := r.card(r.leaves[0].ID).Requests[0]
+	ctx := context.Background()
+	repo, err := openLanes(ctx, r.project, r.repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := r.tip()
+	sha, err := repo.squashLane(ctx, l, tip, landMessage(r.leaves[0].Title, r.leaves[0].Seq, "did it", req.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.idle(task.ID)
+	if _, err := r.m.Archive(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the Project's lanes directory to go", func() bool { return gone(filepath.Join(r.m.lanesRoot(), r.project)) })
+	gitIn(t, r.repo, "update-ref", "refs/heads/"+r.integ(), sha, tip)
+	r.m.closeBoard()
+	if err := r.m.openBoard(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("uam: %s carries %s, which lands this card's request, but the request is", r.integ(), shortSHA(sha))
+	if d := r.card(r.leaves[0].ID); !slices.ContainsFunc(comments(d), func(c string) bool { return strings.HasPrefix(c, want) }) {
+		t.Fatalf("comments = %q, want %q", comments(d), want)
 	}
 }
 

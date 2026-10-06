@@ -620,8 +620,8 @@ export function elapsedSince(start: string | undefined, now: number): string | n
 /**
  * The line under a subagent's name in its row. Running: its current step from its own latest
  * item, which the browser holds only once its transcript was opened ("Running: bash npm test",
- * "Thinking…"), else nothing. Completed: its saved utility summary when available. Failed:
- * its error. The fallback is the first plain-text line of the provider report.
+ * "Thinking…"), else nothing. Failed: its error. Otherwise the first plain-text line of its
+ * own result: the provider report, never a generated summary.
  */
 export function subagentSummary(subagent: Subagent, items: readonly Item[] | undefined, parent: ToolCall | undefined): string {
   if (subagent.status === 'running') {
@@ -635,7 +635,6 @@ export function subagentSummary(subagent: Subagent, items: readonly Item[] | und
     }
     return '';
   }
-  if ((subagent.status === 'completed' || subagent.status === 'idle') && subagent.summary) return firstLine(subagent.summary);
   // A background launch's call output only acknowledges the launch.
   const report = subagent.background ? undefined : parent?.output;
   if (subagent.status === 'failed') return firstLine(subagent.error) || firstLine(subagent.result_summary) || firstLine(report);

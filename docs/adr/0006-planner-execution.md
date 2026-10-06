@@ -123,7 +123,7 @@ ALTER TABLE project_settings ADD COLUMN accept_parallel INTEGER NOT NULL DEFAULT
 ```sql
 UPDATE cards SET paused = 'owner' WHERE kind = 'epic' AND paused = '' AND id IN (SELECT epic_id FROM runs);
 ```
-Every epic approved before the executor existed comes back paused, so the deploy that brings the executor starts nothing on its own. Those approvals may be weeks old, in yolo mode, and made before the git preflight existed. Resume on such an epic runs the Approve preflight (§4.6).
+Every epic approved before the executor existed comes back paused, so the deploy that brings the executor starts nothing on its own. Those approvals may be weeks old, in yolo mode, and made before the git preflight existed. Resume on such an epic runs the Approve preflight (§4.6). As built, v7 also adds an automatic comment by `uam` on each epic it pauses, before the UPDATE, saying why and that Resume runs the Approve checks.
 
 **Left out on purpose:**
 - No `holds.workdir`. The worktree path derives from the lanes root, the Project ID and the attempt name in `holds.branch` (§5.1).
@@ -168,7 +168,7 @@ Nothing is stored beyond the columns above.
 - `paused` on every card.
 - `run` on an epic: `{provider, model, effort, context_size, mode, parallel, approved_at}`.
 - `lane` on a subtask, from its latest hold: `{branch, landed_sha, reverted_sha}`.
-- `GET /api/board/projects/{id}` adds `integration {branch, base_ref, ahead, behind}` and `accept_parallel` (S4), and `executor {providers: [{provider, detail, until}]}` (S5).
+- `GET /api/board/projects/{id}` adds `integration {branch, base_ref, ahead, behind}` and `accept_parallel` (S4), and `executor {providers: [{provider, detail, until}]}` (S5). As built, each provider also carries its display `name`, `until` is null while it is signed out, and `executor` is null when nothing waits.
 
 ## 4. Executor
 
@@ -232,7 +232,7 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 
 | Holder | Action |
 |---|---|
-| Open hold has a landing intent, no land call in flight | Land: finish it (§5.4) |
+| Open hold has a landing intent, no land call in flight, retry time passed | Land: finish it (§5.4) |
 | Pending done marked `landing`, no land call in flight, retry time passed | Land |
 | Another pending done, blocked or split from the holder | None: the owner decides. The slot is free |
 | Working or Waiting | None |
@@ -419,7 +419,8 @@ When a lane Task is archived or deleted, or found orphaned at boot:
 1. abort any merge in progress, since the Task is gone;
 2. commit leftovers to the attempt branch (`--no-verify`);
 3. `git worktree remove`;
-4. delete the attempt branch if its hold landed, and keep it otherwise.
+4. delete the attempt branch if its hold landed, and keep it otherwise;
+5. remove `<lanes root>/<project-id>/` once it is empty, which also happens when the Project is removed. uam never removes it while it holds anything. Recovery (§4.7) still sweeps and cross-checks a Project whose directory is gone once its base branch is recorded.
 
 The transcript stays readable after the worktree is gone, because reading a Copilot history needs only the conversation ID. The recent-folders list leaves out workdirs under the lanes root, so lane directories never push the owner's folders out of the picker.
 
@@ -608,7 +609,7 @@ The dialog posts the listed ids with the revisions it rendered. On `stale` it na
 **Elsewhere.**
 - The Inbox gets a **Plans to approve** section above the requests, and Needs-you counts it. The Accept job shows progress (S4).
 - The Settle dialog offers release (labelled Stop) and cancel for a lane hold, not keep (S4).
-- Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs.
+- Chips always carry a word or screen-reader text: "N to approve", "Paused" or "Paused by uam", "Waiting on #x", "Landing", "Landed 9f3e2a1", "Reverted", "Reopened, code kept", "Waiting for Copilot: `<detail>`". The epic shows "Running 2 of 2 · Ready 3 · Waiting 4". No spinners: doing and Landing stay static glyphs. As built, the run summary and the provider wait show on the epic's Tree row (compact: "Running 2 of 2" with the rest as screen-reader text) and in its card panel; the Board has no epic row, so it shows neither.
 - A card's Attempts list adds the branch, the landed sha and the reverted sha.
 - The Planner header shows "uam-plan-x · 5 ahead of main" and the merge state: "Merge waiting: `<reason>`", or "Merge blocked" with Retry merge (S6). The merge job shows progress.
 - Revert, Stop and Retry merge use the anchored confirmation popover. Revert shows a conflict inline, with Reopen without reverting code as the way out, and lists the dependents that stay landed.

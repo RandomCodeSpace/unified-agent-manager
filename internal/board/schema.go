@@ -207,4 +207,16 @@ ALTER TABLE holds ADD COLUMN waited_on TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE project_settings ADD COLUMN base_ref TEXT NOT NULL DEFAULT '';
 ALTER TABLE project_settings ADD COLUMN accept_parallel INTEGER NOT NULL DEFAULT 1 CHECK (accept_parallel BETWEEN 1 AND 4);
 `,
+	// v7 (ADR 0006 §3.1): from here on uam starts approved epics by itself,
+	// so every epic approved before then is paused as the owner's, and the
+	// deploy starts nothing on its own. Each epic it pauses says why in an
+	// automatic comment, stamped at the stored width; one paused already
+	// keeps its pause.
+	`
+INSERT INTO comments (card_id, author, agent_id, body, automatic, close, created_at)
+SELECT id, 'uam', '', 'paused: uam now runs approved epics by itself, and this epic was approved before it did. Resume runs the Approve checks, then starts its ready subtasks.',
+       1, 0, strftime('%Y-%m-%dT%H:%M:%f', 'now') || '000000Z'
+FROM cards WHERE kind = 'epic' AND paused = '' AND id IN (SELECT epic_id FROM runs) ORDER BY seq;
+UPDATE cards SET paused = 'owner' WHERE kind = 'epic' AND paused = '' AND id IN (SELECT epic_id FROM runs);
+`,
 }
