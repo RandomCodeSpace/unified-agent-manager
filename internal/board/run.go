@@ -77,8 +77,9 @@ func (r RunSettings) check() error {
 // touch confirms. The epic's run is written, or updated when it was
 // approved before, and its own pause is cleared. base, trimmed, becomes the
 // Project's base branch when it has none; "" leaves it as it is. It
-// refuses, writing nothing, unless the epic is live and not done; every
-// item is a live card under it; every card the dialog shows (shown) is
+// refuses, writing nothing, unless the epic is live and not done, or done
+// and approved with live proposals under it; every item is a live card
+// under it; every card the dialog shows (shown) is
 // listed at its current revision (stale otherwise); no subtask under it is
 // held but by a lane; every live story and the epic keep a live subtask
 // that is confirmed or listed; and every such subtask not started resolves
@@ -130,15 +131,18 @@ func (s *Store) Approve(ctx context.Context, a Actor, ref string, settings RunSe
 // approvable checks Approve's refusals on the epic n and returns the listed
 // cards.
 func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, error) {
+	tree := o.subtree(n)
+	live := func(m *node) bool { return m.stored != StatusCancelled && o.underCancelled(m, nil) == nil }
 	switch {
 	case n.Kind != KindEpic:
 		return nil, invalid("%s is a %s; approve its epic", n.ref(), n.Kind)
 	case n.stored == StatusCancelled:
 		return nil, invalid("%s is cancelled; restore it first", n.ref())
-	case n.Status == StatusDone:
+	case n.Status == StatusDone && (n.Run == nil || !slices.ContainsFunc(tree, func(m *node) bool { return !m.Confirmed() && live(m) })):
+		// A done approved epic opens again by approving the proposals
+		// added under it since, which derivation ignores until then.
 		return nil, invalid("%s is done; nothing is left to run", n.ref())
 	}
-	tree := o.subtree(n)
 	in := map[string]bool{}
 	for _, m := range tree {
 		in[m.ID] = true
@@ -181,7 +185,6 @@ func (t *txn) approvable(o *outline, n *node, items []ApproveItem) ([]*node, err
 		return nil, &Error{Code: CodeStale, Refs: stale, Message: fmt.Sprintf(
 			"%s changed since the approval was shown; look again and approve what is there now", strings.Join(stale, ", "))}
 	}
-	live := func(m *node) bool { return m.stored != StatusCancelled && o.underCancelled(m, nil) == nil }
 	runs := func(l *node) bool { return live(l) && (l.Confirmed() || listed[l.ID]) }
 	var held, empty, hidden, noCmd []string
 	settings, err := t.settings(o.project)

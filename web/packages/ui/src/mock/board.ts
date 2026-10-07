@@ -761,8 +761,8 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
       const wrong = misplaced(kind, body.parent_id, pid);
       if (wrong) return wrong;
       const parent = body.parent_id ? byId(String(body.parent_id)) : undefined;
-      // Under a suggestion the owner's card is a suggestion too.
-      const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0, ...(parent && !parent.confirmed ? { confirmed: false } : {}) });
+      // Under a suggestion or an approved epic the owner's card is a suggestion too.
+      const c = card(nextSeq++, pid, kind, null, title, { parent_id: parent?.id ?? null, win_condition: String(body.win_condition ?? ''), desc: String(body.desc ?? ''), created_at: now(), min: 0, ...(parent && (!parent.confirmed || approvedOf(parent)) ? { confirmed: false } : {}) });
       return done(commit(() => {
         cards.push(c);
         planned(c);

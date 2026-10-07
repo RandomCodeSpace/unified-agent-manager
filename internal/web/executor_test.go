@@ -177,6 +177,27 @@ func TestExecutorHoldsAPauseSetBeforeApproval(t *testing.T) {
 	r.running(1)
 }
 
+// A subtask the owner adds under an approved epic is a proposal (ADR 0006
+// §6.2): uam never starts it, though a slot is free, until the owner
+// approves the epic again.
+func TestExecutorStartsNothingAddedAfterApproval(t *testing.T) {
+	r := planLaneRun(t, "true", "A")
+	r.runExec()
+	r.approve()
+	r.running(0)
+	added := r.create(board.KindSubtask, r.story.ID, "B")
+	r.m.executorPass()
+	r.m.exec.mu.Lock()
+	starting := r.m.exec.starting[added.ID]
+	r.m.exec.mu.Unlock()
+	if c := r.card(added.ID).Card; c.Confirmed || c.HeldBy != "" || starting != "" {
+		t.Fatalf("B added after the approval: %+v, starting %q", c, starting)
+	}
+	r.leaves = append(r.leaves, added)
+	r.approve()
+	r.running(1)
+}
+
 // A restart (ADR 0006 §4.7): the next service lands a done request that
 // waited to land, nudges once each Task whose turn the restart interrupted,
 // and starts nothing again: no other Task is made, and each subtask keeps

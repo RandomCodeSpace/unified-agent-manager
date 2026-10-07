@@ -118,7 +118,8 @@ var errReadOnly = refuse(CodeReadOnly, "Unassigned cards are read-only; move the
 // Create adds a card. Agents may create stories and subtasks under a
 // container in their scope, and a Task with no scope may propose epics at
 // the root, within the caps; the owner may create any kind anywhere the kind
-// rules allow, and the owner's card confirms its unconfirmed ancestors.
+// rules allow. The owner's card is confirmed, except under a proposal or an
+// approved epic, where it is a proposal too.
 func (s *Store) Create(ctx context.Context, a Actor, in NewCard) (Card, error) {
 	o := opCreate
 	if in.ParentID == "" {
@@ -203,11 +204,14 @@ func (t *txn) create(a Actor, project, parentID string, in NewCard) (*node, erro
 	if err := validateFields(n.Card); err != nil {
 		return nil, err
 	}
+	parent := o.byID[parentID]
 	switch {
-	case a.owner() && (parentID == "" || o.byID[parentID].Confirmed()):
+	case a.owner() && (parent == nil || parent.Confirmed() && o.approved(parent) == nil):
 		n.PinnedSHA = a.Head
 	case a.owner():
-		// Planning under a proposal confirms nothing (decision 10).
+		// Planning under a proposal confirms nothing (decision 10), and
+		// under an approved epic only approving it again does (ADR 0006
+		// §6.2).
 		rearm(t.now, n)
 		if err := t.rearmAncestors(o, parentID); err != nil {
 			return nil, err
