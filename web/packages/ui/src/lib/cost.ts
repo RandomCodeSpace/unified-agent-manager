@@ -18,8 +18,43 @@ export function ringTone(fraction: number): Tone {
   return 'accent';
 }
 
+/**
+ * Working days (Monday to Friday, in the browser's time zone) from `from` to `to`, both ms: each
+ * local weekday counts by the share of it inside the span, so a 23- or 25-hour day is still one
+ * day; a Saturday or Sunday adds nothing. Steps by local calendar day, never by 24 hours.
+ */
+function workingDays(from: number, to: number): number {
+  const at = new Date(from);
+  let total = 0;
+  for (let d = at.getDate(), begin = new Date(at.getFullYear(), at.getMonth(), d).getTime(); begin < to;) {
+    const end = new Date(at.getFullYear(), at.getMonth(), ++d).getTime();
+    const weekday = new Date(begin).getDay();
+    if (weekday !== 0 && weekday !== 6) total += (Math.min(to, end) - Math.max(from, begin)) / (end - begin);
+    begin = end;
+  }
+  return total;
+}
+
+/** The instant `days` working days after `from` (as `workingDays` counts them): within the weekday they run out on. */
+function afterWorkingDays(from: number, days: number): number {
+  const at = new Date(from);
+  let rest = days;
+  for (let d = at.getDate(), begin = new Date(at.getFullYear(), at.getMonth(), d).getTime(); ;) {
+    const end = new Date(at.getFullYear(), at.getMonth(), ++d).getTime();
+    const weekday = new Date(begin).getDay();
+    if (weekday !== 0 && weekday !== 6) {
+      const start = Math.max(from, begin);
+      const left = (end - start) / (end - begin);
+      if (rest <= left) return start + rest * (end - begin);
+      rest -= left;
+    }
+    begin = end;
+  }
+}
+
 /** Account pace uses Copilot's calendar-month allowance, not the task's token totals.
  * https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing
+ * Time counts working days only (`workingDays`); before the period's first working day there is no pace.
  * Unknown reset periods and stale reports must not imply a healthy pace.
  */
 export function quotaPace(quota: Quota | null, now: number, stale = false): {
@@ -43,13 +78,14 @@ export function quotaPace(quota: Quota | null, now: number, stale = false): {
   if (remaining === 0) return { ...result, tone: 'danger', daysAtPace: 0, label: 'Allowance exhausted' };
   // No other provider's billing cycle is inferred from its reset date.
   if (quota.provider !== 'copilot' || reset !== next || now <= start) return result;
-  const elapsed = (now - start) / 86400000;
+  const elapsed = workingDays(start, now);
+  if (!(elapsed > 0)) return result;
   const used = 100 - remaining;
   // Spending slower than the budget leaves allowance at the reset: a good state, not a warning.
   if (used === 0) return { ...result, tone: 'healthy', label: 'Under pace' };
   const daysAtPace = remaining * elapsed / used;
-  // Compare average consumption with the daily allowance budget; allow 5% either way.
-  const relativePace = (used / 100) / ((now - start) / (next - start));
+  // Compare average consumption with the allowance budget per working day; allow 5% either way.
+  const relativePace = (used / 100) / (elapsed / workingDays(start, next));
   if (relativePace < 0.95) return { ...result, daysAtPace, tone: 'healthy', label: 'Under pace' };
   if (relativePace > 1.05) return { ...result, daysAtPace, tone: 'danger', label: 'Ahead of pace' };
   return { ...result, daysAtPace, tone: 'healthy', label: 'On pace' };
@@ -57,10 +93,10 @@ export function quotaPace(quota: Quota | null, now: number, stale = false): {
 
 /**
  * Copilot's calendar-month allowance as the Usage chart draws it, in shares of the allowance (0…1):
- * how far through the month it is (`elapsed`), how much is used, and, at the average pace so far,
- * how much will be by the reset (`projected`, may pass 1) and when it runs out first (`runsOut`,
- * ms). Null where the month is not known: other providers, a reset off the month's first day, the
- * unlimited and the unreported.
+ * how far through the month's working days it is (`elapsed`), how much is used, and, at the average
+ * pace so far, how much will be by the reset (`projected`, may pass 1) and when it runs out first
+ * (`runsOut`, ms, on a working day). Null where the month is not known: other providers, a reset off
+ * the month's first day, the unlimited and the unreported; and before its first working day.
  */
 export function quotaBurn(quota: Quota | null, now: number): { start: number; reset: number; elapsed: number; used: number; projected: number; runsOut: number | null } | null {
   if (!quota || quota.unlimited || quota.provider !== 'copilot' || !Number.isFinite(quota.remaining_percent)) return null;
@@ -68,10 +104,12 @@ export function quotaBurn(quota: Quota | null, now: number): { start: number; re
   const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
   const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
   if ((quota.reset_at ? Date.parse(quota.reset_at) : next) !== next || now <= start) return null;
-  const elapsed = (now - start) / (next - start);
+  const worked = workingDays(start, now);
+  if (!(worked > 0)) return null;
+  const elapsed = worked / workingDays(start, next);
   const used = (100 - Math.max(0, Math.min(100, quota.remaining_percent))) / 100;
   const projected = used / elapsed;
-  return { start, reset: next, elapsed, used, projected, runsOut: projected > 1 ? start + (next - start) * (elapsed / used) : null };
+  return { start, reset: next, elapsed, used, projected, runsOut: projected > 1 ? afterWorkingDays(start, worked / used) : null };
 }
 
 /** First limited account allowance, otherwise the first reported allowance. */

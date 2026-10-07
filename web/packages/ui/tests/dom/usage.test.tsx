@@ -8,7 +8,7 @@ import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage
 import { composer, renderApp, sidebar } from './render';
 
 beforeEach(() => { vi.spyOn(api, 'tokenPrices').mockResolvedValue(tokenPriceFixture()); });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 function summaryCost(label: 'Estimated cost' | 'Cache saving') {
   return screen.getByText(label, { exact: true }).parentElement!.nextElementSibling!;
@@ -39,6 +39,8 @@ describe('Usage popover', () => {
   });
 
   test('moves the account allowance out of the composer and into Usage', async () => {
+    // A weekday mid-month: before a month's first working day there is no pace to project.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-10-14T12:00:00Z') });
     const { user } = renderApp('#task=t20');
     const nav = await sidebar();
     const button = nav.getByRole('button', { name: 'Usage', exact: true });
