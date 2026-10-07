@@ -55,11 +55,12 @@ provider events and exact reopen. Objective state is `active`, `paused`, or
 A reported zero is preserved. Missing values are not inferred.
 
 The transcript shows elapsed foreground time while working and the recorded
-duration after completion, cancellation, or failure. It includes permission
-waits and autopilot continuations, but excludes time waiting in the queue and
-independent background work. Completed durations survive reloads and service
-restarts. Imported history without timing evidence and unfinished turns after a
-lost runtime connection have no claimed duration.
+duration after completion, cancellation, or failure. It includes autopilot
+continuations, but excludes time waiting for your approval or answer, time
+waiting in the queue and independent background work. Completed durations
+survive reloads and service restarts. Imported history without timing
+evidence and unfinished turns after a lost runtime connection have no claimed
+duration.
 
 An assistant idle or explicit autopilot session-idle boundary does not complete
 an autopilot foreground turn. A final session-idle event, with no autopilot mode

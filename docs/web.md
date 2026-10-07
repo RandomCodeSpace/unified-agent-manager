@@ -360,11 +360,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
-  The strip underneath shows the Project, branch and changed-file count;
-  click the count to open Changes. When the toolbar is narrow (side panels
-  open, or a phone), its labels give way in order: the execution word, the
-  credits, effort and context, then permissions become glyphs and move into
-  the More menu, and the model's name goes last. Hover a glyph for its value.
+  Nothing sits under it: the branch and changed-file count are on the
+  branch button in the Task header, which opens Changes. When the toolbar
+  is narrow (side panels open, or a phone), its labels give way in order:
+  the execution word, the credits, effort and context, then permissions
+  become glyphs and move into the More menu, and the model's name goes
+  last. Hover a glyph for its value.
   The toolbar wraps on phones, and elsewhere only when even that does not
   fit. Type `$`
   at the start of a message to pick a skill; `/` still lists commands and
@@ -482,8 +483,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   subagents appear as before.
 - **Diagrams and code**: a fenced ` ```mermaid ` block in a reply renders as
   a diagram once its fence has closed, with a Diagram / Code toggle and Copy
-  code in its header; clicking the diagram opens it larger. A block Mermaid
-  cannot parse shows the code with a note. Code blocks with a language are
+  code in its header; clicking the diagram opens it as large as the window
+  allows. A block Mermaid cannot parse shows the code with a note that says
+  where and what is wrong. Code blocks with a language are
   highlighted (Go, TypeScript, JavaScript, shell, JSON, YAML, Python, Rust,
   SQL, HTML/XML, CSS, Markdown, Dockerfile, Makefile, INI/TOML, diff).
   Diagrams render in the browser inside a sandboxed frame that cannot read
@@ -862,11 +864,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Task's row in the sidebar keeps it in its hover text ("Review" is the
   visible status until you open the Task, then "Finished"), and the Task header
   beside its state (not on a phone). Everything after the opening phrase
-  is the finish card's own reading of the turn (the service reads it once,
-  for both): the files the Task's edit tools changed in the turn (the main
+  is the finish evidence's own reading of the turn (the service reads it
+  once, for both): the files the Task's edit tools changed in the turn (the main
   agent's and its subagents', the files Changes shows for "Last turn"),
-  whether the main agent's last test run (a "Ran the tests" row on the
-  card) passed ("tests pass") or failed ("tests fail"), saying nothing when
+  whether the main agent's last test run (a "Ran the tests" row in the
+  evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
   exited non-zero. The phrase arriving after the turn does not mark the
   Task unread again. The opening phrase comes from one
@@ -1054,15 +1056,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The last look is kept per browser: the moment you last had the Task on
   screen, marked while it is open and again as you leave it, hide the page
   or close it.
-- **Finish card**: under a turn that completed, a card titled "Finished —
-  check the evidence" puts what the agent did before what it says it did.
+- **Finish evidence**: once the last turn has completed, the Changes panel
+  (the branch button in the Task header) starts with a section titled
+  "Finished — check the evidence", above its files, that puts what the
+  agent did before what it says it did. While there is evidence, the
+  branch button's name adds "evidence available" and its dot pulses.
   It never uses a model; fixed rules in the service read the whole turn,
-  however long, and the outcome line reads the same result. The card
+  however long, and the outcome line reads the same result. The section
   appears once that reading arrives and shows only the parts below that
   have something; a turn that ran no check, made no claim and edited no
-  file, in a Task with no change to review or commit (a question answered
-  in chat), has no card at all. Once shown for a turn it stays, so a
-  commit's outcome stays in view:
+  file (a question answered in chat) has none. Its title folds it away; it
+  takes at most about a third of the panel and scrolls inside:
   - **Checks**: each shell command of the main agent in the turn that runs
     tests, a build, a linter, `go vet` or a type check (`go test`,
     `npm test`, `pytest`, `cargo test`, `go build`, `npm run build`,
@@ -1088,15 +1092,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     if it names one) was edited. A part of a sentence with a negation or a
     failure word is not read as a claim ("I did not run the linter, but the
     build passes" claims the build only); "no errors", "no failures" and
-    the like are not negations. The header counts the claims not verified.
+    the like are not negations. A chip at the top counts the claims not
+    verified.
     When the turn made claims but ran no check, one line says no tests,
     builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the
     main agent's and its subagents'; edits that failed left out), the same
     files Changes lists for "Last turn", named from the repository's top
-    as Changes names them, with their line counts; each opens Changes.
-  - **Review changes** opens Changes. Long file lists scroll inside the card,
-    as they do in the commit panel.
+    as Changes names them, with their line counts. A long list scrolls
+    inside the section.
 - **Paused queue**: the queue pauses when a turn is stopped or fails, when
   the provider process ends, when you close the session, and when the
   provider refuses a message or may not have received it. A paused queue
@@ -1222,11 +1226,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   not counted), never on another Task's or on a file nobody is known to have
   edited. After a restart, edits made before the Task's history was read
   again may be unknown: the panel says so and you check the files yourself.
-  A note says how many changed files are left out. The finish card and the
-  Changes panel edit one shared draft per Task: the message and the checked
-  files are the same in both. The finish card's panel shows while the Task
-  has changed files and keeps the outcome of a commit (and of a failed push
-  after it, with git's message) in view after the files are committed.
+  A note says how many changed files are left out. The message and the
+  checked files are kept per Task while Changes is closed.
   Generate (then Regenerate) asks the Utility model for a message from the
   chosen files' diff and the repository's last 20 commit subjects, so it
   follows their style, Conventional Commits included. It never commits, and
@@ -1488,12 +1489,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   WebGL turned off the panel says so instead.
 - **No Git**: when the project directory is not in a Git repository, or git
   is not installed on the server, the Task header shows a warning in place of
-  Changes and Files, and turns leave out their "Changed n files" line. Click
-  the warning for the reason. It clears once the directory becomes a
-  repository, the next time the Project is re-read. When git is installed,
-  the warning offers "Set up git here", which runs `git init` in the project
-  folder (only when it is in no repository) and brings Changes and Files
-  back.
+  Changes and Files, and turns leave out their "Changed n files" line. Once
+  a turn has finish evidence, the Changes button comes back beside the
+  warning to show it. Click the warning for the reason. It clears once the
+  directory becomes a repository, the next time the Project is re-read.
+  When git is installed, the warning offers "Set up git here", which runs
+  `git init` in the project folder (only when it is in no repository) and
+  brings Changes and Files back.
 - **Loading indicators**: task activity, subagents, tool calls, request loading
   and busy buttons share a quiet ring. Labels and skeleton bars stay still.
   Brief request waits keep the existing 300ms delay. Motion → Match system
@@ -1544,8 +1546,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     search box, "All projects" and every Project; choosing one shows only that
     Project's Tasks, shelves included, and New task starts on it. The choice
     is kept per browser. The gear at the right of each Project opens "Edit
-    project", where its name and Task defaults live together with "Previous
-    sessions" and "Remove project".
+    project", with its name, "Routines", "Previous sessions" and "Remove
+    project". What new Tasks start with is in Settings → New tasks, for
+    every Project.
   - **Collapse the sidebar**: the UAM mark and wordmark beside Search in the sidebar
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
@@ -1555,8 +1558,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
-  - With no Task open, the main pane shows only the UAM mark with its wordmark and one line;
-    New task and Add project are in the sidebar. Settings → This browser →
+  - With no Task open, the main pane shows the UAM mark, "What are you
+    working on?", a **New task** button and, once there are Tasks,
+    **Recent tasks**: up to six that are not archived, across all Projects,
+    latest update first; click one to open it. Without a Project it says
+    "Start with a project" and offers **Add project**. Settings → This browser →
     Theme picks Light, Dark or Match system (the default, which follows the
     OS as it changes); the choice is kept per browser.
 
@@ -1927,10 +1933,11 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 
 The Usage button beside Settings and Planner opens a popover with Today,
 7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
-and estimated USD cost. Cache is read plus write tokens; click its count for
-the breakdown. Input already includes cache. Totals preserve the harness's
-reported accounting; reasoning already included in output is counted once.
-The 7-day and 30-day windows include today and use the service's local dates.
+and estimated USD cost. Cache is read plus write tokens; each model's info
+tip splits it into read and written. Input already includes cache. Totals
+preserve the harness's reported accounting; reasoning already included in
+output is counted once. The 7-day and 30-day windows include today and use
+the service's local dates.
 
 UAM records SDK-reported Copilot task, subagent, and Background AI usage.
 The embedded `aiusage-core` library also reads local harness records once a
