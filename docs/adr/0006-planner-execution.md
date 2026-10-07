@@ -508,7 +508,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 `Store.Approve(ctx, owner, epicRef, settings, items)` is one owner write. `items` are `{id, revision}` pairs as the dialog showed them.
 
 It refuses unless all of these hold:
-- the card is a live epic and does not derive done;
+- the card is a live epic and does not derive done, unless it was approved before and has live proposals under it, which approving confirms, so it opens again;
 - every item is a live card in its subtree, at the revision given. A mismatch refuses `stale` with refs, and the dialog reloads, so an edit by a planning agent between render and post is never approved unseen;
 - no subtask under it is held by a non-lane hold ("finish or release #n first"), so manual and lane work never mix;
 - every live container in the subtree has at least one live subtask that is confirmed or listed. A container with no confirmed subtask derives planned forever and stalls its dependents, and one whose only live subtasks are unlisted proposals would be in that state after approval;

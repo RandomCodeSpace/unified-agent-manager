@@ -1318,7 +1318,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Approving confirms every card it showed and records the run; when a card
   changed or was added meanwhile, the dialog names it, shows it as it is
   now and asks again. A card added under an approved epic stays a proposal ("1 to
-  approve" on the epic) until the epic is approved again. Under an approved
+  approve" on the epic) until the epic is approved again. That holds for a
+  finished epic too: it lists in Plans to approve and offers Approve again,
+  which runs the new card and opens the epic again. Under an approved
   epic nothing is confirmed or started card by card: Confirm, Launch, Do
   whole story and adding a Task to its stories are not offered, Mark done
   on a proposal waits for the next approval, accepting an agent's request

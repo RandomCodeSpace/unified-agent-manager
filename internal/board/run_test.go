@@ -897,3 +897,34 @@ func TestOwnerCardUnderApprovedEpicIsAProposal(t *testing.T) {
 		t.Fatalf("the owner's card outside approved epics = %+v", c)
 	}
 }
+
+// A finished approved epic opens again by approving what was added under it
+// since (ADR 0006 §6.2): the owner's card or an agent's there is a proposal,
+// and approving the epic again confirms it, so the epic is no longer done.
+// With nothing added, it has nothing left to run.
+func TestApproveReopensAFinishedEpic(t *testing.T) {
+	f := newFixture(t)
+	f.acceptCmd("go test ./...")
+	epic, story, one, two := f.tree()
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
+	for _, c := range []Card{one, two} {
+		_, err := f.s.SetStatus(f.ctx, owner, c.ID, StatusDone, "shipped", false)
+		f.must(err)
+	}
+	wantStatus(t, f.card(epic.ID), StatusDone)
+	_, err := f.s.Approve(f.ctx, owner, epic.ID, testRun, f.items(f.shownUnder(epic.ID)...), "")
+	wantCode(t, err, CodeInvalid)
+
+	added := f.create(owner, story.ID, KindSubtask, "Follow-up")
+	f.must(f.s.StartPlanning(f.ctx, owner, epic.ID, "planner"))
+	idea := f.create(Agent("planner", ""), epic.ID, KindSubtask, "Idea")
+	wantStatus(t, f.card(epic.ID), StatusDone)
+	f.approveRun(epic.ID, testRun)
+	for _, c := range []Card{added, idea} {
+		if got := f.card(c.ID); !got.Confirmed() || got.Status != StatusPlanned {
+			t.Fatalf("%s after approving the finished epic again = %+v", c.Title, got)
+		}
+	}
+	wantStatus(t, f.card(epic.ID), StatusDoing)
+	wantStatus(t, f.card(story.ID), StatusDoing)
+}
