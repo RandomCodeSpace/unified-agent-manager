@@ -1120,6 +1120,20 @@ func TestWebMultipleChoiceQuestionNamesItsToolCall(t *testing.T) {
 		t.Fatalf("event-first question = %+v, want tool call call_ask1", q)
 	}
 	answer(h.sink.question(), done)
+
+	// Answered before its event: the late event links nothing, and the next
+	// question with that text gets its own.
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "third question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+	answer(h.sink.question(), done)
+	h.fs.onEvent(ev("q2", &rpc.UserInputRequestedData{RequestID: "r2", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_late")}))
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "fourth question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+	h.fs.onEvent(ev("q3", &rpc.UserInputRequestedData{RequestID: "r3", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_ask3")}))
+	if q := h.sink.question(); q.ToolCallID != "call_ask3" {
+		t.Fatalf("question after a late event = %+v, want tool call call_ask3", q)
+	}
+	answer(h.sink.question(), done)
 }
 
 func TestWebQuestionAnswers(t *testing.T) {
