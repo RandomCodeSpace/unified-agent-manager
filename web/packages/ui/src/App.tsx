@@ -619,7 +619,8 @@ export default function App() {
   const logout = useCallback(() => {
     recentTasks.clear();
     confirmedDetail.current = null;
-    void api.logout().finally(() => { dispatch({ type: 'reset' }); setAuth('out'); });
+    // Log out is in Settings: closing it leaves the sign-in screen the plain title and no fragment, as a fresh one has.
+    void api.logout().finally(() => { dispatch({ type: 'reset' }); setSettingsOpen(false); setAuth('out'); });
   }, [api, recentTasks]);
   const toggleTerminal = useCallback((projectId: string) => setTerminalId((id) => (id ? null : projectId)), []);
   const closeTerminal = useCallback(() => {
