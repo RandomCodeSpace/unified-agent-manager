@@ -57,7 +57,7 @@ How each requirement is met:
 Each item names the ADR 0005 rule it replaces and the requirement that forces the change. Item 20 is the exception: it replaces a non-goal of this design's first draft, not an ADR 0005 rule. A bare "decision N" in this list is one of ADR 0005's decisions; "§9 decision N" is one of this ADR's.
 
 1. **Decision 6, "Blockers never stop a launch or a claim".** Under an approved epic nothing starts while the subtask has an open blocker (its own or inherited), the blocked flag, or a pause at or above it. Manual Launch (with or without confirm), Do whole story, Attach and Claim there are refused `run_owned` (§10 has the order in which this lands). Manual starts outside approved epics keep decision 6. Forced by R4.
-2. **Per-card confirmation as the gate on execution**, as stated in ADR 0005's `expires_at` row (§1), the confirm step on Launch (§5), decision 6's confirm step, decision 10's "confirmation happens only at execution", and Confirm walking only up. Approve confirms the listed subtree downward, at the listed revisions, and authorizes the run. Under an approved epic the store refuses per-card Confirm and Launch with confirm (`run_owned`), and the UI doesn't offer them. Outside approved epics nothing changes. Forced by R2 and R3.
+2. **Per-card confirmation as the gate on execution**, as stated in ADR 0005's `expires_at` row (§1), the confirm step on Launch (§5), decision 6's confirm step, decision 10's "confirmation happens only at execution", and Confirm walking only up. Approve confirms the listed subtree downward, at the listed revisions, and authorizes the run. Under an approved epic the store refuses per-card Confirm and Launch with confirm (`run_owned`), and the UI doesn't offer them. A card the owner creates there is a proposal until the next approval, as an agent's is (§6.3). Outside approved epics nothing changes. Forced by R2 and R3.
 3. **ADR 0005's Rejected item "Per-Task git worktrees: overlap is flagged, not prevented".** Every run attempt gets its own worktree and branch and lands on a per-Project integration branch. In a shared tree a subtask's change can't be isolated, so it can't be reverted alone. Forced by R4 and R6.
 4. **ADR 0005's Deferred item "Start next card".** The executor starts ready subtasks itself. "Queueing cards onto a running Task" stays deferred, because one Task runs one subtask. Forced by R3 and R4.
 5. **Working-Task scope and "Do whole story"** (ADR 0005 §4 and §5). A run Task is scoped to its one subtask. It gets no `board_claim`, and Attach and Do whole story are refused under approved epics. Forced by R5.
@@ -508,7 +508,7 @@ The trigger is idempotent: once `hasAll(base, integ)` holds, nothing fires. Plai
 `Store.Approve(ctx, owner, epicRef, settings, items)` is one owner write. `items` are `{id, revision}` pairs as the dialog showed them.
 
 It refuses unless all of these hold:
-- the card is a live epic and does not derive done;
+- the card is a live epic and does not derive done, unless it was approved before and has live proposals under it, which approving confirms, so it opens again;
 - every item is a live card in its subtree, at the revision given. A mismatch refuses `stale` with refs, and the dialog reloads, so an edit by a planning agent between render and post is never approved unseen;
 - no subtask under it is held by a non-lane hold ("finish or release #n first"), so manual and lane work never mix;
 - every live container in the subtree has at least one live subtask that is confirmed or listed. A container with no confirmed subtask derives planned forever and stalls its dependents, and one whose only live subtasks are unlisted proposals would be in that state after approval;
@@ -673,7 +673,7 @@ Each item is a store, tool, web or UI test. Every ADR 0005 invariant still holds
 2. Under an approved epic, per-card Confirm, Launch with or without confirm, Do whole story, Attach and Claim answer `run_owned`. In S4 only, Launch on a subtask starts a lane when it is ready and answers `not_ready` otherwise.
 3. `paused` is owner-only. An agent write carrying it is refused, and the owner may pause a started card.
 4. An agent move into or out of an approved epic, the root included, is a change request.
-5. Restore under an approved epic makes proposals.
+5. Restore under an approved epic makes proposals, and so does the owner's create there.
 6. Purge drops the `runs` row of a purged epic.
 
 **Agent writes**

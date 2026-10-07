@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
-import { approvedEpicOf, cardPath, isLanded, isStarted, landedUnder, linkedReason, pendingUnder, runningLanes, startedUnderReason } from '../../lib/board';
+import { approvedEpicOf, cardPath, isLanded, isStarted, landedUnder, linkedReason, pendingUnder, plansToApprove, runningLanes, startedUnderReason } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { AlertDialog, useConfirm } from '../ui/dialog';
@@ -41,6 +41,7 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
   const api = useApi();
   const { cards, notify, openCard } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
+  const waiting = useMemo(() => new Set(plansToApprove(cards).map((p) => p.epic.id)), [cards]);
   const [busy, setBusy] = useState<{ card: string; key: string } | null>(null);
   // The card a dialog is about stays while the dialog animates out.
   const [target, setTarget] = useState<string | null>(null);
@@ -99,7 +100,8 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       setLaunching({ card: c, whole, confirms, waits, run: (body) => api.planner.launch(c.id, confirms.length ? { ...body, confirm: true } : body).then(launched) });
     };
     const actions: CardAction[] = [];
-    if (c.kind === 'epic' && c.status !== 'done' && c.status !== 'cancelled') actions.push({ key: 'approve', label: 'Approve and run…', icon: <BadgeCheck />, onClick: () => setApproving({ epic: c }) });
+    // A done epic opens again only by approving the proposals added under it since.
+    if (c.kind === 'epic' && c.status !== 'cancelled' && (c.status !== 'done' || waiting.has(c.id))) actions.push({ key: 'approve', label: 'Approve and run…', icon: <BadgeCheck />, onClick: () => setApproving({ epic: c }) });
     if (approved && c.status !== 'done' && c.status !== 'cancelled') {
       actions.push(
         c.paused
