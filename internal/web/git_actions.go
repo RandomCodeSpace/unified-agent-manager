@@ -527,25 +527,9 @@ func (r *gitRepo) chosen(ctx context.Context, paths []string) ([]statusEntry, er
 	return entries, nil
 }
 
-// notInLane refuses Push and Pull for a lane Task (ADR 0006 §5.3): uam
-// lands its work, and its lane's branch is uam's.
-func (m *Manager) notInLane(id string) error {
-	t, err := m.gitTarget(id)
-	if err != nil {
-		return err
-	}
-	if m.inLanes(t.workdir) {
-		return newError(http.StatusConflict, "This task works in a lane of an approved epic: uam lands its work, so its lane neither pushes nor pulls.")
-	}
-	return nil
-}
-
 // GitPush pushes the current branch, never forced: to its upstream when it
 // has one, else to origin under its own name, setting that as upstream.
 func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
-	if err := m.notInLane(id); err != nil {
-		return GitResult{}, err
-	}
 	_, repo, unlock, err := m.openWriteRepo(ctx, id)
 	if err != nil {
 		return GitResult{}, err
@@ -593,9 +577,6 @@ func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
 // GitPull fast-forwards the current branch to its upstream, and nothing
 // else: it never merges or rebases.
 func (m *Manager) GitPull(ctx context.Context, id string) (GitResult, error) {
-	if err := m.notInLane(id); err != nil {
-		return GitResult{}, err
-	}
 	t, repo, unlock, err := m.openWriteRepo(ctx, id)
 	if err != nil {
 		return GitResult{}, err
@@ -1021,3 +1002,26 @@ func (s *Server) handleCommitMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, draft)
 }
+
+// tailBuffer keeps the last limit bytes written to it.
+type tailBuffer struct {
+	buf   []byte
+	limit int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if n >= t.limit {
+		t.buf = append(t.buf[:0], p[n-t.limit:]...)
+		return n, nil
+	}
+	if over := len(t.buf) + n - t.limit; over > 0 {
+		t.buf = t.buf[:copy(t.buf, t.buf[over:])]
+	}
+	t.buf = append(t.buf, p...)
+	return n, nil
+}
+
+// String is the tail as valid UTF-8: a character cut at the front, and any
+// other invalid byte, is dropped.
+func (t *tailBuffer) String() string { return strings.ToValidUTF8(string(t.buf), "") }

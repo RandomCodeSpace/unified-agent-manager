@@ -41,8 +41,6 @@ const (
 // The purposes of Utility calls.
 const (
 	purposeTitle              = "title"
-	purposePlannerTriage      = "planner-triage"
-	purposePlannerSuggest     = "planner-suggest"
 	purposeCommitMessage      = "commit-message"
 	purposeConfigurationDraft = "configuration-draft"
 )
@@ -58,6 +56,71 @@ const (
 )
 
 const codeUtilityPaused = "utility_paused"
+
+// The Utility job codes: no provider can run a Utility job, or the model's
+// call or answer failed.
+const (
+	codeUtilityUnavailable = "utility_unavailable"
+	codeUtilityFailed      = "utility_failed"
+)
+
+var errUtilityUnavailable = &Error{Status: http.StatusConflict, Code: codeUtilityUnavailable,
+	Message: "no available provider can run Utility jobs; choose a Utility model in Settings"}
+
+// UtilityModel is the provider and model a Utility job runs on.
+type UtilityModel struct {
+	Provider string
+	Model    string
+}
+
+// utilityProviderLocked returns the provider that runs Utility jobs, and
+// its Utility model from Settings: the first provider, in order, that is
+// available, registers host tools and has a Utility model. ok is false when
+// none does. The caller holds mu.
+func (m *Manager) utilityProviderLocked() (runner agentapi.UtilityRunner, model UtilityModel, ok bool) {
+	for _, name := range m.order {
+		runner, ok := m.providers[name].(agentapi.UtilityRunner)
+		if info := m.infos[name]; !ok || !info.Available || !info.Capabilities.HostTools {
+			continue
+		}
+		if id := m.utilityModelLocked(name); id != "" {
+			return runner, UtilityModel{Provider: name, Model: id}, true
+		}
+	}
+	return nil, UtilityModel{}, false
+}
+
+// startUtilityLocked claims the Utility provider for one job, counted in
+// titles so Shutdown waits for it to delete its conversation; the caller
+// calls titles.Done when it ends. The caller holds mu.
+func (m *Manager) startUtilityLocked() (agentapi.UtilityRunner, UtilityModel, error) {
+	runner, model, ok := m.utilityProviderLocked()
+	switch {
+	case m.closed:
+		return nil, model, errShuttingDown
+	case !ok:
+		return nil, model, errUtilityUnavailable
+	}
+	m.titles.Add(1)
+	return runner, model, nil
+}
+
+// bound returns ctx, also ended when the service shuts down.
+func (m *Manager) bound(ctx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(m.ctx, cancel)
+	return ctx, func() { stop(); cancel() }
+}
+
+// utilityFailed reports a failed Utility call; a call today's Utility limit
+// refused keeps its own message.
+func utilityFailed(what string, err error) *Error {
+	if e, ok := errors.AsType[*Error](err); ok && e.Code == codeUtilityPaused {
+		return e
+	}
+	return &Error{Status: http.StatusBadGateway, Code: codeUtilityFailed,
+		Message: fmt.Sprintf("%s failed: %s", what, clipRunes(displaytext.Sanitize(err.Error()), maxDetailRunes))}
+}
 
 // UtilityCall is one Utility model call in the log. At is when it started;
 // Day is its server-local date, set when the log is read. Tokens are the

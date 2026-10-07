@@ -55,9 +55,6 @@ type snapshotEvent struct {
 	Usage    AccountUsage     `json:"usage"`
 	Sessions []SessionSummary `json:"sessions"`
 	Session  *SessionDetail   `json:"session"`
-	// Boards maps each Project, and "" for Unassigned, to its Board's
-	// revision; sent only while the planner is on.
-	Boards map[string]int64 `json:"boards,omitempty"`
 }
 
 type usageEvent struct {
@@ -236,7 +233,7 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail, Boards: m.boardsLocked()}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail}
 	var payload any = snapshot
 	if compact {
 		var d *compactSessionDetail

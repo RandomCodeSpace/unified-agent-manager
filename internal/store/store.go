@@ -404,9 +404,6 @@ type WebState struct {
 	SettledAt time.Time `json:"settled_at,omitzero"`
 	// ArchivedAt is when the Task was archived.
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
-	// Retired is why a lane Task uam retired is not reopened: its lane is
-	// removed. Empty for every other Task.
-	Retired string `json:"retired,omitempty"`
 	// TerminalSession is the ID of the terminal session record tied to the
 	// same provider conversation when the Task was imported. That record
 	// stays the terminal's.
@@ -593,9 +590,6 @@ type WebSettings struct {
 	// Terminal turns on the web terminal: a shell as the service user for
 	// anyone signed in. Off when absent.
 	Terminal bool `json:"terminal,omitempty"`
-	// Planner turns on the planner (ADR 0005): a Board for each Project
-	// with a Git repository. Off when absent.
-	Planner bool `json:"planner,omitempty"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer: sorted, without duplicates, at most MaxHiddenModels each. It is
 	// a display preference, never a check on requests.
@@ -847,7 +841,6 @@ var knownWebSettingsFields = map[string]struct{}{
 	"token_prices":        {},
 	"send_default":        {},
 	"terminal":            {},
-	"planner":             {},
 	"hidden_models":       {},
 	"subagent_models":     {},
 	"title_model":         {},

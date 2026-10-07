@@ -99,7 +99,7 @@ func TestUtilityCallsAreLoggedAndCapped(t *testing.T) {
 	if l := again.UtilityLog(0, 1); !l.Today.Paused || l.Today.Limit != 0 {
 		t.Fatalf("today with the limit at 0 = %+v", l.Today)
 	}
-	_, err := again.runUtility(context.Background(), UtilityCall{Purpose: purposePlannerTriage}, "p", nil)
+	_, err := again.runUtility(context.Background(), UtilityCall{Purpose: purposeCommitMessage}, "p", nil)
 	if e, ok := errors.AsType[*Error](err); !ok || e.Code != codeUtilityPaused || !strings.Contains(e.Message, "Background AI is off") || utilityFailed("the triage", err) != e {
 		t.Fatalf("call with the limit at 0 = %v", err)
 	}
@@ -173,7 +173,8 @@ func TestUtilityLogPagesAndRetention(t *testing.T) {
 	st := openTestStore(t)
 	now := time.Now()
 	old := UtilityCall{ID: 1, At: now.AddDate(0, 0, -utilityRetentionDays-1), Purpose: purposeTitle, Outcome: utilityOK}
-	yesterday := UtilityCall{ID: 2, At: now.AddDate(0, 0, -1), Purpose: purposePlannerTriage, Outcome: utilityError, Reason: "boom", PromptChars: 40, InputTokens: 10}
+	// An earlier version's planner purpose still loads and lists.
+	yesterday := UtilityCall{ID: 2, At: now.AddDate(0, 0, -1), Purpose: "planner-triage", Outcome: utilityError, Reason: "boom", PromptChars: 40, InputTokens: 10}
 	var lines []string
 	for _, c := range []UtilityCall{old, yesterday} {
 		b, err := json.Marshal(c)
@@ -189,7 +190,7 @@ func TestUtilityLogPagesAndRetention(t *testing.T) {
 	}
 	m := startManager(t, st)
 	for i := range 5 {
-		m.utility.add(UtilityCall{At: now, Purpose: purposePlannerSuggest, Outcome: utilityOK, PromptChars: i})
+		m.utility.add(UtilityCall{At: now, Purpose: purposeConfigurationDraft, Outcome: utilityOK, PromptChars: i})
 	}
 	l := m.UtilityLog(0, 2)
 	if len(l.Calls) != 2 || l.Calls[0].ID != 7 || l.Calls[1].ID != 6 || l.Next != 6 {
@@ -199,7 +200,7 @@ func TestUtilityLogPagesAndRetention(t *testing.T) {
 		t.Fatalf("days = %+v", l.Days)
 	}
 	l = m.UtilityLog(l.Next, 4)
-	if len(l.Calls) != 4 || l.Calls[0].ID != 5 || l.Calls[3].ID != 2 || l.Next != 0 {
+	if len(l.Calls) != 4 || l.Calls[0].ID != 5 || l.Calls[3].ID != 2 || l.Calls[3].Purpose != "planner-triage" || l.Next != 0 {
 		t.Fatalf("last page = %+v", l.Calls)
 	}
 	data, err := os.ReadFile(path)

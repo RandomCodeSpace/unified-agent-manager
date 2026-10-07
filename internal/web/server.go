@@ -254,7 +254,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
-	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleSettle)
+	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleStage((*Manager).Settle))
 	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleStage((*Manager).Archive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
@@ -271,7 +271,6 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/events/detail", s.handleDetailEvents)
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
-	s.boardRoutes(mux)
 	s.chartRoutes(mux)
 	s.routineRoutes(mux)
 	s.assistRoutes(mux)
@@ -451,9 +450,6 @@ func writeFailure(w http.ResponseWriter, err error) {
 	if len(webErr.Refs) > 0 {
 		body["refs"] = webErr.Refs
 	}
-	if webErr.Cards != nil {
-		body["cards"] = webErr.Cards
-	}
 	writeJSON(w, status, body)
 }
 
@@ -473,6 +469,26 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// decodeOptionalBody is decodeBody for a body that may be empty, which
+// leaves v as it is.
+func decodeOptionalBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+		}
+		return false
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return true
+	}
+	r.Body = io.NopCloser(bytes.NewReader(data))
+	return decodeBody(w, r, v)
 }
 
 func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
@@ -595,12 +611,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			patch.Terminal = new(bool)
 			if json.Unmarshal(raw, patch.Terminal) != nil || string(raw) == "null" {
 				writeError(w, http.StatusBadRequest, "terminal must be true or false")
-				return
-			}
-		case "planner":
-			patch.Planner = new(bool)
-			if json.Unmarshal(raw, patch.Planner) != nil || string(raw) == "null" {
-				writeError(w, http.StatusBadRequest, "planner must be true or false")
 				return
 			}
 		case "hidden_models":

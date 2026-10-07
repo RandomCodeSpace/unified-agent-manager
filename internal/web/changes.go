@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -573,4 +574,43 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// head is the repository's HEAD commit, "" before the first commit.
+func (r *gitRepo) head(ctx context.Context) (string, error) {
+	if !r.hasHead {
+		return "", nil
+	}
+	out, code, stderr, err := runGit(ctx, r.git, r.top, 4096, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		return "", newError(http.StatusBadGateway, "git rev-parse failed: %s", gitMessage(stderr))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// repoPaths returns a function mapping a tool's file path, relative to dir
+// or absolute, to its slash-separated path in the work tree at top. dir may
+// reach the work tree through a symbolic link, as a Task's tools see it.
+func repoPaths(top, dir string) func(string) (string, bool) {
+	dir = filepath.Clean(dir)
+	prefix := ""
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		if rel, err := filepath.Rel(top, real); err == nil && filepath.IsLocal(rel) {
+			prefix = rel
+		}
+	}
+	return func(p string) (string, bool) {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		for _, root := range []struct{ dir, prefix string }{{dir, prefix}, {top, ""}} {
+			if rel, err := filepath.Rel(root.dir, p); err == nil && filepath.IsLocal(rel) && rel != "." {
+				return filepath.ToSlash(filepath.Join(root.prefix, rel)), true
+			}
+		}
+		return "", false
+	}
 }

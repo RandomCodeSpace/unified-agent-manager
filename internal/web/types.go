@@ -147,9 +147,6 @@ type Settings struct {
 	// Terminal lets anyone signed in open a shell, as the service user, at a
 	// Project's directory (terminal.go). Off by default.
 	Terminal bool `json:"terminal"`
-	// Planner turns on the planner (ADR 0005, board.go). Off by default, and
-	// always sent, so a browser tells off from a service without it.
-	Planner bool `json:"planner"`
 	// HiddenModels lists, by provider, the model IDs the browser does not
 	// offer, sorted; omitted when none is hidden. IDs the provider no longer
 	// lists are kept. The service never refuses a hidden model.
@@ -281,9 +278,6 @@ type SessionSummary struct {
 	Stage      string    `json:"stage,omitempty"`
 	SettledAt  time.Time `json:"settled_at,omitzero"`
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
-	// Retired is why a lane Task uam retired cannot be reopened: its lane
-	// is removed (ADR 0006 §5.6). Omitted for every other Task.
-	Retired string `json:"retired,omitempty"`
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; omitted otherwise.
 	SpawnedBy string `json:"spawned_by,omitempty"`
@@ -466,13 +460,10 @@ type Error struct {
 	// ProjectID names the existing Project when adding a directory that
 	// already has one.
 	ProjectID string
-	// Code classifies a planner refusal (ADR 0005 §14): planner_off, no_git,
-	// holds_undecided, or a board rule's code. Refs lists what a board rule
-	// refused over, such as open checklist items, and Cards are the held
-	// subtasks a holds_undecided refusal asks about.
-	Code  string
-	Refs  []string
-	Cards []BoardCard
+	// Code classifies a refusal, such as utility_paused. Refs lists what it
+	// refused over, such as the Projects that share a name.
+	Code string
+	Refs []string
 }
 
 func (e *Error) Error() string { return e.Message }

@@ -221,9 +221,9 @@ func (m *Manager) watchedLocked(id string) bool {
 }
 
 // needsYouLocked is the Task list's Needs you count, which the app badge
-// carries (without the planner's requests): active Tasks waiting on a
-// request, and failed or interrupted ones no page has opened since they
-// ended (the service's stand-in for each browser's unread mark).
+// carries: active Tasks waiting on a request, and failed or interrupted ones
+// no page has opened since they ended (the service's stand-in for each
+// browser's unread mark).
 func (m *Manager) needsYouLocked() int {
 	n := 0
 	for _, s := range m.sessions {

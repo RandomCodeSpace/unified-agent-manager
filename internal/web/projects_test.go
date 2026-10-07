@@ -949,7 +949,7 @@ func TestTaskDefaultsRoutes(t *testing.T) {
 			t.Fatalf("PATCH %s = %s", body, got)
 		}
 	}
-	if got := patch(`{"task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false,"task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"default","mode":"yolo"}}` {
+	if got := patch(`{"task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"","mode":"yolo"}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"task_defaults":{"provider":"fake","model":"b","effort":"high","context_size":"default","mode":"yolo"}}` {
 		t.Fatalf("PATCH task defaults = %s", got)
 	}
 	if w := ts.do(http.MethodGet, "/api/settings", "", auth); !strings.Contains(w.Body.String(), `"task_defaults":{"provider":"fake","model":"b"`) {

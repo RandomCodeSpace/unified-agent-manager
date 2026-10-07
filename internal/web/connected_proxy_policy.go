@@ -1,15 +1,12 @@
 package web
 
-import "strings"
-
 // connectedWorkloadPatternAllowed is deliberately an exact list of local mux
 // patterns. Adding an owner-only route cannot silently expose it to attached
 // instances. Both ends check this list; aliases, unknown methods and nested
 // proxy/registry routes have no matching entry.
 func connectedWorkloadPatternAllowed(pattern string) bool {
 	switch pattern {
-	case "DELETE /api/board/links",
-		"DELETE /api/configuration/{kind}/{name}",
+	case "DELETE /api/configuration/{kind}/{name}",
 		"DELETE /api/mcp/servers/{name}",
 		"DELETE /api/projects/{id}",
 		"DELETE /api/projects/{id}/charts/{chart_id}",
@@ -19,10 +16,6 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"DELETE /api/sessions/{id}",
 		"DELETE /api/sessions/{id}/file-grants/{grant_id}",
 		"DELETE /api/sessions/{id}/queue/{request_id}",
-		"GET /api/board",
-		"GET /api/board/cards/{ref}",
-		"GET /api/board/executor",
-		"GET /api/board/projects/{id}",
 		"GET /api/configuration",
 		"GET /api/events",
 		"GET /api/events/detail",
@@ -66,33 +59,11 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"GET /api/usage/prices",
 		"GET /api/usage/tokens",
 		"GET /api/utility",
-		"PATCH /api/board/cards/{ref}",
-		"PATCH /api/board/projects/{id}",
 		"PATCH /api/mcp/servers/{name}",
 		"PATCH /api/projects/{id}",
 		"PATCH /api/routines/{id}",
 		"PATCH /api/sessions/{id}",
 		"PATCH /api/settings",
-		"POST /api/board/cards",
-		"POST /api/board/cards/{ref}/attach",
-		"POST /api/board/cards/{ref}/check",
-		"POST /api/board/cards/{ref}/comments",
-		"POST /api/board/cards/{ref}/confirm",
-		"POST /api/board/cards/{ref}/dismiss",
-		"POST /api/board/cards/{ref}/launch",
-		"POST /api/board/cards/{ref}/move",
-		"POST /api/board/cards/{ref}/plan",
-		"POST /api/board/cards/{ref}/release",
-		"POST /api/board/cards/{ref}/restore",
-		"POST /api/board/cards/{ref}/split",
-		"POST /api/board/cards/{ref}/status",
-		"POST /api/board/cards/{ref}/suggest",
-		"POST /api/board/cards/{ref}/triage",
-		"POST /api/board/import",
-		"POST /api/board/links",
-		"POST /api/board/purge",
-		"POST /api/board/requests/{id}/accept",
-		"POST /api/board/requests/{id}/reject",
 		"POST /api/configuration/skills/install",
 		"POST /api/configuration/skills/list",
 		"POST /api/configuration/{kind}/draft",
@@ -151,13 +122,10 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 
 // connectedAccountGated lists the workload routes refused to a connection
 // whose Copilot account breaks the one-account rule: work that runs an agent
-// (creating, prompting or resuming Tasks, routine runs, drafts), the
-// planner's writes and the terminal. Reads, Settings and the account routes
-// stay open, so the account can be fixed there.
+// (creating, prompting or resuming Tasks, routine runs, drafts) and the
+// terminal. Reads, Settings and the account routes stay open, so the account
+// can be fixed there.
 func connectedAccountGated(pattern string) bool {
-	if method, route, _ := strings.Cut(pattern, " "); method != "GET" && strings.HasPrefix(route, "/api/board") {
-		return true
-	}
 	switch pattern {
 	case "GET /api/projects/{id}/terminal",
 		"POST /api/configuration/{kind}/draft",

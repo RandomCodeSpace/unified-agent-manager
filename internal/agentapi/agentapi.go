@@ -527,7 +527,7 @@ type HostToolResult struct {
 	// Failed marks a refused or failed call; Text says why.
 	Failed bool
 	// Payload is optional JSON the web service keeps for its own display of
-	// the call, such as a Planner card. Adapters never send it to the model.
+	// the call. Adapters never send it to the model.
 	Payload json.RawMessage
 }
 

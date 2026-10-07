@@ -144,7 +144,7 @@ func TestCustomModelsRoute(t *testing.T) {
 	}
 	// key_present is output only: a browser sending it back changes nothing.
 	body := `{"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":false}]}`
-	want := `{"send_default":"steer","terminal":false,"planner":false,"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":true}]}`
+	want := `{"send_default":"steer","terminal":false,"custom_models":[{"name":"acme","display_name":"Acme Coder","base_url":"https://llm.example/v1","model_id":"coder","api_key_env":"UAM_BYOM_TEST_ACME","key_present":true}]}`
 	if got := patch(body, http.StatusOK); got != want {
 		t.Fatalf("PATCH = %s", got)
 	}
@@ -160,7 +160,7 @@ func TestCustomModelsRoute(t *testing.T) {
 	if got := patch(body, http.StatusOK); got != want {
 		t.Fatalf("disable vision = %s", got)
 	}
-	if got := patch(`{"custom_models":[]}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false}` {
+	if got := patch(`{"custom_models":[]}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` {
 		t.Fatalf("remove = %s", got)
 	}
 }
