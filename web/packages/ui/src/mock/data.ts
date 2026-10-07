@@ -986,7 +986,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     }),
   ];
 
-  // An older Task that called the planner's board_* tools: they show as ordinary tool rows.
+  // A Task that called an MCP server's tracker_* tools: they show as ordinary tool rows.
   tasks.push(
     task({
       id: 't21',
@@ -1001,12 +1001,12 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       updated_at: ago(8),
       items: [
         { id: 'w1', kind: 'user', time: ago(25), text: 'Work on #25: sign the release archives in the release job and upload the signatures.' },
-        tool('w2', 24, { name: 'board_get', title: 'Read card #25', status: 'completed', input: '{"card":"#25"}', output: '#25 Sign archives and publish signatures (doing)' }),
+        tool('w2', 24, { name: 'tracker_get', title: 'Read card #25', status: 'completed', input: '{"card":"#25"}', output: '#25 Sign archives and publish signatures (doing)' }),
         { id: 'w3', kind: 'assistant', time: ago(23), text: 'Signing belongs to the *Sign release binaries* story, which waits for the release matrix: the archives it signs come from there. I will sign whatever the job builds today and pick up the new targets when they land.' },
-        tool('w4', 22, { name: 'board_get', title: 'Read card #18', status: 'completed', input: '{"card":"#18"}', output: '#18 Release automation (doing)' }),
+        tool('w4', 22, { name: 'tracker_get', title: 'Read card #18', status: 'completed', input: '{"card":"#18"}', output: '#18 Release automation (doing)' }),
         tool('w5', 18, { name: 'edit', title: 'Edit .github/workflows/release.yml', status: 'completed', input: '{"path":".github/workflows/release.yml"}', output: '+      - run: cosign sign-blob --yes dist/*.tar.gz' }),
-        tool('w6', 12, { name: 'board_checklist', title: 'Tick "Sign in the release job"', status: 'completed', input: '{"card":"#25","item":0,"done":true}', output: 'ticked' }),
-        tool('w8', 9, { name: 'board_get', title: 'Read card #26', status: 'completed', input: '{"card":"#26"}', output: '#26 Verify signatures in the install script (planned)' }),
+        tool('w6', 12, { name: 'tracker_checklist', title: 'Tick "Sign in the release job"', status: 'completed', input: '{"card":"#25","item":0,"done":true}', output: 'ticked' }),
+        tool('w8', 9, { name: 'tracker_get', title: 'Read card #26', status: 'completed', input: '{"card":"#26"}', output: '#26 Verify signatures in the install script (planned)' }),
         { id: 'w7', kind: 'assistant', time: ago(8), text: 'The release job signs every archive now. Next: upload the `.sig` files, then document the key. #26 (verifying signatures in the install script) waits on the checksums in #31.' },
       ],
     }),
@@ -1029,7 +1029,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         ];
       };
       const say = (id: string, min: number, text: string, kind: Item['kind'] = 'assistant') => items.push({ id, kind, time: ago(min), text });
-      const internal = ['store', 'web', 'web/items', 'web/archive', 'adapter', 'adapter/copilot', 'vterm', 'config', 'ids', 'logging', 'routines', 'board'];
+      const internal = ['store', 'web', 'web/items', 'web/archive', 'adapter', 'adapter/copilot', 'vterm', 'config', 'ids', 'logging', 'routines', 'charts'];
       say('d1', 60, 'Audit every Go and TS package for exported symbols with no callers. One subagent per package.', 'user');
       say('d2', 59.5, 'Pilot on internal/ first: 12 packages, one audit each.');
       internal.forEach((pkg, i) => audit(i + 1, 59, `internal/${pkg}`, 'completed'));
@@ -1048,7 +1048,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       audit(37, 9, 'web/src/lib', 'running', { preview: 'Reading transcript.ts · step 4' });
       audit(38, 9, 'web/src/components', 'running', { preview: 'grep -rn "trimSubagents" · step 9' });
       audit(39, 9, 'web/src/mock', 'completed');
-      audit(40, 9, 'web/src/planner', 'completed');
+      audit(40, 9, 'web/src/hooks', 'completed');
       audit(41, 9, 'web/tests', 'cancelled');
       // The first pilot audit, asked again: it keeps its first call and runs now, its third run
       // (a follow-up from the person during the second reply, then the agent resuming it).

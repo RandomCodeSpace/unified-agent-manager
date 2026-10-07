@@ -16,8 +16,8 @@ describe('app shell', () => {
     expect(document.title).toBe('(7) UAM');
   });
 
-  test('an old #planner= link lands on the home view', async () => {
-    renderApp('#planner=p1');
+  test('a link to an unknown view lands on the home view', async () => {
+    renderApp('#unknown=p1');
     await sidebar();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     await waitFor(() => expect(window.location.hash).toBe(''));

@@ -9,7 +9,7 @@ const hash = identityHash('#task=same-task', b, 'home-a');
 test('legacy entities and hash routes stay unchanged', () => {
   assert.equal(encodeEntity(null, 'same-task'), 'same-task');
   assert.deepEqual(decodeEntity('same-task'), { connectionId: null, entityId: 'same-task' });
-  for (const path of ['', '#', '#settings', '#task=same-task', '#planner=p&view=board', '#routines=r']) {
+  for (const path of ['', '#', '#settings', '#task=same-task', '#routines=p&view=list', '#routines=r']) {
     assert.equal(identityHash(path, null, 'home-a'), path);
     assert.deepEqual(resolveIdentity(path, 'home-a', [b, c]), { connection: null, path });
   }
@@ -25,7 +25,7 @@ test('colliding remote entity IDs are source qualified with unambiguous escaping
 test('qualified links resolve only the exact saved owner and preserve route bytes', () => {
   assert.equal(hash, '#task=same-task&home=home-a&instance=instance-b&connection=connection-b&generation=3');
   assert.deepEqual(resolveIdentity(hash, 'home-a', [b, c]), { connection: b, path: '#task=same-task' });
-  for (const path of ['#settings', '#planner=p%2Fq&view=board', '#routines=r']) {
+  for (const path of ['#settings', '#routines=p%2Fq&view=list', '#routines=r']) {
     assert.deepEqual(resolveIdentity(identityHash(path, b, 'home-a'), 'home-a', [b]), { connection: b, path });
   }
   assert.equal(identityHash(hash, c, 'home-a'), '#task=same-task&home=home-a&instance=instance-c&connection=connection-c&generation=3');

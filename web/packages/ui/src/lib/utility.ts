@@ -7,8 +7,6 @@ const PURPOSES: Record<string, string> = {
   title: 'Task title',
   // Made only by older versions; their calls stay in the 30-day log.
   'subagent-summary': 'Subagent summary',
-  'planner-triage': 'Planner triage',
-  'planner-suggest': 'Planner suggestion',
   'commit-message': 'Commit message',
   'configuration-draft': 'Configuration draft',
   'suggest-replies': 'Suggested replies',

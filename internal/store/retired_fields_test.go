@@ -24,9 +24,9 @@ func TestRetiredSubagentSummariesDropOnSave(t *testing.T) {
 	}
 }
 
-// A Task record of an earlier version with the planner's retired field
-// loads as an ordinary Task, and the field is kept as an unknown one.
-func TestPlannerRetiredFieldKeptAsUnknown(t *testing.T) {
+// A Task record of an earlier version with the removed planner's retired
+// field loads as an ordinary Task, and the next save drops the field.
+func TestPlannerRetiredFieldDropsOnSave(t *testing.T) {
 	var web WebState
 	old := `{"turn":"completed","stage":"settled","retired":"its lane was removed"}`
 	if err := json.Unmarshal([]byte(old), &web); err != nil {
@@ -35,12 +35,11 @@ func TestPlannerRetiredFieldKeptAsUnknown(t *testing.T) {
 	if web.Stage != "settled" {
 		t.Fatalf("stage = %q", web.Stage)
 	}
-	web.Update(WebState{Turn: "completed"})
 	encoded, err := json.Marshal(web)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"retired":"its lane was removed"`) || strings.Contains(string(encoded), `"stage"`) {
+	if strings.Contains(string(encoded), "retired") || !strings.Contains(string(encoded), `"stage":"settled"`) {
 		t.Fatalf("saved = %s", encoded)
 	}
 }

@@ -21,7 +21,7 @@ export function seedUtility(limit: number): UtilityCall[] {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   const tasks = ['t1', 't2', 't3', 't4', 't5'];
-  const purposes = ['title', 'suggest-replies', 'outcome', 'title', 'planner-triage'];
+  const purposes = ['title', 'suggest-replies', 'outcome', 'title', 'configuration-draft'];
   const day = (back: number, count: number, extra: (c: UtilityCall, i: number) => void) => {
     const base = new Date(start);
     base.setDate(base.getDate() - back);
@@ -32,7 +32,7 @@ export function seedUtility(limit: number): UtilityCall[] {
       const reply = purpose === 'title' ? 24 + (i % 20) : 110 + (i % 50);
       const c: UtilityCall = {
         id: 0, at: localStamp(at), day: localDay(at), purpose, provider: 'copilot', model: 'gpt-6-luna',
-        ...(purpose === 'planner-triage' ? { project_id: 'p1' } : { task_id: tasks[i % tasks.length], project_id: 'p1' }),
+        ...(purpose === 'configuration-draft' ? { project_id: 'p1' } : { task_id: tasks[i % tasks.length], project_id: 'p1' }),
         prompt_chars: prompt, reply_chars: reply, input_tokens: 180 + Math.ceil(prompt / 4), output_tokens: Math.ceil(reply / 4), credits: 0.0012 + (i % 4) * 0.0003,
         duration_ms: 700 + ((i * 131) % 2400), outcome: 'ok',
       };

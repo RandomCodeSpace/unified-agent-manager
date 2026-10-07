@@ -468,6 +468,9 @@ var knownWebStateFields = map[string]struct{}{
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},
+	// Retired: the removed planner's mark on a lane Task (ADR 0007). Known,
+	// so it drops on the next save.
+	"retired": {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {
@@ -849,6 +852,9 @@ var knownWebSettingsFields = map[string]struct{}{
 	"utility_daily_limit": {},
 	"suggest_replies":     {},
 	"compact_threshold":   {},
+	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
+	// on the next save.
+	"planner": {},
 }
 
 func (w WebSettings) MarshalJSON() ([]byte, error) {

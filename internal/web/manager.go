@@ -601,6 +601,7 @@ func (m *Manager) Start(ctx context.Context) error {
 			assignBadges(&cfg, nil)
 		}
 	}
+	removePlannerFiles(ctx, filepath.Dir(m.store.Path()))
 	// Tasks open without the built-in skills when they cannot be installed.
 	var skillDirs []string
 	skills, err := filepath.Abs(filepath.Join(filepath.Dir(m.store.Path()), "skills"))

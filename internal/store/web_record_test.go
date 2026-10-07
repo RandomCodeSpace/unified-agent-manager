@@ -270,9 +270,9 @@ func TestWebTaskDefaultsRoundTripAndLoadClean(t *testing.T) {
 	}
 }
 
-// The planner switch of earlier versions is no longer a setting: a file
-// that has it still loads and saves, and the key is kept as an unknown field.
-func TestWebPlannerSettingKeptAsUnknown(t *testing.T) {
+// The removed planner's switch of earlier versions is no longer a setting:
+// a file that has it still loads, and the next save drops the key.
+func TestWebPlannerSettingDropsOnSave(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +287,7 @@ func TestWebPlannerSettingKeptAsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(s.Path())
-	if err != nil || strings.Count(string(data), `"planner"`) != 1 || string(webSettingsField(t, s.Path(), "planner")) != "true" || string(webSettingsField(t, s.Path(), "send_default")) != `"queue"` {
+	if err != nil || strings.Contains(string(data), `"planner"`) || string(webSettingsField(t, s.Path(), "send_default")) != `"queue"` {
 		t.Fatalf("settings after save: %s, %v", data, err)
 	}
 }

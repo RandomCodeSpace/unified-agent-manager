@@ -173,8 +173,8 @@ func TestUtilityLogPagesAndRetention(t *testing.T) {
 	st := openTestStore(t)
 	now := time.Now()
 	old := UtilityCall{ID: 1, At: now.AddDate(0, 0, -utilityRetentionDays-1), Purpose: purposeTitle, Outcome: utilityOK}
-	// An earlier version's planner purpose still loads and lists.
-	yesterday := UtilityCall{ID: 2, At: now.AddDate(0, 0, -1), Purpose: "planner-triage", Outcome: utilityError, Reason: "boom", PromptChars: 40, InputTokens: 10}
+	// A purpose this version no longer makes still loads and lists.
+	yesterday := UtilityCall{ID: 2, At: now.AddDate(0, 0, -1), Purpose: "retired-job", Outcome: utilityError, Reason: "boom", PromptChars: 40, InputTokens: 10}
 	var lines []string
 	for _, c := range []UtilityCall{old, yesterday} {
 		b, err := json.Marshal(c)
@@ -200,7 +200,7 @@ func TestUtilityLogPagesAndRetention(t *testing.T) {
 		t.Fatalf("days = %+v", l.Days)
 	}
 	l = m.UtilityLog(l.Next, 4)
-	if len(l.Calls) != 4 || l.Calls[0].ID != 5 || l.Calls[3].ID != 2 || l.Calls[3].Purpose != "planner-triage" || l.Next != 0 {
+	if len(l.Calls) != 4 || l.Calls[0].ID != 5 || l.Calls[3].ID != 2 || l.Calls[3].Purpose != "retired-job" || l.Next != 0 {
 		t.Fatalf("last page = %+v", l.Calls)
 	}
 	data, err := os.ReadFile(path)

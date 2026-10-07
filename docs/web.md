@@ -981,8 +981,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Suggested replies", "Outcome line";
-  older versions also logged "Subagent summary", "Planner triage" and
-  "Planner suggestion"), the Task (a click opens it) or Project, the model
+  older versions also logged "Subagent summary"), the Task (a click opens
+  it) or Project, the model
   (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
@@ -1717,16 +1717,13 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   existing terminal hosts before replacing it. Copilot conversations can
   still be imported as Tasks after the in-use check.
 - **Removed planner.** The planner was removed
-  ([ADR 0007](adr/0007-remove-the-planner.md)), and uam no longer reads its
-  `board.db` (with `board.db-wal` and `board.db-shm`) beside `sessions.json`
-  in `~/.config/uam/` (or `$UAM_CONFIG_DIR/`); delete those files once you no
-  longer need the old board. uam also leaves the lane worktrees under `lanes/`
-  in the same folder and the `uam-plan-*` branches in a Project's repository
-  as they are. To remove them, check in that repository with
-  `git worktree list` and `git branch --list 'uam-plan-*'` that nothing there
-  is still needed, then run `git worktree remove <path>` for each lane (or
-  delete the `lanes` folder and run `git worktree prune`), and after that
-  `git branch -D <branch>` for each branch.
+  ([ADR 0007](adr/0007-remove-the-planner.md)). At startup uam deletes its
+  `board.db` (with `board.db-wal` and `board.db-shm`) and the lane worktrees
+  under `lanes/` beside `sessions.json`, and each lane's repository forgets
+  its worktree. The `uam-plan-*` branches it created in a Project's
+  repository stay: list them with `git branch --list 'uam-plan-*'` and, after
+  checking that nothing on a branch is still needed, remove it with
+  `git branch -D <branch>`.
 - **Copilot sessions without a prompt.** Copilot saves a conversation only
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.

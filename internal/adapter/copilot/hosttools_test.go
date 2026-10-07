@@ -32,7 +32,7 @@ func (h *hostCalls) call(ctx context.Context, c agentapi.HostToolCall) agentapi.
 	if reply != nil {
 		return reply(ctx, c)
 	}
-	return agentapi.HostToolResult{Text: "ok " + c.Name, Payload: []byte(`{"card":1}`)}
+	return agentapi.HostToolResult{Text: "ok " + c.Name, Payload: []byte(`{"entry":1}`)}
 }
 
 func (h *hostCalls) recorded() []agentapi.HostToolCall {
@@ -41,14 +41,14 @@ func (h *hostCalls) recorded() []agentapi.HostToolCall {
 	return slices.Clone(h.calls)
 }
 
-func boardTools() []agentapi.HostTool {
+func notesTools() []agentapi.HostTool {
 	object := func(property string) map[string]any {
 		return map[string]any{"type": "object", "additionalProperties": false,
 			"properties": map[string]any{property: map[string]any{"type": "string"}}}
 	}
 	return []agentapi.HostTool{
-		{Name: "board_get", Description: "Read one card", Parameters: object("ref")},
-		{Name: "board_list", Description: "List cards", Parameters: object("query")},
+		{Name: "notes_get", Description: "Read one note", Parameters: object("ref")},
+		{Name: "notes_list", Description: "List notes", Parameters: object("query")},
 	}
 }
 
@@ -72,15 +72,15 @@ func callTool(tool copilot.Tool, session, callID string, args any) (copilot.Tool
 	return tool.Handler(copilot.ToolInvocation{SessionID: session, ToolCallID: callID, ToolName: tool.Name, Arguments: args, TraceContext: context.Background()})
 }
 
-// readyHostTools returns the board tools with their catalog verified for
+// readyHostTools returns the sample tools with their catalog verified for
 // the session "session".
 func readyHostTools(t *testing.T, call func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) (*toolGate, []copilot.Tool) {
 	t.Helper()
-	gate, tools, err := sessionTools("task", nil, boardTools(), call)
+	gate, tools, err := sessionTools("task", nil, notesTools(), call)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gate.catalog(context.Background(), &fakeSession{id: "session", catalog: catalogOf("board_get", "board_list")}, tools...); err != nil {
+	if err := gate.catalog(context.Background(), &fakeSession{id: "session", catalog: catalogOf("notes_get", "notes_list")}, tools...); err != nil {
 		t.Fatal(err)
 	}
 	return gate, tools
@@ -92,11 +92,11 @@ func readyHostTools(t *testing.T, call func(context.Context, agentapi.HostToolCa
 func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(map[bool]string{false: "create", true: "resume"}[resume], func(t *testing.T) {
-			fc := &fakeClient{catalog: catalogOf(declarationToolName, "board_get", "board_list")}
+			fc := &fakeClient{catalog: catalogOf(declarationToolName, "notes_get", "notes_list")}
 			p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
 			calls := &hostCalls{}
-			defs := boardTools()
+			defs := notesTools()
 			req := agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{}, Tools: defs, CallTool: calls.call,
 				ValidateFile: func(_ context.Context, p string) (string, error) { return filepath.Join("/tmp", p), nil }}
 			if resume {
@@ -112,7 +112,7 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 			} else {
 				registered = fc.create[0].Tools
 			}
-			if got := toolNames(registered); !slices.Equal(got, []string{declarationToolName, "board_get", "board_list"}) {
+			if got := toolNames(registered); !slices.Equal(got, []string{declarationToolName, "notes_get", "notes_list"}) {
 				t.Fatalf("registered tools = %v", got)
 			}
 			for _, tool := range registered[1:] {
@@ -136,23 +136,23 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 			}
 
 			result, err := callTool(registered[1], "session", "call-1", map[string]any{"ref": "#12"})
-			if err != nil || result.ResultType != "success" || result.TextResultForLLM != "ok board_get" || result.SessionLog != result.TextResultForLLM {
-				t.Fatalf("board_get = %+v, %v", result, err)
+			if err != nil || result.ResultType != "success" || result.TextResultForLLM != "ok notes_get" || result.SessionLog != result.TextResultForLLM {
+				t.Fatalf("notes_get = %+v, %v", result, err)
 			}
 			got := calls.recorded()
-			if len(got) != 1 || got[0].Name != "board_get" || got[0].CallID != "call-1" || got[0].TaskID != "session" || got[0].AgentID != "" || string(got[0].Arguments) != `{"ref":"#12"}` {
+			if len(got) != 1 || got[0].Name != "notes_get" || got[0].CallID != "call-1" || got[0].TaskID != "session" || got[0].AgentID != "" || string(got[0].Arguments) != `{"ref":"#12"}` {
 				t.Fatalf("forwarded calls = %+v", got)
 			}
-			if strings.Contains(result.TextResultForLLM, "card") {
+			if strings.Contains(result.TextResultForLLM, "entry") {
 				t.Fatal("the payload reached the model")
 			}
 			if _, err := invokeFile(registered[0], "show", map[string]any{"path": "report.txt"}); err != nil {
 				t.Fatalf("uam_show_file beside host tools = %v", err)
 			}
 			calls.reply = func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult {
-				return agentapi.HostToolResult{Text: "no card #99", Failed: true}
+				return agentapi.HostToolResult{Text: "no note #99", Failed: true}
 			}
-			if result, err := callTool(registered[2], "session", "call-2", map[string]any{"query": "x"}); err != nil || result.ResultType != "failure" || result.TextResultForLLM != "no card #99" {
+			if result, err := callTool(registered[2], "session", "call-2", map[string]any{"query": "x"}); err != nil || result.ResultType != "failure" || result.TextResultForLLM != "no note #99" {
 				t.Fatalf("failed call = %+v, %v", result, err)
 			}
 			calls.reply = func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult { return agentapi.HostToolResult{} }
@@ -180,15 +180,15 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 // Open fails, and leaves no session connected, unless every uam tool is
 // uam's own in the catalog.
 func TestHostToolCatalogRefusals(t *testing.T) {
-	server, name := "planner", "board_list"
-	mcpBoard := rpc.CurrentToolMetadata{Name: "board_list", MCPServerName: &server, MCPToolName: &name}
-	own := catalogOf(declarationToolName, "board_get", "board_list")
+	server, name := "notes", "notes_list"
+	mcpNotes := rpc.CurrentToolMetadata{Name: "notes_list", MCPServerName: &server, MCPToolName: &name}
+	own := catalogOf(declarationToolName, "notes_get", "notes_list")
 	for label, tc := range map[string]struct {
 		catalogs []fakeToolCatalog
 		want     string
 	}{
-		"name clash":    {[]fakeToolCatalog{{tools: catalogOf("board_list")}}, "board_list already exists in the unshadowed tool catalog"},
-		"from MCP":      {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(catalogOf(declarationToolName, "board_get"), mcpBoard)}}, "board_list has ambiguous tool origin"},
+		"name clash":    {[]fakeToolCatalog{{tools: catalogOf("notes_list")}}, "notes_list already exists in the unshadowed tool catalog"},
+		"from MCP":      {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(catalogOf(declarationToolName, "notes_get"), mcpNotes)}}, "notes_list has ambiguous tool origin"},
 		"one missing":   {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: own[:2]}}, "changed or is ambiguous"},
 		"one repeated":  {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(slices.Clone(own), own[1])}}, "changed or is ambiguous"},
 		"other changed": {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(slices.Clone(own), rpc.CurrentToolMetadata{Name: "bash"})}}, "changed or is ambiguous"},
@@ -198,7 +198,7 @@ func TestHostToolCatalogRefusals(t *testing.T) {
 			p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
 			calls := &hostCalls{}
-			conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{}, Tools: boardTools(), CallTool: calls.call,
+			conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{}, Tools: notesTools(), CallTool: calls.call,
 				ValidateFile: func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }})
 			if err == nil || conv != nil || !strings.Contains(err.Error(), tc.want) || !fc.sessions[0].disconnected {
 				t.Fatalf("open = %v, %v; calls %v", conv, err, fc.sessions[0].toolCalls)
@@ -213,29 +213,29 @@ func TestHostToolCatalogRefusals(t *testing.T) {
 // Bad definitions fail before any session is created.
 func TestHostToolDefinitionRefusals(t *testing.T) {
 	calls := &hostCalls{}
-	good := boardTools()
+	good := notesTools()
 	for label, tc := range map[string]struct {
 		tools []agentapi.HostTool
 		call  func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult
 	}{
 		"no CallTool":           {good, nil},
-		"bad name":              {[]agentapi.HostTool{{Name: "board get"}}, calls.call},
+		"bad name":              {[]agentapi.HostTool{{Name: "notes get"}}, calls.call},
 		"repeated name":         {[]agentapi.HostTool{good[0], good[0]}, calls.call},
 		"declaration name":      {[]agentapi.HostTool{{Name: declarationToolName}}, calls.call},
-		"unencodable parameter": {[]agentapi.HostTool{{Name: "board_get", Parameters: map[string]any{"x": func() {}}}}, calls.call},
+		"unencodable parameter": {[]agentapi.HostTool{{Name: "notes_get", Parameters: map[string]any{"x": func() {}}}}, calls.call},
 	} {
 		fc := &fakeClient{}
 		p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 		if _, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Events: &recSink{}, Tools: tc.tools, CallTool: tc.call}); err == nil || len(fc.create) != 0 {
 			t.Errorf("%s: open = %v, sessions %d", label, err, len(fc.create))
 		}
-		if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "planner-suggest", Tools: tc.tools, CallTool: tc.call}); err == nil || len(fc.create) != 0 {
+		if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "summary", Tools: tc.tools, CallTool: tc.call}); err == nil || len(fc.create) != 0 {
 			t.Errorf("%s: utility run = %v, sessions %d", label, err, len(fc.create))
 		}
 		_ = p.Shutdown(context.Background())
 	}
 	// A tool without parameters is registered without a schema.
-	gate, tools, err := sessionTools("task", nil, []agentapi.HostTool{{Name: "board_ping"}}, calls.call)
+	gate, tools, err := sessionTools("task", nil, []agentapi.HostTool{{Name: "notes_ping"}}, calls.call)
 	if err != nil || gate == nil || len(tools) != 1 || tools[0].Parameters != nil {
 		t.Fatalf("tool without parameters = %+v, %v", tools, err)
 	}
@@ -272,7 +272,7 @@ func TestHostToolHandlerGuards(t *testing.T) {
 		t.Fatalf("refused calls reached CallTool %d times", n)
 	}
 	// Tools answer only once their catalog is verified.
-	_, unverified, err := sessionTools("task", nil, boardTools(), calls.call)
+	_, unverified, err := sessionTools("task", nil, notesTools(), calls.call)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestHostToolCallsForgetTheOldestFinished(t *testing.T) {
 // still run without tools.
 func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 	calls := &hostCalls{}
-	fc := &fakeClient{catalog: catalogOf("board_get", "board_list"), models: []rpc.Model{{ID: "gpt-6-luna", SupportedReasoningEfforts: []string{"none", "low"}}}}
+	fc := &fakeClient{catalog: catalogOf("notes_get", "notes_list"), models: []rpc.Model{{ID: "gpt-6-luna", SupportedReasoningEfforts: []string{"none", "low"}}}}
 	var deadline bool
 	fc.reply = func(ctx context.Context, msg copilot.MessageOptions) (string, error) {
 		_, deadline = ctx.Deadline()
@@ -410,24 +410,24 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 	if !p.Capabilities().HostTools {
 		t.Fatal("copilot does not report host tools")
 	}
-	reply, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Workdir: "/work", Purpose: "planner-suggest",
-		System: "Draft stories.", Prompt: "Split it", Tools: boardTools(), CallTool: calls.call, Timeout: time.Minute})
-	if err != nil || reply != "Split it after ok board_get" || !deadline {
+	reply, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Workdir: "/work", Purpose: "summary",
+		System: "Summarize the notes.", Prompt: "Split it", Tools: notesTools(), CallTool: calls.call, Timeout: time.Minute})
+	if err != nil || reply != "Split it after ok notes_get" || !deadline {
 		t.Fatalf("reply = %q, %v; deadline %v", reply, err, deadline)
 	}
-	if got := calls.recorded(); len(got) != 1 || got[0].Name != "board_get" || got[0].CallID != "call-1" || got[0].TaskID != "" || string(got[0].Arguments) != `{"ref":"#3"}` {
+	if got := calls.recorded(); len(got) != 1 || got[0].Name != "notes_get" || got[0].CallID != "call-1" || got[0].TaskID != "" || string(got[0].Arguments) != `{"ref":"#3"}` {
 		t.Fatalf("utility calls = %+v", got)
 	}
 	cfg := fc.create[0]
 	off := func(b *bool) bool { return b != nil && !*b }
-	if cfg.ClientName != "uam-planner-suggest" || cfg.Model != "gpt-6-luna" || cfg.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" || cfg.OnEvent == nil {
+	if cfg.ClientName != "uam-summary" || cfg.Model != "gpt-6-luna" || cfg.ReasoningEffort != "none" || cfg.WorkingDirectory != "/work" || cfg.SessionID != "" || cfg.OnEvent == nil {
 		t.Fatalf("utility session = %+v", cfg)
 	}
-	if !slices.Equal(cfg.AvailableTools, []string{"board_get", "board_list"}) || !slices.Equal(toolNames(cfg.Tools), cfg.AvailableTools) {
+	if !slices.Equal(cfg.AvailableTools, []string{"notes_get", "notes_list"}) || !slices.Equal(toolNames(cfg.Tools), cfg.AvailableTools) {
 		t.Fatalf("available %v, tools %v", cfg.AvailableTools, toolNames(cfg.Tools))
 	}
 	if !off(cfg.EnableConfigDiscovery) || !off(cfg.EnableSessionStore) || !off(cfg.EnableSkills) || !off(cfg.EnableFileHooks) || !off(cfg.EnableOnDemandInstructionDiscovery) ||
-		cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != "Draft stories." {
+		cfg.SystemMessage == nil || cfg.SystemMessage.Mode != "replace" || cfg.SystemMessage.Content != "Summarize the notes." {
 		t.Fatalf("utility configuration = %+v", cfg)
 	}
 	if d, err := cfg.OnPermissionRequest(&rpc.PermissionRequestShell{FullCommandText: "ls"}, copilot.PermissionInvocation{}); err != nil {
@@ -455,15 +455,15 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 // deletes its session.
 func TestRunUtilityRefusesAClashingTool(t *testing.T) {
 	calls := &hostCalls{}
-	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{{tools: catalogOf("board_get")}}, reply: func(context.Context, copilot.MessageOptions) (string, error) { return "sent", nil }}
+	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{{tools: catalogOf("notes_get")}}, reply: func(context.Context, copilot.MessageOptions) (string, error) { return "sent", nil }}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-	_, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "planner-suggest", Prompt: "Split it", Tools: boardTools(), CallTool: calls.call})
-	if err == nil || !strings.Contains(err.Error(), "board_get already exists") || len(fc.sessions[0].sent) != 0 || !slices.Equal(fc.deleted, []string{"created-1"}) {
+	_, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "summary", Prompt: "Split it", Tools: notesTools(), CallTool: calls.call})
+	if err == nil || !strings.Contains(err.Error(), "notes_get already exists") || len(fc.sessions[0].sent) != 0 || !slices.Equal(fc.deleted, []string{"created-1"}) {
 		t.Fatalf("clash = %v; sent %v, deleted %v", err, fc.sessions[0].sent, fc.deleted)
 	}
 	fc.createErr = errors.New("no session")
-	if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "planner-suggest", Tools: boardTools(), CallTool: calls.call}); err == nil || len(fc.deleted) != 1 {
+	if _, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "summary", Tools: notesTools(), CallTool: calls.call}); err == nil || len(fc.deleted) != 1 {
 		t.Fatalf("failed create = %v, deleted %v", err, fc.deleted)
 	}
 }
