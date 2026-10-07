@@ -215,10 +215,10 @@ export interface PlanToApprove {
   proposals: number;
 }
 
-/** The plans waiting for the owner's approval on one Board (§6.1): proposed epics, then approved epics with live proposals under them; none done or cancelled, which approval refuses. */
+/** The plans waiting for the owner's approval on one Board (§6.1): proposed epics, then approved epics with live proposals under them, a done one included, which approving opens again; none cancelled, which approval refuses. */
 export function plansToApprove(cards: readonly Card[]): PlanToApprove[] {
   const index = childIndex(cards);
-  const epics = (index.get('') ?? []).filter((c) => c.kind === 'epic' && c.status !== 'cancelled' && c.status !== 'done');
+  const epics = (index.get('') ?? []).filter((c) => c.kind === 'epic' && c.status !== 'cancelled');
   const proposed = epics.filter((e) => !e.confirmed).map((epic) => ({ epic, proposals: proposalsUnder(epic.id, index).length + 1 }));
   const approved = epics.filter((e) => e.confirmed && e.run).map((epic) => ({ epic, proposals: proposalsUnder(epic.id, index).length })).filter((p) => p.proposals > 0);
   return [...proposed, ...approved];

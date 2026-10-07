@@ -109,7 +109,7 @@ func (m *Manager) PreviewRevert(ref string, include []string) (RevertPreview, er
 	}
 	tip, err := repo.integTip(ctx)
 	if err == nil {
-		_, err = repo.revertChain(ctx, tip, revertItems(closure.Landings))
+		_, err = repo.revertChain(ctx, tip, revertItems(closure.Landings), reopenSeq(c))
 	}
 	var refusal *Error
 	switch {
@@ -167,6 +167,16 @@ func revertItems(landings []board.Landing) []revertItem {
 		out[i] = revertItem{sha: l.SHA, seq: l.Seq, title: l.Title}
 	}
 	return out
+}
+
+// reopenSeq is the card whose Reopen without reverting code is the way out
+// of a revert of c that would not apply: c itself when it is a subtask, 0
+// for a story or epic, which no Reopen reopens.
+func reopenSeq(c board.Card) int64 {
+	if c.Kind != board.KindSubtask {
+		return 0
+	}
+	return c.Seq
 }
 
 // RevertCard starts the owner's Revert of the card ref as a job and returns
@@ -252,7 +262,7 @@ func (m *Manager) revertLanded(ctx context.Context, a board.Actor, c board.Card,
 	if err != nil {
 		return false, err
 	}
-	commit, err := repo.revertChain(ctx, tip, revertItems(closure.Landings))
+	commit, err := repo.revertChain(ctx, tip, revertItems(closure.Landings), reopenSeq(c))
 	if err != nil {
 		return false, err
 	}

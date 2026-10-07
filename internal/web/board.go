@@ -631,8 +631,8 @@ func (m *Manager) CardDetail(ref string) (BoardCardDetail, error) {
 }
 
 // CreateCard is the owner's create; the card is confirmed, except under a
-// proposal, where it is a proposal too. A card under a parent goes to the
-// parent's Project.
+// proposal or an approved epic, where it is a proposal too. A card under a
+// parent goes to the parent's Project.
 func (m *Manager) CreateCard(in board.NewCard) (BoardCard, error) {
 	var a board.Actor
 	var err error
