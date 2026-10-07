@@ -215,7 +215,7 @@ func (m *Manager) laneTaskFacts() (map[string]board.TaskFact, map[string]laneTas
 		if s.removed || !m.inLanes(s.workdir) {
 			continue
 		}
-		tasks[id] = board.TaskFact{Stage: boardStage(s.stage), Turn: laneTurn(s), Provider: s.provider}
+		tasks[id] = board.TaskFact{Stage: boardStage(s.stage), Turn: laneTurn(s), Provider: s.provider, Retired: s.retired != ""}
 		lanes[id] = laneTask{workdir: s.workdir, detail: s.detail, seq: s.turnSeq}
 	}
 	return tasks, lanes, m.signedOutLocked()
@@ -401,16 +401,7 @@ func (m *Manager) applyStep(ctx context.Context, now time.Time, facts board.RunF
 		m.discardTask(a.Task)
 	}
 	for _, a := range step.Retire {
-		if tasks[a.Task].Stage == board.StageArchived {
-			// Archived already: its hold is released and its lane cleaned
-			// up as Archive does.
-			m.reconcileBoard()
-			m.cleanLaneOf(lanes[a.Task].workdir)
-			continue
-		}
-		if _, err := m.Archive(a.Task); err != nil {
-			log.Info("retire a lane task failed", "session", a.Task, "error", err)
-		}
+		m.retire(ctx, a, tasks[a.Task].Stage, lanes[a.Task].workdir)
 	}
 	for _, a := range step.Cancel {
 		if _, err := m.cancelBecause(a.Task, fmt.Sprintf("uam: #%d was stopped", a.Seq)); err != nil {
@@ -428,6 +419,68 @@ func (m *Manager) applyStep(ctx context.Context, now time.Time, facts board.RunF
 			m.startPick(p)
 		}
 	}
+}
+
+// retire retires the lane Task a names, whose stage was stage and whose
+// workdir is workdir (ADR 0006 §5.6). An active one is settled as the
+// owner's Settle settles it, so its transcript stays on the Settled shelf;
+// while that is refused, as while it is busy, the next pass tries again.
+// Its planner calls end, its hold is released as Archive's reconcile
+// releases it, it is marked retired, which refuses Reopen and keeps later
+// passes from retiring it again, and its lane is cleaned up. One the owner
+// archived has its hold released and its lane cleaned up as Archive does.
+func (m *Manager) retire(ctx context.Context, a board.Act, stage board.Stage, workdir string) {
+	switch stage {
+	case board.StageArchived:
+		m.reconcileBoard()
+		m.cleanLaneOf(workdir)
+		return
+	case board.StageActive:
+		if _, err := m.moveStage(a.Task, StageSettled, StageActive); err != nil {
+			log.Info("retire a lane task failed", "session", a.Task, "error", err)
+			return
+		}
+		m.endCalls(a.Task)
+	}
+	m.reconcileRetired(a.Task)
+	m.markRetired(a.Task, m.retiredReason(ctx, workdir, a.Seq))
+	m.cleanLaneOf(workdir)
+}
+
+// retiredReason says why the lane Task working in workdir, retired from
+// #seq, is not reopened: its lane is removed. It names the commit the
+// attempt landed as, or the branch that keeps what it did.
+func (m *Manager) retiredReason(ctx context.Context, workdir string, seq int64) string {
+	reason := fmt.Sprintf("#%d ran in a lane that is removed", seq)
+	_, l, ok := m.laneOfDir(workdir)
+	if !ok {
+		return reason + ". Read the transcript here."
+	}
+	var hold board.Hold
+	err := m.withBoard(func(st *board.Store) error {
+		var err error
+		_, hold, err = st.LaneHold(ctx, l.branch)
+		return err
+	})
+	if err == nil && hold.Lane.LandedSHA != "" {
+		return fmt.Sprintf("%s; its work landed as %s. Read the transcript here; the work is on the integration branch.", reason, shortSHA(hold.Lane.LandedSHA))
+	}
+	return fmt.Sprintf("%s; what it did is kept on branch %s. Read the transcript here.", reason, l.branch)
+}
+
+// markRetired records on the settled Task id, once, why it is not reopened.
+// One the owner reopened or archived meanwhile is left unmarked: the next
+// pass retires a reopened one again.
+func (m *Manager) markRetired(id, reason string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.sessions[id]
+	if s == nil || s.removed || s.stage != StageSettled || s.retired != "" {
+		return
+	}
+	before := m.summaryLocked(s)
+	s.retired = reason
+	m.changedLocked(s, before)
 }
 
 // epicsOn lists the approved epics that run on provider: those not paused,

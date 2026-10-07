@@ -946,6 +946,8 @@ export interface SessionSummary {
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;
   archived_at?: string;
+  /** Why a lane Task uam retired (settled once its subtask's attempt ended) cannot be reopened: its lane is removed. Absent for every other Task. */
+  retired?: string;
   /** The Task whose agent started this one with uam_create_task; absent otherwise. */
   spawned_by?: string;
   /** The routine whose run started this Task; absent otherwise. */

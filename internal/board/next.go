@@ -249,6 +249,9 @@ type TaskFact struct {
 	// Worked reports whether the lane has commits or changes beyond its
 	// base; the caller reads it for a failed holder only.
 	Worked bool
+	// Retired marks a lane Task uam retired already (ADR 0006 §5.6):
+	// settled, its hold released and its lane cleaned up.
+	Retired bool
 	// FailedAt is when a failed turn ended.
 	FailedAt time.Time
 }
@@ -351,7 +354,8 @@ const maxFailedNudges = 3
 //
 // A failed turn not reported yet is reported as a provider failure. A lane
 // Task holding nothing is retired once its turn is not busy, or when
-// settled; while busy, one whose attempt did not land is cancelled.
+// settled; while busy, one whose attempt did not land is cancelled. One
+// archived or retired already is left alone.
 //
 // Each approved epic that is not paused, not backing off and whose
 // provider's breaker is closed starts its ready subtasks, highest priority
@@ -432,7 +436,7 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step {
 	for _, id := range ids {
 		e, ok := f.Ended[id]
 		tf := tasks[id]
-		if holding[id] || !ok || tf.Stage == StageArchived {
+		if holding[id] || !ok || tf.Stage == StageArchived || tf.Retired {
 			continue
 		}
 		a := Act{Task: id, CardID: e.CardID, Seq: e.Seq, Provider: tf.Provider}

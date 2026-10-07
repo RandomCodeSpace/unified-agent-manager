@@ -404,6 +404,9 @@ type WebState struct {
 	SettledAt time.Time `json:"settled_at,omitzero"`
 	// ArchivedAt is when the Task was archived.
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
+	// Retired is why a lane Task uam retired is not reopened: its lane is
+	// removed. Empty for every other Task.
+	Retired string `json:"retired,omitempty"`
 	// TerminalSession is the ID of the terminal session record tied to the
 	// same provider conversation when the Task was imported. That record
 	// stays the terminal's.

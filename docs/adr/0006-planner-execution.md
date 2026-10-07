@@ -249,9 +249,10 @@ func Next(f RunFacts, tasks map[string]TaskFact, mem Memory) Step
 |---|---|
 | Its last hold ended `accepted` (landed) | Working: none, the agent is reading "landed ... end your turn". Idle: retire |
 | Its last hold ended otherwise | Working: cancel with the reason "uam: #N was stopped". Idle: retire |
-| Settled | Retire |
+| Settled, not retired yet | Retire |
+| Retired already, or Archived | None |
 
-Retire archives the Task. Archive's reconcile releases any hold left, which for a lane hold is `ended` and pauses `uam` (§2 item 10).
+Retire settles the Task rather than archiving it, so its transcript stays readable on the Settled shelf. An active Task is settled under the owner's Settle preconditions; while they refuse it, as while it is busy, the next pass tries again. Retire then ends the Task's planner calls and releases any hold left as Archive's reconcile does, which for a lane hold is `ended` and pauses `uam` (§2 item 10). It records on the Task why it cannot be reopened (`retired` in sessions.json and on its summary), which names the subtask and the commit it landed as, or the branch that keeps its work; `TaskFact.Retired` carries that mark, so later passes, and a restart, never retire it again. A Task the owner archived is not settled: its hold is released and its lane cleaned up as Archive does.
 
 ### 4.3 Driver
 
@@ -264,7 +265,7 @@ Each pass:
    - **Start** runs in a goroutine with a `Starting` reservation, under the Project land mutex (§5.3).
    - **Nudge** sends a prompt the way the launch's first prompt is sent.
    - **Cancel** goes through `cancelBecause` with a reason, never through the owner's turn cancel, which stores no reason.
-   - **Retire** archives the Task, then cleans its lane (§5.6).
+   - **Retire** settles the Task, releases its hold and marks it retired (§4.2), then cleans its lane (§5.6).
    - **Abort** calls `AbortRun`, discards the Task and removes the lane.
    - **Land** runs `landAndAccept` (§5.4) in a goroutine, with the card in `Landing` until it returns.
    - **ProviderFailed** updates the provider's breaker (§4.5).
@@ -309,7 +310,7 @@ The filing tool call (§5.4) and the owner's Accept job (§5.5) also mark their 
 
 - **Pause** (owner) works on any card under an epic, approved or not, and on an approved epic itself. Nothing new starts at or under it; running attempts go on. Under an epic not approved yet the pause is stored and holds from the approval on, which is how the owner blocks a story or subtask from running when approving (S7); an unapproved epic itself is refused, since approving clears its pause. A card moved to the root, out of any epic, drops its pauses and those under it. The parts of a split into siblings take the original's own pause, `owner` or `uam`, so a split never lets paused work start. **Resume** clears both `owner` and `uam`. From S5, Resume of an approved epic runs the Approve preflight and sync (§5.2) before the write, refuses with the same codes, and sets `base_ref` when it is empty.
 - **Stop** is the owner's Release on a lane-held subtask. The hold ends `released`, the card gets `paused='owner'` and the comment. The web handler then cancels the holder with the reason "uam: #N was stopped", archives it and cleans its lane (§5.6). From S5 the executor's "holding nothing" rows are the safety net, for example after a crash. On a container, Stop is Pause followed by a Release of each running subtask under it; Pause goes first, so nothing new starts in between. There is no separate Stop route, store method or release reason.
-- **Settle of a lane holder.** The Settle dialog offers release or cancel for a lane hold, not keep. Release goes through `ReleaseHold` with the settled reason and pauses `owner`, as Stop does. Holds nobody decided are released as before. A keep on a lane hold is refused with 400 before the Task moves. The settled lane Task then holds nothing and is retired.
+- **Settle of a lane holder.** The Settle dialog offers release or cancel for a lane hold, not keep. Release goes through `ReleaseHold` with the settled reason and pauses `owner`, as Stop does. Holds nobody decided are released as before. A keep on a lane hold is refused with 400 before the Task moves. The settled lane Task then holds nothing and is retired, staying settled.
 - **An accepted blocked request on a lane hold** sets the flag or adds the link as before, and also ends the hold with reason `blocked`: todo, not paused. The flag or the open blocker keeps the subtask out of the ready set. Clearing the flag, or the blocker finishing, restarts it in a fresh worktree; the attempt branch is kept. The holder holds nothing and is retired.
 - **Owner Mark done** on a lane-held subtask is refused with "accept its done request or Stop it". On an unheld subtask it is allowed as before, and that subtask has nothing to revert.
 - **Owner writes that would reopen a running lane's blocker** are refused `in_progress` with refs (§6.3 rule 2).
@@ -324,7 +325,7 @@ Runs, holds, pauses and intents live in board.db. Tasks live in sessions.json, a
 5. Sweep orphans. For each lane directory with no open hold and no Active Task: abort any merge, commit its leftovers to the attempt branch, remove it, and run `git worktree prune`. Delete attempt branches with no hold row and no commits beyond their fork point; a crash between `worktree add` and `StartRun` leaves those.
 6. Cross-check. List the `Uam-Request` trailers on the integration branch since its fork from `base_ref`. A request that is not accepted gets one comment on its card naming the orphan commit. Only a hand edit of the integration branch produces one.
 
-The nudge set lives in memory, so a restart costs at most one extra nudge per holder.
+The nudge set lives in memory, so a restart costs at most one extra nudge per holder. A retired Task's mark lives in sessions.json, so a lane Task uam settled stays settled across a restart: nothing archives, nudges, restarts or retires it again, and step 5 finds its lane removed already, or removes it when a crash came first.
 
 ## 5. Git: lanes, landing, revert and merge
 
@@ -415,12 +416,14 @@ What lands is always what the acceptance command last tested. In S4, before the 
 
 ### 5.6 Cleanup
 
-When a lane Task is archived or deleted, or found orphaned at boot:
+When a lane Task is retired (§4.2), archived or deleted, or found orphaned at boot:
 1. abort any merge in progress, since the Task is gone;
 2. commit leftovers to the attempt branch (`--no-verify`);
 3. `git worktree remove`;
 4. delete the attempt branch if its hold landed, and keep it otherwise;
 5. remove `<lanes root>/<project-id>/` once it is empty, which also happens when the Project is removed. uam never removes it while it holds anything. Recovery (§4.7) still sweeps and cross-checks a Project whose directory is gone once its base branch is recorded.
+
+Cleanup is idempotent: a lane removed already is pruned, so the owner's Archive of a retired Task, which cleans again, finds nothing to do. A retired Task's Reopen is refused with its recorded reason ("#12 ran in a lane that is removed; its work landed as abc1234. Read the transcript here; the work is on the integration branch."), and so is attaching it to a card; the UI keeps Reopen in view, disabled, with that reason. The owner archives and deletes it as any other Task. Stop still archives its Task (§4.6), and a lane start that fails still archives and deletes its Task.
 
 The transcript stays readable after the worktree is gone, because reading a Copilot history needs only the conversation ID. The recent-folders list leaves out workdirs under the lanes root, so lane directories never push the owner's folders out of the picker.
 

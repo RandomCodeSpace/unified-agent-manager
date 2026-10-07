@@ -281,6 +281,9 @@ type SessionSummary struct {
 	Stage      string    `json:"stage,omitempty"`
 	SettledAt  time.Time `json:"settled_at,omitzero"`
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
+	// Retired is why a lane Task uam retired cannot be reopened: its lane
+	// is removed (ADR 0006 §5.6). Omitted for every other Task.
+	Retired string `json:"retired,omitempty"`
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; omitted otherwise.
 	SpawnedBy string `json:"spawned_by,omitempty"`

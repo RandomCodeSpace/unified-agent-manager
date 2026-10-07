@@ -469,14 +469,15 @@ func TestNext(t *testing.T) {
 			mem: Memory{Now: nextAt, Nudged: map[string]int{"t1": 1}},
 		},
 		{
-			name:  "a settled or archived holder is retired",
-			facts: RunFacts{InUse: 2, Lanes: []LaneFacts{holder("h1", 1, "t1"), holder("h2", 2, "t2")}},
+			name:  "a settled or archived holder is retired, one retired already whose hold is left too",
+			facts: RunFacts{InUse: 3, Lanes: []LaneFacts{holder("h1", 1, "t1"), holder("h2", 2, "t2"), holder("h3", 3, "t3")}},
 			tasks: map[string]TaskFact{
 				"t1": {Stage: StageSettled, Turn: TurnEnded, Provider: "copilot"},
 				"t2": {Stage: StageArchived, Turn: TurnInterrupted, Provider: "copilot"},
+				"t3": {Stage: StageSettled, Turn: TurnEnded, Provider: "copilot", Retired: true},
 			},
 			mem:  Memory{Now: nextAt},
-			want: Step{Retire: []Act{act("t1", "h1", 1, "copilot", ""), act("t2", "h2", 2, "copilot", "")}},
+			want: Step{Retire: []Act{act("t1", "h1", 1, "copilot", ""), act("t2", "h2", 2, "copilot", ""), act("t3", "h3", 3, "copilot", "")}},
 		},
 		{
 			name: "a landed Task is left to end its turn, then retired",
@@ -509,15 +510,17 @@ func TestNext(t *testing.T) {
 			},
 		},
 		{
-			name: "a settled Task holding nothing is retired, an archived one and one never started are left",
+			name: "a settled Task holding nothing is retired; an archived one, one retired already and one never started are left",
 			facts: RunFacts{Ended: map[string]LaneEnd{
 				"t1": {CardID: "c1", Seq: 1, Reason: ReleaseAccepted},
 				"t2": {CardID: "c2", Seq: 2, Reason: ReleaseEnded},
+				"t4": {CardID: "c4", Seq: 4, Reason: ReleaseAccepted},
 			}},
 			tasks: map[string]TaskFact{
 				"t1": {Stage: StageSettled, Turn: TurnEnded, Provider: "copilot"},
 				"t2": {Stage: StageArchived, Turn: TurnEnded, Provider: "copilot"},
 				"t3": turn("copilot", TurnWorking),
+				"t4": {Stage: StageSettled, Turn: TurnEnded, Provider: "copilot", Retired: true},
 			},
 			mem:  Memory{Now: nextAt},
 			want: Step{Retire: []Act{act("t1", "c1", 1, "copilot", "")}},
