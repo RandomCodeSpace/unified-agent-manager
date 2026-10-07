@@ -3,7 +3,7 @@ module github.com/RandomCodeSpace/unified-agent-manager
 go 1.26.6
 
 require (
-	github.com/RandomCodeSpace/aiusage-core v0.0.0-20261003153309-617d8d748269
+	github.com/RandomCodeSpace/aiusage-core v0.1.1
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/websocket v1.8.15
