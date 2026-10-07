@@ -598,7 +598,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       inflight.current.add(up.abort);
       up.done
         .finally(() => inflight.current.delete(up.abort))
-        .then((a) => patch(key, { status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, abort: undefined }))
+        .then((a) => {
+          // The service sniffs the bytes: what it stored is the kind, whatever the name said (a text file named .png is text).
+          const stored = kindOf(a.mime);
+          patch(key, { status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, kind: stored, ...(stored === 'image' ? {} : { preview: undefined }), abort: undefined });
+        })
         .catch((e) => {
           if (isStatus(e, 0) && e.message === 'Upload cancelled') return;
           patch(key, { status: 'error', error: sentence(describeError(e)), abort: undefined });
