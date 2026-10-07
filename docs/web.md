@@ -360,8 +360,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
-  Nothing sits under it: the branch and changed-file count are on the
-  branch button in the Task header, which opens Changes. When the toolbar
+  The branch and changed-file count are on the branch button in the Task
+  header, which opens Changes. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes
