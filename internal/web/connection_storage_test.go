@@ -91,6 +91,41 @@ func TestConnectionStorageRejectsSymlinkFileAndPinsDirectory(t *testing.T) {
 	}
 }
 
+// The registry file is uam's own: a copy, restore or sync that widened its
+// mode is fixed, as the directory and the access token are, and uam web
+// starts. A symbolic link in its place is refused by path.
+func TestConnectionStorageMakesItsFilePrivateAndNamesIt(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	r, err := openConnectionRegistry(context.Background(), dir, testToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := r.path
+	r.close()
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err = openConnectionRegistry(context.Background(), dir, testToken)
+	if err != nil {
+		t.Fatalf("readable registry file refused: %v", err)
+	}
+	r.close()
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("registry file mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+
+	moved := filepath.Join(t.TempDir(), connectionFileName)
+	if err := os.Rename(path, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openConnectionRegistry(context.Background(), dir, testToken); err == nil || !strings.Contains(err.Error(), path) {
+		t.Fatalf("symlink registry file: %v, want a refusal naming %s", err, path)
+	}
+}
+
 func TestConnectionStorageSafeDirectoryAlias(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "real")

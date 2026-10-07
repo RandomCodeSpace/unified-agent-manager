@@ -90,6 +90,14 @@ The token lives in `~/.config/uam/web-token` (mode 0600, or
 `$UAM_CONFIG_DIR/web-token`). To revoke every browser session, stop the
 service, delete that file, and run `uam web` again; it creates a new token.
 
+This instance's identity and its connected instances live in
+`~/.config/uam/web-connections.json` (mode 0600, beside the token). Like the
+token and the directory, uam makes the file private again when a copy,
+restore or sync widened its mode. It refuses to start only when the file is
+a symbolic link or belongs to another user, and names the file: replace the
+link with the file itself, or run uam as the file's owner. The file belongs
+to one machine; keep it out of dotfile sync.
+
 To choose the token yourself, pipe it in or type it at the prompt, which does
 not echo it:
 

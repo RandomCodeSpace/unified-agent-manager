@@ -40,10 +40,8 @@ func openConnectionRoot(dir string) (*os.Root, error) {
 	return os.OpenRoot(absolute)
 }
 
-func privateConnectionFile(info os.FileInfo) bool {
-	if info == nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return false
-	}
+// ownedByUser reports whether info belongs to the user uam runs as.
+func ownedByUser(info os.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && int64(st.Uid) == int64(os.Geteuid())
 }
