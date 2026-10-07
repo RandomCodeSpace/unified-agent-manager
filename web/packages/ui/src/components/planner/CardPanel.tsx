@@ -330,8 +330,9 @@ const taskAuthor = (author: string, sessions: { id: string; name: string; title:
 
 /**
  * The checklist: tick an item, click its text to rename it (Enter or leaving the field saves,
- * Esc cancels), remove it, or add one at the end. Each save sends the whole list, built from the
- * card as it stands at that moment. A read-only card shows its items only, and nothing when empty.
+ * Esc cancels), remove it (also while renaming it), or add one at the end. Each save sends the
+ * whole list, built from the card as it stands at that moment. A read-only card shows its items
+ * only, and nothing when empty.
  */
 /** The checklist. `locked`: a started subtask's items are its plan, so they are only ticked. */
 export function Checklist({ card: c, readOnly, locked = false, busy, save }: Readonly<{ card: Card; readOnly: boolean; locked?: boolean; busy: boolean; save: (checklist: ChecklistItem[]) => Promise<boolean> }>) {
@@ -375,21 +376,30 @@ export function Checklist({ card: c, readOnly, locked = false, busy, save }: Rea
               ) : fixed ? (
                 <span className={cn('min-w-0 flex-1 py-1 [overflow-wrap:anywhere]', item.done && 'text-muted line-through')}>{item.text}</span>
               ) : (
-                <>
-                  <button
-                    type="button"
-                    data-item={i}
-                    aria-label={`Edit ${item.text}`}
-                    disabled={busy}
-                    className={cn('min-w-0 flex-1 cursor-text py-1 text-left [overflow-wrap:anywhere] hover:text-ink pointer-coarse:py-3', item.done && 'text-muted line-through')}
-                    onClick={() => setEditing(i)}
-                  >
-                    {item.text}
-                  </button>
-                  <Button size="icon-sm" className="mt-0.5 text-muted pointer-coarse:mt-2.5" aria-label={`Remove ${item.text}`} disabled={busy} onClick={() => void save(c.checklist.filter((_, j) => j !== i))}>
-                    <X />
-                  </Button>
-                </>
+                <button
+                  type="button"
+                  data-item={i}
+                  aria-label={`Edit ${item.text}`}
+                  disabled={busy}
+                  className={cn('min-w-0 flex-1 cursor-text py-1 text-left [overflow-wrap:anywhere] hover:text-ink pointer-coarse:py-3', item.done && 'text-muted line-through')}
+                  onClick={() => setEditing(i)}
+                >
+                  {item.text}
+                </button>
+              )}
+              {!fixed && (
+                <Button
+                  size="icon-sm"
+                  // Centred on the 32px field while renamed, as on the 28px row otherwise.
+                  className={cn('mt-0.5 text-muted pointer-coarse:mt-2.5', editing === i && 'mt-1')}
+                  aria-label={`Remove ${item.text}`}
+                  disabled={busy}
+                  // Also while the text is renamed: the press keeps the field's focus, so its blur saves no rename first.
+                  onMouseDown={editing === i ? (e) => e.preventDefault() : undefined}
+                  onClick={() => void save(c.checklist.filter((_, j) => j !== i)).then((ok) => ok && setEditing(null))}
+                >
+                  <X />
+                </Button>
               )}
             </li>
           ))}

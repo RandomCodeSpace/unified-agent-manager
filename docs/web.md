@@ -1311,6 +1311,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   keeps it a proposal and restarts its 14 days before it expires; only
   Confirm, launching it, adding a Task to it, or approving its epic confirms it. A subtask in progress shows why its plan
   is locked.
+  A checklist item's × removes it, also while its text is being renamed,
+  here and in the Planner's card panel; a subtask in progress only ticks its items.
   In the Planner's card panel, Edit changes the title, win condition,
   description, effort, priority and labels, and saves only the fields you
   changed, so an edit made meanwhile stays; the panel shows the priority
