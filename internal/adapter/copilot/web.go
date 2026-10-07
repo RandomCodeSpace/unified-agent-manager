@@ -835,12 +835,17 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 }
 
 // taskSystem is appended to Copilot's own system message in every Task
-// session, created or resumed, so a question's options arrive as choices the
-// composer lists and pre-selects, and commits and pull requests carry no agent
-// attribution. Task sessions also set CoauthorEnabled false, which drops the
-// CLI's own co-author tool and commit-trailer instructions. Utility sessions
-// replace the message.
-const taskSystem = `When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
+// session, created or resumed, so results land in the reply rather than the
+// folded tool calls, the agent loads the built-in uam skill before using what
+// uam renders or provides (an agent rarely loads it from its description
+// alone), a question's options arrive as choices the composer lists and
+// pre-selects, and commits and pull requests carry no agent attribution. Task
+// sessions also set CoauthorEnabled false, which drops the CLI's own co-author
+// tool and commit-trailer instructions. Utility sessions replace the message.
+// Subagents do not receive it.
+const taskSystem = `This conversation is a uam Task: the owner reads it in a browser, often on a phone, where your tool calls and their output are folded away. Put what the owner needs in your reply: results, the errors that matter, decisions and next steps. Load the uam skill before you show the owner a file, image, diagram or chart, start another Task, or start subagents.
+
+When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 
 Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.`
 
