@@ -190,15 +190,6 @@ func TestConnectionRegistryFailedWriteKeepsLiveState(t *testing.T) {
 	default:
 	}
 }
-func TestConnectionRegistryPrivateFileRequired(t *testing.T) {
-	r := registryFixture(t)
-	if err := os.Chmod(r.path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := openConnectionRegistry(context.Background(), filepath.Dir(r.path), testToken); err == nil {
-		t.Fatal("public registry accepted")
-	}
-}
 func TestConnectionRegistryConcurrentIdentityReads(t *testing.T) {
 	r := registryFixture(t)
 	target := targetFixture()

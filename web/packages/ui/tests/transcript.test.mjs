@@ -270,6 +270,21 @@ test('completed duration excludes recorded time waiting for user input', async (
   assert.equal(completedDuration(timing), '10s');
 });
 
+test('a turn and its thoughts are timed alike, so a part never reads longer than its whole', async () => {
+  const { completedDuration, formatMs } = await import('../src/lib/transcript.ts');
+  const at = (ms) => new Date(Date.parse('2026-10-06T00:41:32Z') + ms).toISOString();
+  // The turn ran 1.73s and its thought 1.62s inside it.
+  const turn = { id: 'turn', user_item_id: 'u', state: 'completed', started_at: at(251), ended_at: at(1981) };
+  const reasoning = { id: 'r', kind: 'reasoning', time: at(336), ended_at: at(1956), text: 'Thinking' };
+  assert.equal(completedDuration(turn), '2s');
+  assert.equal(summarizeTurn([{ item: reasoning }], { live: false }).parts[0].text, '1 thought (2s)');
+  // Past a minute both keep the seconds, and past an hour both read hours and minutes.
+  assert.equal(completedDuration({ ...turn, ended_at: at(251 + 64_400) }), '1m 4s');
+  assert.equal(formatMs(64_400), '1m 4s');
+  assert.equal(completedDuration({ ...turn, ended_at: at(251 + 4_530_000) }), '1h 15m');
+  assert.equal(formatMs(4_530_000), '1h 15m');
+});
+
 test('all current turn segments stay live across steer, while earlier turns stay ended', async () => {
   const { foregroundItems } = await import('../src/lib/transcript.ts');
   const history = [{ id: 'old-user', kind: 'user' }, { id: 'old-tool', kind: 'tool' }, { id: 'user', kind: 'user' }, { id: 'pending-tool', kind: 'tool' }, { id: 'steer', kind: 'user', delivery: 'steer' }, { id: 'progress', kind: 'assistant' }];

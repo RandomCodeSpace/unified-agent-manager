@@ -973,7 +973,7 @@ func TestLaneGitIgnoresPlantedHooks(t *testing.T) {
 	if err != nil || tip == landed {
 		t.Fatalf("sync = %s, %v; want a sync merge", tip, err)
 	}
-	if _, err := repo.revertChain(ctx, tip, []revertItem{{sha: landed, seq: r.leaves[1].Seq, title: "Second"}}); err != nil {
+	if _, err := repo.revertChain(ctx, tip, []revertItem{{sha: landed, seq: r.leaves[1].Seq, title: "Second"}}, r.leaves[1].Seq); err != nil {
 		t.Fatal(err)
 	}
 	baseTip, tip, err := repo.mergeTips(ctx, "main")

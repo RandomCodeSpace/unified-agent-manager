@@ -448,13 +448,14 @@ export function itemTook(item: Item): string | null {
   return item.ended_at ? duration(item.time, item.ended_at) : null;
 }
 
-/** A span in milliseconds as "12s", "1m 4s" or "<1s"; null when it is not a span. */
+/** A span in milliseconds as "12s", "1m 4s", "1h 15m" or "<1s"; null when it is not a span. */
 export function formatMs(ms: number): string | null {
   if (!Number.isFinite(ms) || ms < 0) return null;
   if (ms < 1000) return '<1s';
   const s = Math.round(ms / 1000);
   if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
 }
 
 /** The request waits for the user: pending, and not one yolo mode is already answering. */
@@ -587,10 +588,14 @@ export function timingForTurn(timings: TurnTiming[], userItemId: string | undefi
   return undefined;
 }
 
-/** A stopped clock requires both observed boundaries and a terminal outcome. */
+/**
+ * A stopped clock requires both observed boundaries and a terminal outcome. It rounds like the
+ * turn's steps (formatMs), so a thought never reads longer than the turn that holds it.
+ */
 export function completedDuration(timing: TurnTiming | undefined): string | null {
   if (!timing?.ended_at || !['completed', 'cancelled', 'failed'].includes(timing.state)) return null;
-  return turnElapsed(timing, Date.parse(timing.ended_at));
+  const end = Date.parse(timing.paused_at || timing.ended_at);
+  return formatMs(end - (timing.paused_ms ?? 0) - Date.parse(timing.started_at));
 }
 
 /** Recorded manual waits never count as foreground work, including after reload. */
