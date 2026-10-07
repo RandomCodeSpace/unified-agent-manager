@@ -1,5 +1,7 @@
 package copilot
 
+//lint:file-ignore SA1019 Copilot CLI 1.0.93 still sends tool.execution_partial_result; moving to tool.shell_output removes this.
+
 import (
 	"bytes"
 	"context"

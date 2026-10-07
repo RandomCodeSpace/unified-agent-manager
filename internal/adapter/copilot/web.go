@@ -3550,6 +3550,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			delete(t.clippedInput, d.ToolCallID)
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	//lint:ignore SA1019 Copilot CLI 1.0.93 still sends it; moving to tool.shell_output removes this.
 	case *rpc.ToolExecutionPartialResultData:
 		if _, ended := t.ended[d.ToolCallID]; ended {
 			return it, false
