@@ -237,10 +237,11 @@ export function ItemAttachments({ sessionId, attachments }: Readonly<{ sessionId
  */
 export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer, size }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode; size?: { width: number; height: number } }>) {
   // A drawing is as wide as the room allows, and no wider than its shape lets it be at 78dvh tall.
+  // A short window squeezes the box's height first: object-contain keeps the shape inside it.
   const fit = size && ({ '--fit': `${(78 * size.width) / size.height}dvh` } as CSSProperties);
   return (
     <ViewerDialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} footer={footer}>
-      <img src={src} alt={alt} style={fit} className={cn('mx-auto block max-h-[78dvh] max-w-full min-h-0 rounded-sm bg-sunken shadow-modal', fit ? 'w-[min(94vw,1400px,var(--fit))]' : 'w-auto')} />
+      <img src={src} alt={alt} style={fit} className={cn('mx-auto block max-h-[78dvh] max-w-full min-h-0 rounded-sm bg-sunken object-contain shadow-modal', fit ? 'w-[min(94vw,1400px,var(--fit))]' : 'w-auto')} />
     </ViewerDialog>
   );
 }

@@ -3,7 +3,13 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { Lightbox } from '../../src/components/Attachments';
 import * as data from '../../src/mock/data';
-import { openTask, renderApp, sidebar } from './render';
+import { log, openTask, renderApp, sidebar } from './render';
+
+// The sandboxed diagram frame does not run here: every block draws as Mermaid draws A --> B, 110 by 160.
+vi.mock('../../src/lib/diagram', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/lib/diagram')>()),
+  renderDiagram: async () => ({ svg: '<svg xmlns="http://www.w3.org/2000/svg" width="110" height="160"></svg>', width: 110, height: 160 }),
+}));
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -100,6 +106,19 @@ describe('composer attachments', () => {
   });
 });
 
+describe('diagrams', () => {
+  test('Open diagram in a Task shows the drawing scaled up to fill the lightbox', async () => {
+    const state = data.seed();
+    const t3 = state.tasks.find((t) => t.id === 't3')!;
+    t3.items = [...t3.items, { id: 'i-diagram', kind: 'assistant', time: new Date().toISOString(), text: '```mermaid\ngraph TD; A[Start]-->B[Done]\n```' }];
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    const { user } = await openTask('t3');
+    await user.click(await log().findByRole('button', { name: 'Open diagram' }));
+    const image = within(await screen.findByRole('dialog')).getByRole('img', { name: 'Diagram' });
+    expect(image.style.getPropertyValue('--fit')).toBe('53.625dvh');
+  });
+});
+
 describe('lightbox', () => {
   const svg = 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22110%22%20height%3D%22160%22%2F%3E';
 
@@ -109,6 +128,8 @@ describe('lightbox', () => {
     const image = screen.getByRole('img', { name: 'Diagram' });
     expect(image.style.getPropertyValue('--fit')).toBe('53.625dvh');
     expect(image.className).toContain('w-[min(94vw,1400px,var(--fit))]');
+    // A short window squeezes the box's height before its width: the drawing keeps its shape inside it.
+    expect(image.className).toContain('object-contain');
   });
 
   test('a picture without a size shows at most at its own size, so it never blurs', () => {
