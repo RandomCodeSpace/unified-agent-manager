@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -152,12 +153,13 @@ func openConnectionRegistry(ctx context.Context, dir, master string) (*connectio
 
 func readConnectionDisk(root *os.Root) (connectionDisk, error) {
 	var data connectionDisk
+	path := filepath.Join(root.Name(), connectionFileName)
 	info, err := root.Lstat(connectionFileName)
 	if err != nil {
 		return data, err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-		return data, errors.New("connection state must be a private regular file")
+	if !info.Mode().IsRegular() {
+		return data, fmt.Errorf("connection storage: %s is a symbolic link or not a regular file; replace it with the file itself", path)
 	}
 	file, err := root.Open(connectionFileName)
 	if err != nil {
@@ -165,8 +167,18 @@ func readConnectionDisk(root *os.Root) (connectionDisk, error) {
 	}
 	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) || !privateConnectionFile(opened) {
-		return data, errors.New("connection state must be an owned private regular file")
+	if err != nil || !os.SameFile(info, opened) {
+		return data, fmt.Errorf("connection storage: %s changed while uam opened it", path)
+	}
+	if !ownedByUser(opened) {
+		return data, fmt.Errorf("connection storage: %s is owned by another user; run uam as its owner or make the file yours", path)
+	}
+	// The file is uam's own, so a copy, restore or sync that widened its
+	// mode is fixed, as for the directory and the access token.
+	if opened.Mode().Perm()&0o077 != 0 {
+		if err := file.Chmod(0o600); err != nil {
+			return data, fmt.Errorf("connection storage: make %s private: %w", path, err)
+		}
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, maxConnectionFile+1))
 	if err != nil {
