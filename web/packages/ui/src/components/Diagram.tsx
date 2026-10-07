@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
-import { DiagramError, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
+import { DiagramError, errorReason, renderDiagram, svgDataUrl, type Rendered } from '../lib/diagram';
 import { usePreview } from '../lib/previewContext';
 import { useScheme } from '../lib/theme';
 import { Lightbox } from './Attachments';
@@ -79,7 +79,7 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
           </>
         }
         body={image || undefined}
-        foot={error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {error.split('\n')[0]}</Note>}
+        foot={error && <Note className={cn('px-3 py-1.5')}>Diagram could not be rendered: {errorReason(error)}</Note>}
       >
         {children}
       </CodeBlock>

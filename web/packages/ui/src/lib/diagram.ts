@@ -88,6 +88,24 @@ export class DiagramError extends Error {
   }
 }
 
+/** The longest reason the note under a block that did not render shows. */
+const REASON_MAX = 200;
+
+/**
+ * Why a block did not render, in one line for its note. A Mermaid parse error's first line is
+ * only its header ("Parse error on line 1:", then the source with a caret under it), so its last
+ * line, what was expected and what came instead, follows it. A long list of expected tokens is
+ * cut in the middle, so the end stays.
+ */
+export function errorReason(message: string): string {
+  const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
+  let reason = lines[0] ?? '';
+  if (reason.endsWith(':') && lines.length > 1) reason += ` ${lines.at(-1)}`;
+  if (reason.length <= REASON_MAX) return reason;
+  const half = (REASON_MAX - 1) / 2;
+  return `${reason.slice(0, Math.ceil(half))}…${reason.slice(-Math.floor(half))}`;
+}
+
 interface Pending {
   id: string;
   source: string;
