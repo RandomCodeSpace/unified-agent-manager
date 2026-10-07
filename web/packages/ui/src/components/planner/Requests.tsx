@@ -242,6 +242,7 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const [applying, setApplying] = useState(false);
   // Accept of a lane's done request lands it as a job: its board_job frames say how it goes.
   const [landJob, setLandJob] = useState<string | null>(null);
   const landing = landJob ? jobs[landJob] : undefined;
@@ -270,6 +271,18 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
   };
   const overlap = r.evidence.diff?.files.find((f) => f.overlap)?.overlap;
   const proposed = typeof r.payload.proposed_accept_cmd === 'string' ? r.payload.proposed_accept_cmd.trim() : '';
+  // Apply decides nothing: an open Reject form stays as it is.
+  async function apply(id: string) {
+    setApplying(true);
+    notify(null);
+    try {
+      await api.planner.edit(id, { accept_cmd: proposed });
+    } catch (e) {
+      notify({ tone: 'error', text: `Could not apply the proposed acceptance command: ${plannerErrorText(e)}` });
+    } finally {
+      setApplying(false);
+    }
+  }
 
   return (
     <article aria-label={`${REQUEST_LABEL[r.kind]} request on #${card?.seq ?? '?'}`} className="flex flex-col gap-1.5 rounded-md bg-raised px-3 py-2.5 shadow-raised">
@@ -303,12 +316,12 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
         <div className="flex flex-col gap-0.5 text-caption">
           <span className="text-muted">Proposed acceptance command</span>
           <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 flex-1 font-mono text-code-sm text-ink [overflow-wrap:anywhere]">{proposed}</span>
+            <span className="min-w-0 flex-1 whitespace-pre-wrap font-mono text-code-sm text-ink [overflow-wrap:anywhere]">{proposed}</span>
             {card?.project_id &&
               (card.accept_cmd === proposed ? (
                 <span className="shrink-0 text-muted">In use</span>
               ) : (
-                <Button size="sm" className="shrink-0" disabled={busy} title={`Set it as the acceptance command of #${card.seq}; until then it never runs.`} onClick={() => void decide(() => api.planner.edit(card.id, { accept_cmd: proposed }), 'apply the proposed acceptance command')}>
+                <Button size="sm" className="shrink-0" loading={applying} title={`Set it as the acceptance command of #${card.seq}; until then it never runs.`} onClick={() => void apply(card.id)}>
                   <SquareTerminal />
                   Apply
                 </Button>

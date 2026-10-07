@@ -251,7 +251,7 @@ const isAre = (n: number) => (n === 1 ? 'is' : 'are');
 export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | null; onClose: () => void }>) {
   const api = useApi();
   const { meta, settings } = useApp();
-  const { cards, reload } = useShownBoard();
+  const { cards, reload, setAcceptCmd } = useShownBoard();
   const [shown, setShown] = useState(ask);
   // The cards as shown, and the Board they were taken from; taken again once the Board changes after a `stale`.
   const [snap, setSnap] = useState(() => ({ source: cards, list: ask ? approvalList(ask.epic, cards) : [] }));
@@ -397,6 +397,8 @@ export function ApproveDialog({ ask, onClose }: Readonly<{ ask: ApproveAsk | nul
     try {
       const saved = await api.planner.setProject(projectId, { accept_cmd: cmdDraft.trim() });
       setLoaded({ project: projectId, settings: saved });
+      // Check at HEAD on the subtasks that inherit it reads it from the planner's context.
+      setAcceptCmd(projectId, saved.accept_cmd);
       setCmdDraft(null);
     } catch (err) {
       setError(plannerErrorText(err));

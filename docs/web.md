@@ -1301,11 +1301,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Confirm, launching it, adding a Task to it, or approving its epic confirms it. A subtask in progress shows why its plan
   is locked.
   In the Planner's card panel, Edit changes the title, win condition,
-  description, effort, priority and labels, and the panel shows the
-  priority beside the effort. A subtask marked blocked (an agent's blocked
-  request you accepted) says so and offers **Clear blocked mark**, which
-  lets its Task finish it and, under an approved epic, lets uam start it
-  again. When an agent proposes an acceptance command with its done
+  description, effort, priority and labels, and saves only the fields you
+  changed, so an edit made meanwhile stays; the panel shows the priority
+  beside the effort. A subtask marked blocked (an agent's blocked request
+  you accepted) says so and offers **Clear blocked mark**, which lets its
+  Task finish it and, under an approved epic, lets uam start it again. On
+  a story or epic the mark holds nothing back. When an agent proposes an acceptance command with its done
   request, the request shows it, in the Inbox and the card's evidence
   trail, with **Apply**, which makes it the subtask's command; it never
   runs before. **Check at HEAD** is off, and says why, on a subtask with

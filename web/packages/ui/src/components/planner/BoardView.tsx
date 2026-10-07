@@ -49,22 +49,31 @@ function lanesOf(cards: readonly Card[], epic: string | null, showCancelled: boo
 }
 
 /**
+ * What the Board says with nothing to show: its filters hide confirmed cards, else there are only
+ * proposals (under the epic filter, if one is set), else nothing yet.
+ */
+function emptyText(cards: readonly Card[], epic: string | null, byId: ReadonlyMap<string, Card>): string {
+  if (lanesOf(cards, null, true).length) return 'No subtasks match the filters.';
+  if (cards.some((c) => !c.confirmed && c.status !== 'cancelled' && (!epic || epicOf(c, byId)?.id === epic))) return 'Only proposals so far: they stay in the Tree until you confirm them or approve their epic.';
+  return 'No subtasks yet.';
+}
+
+/**
  * The Board (ADR 0005 §10): kanban over subtasks, a column per status and a swimlane per
  * story. Held subtasks carry their Task's chip, which opens the Task. Suggestions stay in the Tree.
  * In a narrow container (a phone) the columns stack: each lane lists its statuses
  * with cards, under their names, one after another. Each card's "…" button and context menu hold
  * its actions.
  * Cards are memoised on their card object, so a `board` frame re-renders only the ones it changed.
- * Check at HEAD reads the Project's default command, `projectCmd`.
  */
-export function BoardView({ projectCmd }: Readonly<{ projectCmd?: string }> = {}) {
+export function BoardView() {
   const api = useApi();
   const { ui, cards, openCard } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const lanes = useMemo(() => lanesOf(cards, ui.epic, ui.showCancelled), [cards, ui.epic, ui.showCancelled]);
   const [editing, setEditing] = useState<string | null>(null);
   // Check at HEAD shows its run in the card panel, so a card's check opens it there.
-  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id), projectCmd });
+  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id) });
   const menuHandle = useCardMenuHandle();
   const columns: CardStatus[] = ui.showCancelled ? [...BOARD_COLUMNS, 'cancelled'] : [...BOARD_COLUMNS];
   const counts = Object.fromEntries(columns.map((s) => [s, lanes.reduce((n, l) => n + l.leaves.filter((c) => c.status === s).length, 0)]));
@@ -79,12 +88,7 @@ export function BoardView({ projectCmd }: Readonly<{ projectCmd?: string }> = {}
     return cardActions.menuOf(c, [edit]);
   }
 
-  if (!lanes.length) {
-    // Nothing confirmed to show: proposals (under the epic filter, if one is set), or filters that hide the rest.
-    const proposals = cards.some((c) => !c.confirmed && c.status !== 'cancelled' && (!ui.epic || epicOf(c, byId)?.id === ui.epic));
-    const hidden = lanesOf(cards, null, true).length > 0;
-    return <p className="px-4 py-6 text-ui text-muted">{proposals ? 'Only proposals so far: they stay in the Tree until you confirm them or approve their epic.' : hidden ? 'No subtasks match the filters.' : 'No subtasks yet.'}</p>;
-  }
+  if (!lanes.length) return <p className="px-4 py-6 text-ui text-muted">{emptyText(cards, ui.epic, byId)}</p>;
   // A labelled scroll region, which must accept keyboard scrolling.
   const region = { role: 'region', 'aria-label': 'Board', tabIndex: 0, className: '@container min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain' };
   const lanesGrid = (

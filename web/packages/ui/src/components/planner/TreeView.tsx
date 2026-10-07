@@ -65,14 +65,14 @@ interface RowActions {
  * in place (a save confirms nothing). Containers add stories and subtasks under them;
  * the root takes a subtask too (§3). Each row's "…" button and context menu hold its card's
  * actions. An approved epic's row says how its run stands and the provider it waits for among
- * `waits` (ADR 0006 §3.2, §4.5); Check at HEAD reads the Project's default command, `projectCmd`.
- * Rows are memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
+ * `waits` (ADR 0006 §3.2, §4.5). Rows are
+ * memoised on their card, so a `board` frame re-renders only the rows of the cards it changed.
  */
-export function TreeView({ readOnly = false, waits = NO_WAITS, projectCmd }: Readonly<{ readOnly?: boolean; waits?: readonly ProviderWait[]; projectCmd?: string }>) {
+export function TreeView({ readOnly = false, waits = NO_WAITS }: Readonly<{ readOnly?: boolean; waits?: readonly ProviderWait[] }>) {
   const api = useApi();
   const { ui, setUi, cards, openCard, notify } = useShownBoard();
   // Check at HEAD shows its run in the card panel, so a row's check opens the card there.
-  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id), projectCmd });
+  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id) });
   const menuHandle = useCardMenuHandle();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const outline = useMemo(() => buildOutline(cards, { epic: ui.epic, showCancelled: ui.showCancelled }), [cards, ui.epic, ui.showCancelled]);
@@ -488,8 +488,9 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
 
 /**
  * Title and win condition in place; Enter saves both, Esc leaves them. `full` (the card panel's
- * editor) also edits the description, effort, priority and labels (ADR 0005 §10). Saving confirms
- * nothing: a suggestion stays one.
+ * editor) also edits the description, effort, priority and labels (ADR 0005 §10), and sends only
+ * those changed since it opened, so an edit made meanwhile stays. Saving confirms nothing: a
+ * suggestion stays one.
  */
 export function CardEditor({ card, onSave, onCancel, extra, full = false }: Readonly<{ card: Card; onSave: (patch: CardPatch) => void | Promise<void>; onCancel: () => void; extra?: ReactNode; full?: boolean }>) {
   const [title, setTitle] = useState(card.title);
@@ -499,10 +500,18 @@ export function CardEditor({ card, onSave, onCancel, extra, full = false }: Read
   const [effort, setEffort] = useState<string>(card.effort || 'S');
   const [prio, setPrio] = useState(String(card.prio));
   const [labels, setLabels] = useState(card.labels.join(' '));
+  const [opened] = useState(card);
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    const fields: CardPatch = full ? { desc: desc.trim(), effort: effort as Card['effort'], prio: Number(prio), labels: labels.split(/\s+/).filter(Boolean) } : {};
+    const fields: CardPatch = {};
+    if (full) {
+      const tags = labels.split(/\s+/).filter(Boolean);
+      if (desc !== opened.desc) fields.desc = desc.trim();
+      if (effort !== (opened.effort || 'S')) fields.effort = effort as Card['effort'];
+      if (Number(prio) !== opened.prio) fields.prio = Number(prio);
+      if (tags.join(' ') !== opened.labels.join(' ')) fields.labels = tags;
+    }
     void onSave({ title: title.trim(), win_condition: win.trim(), ...fields });
   };
   const escape = (e: KeyboardEvent<HTMLElement>) => e.key === 'Escape' && onCancel();

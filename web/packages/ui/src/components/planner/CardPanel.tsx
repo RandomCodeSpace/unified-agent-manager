@@ -36,9 +36,9 @@ function Group({ title, children, action }: Readonly<{ title: string; children: 
  * checklist, blocker links, its evidence trail (every request, decided ones included), hold
  * history, comments, the owner-only acceptance command and paths, and the card's actions. An
  * approved epic says how its run stands, and the provider it waits for among `waits` (ADR 0006
- * §3.2). Check at HEAD reads the Project's default command, `projectCmd`.
+ * §3.2).
  */
-export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS, projectCmd }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; waits?: readonly ProviderWait[]; projectCmd?: string }>) {
+export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; waits?: readonly ProviderWait[] }>) {
   const { ui, cards, openCard } = useShownBoard();
   const { narrow } = useApp();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
@@ -67,7 +67,7 @@ export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS, p
           </Button>
         )}
       </PanelHeader>
-      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} waits={waits} projectCmd={projectCmd} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
+      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} waits={waits} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
     </SidePanel>
   );
 }
@@ -79,7 +79,18 @@ function RunLine({ summary }: Readonly<{ summary: ReturnType<typeof runSummary> 
   return <p className="text-caption text-muted tabular-nums">{runText(summary)}</p>;
 }
 
-function CardBody({ card: c, byId, onOpen, waits, projectCmd }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[]; projectCmd?: string }>) {
+/**
+ * What a card's blocked mark holds back (ADR 0006 §4.6): only a subtask's own mark holds work back,
+ * and a done or cancelled one's has nothing left to hold. Null for no note.
+ */
+function blockedNote(c: Card): string | null {
+  if (!c.blocked || c.status === 'cancelled') return null;
+  if (c.kind !== 'subtask') return `Marked blocked: on ${c.kind === 'epic' ? 'an epic' : 'a story'} the mark holds nothing back.`;
+  if (c.status === 'done') return null;
+  return "Marked blocked: its Task can't finish it, and under an approved epic uam won't start it. Clear blocked mark when the blocker is gone.";
+}
+
+function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[] }>) {
   const api = useApi();
   const { projects, jobs, cards } = useShownBoard();
   const { sessions } = usePlannerTasks();
@@ -88,10 +99,11 @@ function CardBody({ card: c, byId, onOpen, waits, projectCmd }: Readonly<{ card:
   const [editing, setEditing] = useState(false);
   const [triage, setTriage] = useState<TriageResult | null>(null);
   const [comment, setComment] = useState('');
-  const cardActions = useCardActions({ onTriage: (_, t) => setTriage(t), projectCmd });
+  const cardActions = useCardActions({ onTriage: (_, t) => setTriage(t) });
   const busy = cardActions.busy?.key ?? null;
   const run = <T,>(key: string, verb: string, op: () => Promise<T>) => cardActions.run(c.id, key, verb, op);
   const unassigned = !c.project_id;
+  const blocked = unassigned ? null : blockedNote(c);
   const leaf = c.kind === 'subtask';
   // A started subtask keeps its plan (ADR 0005 decision 8); ticks and the owner's own fields go on.
   const locked = lockedReason(c);
@@ -174,7 +186,7 @@ function CardBody({ card: c, byId, onOpen, waits, projectCmd }: Readonly<{ card:
           </div>
           {runsNow(c) && <RunLine summary={runSummary(c, byId)} />}
           {locked && !unassigned && <Note tone="muted">{locked}</Note>}
-          {c.blocked && !unassigned && c.status !== 'cancelled' && <Note>Marked blocked: its Task can't finish it, and under an approved epic uam won't start it. Clear blocked mark when the blocker is gone.</Note>}
+          {blocked && <Note>{blocked}</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
           {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}

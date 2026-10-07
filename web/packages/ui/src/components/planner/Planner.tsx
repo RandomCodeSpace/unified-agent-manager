@@ -52,6 +52,8 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   const api = useApi();
   const [ui, setUiState] = useState<PlannerUi>(() => ({ ...INITIAL_UI, project: initialProject }));
   const [notice, notify] = useState<PlannerNotice | null>(null);
+  const [acceptCmds, setAcceptCmds] = useState<Partial<Record<string, string>>>({});
+  const setAcceptCmd = useCallback((project: string, cmd: string) => setAcceptCmds((m) => (m[project] === cmd ? m : { ...m, [project]: cmd })), []);
   const inflight = useRef(new Set<string>());
   const setUi = useCallback((patch: Partial<PlannerUi> | ((u: PlannerUi) => Partial<PlannerUi>)) => setUiState((u) => ({ ...u, ...(typeof patch === 'function' ? patch(u) : patch) })), []);
 
@@ -130,7 +132,9 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
     notice,
     notify,
     enabled,
-  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, notice, enabled]);
+    acceptCmds,
+    setAcceptCmd,
+  }), [ui, setUi, boards, jobs, projects, openCard, onOpenTask, load, notice, enabled, acceptCmds, setAcceptCmd]);
 
   return { value };
 }
@@ -153,15 +157,17 @@ function unfoldTo(u: PlannerUi, path: readonly Card[], epic: string | null): Pic
 }
 
 /**
- * The Project's integration branch (ADR 0006 §5.2) and default acceptance command, fetched for
- * `project` and again as `version` changes, and the providers uam's executor waits for (§4.5), read
- * again as `revision` changes: each Board revision while an epic runs. Only the first runs git on
- * the service, so a Board change reads the waits alone. A wait ends with no Board change, so the
- * first to end reads them again too. Null, undefined and none until they load.
+ * The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `version`
+ * changes, and the providers uam's executor waits for (§4.5), read again as `revision` changes:
+ * each Board revision while an epic runs. Only the first runs git on the service, so a Board change
+ * reads the waits alone. A wait ends with no Board change, so the first to end reads them again too.
+ * Null and none until they load. The Project's default acceptance command, read with the branch,
+ * goes to the planner's context for Check at HEAD.
  */
-function useProjectRun(project: string, version: string, revision: string): { integration: BoardIntegration | null; acceptCmd: string | undefined; waits: ProviderWait[] } {
+function useProjectRun(project: string, version: string, revision: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
   const api = useApi();
-  const [settings, setSettings] = useState<{ project: string; integration: BoardIntegration | null; acceptCmd: string } | null>(null);
+  const { setAcceptCmd } = usePlanner();
+  const [integration, setIntegration] = useState<{ project: string; value: BoardIntegration | null } | null>(null);
   const [waits, setWaits] = useState<ProviderWait[] | null>(null);
   const [ended, setEnded] = useState(0);
   useEffect(() => {
@@ -169,12 +175,16 @@ function useProjectRun(project: string, version: string, revision: string): { in
     let alive = true;
     api.planner
       .project(project)
-      .then((p) => alive && setSettings({ project, integration: p.integration ?? null, acceptCmd: p.accept_cmd }))
+      .then((p) => {
+        if (!alive) return;
+        setIntegration({ project, value: p.integration ?? null });
+        setAcceptCmd(project, p.accept_cmd);
+      })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [api.planner, project, version]);
+  }, [api.planner, project, version, setAcceptCmd]);
   useEffect(() => {
     if (!project) return;
     let alive = true;
@@ -193,8 +203,7 @@ function useProjectRun(project: string, version: string, revision: string): { in
     const timer = setTimeout(() => setEnded((n) => n + 1), Math.max(0, Math.min(...ends) - Date.now()) + WAIT_SLACK_MS);
     return () => clearTimeout(timer);
   }, [waits]);
-  const shown = settings?.project === project ? settings : null;
-  return { integration: shown?.integration ?? null, acceptCmd: shown?.acceptCmd, waits: project && waits ? waits : NO_WAITS };
+  return { integration: integration?.project === project ? integration.value : null, waits: project && waits ? waits : NO_WAITS };
 }
 
 const WAIT_SLACK_MS = 500;
@@ -244,7 +253,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const lastJob = Object.values(jobs).filter((j) => (j.kind === 'merge' && j.project_id === key) || j.kind === 'revert').at(-1);
   const merging = Object.values(jobs).some((j) => j.kind === 'merge' && j.project_id === key && j.status === 'running');
   const running = cards?.some((c) => c.kind === 'epic' && c.run && !c.paused && c.status !== 'done' && c.status !== 'cancelled') ?? false;
-  const { integration, acceptCmd, waits } = useProjectRun(
+  const { integration, waits } = useProjectRun(
     key && key !== 'unassigned' && !project?.no_git ? key : '',
     `${landed} ${lastJob?.job_id ?? ''} ${lastJob?.status ?? ''}`,
     running ? String(board?.data?.revision) : '',
@@ -289,9 +298,9 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
       </div>
     );
   } else if (ui.view === 'tree') {
-    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} waits={waits} projectCmd={acceptCmd} /></div>;
+    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} waits={waits} /></div>;
   } else if (ui.view === 'board') {
-    body = <BoardView projectCmd={acceptCmd} />;
+    body = <BoardView />;
   } else {
     body = <MapView />;
   }
@@ -392,7 +401,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             {body}
           </div>
         </div>
-        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} projectCmd={acceptCmd} />}
+        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} />}
         {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       </div>
       <AlertDialog

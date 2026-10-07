@@ -177,7 +177,8 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
             ...(sizes.some((s) => s.id === 'default') ? [] : [{ value: 'default', label: 'Default' }]),
             ...sizes.map((s) => ({ value: s.id, label: `${sizeLabel(s.id)} · ${s.tokens.toLocaleString()}` })),
           ]}
-          onValueChange={(context_size) => onChange({ ...value, context_size })}
+          // As for effort: a size the new model lacks resets to null, which is the default size.
+          onValueChange={(context_size) => onChange({ ...value, context_size: context_size ?? 'default' })}
         />
       </Field>
       <div className="col-span-full">

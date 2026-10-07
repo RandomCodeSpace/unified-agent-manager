@@ -35,13 +35,12 @@ export interface CardAction {
  * one in flight and the dialogs they open. The card panel shows a card's actions as buttons; the
  * Tree and the Board offer the same ones in a row's "…" and context menus (DESIGN.md principle 6).
  * Check at HEAD reports through its job, which the card panel shows (`onCheck` opens it there);
- * it needs a command to run, the subtask's own or `projectCmd`, the Project's default (`''` for
- * none, undefined while unknown). Triage answers with a verdict only the panel has room for, so it
- * is offered with `onTriage` only.
+ * it needs a command to run, the subtask's own or its Project's default from the planner's context.
+ * Triage answers with a verdict only the panel has room for, so it is offered with `onTriage` only.
  */
-export function useCardActions({ onTriage, onCheck, projectCmd }: Readonly<{ onTriage?: (card: Card, t: TriageResult) => void; onCheck?: (card: Card) => void; projectCmd?: string }> = {}) {
+export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (card: Card, t: TriageResult) => void; onCheck?: (card: Card) => void }> = {}) {
   const api = useApi();
-  const { cards, notify, openCard } = useShownBoard();
+  const { cards, notify, openCard, acceptCmds } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const [busy, setBusy] = useState<{ card: string; key: string } | null>(null);
   // The card a dialog is about stays while the dialog animates out.
@@ -140,8 +139,8 @@ export function useCardActions({ onTriage, onCheck, projectCmd }: Readonly<{ onT
       actions.push({ key: 'todo', label: 'Back to To do', icon: <ListRestart />, onClick: () => setReason({ title: `Move #${c.seq} back to To do?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Back to To do', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
     }
     if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') {
-      // With no command to run, its own or the Project's (both stored trimmed, '' for none), the service refuses it.
-      const reason = (c.accept_cmd ?? projectCmd) === '' ? `#${c.seq} has no acceptance command: set one under Owner only, or as the project's default.` : undefined;
+      // With no command to run, its own or the Project's (a blank one is none), the service refuses it; unknown until read.
+      const reason = (c.accept_cmd ?? acceptCmds[c.project_id])?.trim() === '' ? `#${c.seq} has no acceptance command: set one under Owner only, or as the project's default.` : undefined;
       actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, reason, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
     }
     // The blocked flag an accepted blocked request set (ADR 0005 §6, ADR 0006 §4.6): clearing it is the owner's go-ahead.

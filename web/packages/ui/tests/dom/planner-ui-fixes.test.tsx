@@ -53,8 +53,11 @@ function serviceReply(match: (url: string, method: string) => boolean, answer: (
 
 const reply = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }));
 
-/** notes-site's Board as an agent's plan: one proposed epic with one proposed subtask, nothing confirmed. */
-function proposalsOnly() {
+/**
+ * notes-site's Board as an agent's plan: one proposed epic with one proposed subtask, nothing
+ * confirmed, and with `cancelled` a confirmed subtask at the root that was cancelled.
+ */
+function proposalsOnly(cancelled = false) {
   return serviceReply(
     (url, method) => method === 'GET' && url.includes('/api/board?project_id=p3'),
     async (real) => {
@@ -63,7 +66,8 @@ function proposalsOnly() {
       const expires_at = new Date(Date.now() + 14 * 86_400_000).toISOString();
       const epic = { ...base, id: 'cp3-90', seq: 90, kind: 'epic', parent_id: null, rank: 99, title: 'Offline reading', status: 'planned', progress: { done: 0, total: 1, proposed: 1 }, confirmed: false, expires_at, pinned_sha: '' };
       const leaf = { ...base, id: 'cp3-91', seq: 91, parent_id: 'cp3-90', rank: 0, title: 'Cache posts', status: 'planned', confirmed: false, expires_at, pinned_sha: '' };
-      return reply(200, { ...data, cards: [epic, leaf] });
+      const old = { ...base, id: 'cp3-92', seq: 92, parent_id: null, rank: 98, title: 'Print stylesheet', status: 'cancelled' };
+      return reply(200, { ...data, cards: cancelled ? [epic, leaf, old] : [epic, leaf] });
     },
   );
 }
@@ -87,6 +91,21 @@ describe('the blocked mark', () => {
     }
   });
 
+  test('a story marked blocked says the mark holds nothing back there, and a done subtask has no note', async () => {
+    const { user, tree } = await openPlanner();
+    await act(() => api.planner.edit('cp1-19', { blocked: true }));
+    await act(() => api.planner.edit('cp1-3', { blocked: true }));
+    const story = await openCard(user, tree, 19);
+    expect(story.getByText('Marked blocked: on a story the mark holds nothing back.')).toBeTruthy();
+    expect(story.queryByText(/its Task can't finish it/)).toBeNull();
+    expect(story.getByRole('button', { name: 'Clear blocked mark' })).toBeTruthy();
+    await closeCard(user);
+    const done = await openCard(user, tree, 3);
+    expect(done.getAllByText('Marked blocked').length).toBeGreaterThan(0);
+    expect(done.queryByText(/^Marked blocked:/)).toBeNull();
+    expect(done.getByRole('button', { name: 'Clear blocked mark' })).toBeTruthy();
+  });
+
   test('a row’s menu offers Clear blocked mark only while the card is marked', async () => {
     const { user } = await openPlanner();
     const items = async () => (await openMenu(user, 'Actions for #22')).getAllByRole('menuitem').map((i) => i.textContent);
@@ -106,7 +125,8 @@ describe('a proposed acceptance command', () => {
       const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
       const request = within(inbox.getByRole('article', { name: 'Done request on #8' }));
       expect(request.getByText('Proposed acceptance command')).toBeTruthy();
-      expect(request.getByText('go test ./internal/web/...')).toBeTruthy();
+      // Line breaks and runs of spaces show as Apply stores them.
+      expect(request.getByText('go test ./internal/web/...').classList.contains('whitespace-pre-wrap')).toBe(true);
       await user.click(request.getByRole('button', { name: 'Apply' }));
       await waitFor(() => expect(edit).toHaveBeenCalledWith('cp1-8', { accept_cmd: 'go test ./internal/web/...' }));
       // Applied, the row says the command is the subtask's now.
@@ -120,6 +140,34 @@ describe('a proposed acceptance command', () => {
       expect(row.getByText('In use')).toBeTruthy();
     } finally {
       edit.mockRestore();
+    }
+  });
+
+  test('Apply shows it is working and leaves an open Reject form as it is', async () => {
+    const { user } = await openPlanner();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const spy = serviceReply((url, method) => method === 'PATCH' && url.endsWith('/api/board/cards/cp1-8'), async (real) => {
+      await gate;
+      return real();
+    });
+    try {
+      await user.click(screen.getByRole('button', { name: /^Inbox, \d+ pending$/ }));
+      const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
+      const request = within(inbox.getByRole('article', { name: 'Done request on #8' }));
+      await user.click(request.getByRole('button', { name: 'Reject' }));
+      await user.type(request.getByRole('textbox', { name: 'Reason' }), 'Not yet');
+      const apply = request.getByRole('button', { name: 'Apply' });
+      await user.click(apply);
+      await waitFor(() => expect(apply.getAttribute('aria-busy')).toBe('true'));
+      release();
+      expect(await request.findByText('In use')).toBeTruthy();
+      expect((request.getByRole('textbox', { name: 'Reason' }) as HTMLInputElement).value).toBe('Not yet');
+    } finally {
+      release();
+      spy.mockRestore();
     }
   });
 
@@ -174,6 +222,25 @@ describe('the card editor', () => {
       edit.mockRestore();
     }
   });
+
+  test('a save sends only the fields the owner changed, so an edit made meanwhile stays', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 15);
+    await user.click(panel.getByRole('button', { name: 'Edit card' }));
+    const form = within(panel.getByRole('form', { name: 'Edit #15' }));
+    // An agent edits the card while the editor is open.
+    await act(() => api.planner.edit('cp1-15', { desc: 'Written by an agent.', prio: 2, labels: ['agent'] }));
+    const edit = vi.spyOn(api.planner, 'edit');
+    try {
+      await user.type(form.getByRole('textbox', { name: 'Title' }), ' first');
+      await user.click(form.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(edit).toHaveBeenCalledWith('cp1-15', { title: 'Cover anchoring with a DOM test first', win_condition: 'A test fails when a landed page shifts the visible row.' }));
+      const saved = (await api.planner.board('p1')).cards.find((c) => c.seq === 15)!;
+      expect([saved.desc, saved.prio, saved.labels]).toEqual(['Written by an agent.', 2, ['agent']]);
+    } finally {
+      edit.mockRestore();
+    }
+  });
 });
 
 describe('Check at HEAD', () => {
@@ -189,11 +256,36 @@ describe('Check at HEAD', () => {
   });
 
   test('a subtask that inherits its project’s command keeps Check at HEAD on', async () => {
-    const { user, tree } = await openPlanner();
-    const panel = await openCard(user, tree, 22);
-    // The project's settings load with the view.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(((await panel.findByRole('button', { name: 'Check at HEAD' })) as HTMLButtonElement).disabled).toBe(false);
+    const project = vi.spyOn(api.planner, 'project');
+    try {
+      const { user, tree } = await openPlanner();
+      const panel = await openCard(user, tree, 22);
+      // The project's settings, read with the view, name its default command.
+      await waitFor(() => expect(project).toHaveBeenCalledWith('p1'));
+      await act(() => Promise.all(project.mock.results.map((r) => r.value)));
+      expect(((await panel.findByRole('button', { name: 'Check at HEAD' })) as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      project.mockRestore();
+    }
+  });
+
+  test('saving the project’s command in the Approve dialog turns Check at HEAD on', async () => {
+    const { user, tree } = await openNotes();
+    let panel = await openCard(user, tree, 35);
+    await waitFor(() => expect((panel.getByRole('button', { name: 'Check at HEAD' }) as HTMLButtonElement).disabled).toBe(true));
+    await closeCard(user);
+    await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+    // The dialog reads the project's settings: none yet.
+    await dialog.findByText('None');
+    await user.click(dialog.getByRole('button', { name: 'Edit' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Project acceptance command' }), 'npm test');
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    expect(await dialog.findByText('npm test')).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Approve #32?' })).toBeNull());
+    panel = await openCard(user, tree, 35);
+    expect((panel.getByRole('button', { name: 'Check at HEAD' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });
 
@@ -207,6 +299,21 @@ describe('the Board', () => {
       await user.click(screen.getByRole('radio', { name: 'Board' }));
       expect(await screen.findByText('Only proposals so far: they stay in the Tree until you confirm them or approve their epic.')).toBeTruthy();
       expect(screen.queryByText('No subtasks match the filters.')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('proposals beside subtasks the filters hide say the filters hide them', async () => {
+    const { user } = renderApp('#planner=p3');
+    const spy = proposalsOnly(true);
+    try {
+      const tree = within(await screen.findByRole('tree', { name: 'Plan outline' }));
+      await tree.findByRole('treeitem', { name: '+1 suggested' });
+      await user.click(screen.getByRole('radio', { name: 'Board' }));
+      expect(await screen.findByText('No subtasks match the filters.')).toBeTruthy();
+      await user.click(screen.getByRole('switch', { name: 'Show cancelled' }));
+      expect(await screen.findByRole('region', { name: 'Board' })).toBeTruthy();
     } finally {
       spy.mockRestore();
     }
@@ -283,6 +390,29 @@ describe('the Approve dialog', () => {
     await pick(user, dialog, 'Model', /Kimi K3/);
     await waitFor(() => expect(dialog.getByRole('combobox', { name: 'Effort' }).textContent).toBe('Default'));
     expect(dialog.getByText('This model uses its default effort.')).toBeTruthy();
+  });
+
+  test('a switch to a model without context sizes runs at the default size', async () => {
+    const { user } = await openNotes();
+    await user.click((await openMenu(user, 'Actions for #32')).getByRole('menuitem', { name: 'Approve and run…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Approve #32?' }));
+    // notes-site has no acceptance command, which Approve needs.
+    await dialog.findByText('None');
+    await user.click(dialog.getByRole('button', { name: 'Edit' }));
+    await user.type(dialog.getByRole('textbox', { name: 'Project acceptance command' }), 'npm test');
+    await user.click(dialog.getByRole('button', { name: 'Save' }));
+    await dialog.findByText('npm test');
+    await pick(user, dialog, 'Model', /Claude Haiku/);
+    await pick(user, dialog, 'Context size', /Long context/);
+    await pick(user, dialog, 'Model', /Kimi K3/);
+    expect(dialog.getByRole('combobox', { name: 'Context size' }).textContent).toBe('Default');
+    const approve = vi.spyOn(api.planner, 'approve');
+    try {
+      await user.click(dialog.getByRole('button', { name: 'Approve and run' }));
+      await waitFor(() => expect(approve).toHaveBeenCalledWith('cp3-32', expect.objectContaining({ model: 'kimi-k3', context_size: 'default' })));
+    } finally {
+      approve.mockRestore();
+    }
   });
 });
 
