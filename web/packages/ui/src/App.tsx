@@ -14,6 +14,7 @@ import { AddProjectDialog, EditProjectDialog } from './components/Projects';
 import { NewTaskPalette } from './components/ProjectPicker';
 import { Brand, CONNECTION_TEXT, Sidebar, SidebarRail, SidebarToggle, type WorkspaceActions } from './components/Sidebar';
 import { cn } from './lib/cn';
+import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
 import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
@@ -974,7 +975,8 @@ export default function App() {
       try {
         for (const u of first.uploads) {
           const a = await api.upload(s.id, u.file, () => {}).done;
-          sent.push({ id: a.id, name: a.name, size: a.size ?? u.file.size, kind: u.kind });
+          // The kind the service sniffed, not the name's: a draft kept after a failed Send shows it.
+          sent.push({ id: a.id, name: a.name, size: a.size ?? u.file.size, kind: kindOf(a.mime) });
         }
         const extras = { ...(first.files.length ? { files: first.files } : {}), ...(sent.length ? { attachments: sent.map((a) => a.id) } : {}) };
         const sub = await api.prompt(s.id, first.text, newRequestId(), 'send', extras);

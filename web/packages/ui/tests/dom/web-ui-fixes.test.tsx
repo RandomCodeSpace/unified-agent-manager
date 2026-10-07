@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { Lightbox } from '../../src/components/Attachments';
@@ -6,6 +6,8 @@ import * as data from '../../src/mock/data';
 import { openTask, renderApp, sidebar } from './render';
 
 afterEach(() => vi.restoreAllMocks());
+
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
 describe('sidebar shelves', () => {
   test('the pinned shelf headers sit flush with the foot of the list, past its bottom padding', async () => {
@@ -47,9 +49,54 @@ describe('composer attachments', () => {
     const chip = () => screen.getByRole('button', { name: 'Remove fake.png' }).parentElement!;
     await waitFor(() => expect(within(chip()).getByText('17 B · Text')).toBeTruthy(), { timeout: 3000 });
     expect(chip().querySelector('img')).toBeNull();
-    await user.upload(input, new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])], 'pic.png', { type: 'image/png' }));
+    await user.upload(input, new File([new Uint8Array(PNG)], 'pic.png', { type: 'image/png' }));
     expect(await screen.findByRole('button', { name: 'Remove pic.png' })).toBeTruthy();
     expect(screen.queryByText(/accepts at most 1 image/)).toBeNull();
+  });
+
+  test('a thumbnail read after the upload came back as text stays off the chip', async () => {
+    let thumbnail: (() => void) | undefined;
+    vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
+      thumbnail = () => {
+        Object.defineProperty(this, 'result', { configurable: true, value: 'data:image/png;base64,bm90IHJlYWxseSBhIHBuZwo=' });
+        this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>);
+      };
+    });
+    const { user } = await openTask('t3');
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['not really a png\n'], 'fake.png', { type: 'image/png' }));
+    const chip = () => screen.getByRole('button', { name: 'Remove fake.png' }).parentElement!;
+    await waitFor(() => expect(within(chip()).getByText('17 B · Text')).toBeTruthy(), { timeout: 3000 });
+    act(() => thumbnail!());
+    expect(chip().querySelector('img')).toBeNull();
+  });
+
+  test('an image the name did not reveal shows its stored copy once the service has it', async () => {
+    const { user } = await openTask('t3');
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    // No extension and no browser type: the composer guesses text, the service sniffs a PNG.
+    await user.upload(input, new File([new Uint8Array(PNG)], 'screenshot', { type: '' }));
+    const chip = () => screen.getByRole('button', { name: 'Remove screenshot' }).parentElement!;
+    await waitFor(() => expect(within(chip()).getByText('12 B · Image')).toBeTruthy(), { timeout: 3000 });
+    expect(chip().querySelector('img')?.getAttribute('src')).toMatch(/\/api\/sessions\/t3\/attachments\/.+/);
+  });
+
+  test("a new Task's first message that fails keeps a text file named .png as Text in its draft", async () => {
+    vi.spyOn(api, 'prompt').mockRejectedValue(new Error('the service is busy'));
+    const { user } = renderApp();
+    const side = await sidebar();
+    await user.click(side.getByRole('button', { name: 'New task' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('New task'));
+    const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
+    await user.upload(input, new File(['not really a png\n'], 'fake.png', { type: 'image/png' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(window.location.hash).toMatch(/^#task=t\d+$/));
+    expect(await screen.findByText(/its first message was not sent/)).toBeTruthy();
+    const chip = (await screen.findByRole('button', { name: 'Remove fake.png' })).parentElement!;
+    expect(within(chip).getByText('17 B · Text')).toBeTruthy();
+    expect(chip.querySelector('img')).toBeNull();
   });
 });
 

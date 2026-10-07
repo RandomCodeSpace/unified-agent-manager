@@ -775,8 +775,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   composer upload them at once. A chip shows the upload's progress, then its
   size and type, or why it was refused. Allowed: png, jpeg, gif and webp
   images up to 3 MiB, PDF up to 10 MiB, and UTF-8 text up to 256 KiB, at most
-  5 per message; the type is taken from the file's bytes, not its name. SVG,
-  HEIC, audio, video, archives and everything else are refused. Images and
+  5 per message; the type is taken from the file's bytes, not its name.
+  Until a file has uploaded (in a new Task, until its first Send), its chip
+  and the model's image and PDF checks go by the name. SVG, HEIC, audio, video,
+  archives and everything else are refused. Images and
   PDFs need a model that accepts them: Copilot reports this per model, `auto`
   is not checked, and the button says so when the Task's model takes text
   only. Attachments go with the message, whether it is sent, queued or
