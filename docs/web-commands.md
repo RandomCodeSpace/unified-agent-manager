@@ -22,7 +22,7 @@ aliases are accepted, including `goal`, `yolo`, and `models`.
 | `model` / `models` | Open model settings, or select one offered Task model ID. Native global/repository and plan-model options are not accepted. |
 | `rename` | Open rename, or rename this web Task. |
 | `context`, `usage`, `list-dirs`, `env`, `skills` | Display native read-only output. Arguments are rejected before invocation. |
-| `compact` | Invoke native compaction, with optional focus instructions. The Task shows Compacting while it runs; the outcome is a transcript notice and the command result. |
+| `compact` | Invoke native compaction, with optional focus instructions. The Task shows Compacting while it runs; the outcome is a transcript notice, and the command result only says it completed. |
 | `plan` | Disabled until the web client supports plan-exit approval. The SDK callback explicitly refuses automatic plan exit. |
 | `every`, `after` | Disabled: web scheduling is not supported. |
 | `cwd`, `add-dir` | Disabled: these change directories outside Task project settings. |
