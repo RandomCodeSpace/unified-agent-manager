@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-07
-- Supersedes: [ADR 0005](0005-planner.md) and [ADR 0006](0006-planner-execution.md)
+- Supersedes: the earlier ADRs 0005 and 0006 (removed; see git history)
 
 ## Context
 
@@ -30,32 +30,30 @@ own plan mode is a separate feature and stays.
 
 ## What remains on disk
 
-uam neither deletes nor migrates what the planner left behind.
+A settings file with the `planner` switch and Task records with the
+planner's `retired` mark still load; both keys drop on the next save.
 
-- `board.db`, with `board.db-wal` and `board.db-shm`, sits beside
-  `sessions.json` in `~/.config/uam/` (or `$UAM_CONFIG_DIR/`). uam no longer
-  opens it. Delete the three files once the old board is no longer needed.
-- Lane worktrees of each Project's repository sit under
-  `lanes/<project id>/` in that same folder.
-- Each Project's repository may keep branches named `uam-plan-*`: the
-  integration branch `uam-plan-<id>` and attempt branches
-  `uam-plan-<id>-<n>-<suffix>`.
+At startup uam deletes the planner's files beside `sessions.json` in
+`~/.config/uam/` (or `$UAM_CONFIG_DIR/`): `board.db` with `board.db-wal` and
+`board.db-shm`, and the lane worktrees under `lanes/`. It reads each lane's
+repository from the lane's `.git` file and, once the lane is gone, runs
+`git worktree prune` there so the repository forgets it. It removes only
+regular files and a real `lanes` folder, never through a symlink, and a
+failure is logged without stopping startup. This one-time cleanup can be
+dropped in a later release.
 
-To clear them, check in the Project's repository that nothing on them is
-still needed, then remove the worktrees before the branches (git keeps a
-branch a worktree has checked out). `git worktree prune` forgets lane
-folders deleted by hand.
+The branches the planner created in a Project's repository stay: the
+integration branch `uam-plan-<id>` and attempt branches
+`uam-plan-<id>-<n>-<suffix>`. To remove them, list them, check that nothing
+on a branch is still needed, then delete it:
 
 ```sh
-git worktree list
 git branch --list 'uam-plan-*'
-git log --oneline <base branch>..uam-plan-<id>
-git worktree remove <lane path>
-git worktree prune
+git log --oneline <base branch>..<branch>
 git branch -D <branch>
 ```
 
 ## Consequences
 
-Planning happens in ordinary Tasks. An old `board.db` can still be read with
-any SQLite client, and ADRs 0005 and 0006 stay as the planner's record.
+Planning happens in ordinary Tasks. The planner's data is not kept, and
+ADRs 0005 and 0006 remain only in git history.

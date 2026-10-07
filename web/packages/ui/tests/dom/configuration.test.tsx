@@ -137,7 +137,7 @@ describe('native configuration', () => {
     const { user, card } = await open('Agents');
     await user.click(card.getByRole('button', { name: 'Add agent' }));
     const form = within(card.getByRole('form', { name: 'Add agent' }));
-    await user.type(form.getByLabelText('Name'), 'planner');
+    await user.type(form.getByLabelText('Name'), 'scout');
     await user.type(form.getByLabelText('Description'), 'Plan focused changes');
     await user.click(form.getByRole('combobox', { name: 'Model (optional)' }));
     await user.click(await screen.findByRole('option', { name: 'GPT-5 mini', exact: true }));
@@ -146,8 +146,8 @@ describe('native configuration', () => {
     await user.type(form.getByLabelText('Tools (optional, one per line)'), 'read\nsearch');
     await user.type(form.getByLabelText('Agent instructions'), 'Read the issue first.');
     await user.click(form.getByRole('button', { name: 'Add agent' }));
-    await card.findByText('planner saved. New and reopened tasks use the updated file.');
-    const created = (await api.configuration()).agents.find((entry) => entry.name === 'planner');
+    await card.findByText('scout saved. New and reopened tasks use the updated file.');
+    const created = (await api.configuration()).agents.find((entry) => entry.name === 'scout');
     expect(created?.content).toContain('tools: ["read","search"]');
     expect(created?.content).toContain('model: "gpt-5-mini"');
     const reviewer = card.getByText('reviewer').closest('li')!;

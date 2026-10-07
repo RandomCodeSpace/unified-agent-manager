@@ -16,6 +16,4 @@
 | **Legacy terminal record** | Saved metadata from UAM's retired terminal support. It remains on disk but is not an active Task and has no terminal controls in current UAM. |
 
 See the [web guide](docs/web.md) for current behavior. Earlier terminal ADRs
-remain historical records of the retired interface. ADRs 0005 and 0006
-record the planner, which [ADR 0007](docs/adr/0007-remove-the-planner.md)
-removed; their terms (Board, Card, Epic, Lane and so on) are no longer used.
+remain historical records of the retired interface.

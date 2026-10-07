@@ -24,7 +24,7 @@ const header = () => screen.getByRole('heading', { level: 1 });
 describe('the Task list', () => {
   test('keeps every unsettled Task in one flat list with its status', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
-    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which called the planner's tools;
+    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which called an MCP server's tools;
     // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
     const { user } = renderApp();

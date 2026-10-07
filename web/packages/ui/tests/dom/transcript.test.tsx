@@ -345,16 +345,3 @@ describe('history', () => {
     expect(await screen.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
   });
 });
-
-describe('a planner tool call in an older transcript', () => {
-  test('is an ordinary tool row', () => {
-    // A transcript cached before the planner was removed may still name a card; nothing reads it.
-    const item = {
-      id: 'board-1', kind: 'tool', time: '2026-09-29T12:00:00Z',
-      tool: { name: 'board_get', status: 'completed', display_arg: '#12', board_card: { id: 'c1', seq: 12, kind: 'subtask', title: 'Make it', status: 'doing' } },
-    } as Item;
-    const view = render(<ToolRow item={item} live={false} />);
-    expect(view.getByRole('button', { name: /^board_get/ }).getAttribute('aria-expanded')).toBe('false');
-    expect(view.queryByText('Make it')).toBeNull();
-  });
-});
