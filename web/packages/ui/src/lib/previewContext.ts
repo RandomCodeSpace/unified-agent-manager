@@ -9,6 +9,8 @@ interface PreviewDetails {
   frameable?: boolean;
   /** Diagrams retain their existing image-only enlargement. */
   original?: boolean;
+  /** A drawing's own size (a diagram): the lightbox scales it up to fill the room. */
+  size?: { width: number; height: number };
   temporary?: boolean;
 }
 
