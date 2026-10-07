@@ -1805,18 +1805,20 @@ func (c *conversation) linkQuestionLocked(d *rpc.UserInputRequestedData, agentID
 	}
 	q := &c.questions
 	q.expire(now)
+	// Questions are matched by the text the owner reads, without the marker.
+	text, _ := questionText(d.Question)
 	// An older callback may already be answered while the next same-text
 	// question waits. Consume that older event before matching a waiter.
-	if sp, ok := q.spent[d.Question]; ok {
+	if sp, ok := q.spent[text]; ok {
 		if sp.n--; sp.n == 0 {
-			delete(q.spent, d.Question)
+			delete(q.spent, text)
 		} else {
-			q.spent[d.Question] = sp
+			q.spent[text] = sp
 		}
 		return
 	}
 	for i, in := range q.waiting {
-		if in.Questions[0].Text != d.Question {
+		if in.Questions[0].Text != text {
 			continue
 		}
 		q.waiting = slices.Delete(q.waiting, i, i+1)
@@ -1833,7 +1835,7 @@ func (c *conversation) linkQuestionLocked(d *rpc.UserInputRequestedData, agentID
 	if q.count() >= maxQuestionLinks {
 		q.dropOldestEvent()
 	}
-	q.events[d.Question] = append(q.events[d.Question], questionEvent{toolCallID: id, agentID: agentID, at: now})
+	q.events[text] = append(q.events[text], questionEvent{toolCallID: id, agentID: agentID, at: now})
 }
 
 // askedLocked gives a new question its event's tool call and agent when the
@@ -2861,12 +2863,18 @@ var multipleChoice = regexp.MustCompile(`(?i)\s*\((?:choose|select|pick)\s+(?:an
 // questionOf is the owner's question for an ask_user request. The owner may always type
 // their own answer, so Custom is set even when the agent sent allowFreeform false.
 func questionOf(req copilot.UserInputRequest) agentapi.Question {
-	q := agentapi.Question{Text: req.Question, Choices: req.Choices, Custom: true}
-	if multipleChoice.MatchString(q.Text) {
-		q.Text = strings.TrimSpace(multipleChoice.ReplaceAllString(q.Text, ""))
-		q.Multiple = true
-	}
+	q := agentapi.Question{Choices: req.Choices, Custom: true}
+	q.Text, q.Multiple = questionText(req.Question)
 	return q
+}
+
+// questionText is the agent's question text without the multiple-choice
+// marker, and whether the marker was there.
+func questionText(raw string) (string, bool) {
+	if !multipleChoice.MatchString(raw) {
+		return raw, false
+	}
+	return strings.TrimSpace(multipleChoice.ReplaceAllString(raw, "")), true
 }
 
 // askUser is the SDK's ask_user callback. It runs on its own goroutine and

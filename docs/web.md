@@ -1912,6 +1912,13 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   the conversation. The provider may have partly changed; UAM does not claim
   the selection succeeded or try to roll it back. The next explicit send
   must first restore the recorded settings successfully.
+- **Detached shells (Copilot).** While a shell Copilot started detached
+  is running, Copilot CLI 1.0.92 reports it in a form the Copilot SDK
+  cannot read, so the Task's background tasks cannot be read either. The
+  chip says Status unavailable and lists the shells reported before, or
+  does not appear when none were; nothing can be stopped from it. The shell
+  shows once it ends. Until then, a subagent's follow-up and an autopilot
+  turn waiting on an attached shell may also stay running.
 - **Copilot session diffs.** Copilot does not report per-conversation file
   changes, so UAM attributes files to a Task from its edit tool calls (see
   Changes); files written by shell commands show only under All changes.
