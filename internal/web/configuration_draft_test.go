@@ -91,8 +91,8 @@ func TestConfigurationDraftKindsAreEditableAndDoNotWrite(t *testing.T) {
 				if len(calls) != 1 || calls[0].Purpose != purposeConfigurationDraft || calls[0].ProjectID != projectID || calls[0].InputTokens != 10 || calls[0].OutputTokens != 20 || calls[0].Outcome != utilityOK {
 					t.Fatalf("utility log = %+v", calls)
 				}
-				if ts.m.settings.Planner || len(ts.m.sessions) != 0 {
-					t.Fatal("drafting must not require Planner or create a task")
+				if len(ts.m.sessions) != 0 {
+					t.Fatal("drafting must not create a task")
 				}
 			})
 		}
@@ -210,7 +210,7 @@ func TestConfigurationDraftUtilityAvailability(t *testing.T) {
 				return
 			}
 			var e *Error
-			if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != codeUtilityUnavailable || strings.Contains(e.Message, "planner") || len(ts.prov.UtilityRequests()) != 0 {
+			if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != codeUtilityUnavailable || len(ts.prov.UtilityRequests()) != 0 {
 				t.Fatalf("unavailable utility = %v", err)
 			}
 		})

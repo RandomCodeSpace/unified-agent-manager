@@ -20,6 +20,8 @@ import (
 
 var allCaps = agentapi.Capabilities{Cancel: true, Permissions: true, Questions: true, SessionDiff: true, History: true}
 
+var utilityCaps = func() agentapi.Capabilities { c := allCaps; c.Titles, c.HostTools = true, true; return c }()
+
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "sessions.json"))
@@ -575,6 +577,67 @@ func seedWebRecord(t *testing.T, st *store.Store, id, convID, turn string) {
 	}
 }
 
+// Records written while the planner existed load as ordinary Tasks: a lane
+// Task's retired mark no longer stops Reopen, and starting, reopening and
+// archiving it leave board.db, the planner switch and the lane directory as
+// they were.
+func TestPlannerRecordsLoadAsOrdinaryTasks(t *testing.T) {
+	st := openTestStore(t)
+	root := filepath.Dir(st.Path())
+	lane := filepath.Join(root, "lanes", "project", "lane")
+	if err := os.MkdirAll(lane, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker, boardDB := filepath.Join(lane, "work.go"), filepath.Join(root, "board.db")
+	for _, path := range []string{marker, boardDB} {
+		if err := os.WriteFile(path, []byte("kept"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, now := mustUUID(t), time.Now().UTC()
+	var web store.WebState
+	if err := json.Unmarshal([]byte(`{"turn":"completed","stage":"settled","settled_at":"`+now.Format(time.RFC3339)+`","retired":"its lane was removed"}`), &web); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Update(func(cfg *store.Config) error {
+		if err := json.Unmarshal([]byte(`{"planner":true}`), &cfg.WebSettings); err != nil {
+			return err
+		}
+		cfg.Sessions[store.Key("fake", id)] = store.SessionRecord{
+			ID: id, Agent: "fake", Name: "lane task", Mode: store.ModeSafe, Workdir: lane, CreatedAt: now, LastSeenAt: now,
+			Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: "conv_lane", Web: &web,
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := startManager(t, st, agenttest.NewProvider("fake", allCaps))
+	sum, err := m.Summary(id)
+	if err != nil || sum.Stage != StageSettled || sum.Workdir != lane {
+		t.Fatalf("summary = %+v, %v", sum, err)
+	}
+	if raw, _ := json.Marshal(sum); strings.Contains(string(raw), "retired") {
+		t.Fatalf("summary JSON = %s", raw)
+	}
+	if sum, err = m.Reopen(id); err != nil || sum.Stage != "" {
+		t.Fatalf("reopen = %+v, %v", sum, err)
+	}
+	if sum, err = m.Archive(id); err != nil || sum.Stage != StageArchived {
+		t.Fatalf("archive = %+v, %v", sum, err)
+	}
+	for _, path := range []string{marker, boardDB} {
+		if data, err := os.ReadFile(path); err != nil || string(data) != "kept" {
+			t.Fatalf("%s = %q, %v", path, data, err)
+		}
+	}
+	if matches, _ := filepath.Glob(boardDB + "?*"); len(matches) != 0 {
+		t.Fatalf("board.db was opened: %v", matches)
+	}
+	if raw, err := os.ReadFile(st.Path()); err != nil || !strings.Contains(string(raw), `"planner": true`) {
+		t.Fatalf("settings lost the planner key: %v", err)
+	}
+}
+
 func TestRestartMarksRunningTurnsInterrupted(t *testing.T) {
 	st := openTestStore(t)
 	working, waiting, done := mustUUID(t), mustUUID(t), mustUUID(t)
@@ -820,7 +883,7 @@ func TestOpensPassHostToolsBoundToTheTask(t *testing.T) {
 	var mu sync.Mutex
 	var calls []agentapi.HostToolCall
 	tools := []agentapi.HostTool{{Name: "board_get", Parameters: map[string]any{"type": "object"}}, {Name: "board_list"}}
-	m.hostTools = func(taskID, _ string, _, _ bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+	m.hostTools = func(taskID string, _ bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
 		return tools, func(_ context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 			mu.Lock()
 			defer mu.Unlock()

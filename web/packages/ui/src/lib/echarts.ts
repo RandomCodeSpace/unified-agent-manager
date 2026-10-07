@@ -3,7 +3,7 @@ import { AriaComponent, CalendarComponent, DatasetComponent, DataZoomComponent, 
 import { init, use as register } from 'echarts/core';
 import { SVGRenderer } from 'echarts/renderers';
 
-// Loaded only when a chart or planner graph is drawn; no external scripts or CDN.
+// Loaded only when a chart is drawn; no external scripts or CDN.
 register([
   BarChart, LineChart, PieChart, ScatterChart, EffectScatterChart, RadarChart, TreeChart, TreemapChart,
   SunburstChart, BoxplotChart, CandlestickChart, HeatmapChart, ParallelChart, LinesChart, GraphChart,

@@ -1,8 +1,9 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
+import { headerRoom } from '../../src/components/Task';
 import { saveDensity } from '../../src/lib/density';
-import { log, openMenu, openTask } from './render';
+import { log, openMenu, openTask, renderApp } from './render';
 
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
@@ -301,5 +302,29 @@ describe('subagents', () => {
     expect(peek.getByText('3 tool calls')).toBeTruthy();
     await user.click(peek.getByRole('button', { name: 'Full transcript' }));
     expect(await (await panel()).findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
+  });
+});
+
+describe('the Task header', () => {
+  test('narrow, it drops the button labels, then folds Files and Terminal into the menu; the title keeps its room', async () => {
+    expect(headerRoom(0)).toBe('wide');
+    expect(headerRoom(1100)).toBe('wide');
+    expect(headerRoom(720)).toBe('snug');
+    expect(headerRoom(520)).toBe('tight');
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.tagName === 'HEADER' ? 520 : 0;
+    });
+    try {
+      const { user } = renderApp('#task=t21');
+      await screen.findByRole('region', { name: 'Conversation' });
+      const header = screen.getByRole('heading', { level: 1 }).closest('header')!;
+      expect(screen.getByRole('heading', { level: 1 }).parentElement!.className).toContain('min-w-28');
+      expect(within(header).queryByRole('button', { name: 'Browse files' })).toBeNull();
+      expect(within(header).getByRole('button', { name: /^Open changes/ }).textContent).not.toContain('Changes');
+      const menu = await openMenu(user, 'Task actions');
+      expect(menu.getByRole('menuitem', { name: 'Browse files' })).toBeTruthy();
+    } finally {
+      width.mockRestore();
+    }
   });
 });

@@ -30,9 +30,9 @@ const statusText: Record<ConnectedStatus['status'], string> = {
 };
 
 /** The optional features a paired instance can offer this one, named as Settings names them, in its order. */
-const FEATURES: readonly (readonly [string, string])[] = [['files-v1', 'Files'], ['terminal-v1', 'Terminal'], ['configuration-v1', 'Configuration'], ['provider-accounts-v1', 'Provider accounts'], ['planner-v1', 'Planner'], ['routines-v1', 'Routines'], ['usage-v1', 'Usage']];
+const FEATURES: readonly (readonly [string, string])[] = [['files-v1', 'Files'], ['terminal-v1', 'Terminal'], ['configuration-v1', 'Configuration'], ['provider-accounts-v1', 'Provider accounts'], ['routines-v1', 'Routines'], ['usage-v1', 'Usage']];
 
-/** "v0.7.1 · Files, Terminal, Planner": what the paired instance runs and offers, one line, or nothing known. */
+/** "v0.7.1 · Files, Terminal": what the paired instance runs and offers, one line, or nothing known. */
 function offers(connection: ConnectedInstance): string {
   const features = FEATURES.filter(([capability]) => connection.capabilities.includes(capability)).map(([, label]) => label);
   return [connection.version, features.join(', ')].filter(Boolean).join(' · ');

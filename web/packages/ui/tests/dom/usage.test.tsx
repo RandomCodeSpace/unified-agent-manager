@@ -116,11 +116,10 @@ describe('Usage popover', () => {
     }
   });
 
-  test('opens beside Settings and Planner, switches periods and shows input, output, cache and totals', async () => {
+  test('opens beside Settings, switches periods and shows input, output, cache and totals', async () => {
     const { user } = renderApp();
     const nav = await sidebar();
     expect(nav.getByRole('button', { name: 'Settings' })).toBeTruthy();
-    expect(nav.getByRole('button', { name: 'Planner' })).toBeTruthy();
     const button = nav.getByRole('button', { name: 'Usage' });
     const read = vi.spyOn(api, 'tokenUsage');
     expect(read).not.toHaveBeenCalled();

@@ -36,9 +36,6 @@ type compactTool struct {
 	FilePaths  []string `json:"file_paths,omitempty"`
 	HasInput   bool     `json:"has_input"`
 	HasOutput  bool     `json:"has_output"`
-	// BoardCard is the planner card a completed planner tool call was about,
-	// read from its result (board_tools.go), for the transcript's chip.
-	BoardCard *toolCard `json:"board_card,omitempty"`
 }
 type compactSubagent struct {
 	agentapi.Subagent
@@ -239,12 +236,6 @@ func projectItem(it agentapi.Item) compactItem {
 			}
 		}
 		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths}
-		if isBoardTool(tool.Name) && tool.Status == agentapi.ToolCompleted {
-			var reply toolReply
-			if json.Unmarshal([]byte(tool.Output), &reply) == nil && reply.Card != nil && reply.Card.Seq > 0 {
-				projected.BoardCard = reply.Card
-			}
-		}
 		// Question text and its recorded answer are semantic UI, including after reload.
 		if tool.Name != "ask_user" {
 			tool.Input, tool.Output = "", ""

@@ -5,8 +5,8 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, undecidedHolds, type Card, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
-import { initialState, reducer, type Action } from './state';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { initialState, reducer } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { Home } from './components/Home';
@@ -17,19 +17,15 @@ import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { cycleTask, mostRecentProject, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
-import { pendingRequests, plansWaiting } from './lib/board';
-import { PlannerContext, PlannerView, usePlannerController } from './components/planner/Planner';
-import { PlannerTasks } from './components/planner/context';
-import { SettleDialog, type SettleAsk } from './components/planner/SettleDialog';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
 import { useResizable } from './lib/useResizable';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import type { FirstMessage } from './components/Composer';
-import { TaskActionsContext, type Renaming, type TaskActions } from './components/taskActions';
+import { TaskActionsContext, TaskList, type Renaming, type TaskActions } from './components/taskActions';
 import { TryModelDialog } from './components/Assist';
 import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
@@ -66,8 +62,6 @@ const HASH_PREFIX = '#task=';
 /** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
 const QUIET_MS = 600;
 const SETTINGS_HASH = '#settings';
-/** The Planner view: `#planner=<project id or unassigned>`. */
-const PLANNER_PREFIX = '#planner=';
 /** Every Project's routines: `#routines` (or `#routines=all`); one Project's: `#routines=<project id>`. */
 const ROUTINES_HASH = '#routines';
 const ROUTINES_PREFIX = '#routines=';
@@ -120,11 +114,6 @@ function readJSON<T>(key: string, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function hashPlanner(path = window.location.hash): string | null {
-  const h = path.split('&')[0];
-  return h.startsWith(PLANNER_PREFIX) ? decodeURIComponent(h.slice(PLANNER_PREFIX.length)) || null : null;
 }
 
 /** The routines the fragment shows: a Project id, `all`, or null for another view. */
@@ -220,10 +209,7 @@ export default function App() {
   const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
   // The provider whose account Settings opens on (the blocked app's Open Settings), or null.
   const [accountFocus, setAccountFocus] = useState<string | null>(null);
-  const [plannerOpen, setPlannerOpen] = useState(() => (initialPath ?? window.location.hash).startsWith(PLANNER_PREFIX));
   const [routinesFor, setRoutinesFor] = useState<string | null>(() => hashRoutines(initialPath));
-  // Settle found subtasks the Task holds: the dialog decides each (ADR 0005 §5).
-  const [settleAsk, setSettleAsk] = useState<SettleAsk | null>(null);
   // New task opens a draft for a Project on its defaults; nothing exists on the service until its first Send.
   // `tick` refocuses its composer when New task is chosen again.
   const [newTask, setNewTask] = useState<{ projectId: string; defaults: TaskDefaults; tick: number } | null>(null);
@@ -544,7 +530,7 @@ export default function App() {
       es.addEventListener(name, (e) => {
         if (!alive) return;
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
-        if (['session', 'session_removed', 'project', 'project_removed', 'settings', 'usage', 'board', 'board_job'].includes(data.name)) onEvent?.({ type: 'update', data });
+        if (['session', 'session_removed', 'project', 'project_removed', 'settings', 'usage'].includes(data.name)) onEvent?.({ type: 'update', data });
         recentTasks.invalidate(data);
         if (data.name === 'session_removed') forgetArchive(api.cacheKey(data.session_id));
         // Invalidations precede React's commit. A click in between must not
@@ -590,7 +576,7 @@ export default function App() {
   const late = useLate(state.connection !== 'connected', QUIET_MS);
   const loading = late && state.connection === 'connecting';
   const connection = late && !loading ? state.connection : 'connected';
-  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !plannerOpen && !routinesFor, QUIET_MS);
+  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !routinesFor, QUIET_MS);
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
   const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
@@ -602,7 +588,7 @@ export default function App() {
       Array.from(buttons).find((button) => !button.closest('[inert], [aria-hidden="true"]'))?.click();
     });
   }, [narrow]);
-  const ownerSettings = useMemo(() => api.owner ? { ...state.settings, terminal: state.settings.terminal && api.supports('terminal-v1'), planner: state.settings.planner && api.supports('planner-v1') } : state.settings, [api, state.settings]);
+  const ownerSettings = useMemo(() => api.owner ? { ...state.settings, terminal: state.settings.terminal && api.supports('terminal-v1') } : state.settings, [api, state.settings]);
   const ctx = useMemo(
     () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage }),
     [meta, metaError, state.loaded, narrow, hasNews, ownerSettings, state.usage, refreshMeta, openUsage],
@@ -647,19 +633,19 @@ export default function App() {
     setTaskDialogOpen(true);
   }, []);
 
-  // A move between views (a Task, Settings, the planner, Routines) adds a history entry, so Back and
+  // A move between views (a Task, Settings, Routines) adds a history entry, so Back and
   // Forward retrace it; a correction the app makes on its own (a stale or unknown fragment) replaces the entry.
   const pushView = useRef(false);
-  // What opened Settings, the planner or Routines: closing the view gives it focus back.
+  // What opened Settings or Routines: closing the view gives it focus back.
   const opener = useRef<HTMLElement | null>(null);
   const viewShown = useRef(false);
   useLayoutEffect(() => {
-    viewShown.current = settingsOpen || plannerOpen || !!routinesFor;
+    viewShown.current = settingsOpen || !!routinesFor;
   });
   const noteOpener = useCallback(() => {
     pushView.current = true;
     const el = document.activeElement;
-    // A move inside the open view (the planner opening a card) keeps the button that opened it.
+    // A move inside the open view keeps the button that opened it.
     if (viewShown.current && el?.closest('main')) return;
     opener.current = el instanceof HTMLElement && el !== document.body ? el : null;
   }, []);
@@ -679,29 +665,18 @@ export default function App() {
     setSheetOpen(false);
     setDrawerOpen(false);
     setSettingsOpen(false);
-    setPlannerOpen(false);
     setRoutinesFor(null);
     setNewTask(null);
   }, [recentTasks]);
 
-  /** The Planner view in the main pane (like Settings, it keeps the selected Task behind it). */
-  const showPlanner = useCallback(() => {
-    noteOpener();
-    setPlannerOpen(true);
-    setSettingsOpen(false);
-    setRoutinesFor(null);
-    setNewTask(null);
-    setDrawerOpen(false);
-    setSheetOpen(false);
-  }, [noteOpener]);
   const openTask = useCallback((id: string) => select(id), [select]);
+  const taskList = useMemo(() => ({ sessions: state.sessions, projects: state.projects, openTask }), [state.sessions, state.projects, openTask]);
   /** Settings in the main pane, from the signed-out banner (like the sidebar's gear, it keeps the selected Task behind it). */
   const showSettings = useCallback(() => {
     noteOpener();
     setTokenPricesRequest(0);
     setAccountFocus(null);
     setSettingsOpen(true);
-    setPlannerOpen(false);
     setRoutinesFor(null);
     setNewTask(null);
     setDrawerOpen(false);
@@ -723,68 +698,43 @@ export default function App() {
     noteOpener();
     setRoutinesFor(projectId);
     setSettingsOpen(false);
-    setPlannerOpen(false);
     setNewTask(null);
     setDrawerOpen(false);
     setSheetOpen(false);
   }, [noteOpener]);
-  /** Closes Settings, the planner or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
+  /** Closes Settings or Routines (their ×, or Esc): focus goes back to what opened the view, or to the Task's conversation once that is gone. */
   const closeView = useCallback(() => {
     pushView.current = true;
     setSettingsOpen(false);
-    setPlannerOpen(false);
     setRoutinesFor(null);
     const back = opener.current;
     opener.current = null;
     requestAnimationFrame(() => (back?.isConnected && !back.closest('[inert]') && back.getClientRects().length ? back : conversation())?.focus());
   }, []);
-  // Only `true` shows the planner: `false` leaves its Settings switch, and a service that does not know the setting (undefined) shows none of it.
-  const plannerOn = state.settings.planner === true && state.loaded && api.supports('planner-v1');
-  // A `#planner=` link on a service without the planner on lands on the usual view.
-  if (state.loaded && !plannerOn && plannerOpen) setPlannerOpen(false);
-  const plannerShown = plannerOpen && plannerOn;
-  const plannerDispatch = useCallback((action: Action) => { dispatch(action); onEvent?.(action); }, [onEvent]);
-  const planner = usePlannerController({
-    enabled: plannerOn,
-    boards: state.boards,
-    jobs: state.boardJobs,
-    projects: state.projects,
-    dispatch: plannerDispatch,
-    onShowPlanner: showPlanner,
-    onOpenTask: openTask,
-    initialProject: hashPlanner(initialPath),
-  });
-  const plannerTasks = useMemo(() => ({ sessions: state.sessions, openTask }), [state.sessions, openTask]);
-  const plannerProject = planner.value.ui.project;
-  const plannerPanel = planner.value.ui.panel;
-  const setPlannerUi = planner.value.setUi;
-
-  // Esc closes Settings, the planner (its side panel first) or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
-  const viewOpen = settingsOpen || plannerShown || !!routinesFor;
+  // Esc closes Settings or Routines, like their ×; not while typing, in the terminal, or with a popup open (it closes that).
+  const viewOpen = settingsOpen || !!routinesFor;
   useEffect(() => {
     if (!viewOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || keysTaken() || editing()) return;
       if (e.target instanceof Element && e.target.closest('.xterm')) return;
-      if (plannerShown && !settingsOpen && plannerPanel) setPlannerUi({ panel: null });
-      else closeView();
+      closeView();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [viewOpen, plannerShown, settingsOpen, plannerPanel, setPlannerUi, closeView]);
+  }, [viewOpen, closeView]);
 
   useEffect(() => {
     if (auth === 'in' && !federated) return startNotifications();
   }, [auth, federated]);
-  // The Task on screen is not announced while this page is visible; Settings, the planner and Routines cover it.
+  // The Task on screen is not announced while this page is visible; Settings and Routines cover it.
   useEffect(() => {
-    if (auth === 'in') setViewing(settingsOpen || plannerOpen || routinesFor || mismatched ? null : state.selectedId);
-  }, [auth, state.selectedId, settingsOpen, plannerOpen, routinesFor, mismatched]);
+    if (auth === 'in') setViewing(settingsOpen || routinesFor || mismatched ? null : state.selectedId);
+  }, [auth, state.selectedId, settingsOpen, routinesFor, mismatched]);
 
-  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#planner=…`, `#routines…`, else the selected task.
+  // Keep the view in the URL fragment so a reload lands on it: `#settings`, `#routines…`, else the selected task.
   let viewHash = '';
   if (settingsOpen) viewHash = SETTINGS_HASH;
-  else if (plannerOpen) viewHash = `${PLANNER_PREFIX}${encodeURIComponent(plannerProject ?? '')}`;
   else if (routinesFor) viewHash = routinesFor === ALL_ROUTINES ? ROUTINES_HASH : `${ROUTINES_PREFIX}${encodeURIComponent(routinesFor)}`;
   else if (state.selectedId) viewHash = `${HASH_PREFIX}${encodeURIComponent(state.selectedId)}`;
   // Written when the view changes, never over a fragment the user just navigated to (its event may come
@@ -811,11 +761,7 @@ export default function App() {
     if (!force && h === viewHash) return;
     const routines = hashRoutines(h);
     if (h === SETTINGS_HASH) showSettings();
-    else if (h.startsWith(PLANNER_PREFIX)) {
-      const board = hashPlanner(h);
-      if (board) setPlannerUi({ project: board, selected: null, epic: null, panel: null });
-      showPlanner();
-    } else if (routines) showRoutines(routines);
+    else if (routines) showRoutines(routines);
     else select(hashSelection(h));
     // The entry is already in history.
     pushView.current = false;
@@ -1033,26 +979,7 @@ export default function App() {
         if (!current || current.name === name) return;
         await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
       },
-      // With the planner on, a Task holding subtasks answers 409 holds_undecided: the Settle dialog decides each, then settles.
-      settle: (id) =>
-        void runTask(id, async () => {
-          if (!plannerOn) return api.stage(id, 'settle');
-          try {
-            return await api.settle(id);
-          } catch (e) {
-            const held = undecidedHolds(e);
-            if (!held) throw e;
-            const task = state.sessions.find((s) => s.id === id);
-            setSettleAsk({
-              taskName: task ? `“${taskName(task) || 'New task'}”` : 'this task',
-              cards: held as Card[],
-              settle: async (holds) => {
-                const s = await api.settle(id, holds);
-                dispatch({ type: 'upsert_session', session: s });
-              },
-            });
-          }
-        }, 'settle the task').catch(() => {}),
+      settle: (id) => void runTask(id, () => api.stage(id, 'settle'), 'settle the task').catch(() => {}),
       reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
@@ -1062,7 +989,7 @@ export default function App() {
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, state.sessions, runTask, api, plannerOn, openTaskDialog, rerun],
+    [renaming, busyTasks, select, state.sessions, runTask, api, openTaskDialog, rerun],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1099,17 +1026,7 @@ export default function App() {
         if (!current || current.name === name) return;
         await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => run(id, async () => {
-        if (!(m.state.settings.planner === true && c.supports('planner-v1'))) return c.stage(id, 'settle');
-        try {
-          await c.settle(id);
-        } catch (e) {
-          const held = undecidedHolds(e);
-          if (!held) throw e;
-          const task = m.state.sessions.find((s) => s.id === id);
-          setSettleAsk({ taskName: task ? `“${taskName(task) || 'New task'}”` : 'this task', cards: held as Card[], settle: async (holds) => { await c.settle(id, holds); } });
-        }
-      }, 'settle the task'),
+      settle: (id) => run(id, () => c.stage(id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
       archive: (id) => openTaskDialog({ kind: 'archive', id, owner: m.id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
@@ -1119,8 +1036,6 @@ export default function App() {
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
   })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog]);
-  // The planner button with it off here: the first machine that has it on opens there.
-  const plannerElsewhere = plannerOn ? undefined : machines?.find((m) => !m.active && m.state.settings.planner === true && m.client.supports('planner-v1'))?.id;
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1144,40 +1059,24 @@ export default function App() {
         setTokenPricesRequest((request) => target ? request + 1 : 0);
         setAccountFocus(null);
         setSettingsOpen((o) => target ? true : !o);
-        setPlannerOpen(false);
         setRoutinesFor(null);
         setDrawerOpen(false);
         setNewTask(null);
       },
-      planner: plannerOn
-        ? {
-            open: plannerOpen && !settingsOpen,
-            onOpen: (projectId) => {
-              noteOpener();
-              if (projectId) setPlannerUi({ project: projectId, selected: null, epic: null, panel: null });
-              if (plannerOpen && !settingsOpen && !projectId) setPlannerOpen(false);
-              else showPlanner();
-            },
-          }
-        : plannerElsewhere !== undefined
-          ? { open: false, onOpen: (projectId) => go?.(plannerElsewhere, `${PLANNER_PREFIX}${encodeURIComponent(projectId ?? '')}`) }
-          : undefined,
     }),
-    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, plannerOn, plannerOpen, setPlannerUi, showPlanner, showRoutines, routinesFor, noteOpener, applyFilter, plannerElsewhere, go],
+    [filter, narrow, drawerOpen, sidebarOpen, settingsOpen, openNewTask, openDialog, toggleSidebar, showRoutines, routinesFor, noteOpener, applyFilter],
   );
 
   const selected = state.sessions.find((s) => s.id === state.selectedId) ?? null;
 
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
-  // Pending planner requests and plans to approve need the owner too (ADR 0005 §10, ADR 0006 §6.1): they fold into the same count.
   const localNeedsYouTasks = useMemo(() => needsYouCount(state.sessions, hasNews), [state.sessions, hasNews]);
   const needsYouTasks = localNeedsYouTasks + (federation?.otherAttention ?? 0);
-  const attention = needsYouTasks + (plannerOn ? pendingRequests(state.boards) + plansWaiting(state.boards) : 0);
+  const attention = needsYouTasks;
   // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
   let shownName: string | null = null;
   if (settingsOpen) shownName = 'Settings';
   else if (mismatched) shownName = null;
-  else if (plannerShown) shownName = 'Planner';
   else if (routinesFor) shownName = 'Routines';
   else if (newTask) shownName = '';
   else if (selected) shownName = taskName(selected);
@@ -1207,7 +1106,7 @@ export default function App() {
   let shown: SessionDetail | null = null;
   if (state.detail && selected) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
-  const stale = !settingsOpen && !mismatched && !plannerShown && !routinesFor && !newTask && !!shown && shown !== state.detail;
+  const stale = !settingsOpen && !mismatched && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;
   // Turning Settings → Terminal off ends every shell on the service, and a removed Project takes its shell: the dock leaves.
   const terminalProject = terminalId && state.settings.terminal && api.supports('terminal-v1') ? state.projects.find((p) => p.id === terminalId) : undefined;
@@ -1219,7 +1118,7 @@ export default function App() {
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
   // A removed Project, or a `#routines=` link to none, lands on the usual view.
   const routinesKnown = routinesFor === ALL_ROUTINES || state.projects.some((p) => p.id === routinesFor);
-  const routinesShown = !!routinesFor && !settingsOpen && !plannerShown && state.loaded && routinesKnown;
+  const routinesShown = !!routinesFor && !settingsOpen && state.loaded && routinesKnown;
   if (routinesFor && state.loaded && !routinesKnown) setRoutinesFor(null);
 
   function showProject(id: string) {
@@ -1282,9 +1181,6 @@ export default function App() {
   let pane: React.ReactNode;
   // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
   let taskPane = false;
-  // The Board the planner opens on: the filtered Project when it has git, else the most recently active git Project.
-  const gitProjects = state.projects.filter((p) => !p.no_git);
-  const defaultBoard = (filter && gitProjects.some((p) => p.id === filter) ? filter : mostRecentProject(gitProjects, state.sessions, state.selectedId)?.id) ?? null;
   if (settingsOpen) {
     pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} />;
   } else if (mismatched) {
@@ -1298,8 +1194,6 @@ export default function App() {
         </Button>
       </EmptyPane>
     );
-  } else if (plannerShown) {
-    pane = <PlannerView leading={leading} inline={sheetInline} defaultProject={defaultBoard} onClose={closeView} />;
   } else if (routinesShown) {
     pane = <RoutinesView leading={leading} projects={state.projects} scope={routinesFor === ALL_ROUTINES ? null : routinesFor} onScope={(id) => setRoutinesFor(id ?? ALL_ROUTINES)} sessions={state.sessions} onOpenTask={openTask} onClose={closeView} />;
   } else if (newTask && newTaskProject) {
@@ -1368,8 +1262,7 @@ export default function App() {
 
   return (
     <AppContext.Provider value={ctx}>
-      <PlannerContext.Provider value={planner.value}>
-      <PlannerTasks.Provider value={plannerTasks}>
+      <TaskList.Provider value={taskList}>
       <TaskActionsContext.Provider value={taskActions}>
         <TooltipProvider delay={400} closeDelay={0}>
           {/* The first stop for the keyboard: past the sidebar to the conversation, else the main pane (a button, not a link: the fragment holds the view). */}
@@ -1444,8 +1337,8 @@ export default function App() {
                 <div className="flex min-h-0 flex-1 flex-col" inert={stale} aria-busy={stale || undefined}>
                   <Suspense fallback={<ViewLoading leading={leading} />}>{pane}</Suspense>
                 </div>
-                {/* Settings, the planner, routines and a new Task do not wait on the stream. */}
-                <LoadingVeil show={loading && !settingsOpen && !mismatched && !plannerShown && !routinesShown && !newTask} />
+                {/* Settings, routines and a new Task do not wait on the stream. */}
+                <LoadingVeil show={loading && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>
               {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} onClose={closeTerminal} />}
             </main>
@@ -1527,13 +1420,11 @@ export default function App() {
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
-            <SettleDialog ask={settleAsk} onClose={() => setSettleAsk(null)} />
             <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />
           </div>
         </TooltipProvider>
       </TaskActionsContext.Provider>
-      </PlannerTasks.Provider>
-      </PlannerContext.Provider>
+      </TaskList.Provider>
     </AppContext.Provider>
   );
 }

@@ -1,6 +1,6 @@
 ---
 name: uam
-description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image, diagram or chart, before calling a board_*, uam_create_task or uam_chart tool, and when the owner mentions uam or the Planner.
+description: This session is a uam Task. The owner reads your replies in a browser, often on a phone, that folds tool calls and their output away, so state results and errors in the reply itself. Load this skill before showing the owner a file, image, diagram or chart, before calling a uam_create_task or uam_chart tool, and when the owner mentions uam.
 ---
 
 # uam
@@ -98,100 +98,6 @@ Task. The new Task starts in Safe mode, runs on its own and shows in the
 owner's sidebar; no reply comes back to you. A Task can start at most 5. A Task
 started this way, or by one of the owner's routines (scheduled runs), does
 not have the tool.
-
-## Planner: the board_* tools
-
-The Planner is the owner's agile board per Project, with Epic, Story and
-Subtask cards. The `board_*` tools are present while the owner has the
-Planner on and the Project is a git repository.
-
-- **Scope**: a Task started from the Planner works only under the card its
-  first message names; that message may carry a brief from the owner.
-  "Launch" and "Do whole story" start it holding a subtask: finish that
-  with a done request, then `board_claim` the next pending one. "Plan with
-  agent" creates and edits under its card and holds nothing. The owner may also add a running Task to a story without a
-  message: it then holds a subtask and works in that story's scope like a
-  launched Task, and `board_list` shows the card as "held by you". Any other
-  Task reads the board and may propose epics. Every Task's scope also covers
-  the cards it created until they start, so you can build out the epics you
-  propose: stories, subtasks and links under them, from one request. Cards
-  the owner or another Task created stay out of reach.
-- **Requests**: `board_request` files done, cancel or blocked. You never
-  mark a card done yourself. The owner accepts or rejects every request
-  that is not accepted automatically (see Done). A rejection reaches you as
-  a steer with the reason, and you keep the subtask.
-- **Done** needs every checklist item ticked with `board_checklist` and no
-  open blocker. uam then gathers the evidence itself (diff, commits, files
-  this Task touched) and runs the owner's acceptance command. A failing
-  command refuses the request. It is accepted at once when the command
-  passes and nothing holds it back: claim the next pending one. Otherwise
-  it waits for the owner, and the reply says why.
-- **Proposals**: cards you create stay unconfirmed until the owner confirms
-  or launches them, or approves their epic; the owner's edits keep them proposals and restart their
-  14 days, after which they expire. Work runs only on confirmed cards:
-  `board_claim` refuses a proposal or a card under one. Caps per Task: 50
-  live cards created (deleted and expired ones free their place), 200
-  created in its lifetime (deleted and expired ones still count), 10
-  unconfirmed children per card or 10 epics at the root, 20 comments per
-  card.
-- **Approval**: an epic runs on the owner's one approval of it in the
-  Planner. When your plan for an epic is complete, ask the owner to approve
-  it there and end your turn; nothing runs before that. Under an approved
-  epic the approval owns the work: uam starts its subtasks, each in a lane,
-  so leave claiming to it (`board_claim` answers `run_owned`), and a
-  card you add, or one the owner restores, stays a proposal until the owner
-  approves the epic again, which you ask for the same way. Moving a card
-  into or out of an approved epic becomes a change request for the owner.
-  Keep a confirmed subtask in every confirmed story and epic there: a write
-  that leaves one with none is refused. To split a confirmed subtask right
-  under the epic, edit it into the first part and create the others.
-  `board_get` shows the approval and any pause; nothing at or under a
-  paused card starts, and moving a card out from under one becomes a
-  change request too.
-- **Lanes**: under an approved epic each subtask runs in a Task of its own,
-  in its own git worktree, on a branch made from the Project's integration
-  branch (`uam-plan-…`); other subtasks run beside it in theirs. That Task
-  has only `board_get`, `board_list`, `board_checklist`, `board_comment` and
-  `board_request`, and works on its one subtask, in its directory, on its
-  branch: uam alone pushes, pulls and switches branches there. Finish with
-  `board_request` done: uam commits what you left, merges the integration
-  tip into your lane, runs the acceptance command and lands your work as one
-  commit. Commit any merge you start before filing done. When the tip's
-  merge conflicts, the reply names the files: run `git merge uam-plan-…`,
-  resolve them, commit, and file done again. Merge only `uam-plan-…` into
-  your lane, never the base branch: a lane holding base commits that
-  `uam-plan-…` cannot take is refused. Once the reply says the work
-  landed, or that landing is queued, end your turn. A landed subtask the
-  owner reverts, or reopens with its code kept, comes back To do and
-  paused; its comment says which and why, so read it before you plan
-  around that subtask.
-- **Planning**: until a subtask starts (held, doing or done) you plan it
-  directly in your scope, confirmed or not: `board_edit`, `board_checklist`,
-  `board_link`, `board_unlink`, `board_split` and `board_delete`. A started
-  subtask keeps its plan: you tick only the one you hold and comment; a
-  change to it becomes a request the owner accepts after releasing it.
-- **Started work keeps what it waits on**. A write that would make a started
-  subtask wait on an open card again is refused `in_progress`, naming that
-  subtask: for example, moving a confirmed subtask into a done story that
-  started work waits on. A card you create under a done story is a proposal
-  and leaves the story done. Once work under a story or epic is in progress
-  or done, only the owner links or unlinks what it waits on; you may still
-  link it as the blocker of another card.
-- **Delete**: `board_delete` cancels a card and everything under it, and the
-  owner can restore it. It is refused while anything in it has started,
-  while started work waits on it, and when it would leave the story or epic
-  above it done or cancelled; then edit the card, or file a cancel request.
-  Deleting a blocker releases what waits on it, so link the replacement
-  first. `board_split` is refused the same way when its parts, which are
-  proposals, would leave the story or epic above done or cancelled; then
-  edit the subtask into the first part and create the others.
-- **Links** order cards at one level: epics with epics, stories with stories
-  in one epic, subtasks with subtasks in one story. Either side may be a
-  proposal. To order work across containers, link the containers; a card
-  waits on its container's blockers too. A linked card can't move to another
-  parent until its links are removed. Splitting a subtask under a story makes
-  siblings that keep its links, both ways, except to a subtask that already
-  started.
 
 ## Attachments
 

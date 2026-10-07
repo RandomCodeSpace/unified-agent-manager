@@ -26,6 +26,17 @@ func spawnCall(t *testing.T, conv *agenttest.Conversation, call agentapi.HostToo
 	return res
 }
 
+func toolNames(tools []agentapi.HostTool) []string {
+	var out []string
+	for _, t := range tools {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
+// plainTaskTools are the tools of a Task that may create Tasks.
+var plainTaskTools = []string{createTaskToolName, chartToolName}
+
 // startedTask is the Task ID a uam_create_task result names.
 var startedTask = regexp.MustCompile(`^Started task ([0-9a-f-]{36})\b`)
 
@@ -56,20 +67,6 @@ func taskConv(t *testing.T, prov *agenttest.Provider, id string) *agenttest.Conv
 	}
 	t.Fatalf("no conversation for task %s", id)
 	return nil
-}
-
-// promptOpened sends text to the Task id, ends the turn it starts, and
-// returns the conversation that took it and whether sending opened one.
-func promptOpened(t *testing.T, m *Manager, prov *agenttest.Provider, id, text string) (*agenttest.Conversation, bool) {
-	t.Helper()
-	opens := len(prov.Opens())
-	mustSubmit(t, m, id, text, mustUUID(t), ModeSend, SubmissionAccepted)
-	conv := taskConv(t, prov, id)
-	if sends := conv.Sends(); len(sends) == 0 || sends[len(sends)-1] != text {
-		t.Fatalf("%q was not sent to task %s: %q", text, id, sends)
-	}
-	conv.EmitTurn(agentapi.TurnCompleted, "")
-	return conv, len(prov.Opens()) > opens
 }
 
 // spawnRefused requires a uam_create_task call to be refused with a text
@@ -375,34 +372,5 @@ func TestCreateTaskRefusedWhenTheCallerIsNotActive(t *testing.T) {
 	waitSpawns(t, m)
 	if len(prov.Opens()) != opens {
 		t.Fatal("a settled task started a task")
-	}
-}
-
-// uam_create_task is always there, so it is not what a prompt compares: with
-// the planner off, prompts reopen neither a Task that has the tool nor a
-// Task created by it, and each reopens once the planner is switched on.
-func TestPromptDoesNotReopenForTheCreateTaskTool(t *testing.T) {
-	m, prov, _ := newTestManager(t)
-	project := gitProject(t, m, "app")
-	caller, err := m.Create(CreateRequest{Provider: prov.Name(), ProjectID: project, Name: "task"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	child, childConv := spawnOK(t, m, prov, prov.Last(), "call-1", fmt.Sprintf(`{"project":%q,"prompt":"p"}`, project))
-	childConv.EmitTurn(agentapi.TurnCompleted, "")
-	for _, id := range []string{caller.ID, child.ID, caller.ID, child.ID} {
-		if _, reopened := promptOpened(t, m, prov, id, "prompt"); reopened {
-			t.Fatalf("a prompt to %s reopened it with the planner off", id)
-		}
-	}
-	setPlanner(t, m, true)
-	for id, want := range map[string][]string{caller.ID: plannerTaskTools, child.ID: append(slices.Clone(allBoardTools), chartToolName)} {
-		conv, reopened := promptOpened(t, m, prov, id, "on")
-		if got := toolNames(conv.Request().Tools); !reopened || !slices.Equal(got, want) {
-			t.Fatalf("task %s reopened %v with %q", id, reopened, got)
-		}
-		if _, reopened := promptOpened(t, m, prov, id, "again"); reopened {
-			t.Fatalf("a prompt to %s reopened it again", id)
-		}
 	}
 }

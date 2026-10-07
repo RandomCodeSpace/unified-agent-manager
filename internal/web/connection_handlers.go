@@ -46,7 +46,7 @@ type federationPairResponse struct {
 }
 
 func (s *Server) federationDescriptor() federationDescriptor {
-	capabilities := append(slices.Clone(federationCoreCapabilities), "files-v1", "terminal-v1", "configuration-v1", "provider-accounts-v1", "planner-v1", "routines-v1", "usage-v1")
+	capabilities := append(slices.Clone(federationCoreCapabilities), "files-v1", "terminal-v1", "configuration-v1", "provider-accounts-v1", "routines-v1", "usage-v1")
 	if s.notices != nil {
 		capabilities = append(capabilities, "notices-v1")
 	}

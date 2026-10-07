@@ -24,10 +24,10 @@ const header = () => screen.getByRole('heading', { level: 1 });
 describe('the Task list', () => {
   test('keeps every unsettled Task in one flat list with its status', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
-    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which works on a planner subtask;
+    // Ready for review also holds t-chart, the chart demo (mock/charts.ts), and t21, which called the planner's tools;
     // Working holds t22, whose subagents still run after its turn.
     localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
-    const { user } = renderApp('?planner=unset');
+    const { user } = renderApp();
     const side = await sidebar();
     expect(side.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
     expect(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
@@ -168,7 +168,7 @@ describe('the Task list', () => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     try {
       localStorage.setItem('uam.viewedSince', JSON.stringify('2020-01-01T00:00:00Z'));
-      renderApp('?planner=unset');
+      renderApp();
       await sidebar();
       await waitFor(() => expect(document.title).toBe('(9) UAM'));
       expect(badges).toEqual([]);

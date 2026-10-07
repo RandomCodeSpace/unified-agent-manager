@@ -2,12 +2,15 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"maps"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -277,4 +280,105 @@ func joinReasons(a, b string) string {
 		return b
 	}
 	return a + "; " + b
+}
+
+// editedPaths lists the files one edit tool call (edit, create, write or
+// apply_patch, in any case) touched; none for a call that only reads or
+// failed. The paths come from the input's headers or path field alone, so an
+// input clipped at its size limit, or framed loosely, still names the files
+// before the cut; the paths are only matched against git's listing. This is
+// the one reading of which files a call changed: Changes, the Task's total,
+// the finish card and the outcome line all use it.
+func editedPaths(tool *agentapi.ToolCall) []string {
+	if tool == nil || tool.Status == agentapi.ToolFailed {
+		return nil
+	}
+	switch strings.ToLower(tool.Name) {
+	case "apply_patch":
+		return patchHeaderPaths(tool.Input)
+	case "edit", "create", "write":
+		if p := inputPath(tool.Input); p != "" {
+			return []string{p}
+		}
+	}
+	return nil
+}
+
+// inputPathRE finds a path field in JSON clipped before it closes.
+var inputPathRE = regexp.MustCompile(`"(?:path|file_path|filePath)"\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// inputPath is the file an edit tool's JSON input names in its path,
+// file_path or filePath field; "" when none, or when they disagree.
+func inputPath(input string) string {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(input), &obj) != nil {
+		// Clipped: the first path field before the cut.
+		var p string
+		if m := inputPathRE.FindStringSubmatch(input); m == nil || json.Unmarshal([]byte(m[1]), &p) != nil || !validResolvePath(p) {
+			return ""
+		}
+		return p
+	}
+	path := ""
+	for _, key := range []string{"path", "file_path", "filePath"} {
+		if raw, ok := obj[key]; ok {
+			var value string
+			if json.Unmarshal(raw, &value) != nil || !validResolvePath(value) || (path != "" && path != value) {
+				return ""
+			}
+			path = value
+		}
+	}
+	return path
+}
+
+// patchHeaderPaths lists the files a patch's Add, Update, Delete and Move to
+// headers name, in order. The input may be the patch itself, the patch as a
+// JSON string, or a JSON object holding it as a string field. JSON clipped at
+// the size limit has its escaped line breaks split and its cut last line
+// dropped.
+func patchHeaderPaths(input string) []string {
+	patch := strings.TrimSpace(input)
+	switch {
+	case strings.HasPrefix(patch, `"`):
+		var value string
+		if json.Unmarshal([]byte(patch), &value) == nil {
+			patch = value
+		} else {
+			patch = clippedLines(patch)
+		}
+	case strings.HasPrefix(patch, "{"):
+		var obj map[string]json.RawMessage
+		if json.Unmarshal([]byte(patch), &obj) != nil {
+			patch = clippedLines(patch)
+			break
+		}
+		for _, raw := range obj {
+			var value string
+			if json.Unmarshal(raw, &value) == nil && strings.Contains(value, "*** ") {
+				patch = value
+				break
+			}
+		}
+	}
+	var paths []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(patch, "\n") {
+		line = strings.TrimSpace(line)
+		for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "} {
+			p, ok := strings.CutPrefix(line, prefix)
+			if p = strings.TrimSpace(p); ok && validResolvePath(p) && !seen[p] && len(paths) < maxChangedFiles {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
+}
+
+// clippedLines splits clipped JSON text at its escaped line breaks and drops
+// the last line, which the clip may have cut.
+func clippedLines(text string) string {
+	text = strings.ReplaceAll(text, `\n`, "\n")
+	return text[:strings.LastIndexByte(text, '\n')+1]
 }

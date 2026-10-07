@@ -6,7 +6,7 @@ import { UamApp } from '@uam/ui';
 import { install } from '../../src/mock/install';
 import { createApiClient, type ConnectedInstance } from '../../src/api';
 
-const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'planner-v1', 'routines-v1', 'usage-v1', 'notices-v1'];
+const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'notices-v1'];
 const record = (id: string, label: string): ConnectedInstance => ({ id, instance_id: `instance-${id}`, label, base_url: `https://${id}.example`, enabled: true, generation: 1, has_key: true, version: 'test', protocol_major: 1, capabilities, allow_private: false });
 
 function federated(hash = '', records = [record('b', 'Workstation B'), record('c', 'Workstation C')]) {
@@ -236,7 +236,7 @@ test('home auth loss clears connected sources even while an invalid route has un
 
 test('combined badge preserves the home unread-failure count beside remote permission requests', async () => {
   localStorage.setItem('uam.viewedSince', JSON.stringify('2000-01-01T00:00:00Z'));
-  const { user } = federated('?planner=unset', [record('b', 'Workstation B')]);
+  const { user } = federated('', [record('b', 'Workstation B')]);
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   // Each instance has seven permission/question tasks; home's old read mark adds its failed and interrupted tasks.
@@ -345,7 +345,7 @@ test('Alt+J and Alt+K walk the Tasks that need you across machines, in the list�
   await waitFor(() => expect(window.location.hash).toBe(remote(keys[0])));
 });
 
-test('another machine’s Task, Terminal, Changes and Planner name the machine after their title; this instance’s do not', async () => {
+test('another machine’s Task, Terminal and Changes name the machine after their title; this instance’s do not', async () => {
   const { user } = federated('', [record('b', 'Workstation B')]);
   const rows = await taskRows();
   await user.click(await rows.findByRole('button', { name: /Fix re-attach redraw regression/, description: 'This instance' }));
@@ -365,9 +365,6 @@ test('another machine’s Task, Terminal, Changes and Planner name the machine a
   expect(within(changes).getByText('Workstation B')).toBeTruthy();
   await user.click(within(changes).getByRole('button', { name: 'Close changes' }));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
-  await user.click(screen.getByRole('button', { name: 'Planner' }));
-  await screen.findByRole('heading', { name: 'Planner', level: 1 });
-  expect(titleRow().getByText('Workstation B')).toBeTruthy();
 });
 
 test('choosing the open remote task again still selects it (the composer takes focus, the drawer closes)', async () => {
@@ -472,21 +469,6 @@ test('switching the instance in Settings keeps the section and shows the known s
   expect(screen.queryByText('Loading tasks…')).toBeNull();
   expect(screen.queryByRole('main', { busy: true })).toBeNull();
   for (const machine of ['This instance', 'Workstation B', 'Workstation C']) expect((await taskRows()).getByRole('button', { name: /Doctor: add terminal line/, description: machine })).toBeTruthy();
-});
-
-test('the Planner button opens another machine’s Planner when this one has it off', async () => {
-  const { user, owners } = federated();
-  const rows = await taskRows();
-  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
-  await act(async () => { await owners[0].fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planner: false }) }); });
-  await user.click(await screen.findByRole('button', { name: 'Planner' }));
-  await waitFor(() => expect(window.location.hash).toMatch(/^#planner=.*connection=b/));
-  // Its Board picker offers the machines with the planner on, by machine; this one is not among them.
-  await user.click(await screen.findByRole('button', { name: /^Project: / }));
-  const list = within(await screen.findByRole('listbox', { name: 'Projects' }));
-  expect(list.getByRole('group', { name: 'Workstation B' })).toBeTruthy();
-  expect(list.getByRole('group', { name: 'Workstation C' })).toBeTruthy();
-  expect(list.queryByRole('group', { name: 'This instance' })).toBeNull();
 });
 
 /** The Usage popover's summary value under `label`. */

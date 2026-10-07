@@ -6,8 +6,8 @@ import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, modelTex
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
 import { Note, Skeleton } from './common';
-import { PlannerContext, usePlannerTasks } from './planner/context';
 import { Row } from './TaskDefaults';
+import { TaskList } from './taskActions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse } from './ui/collapse';
@@ -19,10 +19,9 @@ const REFRESH_MS = 15000;
 const MAX_LIMIT = 1000;
 
 function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
-  const { sessions, openTask } = usePlannerTasks();
-  const projects = useContext(PlannerContext)?.projects;
+  const { sessions, projects, openTask } = useContext(TaskList);
   const task = call.task_id ? sessions.find((s) => s.id === call.task_id) : undefined;
-  const project = call.project_id ? projects?.find((p) => p.id === call.project_id) : undefined;
+  const project = call.project_id ? projects.find((p) => p.id === call.project_id) : undefined;
   const outcome = outcomeLabel(call);
   const ran = call.outcome !== 'skipped';
   const meta = [modelText(call), ran && sizeText(call), ran && tokenText(call), ran && durationText(call.duration_ms), call.credits ? `${formatCredits(call.credits)} credits` : ''].filter(Boolean).join(' · ');
@@ -53,7 +52,7 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
 }
 
 /**
- * Settings → Background AI: UAM's own calls on the Utility model (titles, suggested replies, planner jobs), today's
+ * Settings → Background AI: UAM's own calls on the Utility model (titles, suggested replies), today's
  * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. The log
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
@@ -161,8 +160,8 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
         {today.paused && (
           <Note tone="warn" role="status" className="max-w-3xl">
             {today.limit === 0
-              ? 'Background AI is off. New tasks keep their first message as the title, subagent results keep their own report, and planner suggestions and triage are refused. Set a daily limit above 0 to turn it on.'
-              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new tasks keep their first message as the title, subagent results keep their own report, and planner suggestions and triage are refused. Raise the limit to resume now.`}
+              ? 'Background AI is off. New tasks keep their first message as the title, and subagent results keep their own report. Set a daily limit above 0 to turn it on.'
+              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new tasks keep their first message as the title, and subagent results keep their own report. Raise the limit to resume now.`}
           </Note>
         )}
       </div>

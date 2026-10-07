@@ -24,7 +24,6 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -145,9 +144,6 @@ type Manager struct {
 	// repository, closed when it ends (git_actions.go). A turn starting there
 	// waits for it.
 	gitWrites map[string]chan struct{}
-	// boardRevs is each Board's latest revision while the planner store is
-	// open, and nil otherwise (board.go).
-	boardRevs map[string]int64
 	// quota is each usage provider's quota cache; quotaPolled is when the
 	// latest read began.
 	quota       map[string]*quotaCache
@@ -156,8 +152,8 @@ type Manager struct {
 	// loop checks for a due one (tests set it before Start).
 	quotaKick chan struct{}
 	quotaTick time.Duration
-	// titles counts the Utility jobs (titles, the planner's jobs, suggested
-	// replies, turn outcomes and commit drafts), which Shutdown waits for
+	// titles counts the Utility jobs (titles, suggested replies, turn
+	// outcomes and commit drafts), which Shutdown waits for
 	// before providers stop: a job deletes its throwaway conversation on the
 	// way out.
 	// titleSlots bounds provider calls shared by titles, suggested replies and
@@ -175,39 +171,18 @@ type Manager struct {
 	terminals  map[*terminal]struct{}
 	terminalWG sync.WaitGroup
 	// hostTools, when set, returns the host tools the conversation of a Task
-	// in a Project registers, spawned when uam_create_task or a routine's run
-	// created the Task and lane when it works in a lane, and the CallTool
-	// bound to that Task. It runs with mu held, so it takes no lock and never
-	// uses the planner store. NewManager sets it to the planner's tools and
-	// uam_create_task (create_task.go).
-	hostTools func(taskID, projectID string, spawned, lane bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
+	// registers, spawned when uam_create_task or a routine's run created the
+	// Task, and the CallTool bound to that Task. It runs with mu held, so it
+	// takes no lock. NewManager sets it to uam_create_task and uam_chart
+	// (create_task.go).
+	hostTools func(taskID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult)
 	// skillDirs hold the built-in skills every Task's conversation loads
 	// (skills.go); Start installs them.
 	skillDirs []string
-	// board is the planner database while the Settings switch is on
-	// (board.go).
-	board boardDB
-	// accept runs the planner's acceptance commands, as many per Project at
-	// a time as it allows (board_evidence.go).
-	accept acceptRunners
-	// lanes holds each Project's land mutex and the lane work in progress
-	// (lane_runs.go). landHook, when set, runs at each landing, revert and
-	// lane start step; tests set it before them.
-	lanes    laneState
-	landHook func(stage string)
 	// calls are each Task's host tool calls in progress, which settling or
-	// archiving the Task cancels and waits for (board_tools.go). Guarded by
-	// mu. boardCallHook, when set, runs as each such call starts; tests set
-	// it before the calls.
-	calls         map[string]map[*taskCall]struct{}
-	boardCallHook func(ctx context.Context, tool string)
-	// stale computes the planner's staleness (board_stale.go), and triage
-	// keeps its triage answers (board_ai.go).
-	stale  staleCache
-	triage triageCache
-	// boardJobs maps a card to its running planner job, a suggestion or a
-	// check (board_ai.go). Guarded by mu.
-	boardJobs map[string]string
+	// archiving the Task cancels and waits for (create_task.go). Guarded by
+	// mu.
+	calls map[string]map[*taskCall]struct{}
 	// spawns maps each Task uam_create_task is creating to the Task that
 	// called it, until the create ends, and spawnWait bounds how long the
 	// call waits for it: viewWait, which tests shorten (create_task.go).
@@ -224,8 +199,6 @@ type Manager struct {
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).
 	routines routineState
-	// exec is the executor, which runs approved epics (executor.go).
-	exec executorState
 	// binary follows the uam binary on disk for a restart onto a new one
 	// (restart.go); nil when the service cannot restart itself. RunDaemon
 	// sets it before Start.
@@ -264,7 +237,6 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 		titleSlots: make(chan struct{}, maxTitleJobs),
 		imageJobs:  make(chan imageJob, maxImageJobs),
 		reads:      make(chan struct{}, maxHistoryReads),
-		exec:       newExecutorState(),
 	}
 	for _, p := range providers {
 		if p == nil {
@@ -329,9 +301,6 @@ type webSession struct {
 	// stage is StageActive, StageSettled or StageArchived.
 	stage                 string
 	settledAt, archivedAt time.Time
-	// retired is why a lane Task uam retired is not reopened; empty for
-	// every other Task.
-	retired string
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq           uint64
@@ -341,9 +310,6 @@ type webSession struct {
 	timingRevision    uint64
 
 	conv agentapi.Conversation
-	// convBoardTools is whether conv opened with the planner tools
-	// (boardToolsLocked).
-	convBoardTools bool
 	// gen identifies the current conversation; events from an older one are
 	// ignored.
 	gen     uint64
@@ -493,7 +459,7 @@ type persistKey struct {
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
 	mode                                                                                                             store.Mode
 	settledAt, archivedAt                                                                                            time.Time
-	outcome, retired                                                                                                 string
+	outcome                                                                                                          string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -560,7 +526,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, retired: s.retired}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -657,7 +623,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
-	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, Planner: cfg.WebSettings.Planner, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold}
 	if m.settings.SendDefault != store.WebSendQueue {
@@ -680,19 +646,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	usage := m.usageProviderLocked()
 	cliNames := m.cliProvidersLocked()
-	planner := m.settings.Planner
 	m.mu.Unlock()
 	m.loadRoutines(cfg)
-	// The Task records are loaded, so Reconcile runs before the planner
-	// takes a write.
-	if planner {
-		if err := m.openBoard(ctx); err != nil {
-			log.Warn("open the planner database failed", "error", err)
-			m.board.mu.Lock()
-			m.board.broken = true
-			m.board.mu.Unlock()
-		}
-	}
 	m.loadUploads()
 	m.sweepUploads()
 	m.loadUtilityLog()
@@ -709,11 +664,10 @@ func (m *Manager) Start(ctx context.Context) error {
 			_ = m.verifyAccount(name, true)
 		}
 	}
-	m.wg.Add(5)
+	m.wg.Add(4)
 	go m.persistLoop()
 	go m.sweepLoop()
 	go m.routineLoop()
-	go m.executorLoop()
 	if usage {
 		m.wg.Add(1)
 		go m.usageLoop()
@@ -842,7 +796,6 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
 		}
-		s.retired = web.Retired
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
 		}
@@ -984,7 +937,7 @@ func (m *Manager) Providers() []ProviderInfo {
 }
 
 // RecentWorkdirs returns distinct workdirs of stored records of any surface,
-// most recently seen first, leaving out the lanes.
+// most recently seen first.
 func (m *Manager) RecentWorkdirs() []string {
 	out := []string{}
 	cfg, err := m.store.Load()
@@ -994,8 +947,7 @@ func (m *Manager) RecentWorkdirs() []string {
 	}
 	recs := make([]store.SessionRecord, 0, len(cfg.Sessions))
 	for _, rec := range cfg.Sessions {
-		// Lanes are uam's, never folders the owner picks.
-		if rec.Workdir != "" && !m.inLanes(rec.Workdir) {
+		if rec.Workdir != "" {
 			recs = append(recs, rec)
 		}
 	}
@@ -1043,7 +995,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, Retired: s.retired, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
+		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome,
@@ -1304,16 +1256,9 @@ var errProjectNotFound = newError(http.StatusNotFound, "project not found")
 
 // RemoveProject deletes a Project and its Task records. It is refused unless
 // every Task in it is archived. Conversations are never deleted at the
-// provider, and the directory is not touched. The Project's planner cards
-// move to Unassigned, and the directory uam made for its lanes goes when
-// empty.
+// provider, and the directory is not touched.
 func (m *Manager) RemoveProject(id string) error {
-	if err := m.removeProject(id); err != nil {
-		return err
-	}
-	m.unassignBoard(id)
-	m.dropLanesDir(id)
-	return nil
+	return m.removeProject(id)
 }
 
 func (m *Manager) removeProject(id string) error {
@@ -1412,8 +1357,7 @@ func (m *Manager) Settings() Settings {
 // CustomModels, when not nil, replaces every custom model; an empty list
 // removes them all. TaskDefaults replaces the settings a new Task starts
 // with; they are checked as a Task's selection is. Turning Terminal off
-// closes every open terminal. Turning Planner on opens the planner database,
-// and turning it off closes it; it cannot turn on without Git.
+// closes every open terminal.
 // UtilityLimit sets the daily limit of Utility calls, 0 to
 // store.MaxUtilityDailyLimit; pointing at nil puts the default back.
 // CompactionThreshold works the same way, store.MinCompactionThreshold to
@@ -1422,7 +1366,6 @@ type SettingsPatch struct {
 	TokenPrices    *map[string]map[string]store.WebTokenPrice
 	SendDefault    *string
 	Terminal       *bool
-	Planner        *bool
 	HiddenModels   map[string][]string
 	SubagentModels map[string][]string
 	TitleModel     map[string]string
@@ -1581,9 +1524,6 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.Terminal != nil {
 		next.Terminal = *p.Terminal
 	}
-	if p.Planner != nil {
-		next.Planner = *p.Planner
-	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1615,17 +1555,8 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.Planner == current.Planner && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
-	}
-	opening := next.Planner && !current.Planner
-	if opening {
-		if _, err := execpath.Resolve("git"); err != nil {
-			return Settings{}, noGitError(noGitInstalled)
-		}
-		if err := m.openBoard(m.ctx); err != nil {
-			return Settings{}, fmt.Errorf("open the planner database: %w", err)
-		}
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		if p.TokenPrices != nil {
@@ -1633,7 +1564,6 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.Terminal = next.Terminal
-		cfg.WebSettings.Planner = next.Planner
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.SuggestReplies = next.SuggestReplies
@@ -1646,13 +1576,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 		return nil
 	}); err != nil {
-		if opening {
-			m.closeBoard()
-		}
 		return Settings{}, fmt.Errorf("save web settings: %w", err)
-	}
-	if current.Planner && !next.Planner {
-		m.closeBoard()
 	}
 	if customChanged {
 		m.setCustomModels(*p.CustomModels)
@@ -1810,11 +1734,7 @@ func withProviders[V string | []string](current, change map[string]V) map[string
 // is refused for any other stage. The conversation is never deleted at the
 // provider.
 func (m *Manager) Delete(id string) error {
-	if err := m.deleteTask(id); err != nil {
-		return err
-	}
-	m.reconcileBoard()
-	return nil
+	return m.deleteTask(id)
 }
 
 func (m *Manager) deleteTask(id string) error {
@@ -1978,7 +1898,7 @@ func (m *Manager) flush() (err error) {
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
-				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, Retired: key.retired, TerminalSession: s.terminalID, Imported: s.imported,
+				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 			},
 		})
@@ -2250,7 +2170,6 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickSignedOutLocked(s, detail)
 	}
 	if turn.State != agentapi.TurnWorking {
-		m.turnLeftWorkingLocked(s, turn.State)
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
 		m.kickQuotaLocked(s.provider)
@@ -2283,10 +2202,6 @@ type CreateRequest struct {
 	autopilot bool
 	// rerunOf is the Task Rerun runs again.
 	rerunOf string
-	// workdir is the lane a lane start makes the Task in (ADR 0006 §5.3);
-	// "" is the Project directory. checkCreate honours it only in the
-	// Project's lanes.
-	workdir string
 }
 
 // Create opens a new provider conversation in a Project's directory, records
@@ -2313,16 +2228,6 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 	var workdir string
 	if project != nil {
 		workdir = project.Dir
-	}
-	// Only a lane start sets its own workdir, and only in the Project's
-	// lanes.
-	if req.workdir != "" {
-		lanes := filepath.Join(m.lanesRoot(), req.ProjectID)
-		if !m.inLanes(req.workdir) || !inDir(lanes, filepath.Clean(req.workdir)) || filepath.Clean(req.workdir) == lanes {
-			m.mu.Unlock()
-			return nil, "", "", newError(http.StatusBadRequest, "a task works in its project's directory")
-		}
-		workdir = filepath.Clean(req.workdir)
 	}
 	req.ContextSize = cmp.Or(req.ContextSize, "default")
 	selectionErr := m.validateSelectionLocked(prov.Name(), req.Model, req.Effort, req.ContextSize)
@@ -2393,7 +2298,6 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.gen = 1
 	m.mu.Lock()
 	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, s)
-	s.convBoardTools = m.boardToolsLocked(s.projectID)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
@@ -2634,7 +2538,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 	}
 	s.compactAt = m.settings.compactionThreshold()
 	if m.hostTools != nil {
-		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.projectID, s.spawnedBy != "" || s.routineID != "", m.inLanes(s.workdir))
+		req.Tools, req.CallTool = m.hostTools(req.SessionID, s.spawnedBy != "" || s.routineID != "")
 	}
 	return req
 }
@@ -2682,7 +2586,6 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	s.gen++
 	gen := s.gen
 	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s)
-	boardTools := m.boardToolsLocked(s.projectID)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context, s.compacting = nil, false
@@ -2739,7 +2642,6 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	switch {
 	case err == nil && !stale:
 		s.conv = conv
-		s.convBoardTools = boardTools
 		s.activeAt = m.now()
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
@@ -3050,9 +2952,6 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, error) {
 	if sub, found, err := m.checkedPrompt(s, reqID); found || err != nil {
 		return sub, err
-	}
-	if in.command == "" {
-		m.closeForToolsLocked(s)
 	}
 	if err := m.openLocked(s, true); err != nil {
 		if errors.Is(err, errShuttingDown) {
@@ -3768,28 +3667,6 @@ func (m *Manager) closeIdle(s *webSession) {
 	log.Info("closed idle web conversation", "session", s.id, "idle", idle.Round(time.Second))
 }
 
-// closeForToolsLocked closes s's conversation when it opened with or without
-// the planner tools and the Task now gets the other (boardToolsLocked), so
-// the openLocked that follows reopens it with the current ones. Its other
-// host tools never change, so they are not compared. A conversation that
-// still runs or waits for anything, an idle subagent's follow-up included,
-// is left as it is. The transcript is kept for the viewer; the reopen
-// merges the provider's record into it. The caller holds s.op.
-func (m *Manager) closeForToolsLocked(s *webSession) {
-	m.mu.Lock()
-	if m.closed || s.removed || s.conv == nil || s.convBoardTools == m.boardToolsLocked(s.projectID) || s.runsOrWaitsLocked() ||
-		slices.ContainsFunc(s.subagents, func(sa *agentapi.Subagent) bool { return sa.Status == agentapi.SubagentIdle }) {
-		m.mu.Unlock()
-		return
-	}
-	before := m.summaryLocked(s)
-	conv := m.suspendLocked(s, false)
-	m.changedLocked(s, before)
-	m.mu.Unlock()
-	m.closeConversation(conv)
-	log.Info("closed web conversation to reopen it with its current tools", "session", s.id)
-}
-
 // suspendLocked detaches s from its open conversation and returns it for the
 // caller to close outside mu. The Task keeps its state; its next view or
 // prompt reopens the conversation, as after a restart. dropHistory drops the
@@ -3834,38 +3711,29 @@ func (s *webSession) runsOrWaitsLocked() bool {
 
 // Settle marks an active Task complete and closes its conversation. It is
 // refused while the Task is busy, has queued prompts, waits for an answer, or
-// still runs subagents or background tasks. A Task holding planner subtasks
-// settles through SettleHolds.
+// still runs subagents or background tasks. Its host tool calls in progress
+// end.
 func (m *Manager) Settle(id string) (SessionSummary, error) {
-	return m.SettleHolds(id, nil)
-}
-
-// Reopen makes a settled Task active again. Its next prompt reopens the same
-// conversation. A lane Task uam retired is refused with why.
-func (m *Manager) Reopen(id string) (SessionSummary, error) {
-	return m.reconciled(m.moveStage(id, StageActive, StageSettled))
-}
-
-// Archive moves an active or settled Task to its final stage; nothing moves
-// it back. An active Task must meet the same conditions as for Settle.
-// Archiving ends the Task's planner calls in progress, then releases its
-// planner holds; a lane Task's lane is then cleaned up.
-func (m *Manager) Archive(id string) (SessionSummary, error) {
-	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
+	summary, err := m.moveStage(id, StageSettled, StageActive)
 	if err == nil {
 		m.endCalls(id)
-	}
-	summary, err = m.reconciled(summary, err)
-	if err == nil {
-		m.cleanLaneOf(summary.Workdir)
 	}
 	return summary, err
 }
 
-// reconciled reconciles the planner after a Task transition that succeeded.
-func (m *Manager) reconciled(summary SessionSummary, err error) (SessionSummary, error) {
+// Reopen makes a settled Task active again. Its next prompt reopens the same
+// conversation.
+func (m *Manager) Reopen(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageActive, StageSettled)
+}
+
+// Archive moves an active or settled Task to its final stage; nothing moves
+// it back. An active Task must meet the same conditions as for Settle.
+// Archiving ends the Task's host tool calls in progress.
+func (m *Manager) Archive(id string) (SessionSummary, error) {
+	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
 	if err == nil {
-		m.reconcileBoard()
+		m.endCalls(id)
 	}
 	return summary, err
 }
@@ -3891,10 +3759,6 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 	case !slices.Contains(from, s.stage):
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "a task that is %s cannot be %s", stageName(s.stage), stageVerb(to))
-	case to == StageActive && s.retired != "":
-		// A lane Task uam retired has no lane left to work in.
-		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusConflict, "%s", s.retired)
 	}
 	before := m.summaryLocked(s)
 	var conv agentapi.Conversation
@@ -4348,11 +4212,9 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 		}
 	}
 	wait(ctx, &m.wg)
-	wait(ctx, &m.lanes.wg)
 	if err := m.flush(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("persist web sessions: %w", err)
 	}
-	m.closeBoard()
 	return true, firstErr
 }
 

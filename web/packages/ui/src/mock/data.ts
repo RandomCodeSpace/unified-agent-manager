@@ -986,7 +986,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     }),
   ];
 
-  // Works on planner subtask #25 (mock/board.ts), with card links in its transcript: its story strip and Plan panel.
+  // An older Task that called the planner's board_* tools: they show as ordinary tool rows.
   tasks.push(
     task({
       id: 't21',
@@ -1001,12 +1001,12 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       updated_at: ago(8),
       items: [
         { id: 'w1', kind: 'user', time: ago(25), text: 'Work on #25: sign the release archives in the release job and upload the signatures.' },
-        tool('w2', 24, { name: 'board_get', title: 'Read card #25', status: 'completed', input: '{"card":"#25"}', output: '#25 Sign archives and publish signatures (doing)', board_card: { id: 'cp1-25', seq: 25, kind: 'subtask', title: 'Sign archives and publish signatures', status: 'doing' } }),
+        tool('w2', 24, { name: 'board_get', title: 'Read card #25', status: 'completed', input: '{"card":"#25"}', output: '#25 Sign archives and publish signatures (doing)' }),
         { id: 'w3', kind: 'assistant', time: ago(23), text: 'Signing belongs to the *Sign release binaries* story, which waits for the release matrix: the archives it signs come from there. I will sign whatever the job builds today and pick up the new targets when they land.' },
-        tool('w4', 22, { name: 'board_get', title: 'Read card #18', status: 'completed', input: '{"card":"#18"}', output: '#18 Release automation (doing)', board_card: { id: 'cp1-18', seq: 18, kind: 'epic', title: 'Release automation', status: 'doing' } }),
+        tool('w4', 22, { name: 'board_get', title: 'Read card #18', status: 'completed', input: '{"card":"#18"}', output: '#18 Release automation (doing)' }),
         tool('w5', 18, { name: 'edit', title: 'Edit .github/workflows/release.yml', status: 'completed', input: '{"path":".github/workflows/release.yml"}', output: '+      - run: cosign sign-blob --yes dist/*.tar.gz' }),
-        tool('w6', 12, { name: 'board_checklist', title: 'Tick "Sign in the release job"', status: 'completed', input: '{"card":"#25","item":0,"done":true}', output: 'ticked', board_card: { id: 'cp1-25', seq: 25, kind: 'subtask', title: 'Sign archives and publish signatures', status: 'doing' } }),
-        tool('w8', 9, { name: 'board_get', title: 'Read card #26', status: 'completed', input: '{"card":"#26"}', output: '#26 Verify signatures in the install script (planned)', board_card: { id: 'cp1-26', seq: 26, kind: 'subtask', title: 'Verify signatures in the install script', status: 'planned' } }),
+        tool('w6', 12, { name: 'board_checklist', title: 'Tick "Sign in the release job"', status: 'completed', input: '{"card":"#25","item":0,"done":true}', output: 'ticked' }),
+        tool('w8', 9, { name: 'board_get', title: 'Read card #26', status: 'completed', input: '{"card":"#26"}', output: '#26 Verify signatures in the install script (planned)' }),
         { id: 'w7', kind: 'assistant', time: ago(8), text: 'The release job signs every archive now. Next: upload the `.sig` files, then document the key. #26 (verifying signatures in the install script) waits on the checksums in #31.' },
       ],
     }),
@@ -1240,9 +1240,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',
-      // On here, unlike the service, so the Task header shows Terminal and the sidebar the planner.
+      // On here, unlike the service, so the Task header shows Terminal.
       terminal: true,
-      planner: true,
       // The setting names a model with effort and a long context, so the Settings section and a draft show them resolved.
       task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],

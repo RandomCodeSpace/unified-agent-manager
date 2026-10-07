@@ -77,7 +77,7 @@ describe('Home', () => {
     let loadMeta!: (meta: typeof state.meta) => void;
     vi.spyOn(api, 'meta').mockReturnValue(new Promise((resolve) => { loadMeta = resolve; }));
     const create = vi.spyOn(api, 'createSession');
-    const { user } = renderApp('?planner=unset');
+    const { user } = renderApp();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
     expect(main.queryByRole('region', { name: 'Recent tasks' })).toBeNull();
@@ -95,7 +95,7 @@ describe('Home', () => {
     state.projects = [];
     state.tasks = [];
     vi.spyOn(data, 'seed').mockReturnValue(state);
-    const { user } = renderApp('?planner=unset');
+    const { user } = renderApp();
     expect(await screen.findByRole('heading', { name: 'Start with a project' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
     expect(main.queryByRole('button', { name: 'New task' })).toBeNull();

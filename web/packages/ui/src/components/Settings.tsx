@@ -2,14 +2,14 @@ import { useApi } from '../ApiContext';
 import { useFederation } from '../FederationContext';
 import { LogOut, X } from 'lucide-react';
 import { useContext, useEffect, useId, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
-import { PlannerContext } from './planner/context';
-import { DEFAULT_COMPACT_THRESHOLD, describeError, plannerErrorText, resolveTaskDefaults, routeMissing, type CustomModel, type ImportReport, type Model, type Project, type ProviderInfo, type SendDefault, type Settings } from '../api';
+import { DEFAULT_COMPACT_THRESHOLD, describeError, resolveTaskDefaults, type CustomModel, type Model, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { restartOffered, UamService } from './UamService';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
+import { TaskList } from './taskActions';
 import { Dot, Note, Skeleton, Spinner, useApp, useScrolled, ScrollSentinel } from './common';
 import { cn } from '../lib/cn';
 import { byCodeUnit } from '../lib/order';
@@ -32,7 +32,6 @@ import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { HelpTip, Tip } from './ui/tooltip';
 
-const NO_PROJECTS: Project[] = [];
 const SETTINGS_SECTIONS = [
   { id: 'connections', label: 'Connected instances' },
   { id: 'general', label: 'General' },
@@ -92,7 +91,7 @@ function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: str
 }
 
 /** The optional connected-instance features (Federation capabilities), named as Settings names them. */
-const OPTIONAL_FEATURES = ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'planner-v1', 'routines-v1', 'usage-v1'];
+const OPTIONAL_FEATURES = ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1'];
 
 /** In place of a section whose routes the connected instance on screen does not offer: why, not a form that fails. */
 function Unsupported({ what }: Readonly<{ what: string }>) {
@@ -416,85 +415,6 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
 }
 
 /**
- * Settings → Planner (ADR 0005 §17): the switch (off by default; it cannot turn on without a git
- * binary), the Utility model its suggestions and triage use, and the one-time import of a board
- * from the kb app: a source directory in, a report out.
- */
-function PlannerSection({ settings, saving, projects, providers, onSave, hidden }: Readonly<{ settings: Settings; saving: boolean; projects: Project[]; providers: ProviderInfo[]; hidden?: boolean; onSave: (patch: Partial<Settings>) => void }>) {
-  const api = useApi();
-  const [dir, setDir] = useState('');
-  const [report, setReport] = useState<ImportReport | null>(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  // A service without the import route yet (it lands after the planner): the form stays, disabled.
-  const [importMissing, setImportMissing] = useState(false);
-  const noGit = projects.some((p) => p.no_git === 'not_installed');
-  const utility = providers
-    .filter((p) => p.capabilities.titles)
-    .map((p) => {
-      const id = settings.title_model?.[p.name] || p.cheapest_model;
-      return id === UTILITY_NONE ? `${p.display_name}: none (suggestions and triage are unavailable)` : `${p.display_name}: ${p.models.find((m) => m.id === id)?.name ?? id ?? 'the provider default'}`;
-    });
-  const run = async (e: SubmitEvent) => {
-    e.preventDefault();
-    setImporting(true);
-    setImportError(null);
-    setReport(null);
-    try {
-      setReport(await api.planner.import(dir.trim()));
-    } catch (err) {
-      if (routeMissing(err)) setImportMissing(true);
-      else setImportError(plannerErrorText(err));
-    } finally {
-      setImporting(false);
-    }
-  };
-  return (
-    <Section
-      hidden={hidden}
-      id="planner"
-      title="Planner"
-      help="Epics, stories and subtasks for each git project, which agents decompose and carry out and you confirm, launch and close. Off, nothing of it shows."
-      control={<Switch aria-label="Planner" aria-describedby={noGit ? 'planner-switch-help' : undefined} checked={!!settings.planner} disabled={saving || (noGit && !settings.planner)} onCheckedChange={(planner) => onSave({ planner })} />}
-    >
-      {noGit && <Note id="planner-switch-help">Git is not installed on the server, so the planner cannot turn on.</Note>}
-      {settings.planner && utility.length > 0 && <Note>Suggestions and triage use the Utility model: {utility.join('; ')}.</Note>}
-      {settings.planner && (
-        <form aria-label="Import from kb" className="flex flex-col gap-2" onSubmit={(e) => void run(e)}>
-          <Row id="planner-import" label="Import from kb" htmlFor="planner-import-dir" help="Copy cards from a kb board directory. Cards whose project name matches a project here join its board; the rest wait in Unassigned. Running it again adds no duplicates.">
-            <Input id="planner-import-dir" aria-describedby="planner-import-help" className="w-72 max-w-full text-ui" spellCheck={false} autoComplete="off" placeholder="/home/you/.local/share/kb" value={dir} disabled={importing || importMissing} onChange={(e) => setDir(e.target.value)} />
-            <Button type="submit" variant="secondary" size="lg" loading={importing} disabled={!dir.trim() || importMissing}>
-              Import
-            </Button>
-          </Row>
-          {importMissing && <Note role="status">This service cannot import yet; an update adds it.</Note>}
-          {importError && <Note tone="error" role="alert">Could not import: {importError}</Note>}
-          {report && (
-            <div role="status" className="flex flex-col gap-1 rounded-md bg-tint-well px-3 py-2 text-caption text-body">
-              <span>
-                {report.imported} imported, {report.updated} already here, {report.unassigned} to Unassigned, {report.comments} {report.comments === 1 ? 'comment' : 'comments'} and {report.links} blocker {report.links === 1 ? 'link' : 'links'} copied.
-              </span>
-              {report.skipped.length > 0 && (
-                <>
-                  <span className="text-muted">{report.skipped.length} skipped:</span>
-                  <ul className="flex flex-col gap-0.5 pl-2">
-                    {report.skipped.map((s) => (
-                      <li key={s.id} className="min-w-0 text-muted [overflow-wrap:anywhere]">
-                        {s.id}: {s.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          )}
-        </form>
-      )}
-    </Section>
-  );
-}
-
-/**
  * The Settings view (issue #183): a page in the main pane, not a dialog, reached from the
  * sidebar's gear and `#settings`. A change shows at once and is saved through PATCH; a
  * refusal puts the old value back and says why.
@@ -550,7 +470,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const instance = instanceControl ? api.owner?.label ?? 'This instance' : null;
   const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
-  const projects = useContext(PlannerContext)?.projects ?? NO_PROJECTS;
+  const { projects } = useContext(TaskList);
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
   // Opened for Token costs, or on a provider's account (`focusAccount`, the blocked app's Open Settings).
@@ -774,7 +694,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               </div>
             ))}
           </Section>}
-          {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, suggested replies, outcome lines, planner suggestions and triage, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
+          {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
             <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
           </Section>}
           {loaded && !catalogPending && <Section hidden={section !== 'models'} id="models" title="Models" help="Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.">
@@ -819,10 +739,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             {metaError && <Note tone="error" role="alert">Could not load provider accounts: {metaError} <Button size="sm" onClick={refreshMeta}>Retry</Button></Note>}
             <CustomModels models={settings.custom_models ?? []} disabled={saving} onSave={saveCustom} />
           </Section>}
-          {/* A service that does not know the planner setting yet has no planner: no row at all. */}
-          {loaded && settings.planner !== undefined && (api.supports('planner-v1')
-            ? <PlannerSection hidden={section !== 'general'} settings={settings} saving={saving} projects={projects} providers={meta?.providers ?? []} onSave={(patch) => void save(patch)} />
-            : <Section hidden={section !== 'general'} id="planner" title="Planner"><Unsupported what="the planner" /></Section>)}
           {loaded && <Section hidden={section !== 'general'} id="shell" title="Shell access">
             {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
               <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />

@@ -1,9 +1,12 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -51,27 +54,121 @@ type createTaskArgs struct {
 	Model   string `json:"model"`
 }
 
-// taskToolsLocked is the Manager's hostTools: the planner tools the Task
-// gets (taskHostToolsLocked), uam_create_task unless spawned (that tool or a
-// routine's run created the Task) or a lane Task (it runs one subtask of an
-// approved epic), and uam_chart (charts.go). Its CallTool runs each call by
-// the tool's name. The caller holds mu.
-func (m *Manager) taskToolsLocked(taskID, projectID string, spawned, lane bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
-	tools, board := m.taskHostToolsLocked(taskID, projectID, lane)
-	creates := !spawned && !lane
-	if creates {
+// taskToolsLocked is the Manager's hostTools: uam_create_task unless
+// spawned (that tool or a routine's run created the Task), and uam_chart
+// (charts.go). Its CallTool runs each call by the tool's name. The caller
+// holds mu.
+func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostTool, func(context.Context, agentapi.HostToolCall) agentapi.HostToolResult) {
+	var tools []agentapi.HostTool
+	if !spawned {
 		tools = append(tools, createTaskTool)
 	}
 	return append(tools, chartTool), func(ctx context.Context, call agentapi.HostToolCall) agentapi.HostToolResult {
 		switch {
 		case call.Name == chartToolName:
 			return m.chartCall(ctx, taskID, call)
-		case call.Name == createTaskToolName && creates:
+		case call.Name == createTaskToolName && !spawned:
 			return m.createTask(ctx, taskID, call)
-		case board == nil:
-			return agentapi.HostToolResult{Text: fmt.Sprintf("there is no uam tool %q", call.Name), Failed: true}
 		}
-		return board(ctx, call)
+		return agentapi.HostToolResult{Text: fmt.Sprintf("there is no uam tool %q", call.Name), Failed: true}
+	}
+}
+
+// errTaskEnded ends a host tool call whose Task was settled or archived
+// while it ran.
+var errTaskEnded = errors.New("the task was settled or archived, so this call was discarded")
+
+// decodeToolArgs decodes a call's JSON object into v, refusing unknown
+// arguments as the schemas do.
+func decodeToolArgs(raw json.RawMessage, v any) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = json.RawMessage("{}")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return newError(http.StatusBadRequest, "invalid arguments: %s", strings.TrimPrefix(err.Error(), "json: "))
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return newError(http.StatusBadRequest, "invalid arguments: one JSON object is expected")
+	}
+	return nil
+}
+
+// toolSchema is a strict JSON Schema object of the given properties.
+func toolSchema(required []string, props map[string]any) map[string]any {
+	if required == nil {
+		required = []string{}
+	}
+	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
+}
+
+func stringProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
+
+func enumProp(desc string, values ...string) map[string]any {
+	return map[string]any{"type": "string", "enum": values, "description": desc}
+}
+
+func listProp(desc string, items map[string]any) map[string]any {
+	return map[string]any{"type": "array", "items": items, "description": desc}
+}
+
+// taskCall is one host tool call of a Task in progress: cancel ends it, and
+// done is closed once it has returned.
+type taskCall struct {
+	cancel context.CancelCauseFunc
+	done   chan struct{}
+}
+
+// startCall ties a host tool call of the Task id to the Task. It refuses
+// unless the Task is active, checked under mu, where Settle and Archive
+// change the stage; the returned context ends with errTaskEnded once the
+// Task leaves the active stage. end must run when the call returns.
+func (m *Manager) startCall(ctx context.Context, id string) (context.Context, func(), error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch s := m.sessions[id]; {
+	case s == nil:
+		return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
+	case s.stage != StageActive:
+		return nil, nil, newError(http.StatusConflict, "the task is %s, so it can no longer use uam tools", stageName(s.stage))
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	call := &taskCall{cancel: cancel, done: make(chan struct{})}
+	if m.calls == nil {
+		m.calls = map[string]map[*taskCall]struct{}{}
+	}
+	if m.calls[id] == nil {
+		m.calls[id] = map[*taskCall]struct{}{}
+	}
+	m.calls[id][call] = struct{}{}
+	return ctx, func() {
+		m.mu.Lock()
+		delete(m.calls[id], call)
+		if len(m.calls[id]) == 0 {
+			delete(m.calls, id)
+		}
+		m.mu.Unlock()
+		cancel(nil)
+		close(call.done)
+	}, nil
+}
+
+// endCalls cancels the host tool calls of the Task id in progress and
+// returns once they have all returned. The caller has moved the Task out of
+// the active stage, so no new call starts.
+func (m *Manager) endCalls(id string) {
+	m.mu.Lock()
+	calls := m.calls[id]
+	delete(m.calls, id)
+	m.mu.Unlock()
+	for call := range calls {
+		call.cancel(errTaskEnded)
+	}
+	for call := range calls {
+		<-call.done
 	}
 }
 

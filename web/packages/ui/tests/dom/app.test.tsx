@@ -6,8 +6,7 @@ const header = () => screen.getByRole('heading', { level: 1 });
 
 describe('app shell', () => {
   test('lists the projects and tasks, with the Home launcher in the main pane', async () => {
-    // A service that predates the planner: the count is the Tasks' alone.
-    renderApp('?planner=unset');
+    renderApp();
     const side = await sidebar();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
@@ -15,6 +14,13 @@ describe('app shell', () => {
     expect(side.getByRole('status').textContent).toContain('Connected');
     // Seven tasks wait for the user: two for permission, five for an answer.
     expect(document.title).toBe('(7) UAM');
+  });
+
+  test('an old #planner= link lands on the home view', async () => {
+    renderApp('#planner=p1');
+    await sidebar();
+    expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
+    await waitFor(() => expect(window.location.hash).toBe(''));
   });
 
   test('opening a task from the sidebar shows it and keeps it in the URL', async () => {

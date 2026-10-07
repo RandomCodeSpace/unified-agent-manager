@@ -212,9 +212,6 @@ func compactItemBytes(it compactItem) int {
 		tool := 64 + str("name", t.Name, false) + str("status", string(t.Status), false)
 		tool += str("title", t.Title, true) + str("input", t.Input, true) + str("output", t.Output, true) + str("display_arg", t.DisplayArg, true) + str("path", t.Path, true)
 		tool += field("has_input", 4) + field("has_output", 4)
-		if c := t.BoardCard; c != nil {
-			tool += field("board_card", 64+str("id", c.ID, false)+field("seq", 8)+str("kind", string(c.Kind), false)+str("title", c.Title, false)+str("status", string(c.Status), false))
-		}
 		if len(t.FilePaths) > 0 {
 			list := 32
 			for _, path := range t.FilePaths {

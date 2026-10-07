@@ -162,7 +162,7 @@ func TestSubagentModelsRoute(t *testing.T) {
 		}
 		return strings.TrimSpace(w.Body.String())
 	}
-	limited := `{"send_default":"steer","terminal":false,"planner":false,"subagent_models":{"fake":["own"]}}`
+	limited := `{"send_default":"steer","terminal":false,"subagent_models":{"fake":["own"]}}`
 	if got := patch(`{"subagent_models":{"fake":["own","own"]}}`, http.StatusOK); got != limited {
 		t.Fatalf("PATCH subagent_models = %s", got)
 	}
@@ -178,7 +178,7 @@ func TestSubagentModelsRoute(t *testing.T) {
 	if w := ts.do(http.MethodGet, "/api/settings", "", auth); strings.TrimSpace(w.Body.String()) != limited {
 		t.Fatalf("GET after refused PATCHes = %s", w.Body)
 	}
-	if got := patch(`{"subagent_models":{"fake":[]}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false,"planner":false}` {
+	if got := patch(`{"subagent_models":{"fake":[]}}`, http.StatusOK); got != `{"send_default":"steer","terminal":false}` {
 		t.Fatalf("lift subagent_models = %s", got)
 	}
 }

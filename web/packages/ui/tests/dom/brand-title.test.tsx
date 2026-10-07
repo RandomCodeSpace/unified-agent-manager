@@ -6,13 +6,11 @@ import { renderApp, sidebar } from './render';
 
 describe('the UAM wordmark', () => {
   test('the sidebar toggle and Home show the mark with UAM; the collapsed rail shows the mark alone', async () => {
-    const { user } = renderApp('?planner=unset');
+    const { user } = renderApp();
     const side = await sidebar();
     const hide = side.getByRole('button', { name: 'Hide sidebar' });
     expect(hide.querySelector('svg')).toBeTruthy();
     expect(hide.textContent).toBe('UAM');
-    // The planner's button is not the brand.
-    expect(screen.queryByRole('button', { name: 'Planner' })?.textContent ?? '').not.toContain('UAM');
     const home = within(await screen.findByRole('region', { name: 'Home' }));
     const brand = home.getByText('UAM');
     expect(brand.parentElement!.querySelector('svg')).toBeTruthy();
@@ -34,7 +32,7 @@ describe('the UAM wordmark', () => {
 
 describe('the tab title', () => {
   test('is UAM on the home screen and UAM - <name> for an open Task, after the Needs you count', async () => {
-    const { user } = renderApp('?planner=unset');
+    const { user } = renderApp();
     const side = await sidebar();
     await waitFor(() => expect(document.title).toBe('(7) UAM'));
     await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
@@ -42,7 +40,7 @@ describe('the tab title', () => {
   });
 
   test('a Task still waiting for a title, and a new Task, read UAM - New task', async () => {
-    const { user } = renderApp('?planner=unset#task=t7');
+    const { user } = renderApp('#task=t7');
     const side = await sidebar();
     await waitFor(() => expect(document.title).toBe('(7) UAM - New task'));
     await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
@@ -52,15 +50,13 @@ describe('the tab title', () => {
     await waitFor(() => expect(document.title).toBe('(7) UAM - New task'));
   });
 
-  test('names Settings, Routines and the planner', async () => {
+  test('names Settings and Routines', async () => {
     const { user } = renderApp('#settings');
     await sidebar();
-    await waitFor(() => expect(document.title).toBe('(13) UAM - Settings'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM - Settings'));
     await user.click(screen.getByRole('button', { name: 'Settings' }));
-    await waitFor(() => expect(document.title).toBe('(13) UAM'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM'));
     await user.click(screen.getByRole('button', { name: 'Routines' }));
-    await waitFor(() => expect(document.title).toBe('(13) UAM - Routines'));
-    await user.click(screen.getByRole('button', { name: 'Planner' }));
-    await waitFor(() => expect(document.title).toBe('(13) UAM - Planner'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM - Routines'));
   });
 });
