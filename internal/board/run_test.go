@@ -2,6 +2,7 @@ package board
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -846,5 +847,53 @@ func TestSetStatusRefusesAProposalUnderApprovedEpic(t *testing.T) {
 	}
 	if _, err := f.s.SetStatus(f.ctx, owner, p.a.ID, StatusDone, "shipped", false); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A card the owner adds under an approved epic is a proposal, as an
+// agent's is (ADR 0006 §6.2): the cards above it keep their confirmation,
+// and only approving the epic again confirms it, after the checks every
+// listed card gets. Outside approved epics the owner's card under a
+// confirmed parent is confirmed.
+func TestOwnerCardUnderApprovedEpicIsAProposal(t *testing.T) {
+	f := newFixture(t)
+	epic, story, one, two := f.tree()
+	cmd := sql.NullString{String: "go test ./...", Valid: true}
+	for _, id := range []string{one.ID, two.ID} {
+		_, err := f.s.Edit(f.ctx, owner, id, Patch{AcceptCmd: &cmd})
+		f.must(err)
+	}
+	f.approve(epic.ID, epic.ID, story.ID, one.ID, two.ID)
+
+	f.clock.advance(time.Hour)
+	added := f.create(owner, story.ID, KindSubtask, "Three")
+	other := f.create(owner, epic.ID, KindStory, "Other")
+	under := f.create(owner, other.ID, KindSubtask, "Four")
+	expires := f.clock.Now().Add(ExpiryWindow)
+	for _, c := range []Card{added, other, under} {
+		if got := f.card(c.ID); got.Confirmed() || got.ExpiresAt == nil || !got.ExpiresAt.Equal(expires) || got.PinnedSHA != "" {
+			t.Fatalf("%s added after the approval = %+v", c.Title, got)
+		}
+	}
+	for _, c := range []Card{epic, story} {
+		if !f.card(c.ID).Confirmed() {
+			t.Fatalf("%s lost its confirmation", c.Title)
+		}
+	}
+
+	all := []string{epic.ID, story.ID, one.ID, two.ID, added.ID, other.ID, under.ID}
+	_, err := f.s.Approve(f.ctx, owner, epic.ID, testRun, f.items(all...), "")
+	wantRefusal(t, err, CodeInvalid, added.ref(), under.ref())
+	f.acceptCmd("go test ./...")
+	f.approve(epic.ID, all...)
+	for _, c := range []Card{added, other, under} {
+		if !f.card(c.ID).Confirmed() {
+			t.Fatalf("%s after approving again = %+v", c.Title, f.card(c.ID))
+		}
+	}
+
+	_, plainStory, _, _ := f.tree2()
+	if c := f.create(owner, plainStory.ID, KindSubtask, "Plain"); !c.Confirmed() || c.PinnedSHA != "head-1" {
+		t.Fatalf("the owner's card outside approved epics = %+v", c)
 	}
 }
