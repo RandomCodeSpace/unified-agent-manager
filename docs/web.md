@@ -238,9 +238,9 @@ use. A sign-in as another account, by token or with GitHub, is refused ("This
 server is linked to Copilot account <login>. Sign in with that account.") and
 removed again. If Copilot is signed in as another account some other way (an
 environment token, `copilot login` or `gh` on the server), Copilot is
-unavailable and every Task, send, routine and planner run that needs it is
-refused until that is fixed: the app shows "Copilot is signed in to another
-account" with **Open Settings** in place of every view but Settings, and lifts
+unavailable and every Task, send and routine run that needs it is refused
+until that is fixed: the app shows "Copilot is signed in to another account"
+with **Open Settings** in place of every view but Settings, and lifts
 it once the account is fixed. **Unlink** in Settings, after a confirmation,
 signs out a sign-in Copilot stored and clears the link; the next sign-in links
 its account. An environment token or a `gh` sign-in cannot be signed out here,
@@ -259,10 +259,10 @@ before. Each read of `GET /api/connections` reads every enabled connection's
 `/api/providers/copilot/account` and marks one linked to another account than
 this instance, or signed in as another account than its link, with `"status":
 "account_mismatch"` and a `"reason"`. Through such a connection this instance
-refuses creating, prompting or resuming Tasks, routine runs, drafts, the
-planner's writes and the terminal with 409 `account_not_linked` and the
-reason (reading the account again at most every 15 seconds); its reads,
-Settings and account stay open so the account can be fixed there.
+refuses creating, prompting or resuming Tasks, routine runs, drafts and
+the terminal with 409 `account_not_linked` and the reason (reading the
+account again at most every 15 seconds); its reads, Settings and account
+stay open so the account can be fixed there.
 
 The API: `GET /api/providers/copilot/account` returns `{"signed_in", "login"?,
 "host"?, "source"? ("stored", "env", "gh-cli" or "other"), "env_var"?,
@@ -383,8 +383,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agents, custom instructions, hooks in `.github/hooks/`, and the built-in
   GitHub MCP server. Hooks run their commands without asking, as they do in
   the terminal. Every Task also gets uam's built-in `uam` skill, which tells
-  the agent what uam is, how its replies and files show here, and how to use
-  the Planner tools, and the built-in `uam-design` skill, which gives design
+  the agent what uam is and how its replies and files show here, and the
+  built-in `uam-design` skill, which gives design
   defaults for web and UI work such as prototypes. `uam-design` is a fallback:
   it tells the agent to follow your own instructions and design skills and the
   project's design system (a `DESIGN.md`, tokens, its component library) first.
@@ -974,16 +974,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Background AI**: every call UAM makes on the Utility model (Task
-  titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines, planner
-  triage and suggestions) counts
+  titles, also those made with a Task's own model, subagent result lines, suggested replies and outcome lines) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log · N calls today** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Suggested replies", "Outcome line",
-  "Planner triage", "Planner suggestion"; older versions also logged
-  "Subagent summary"), the Task (a click opens it) or Project, the model
+  what it was for ("Task title", "Suggested replies", "Outcome line";
+  older versions also logged "Subagent summary", "Planner triage" and
+  "Planner suggestion"), the Task (a click opens it) or Project, the model
   (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
@@ -998,10 +997,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Tasks
   keep their first message as the title, completed subagents keep their own
-  report, no replies are suggested (and the next look asks again), outcome
-  lines keep the evidence alone, triage answers 409 `utility_paused` with
-  the reason, and a
-  suggestion job fails with that reason. Settings then says Background AI is
+  report, no replies are suggested (and the next look asks again), and
+  outcome lines keep the evidence alone. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
   "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
@@ -1137,7 +1134,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
   | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
-  | Reopen | a settled Task | not a lane Task uam settled, whose lane is removed | Active again; the next message reopens the same conversation |
+  | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
   | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
   | Delete Task | an archived Task | – | The Task is removed from UAM |
   | Remove Project | any Project | every Task in it archived, or no Tasks | The Project, its archived Tasks, its routines and the prompts saved for it are removed from UAM |
@@ -1273,224 +1270,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   refreshes on its own: use Refresh. Choosing a file shows it below the tree:
   text highlighted and wrapped (at most its first 64 KiB), images inline, and
   anything else with Open in new tab and Download. Only one of Changes, Files,
-  Plan, Subagents and a file preview is open at a time. On a wide window, a click in
+  Subagents and a file preview is open at a time. On a wide window, a click in
   the conversation or the composer closes whichever of them is open. When the
   header runs short of room (side panels open beside the sidebar), its buttons
   drop their labels first, then Files, Charts and Terminal move into the
   header's "…" menu, so the Task's title keeps its room.
-- **Plan**: with the planner on, a Task whose Project has a plan shows a
-  one-line story strip under its header: "Epic › Story · 1/4 done · 1 proposed · This
-  task #25 · next #26 · waits for …", where "waits for" includes what the
-  card waits for through its story or epic. "next" is the first subtask in
-  the story not started yet with nothing open in its way (its own blockers
-  or its story's and epic's), a confirmed one before a proposal; with none,
-  the strip leaves it out. The Task's card is the subtask it
-  works on, or one it finished. A Task with no card shows "Not part of a
-  story · Add to a story", and a Project with no plan shows no strip. The
-  strip, or the **Plan** button beside Files, opens the Plan panel in the
-  same place as Changes and Files: what this Task works on, then the plan as
-  an **Outline** (epics › stories › subtasks with their progress, the Task's
-  card marked and its story open) or a **Graph** of one level's dependencies
-  at a time (the Project's epics, an epic's stories, a story's subtasks), with
-  a breadcrumb to move between levels. Both planner graph views use
-  ECharts with fixed node positions. Drag to pan, zoom with the controls,
-  and reset the view without changing cards or dependencies. Clicking a card opens its details in
-  place: done when, description, checklist, dependencies (its own level, and
-  what it waits for through its story or epic), the agents' requests on it,
-  Edit, Discard for a proposal, Launch, and Approve on an epic. Launch, Do whole story and Plan with agent in
-  the Planner, open a dialog with the new Task's model, effort, context size
-  and mode (starting from Settings → New tasks) and an optional brief, which
-  the Task's first message carries; when launching confirms proposals, the
-  dialog names them first. The new Task is named and titled after its card,
-  "#12 Title" ("Plan #12 Title" for Plan with agent), in uam and in the
-  provider's own session list, rather than after its first message, and no
-  title is generated for it; clearing the name shows the same title. A container's progress counts all its
-  live subtasks, proposals included, and names the proposals ("0/3 done · 2
-  proposed") in the strip, the outline, the graph and the Planner's views.
-  Editing, linking, moving or splitting a proposal
-  keeps it a proposal and restarts its 14 days before it expires; only
-  Confirm, launching it, adding a Task to it, or approving its epic confirms it. A subtask in progress shows why its plan
-  is locked.
-  A checklist item's × removes it, also while its text is being renamed,
-  here and in the Planner's card panel; a subtask in progress only ticks its items.
-  In the Planner's card panel, Edit changes the title, win condition,
-  description, effort, priority and labels, and saves only the fields you
-  changed, so an edit made meanwhile stays; the panel shows the priority
-  beside the effort. A subtask marked blocked (an agent's blocked request
-  you accepted) says so and offers **Clear blocked mark**, which lets its
-  Task finish it and, under an approved epic, lets uam start it again. On
-  a story or epic the mark holds nothing back. When an agent proposes an acceptance command with its done
-  request, the request shows it, in the Inbox and the card's evidence
-  trail, with **Apply**, which makes it the subtask's command; it never
-  runs before. **Check at HEAD** is off, and says why, on a subtask with
-  no acceptance command of its own or from its Project. **Release** returns
-  a subtask to To do and withdraws its pending done, cancel and blocked
-  requests; split and change requests stay for you to decide. The Board
-  shows confirmed subtasks only, so a plan of proposals says they stay in
-  the Tree, and a paused subtask reads "Paused" there as in the Tree.
-  Opening a card from the Inbox unfolds the Tree to it.
-  **Approve** on an epic (its "…" menu, its card panel, its details here,
-  or the Inbox's **Plans to approve**, which lists proposed epics and
-  approved epics with proposals added since) opens a dialog with the epic's
-  live cards as they were when it opened, grouped by story, marking new
-  proposals, paused cards and what each waits on. Block and Unblock on a
-  story or subtask there pause or resume it at once, before any approval,
-  and it and everything under it read "Blocked: won't start"; approving
-  keeps those pauses and clears only the epic's own. It says inline what the
-  service would refuse (a held subtask, a story or epic with no subtask, a
-  subtask without an acceptance command, with the Project's command
-  editable in place, and a running lane that would wait again on a done
-  story the approval reopens by confirming a proposal under it) and asks
-  for the run's model (none is picked unless
-  Settings → New tasks names one), mode (Safe warns that a permission prompt
-  stops unattended work) and subtasks at a time (1 to 4, 2 by default).
-  Approving confirms every card it showed and records the run; when a card
-  changed or was added meanwhile, the dialog names it, shows it as it is
-  now and asks again. A card added under an approved epic stays a proposal ("1 to
-  approve" on the epic) until the epic is approved again. That holds for a
-  finished epic too: it lists in Plans to approve and offers Approve again,
-  which runs the new card and opens the epic again. Under an approved
-  epic nothing is confirmed or started card by card: Confirm, Launch, Do
-  whole story and adding a Task to its stories are not offered, Mark done
-  on a proposal waits for the next approval, accepting an agent's request
-  confirms no proposal (a card moved under one waits with it for the next
-  approval), Triage's Re-pin gives way to
-  approving the epic again, which re-pins the cards it lists, and Pause
-  and Resume block or free a card and everything under it; a card moved to
-  the root, out of any epic, drops its pause. An agent's move into or out of an approved
-  epic, or out from under a pause, reaches the Inbox as a change request
-  that names both parents and the run of each approved epic it leaves or
-  enters. Accepting an agent's split request there is refused when it would
-  close a story or epic before its parts, which are proposals, are approved;
-  split the subtask yourself instead. Restoring a cancelled card there brings it
-  back as a proposal, the epic itself excepted. Approve also readies git for
-  the run: it refuses when the server's git is older than 2.40 or has no
-  committer identity, and when the Project's base branch (the branch checked
-  out at the first approval) does not merge cleanly into the Project's
-  integration branch `uam-plan-<id>`, which it creates or brings up to date.
-  Uncommitted changes in the Project folder are not part of the run.
-  The dialog's action reads **Approve and run**: uam then starts each ready
-  subtask of the epic in a lane by itself, a ready one being confirmed, not
-  paused, not flagged blocked and waiting on nothing open, up to the epic's
-  subtasks at a time and 4 across the server. A lane is a new Task with the
-  run's model and mode, in its own git worktree beside uam's settings (never
-  in the Project folder, so it never holds up your Commit, Pull or Push), on
-  its own branch made from the integration branch. Launch, Do whole story
-  and adding a Task are not offered under an approved epic, and the service
-  refuses them. The epic's row in the Tree and its card panel say how its
-  run stands in words, "Running 2 of 2 · Ready 1 · Waiting 3", and, while its
-  provider backs off or is signed out, "Waiting for <provider>: <why>". The lane's Task gets only the planner tools to read the
-  board, tick its checklist, comment and file requests, and its git panel
-  neither pushes nor pulls. Its done request commits what it left, merges
-  the integration tip into the lane (a conflict refuses it with the files
-  and the steps), runs the acceptance command there and lands the lane on
-  the integration branch as one commit whose trailers name the card and the
-  request: the card shows **Landing**, then **Landed** with the commit. Once
-  the lane's Task ends its turn, uam settles it, not archives it: it stays
-  on the Settled shelf with its transcript, its lane is removed, and Reopen
-  is refused, naming the subtask and the commit it landed as. Archive or
-  delete it as any other Task. A
-  change to test or build files is flagged on its request, not held for you. A done
-  request that waits for you (nothing changed, or the command could not run
-  or outran its time limit) lands when you Accept it, as a job whose
-  progress shows on the request; when the integration branch moved since the
-  claim, the job merges it in and runs the command again, and a failure
-  rejects the request and tells the Task why. Accept is refused while the
-  Task works. **Stop** on a running subtask (its Release) asks first, then
-  pauses the subtask, stops and archives its Task and removes the lane,
-  keeping its branch; on a story or epic, Stop pauses it first and then
-  stops each subtask running under it. Settle offers Stop or Cancel for a
-  lane, not Keep held. Mark done and a move back to To do are refused on a
-  running lane's subtask: its done request lands it, and Stop releases it.
-  **Revert** on a landed subtask, or on a story or epic for every subtask
-  landed under it, first shows what it takes along: the subtasks that
-  landed on top of it (as recorded when each started, whatever the links
-  say now), their commits and files, whether the base branch has one of
-  them, and the conflict when it would not apply, naming the files and
-  the later cards that changed them, which you can add to the revert. It is
-  refused while a subtask that started on top of it runs: Stop that one
-  first. It runs as a job that puts one revert commit per landing on the
-  integration branch, newest first, in one move, and the reverted
-  subtasks go back to To do, paused ("Reverted"); resumed, a subtask runs
-  again from the integration branch without the reverted change. When a
-  revert cannot apply, **Reopen without reverting code** moves the
-  subtask back to To do, paused ("Reopened, code kept"), and leaves its
-  commit on the integration branch; what landed on top of it stays landed,
-  and the confirmation names those subtasks. A plain move back to To do is
-  refused on a landed subtask.
-  An attempt that ends without landing pauses its subtask ("Paused by
-  uam"). Settling or archiving a lane's Task commits what the lane left to
-  its branch and removes the lane; a landed attempt's branch goes too, and the
-  Project's folder of lanes once it is empty, as when the Project is
-  removed. The acceptance
-  runs of a Project, its lanes' included, run one at a time unless the
-  Project allows up to 4 (Acceptance runs at a time, in the Approve
-  dialog). The Planner names the integration branch beside its filters,
-  with how many landings and reverts the base branch lacks. When an
-  approved epic finishes, as its last subtask lands or you cancel what is
-  left, uam merges the integration branch into the base branch with no
-  click, since the approval covers it, and
-  the epic's comment lists what the merge carried, marking the subtasks
-  that changed test or build files. A Revert of work the base branch
-  already has is merged the same way, and so is a finished epic uam finds
-  unmerged when it starts. Where the base branch is checked out, the merge
-  runs there; while another git
-  action runs there, a Task there works, another git program holds a lock
-  the merge needs, or the merge would overwrite a change you have not
-  committed, it waits ("Merge waiting" and the reason beside the branch)
-  and uam tries again after 1, 2, 4, 8, then every 15 minutes. It also
-  waits while the base branch is checked out in more than one worktree,
-  and when, right before the merge, that checkout no longer has the base
-  branch at the commit uam checked. A base branch checked out nowhere just moves. uam's merge does
-  not run repository hooks, wherever the base branch is, and does not sign
-  the merge commit: it runs unattended, and an agent can change the
-  repository's configuration. For the same reason it is always a real
-  merge commit by git's default strategy that never stashes your changes,
-  whatever the repository's merge settings say, and uam commits it only
-  when it holds the content uam checked it would; a merge uam starts and
-  cannot finish is aborted, but a merge you started never is. A commit on
-  the integration branch that uam did not make, anything but its landings,
-  its reverts and its clean merges of the base branch, blocks the merge,
-  and the epic's comment names it. uam merges only the commits it checked:
-  when either branch moves during that check, the merge waits and uam
-  checks again. A lane that merged the base branch lands only
-  its own work, as uam brings the base's commits onto the integration
-  branch first, so a later Revert keeps your base commits. A merge that
-  conflicts, or fails otherwise, shows "Merge blocked" and waits until
-  either branch moves or you choose **Retry merge**; resolve it in
-  Terminal, or revert the subtask it conflicts with. Once the base branch
-  has it all, as after you merge by hand, uam drops either state. **Merge into main
-  now** (named after your base branch), in the Planner's menu, merges what
-  landed before the epic finishes. Its confirmation, like Retry merge's,
-  lists what the merge carries, by epic, naming the epics not finished and
-  the subtasks that changed test or build files. Each outcome is said once
-  on the epic, and uam never pushes.
-  A lane Task that ends its
-  turn without a done request is reminded once; ending again without one
-  settles it, which ends the attempt without landing; its Reopen is refused,
-  naming the branch that keeps its work. One whose provider failed before
-  it changed anything goes (its Task is archived and deleted, as is one
-  whose start fails), and its subtask starts again later. A provider that
-  fails a start or a lane's turn gets no new starts for 1 minute, doubling
-  up to 15, after which the lane Task whose turn failed is asked to
-  continue; any completed turn on that provider ends the
-  wait. A signed-out provider waits until you sign in. A
-  done request waiting to land when uam stops lands when it starts again,
-  and a lane Task that was working is told to continue; one that cannot
-  take that message is settled, which ends the attempt without landing. A
-  lane Task uam settled stays settled across a restart. A
-  lane that cannot start for git or the planner's database backs its epic
-  off and comments why; the third failure in a row pauses the epic
-  ("Paused by uam").
-  Resume on a paused approved epic runs Approve's git checks again first.
-  Epics approved before automatic runs come back paused: Resume runs them.
-  Card links in the conversation open the card here and never leave the
-  Task; the Planner itself is in the sidebar, for planning the whole
-  Project. "Add to a story" picks a story and either a new subtask, named
-  after the Task, or one of its subtasks not started yet; the Task then works
-  on it as a launched Task would (no message is sent to it), after a confirm
-  step when the story is a proposal. On a phone the panel opens full screen
-  and the graph scrolls inside itself.
 - **Terminal**: off by default. Turn on Settings → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project
@@ -1561,11 +1345,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge and the sidebar button on a
-    narrow window carry the Needs you count (the app badge and title add
-    pending planner requests and plans to approve). The tab title reads "UAM" on the home
-    screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
-    a new Task or one still waiting for a title), and "UAM - Settings",
-    "UAM - Planner" or "UAM - Routines" for those views; the count comes
+    narrow window carry the Needs you count. The tab title reads "UAM" on
+    the home screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
+    a new Task or one still waiting for a title), and "UAM - Settings"
+    or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
   A shelf row shows the Project badge and title, faded until hovered or
@@ -1590,8 +1373,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
     the UAM mark alone (shows the sidebar again, with the Needs you count on it),
-    New task, the Project filter, Add project, and at the foot Settings, the
-    planner and the connection dot; each opens exactly what the sidebar's
+    New task, the Project filter, Add project, and at the foot Settings and
+    the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
@@ -1773,7 +1556,7 @@ list's **Needs you** count. Failed or interrupted Tasks count until any
 browser opens them, because the service does not know which browser has
 read them; that mark survives a restart, and a Task whose turn a restart
 interrupted counts too. A visible page keeps the badge at its own count,
-with this browser's read marks, planner requests and plans to approve.
+with this browser's read marks.
 
 **Storage.** The first browser to turn notifications on makes the service
 generate its Web Push (VAPID) key pair. The keys and the subscribed
@@ -1933,6 +1716,17 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   on disk but have no controls in current UAM. Use the older binary to stop
   existing terminal hosts before replacing it. Copilot conversations can
   still be imported as Tasks after the in-use check.
+- **Removed planner.** The planner was removed
+  ([ADR 0007](adr/0007-remove-the-planner.md)), and uam no longer reads its
+  `board.db` (with `board.db-wal` and `board.db-shm`) beside `sessions.json`
+  in `~/.config/uam/` (or `$UAM_CONFIG_DIR/`); delete those files once you no
+  longer need the old board. uam also leaves the lane worktrees under `lanes/`
+  in the same folder and the `uam-plan-*` branches in a Project's repository
+  as they are. To remove them, check in that repository with
+  `git worktree list` and `git branch --list 'uam-plan-*'` that nothing there
+  is still needed, then run `git worktree remove <path>` for each lane (or
+  delete the `lanes` folder and run `git worktree prune`), and after that
+  `git branch -D <branch>` for each branch.
 - **Copilot sessions without a prompt.** Copilot saves a conversation only
   after its first message. A session created without a prompt cannot be
   reopened after the service restarts.
@@ -1975,7 +1769,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 
 ## Token usage and estimated cost
 
-The Usage button beside Settings and Planner opens a popover with Today,
+The Usage button beside Settings opens a popover with Today,
 7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
 and estimated USD cost. Cache is read plus write tokens; each model's info
 tip splits it into read and written. Input already includes cache. Totals

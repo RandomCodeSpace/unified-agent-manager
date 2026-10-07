@@ -1,6 +1,8 @@
 # ADR 0006: Planner execution
 
-Status: accepted (2026-10-06). It extends [ADR 0005](0005-planner.md) and supersedes the parts of it listed in §2, each of which ADR 0005 marks with a note.
+> Historical: the planner was removed on 2026-10-07 by [ADR 0007](0007-remove-the-planner.md).
+
+Status: superseded by [ADR 0007](0007-remove-the-planner.md) (2026-10-07); accepted (2026-10-06). It extends [ADR 0005](0005-planner.md) and supersedes the parts of it listed in §2, each of which ADR 0005 marks with a note.
 
 ## Context
 

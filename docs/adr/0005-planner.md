@@ -1,6 +1,8 @@
 # ADR 0005: Agentic planner
 
-Status: accepted (2026-09-29). Decided in [#255](https://github.com/RandomCodeSpace/unified-agent-manager/issues/255) and [#248](https://github.com/RandomCodeSpace/unified-agent-manager/issues/248). The map is [#247](https://github.com/RandomCodeSpace/unified-agent-manager/issues/247). Partly superseded by [ADR 0006](0006-planner-execution.md) (2026-10-06); each superseded rule below carries a note.
+> Historical: the planner was removed on 2026-10-07 by [ADR 0007](0007-remove-the-planner.md).
+
+Status: superseded by [ADR 0007](0007-remove-the-planner.md) (2026-10-07); accepted (2026-09-29). Decided in [#255](https://github.com/RandomCodeSpace/unified-agent-manager/issues/255) and [#248](https://github.com/RandomCodeSpace/unified-agent-manager/issues/248). The map is [#247](https://github.com/RandomCodeSpace/unified-agent-manager/issues/247). Partly superseded by [ADR 0006](0006-planner-execution.md) (2026-10-06); each superseded rule below carries a note.
 
 ## Context
 
