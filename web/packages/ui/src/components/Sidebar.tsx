@@ -538,6 +538,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, abov
     if (!open) window.setTimeout(() => head.current?.scrollIntoView({ block: 'start' }), 300);
   };
   // No wrapper: a sticky header can only move within its parent, so the header, the rows and the pinned row are siblings in the list's column.
+  // The sticky edge sits inside the scroller's bottom padding (pb-3): the insets reach 12px past it, so the headers meet the foot and no row shows under them.
   return (
     <>
       <button
@@ -546,7 +547,7 @@ function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, abov
         data-nav={`shelf:${label}`}
         tabIndex={tabStop === `shelf:${label}` ? 0 : -1}
         aria-expanded={open}
-        className={cn('sticky z-10 mt-1 flex h-7 w-full shrink-0 items-center gap-2 rounded-sm bg-rail px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11', above ? 'bottom-7 pointer-coarse:bottom-11' : 'bottom-0', first && 'mt-auto')}
+        className={cn('sticky z-10 mt-1 flex h-7 w-full shrink-0 items-center gap-2 rounded-sm bg-rail px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11', above ? 'bottom-4 pointer-coarse:bottom-8' : '-bottom-3', first && 'mt-auto')}
         onClick={toggle}
       >
         <span className="whitespace-nowrap">

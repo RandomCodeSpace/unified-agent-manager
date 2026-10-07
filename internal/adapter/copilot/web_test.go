@@ -1088,6 +1088,54 @@ func TestWebQuestionNamesItsToolCall(t *testing.T) {
 	answer(h.sink.question(), done)
 }
 
+// The event carries the agent's text, marker included; the owner's question
+// leaves the marker out. A multiple-choice question still links in either order.
+func TestWebMultipleChoiceQuestionNamesItsToolCall(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	id := func(s string) *string { return &s }
+	text := "Which letters? (Choose any that apply)"
+	answer := func(q *agentapi.Interaction, done <-chan userReply) {
+		t.Helper()
+		if err := h.conv.Respond(ctx, q.ID, agentapi.Answer{Answers: [][]string{{"A", "C"}}}); err != nil {
+			t.Fatalf("Respond: %v", err)
+		}
+		<-done
+	}
+
+	// Callback first: the event links the waiting question.
+	done := askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "question", func() bool { return h.sink.question() != nil })
+	h.fs.onEvent(ev("q0", &rpc.UserInputRequestedData{RequestID: "r0", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_ask0")}))
+	if q := h.sink.question(); q.ToolCallID != "call_ask0" || !q.Questions[0].Multiple {
+		t.Fatalf("callback-first question = %+v, want tool call call_ask0", q)
+	}
+	answer(h.sink.question(), done)
+
+	// Event first: the callback picks the link up.
+	h.fs.onEvent(ev("q1", &rpc.UserInputRequestedData{RequestID: "r1", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_ask1")}))
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "second question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+	if q := h.sink.question(); q.ToolCallID != "call_ask1" {
+		t.Fatalf("event-first question = %+v, want tool call call_ask1", q)
+	}
+	answer(h.sink.question(), done)
+
+	// Answered before its event: the late event links nothing, and the next
+	// question with that text gets its own.
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "third question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+	answer(h.sink.question(), done)
+	h.fs.onEvent(ev("q2", &rpc.UserInputRequestedData{RequestID: "r2", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_late")}))
+	done = askAsync(h.fs, copilot.UserInputRequest{Question: text, Choices: []string{"A", "B", "C"}})
+	waitFor(t, "fourth question", func() bool { q := h.sink.question(); return q != nil && q.State == agentapi.InteractionPending })
+	h.fs.onEvent(ev("q3", &rpc.UserInputRequestedData{RequestID: "r3", Question: text, Choices: []string{"A", "B", "C"}, ToolCallID: id("call_ask3")}))
+	if q := h.sink.question(); q.ToolCallID != "call_ask3" {
+		t.Fatalf("question after a late event = %+v, want tool call call_ask3", q)
+	}
+	answer(h.sink.question(), done)
+}
+
 func TestWebQuestionAnswers(t *testing.T) {
 	h := openWeb(t)
 	ctx := context.Background()

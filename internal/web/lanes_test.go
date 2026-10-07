@@ -396,7 +396,7 @@ func TestLaneRevertChain(t *testing.T) {
 	before := f.refs()
 
 	// Given oldest first, it reverts newest first.
-	chain, err := f.r.revertChain(f.ctx, landed2, []revertItem{{sha: landed1, seq: 1, title: "Add b"}, {sha: landed2, seq: 2, title: "Add c"}})
+	chain, err := f.r.revertChain(f.ctx, landed2, []revertItem{{sha: landed1, seq: 1, title: "Add b"}, {sha: landed2, seq: 2, title: "Add c"}}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,10 +422,12 @@ func TestLaneRevertChain(t *testing.T) {
 	landed4 := f.land(four, 4)
 	before = f.refs()
 	status := gitOutput(t, f.top, "status", "--porcelain")
-	_, err = f.r.revertChain(f.ctx, landed4, []revertItem{{sha: landed3, seq: 3, title: "Add c again"}})
+	// A story's or epic's revert (no subtask to reopen) offers to reopen
+	// the landing's own subtask.
+	_, err = f.r.revertChain(f.ctx, landed4, []revertItem{{sha: landed3, seq: 3, title: "Add c again"}}, 0)
 	e := wantCode(t, err, codeRevertConflict)
-	if !strings.Contains(e.Message, "c.txt") || !slices.Equal(e.Refs, []string{"#4"}) {
-		t.Fatalf("refusal = %q refs %v, want c.txt and #4", e.Message, e.Refs)
+	if !strings.Contains(e.Message, "c.txt") || !slices.Equal(e.Refs, []string{"#4"}) || !strings.HasSuffix(e.Message, "; include those cards or reopen #3 without reverting code") {
+		t.Fatalf("refusal = %q refs %v, want c.txt, #4 and reopening #3", e.Message, e.Refs)
 	}
 	if got := f.refs(); got != before {
 		t.Fatalf("a refused revert moved refs")
@@ -436,8 +438,10 @@ func TestLaneRevertChain(t *testing.T) {
 
 	// A commit that is not on the integration branch's first-parent line.
 	owner := commitFile(t, f.top, "d.txt", "owner\n")
-	_, err = f.r.revertChain(f.ctx, landed4, []revertItem{{sha: owner, seq: 5, title: "Owner"}})
-	_ = wantCode(t, err, codeRevertConflict)
+	_, err = f.r.revertChain(f.ctx, landed4, []revertItem{{sha: owner, seq: 5, title: "Owner"}}, 2)
+	if e := wantCode(t, err, codeRevertConflict); !strings.HasSuffix(e.Message, "; reopen #2 without reverting code") {
+		t.Fatalf("refusal = %q, want it to offer reopening #2, the subtask asked for", e.Message)
+	}
 }
 
 func TestLaneWorkdirOfAProjectInASubdirectory(t *testing.T) {
@@ -1623,7 +1627,7 @@ func TestLaneGitFailuresAreErrors(t *testing.T) {
 	_, failures["commitLeftovers"] = f.r.commitLeftovers(ctx, l, 1)
 	_, failures["squashLane"] = f.r.squashLane(ctx, l, tip, "x")
 	_, failures["finishOnInteg"] = f.r.finishOnInteg(ctx, tip)
-	_, failures["revertChain"] = f.r.revertChain(ctx, tip, nil)
+	_, failures["revertChain"] = f.r.revertChain(ctx, tip, nil, 0)
 	_, failures["mergeIntoBase"] = f.r.mergeIntoBase(ctx, f.root, "main", tip, tip, "x")
 	for name, err := range failures {
 		if err == nil {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DiagramError, DiagramQueue, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
+import { DiagramError, DiagramQueue, errorReason, fenceClosed, intrinsicSize, parseReply, parseRequest, renderDiagram, svgDataUrl } from '../src/lib/diagram.ts';
 
 const flow = 'flowchart LR\n  A --> B';
 const theme = { primaryColor: '#f3f2ee' };
@@ -157,4 +157,17 @@ test('a failed frame load and a stalled renderer reject their whole batch and al
   page.dispatchEvent(Object.assign(new Event('message'), { source: frame.contentWindow, origin: 'null', data: reply }));
   assert.deepEqual(await retry, { svg: '<svg/>', width: 100, height: 50 });
   assert.equal(renderDiagram('queued behind stall'), retry, 'successful results stay cached');
+});
+
+test('a parse error names its reason, not only the line, in at most 200 characters', () => {
+  // Mermaid's own message: a header, the source with a caret under it, then what it expected.
+  const parse = "Parse error on line 1:\ngraph TD; A--> -->> ((\n---------------^\nExpecting 'AMP', 'COLON', 'PIPE', 'TESTSTR', 'DOWN', 'DEFAULT', 'NUM', 'COMMA', 'NODE_STRING', 'BRKT', 'MINUS', 'MULT', 'UNICODE_TEXT', got 'LINK'";
+  assert.equal(errorReason(parse), "Parse error on line 1: Expecting 'AMP', 'COLON', 'PIPE', 'TESTSTR', 'DOWN', 'DEFAULT', 'NUM', 'COMMA', 'NODE_STRING', 'BRKT', 'MINUS', 'MULT', 'UNICODE_TEXT', got 'LINK'");
+  // A first line that says what is wrong stands alone.
+  assert.equal(errorReason('Lexical error on line 1. Unrecognized text.\ngraph TD; A-x\n----^'), 'Lexical error on line 1. Unrecognized text.');
+  assert.equal(errorReason('The diagram took too long to render'), 'The diagram took too long to render');
+  // A long list of expected tokens is cut in the middle, so what came instead stays.
+  const long = errorReason(`Parse error on line 2:\nx\n^\nExpecting ${Array.from({ length: 40 }, (_, i) => `'TOKEN_${i}'`).join(', ')}, got 'EOF'`);
+  assert.ok(long.length <= 200, long);
+  assert.match(long, /^Parse error on line 2: Expecting 'TOKEN_0', .*….*, got 'EOF'$/);
 });

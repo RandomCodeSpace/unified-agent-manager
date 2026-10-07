@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -680,8 +681,10 @@ type revertItem struct {
 // of tip, newest landing first by its place on the integration branch's
 // first-parent line, and returns the last. It moves no ref. A landing off
 // that line, or a conflict, refuses revert_conflict; a conflict names the
-// files and the later landings that changed them.
-func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertItem) (string, error) {
+// files and the later landings that changed them. Either refusal says to
+// reopen subtask #reopen without reverting code or, when reopen is 0 (the
+// revert of a story or epic), the landing's own subtask.
+func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertItem, reopen int64) (string, error) {
 	line, err := r.output(ctx, r.top, "rev-list", "--first-parent", tip, "--")
 	if err != nil {
 		return "", err
@@ -694,7 +697,7 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 	for _, it := range items {
 		if _, ok := place[it.sha]; !ok {
 			return "", &Error{Status: http.StatusConflict, Code: codeRevertConflict,
-				Message: fmt.Sprintf("#%d landed as %s, which is not on %s; reopen it without reverting code", it.seq, shortSHA(it.sha), r.integ)}
+				Message: fmt.Sprintf("#%d landed as %s, which is not on %s; reopen #%d without reverting code", it.seq, shortSHA(it.sha), r.integ, cmp.Or(reopen, it.seq))}
 		}
 	}
 	slices.SortFunc(items, func(a, b revertItem) int { return place[a.sha] - place[b.sha] })
@@ -706,8 +709,12 @@ func (r *laneRepo) revertChain(ctx context.Context, tip string, items []revertIt
 		}
 		if len(conflicts) > 0 {
 			cards := r.cardsTouching(ctx, it.sha, tip, conflicts)
+			include := ""
+			if len(cards) > 0 {
+				include = "include those cards or "
+			}
 			return "", &Error{Status: http.StatusConflict, Code: codeRevertConflict, Refs: cards,
-				Message: fmt.Sprintf("reverting #%d conflicts in %s%s; include those cards or reopen #%d without reverting code", it.seq, fileList(conflicts), changedBy(cards), it.seq)}
+				Message: fmt.Sprintf("reverting #%d conflicts in %s%s; %sreopen #%d without reverting code", it.seq, fileList(conflicts), changedBy(cards), include, cmp.Or(reopen, it.seq))}
 		}
 		msg := fmt.Sprintf("Revert #%d %s\n\nThis reverts %s.\n\n%s: #%d\n", it.seq, strings.TrimSpace(it.title), it.sha, trailerRevert, it.seq)
 		if cur, err = r.commitTree(ctx, tree, msg, cur); err != nil {

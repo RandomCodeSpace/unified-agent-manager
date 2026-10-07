@@ -592,3 +592,16 @@ func TestWebShellStopFailures(t *testing.T) {
 		t.Fatalf("closed = %v", err)
 	}
 }
+
+// A finished /compact reports its outcome in the transcript notice, built from
+// the structured compaction event. Copilot's own text repeats it and can name
+// a negative token count, so the command result only says it completed.
+func TestWebCompactResultLeavesTheOutcomeToTheNotice(t *testing.T) {
+	h, _ := runtimeHarness(t)
+	h.fs.commands = append(h.fs.commands, rpc.SlashCommandInfo{Name: "compact", Kind: rpc.SlashCommandKindBuiltin})
+	h.fs.invoke = &rpc.SlashCommandTextResult{Text: "Compacted conversation history and removed 1 message and -393 tokens."}
+	result, err := h.conv.(agentapi.CommandExecutor).ExecuteCommand(context.Background(), "compact", agentapi.Prompt{})
+	if err != nil || result == nil || result.Kind != "completed" || result.Text != "" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

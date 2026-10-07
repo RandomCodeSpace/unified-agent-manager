@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { AtSign, ExternalLink, FileText, FileType, Image as ImageIcon, Paperclip, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { type Attachment } from '../api';
 import { formatSize, kindOf, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -231,11 +231,17 @@ export function ItemAttachments({ sessionId, attachments }: Readonly<{ sessionId
   );
 }
 
-/** The image lightbox (DESIGN.md): the image up to 94vw by 1400px and 78dvh on a see-through scrim, `footer` right-aligned under it. */
-export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode }>) {
+/**
+ * The image lightbox (DESIGN.md): the image up to 94vw by 1400px and 78dvh on a see-through scrim, `footer` right-aligned under it.
+ * A picture shows at most at its own size, so it never blurs; a drawing with its `size` (a diagram's SVG) scales up to fill that room.
+ */
+export function Lightbox({ open, onOpenChange, onClosed, title, description, src, alt, footer, size }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; title: ReactNode; description?: ReactNode; src: string; alt: string; footer?: ReactNode; size?: { width: number; height: number } }>) {
+  // A drawing is as wide as the room allows, and no wider than its shape lets it be at 78dvh tall.
+  // A short window squeezes the box's height first: object-contain keeps the shape inside it.
+  const fit = size && ({ '--fit': `${(78 * size.width) / size.height}dvh` } as CSSProperties);
   return (
     <ViewerDialog open={open} onOpenChange={onOpenChange} onClosed={onClosed} title={title} description={description} footer={footer}>
-      <img src={src} alt={alt} className="mx-auto block max-h-[78dvh] w-auto max-w-full min-h-0 rounded-sm bg-sunken shadow-modal" />
+      <img src={src} alt={alt} style={fit} className={cn('mx-auto block max-h-[78dvh] max-w-full min-h-0 rounded-sm bg-sunken object-contain shadow-modal', fit ? 'w-[min(94vw,1400px,var(--fit))]' : 'w-auto')} />
     </ViewerDialog>
   );
 }

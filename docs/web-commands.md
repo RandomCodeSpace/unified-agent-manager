@@ -22,7 +22,7 @@ aliases are accepted, including `goal`, `yolo`, and `models`.
 | `model` / `models` | Open model settings, or select one offered Task model ID. Native global/repository and plan-model options are not accepted. |
 | `rename` | Open rename, or rename this web Task. |
 | `context`, `usage`, `list-dirs`, `env`, `skills` | Display native read-only output. Arguments are rejected before invocation. |
-| `compact` | Invoke native compaction, with optional focus instructions. The Task shows Compacting while it runs; the outcome is a transcript notice and the command result. |
+| `compact` | Invoke native compaction, with optional focus instructions. The Task shows Compacting while it runs; the outcome is a transcript notice, and the command result only says it completed. |
 | `plan` | Disabled until the web client supports plan-exit approval. The SDK callback explicitly refuses automatic plan exit. |
 | `every`, `after` | Disabled: web scheduling is not supported. |
 | `cwd`, `add-dir` | Disabled: these change directories outside Task project settings. |
@@ -55,11 +55,12 @@ provider events and exact reopen. Objective state is `active`, `paused`, or
 A reported zero is preserved. Missing values are not inferred.
 
 The transcript shows elapsed foreground time while working and the recorded
-duration after completion, cancellation, or failure. It includes permission
-waits and autopilot continuations, but excludes time waiting in the queue and
-independent background work. Completed durations survive reloads and service
-restarts. Imported history without timing evidence and unfinished turns after a
-lost runtime connection have no claimed duration.
+duration after completion, cancellation, or failure. It includes autopilot
+continuations, but excludes time waiting for your approval or answer, time
+waiting in the queue and independent background work. Completed durations
+survive reloads and service restarts. Imported history without timing
+evidence and unfinished turns after a lost runtime connection have no claimed
+duration.
 
 An assistant idle or explicit autopilot session-idle boundary does not complete
 an autopilot foreground turn. A final session-idle event, with no autopilot mode

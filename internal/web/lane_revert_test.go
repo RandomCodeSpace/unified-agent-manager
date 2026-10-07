@@ -201,6 +201,41 @@ func TestRevertConflictNamesLaterCards(t *testing.T) {
 	}
 }
 
+// A revert that conflicts on a landing it takes along names that landing
+// and the later card that changed its files, and offers to reopen the
+// subtask asked for, the one the panel's Reopen without reverting code
+// reopens.
+func TestRevertConflictOfADependentNamesTheCardToReopen(t *testing.T) {
+	r := newLaneRun(t, "true", "Add x", "Change x", "Change x again")
+	r.link(0, 1)
+	r.landWith(0, "x.txt", "one\n")
+	r.landWith(1, "x.txt", "two\n")
+	r.landWith(2, "x.txt", "three\n")
+	first, second, third := r.leaves[0], r.leaves[1], r.leaves[2]
+	p := r.preview(first.ID)
+	want := fmt.Sprintf("reverting #%d conflicts in x.txt (changed by #%d); include those cards or reopen #%d without reverting code", second.Seq, third.Seq, first.Seq)
+	if p.Conflict == nil || p.Conflict.Message != want || !slices.Equal(p.Conflict.Refs, []string{fmt.Sprintf("#%d", third.Seq)}) {
+		t.Fatalf("preview conflict = %+v, want %q", p.Conflict, want)
+	}
+}
+
+// A revert that conflicts with a commit no card landed, such as one of the
+// owner's synced in from the base branch, names no cards to include.
+func TestRevertConflictWithNoCardNamesNone(t *testing.T) {
+	r := newLaneRun(t, "true", "Add x")
+	r.landWith(0, "x.txt", "one\n")
+	held := filepath.Join(t.TempDir(), "held")
+	gitIn(t, r.repo, "worktree", "add", "-q", held, r.integ())
+	commitFile(t, held, "x.txt", "owner\n")
+	gitIn(t, r.repo, "worktree", "remove", "--force", held)
+	first := r.leaves[0]
+	p := r.preview(first.ID)
+	want := fmt.Sprintf("reverting #%d conflicts in x.txt; reopen #%d without reverting code", first.Seq, first.Seq)
+	if p.Conflict == nil || p.Conflict.Message != want || len(p.Conflict.Refs) != 0 {
+		t.Fatalf("preview conflict = %+v, want %q", p.Conflict, want)
+	}
+}
+
 // A revert whose cards differ from the ones the preview showed is refused
 // at once.
 func TestRevertExpectMismatch(t *testing.T) {
@@ -283,7 +318,7 @@ func TestRevertWritesTheStoreFirst(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			commit, err := repo.revertChain(ctx, landed, []revertItem{{sha: landed, seq: leaf.Seq, title: leaf.Title}})
+			commit, err := repo.revertChain(ctx, landed, []revertItem{{sha: landed, seq: leaf.Seq, title: leaf.Title}}, leaf.Seq)
 			if err != nil {
 				t.Fatal(err)
 			}

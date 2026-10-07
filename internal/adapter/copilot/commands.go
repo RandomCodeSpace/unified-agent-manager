@@ -282,6 +282,12 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 		if value.SandboxSessionChange != nil {
 			return nil, fmt.Errorf("%w: unexpected sandbox change", agentapi.ErrSubmissionUncertain)
 		}
+		// A failed compaction is an error. The transcript notice reports a
+		// finished one from its event; Copilot's text can name negative tokens.
+		if name == "compact" {
+			result.Kind = "completed"
+			break
+		}
 		result.Kind, result.Text = "text", displaytext.SanitizeText(value.Text)
 		result.Markdown = value.Markdown != nil && *value.Markdown
 	case *rpc.SlashCommandCompletedResult:

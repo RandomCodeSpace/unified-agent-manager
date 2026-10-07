@@ -585,7 +585,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       kinds.push(kind);
       if (kind === 'image') {
         const reader = new FileReader();
-        reader.onload = () => { if (typeof reader.result === 'string') patch(key, { preview: reader.result }); };
+        // Only while the chip is still an image: the upload may have come back as text first.
+        reader.onload = () => {
+          const preview = reader.result;
+          if (typeof preview === 'string') setUploads((u) => u.map((x) => (x.key === key && x.kind === 'image' ? { ...x, preview } : x)));
+        };
         reader.readAsDataURL(file);
       }
       if (newTask) {
@@ -598,7 +602,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       inflight.current.add(up.abort);
       up.done
         .finally(() => inflight.current.delete(up.abort))
-        .then((a) => patch(key, { status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, abort: undefined }))
+        .then((a) => {
+          // The service sniffs the bytes: what it stored is the kind, whatever the name said (a text file named .png is text).
+          // An image the name did not reveal has no thumbnail of its own yet; it shows the stored copy.
+          const stored = kindOf(a.mime);
+          setUploads((u) => u.map((x) => (x.key === key ? { ...x, status: 'done', id: a.id, progress: 1, name: a.name, size: a.size ?? file.size, kind: stored, preview: stored === 'image' ? (x.preview ?? api.attachmentUrl(session.id, a.id)) : undefined, abort: undefined } : x)));
+        })
         .catch((e) => {
           if (isStatus(e, 0) && e.message === 'Upload cancelled') return;
           patch(key, { status: 'error', error: sentence(describeError(e)), abort: undefined });
