@@ -329,6 +329,9 @@ type webSession struct {
 	// stage is StageActive, StageSettled or StageArchived.
 	stage                 string
 	settledAt, archivedAt time.Time
+	// retired is why a lane Task uam retired is not reopened; empty for
+	// every other Task.
+	retired string
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq           uint64
@@ -490,7 +493,7 @@ type persistKey struct {
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
 	mode                                                                                                             store.Mode
 	settledAt, archivedAt                                                                                            time.Time
-	outcome                                                                                                          string
+	outcome, retired                                                                                                 string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -557,7 +560,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, retired: s.retired}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -839,6 +842,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
 		}
+		s.retired = web.Retired
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
 		}
@@ -1039,7 +1043,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
+		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, Retired: s.retired, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome,
@@ -1974,7 +1978,7 @@ func (m *Manager) flush() (err error) {
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
-				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
+				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, Retired: key.retired, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 			},
 		})
@@ -3837,7 +3841,7 @@ func (m *Manager) Settle(id string) (SessionSummary, error) {
 }
 
 // Reopen makes a settled Task active again. Its next prompt reopens the same
-// conversation.
+// conversation. A lane Task uam retired is refused with why.
 func (m *Manager) Reopen(id string) (SessionSummary, error) {
 	return m.reconciled(m.moveStage(id, StageActive, StageSettled))
 }
@@ -3887,6 +3891,10 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 	case !slices.Contains(from, s.stage):
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "a task that is %s cannot be %s", stageName(s.stage), stageVerb(to))
+	case to == StageActive && s.retired != "":
+		// A lane Task uam retired has no lane left to work in.
+		m.mu.Unlock()
+		return SessionSummary{}, newError(http.StatusConflict, "%s", s.retired)
 	}
 	before := m.summaryLocked(s)
 	var conv agentapi.Conversation

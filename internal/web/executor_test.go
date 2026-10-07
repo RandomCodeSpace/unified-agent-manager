@@ -109,7 +109,7 @@ func emptyDir(t *testing.T, dir string) bool {
 // each in a lane of its own; one that waits on them starts once both
 // landed, on top of their work. A Task whose work landed is never
 // cancelled: it reads that it is finished and ends its turn, and is then
-// archived, its lane removed and its branch deleted.
+// settled, its lane removed and its branch deleted.
 func TestExecutorRunsAnEpic(t *testing.T) {
 	r := planLaneRun(t, "true", "A", "B", "C")
 	r.link(0, 2)
@@ -140,9 +140,9 @@ func TestExecutorRunsAnEpic(t *testing.T) {
 	for i, l := range []lane{la, lb} {
 		task := []SessionSummary{a, b}[i]
 		r.idle(task.ID)
-		waitUntil(t, "the landed Task to be archived and its lane removed", func() bool {
+		waitUntil(t, "the landed Task to be settled and its lane removed", func() bool {
 			s, _ := r.m.Summary(task.ID)
-			return s.Stage == StageArchived && gone(l.dir) && gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.branch) != nil
+			return s.Stage == StageSettled && gone(l.dir) && gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.branch) != nil
 		})
 		if n := r.conversation(task.ID).Cancels(); n != 0 {
 			t.Fatalf("the Task that landed #%d was cancelled %d times", r.leaves[i].Seq, n)
@@ -343,7 +343,7 @@ func TestExecutorFinishedEpicMergesOnce(t *testing.T) {
 	}
 	r.idle(a.ID)
 	for _, task := range []SessionSummary{a, b} {
-		waitUntil(t, "the landed Task to be retired", func() bool { s, _ := r.m.Summary(task.ID); return s.Stage == StageArchived })
+		waitUntil(t, "the landed Task to be retired", func() bool { s, _ := r.m.Summary(task.ID); return s.Stage == StageSettled && s.Retired != "" })
 	}
 	move(16 * time.Minute)
 	r.m.executorPass()
@@ -510,8 +510,9 @@ func TestResumeOfAnApprovedEpicRunsThePreflight(t *testing.T) {
 
 // A lane Task that ends its turn without a done request is nudged once to
 // finish or say why it is blocked; ending again without one retires it:
-// the Task is archived, never cancelled, its lane removed and its branch
-// kept, and the subtask paused by uam (ADR 0006 §4.2, §4.5).
+// the Task is settled, never cancelled, its lane removed and its branch
+// kept, and the subtask paused by uam (ADR 0006 §4.2, §4.5). Reopen is
+// refused, naming the branch.
 func TestExecutorNudgesOnceThenRetires(t *testing.T) {
 	r := planLaneRun(t, "true", "Leaf")
 	r.runExec()
@@ -524,14 +525,151 @@ func TestExecutorNudgesOnceThenRetires(t *testing.T) {
 	r.idle(task.ID)
 	waitUntil(t, "the Task to be retired", func() bool {
 		s, _ := r.m.Summary(task.ID)
-		return s.Stage == StageArchived && gone(l.dir)
+		return s.Stage == StageSettled && gone(l.dir)
 	})
 	d := r.card(r.leaves[0].ID)
 	if d.Card.Paused != board.PausedUAM || d.Card.HeldBy != "" || len(conv.Sends()) != 2 || conv.Cancels() != 0 {
 		t.Fatalf("retired: %+v, sends %q, %d cancels", d.Card, conv.Sends(), conv.Cancels())
 	}
+	want = fmt.Sprintf("#%d ran in a lane that is removed; what it did is kept on branch %s. Read the transcript here.", r.leaves[0].Seq, l.branch)
+	if s, _ := r.m.Summary(task.ID); s.Retired != want {
+		t.Fatalf("retired = %q, want %q", s.Retired, want)
+	}
+	if _, err := r.m.Reopen(task.ID); err == nil || err.Error() != want {
+		t.Fatalf("reopen = %v, want %q", err, want)
+	}
 	if err := gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.branch); err != nil {
 		t.Fatalf("the attempt branch went: %v", err)
+	}
+}
+
+// A lane Task whose work landed is retired as settled, not archived (ADR
+// 0006 §5.6): it stays on the Settled shelf with its transcript, its lane
+// is removed and its landed branch deleted, and later passes leave it as it
+// is. Reopen, and attaching it to a card, are refused with the reason, which
+// names the subtask and the commit it landed as. The owner still archives
+// and deletes it, the lane's cleanup finding nothing left to do.
+func TestExecutorSettlesALandedLaneTask(t *testing.T) {
+	r := newLaneRun(t, "true", "A")
+	r.runExec()
+	task, l := r.running(0)
+	commitFile(t, l.dir, "from-a.txt", "a\n")
+	sha := r.landed(task, 0)
+	r.idle(task.ID)
+	waitUntil(t, "the landed Task to be settled and its lane removed", func() bool {
+		s, _ := r.m.Summary(task.ID)
+		return s.Stage == StageSettled && s.Retired != "" && gone(l.dir) && gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.branch) != nil
+	})
+	want := fmt.Sprintf("#%d ran in a lane that is removed; its work landed as %s. Read the transcript here; the work is on the integration branch.", r.leaves[0].Seq, shortSHA(sha))
+	if s, _ := r.m.Summary(task.ID); s.Retired != want {
+		t.Fatalf("retired = %q, want %q", s.Retired, want)
+	}
+	if tasks, _, _ := r.m.laneTaskFacts(); tasks[task.ID].Stage != board.StageSettled || !tasks[task.ID].Retired {
+		t.Fatalf("the settled lane Task's facts = %+v", tasks[task.ID])
+	}
+	for range 3 {
+		r.m.executorPass()
+	}
+	if s, _ := r.m.Summary(task.ID); s.Stage != StageSettled {
+		t.Fatalf("after more passes the Task is %s", s.Stage)
+	}
+	w := r.do(http.MethodPost, "/api/sessions/"+task.ID+"/reopen", "")
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("reopen = %d %s, want 409 %q", w.Code, w.Body, want)
+	}
+	elsewhere := r.create(board.KindSubtask, "", "Elsewhere")
+	reply := r.refused(http.MethodPost, "/api/board/cards/"+elsewhere.ID+"/attach", fmt.Sprintf(`{"task_id":%q}`, task.ID), http.StatusBadRequest, string(board.CodeInvalid))
+	if !strings.Contains(string(reply["error"]), "ran in a lane that is removed") {
+		t.Fatalf("attach = %s", reply["error"])
+	}
+	if _, err := r.m.Archive(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.m.cleanLaneErr(context.Background(), r.project, l); err != nil {
+		t.Fatalf("cleaning the removed lane again: %v", err)
+	}
+	if err := r.m.Delete(task.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The owner's Settle of a lane Task, which releases its subtask, leaves it
+// settled (ADR 0006 §4.6): uam retires it there, removing its lane and
+// keeping its branch, and never archives it.
+func TestExecutorKeepsAnOwnerSettledLaneTaskSettled(t *testing.T) {
+	r := newLaneRun(t, "true", "A")
+	task, l := r.start(0)
+	r.idle(task.ID)
+	r.call(http.MethodPost, "/api/sessions/"+task.ID+"/settle", fmt.Sprintf(`{"holds":{%q:{"action":"release"}}}`, r.leaves[0].ID), http.StatusOK, nil)
+	r.runExec()
+	waitUntil(t, "the settled lane Task to be retired", func() bool {
+		s, _ := r.m.Summary(task.ID)
+		return s.Retired != "" && gone(l.dir)
+	})
+	if s, _ := r.m.Summary(task.ID); s.Stage != StageSettled {
+		t.Fatalf("the owner's settled lane Task is %s", s.Stage)
+	}
+	if err := gitTry(t, r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+l.branch); err != nil {
+		t.Fatalf("the attempt branch went: %v", err)
+	}
+}
+
+// Stop on a running lane subtask still archives its Task (ADR 0006 §4.6),
+// the executor running too.
+func TestExecutorStopStillArchives(t *testing.T) {
+	r := newLaneRun(t, "true", "A")
+	r.runExec()
+	task, l := r.running(0)
+	conv := r.conversation(task.ID)
+	conv.SetCancelHook(func(context.Context) error {
+		conv.EmitTurn(agentapi.TurnCancelled, "")
+		return nil
+	})
+	r.call(http.MethodPost, "/api/board/cards/"+r.leaves[0].ID+"/release", `{}`, http.StatusOK, nil)
+	waitUntil(t, "the stopped Task to be archived and its lane removed", func() bool {
+		s, _ := r.m.Summary(task.ID)
+		return s.Stage == StageArchived && gone(l.dir)
+	})
+}
+
+// A lane Task uam settled stays so across a restart (ADR 0006 §4.7): the
+// next service neither archives, nudges nor reopens it, makes no Task, and
+// still refuses to reopen it.
+func TestExecutorRestartKeepsARetiredLaneTaskSettled(t *testing.T) {
+	r := newLaneRun(t, "true", "A")
+	r.runExec()
+	task, l := r.running(0)
+	commitFile(t, l.dir, "from-a.txt", "a\n")
+	r.landed(task, 0)
+	r.idle(task.ID)
+	waitUntil(t, "the landed Task to be retired", func() bool {
+		s, _ := r.m.Summary(task.ID)
+		return s.Stage == StageSettled && s.Retired != "" && gone(l.dir)
+	})
+	before, _ := r.m.Summary(task.ID)
+	sent, opens := len(sends(r.ts.prov, task.ID)), len(r.ts.prov.Opens())
+	ctx := context.Background()
+	if err := r.m.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(r.m.store, []agentapi.Provider{r.ts.prov})
+	if err := m.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Shutdown(context.Background()) })
+	waitUntil(t, "the planner to open", func() bool { _, err := m.CardDetail(r.leaves[0].ID); return err == nil })
+	for range 3 {
+		m.executorPass()
+	}
+	s, err := m.Summary(task.ID)
+	if err != nil || s.Stage != StageSettled || s.Retired != before.Retired {
+		t.Fatalf("after the restart = %+v, %v; want settled, retired %q", s, err, before.Retired)
+	}
+	if _, err := m.Reopen(task.ID); err == nil || err.Error() != before.Retired {
+		t.Fatalf("reopen after the restart = %v", err)
+	}
+	if n, o := len(sends(r.ts.prov, task.ID)), len(r.ts.prov.Opens()); n != sent || o != opens {
+		t.Fatalf("after the restart: %d prompts (was %d), %d opens (was %d)", n, sent, o, opens)
 	}
 }
 

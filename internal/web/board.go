@@ -120,7 +120,7 @@ func (m *Manager) openBoard(ctx context.Context) error {
 		_ = st.Close()
 		return err
 	}
-	if err := m.reconcileWith(ctx, st); err != nil {
+	if err := m.reconcileWith(ctx, st, ""); err != nil {
 		_ = st.Close()
 		return err
 	}
@@ -277,16 +277,21 @@ func (m *Manager) taskStagesLocked() map[string]board.Stage {
 // reconcileWith releases st's holds whose Task is Archived or deleted (ADR
 // 0005 §5), noting each Project's uncommitted files. It reads the Task
 // records, never whether a conversation is live, so a Settled Task keeps its
-// holds. The stages and asOf, on the store's clock, are read together under
-// mu: a Task created later can only hold from after asOf, and Reconcile
-// leaves such holds alone.
-func (m *Manager) reconcileWith(ctx context.Context, st *board.Store) error {
+// holds, except the lane Task retired, which uam just retired as settled
+// (ADR 0006 §5.6): its holds end as an archived Task's do. The stages and
+// asOf, on the store's clock, are read together under mu: a Task created
+// later can only hold from after asOf, and Reconcile leaves such holds
+// alone.
+func (m *Manager) reconcileWith(ctx context.Context, st *board.Store, retired string) error {
 	held, err := st.Held(ctx)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	stages, asOf := m.taskStagesLocked(), time.Now()
+	if stages[retired] == board.StageSettled {
+		stages[retired] = board.StageArchived
+	}
 	dirs := map[string]string{}
 	ended := 0
 	for _, c := range held {
@@ -318,8 +323,12 @@ func (m *Manager) reconcileWith(ctx context.Context, st *board.Store) error {
 // reconcileBoard reconciles after a Task transition: Settle, Reopen, Archive,
 // Delete, or a planner Task discarded after a failed launch, then kicks the
 // executor. It does nothing while the planner is off.
-func (m *Manager) reconcileBoard() {
-	err := m.withBoard(func(st *board.Store) error { return m.reconcileWith(m.ctx, st) })
+func (m *Manager) reconcileBoard() { m.reconcileRetired("") }
+
+// reconcileRetired is reconcileBoard after uam retired the settled lane Task
+// id, whose holds it releases as Archive's reconcile would; "" retires none.
+func (m *Manager) reconcileRetired(id string) {
+	err := m.withBoard(func(st *board.Store) error { return m.reconcileWith(m.ctx, st, id) })
 	if err != nil && !plannerDown(err) {
 		log.Warn("reconcile planner holds failed", "error", err)
 	}
@@ -1003,6 +1012,9 @@ func (m *Manager) AttachTask(ref string, req AttachRequest) (BoardCard, error) {
 	}
 	if task.Stage == StageArchived {
 		return BoardCard{}, invalidBoard("the task is archived; restore it first")
+	}
+	if task.Retired != "" {
+		return BoardCard{}, invalidBoard("%s", task.Retired)
 	}
 	ctx := m.ctx
 	var c board.Card

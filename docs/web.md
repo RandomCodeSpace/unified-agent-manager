@@ -1137,7 +1137,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
   | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
-  | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
+  | Reopen | a settled Task | not a lane Task uam settled, whose lane is removed | Active again; the next message reopens the same conversation |
   | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
   | Delete Task | an archived Task | – | The Task is removed from UAM |
   | Remove Project | any Project | every Task in it archived, or no Tasks | The Project, its archived Tasks, its routines and the prompts saved for it are removed from UAM |
@@ -1385,7 +1385,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the integration tip into the lane (a conflict refuses it with the files
   and the steps), runs the acceptance command there and lands the lane on
   the integration branch as one commit whose trailers name the card and the
-  request: the card shows **Landing**, then **Landed** with the commit. A
+  request: the card shows **Landing**, then **Landed** with the commit. Once
+  the lane's Task ends its turn, uam settles it, not archives it: it stays
+  on the Settled shelf with its transcript, its lane is removed, and Reopen
+  is refused, naming the subtask and the commit it landed as. Archive or
+  delete it as any other Task. A
   change to test or build files is flagged on its request, not held for you. A done
   request that waits for you (nothing changed, or the command could not run
   or outran its time limit) lands when you Accept it, as a job whose
@@ -1415,8 +1419,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and the confirmation names those subtasks. A plain move back to To do is
   refused on a landed subtask.
   An attempt that ends without landing pauses its subtask ("Paused by
-  uam"). Archiving a lane's Task commits what the lane left to its branch
-  and removes the lane; a landed attempt's branch goes too, and the
+  uam"). Settling or archiving a lane's Task commits what the lane left to
+  its branch and removes the lane; a landed attempt's branch goes too, and the
   Project's folder of lanes once it is empty, as when the Project is
   removed. The acceptance
   runs of a Project, its lanes' included, run one at a time unless the
@@ -1463,15 +1467,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   on the epic, and uam never pushes.
   A lane Task that ends its
   turn without a done request is reminded once; ending again without one
-  archives it, which ends the attempt without landing. One whose provider
-  failed before it changed anything goes, and its subtask starts again
-  later. A provider that fails a start or a lane's turn gets no new starts
-  for 1 minute, doubling up to 15, after which the lane Task whose turn
-  failed is asked to continue; any completed turn on that provider ends the
+  settles it, which ends the attempt without landing; its Reopen is refused,
+  naming the branch that keeps its work. One whose provider failed before
+  it changed anything goes (its Task is archived and deleted, as is one
+  whose start fails), and its subtask starts again later. A provider that
+  fails a start or a lane's turn gets no new starts for 1 minute, doubling
+  up to 15, after which the lane Task whose turn failed is asked to
+  continue; any completed turn on that provider ends the
   wait. A signed-out provider waits until you sign in. A
   done request waiting to land when uam stops lands when it starts again,
   and a lane Task that was working is told to continue; one that cannot
-  take that message is archived, which ends the attempt without landing. A
+  take that message is settled, which ends the attempt without landing. A
+  lane Task uam settled stays settled across a restart. A
   lane that cannot start for git or the planner's database backs its epic
   off and comments why; the third failure in a row pauses the epic
   ("Paused by uam").

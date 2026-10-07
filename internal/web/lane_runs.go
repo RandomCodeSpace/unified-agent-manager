@@ -25,7 +25,7 @@ import (
 // in a Task of its own, in a lane, and lands on the Project's integration
 // branch. This file wires lanes.go into the planner: lane starts, the
 // landing of a done claim, the owner's Accept as a job, Stop, the cleanup
-// of a lane whose Task is archived, and the recovery at boot.
+// of a lane whose Task is retired or archived, and the recovery at boot.
 
 const (
 	// codeTaskWorking refuses the owner's Accept of a lane's done request
@@ -837,8 +837,9 @@ func (m *Manager) stopLaneTask(ctx context.Context, id string, seq int64) {
 	}
 }
 
-// cleanLaneOf cleans up the lane of the archived Task whose workdir is
-// workdir, in the background; a Task outside the lanes has none.
+// cleanLaneOf cleans up the lane of the retired or archived Task whose
+// workdir is workdir, in the background; a Task outside the lanes has none.
+// A lane cleaned up already is left as it is.
 func (m *Manager) cleanLaneOf(workdir string) {
 	project, l, ok := m.laneOfDir(workdir)
 	if !ok {

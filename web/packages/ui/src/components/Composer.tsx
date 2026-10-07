@@ -1262,11 +1262,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && session.stage === 'settled' && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Note>Settled. Reopen this task to continue the same conversation.</Note>
-              <Button size="sm" variant="secondary" loading={!!taskActions.busy[session.id]} onClick={reopen}>
-                <ArchiveRestore />
-                Reopen
-              </Button>
+              <Note>{session.retired ? `Settled. ${session.retired}` : 'Settled. Reopen this task to continue the same conversation.'}</Note>
+              {/* A lane Task uam retired has no lane left: Reopen stays in view, disabled, with the service's reason. */}
+              <Tip label={session.retired}>
+                <Button size="sm" variant="secondary" aria-disabled={session.retired ? true : undefined} loading={!!taskActions.busy[session.id]} onClick={() => { if (!session.retired) reopen(); }}>
+                  <ArchiveRestore />
+                  Reopen
+                </Button>
+              </Tip>
             </div>
           )}
           {locked && session.stage !== 'settled' && <Note>Archived. This task is read-only.</Note>}
