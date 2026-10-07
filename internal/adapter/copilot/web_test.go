@@ -1,5 +1,7 @@
 package copilot
 
+//lint:file-ignore SA1019 Copilot CLI 1.0.93 still sends tool.execution_partial_result; moving to tool.shell_output removes this.
+
 import (
 	"bytes"
 	"context"
@@ -769,7 +771,7 @@ func TestWebPermissionNamesItsToolCall(t *testing.T) {
 		{"custom", &rpc.PermissionRequestCustomTool{ToolName: "t", ToolCallID: id("call_custom")}, "call_custom"},
 		{"memory", &rpc.PermissionRequestMemory{ToolCallID: id("call_memory")}, "call_memory"},
 		{"hook", &rpc.PermissionRequestHook{ToolName: "t", ToolCallID: id("call_hook")}, "call_hook"},
-		{"factory", &rpc.PermissionRequestFactory{ToolCallID: id("call_factory")}, "call_factory"},
+		{"workflow", &rpc.PermissionRequestWorkflow{ToolCallID: id("call_workflow")}, "call_workflow"},
 		{"env", &rpc.PermissionRequestExtensionEnvAccess{ToolCallID: id("call_env")}, "call_env"},
 		{"extension", &rpc.PermissionRequestExtensionManagement{ToolCallID: id("call_ext")}, "call_ext"},
 		{"extension-permission", &rpc.PermissionRequestExtensionPermissionAccess{ToolCallID: id("call_extp")}, "call_extp"},

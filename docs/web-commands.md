@@ -9,7 +9,7 @@ Tasks remain read-only.
 
 ## Copilot support
 
-This table describes the web adapter for the pinned Copilot Go SDK 1.0.14. A
+This table describes the web adapter for the pinned Copilot Go SDK 1.0.17. A
 command also has to exist in the installed runtime's catalogue. Its native
 aliases are accepted, including `goal`, `yolo`, and `models`.
 
