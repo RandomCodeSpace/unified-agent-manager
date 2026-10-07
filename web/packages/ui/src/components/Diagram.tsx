@@ -47,7 +47,7 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
       aria-label="Open diagram"
       onClick={event => {
         if (preview) {
-          preview({ url, name: 'Diagram', description: 'mermaid', image: true, original: false }, event.currentTarget);
+          preview({ url, name: 'Diagram', description: 'mermaid', image: true, original: false, size: rendered }, event.currentTarget);
           return;
         }
         setShown(true);
@@ -83,7 +83,7 @@ export function DiagramCard({ source, ready, children }: Readonly<{ source: stri
       >
         {children}
       </CodeBlock>
-      {!preview && shown && rendered && <Lightbox open={open} onOpenChange={setOpen} onClosed={() => setShown(false)} title="Diagram" description="mermaid" src={url} alt="Diagram" />}
+      {!preview && shown && rendered && <Lightbox open={open} onOpenChange={setOpen} onClosed={() => setShown(false)} title="Diagram" description="mermaid" src={url} alt="Diagram" size={rendered} />}
     </>
   );
 }

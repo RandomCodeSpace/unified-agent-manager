@@ -93,7 +93,7 @@ export function FilePreview({ selection, sessionId, workdir, inline, onClose }: 
     <a href={downloadUrl(target.url)} download={target.name} className={buttonVariants({ variant: 'secondary', size: 'sm' })}><Download />Download</a>
   </>;
   if (image && target.url) {
-    return <Lightbox open onOpenChange={open => !open && onClose()} title={target.name} description={target.description} src={target.url} alt={target.name} footer={<div className="flex max-w-prose flex-col gap-2">
+    return <Lightbox open onOpenChange={open => !open && onClose()} title={target.name} description={target.description} src={target.url} alt={target.name} size={target.size} footer={<div className="flex max-w-prose flex-col gap-2">
       {temporary && <p className="text-caption text-on-primary/70">{limitation}</p>}
       {actions && <div className="flex flex-wrap justify-end gap-2">{actions}</div>}
     </div>} />;
