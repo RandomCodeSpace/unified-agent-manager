@@ -1,5 +1,5 @@
 import { useFederation, type Machine } from '../FederationContext';
-import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, KanbanSquare, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { ViewTransition, memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -36,8 +36,6 @@ export interface WorkspaceActions {
   onToggleSidebar: () => void;
   settingsOpen: boolean;
   onSettings: (target?: 'token-prices') => void;
-  /** The planner, while Settings → Planner is on: whether its view is showing, and Plan (a Project's Board, or the last one shown). */
-  planner?: { open: boolean; onOpen: (projectId?: string) => void };
 }
 
 /**
@@ -107,7 +105,6 @@ function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[
     // Each machine's Projects under its name; a Project's buttons act on its own machine, opening it where the view lives.
     const filter = federation.filter;
     const groups: ProjectGroup[] = machines.map((m) => {
-      const planner = m.state.settings.planner === true && m.client.supports('planner-v1');
       return {
         key: m.id,
         label: m.label,
@@ -116,13 +113,12 @@ function FilterButton({ projects, actions, side }: Readonly<{ projects: Project[
         onPick: (p) => federation.onFilter?.({ machine: m.id, project: p.id }),
         onEdit: m.active ? actions.onEditProject : (p) => federation.request?.({ machine: m.id, kind: 'edit-project', projectId: p.id }),
         onRoutines: m.active ? actions.onRoutines : m.client.supports('routines-v1') ? (p) => federation.go?.(m.id, `#routines=${encodeURIComponent(p.id)}`) : undefined,
-        onPlan: !planner ? undefined : m.active && actions.planner ? (p) => actions.planner!.onOpen(p.id) : (p) => federation.go?.(m.id, `#planner=${encodeURIComponent(p.id)}`),
       };
     });
     const chosen = groups.find((g) => g.current && g.projects.some((p) => p.id === g.current));
     return <ProjectFilterPicker projects={chosen?.projects ?? []} filter={chosen?.current ?? null} groups={groups} onFilter={() => federation.onFilter?.(null)} onEdit={actions.onEditProject} side={side === 'right' ? 'right' : undefined} />;
   }
-  return <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} onPlan={actions.planner && ((p) => actions.planner!.onOpen(p.id))} side={side === 'right' ? 'right' : undefined} />;
+  return <ProjectFilterPicker projects={projects} filter={actions.filter} onFilter={actions.onFilter} onEdit={actions.onEditProject} onRoutines={actions.onRoutines} side={side === 'right' ? 'right' : undefined} />;
 }
 
 /** Whether any machine on screen has a Project: the rail and the header offer their Project buttons then. */
@@ -167,11 +163,6 @@ function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions;
   return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={notice || undefined} />;
 }
 
-function PlannerButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
-  if (!actions.planner) return null;
-  return <FooterButton label="Planner" icon={<KanbanSquare />} pressed={actions.planner.open} onClick={() => actions.planner!.onOpen()} side={side} />;
-}
-
 /**
  * The rail's connection: silent while connected (the status is for screen readers), a warning or
  * error glyph with its sentence in a tip once the stream is lost. Colour is never the only sign.
@@ -212,7 +203,7 @@ function VersionMeta({ version }: Readonly<{ version: string }>) {
 /**
  * The collapsed sidebar (wide layout): a narrow rail (`--spacing-rail-collapsed`) on the sidebar's floor. At the top the UAM
  * mark (shows the sidebar, with the Needs you count), then the Project filter, Routines, Add project and New task,
- * in the sidebar header's order; at the foot Settings, the planner and the connection. Each is the expanded
+ * in the sidebar header's order; at the foot Settings and the connection. Each is the expanded
  * sidebar's own control, so it opens the same thing; tips open to the right.
  */
 export function SidebarRail({ projects, actions, connection, count }: Readonly<{ projects: Project[]; actions: WorkspaceActions; connection: Connection; count: number }>) {
@@ -231,7 +222,6 @@ export function SidebarRail({ projects, actions, connection, count }: Readonly<{
       <span className="flex-1" />
       <div className="flex flex-col items-center gap-1.5 pointer-coarse:gap-4">
         <SettingsButton actions={actions} side="right" />
-        <PlannerButton actions={actions} side="right" />
         <UsageButton side="right" onAddPrices={() => actions.onSettings('token-prices')} />
         <ConnectionMark connection={connection} side="right" />
       </div>
@@ -746,12 +736,11 @@ export const Sidebar = memo(function Sidebar({
           {CONNECTION_TEXT[connection]}
         </output>
       )}
-      {/* The foot, one row: Settings and the planner as icons with tips, the account allowance as a small chip, then the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
+      {/* The foot, one row: Settings as an icon with a tip, the account allowance as a small chip, then the version. A lost connection is the banner above; while connected the status is for screen readers only. */}
       <footer className="flex shrink-0 flex-col gap-1 px-2 pb-2">
         <div className="fade-rule mx-1 mb-1" aria-hidden="true" />
         <div className="flex min-w-0 items-center gap-1">
           <SettingsButton actions={actions} />
-          <PlannerButton actions={actions} />
           <UsageButton variant="chip" side="top" className="ml-1" onAddPrices={() => actions.onSettings('token-prices')} />
           <span className="flex-1" />
           {version && <VersionMeta version={version} />}

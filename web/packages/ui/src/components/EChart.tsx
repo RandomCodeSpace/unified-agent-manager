@@ -17,7 +17,7 @@ const axesKey = (range: ZoomRange) => JSON.stringify([axisIndexes(range.xAxisInd
 type LegendModel = { get(key: 'show' | 'selectedMode'): unknown; getData(): { get(key: 'name'): unknown }[]; isSelected(name: string): boolean };
 const legendModel = (drawing: EChartsType) => (drawing as unknown as { getModel(): { getComponent(type: string): LegendModel | undefined } }).getModel().getComponent('legend');
 
-/** A locally bundled SVG drawing. The owner supplies accessible controls for planner nodes. */
+/** A locally bundled SVG drawing. */
 export function EChart({ option, width, height, className, label, zoomControls = false, controlsContainer, legend }: Readonly<{
   option: EChartsOption;
   width: number;

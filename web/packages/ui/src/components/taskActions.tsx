@@ -1,6 +1,6 @@
 import { Archive, ArchiveRestore, Check, Cpu, Download, Pencil, PowerOff, RotateCw, Trash2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
-import { LIVE, needsYou, type SessionSummary } from '../api';
+import { LIVE, needsYou, type Project, type SessionSummary } from '../api';
 import type { ActionItem } from './ui/menu';
 
 /** Where an in-place rename is happening: the sidebar row or the Task header. */
@@ -56,6 +56,18 @@ export const TaskActionsContext = createContext<TaskActions>({
 
 export const useTaskActions = () => useContext(TaskActionsContext);
 
+/**
+ * The Tasks and Projects for Settings: Background AI's rows name them, and the configuration
+ * sections offer the Projects. Apart from the app's context, so a Task update re-renders only their readers.
+ */
+export interface TaskListValue {
+  sessions: SessionSummary[];
+  projects: Project[];
+  openTask: (id: string) => void;
+}
+
+export const TaskList = createContext<TaskListValue>({ sessions: [], projects: [], openTask: () => {} });
+
 export const STAGE_REASON = 'Stop the turn, answer what is waiting, clear queued prompts and let subagents and background tasks finish (or stop them) before settling or archiving.';
 
 /** True while the lifecycle rules refuse a stage change (a busy Task, or work that outlived its turn). */
@@ -87,7 +99,7 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
   if (tryModel) items.push({ key: 'try-model', label: 'Try with another model…', icon: <Cpu />, disabled: busy, onSelect: () => tryModel(s.id) });
   if (exportMarkdown) items.push({ key: 'export', label: 'Export as Markdown', icon: <Download />, disabled: busy, onSelect: () => exportMarkdown(s.id), separator: !runAgain });
   if (stage === 'active') items.push({ key: 'settle', label: 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
-  if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy || !!s.retired, reason: s.retired, onSelect: () => a.reopen(s.id), separator: true });
+  if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy, onSelect: () => a.reopen(s.id), separator: true });
   if (stage !== 'archived') items.push({ key: 'archive', label: 'Archive', icon: <Archive />, disabled: busy || (stage === 'active' && blocked), reason: stage === 'active' && blocked ? STAGE_REASON : undefined, onSelect: () => a.archive(s.id) });
   if (stage === 'archived') items.push({ key: 'delete', label: 'Delete', icon: <Trash2 />, danger: true, disabled: busy, onSelect: () => a.remove(s.id), separator: true });
   return items;

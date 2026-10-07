@@ -10,7 +10,6 @@ import { Select } from './components/ui/select';
 import { initialState, reducer, type State, type Action } from './state';
 import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
 import { needsYouCount, newsReader } from './lib/tasks';
-import { pendingRequests, plansWaiting } from './lib/board';
 import { handleNotice, setNotificationSource, startNotifications, type Notice } from './lib/notify';
 import { forgetArchive, readMarks } from './lib/historyArchive';
 
@@ -335,7 +334,7 @@ export default function Federation() {
   };
   const otherAttention = sources.filter(source => source.id !== activeID).reduce((count, source) => {
     const state = sourceStates[source.id]?.state;
-    return state ? count + needsYouCount(state.sessions, unreadFor(source)) + pendingRequests(state.boards) + plansWaiting(state.boards) : count;
+    return state ? count + needsYouCount(state.sessions, unreadFor(source)) : count;
   }, 0);
   const federated = connections.length > 0;
   // Every enabled machine with what it last streamed; the one on screen is App's live state, this its lagging copy.

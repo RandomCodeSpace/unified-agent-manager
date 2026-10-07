@@ -5,7 +5,6 @@
 
 import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
-import { boardMock } from './board';
 import { gitMock } from './git';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
@@ -120,11 +119,6 @@ export function install(): { received: Received[] } {
   const received: Received[] = [];
   // `?mock&slow=1500` holds every reply and the first snapshot that long, to look at the loading states.
   const slow = Math.max(0, Number(new URLSearchParams(window.location.search).get('slow')) || 0);
-  // `?mock&planner=off` starts with the planner off; `?mock&planner=unset` is a service that predates it (no setting, no routes).
-  const plannerMode = new URLSearchParams(window.location.search).get('planner');
-  const plannerKnown = plannerMode !== 'unset';
-  if (!plannerKnown) delete st.settings.planner;
-  else if (plannerMode === 'off') st.settings.planner = false;
   // `?mock&manychanges` adds 40 uncommitted files from no Task, to check Changes and Commit with a long list.
   if (new URLSearchParams(window.location.search).has('manychanges')) {
     for (let i = 1; i <= 40; i++) st.changes.p1.push({ path: `web/src/generated/module-${i}.ts`, status: 'M', additions: i, deletions: 1, patch: '' });
@@ -188,7 +182,6 @@ export function install(): { received: Received[] } {
   const service = serviceMock(st.meta);
   const configuration = configurationMock(() => !!st.settings.terminal);
   const mcp = mcpMock(() => !!st.settings.terminal);
-  // The planner (ADR 0005); `?mock&bigplan` adds about 200 cards to notes-site.
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const assist = assistMock({
     broadcast: (name, payload) => broadcast(name, payload),
@@ -198,26 +191,6 @@ export function install(): { received: Received[] } {
     newest: () => st.tasks.at(-1),
     summary: (t) => summary(t),
   });
-  const board = boardMock({
-    broadcast: (name, payload) => broadcast(name, payload),
-    projects: () => st.projects,
-    settings: () => st.settings,
-    task: (id) => { const t = find(id); return t && summary(t); },
-    createTask: (projectId, name, prompt) => {
-      const p = st.projects.find((x) => x.id === projectId)!;
-      const d = st.settings.task_defaults;
-      const t: MockTask = {
-        id: nextId('t'), project_id: p.id, provider: 'copilot', name, title: name, workdir: p.dir, conversation_id: nextId('conv'),
-        model: d?.model ?? 'auto', last_model: '', effort: d?.effort, context_size: d?.context_size, mode: d?.mode, subagents_running: 0,
-        state: 'working', open: true, pending: 0, created_at: now(), updated_at: now(), capabilities: st.meta.providers[0].capabilities,
-        items: [{ id: nextId('u'), kind: 'user', text: prompt, time: now() }], interactions: [], subagents: [], history_truncated: false, last_submission: null, agentItems: {},
-      };
-      st.tasks.push(t);
-      broadcast('session', { session: summary(t) });
-      void reply(t, 'Reading the card and the files it names, then I will claim the next subtask.', t.model === 'auto' ? 'mai-code-1.1-flash' : t.model);
-      return summary(t);
-    },
-  }, { big: new URLSearchParams(window.location.search).has('bigplan') });
   // The commit panel's routes; a Task's files are the ones its edit tools name.
   const git = gitMock({
     projects: () => st.projects,
@@ -449,7 +422,7 @@ export function install(): { received: Received[] } {
         }
         return () => sources.delete(src);
       }
-      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, ...(st.settings.planner ? { boards: { ...Object.fromEntries(st.projects.map((p) => [p.id, 0])), ...board.revisions() } } : {}), sessions: st.tasks.map(summary), session: t ? detail(t) : null });
+      const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
       if (slow) window.setTimeout(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {
@@ -698,8 +671,6 @@ export function install(): { received: Received[] } {
     if (versioned) return versioned;
     const serviced = service(method, url);
     if (serviced) return serviced;
-    const planned = plannerKnown ? board.route(method, url, body) : null;
-    if (planned) return planned;
     const gitted = git.route(method, url, body);
     if (gitted) return gitted;
     const charted = charts(method, url, body);
@@ -723,7 +694,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold' && (key !== 'planner' || !plannerKnown)) return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold') return fail(400, `unknown setting "${key}"`);
       if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
@@ -740,11 +711,6 @@ export function install(): { received: Received[] } {
         if (t !== null && (typeof t !== 'number' || !Number.isInteger(t) || t < 50 || t > 90)) return fail(400, 'compact_threshold must be 50 to 90');
         const { compact_threshold: _, ...rest } = st.settings;
         st.settings = t === null || t === 80 ? rest : { ...rest, compact_threshold: t };
-        broadcast('settings', { settings: st.settings });
-      }
-      if (body.planner !== undefined) {
-        if (typeof body.planner !== 'boolean') return fail(400, 'planner must be true or false');
-        st.settings = { ...st.settings, planner: body.planner };
         broadcast('settings', { settings: st.settings });
       }
       if (body.terminal !== undefined) {
@@ -948,10 +914,6 @@ export function install(): { received: Received[] } {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
           if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
-          if (st.settings.planner) {
-            const holds = board.settle(t.id, body);
-            if (holds) return holds;
-          }
           touch(t, { stage: 'settled', settled_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'reopen':
@@ -962,7 +924,6 @@ export function install(): { received: Received[] } {
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
-          board.ended(t.id);
           return json(200, summary(t));
       }
     }

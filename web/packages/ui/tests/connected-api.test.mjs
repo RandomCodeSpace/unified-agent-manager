@@ -4,7 +4,7 @@ import { registerHooks } from 'node:module';
 const hooks = registerHooks({ resolve(specifier, context, next) { return next(['./lib/models', './lib/reads', './lib/preview'].includes(specifier) ? `${specifier}.ts` : specifier, context); } });
 const { api, createApiClient, onUnauthorized, errorCode } = await import('../src/api.ts');
 hooks.deregister();
-const connection = (id = 'remote-b') => ({ id, instance_id: `instance-${id}`, label: id, enabled: true, generation: 3, capabilities: ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'planner-v1', 'routines-v1', 'usage-v1'] });
+const connection = (id = 'remote-b') => ({ id, instance_id: `instance-${id}`, label: id, enabled: true, generation: 3, capabilities: ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1'] });
 
 test('colliding task and project IDs always route through the captured owner and generation', async () => {
   const original = globalThis.fetch, requests = [];
@@ -12,12 +12,12 @@ test('colliding task and project IDs always route through the captured owner and
   try {
     const b = createApiClient(connection()), c = createApiClient(connection('remote-c'));
     await Promise.all([b.prompt('same/id', 'B', 'request-b'), c.prompt('same/id', 'C', 'request-c'), api.prompt('same/id', 'A', 'request-a')]);
-    await b.planner.create({ project_id: 'same-project', title: 'B card', kind: 'story', parent_id: null });
+    await b.routines('same-project');
     await c.configuration('same-project');
     assert.match(requests[0].url, /^\/api\/connected\/remote-b\/api\/sessions\/same%2Fid\/prompt\?uam_generation=3$/);
     assert.match(requests[1].url, /^\/api\/connected\/remote-c\//);
     assert.equal(requests[2].url, '/api/sessions/same%2Fid/prompt');
-    assert.match(requests[3].url, /^\/api\/connected\/remote-b\/api\/board\/cards\?uam_generation=3$/);
+    assert.match(requests[3].url, /^\/api\/connected\/remote-b\/api\/projects\/same-project\/routines\?uam_generation=3$/);
     assert.match(requests[4].url, /^\/api\/connected\/remote-c\/api\/configuration\?project_id=same-project&uam_generation=3$/);
     assert.ok(requests.every(request => request.options.credentials === 'same-origin'));
   } finally { globalThis.fetch = original; }

@@ -2,7 +2,7 @@ import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, 
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
-import type { Interaction, Item, Subagent, ToolBoardCard, ToolStatus, TurnTiming } from '../api';
+import type { Interaction, Item, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -16,10 +16,9 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
 import { CodeBlock, Dot, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
-import { usePlannerOpenCard } from './planner/context';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { Button } from './ui/button';
-import { Chip, chipVariants } from './ui/chip';
+import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Appear } from './ui/appear';
@@ -1052,11 +1051,11 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     <ContextMenu.Root>
       <ContextMenu.Trigger render={<div className={cn('group/tool relative', className)} />}>
         <div ref={attach} id={`item-${item.id}`} className={cn('rounded-sm', tone === 'failed' && 'text-error')}>
-          <div className={cn('flex items-center gap-1', t?.board_card && 'pr-8 pointer-coarse:pr-11')}>
+          <div className="flex items-center gap-1">
             <button
               type="button"
               aria-expanded={open}
-              className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11', t?.board_card ? 'pr-1.5' : 'pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
+              className={cn('flex h-6 min-w-0 flex-1 items-center gap-2 rounded-full pl-1.5 text-left font-mono text-code-sm text-muted transition-colors hover:bg-tint-well pointer-coarse:min-h-11 pr-8 pointer-coarse:pr-11', tone === 'running' && 'text-body', tone === 'failed' && 'text-error')}
               title={ended ? 'The turn ended before this tool reported a result' : undefined}
               onClick={toggle}
             >
@@ -1068,7 +1067,6 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
               <span className="sr-only">, {word}</span>
               {decided.length > 0 && <ApprovalMark interactions={decided} />}
             </button>
-            {t?.board_card && <BoardCardChip card={t.board_card} />}
           </div>
           {opened && (
             <Collapse open={open} appear>
@@ -1093,29 +1091,6 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     </ContextMenu.Root>
   );
 });
-
-/**
- * The planner card a planner tool call was about, as "#12 Title" beside its row. It opens the
- * card in the planner, and is plain text while the planner is off.
- */
-function BoardCardChip({ card }: Readonly<{ card: ToolBoardCard }>) {
-  const openCard = usePlannerOpenCard();
-  const name = `#${card.seq} ${card.title}`;
-  const label = (
-    <>
-      <span className="tabular-nums">#{card.seq}</span>{' '}
-      <span className="truncate">{card.title}</span>
-    </>
-  );
-  if (!openCard) {
-    return <Chip fill="well" className="max-w-48 font-sans" title={name}>{label}</Chip>;
-  }
-  return (
-    <button type="button" className={cn(chipVariants({ fill: 'well' }), 'max-w-48 font-sans hover:text-body')} title={`Open ${name} in the planner`} onClick={() => openCard(card.id)}>
-      {label}
-    </button>
-  );
-}
 
 /** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
 function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessionId?: string; className?: string }>) {

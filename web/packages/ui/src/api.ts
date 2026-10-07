@@ -399,8 +399,6 @@ export interface Settings {
   task_defaults?: TaskDefaults;
   /** Whether a Task's header offers a shell in its Project folder; off by default. Turning it off ends every open shell. */
   terminal: boolean;
-  /** The planner (ADR 0005): the Boards of git Projects; off by default, absent from a service older than it. */
-  planner?: boolean;
   /** `false` when replies to send next are not offered after a turn; absent while they are (the default). */
   suggest_replies?: boolean;
   /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
@@ -465,348 +463,15 @@ export interface UtilityLog {
   next?: number;
 }
 
-/* ---------- The planner (ADR 0005 §14–§15) ---------- */
-
-export type CardKind = 'epic' | 'story' | 'subtask';
-/** A subtask's stored status; a container's is derived from its confirmed subtasks and is never `todo`. */
-export type CardStatus = 'planned' | 'todo' | 'doing' | 'done' | 'cancelled';
-
-export interface ChecklistItem {
-  text: string;
-  done: boolean;
-}
-
-/** Done ÷ non-cancelled confirmed subtasks, counted; `proposed` is the unconfirmed ones. Containers only. */
-export interface CardProgress {
-  done: number;
-  total: number;
-  proposed: number;
-}
-
-/** How far a confirmed, unheld subtask is behind HEAD since its pin (§9). */
-export interface Staleness {
-  behind: number;
-  diverged: boolean;
-  files: string[];
-}
-
-/** One node on a Board: an epic, a story or a subtask. `{ref}` in a route is its id or its `#seq`. */
-export interface Card {
-  id: string;
-  seq: number;
-  /** Empty for the Unassigned list (kb import cards not moved into a Project yet). */
-  project_id: string;
-  kind: CardKind;
-  parent_id: string | null;
-  rank: number;
-  title: string;
-  desc: string;
-  win_condition: string;
-  status: CardStatus;
-  progress?: CardProgress;
-  prio: number;
-  due?: string;
-  effort?: 'S' | 'M' | 'L' | '';
-  labels: string[];
-  checklist: ChecklistItem[];
-  blocked: boolean;
-  blocked_by: string[];
-  blocks: string[];
-  confirmed: boolean;
-  /** Sent only while the card is unconfirmed. */
-  expires_at?: string;
-  /** The Task holding a doing subtask. */
-  held_by?: string;
-  /** The Task of the subtask's latest attempt, kept after it ends. */
-  worked_by?: string;
-  pinned_sha: string;
-  /** Owner only: null inherits the Project default, `''` means none, otherwise the command. */
-  accept_cmd: string | null;
-  /** Owner only: globs the staleness check watches. */
-  paths: string[];
-  /** Sent only once computed. */
-  stale?: Staleness;
-  /**
-   * Who paused it (ADR 0006 §4.6): the owner, or uam when an attempt ended without landing; `''` when it
-   * is not. Nothing new starts at or under a paused card. Absent from a service older than approvals.
-   */
-  paused?: '' | 'owner' | 'uam';
-  /** An approved epic's run: what its approval authorizes its subtasks to run with. Absent on every other card. */
-  run?: CardRun;
-  /** A subtask whose latest attempt ran in a lane (ADR 0006 §5.1): that attempt's git state. */
-  lane?: CardLane;
-  pending_requests: number;
-  revision: number;
-  created_at: string;
-  updated_at: string;
-  moved_at: string;
-}
-
-/** An approved epic's run (ADR 0006 §3.3). */
-export interface CardRun {
-  provider: string;
-  model: string;
-  effort: string;
-  context_size: string;
-  mode: 'safe' | 'yolo';
-  /** How many of its subtasks may run at a time, 1 to 4. */
-  parallel: number;
-  approved_at: string;
-}
-
-/**
- * A lane attempt's git state: its attempt branch, and `landed_sha`, the landing intent while the
- * attempt is open (Landing) and the commit it landed as once it ended (Landed); `reverted_sha`
- * the commit that reverted it. Empty strings when there is none.
- */
-export interface CardLane {
-  branch: string;
-  landed_sha: string;
-  reverted_sha: string;
-}
-
-/** `GET /api/board/projects/{id}`: a Project's planner settings. */
-export interface BoardProject {
-  /** The default acceptance command, `''` for none. */
-  accept_cmd: string;
-  /** Why the Project has no git (`not_installed`, `not_repository`), `''` when it has. */
-  git: string;
-  /** How many acceptance runs of this Project run at a time, 1 to 4. */
-  accept_parallel: number;
-  /** Its integration branch, once an approval named the base branch it follows; null before. */
-  integration: BoardIntegration | null;
-  /** What uam's executor waits for before it starts or nudges anything more (ADR 0006 §4.5); null for nothing. */
-  executor?: BoardExecutor | null;
-}
-
-/** `GET /api/board/executor`, also in `BoardProject`: the providers nothing starts on now, backing off after a failure until `until`, or signed out (`until` null). */
-export interface BoardExecutor {
-  providers: ProviderWait[];
-}
-
-export interface ProviderWait {
-  provider: string;
-  /** The provider's display name. */
-  name: string;
-  detail: string;
-  until: string | null;
-}
-
-/**
- * A Project's integration branch: `ahead` landings and reverts not yet in `base_ref`, which is `behind`
- * commits past it, and its last merge into `base_ref` that did not go through (ADR 0006 §5.8).
- */
-export interface BoardIntegration {
-  branch: string;
-  base_ref: string;
-  ahead: number;
-  behind: number;
-  merge?: BoardMerge;
-}
-
-/** A merge that did not go through: waiting (uam tries it again at `retry_at`), or blocked until Retry merge or new tips. */
-export interface BoardMerge {
-  state: 'waiting' | 'blocked';
-  reason: string;
-  retry_at?: string;
-}
-
-/**
- * What a Revert would do (ADR 0006 §5.7): the integration branch, the ids of the cards it reverts (posted
- * back as `expect`) and of the running subtasks to Stop first, each landing it reverts with its files,
- * whether the base branch has one of them, and why it would not apply.
- */
-export interface RevertPreview {
-  branch: string;
-  cards: string[];
-  running: string[];
-  landings: { card_id: string; seq: number; title: string; sha: string; files: string[] }[];
-  merged: boolean;
-  conflict?: { code: string; error: string; refs?: string[] };
-}
-
-/**
- * What a merge of a Project's integration branch into its base branch would carry (ADR 0006 §5.8): each
- * landing and revert the base branch lacks, oldest first, with its subtask, the subtask's epic, and whether
- * the landing changed tests or build files.
- */
-export interface MergePreview {
-  branch: string;
-  base_ref: string;
-  items: { card_id: string; seq: number; title: string; epic_id: string; revert: boolean; flagged: boolean }[];
-}
-
-/** The Approve dialog's post (ADR 0006 §7): the cards it showed, at the revisions it showed, and the run's settings. */
-export interface ApproveBody extends TaskDefaults {
-  items: { id: string; revision: number }[];
-  parallel: number;
-}
-
-export type RequestKind = 'done' | 'cancel' | 'blocked' | 'split' | 'change';
-export type RequestFlag = 'acceptance_could_not_run' | 'baseline_missing' | 'no_change_in_tree' | 'tests_or_build_changed' | 'overlap';
-
-/** The evidence rows of a done request (§6). */
-export interface Evidence {
-  baseline?: { head: string; dirty: string[] };
-  /** `pre_dirty`: the path was uncommitted when the hold began, and counts because its content changed since. */
-  diff?: { added: number; deleted: number; files: { path: string; added: number; deleted: number; by_task: boolean; pre_dirty?: boolean; overlap?: { card: number; task_id: string } }[] };
-  commits?: { sha: string; subject: string }[];
-  accept?: AcceptRun;
-  /** `partial`: uam's copy of the transcript may not reach back to the hold's start, so the touched files may be incomplete. */
-  transcript?: { task_id: string; from_item: string; to_item: string; partial?: boolean };
-  checklist?: { done: number; total: number };
-}
-
-export interface AcceptRun {
-  cmd: string;
-  cmd_hash: string;
-  head: string;
-  dirty: boolean;
-  exit: number;
-  tail: string;
-  ran_at: string;
-  /** The command changed since this run. */
-  stale: boolean;
-}
-
-/** An agent's ask for an owner decision on a card; the pending ones are the Inbox (the ADR's Request). */
-export interface BoardRequest {
-  id: string;
-  card_id: string;
-  task_id: string;
-  agent_id: string;
-  kind: RequestKind;
-  comment: string;
-  /**
-   * split: `{children: [{title, win_condition}]}`; change: `{patch: {the proposed fields}, proposed_accept_cmd?}`;
-   * blocked: `{blocker}` (a card id); a done request a split filed for a ticked item: `{split_of, tick}`.
-   */
-  payload: Record<string, unknown>;
-  evidence: Evidence;
-  flags: RequestFlag[];
-  base_revision: number;
-  status: 'pending' | 'accepted' | 'rejected' | 'withdrawn';
-  created_at: string;
-  decided_at?: string;
-  decision_comment?: string;
-  /** Who decided: the owner, or `uam` for a done request accepted automatically because its acceptance command passed. */
-  decided_by?: 'owner' | 'uam';
-}
-
-export interface CardComment {
-  id: string;
-  /** `owner`, `task:<id>` or `uam` (automatic comments). */
-  author: string;
-  body: string;
-  automatic: boolean;
-  created_at: string;
-}
-
-/** One attempt: a hold from its start to its end. */
-export interface Hold {
-  id: string;
-  task_id: string;
-  started_at: string;
-  baseline_head: string;
-  baseline_dirty: string[];
-  ended_at?: string;
-  end_reason?: string;
-  /** A lane attempt's branch, and what it landed as and was reverted by (CardLane); absent for an attempt outside a lane. */
-  branch?: string;
-  landed_sha?: string;
-  reverted_sha?: string;
-}
-
-/** `GET /api/board`: one Project's cards, its pending requests and its revision. */
-export interface BoardData {
-  cards: Card[];
-  requests: BoardRequest[];
-  revision: number;
-}
-
-export interface CardDetail {
-  card: Card;
-  comments: CardComment[];
-  requests: BoardRequest[];
-  holds: Hold[];
-}
-
-export type BoardFrame = Extract<UpdateData, { name: 'board' }>;
-export type BoardJob = Extract<UpdateData, { name: 'board_job' }>;
-
-export type TriageVerdict = 'valid' | 'moot' | 'conflicts';
-
-export interface ImportReport {
-  imported: number;
-  updated: number;
-  unassigned: number;
-  comments: number;
-  links: number;
-  skipped: { id: string; reason: string }[];
-}
-
-/** The fields an owner edit may carry (`PATCH /api/board/cards/{ref}`); it confirms no suggestion. */
-export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 'prio' | 'effort' | 'due' | 'labels' | 'checklist' | 'blocked' | 'accept_cmd' | 'paths' | 'project_id'>>;
-
-/** What Settle decides for each subtask the Task holds (§5). */
-export type HoldDecision = { action: 'keep' | 'release' | 'cancel'; comment: string };
-
-/**
- * The planner's error code, when a refusal carries one (`planner_off`, `no_git`, `guard_open_items`,
- * `holds_undecided`, `invalid`, `not_found`, …). The UI decides on the code, never on the status.
- */
+/** The service's error code, when a refusal carries one. The UI decides on the code, never on the status. */
 export function errorCode(e: unknown): string | undefined {
   return e instanceof ApiError && typeof e.body.code === 'string' ? e.body.code : undefined;
 }
 
-/** What a refusal was about (`refs`): the open checklist items of `guard_open_items`, the `#seq` of each open blocker of `guard_blockers`, the cards an approval found changed (`stale`) or in its way. */
-export function errorRefs(e: unknown): string[] {
-  return e instanceof ApiError && Array.isArray(e.body.refs) ? e.body.refs.map(String) : [];
-}
-
-/** A route this service does not have yet (a planner feature that lands later): 404 with no code. */
+/** A route this service does not have yet: 404 with no code. */
 export function routeMissing(e: unknown): boolean {
   return isStatus(e, 404) && errorCode(e) === undefined;
 }
-
-/**
- * A planner refusal in words: the service's own message, except where the UI can say it better
- * (the planner off or unavailable, a busy acceptance run or import, a feature not here yet).
- */
-export function plannerErrorText(e: unknown): string {
-  if (routeMissing(e)) return 'this service does not offer it yet';
-  switch (errorCode(e)) {
-    case 'planner_off':
-      return 'the planner is off; turn it on in Settings';
-    case 'planner_unavailable':
-      return 'the planner database could not be opened; see the service log';
-    case 'acceptance_busy':
-      return 'the acceptance command is already running in this project; try again in a moment';
-    case 'import_busy':
-      return 'the source board changed while it was copied; try again in a moment';
-  }
-  return describeError(e);
-}
-
-/** What stops an owner's Mark done (`guard_open_items`, `guard_blockers` or `guard_blocked`, §6), or null for any other outcome. */
-export type DoneGuard = { code: 'guard_open_items'; items: string[] } | { code: 'guard_blockers'; blockers: string[] } | { code: 'guard_blocked' };
-
-export function doneGuard(e: unknown): DoneGuard | null {
-  const code = errorCode(e);
-  if (code === 'guard_open_items') return { code, items: errorRefs(e) };
-  if (code === 'guard_blockers') return { code, blockers: errorRefs(e) };
-  if (code === 'guard_blocked') return { code };
-  return null;
-}
-
-/** The subtasks a Settle left undecided (`holds_undecided`), or null for any other outcome. */
-export function undecidedHolds(e: unknown): Card[] | null {
-  if (!(e instanceof ApiError) || errorCode(e) !== 'holds_undecided') return null;
-  return Array.isArray(e.body.cards) ? (e.body.cards as Card[]) : [];
-}
-
-/** A rejected request, and whether its reason reached the Task (§14). When it did not and the subtask is still held, the owner may Release it. */
-export type Rejection = BoardRequest & { steered: boolean };
 
 /**
  * A custom (BYOM) model, offered by Copilot as `name/model_id`. Keys may be supplied
@@ -946,8 +611,6 @@ export interface SessionSummary {
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;
   archived_at?: string;
-  /** Why a lane Task uam retired (settled once its subtask's attempt ended) cannot be reopened: its lane is removed. Absent for every other Task. */
-  retired?: string;
   /** The Task whose agent started this one with uam_create_task; absent otherwise. */
   spawned_by?: string;
   /** The routine whose run started this Task; absent otherwise. */
@@ -987,15 +650,6 @@ export interface FileDeclaration {
   type_hint?: string;
 }
 
-/** A planner card as a `board_*` tool's result names it. */
-export interface ToolBoardCard {
-  id: string;
-  seq: number;
-  kind: 'epic' | 'story' | 'subtask';
-  title: string;
-  status: string;
-}
-
 export interface ToolCall {
   name: string;
   title?: string;
@@ -1009,8 +663,6 @@ export interface ToolCall {
   path?: string;
   has_input?: boolean;
   has_output?: boolean;
-  /** The planner card a completed `board_*` call was about, read from its result. */
-  board_card?: ToolBoardCard;
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
 }
@@ -1392,11 +1044,6 @@ export interface SnapshotData extends Representation {
   settings?: Settings;
   /** Absent from a service older than usage (#188). */
   usage?: AccountUsage;
-  /**
-   * With the planner on: each Board's revision by Project id (`''` for the Unassigned list), so
-   * a new stream fetches again only the Boards that moved while no stream was open (ADR 0005 §15).
-   */
-  boards?: Record<string, number>;
   sessions: SessionSummary[];
   session: SessionDetail | null;
 }
@@ -1426,15 +1073,7 @@ export type UpdateData =
   | { name: 'submission'; seq: number; session_id: string; submission: Submission }
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
-  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
-  /** One committed planner write, to everyone (§15); `project_id` is empty for the Unassigned list. */
-  | { name: 'board'; seq: number; project_id: string; revision: number; cards: Card[]; removed: string[]; requests: BoardRequest[] }
-  /**
-   * A planner job on a card: a suggestion, a Check at HEAD whose last frame carries its run (`accept`), a
-   * lane's landing or a Revert (ADR 0006); or on a Project (`project_id`, `card_id` empty): a merge of its
-   * integration branch into its base branch.
-   */
-  | { name: 'board_job'; seq: number; job_id: string; card_id: string; project_id?: string; kind: 'suggest' | 'check' | 'land' | 'revert' | 'merge'; status: 'running' | 'done' | 'failed'; error?: string; accept?: AcceptRun };
+  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1454,8 +1093,6 @@ export const UPDATE_EVENTS = [
   'subagent',
   'background_tasks',
   'turn_timing',
-  'board',
-  'board_job',
 ] as const;
 
 export class ApiError extends Error {
@@ -1643,12 +1280,6 @@ export interface Routine extends RoutineInput {
   runs: RoutineRun[];
 }
 
-/**
- * The planner's routes (ADR 0005 §14). `ref` is a card id or its `#seq`; `project` is a Project
- * id or `unassigned`. Replies whose shape the ADR leaves open resolve to `unknown`: the views
- * follow the `board` frame, never those bodies.
- */
-
 export interface Upload {
   done: Promise<Attachment & { id: string }>;
   abort: () => void;
@@ -1684,7 +1315,6 @@ export interface ConnectedStatus { status: 'connecting' | 'online' | 'offline' |
 const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
   ['configuration-v1', (path) => path.startsWith('/api/configuration')],
   ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
-  ['planner-v1', (path) => path.startsWith('/api/board')],
   ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
   ['usage-v1', (path) => path.startsWith('/api/usage')],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
@@ -1782,67 +1412,6 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       }
       return { ...metadata, ...await readTextPreview(response, signal) };
     }, signal);
-  }
-
-
-  function plannerApi() {
-    const card = (ref: string, action = '') => `/api/board/cards/${enc(ref)}${action ? `/${action}` : ''}`;
-    type TaskSettings = Partial<TaskDefaults>;
-    return {
-      board: (project: string, signal?: AbortSignal) => call<BoardData>('GET', `/api/board?project_id=${enc(project)}`, undefined, false, signal),
-      project: (id: string) => call<BoardProject>('GET', `/api/board/projects/${enc(id)}`),
-      /** What uam's executor waits for, read with no git, unlike `project`. */
-      executor: () => call<BoardExecutor>('GET', '/api/board/executor'),
-      /** Changes the given settings only. */
-      setProject: (id: string, patch: { accept_cmd?: string; base_ref?: string; accept_parallel?: number }) => call<BoardProject>('PATCH', `/api/board/projects/${enc(id)}`, patch),
-      card: (ref: string, signal?: AbortSignal) => call<CardDetail>('GET', card(ref), undefined, false, signal),
-      create: (body: { project_id: string; kind: CardKind; parent_id: string | null; title: string; desc?: string; win_condition?: string; prio?: number; effort?: string; due?: string; labels?: string[]; checklist?: ChecklistItem[] }) => call<Card>('POST', '/api/board/cards', body),
-      edit: (ref: string, patch: CardPatch) => call<unknown>('PATCH', card(ref), patch),
-      confirm: (ref: string) => call<unknown>('POST', card(ref, 'confirm')),
-      /** Approves an epic (ADR 0006 §6.2): confirms the listed cards at their listed revisions and records its run. `stale` names the cards that changed. */
-      approve: (ref: string, body: ApproveBody) => call<Card>('POST', card(ref, 'approve'), body),
-      /** Pause or Resume a card under an epic, approved or not, or an approved epic. */
-      pause: (ref: string, paused: boolean) => call<Card>('PATCH', card(ref), { paused }),
-      dismiss: (ref: string) => call<unknown>('POST', card(ref, 'dismiss')),
-      /** Without a rank the card goes after its new parent's last child; `rank` is an index among the siblings. */
-      move: (ref: string, parent_id: string | null, rank?: number) => call<unknown>('POST', card(ref, 'move'), rank === undefined ? { parent_id } : { parent_id, rank }),
-      status: (ref: string, status: 'done' | 'cancelled' | 'todo', comment: string, force = false) => call<unknown>('POST', card(ref, 'status'), { status, comment, force }),
-      restore: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'restore'), { comment }),
-      split: (ref: string, children: { title: string; win_condition: string }[]) => call<unknown>('POST', card(ref, 'split'), { children }),
-      comment: (ref: string, body: string) => call<unknown>('POST', card(ref, 'comments'), { body }),
-      link: (blocker: string, blocked: string) => call<unknown>('POST', '/api/board/links', { blocker, blocked }),
-      unlink: (blocker: string, blocked: string) => call<unknown>('DELETE', `/api/board/links?blocker=${enc(blocker)}&blocked=${enc(blocked)}`),
-      /**
-       * On a subtask it launches that subtask; on a story it is Do whole story. `confirm` lets it
-       * confirm the suggestions it holds or sits under; without it such a launch is refused (`unconfirmed`).
-       * The new Task starts on the given selection (else the Task defaults), with `brief` in its first prompt.
-       */
-      launch: (ref: string, body: TaskSettings & { brief?: string; confirm?: boolean } = {}) => call<{ card: Card; session: SessionSummary }>('POST', card(ref, 'launch'), body),
-      /** Makes an existing Task work on the subtask `ref`, or on a new subtask under the story or epic `ref` (titled `title`, else after the Task). */
-      attach: (ref: string, body: { task_id: string; title?: string; confirm?: boolean }) => call<Card>('POST', card(ref, 'attach'), body),
-      plan: (ref: string, body: { brief: string } & TaskSettings) => call<{ session: SessionSummary }>('POST', card(ref, 'plan'), body),
-      /** What reverting `ref`, with the cards `include` adds, would take along (ADR 0006 §5.7). */
-      revertPreview: (ref: string, include: string[] = []) => call<RevertPreview>('GET', `${card(ref, 'revert')}${include.length ? `?${include.map((r) => `include=${enc(r)}`).join('&')}` : ''}`),
-      /** Reverts what the preview showed (`expect`): a job (202), its `board_job` frames of kind `revert`. */
-      revert: (ref: string, body: { include: string[]; expect: string[]; comment: string }) => call<{ job_id: string }>('POST', card(ref, 'revert'), body),
-      /** Reopen without reverting code: a landed subtask back to To do, paused, its commit kept on the integration branch. */
-      reopen: (ref: string, comment: string) => call<Card>('POST', card(ref, 'status'), { status: 'todo', keep_code: true, comment }),
-      /** Retry merge, or an early merge, of the Project's integration branch into its base branch: a job (202), its `board_job` frames of kind `merge`. */
-      merge: (project: string) => call<{ job_id: string }>('POST', `/api/board/projects/${enc(project)}/merge`),
-      /** What Retry merge or Merge now would carry into the base branch. */
-      mergePreview: (project: string) => call<MergePreview>('GET', `/api/board/projects/${enc(project)}/merge`),
-      /** On a subtask held in a lane it is Stop: the subtask is paused, and its Task stops and is archived. */
-      release: (ref: string, comment: string) => call<unknown>('POST', card(ref, 'release'), { comment }),
-      /** Starts Check at HEAD; its `board_job` frames carry the run. */
-      check: (ref: string) => call<{ job_id: string }>('POST', card(ref, 'check')),
-      triage: (ref: string) => call<{ verdict: TriageVerdict; sentence: string; head: string }>('POST', card(ref, 'triage')),
-      suggest: (ref: string, body: { brief: string; document: string; max: number }) => call<{ job_id: string }>('POST', card(ref, 'suggest'), body),
-      /** A lane's done request lands as a job (202, its `board_job` frames of kind `land`); any other is decided at once. */
-      accept: (id: string, comment: string) => call<BoardRequest | { job_id: string }>('POST', `/api/board/requests/${enc(id)}/accept`, { comment }),
-      reject: (id: string, reason: string) => call<Rejection>('POST', `/api/board/requests/${enc(id)}/reject`, { reason }),
-      purge: (project_id: string) => call<{ purged: number }>('POST', '/api/board/purge', { project_id }),
-      import: (dir: string) => call<ImportReport>('POST', '/api/board/import', { dir }),
-    };
   }
 
 
@@ -2023,13 +1592,6 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
     detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => url(`/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`),
     eventsUrl: (id: string | null) => url(id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1&page=${PAGE_ID}` : `/api/events?page=${PAGE_ID}`),
-
-    /**
-     * Settle, deciding the subtasks the Task holds (§5): without a decision for each, the service
-     * answers 409 `holds_undecided` with the held cards (`undecidedHolds`), and the Settle dialog asks.
-     */
-    settle: (id: string, holds?: Record<string, HoldDecision>) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/settle`, holds ? { holds } : {}),
-    planner: plannerApi(),
 
     /** The chart a Task drew with the `uam_chart` call `callId`. */
     chart: (id: string, callId: string, signal?: AbortSignal) => call<Chart>('GET', `/api/sessions/${enc(id)}/chart?call=${enc(callId)}`, undefined, false, signal),

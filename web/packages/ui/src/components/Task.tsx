@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, Ellipsis, FolderTree, ListTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
-import { Suspense, lazy, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { ArrowDown, ChartLine, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
 import type { AgentTranscript, HistoryRequest } from '../state';
@@ -34,8 +34,6 @@ import { HistoryAnchor } from './HistoryAnchor';
 import { Button } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
-import { PlannerContext, TaskCardOpener } from './planner/context';
-import { PlanButton, PlanPanel, StoryStrip, useTaskPlan, type PlanFocus } from './planner/TaskPlan';
 
 /** The Files sheet loads with its first opening, never with the Task. */
 const FilesSheet = lazy(() => import('./Files'));
@@ -55,7 +53,7 @@ interface Props {
   historyItemSeq: Record<string, number>;
   onHistoryReset: () => void;
   sheetOpen: boolean;
-  /** Side panels (Changes, Files, Plan) sit beside the column (wide) rather than over it. */
+  /** Side panels (Changes, Files) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
   onSheet: (open: boolean, restoreFocus?: boolean) => void;
   /** The terminal docked under the app (App.tsx): whether it is open, and the toggle that opens it in a Project's folder or closes it. */
@@ -110,8 +108,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
-  /** The Plan panel while open, with the card it was asked to show (the Task's own when null). */
-  const [planFocus, setPlanFocus] = useState<PlanFocus | null>(null);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
   const alive = useRef(false);
@@ -145,14 +141,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, [locateError]);
   const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setFilesOpen(false); setChartsOpen(false); setPlanFocus(null); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setFilesOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
-  useLayoutEffect(() => { if (sheetOpen || filesOpen || chartsOpen || planFocus || output) closePreview(false); }, [sheetOpen, filesOpen, chartsOpen, planFocus, output, closePreview]);
+  useLayoutEffect(() => { if (sheetOpen || filesOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, filesOpen, chartsOpen, output, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
   if (sheetOpen && filesOpen) setFilesOpen(false);
   if (sheetOpen && chartsOpen) setChartsOpen(false);
-  if (sheetOpen && planFocus) setPlanFocus(null);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
   const lastScrollTop = useRef(0);
@@ -344,17 +339,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
   const chartsPresence = usePresence(chartsOpen);
-  const planOpen = !!planFocus;
-  const planPresence = usePresence(planOpen);
-  // The last ask stays while the panel slides out.
-  const [lastPlanFocus, setLastPlanFocus] = useState<PlanFocus>({ id: null, at: 0 });
-  if (planFocus && planFocus !== lastPlanFocus) setLastPlanFocus(planFocus);
-  // The memoised panel takes a stable exit callback, so a streamed reply does not render it.
-  const planExit = useRef(planPresence.onClosed);
-  useLayoutEffect(() => {
-    planExit.current = planPresence.onClosed;
-  });
-  const onPlanClosed = useCallback(() => planExit.current(), []);
   const outputPresence = usePresence(!!output);
   const [lastOutput, setLastOutput] = useState<CommandOutput | null>(null);
   if (output && output !== lastOutput) setLastOutput(output);
@@ -366,7 +350,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setFilesOpen(false);
     setChartsOpen(false);
-    setPlanFocus(null);
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
@@ -377,7 +360,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const toggleFiles = useCallback(() => {
     closePreview(false);
     setChartsOpen(false);
-    setPlanFocus(null);
     setOutput(null);
     onSheet(false);
     setFilesOpen((open) => !open);
@@ -386,30 +368,17 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const toggleCharts = useCallback(() => {
     closePreview(false);
     setFilesOpen(false);
-    setPlanFocus(null);
     setOutput(null);
     onSheet(false);
     setChartsOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeCharts = useCallback(() => setChartsOpen(false), []);
-  /** Opens the Plan panel on card `id` (the Task's own when null), in the side-panel slot. */
-  const openPlan = useCallback((id: string | null) => {
-    closePreview(false);
-    setFilesOpen(false);
-    setChartsOpen(false);
-    setOutput(null);
-    onSheet(false);
-    setPlanFocus({ id, at: Date.now() });
-  }, [onSheet, closePreview]);
-  const closePlan = useCallback(() => setPlanFocus(null), []);
-  const togglePlan = useCallback(() => (planFocus ? setPlanFocus(null) : openPlan(null)), [planFocus, openPlan]);
   const showOutput = useCallback((next: CommandOutput) => {
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
     setFilesOpen(false);
     setChartsOpen(false);
-    setPlanFocus(null);
     onSheet(false, false);
     setOutput(next);
   }, [closePreview, onSheet]);
@@ -427,7 +396,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     closePreview(false);
     setFilesOpen(false);
     setChartsOpen(false);
-    setPlanFocus(null);
     if (!keepOutput) setOutput(null);
     onSheet(false, false);
   }, [closePreview, onSheet]);
@@ -634,7 +602,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
-  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files, Plan and Terminal move into the actions menu.
+  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
   // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
   const phone = useMedia(PHONE);
   const header = useRef<HTMLElement>(null);
@@ -655,19 +623,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }, []);
   const labels = !phone && room === 'wide';
   const fold = phone || room === 'tight';
-  // The plan this Task sits in (ADR 0005 §10): the story strip, the Plan button and panel, and card links that open there.
-  const plan = useTaskPlan(session.id, project);
-  const hasPlan = plan?.status === 'ready';
-  const planner = useContext(PlannerContext);
-  const planBoard = plan ? planner?.boards[plan.project.id]?.data : undefined;
-  const openCardHere = useCallback((id: string) => {
-    // A card of this Project opens in the panel; one elsewhere (another Project, the Unassigned list) in the Planner.
-    if (planBoard?.cards.some((c) => c.id === id && c.status !== 'cancelled')) openPlan(id);
-    else planner?.openCard(id);
-  }, [planBoard, planner, openPlan]);
   const folded: ActionItem[] = [];
   if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: toggleFiles });
-  if (fold && hasPlan) folded.push({ key: 'plan', label: planOpen ? 'Close plan' : 'Open plan', icon: <ListTree />, onSelect: togglePlan });
   const pinned = project?.charts ?? 0;
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: toggleCharts });
   if (fold && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
@@ -681,7 +638,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <TaskCardOpener.Provider value={plan ? openCardHere : null}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -751,7 +707,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               )}
             </>
           )}
-          {hasPlan && !fold && <PlanButton open={planOpen} label={labels} onToggle={togglePlan} />}
           {pinned > 0 && !fold && (
             <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
               <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={toggleCharts}>
@@ -779,7 +734,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </Menu.Content>
           </Menu.Root>
         </header>
-        {hasPlan && <StoryStrip plan={plan} open={planOpen} onOpen={() => (planOpen ? closePlan() : openPlan(null))} />}
         {mcpOpen && <McpTaskDialog sessionId={session.id} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -885,14 +839,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
       {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
-      {/* The Task's name only seeds "Add to a story": a Task with a card passes none, so its title arriving does not render the panel. */}
-      {planPresence.mounted && plan && <PlanPanel plan={plan} taskId={session.id} taskName={plan.mine ? '' : name} focus={planFocus ?? lastPlanFocus} inline={sidePanelInline} open={planOpen} onClose={closePlan} onClosed={onPlanClosed} />}
       {chartsPresence.mounted && project && <PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} />}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
       {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>
     </SubagentScope>
-    </TaskCardOpener.Provider>
     </TempRootContext.Provider>
     </PreviewContext.Provider>
     </FileReferencesProvider>
