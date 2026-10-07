@@ -3288,7 +3288,7 @@ func (c *conversation) permissionCompletedLocked(d *rpc.PermissionCompletedData)
 
 // sessionApproval builds the "allow for this session" decision the same way
 // the CLI's own prompt does, for the prompt kinds where that is unambiguous.
-// URL (origin pattern computed natively), path, hook, factory and extension
+// URL (origin pattern computed natively), path, hook, workflow and extension
 // prompts get no session option.
 func sessionApproval(pr rpc.PermissionPromptRequest) rpc.PermissionDecision {
 	var approval rpc.PermissionDecisionApproveForSessionApproval
@@ -3355,7 +3355,7 @@ func describePermission(d *rpc.PermissionRequestedData) (title, detail string) {
 // permissionToolCallID returns the tool call a permission request is for,
 // or "" when the request does not say. It is the ToolCallID of the tool
 // execution events, which the transcript uses as the tool item's ID. Every
-// request kind in SDK 1.0.14 has an optional toolCallId; a kind the SDK
+// request kind in SDK 1.0.17 has an optional toolCallId; a kind the SDK
 // cannot read keeps its raw JSON, which is read for the same field.
 func permissionToolCallID(pr rpc.PermissionRequest) string {
 	var id *string
@@ -3376,7 +3376,7 @@ func permissionToolCallID(pr rpc.PermissionRequest) string {
 		id = r.ToolCallID
 	case *rpc.PermissionRequestHook:
 		id = r.ToolCallID
-	case *rpc.PermissionRequestFactory:
+	case *rpc.PermissionRequestWorkflow:
 		id = r.ToolCallID
 	case *rpc.PermissionRequestExtensionEnvAccess:
 		id = r.ToolCallID
