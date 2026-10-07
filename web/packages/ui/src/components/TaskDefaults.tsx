@@ -163,7 +163,8 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           disabled={disabled || !!noEffort}
           aria-describedby={noEffort ? `${prefix}-effort-hint` : undefined}
           items={[{ value: '', label: 'Default' }, ...(model?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]}
-          onValueChange={(effort) => onChange({ ...value, effort })}
+          // Base UI resets the value to null when a new model's levels drop the one it held: that is the default effort.
+          onValueChange={(effort) => onChange({ ...value, effort: effort ?? '' })}
         />
       </Field>
       <Field id={`${prefix}-context-size`} label="Context size" hintVisible={!!noContext} hint={noContext || (value.context_size === 'long_context' ? 'Long context may cost more.' : undefined)}>

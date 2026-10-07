@@ -149,7 +149,7 @@ describe('planner', () => {
     const inbox = within(await screen.findByRole('list', { name: 'Pending requests' }));
     const request = within(inbox.getByRole('article', { name: 'Split request on #28' }));
     // The given child first, then #28's three checklist items; the ticked one is accepted with the split.
-    expect(request.getByText('Adds 4 subtasks to #27 Changelog from merged pull requests right after #28, which is cancelled. The hold moves to the first pending one.')).toBeTruthy();
+    expect(request.getByText('Adds 4 subtasks to #27 Changelog from merged pull requests right after #28, which is cancelled.')).toBeTruthy();
     const listed = request.getAllByRole('listitem').map((li) => li.textContent);
     expect(listed[0]).toContain('Read merged pull requests since the last tag');
     expect(listed[1]).toContain('Parse the commit type (ticked: accepted with the split)');

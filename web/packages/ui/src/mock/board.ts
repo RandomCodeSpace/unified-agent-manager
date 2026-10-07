@@ -167,6 +167,8 @@ function seedBoard(big: boolean): Seeded {
   const requests: BoardRequest[] = [
     req(1, 5, 'done', 't15', 'Cached pages past the reading window are evicted on every window move; the live tail stays. Three tests cover it.', { evidence: evidence5, flags: ['tests_or_build_changed', 'overlap'] }),
     req(2, 8, 'done', 't1', 'The unused fields were already gone on this branch; nothing to change.', {
+      // An agent's suggested command rides on a done request only, as text until the owner applies it.
+      payload: { proposed_accept_cmd: 'go test ./internal/web/...' },
       flags: ['no_change_in_tree', 'acceptance_could_not_run'],
       evidence: { baseline: { head: 'c41d2e8', dirty: ['internal/web/snapshot.go'] }, diff: { added: 0, deleted: 0, files: [] }, commits: [], transcript: { task_id: 't1', from_item: 'i1', to_item: 'i7', partial: true }, checklist: { done: 0, total: 0 } },
     }),
@@ -874,7 +876,7 @@ export function boardMock(host: BoardHost, options: { big: boolean }) {
         }
         return done(commit(() => {
           if ('paused' in body) c.paused = body.paused ? 'owner' : '';
-          for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];
+          for (const key of ['title', 'desc', 'win_condition', 'prio', 'effort', 'due', 'labels', 'checklist', 'blocked', 'accept_cmd', 'paths', 'project_id'] as const) if (key in body) (c as unknown as Json)[key] = body[key];
           if ('project_id' in body) c.moved_at = now();
           if (Object.keys(body).some((k) => k !== 'paused')) planned(c);
         }), ok);

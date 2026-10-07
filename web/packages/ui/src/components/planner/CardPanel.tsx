@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitBranch, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem, type ProviderWait } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, runText } from '../../lib/board';
+import { PRIO_LABEL, approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, runText } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -36,9 +36,9 @@ function Group({ title, children, action }: Readonly<{ title: string; children: 
  * checklist, blocker links, its evidence trail (every request, decided ones included), hold
  * history, comments, the owner-only acceptance command and paths, and the card's actions. An
  * approved epic says how its run stands, and the provider it waits for among `waits` (ADR 0006
- * §3.2).
+ * §3.2). Check at HEAD reads the Project's default command, `projectCmd`.
  */
-export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; waits?: readonly ProviderWait[] }>) {
+export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS, projectCmd }: Readonly<{ inline: boolean; open: boolean; onClose: () => void; onClosed: () => void; waits?: readonly ProviderWait[]; projectCmd?: string }>) {
   const { ui, cards, openCard } = useShownBoard();
   const { narrow } = useApp();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
@@ -67,7 +67,7 @@ export function CardPanel({ inline, open, onClose, onClosed, waits = NO_WAITS }:
           </Button>
         )}
       </PanelHeader>
-      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} waits={waits} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
+      {card ? <CardBody key={card.id} card={card} byId={byId} onOpen={openCard} waits={waits} projectCmd={projectCmd} /> : <p className="px-4 py-6 text-ui text-muted">This card is no longer on the board.</p>}
     </SidePanel>
   );
 }
@@ -79,7 +79,7 @@ function RunLine({ summary }: Readonly<{ summary: ReturnType<typeof runSummary> 
   return <p className="text-caption text-muted tabular-nums">{runText(summary)}</p>;
 }
 
-function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[] }>) {
+function CardBody({ card: c, byId, onOpen, waits, projectCmd }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[]; projectCmd?: string }>) {
   const api = useApi();
   const { projects, jobs, cards } = useShownBoard();
   const { sessions } = usePlannerTasks();
@@ -88,7 +88,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
   const [editing, setEditing] = useState(false);
   const [triage, setTriage] = useState<TriageResult | null>(null);
   const [comment, setComment] = useState('');
-  const cardActions = useCardActions({ onTriage: (_, t) => setTriage(t) });
+  const cardActions = useCardActions({ onTriage: (_, t) => setTriage(t), projectCmd });
   const busy = cardActions.busy?.key ?? null;
   const run = <T,>(key: string, verb: string, op: () => Promise<T>) => cardActions.run(c.id, key, verb, op);
   const unassigned = !c.project_id;
@@ -140,6 +140,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
           {editing ? (
             <CardEditor
               card={c}
+              full
               onCancel={() => setEditing(false)}
               onSave={async (patch) => {
                 setEditing(false);
@@ -153,7 +154,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
                 <p className={cn('text-ui [overflow-wrap:anywhere]', c.win_condition ? 'text-body' : 'text-muted')}>{c.win_condition ? <><span className="text-muted">Done means: </span>{c.win_condition}</> : 'No win condition yet.'}</p>
               </div>
               {!unassigned && !locked && (
-                <Button size="icon" aria-label="Edit title and win condition" className="text-muted" onClick={() => setEditing(true)}>
+                <Button size="icon" aria-label="Edit card" className="text-muted" onClick={() => setEditing(true)}>
                   <Pencil />
                 </Button>
               )}
@@ -167,11 +168,13 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
             <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} waiting={providerWait(c, waits)} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
+            {PRIO_LABEL[c.prio] && <span>Priority {PRIO_LABEL[c.prio]}</span>}
             {c.due && <span>Due {c.due}</span>}
             {c.labels.map((l) => <Chip key={l} fill="well">{l}</Chip>)}
           </div>
           {runsNow(c) && <RunLine summary={runSummary(c, byId)} />}
           {locked && !unassigned && <Note tone="muted">{locked}</Note>}
+          {c.blocked && !unassigned && c.status !== 'cancelled' && <Note>Marked blocked: its Task can't finish it, and under an approved epic uam won't start it. Clear blocked mark when the blocker is gone.</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
           {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}

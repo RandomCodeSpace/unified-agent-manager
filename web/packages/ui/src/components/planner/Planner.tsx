@@ -1,8 +1,8 @@
 import { useApi } from '../../ApiContext';
 import { Ellipsis, GitBranch, GitMerge, Inbox, KanbanSquare, Plus, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { plannerErrorText, type BoardIntegration, type BoardJob, type Project, type ProviderWait } from '../../api';
-import { boardOf, childIndex, epicOf, plansToApprove } from '../../lib/board';
+import { plannerErrorText, type BoardIntegration, type BoardJob, type Card, type Project, type ProviderWait } from '../../api';
+import { boardOf, cardPath, childIndex, epicOf, plansToApprove } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { Action, BoardState } from '../../state';
 import { popupOpen } from '../../App';
@@ -92,20 +92,25 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
   });
   /**
    * Shows a card in the Planner view, switching to its Board when another is shown. The Planner's
-   * own filters never hide the card it selects: an epic filter it is not under clears, and a
-   * cancelled card shows cancelled ones.
+   * own filters never hide the card it selects: an epic filter it is not under clears, a
+   * cancelled card shows cancelled ones, and the Tree unfolds the containers and "+N suggested"
+   * rows it sits in.
    */
   const openCard = useCallback((id: string) => {
     const home = boardOf(boardsNow.current, id);
     const cards = home ? (boardsNow.current[home].data?.cards ?? []) : [];
     const card = cards.find((c) => c.id === id);
+    const byId = new Map(cards.map((c) => [c.id, c]));
+    const path = card ? cardPath(card, byId) : [];
     setUi((u) => {
       const moved = !!home && home !== u.project;
-      const outsideEpic = !!u.epic && !!card && epicOf(card, new Map(cards.map((c) => [c.id, c])))?.id !== u.epic;
+      const outsideEpic = !!u.epic && !!card && epicOf(card, byId)?.id !== u.epic;
+      const epic = moved || outsideEpic ? null : u.epic;
       return {
         ...(moved ? { project: home, creating: null } : {}),
-        epic: moved || outsideEpic ? null : u.epic,
+        epic,
         ...(card?.status === 'cancelled' ? { showCancelled: true } : {}),
+        ...unfoldTo(u, path, epic),
         selected: id,
         panel: 'card',
       };
@@ -131,15 +136,32 @@ export function usePlannerController({ enabled, boards, jobs, projects, dispatch
 }
 
 /**
- * The Project's integration branch (ADR 0006 §5.2), fetched for `project` and again as `version`
- * changes, and the providers uam's executor waits for (§4.5), read again as `revision` changes:
- * each Board revision while an epic runs. Only the first runs git on the service, so a Board change
- * reads the waits alone. A wait ends with no Board change, so the first to end reads them again too.
- * Null and none until they load.
+ * The Tree's view state that shows the last card of `path` (root first): its containers unfolded,
+ * and each "+N suggested" row it or a parent sits behind opened (none at the root while `epic`
+ * filters to the path's epic, which then shows as it is). The same objects when nothing changes.
  */
-function useProjectRun(project: string, version: string, revision: string): { integration: BoardIntegration | null; waits: ProviderWait[] } {
+function unfoldTo(u: PlannerUi, path: readonly Card[], epic: string | null): Pick<PlannerUi, 'folded' | 'suggestedOpen'> {
+  let { folded, suggestedOpen } = u;
+  path.forEach((c, i) => {
+    const parent = path[i - 1];
+    if (i < path.length - 1 && folded[c.id]) folded = { ...folded, [c.id]: false };
+    // A proposal under a confirmed parent, or at the root, folds into its parent's "+N suggested".
+    const behind = !c.confirmed && (parent ? parent.confirmed : epic !== c.id);
+    if (behind && !suggestedOpen[parent?.id ?? '']) suggestedOpen = { ...suggestedOpen, [parent?.id ?? '']: true };
+  });
+  return { folded, suggestedOpen };
+}
+
+/**
+ * The Project's integration branch (ADR 0006 §5.2) and default acceptance command, fetched for
+ * `project` and again as `version` changes, and the providers uam's executor waits for (§4.5), read
+ * again as `revision` changes: each Board revision while an epic runs. Only the first runs git on
+ * the service, so a Board change reads the waits alone. A wait ends with no Board change, so the
+ * first to end reads them again too. Null, undefined and none until they load.
+ */
+function useProjectRun(project: string, version: string, revision: string): { integration: BoardIntegration | null; acceptCmd: string | undefined; waits: ProviderWait[] } {
   const api = useApi();
-  const [integration, setIntegration] = useState<{ project: string; value: BoardIntegration | null } | null>(null);
+  const [settings, setSettings] = useState<{ project: string; integration: BoardIntegration | null; acceptCmd: string } | null>(null);
   const [waits, setWaits] = useState<ProviderWait[] | null>(null);
   const [ended, setEnded] = useState(0);
   useEffect(() => {
@@ -147,7 +169,7 @@ function useProjectRun(project: string, version: string, revision: string): { in
     let alive = true;
     api.planner
       .project(project)
-      .then((p) => alive && setIntegration({ project, value: p.integration ?? null }))
+      .then((p) => alive && setSettings({ project, integration: p.integration ?? null, acceptCmd: p.accept_cmd }))
       .catch(() => {});
     return () => {
       alive = false;
@@ -171,7 +193,8 @@ function useProjectRun(project: string, version: string, revision: string): { in
     const timer = setTimeout(() => setEnded((n) => n + 1), Math.max(0, Math.min(...ends) - Date.now()) + WAIT_SLACK_MS);
     return () => clearTimeout(timer);
   }, [waits]);
-  return { integration: integration?.project === project ? integration.value : null, waits: project && waits ? waits : NO_WAITS };
+  const shown = settings?.project === project ? settings : null;
+  return { integration: shown?.integration ?? null, acceptCmd: shown?.acceptCmd, waits: project && waits ? waits : NO_WAITS };
 }
 
 const WAIT_SLACK_MS = 500;
@@ -221,7 +244,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
   const lastJob = Object.values(jobs).filter((j) => (j.kind === 'merge' && j.project_id === key) || j.kind === 'revert').at(-1);
   const merging = Object.values(jobs).some((j) => j.kind === 'merge' && j.project_id === key && j.status === 'running');
   const running = cards?.some((c) => c.kind === 'epic' && c.run && !c.paused && c.status !== 'done' && c.status !== 'cancelled') ?? false;
-  const { integration, waits } = useProjectRun(
+  const { integration, acceptCmd, waits } = useProjectRun(
     key && key !== 'unassigned' && !project?.no_git ? key : '',
     `${landed} ${lastJob?.job_id ?? ''} ${lastJob?.status ?? ''}`,
     running ? String(board?.data?.revision) : '',
@@ -266,9 +289,9 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
       </div>
     );
   } else if (ui.view === 'tree') {
-    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} waits={waits} /></div>;
+    body = <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"><TreeView readOnly={key === 'unassigned'} waits={waits} projectCmd={acceptCmd} /></div>;
   } else if (ui.view === 'board') {
-    body = <BoardView />;
+    body = <BoardView projectCmd={acceptCmd} />;
   } else {
     body = <MapView />;
   }
@@ -369,7 +392,7 @@ export function PlannerView({ leading, inline, onClose, defaultProject }: Readon
             {body}
           </div>
         </div>
-        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} />}
+        {panelPresence.mounted && panel === 'card' && <CardPanel inline={inline} open={ui.panel === 'card'} onClose={closePanel} onClosed={panelPresence.onClosed} waits={waits} projectCmd={acceptCmd} />}
         {panelPresence.mounted && panel === 'inbox' && <InboxPanel inline={inline} open={ui.panel === 'inbox'} onClose={closePanel} onClosed={panelPresence.onClosed} />}
       </div>
       <AlertDialog

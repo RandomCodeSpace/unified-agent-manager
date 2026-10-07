@@ -12,6 +12,9 @@ export const STATUS_LABEL: Record<CardStatus, string> = { planned: 'Planned', to
 
 export const KIND_LABEL: Record<CardKind, string> = { epic: 'Epic', story: 'Story', subtask: 'Subtask' };
 
+/** A card's priority (`prio`): 1 high, 2 medium, 3 low, the default. */
+export const PRIO_LABEL: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' };
+
 type Leaf = Pick<Card, 'status' | 'confirmed' | 'held_by' | 'pending_requests'>;
 
 /**

@@ -125,13 +125,13 @@ function taskLabel(sessions: SessionSummary[], id: string): string {
 
 /**
  * What a split does to `card` with `count` new subtasks (§7): under a story they join it right
- * after the card, which is cancelled; under an epic or at the root the card becomes a story.
+ * after the card, which is cancelled; under an epic or at the root the card becomes a story. A
+ * split moves no hold (ADR 0005 decision 6).
  */
 export function splitSentence(card: Card | undefined, byId: ReadonlyMap<string, Card>, count: number): string {
   const parent = card?.parent_id ? byId.get(card.parent_id) : undefined;
   const n = `${count} ${count === 1 ? 'subtask' : 'subtasks'}`;
-  const hold = card?.held_by ? ' The hold moves to the first pending one.' : '';
-  return parent?.kind === 'story' ? `Adds ${n} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.${hold}` : `Turns #${card?.seq} into a story with ${n}.${hold}`;
+  return parent?.kind === 'story' ? `Adds ${n} to #${parent.seq} ${parent.title} right after #${card?.seq}, which is cancelled.` : `Turns #${card?.seq} into a story with ${n}.`;
 }
 
 /** A parent as the owner reads it: "#seq title", or the root. */
@@ -180,10 +180,9 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
     );
   }
   if (r.kind === 'change') {
-    // The proposed fields ride in `patch`; a proposed acceptance command is text only until the owner copies it.
+    // The proposed fields ride in `patch`.
     const patch = r.payload.patch && typeof r.payload.patch === 'object' ? (r.payload.patch as Record<string, unknown>) : {};
     const fields = Object.entries(patch);
-    if (typeof r.payload.proposed_accept_cmd === 'string' && r.payload.proposed_accept_cmd) fields.push(['proposed acceptance command', r.payload.proposed_accept_cmd]);
     // A move names both parents, and the approved epics it leaves or enters.
     const crossing = 'parent_id' in patch ? runCrossing(card, patch.parent_id, byId) : [];
     return (
@@ -225,6 +224,8 @@ function Proposal({ request: r, card, byId }: Readonly<{ request: BoardRequest; 
  * Accept, and Reject with a required reason, both inline so they work in a popped-out window.
  * A rejection whose reason did not reach the Task (`steered` false) goes to `onUnheard`; shown
  * with `unheard`, the row offers Release, since the Task still holds the subtask without knowing why.
+ * A done request's proposed acceptance command is text until the owner's Apply makes it the
+ * subtask's command (ADR 0005 §6).
  */
 export function RequestItem({ request: r, byId, showCard = true, onUnheard, unheard = false, onDismiss }: Readonly<{
   request: BoardRequest;
@@ -268,6 +269,7 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
     }, 'reject the request');
   };
   const overlap = r.evidence.diff?.files.find((f) => f.overlap)?.overlap;
+  const proposed = typeof r.payload.proposed_accept_cmd === 'string' ? r.payload.proposed_accept_cmd.trim() : '';
 
   return (
     <article aria-label={`${REQUEST_LABEL[r.kind]} request on #${card?.seq ?? '?'}`} className="flex flex-col gap-1.5 rounded-md bg-raised px-3 py-2.5 shadow-raised">
@@ -297,6 +299,23 @@ export function RequestItem({ request: r, byId, showCard = true, onUnheard, unhe
         </div>
       )}
       <Proposal request={r} card={card} byId={byId} />
+      {proposed && (
+        <div className="flex flex-col gap-0.5 text-caption">
+          <span className="text-muted">Proposed acceptance command</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 font-mono text-code-sm text-ink [overflow-wrap:anywhere]">{proposed}</span>
+            {card?.project_id &&
+              (card.accept_cmd === proposed ? (
+                <span className="shrink-0 text-muted">In use</span>
+              ) : (
+                <Button size="sm" className="shrink-0" disabled={busy} title={`Set it as the acceptance command of #${card.seq}; until then it never runs.`} onClick={() => void decide(() => api.planner.edit(card.id, { accept_cmd: proposed }), 'apply the proposed acceptance command')}>
+                  <SquareTerminal />
+                  Apply
+                </Button>
+              ))}
+          </span>
+        </div>
+      )}
       <EvidenceRows evidence={r.evidence} />
       {r.decision_comment && <p className="text-caption text-muted">Decision: {r.decision_comment}</p>}
       {unheard && card && (

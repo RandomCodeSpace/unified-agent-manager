@@ -1300,6 +1300,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   keeps it a proposal and restarts its 14 days before it expires; only
   Confirm, launching it, adding a Task to it, or approving its epic confirms it. A subtask in progress shows why its plan
   is locked.
+  In the Planner's card panel, Edit changes the title, win condition,
+  description, effort, priority and labels, and the panel shows the
+  priority beside the effort. A subtask marked blocked (an agent's blocked
+  request you accepted) says so and offers **Clear blocked mark**, which
+  lets its Task finish it and, under an approved epic, lets uam start it
+  again. When an agent proposes an acceptance command with its done
+  request, the request shows it, in the Inbox and the card's evidence
+  trail, with **Apply**, which makes it the subtask's command; it never
+  runs before. **Check at HEAD** is off, and says why, on a subtask with
+  no acceptance command of its own or from its Project. **Release** returns
+  a subtask to To do and withdraws its pending done, cancel and blocked
+  requests; split and change requests stay for you to decide. The Board
+  shows confirmed subtasks only, so a plan of proposals says they stay in
+  the Tree, and a paused subtask reads "Paused" there as in the Tree.
+  Opening a card from the Inbox unfolds the Tree to it.
   **Approve** on an epic (its "…" menu, its card panel, its details here,
   or the Inbox's **Plans to approve**, which lists proposed epics and
   approved epics with proposals added since) opens a dialog with the epic's

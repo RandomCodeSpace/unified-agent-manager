@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { Pencil } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
 import { type Card, type CardStatus } from '../../api';
-import { BOARD_COLUMNS, STATUS_LABEL, childIndex, lockedReason, openBlockerSeqs } from '../../lib/board';
+import { BOARD_COLUMNS, STATUS_LABEL, childIndex, epicOf, lockedReason, openBlockerSeqs, pauseLabel } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import type { ActionItem } from '../ui/menu';
 import { CardMenuButton, CardMenus, useCardActions, useCardMenuHandle, type CardMenuHandle } from './actions';
@@ -55,15 +55,16 @@ function lanesOf(cards: readonly Card[], epic: string | null, showCancelled: boo
  * with cards, under their names, one after another. Each card's "…" button and context menu hold
  * its actions.
  * Cards are memoised on their card object, so a `board` frame re-renders only the ones it changed.
+ * Check at HEAD reads the Project's default command, `projectCmd`.
  */
-export function BoardView() {
+export function BoardView({ projectCmd }: Readonly<{ projectCmd?: string }> = {}) {
   const api = useApi();
   const { ui, cards, openCard } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const lanes = useMemo(() => lanesOf(cards, ui.epic, ui.showCancelled), [cards, ui.epic, ui.showCancelled]);
   const [editing, setEditing] = useState<string | null>(null);
   // Check at HEAD shows its run in the card panel, so a card's check opens it there.
-  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id) });
+  const cardActions = useCardActions({ onCheck: (c) => openCard(c.id), projectCmd });
   const menuHandle = useCardMenuHandle();
   const columns: CardStatus[] = ui.showCancelled ? [...BOARD_COLUMNS, 'cancelled'] : [...BOARD_COLUMNS];
   const counts = Object.fromEntries(columns.map((s) => [s, lanes.reduce((n, l) => n + l.leaves.filter((c) => c.status === s).length, 0)]));
@@ -78,7 +79,12 @@ export function BoardView() {
     return cardActions.menuOf(c, [edit]);
   }
 
-  if (!lanes.length) return <p className="px-4 py-6 text-ui text-muted">No subtasks match the filters.</p>;
+  if (!lanes.length) {
+    // Nothing confirmed to show: proposals (under the epic filter, if one is set), or filters that hide the rest.
+    const proposals = cards.some((c) => !c.confirmed && c.status !== 'cancelled' && (!ui.epic || epicOf(c, byId)?.id === ui.epic));
+    const hidden = lanesOf(cards, null, true).length > 0;
+    return <p className="px-4 py-6 text-ui text-muted">{proposals ? 'Only proposals so far: they stay in the Tree until you confirm them or approve their epic.' : hidden ? 'No subtasks match the filters.' : 'No subtasks yet.'}</p>;
+  }
   // A labelled scroll region, which must accept keyboard scrolling.
   const region = { role: 'region', 'aria-label': 'Board', tabIndex: 0, className: '@container min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain' };
   const lanesGrid = (
@@ -128,7 +134,7 @@ export function BoardView() {
                           }}
                         />
                       ) : (
-                        <BoardCard card={c} blockers={openBlockerSeqs(c, byId)} selected={ui.selected === c.id} onOpen={openCard} menu={menuHandle} />
+                        <BoardCard card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} selected={ui.selected === c.id} onOpen={openCard} menu={menuHandle} />
                       )}
                     </li>
                   ))}
@@ -150,7 +156,7 @@ export function BoardView() {
   );
 }
 
-const BoardCard = memo(function BoardCard({ card: c, blockers, selected, onOpen, menu }: Readonly<{ card: Card; blockers: string; selected: boolean; onOpen: (id: string) => void; menu?: CardMenuHandle }>) {
+const BoardCard = memo(function BoardCard({ card: c, blockers, pause, selected, onOpen, menu }: Readonly<{ card: Card; blockers: string; pause: string; selected: boolean; onOpen: (id: string) => void; menu?: CardMenuHandle }>) {
   return (
     // A div, not a button: the Task chip and the "…" inside are ones. It is reached and opened by keyboard all the same.
     <div
@@ -175,10 +181,10 @@ const BoardCard = memo(function BoardCard({ card: c, blockers, selected, onOpen,
         <span className="shrink-0 text-caption tabular-nums text-muted">#{c.seq}</span>
         <span className={cn('min-w-0 flex-1 text-ink [overflow-wrap:anywhere]', c.status === 'cancelled' && 'line-through')}>{c.title}</span>
       </span>
-      {(c.held_by || c.pending_requests > 0 || c.stale || c.blocked || blockers || c.effort) && (
+      {(c.held_by || c.pending_requests > 0 || c.stale || c.blocked || blockers || pause || c.effort) && (
         <span className="flex min-w-0 flex-wrap items-center gap-1">
           {c.held_by && <TaskChip taskId={c.held_by} />}
-          <CardMarkers card={c} blockers={blockers} compact />
+          <CardMarkers card={c} blockers={blockers} pause={pause} compact />
           {c.effort && <span className="text-caption text-muted">Effort {c.effort}</span>}
         </span>
       )}
