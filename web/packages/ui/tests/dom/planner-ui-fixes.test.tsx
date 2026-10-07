@@ -206,8 +206,6 @@ describe('the card editor', () => {
       await user.click(form.getByRole('button', { name: 'Save' }));
       await waitFor(() =>
         expect(edit).toHaveBeenCalledWith('cp1-15', {
-          title: 'Cover anchoring with a DOM test',
-          win_condition: 'A test fails when a landed page shifts the visible row.',
           desc: 'Use the long fixture.',
           effort: 'M',
           prio: 1,
@@ -229,14 +227,28 @@ describe('the card editor', () => {
     await user.click(panel.getByRole('button', { name: 'Edit card' }));
     const form = within(panel.getByRole('form', { name: 'Edit #15' }));
     // An agent edits the card while the editor is open.
-    await act(() => api.planner.edit('cp1-15', { desc: 'Written by an agent.', prio: 2, labels: ['agent'] }));
+    await act(() => api.planner.edit('cp1-15', { win_condition: 'Agreed by an agent.', desc: 'Written by an agent.', prio: 2, labels: ['agent'] }));
     const edit = vi.spyOn(api.planner, 'edit');
     try {
       await user.type(form.getByRole('textbox', { name: 'Title' }), ' first');
       await user.click(form.getByRole('button', { name: 'Save' }));
-      await waitFor(() => expect(edit).toHaveBeenCalledWith('cp1-15', { title: 'Cover anchoring with a DOM test first', win_condition: 'A test fails when a landed page shifts the visible row.' }));
+      await waitFor(() => expect(edit).toHaveBeenCalledWith('cp1-15', { title: 'Cover anchoring with a DOM test first' }));
       const saved = (await api.planner.board('p1')).cards.find((c) => c.seq === 15)!;
-      expect([saved.desc, saved.prio, saved.labels]).toEqual(['Written by an agent.', 2, ['agent']]);
+      expect([saved.win_condition, saved.desc, saved.prio, saved.labels]).toEqual(['Agreed by an agent.', 'Written by an agent.', 2, ['agent']]);
+    } finally {
+      edit.mockRestore();
+    }
+  });
+
+  test('a save with nothing changed sends nothing and closes the editor', async () => {
+    const { user, tree } = await openPlanner();
+    const panel = await openCard(user, tree, 15);
+    await user.click(panel.getByRole('button', { name: 'Edit card' }));
+    const edit = vi.spyOn(api.planner, 'edit');
+    try {
+      await user.click(within(panel.getByRole('form', { name: 'Edit #15' })).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(panel.queryByRole('form', { name: 'Edit #15' })).toBeNull());
+      expect(edit).not.toHaveBeenCalled();
     } finally {
       edit.mockRestore();
     }

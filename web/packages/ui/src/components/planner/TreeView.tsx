@@ -487,10 +487,10 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
 }
 
 /**
- * Title and win condition in place; Enter saves both, Esc leaves them. `full` (the card panel's
- * editor) also edits the description, effort, priority and labels (ADR 0005 §10), and sends only
- * those changed since it opened, so an edit made meanwhile stays. Saving confirms nothing: a
- * suggestion stays one.
+ * Title and win condition in place; Enter saves, Esc leaves them. `full` (the card panel's
+ * editor) also edits the description, effort, priority and labels (ADR 0005 §10). A save sends
+ * only the fields changed since the editor opened, so an edit made meanwhile stays, and closes
+ * the editor when nothing changed. Saving confirms nothing: a suggestion stays one.
  */
 export function CardEditor({ card, onSave, onCancel, extra, full = false }: Readonly<{ card: Card; onSave: (patch: CardPatch) => void | Promise<void>; onCancel: () => void; extra?: ReactNode; full?: boolean }>) {
   const [title, setTitle] = useState(card.title);
@@ -505,6 +505,8 @@ export function CardEditor({ card, onSave, onCancel, extra, full = false }: Read
     e.preventDefault();
     if (!title.trim()) return;
     const fields: CardPatch = {};
+    if (title.trim() !== opened.title) fields.title = title.trim();
+    if (win.trim() !== opened.win_condition) fields.win_condition = win.trim();
     if (full) {
       const tags = labels.split(/\s+/).filter(Boolean);
       if (desc !== opened.desc) fields.desc = desc.trim();
@@ -512,7 +514,8 @@ export function CardEditor({ card, onSave, onCancel, extra, full = false }: Read
       if (Number(prio) !== opened.prio) fields.prio = Number(prio);
       if (tags.join(' ') !== opened.labels.join(' ')) fields.labels = tags;
     }
-    void onSave({ title: title.trim(), win_condition: win.trim(), ...fields });
+    if (Object.keys(fields).length === 0) return onCancel();
+    void onSave(fields);
   };
   const escape = (e: KeyboardEvent<HTMLElement>) => e.key === 'Escape' && onCancel();
   return (
