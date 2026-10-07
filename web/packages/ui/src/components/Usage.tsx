@@ -221,8 +221,8 @@ function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: () => v
 
 const PACE_CHIPS = { healthy: 'bg-success-wash text-success', attention: 'bg-warning-wash text-warning', danger: 'bg-error-wash text-error', muted: 'bg-tint-well text-muted' };
 
-/** "Nov 1": a day of the month, in the browser's locale. */
-const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+/** "Nov 1": a day of the month, in the browser's locale and time zone, or in `timeZone` (the reset's is UTC, where Copilot's month turns). */
+const day = (at: number, timeZone?: string) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone });
 
 /**
  * One allowance (DESIGN.md Account allowance in Usage): used of the whole with its pace, the month as a
@@ -234,7 +234,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
   const unit = quotaLabel(quota.type);
   const n = (v: number) => Math.round(v).toLocaleString('en-US');
   // With the bar its legend says where the pace lands; without it, a row does.
-  const projection = !burn && pace.daysAtPace !== null ? `About ${daysText(pace.daysAtPace)} left` : null;
+  const projection = !burn && pace.daysAtPace !== null ? `About ${daysText(pace.daysAtPace, 'working day')} left` : null;
   const resetAt = pace.daysUntilReset !== null ? now + pace.daysUntilReset * 86400000 : null;
   return (
     <PanelSection label="Allowance" meta={`${provider} · ${allowanceName(quota.type)}`}>
@@ -247,7 +247,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
               <span className="text-display-md text-ink">{n(quota.used)}</span>
               <span className="text-ui text-muted"> / {n(quota.entitlement)} used</span>
               {quota.overage > 0 && <span className="text-ui text-error"> · {n(quota.overage)} over</span>}
-              {resetAt !== null && <span className="text-ui text-muted" title={`${dateTime(new Date(resetAt))} · ${daysText(pace.daysUntilReset!)}`}> · Resets {day(resetAt)}</span>}
+              {resetAt !== null && <span className="text-ui text-muted" title={`${dateTime(new Date(resetAt))} · ${daysText(pace.daysUntilReset!)}`}> · Resets {day(resetAt, 'UTC')}</span>}
             </p>
             {!QUIET_PACE.has(pace.label) && (
               <span className={cn('flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-caption font-medium', PACE_CHIPS[pace.tone])}>
@@ -262,7 +262,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
               <div className="flex items-baseline justify-between gap-3 py-1.5">
                 <dt className="flex items-center gap-1 text-muted">
                   At this pace
-                  <HelpTip label="At this pace">The average spent per day so far this month, carried on to the reset. Pace allows 5% either way.</HelpTip>
+                  <HelpTip label="At this pace">The average spent per working day (Monday to Friday) so far this month, carried on to the reset. Pace allows 5% either way.</HelpTip>
                 </dt>
                 <dd className="tabular-nums text-ink">{projection}</dd>
               </div>
@@ -304,10 +304,10 @@ function BurnBar({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<Retur
 
 const QUOTA_TONES = { healthy: 'text-success', attention: 'text-warning', danger: 'text-error', muted: 'text-muted' };
 
-function daysText(days: number): string {
-  if (days < 1) return 'less than 1 day';
+function daysText(days: number, unit = 'day'): string {
+  if (days < 1) return `less than 1 ${unit}`;
   const count = Math.round(days);
-  return `${count} ${count === 1 ? 'day' : 'days'}`;
+  return `${count} ${unit}${count === 1 ? '' : 's'}`;
 }
 
 const QUOTA_FILLS = { healthy: 'bg-success', attention: 'bg-warning', danger: 'bg-error', muted: 'bg-faint' };
