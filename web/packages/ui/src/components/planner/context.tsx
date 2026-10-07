@@ -57,6 +57,10 @@ export interface PlannerContextValue {
   notify: (n: PlannerNotice | null) => void;
   /** Settings → Planner is on. */
   enabled: boolean;
+  /** Each Project's default acceptance command as last read or saved, `''` for none; missing until read. */
+  acceptCmds: Partial<Record<string, string>>;
+  /** Keeps a Project's default acceptance command just read or saved. */
+  setAcceptCmd: (project: string, cmd: string) => void;
 }
 
 export const PlannerContext = createContext<PlannerContextValue | null>(null);

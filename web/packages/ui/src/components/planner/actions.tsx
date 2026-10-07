@@ -1,5 +1,5 @@
 import { useApi } from '../../ApiContext';
-import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
+import { Ban, BadgeCheck, Check, CheckCheck, Ellipsis, ListRestart, LockOpen, MoveRight, PanelRightOpen, Pause, Play, RotateCcw, Sparkles, Split, Square, SquareTerminal, Stethoscope, Undo2, Workflow } from 'lucide-react';
 import { useMemo, useRef, useState, type ComponentProps, type ReactElement, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type TriageVerdict } from '../../api';
 import { approvedEpicOf, cardPath, isLanded, isStarted, landedUnder, linkedReason, pendingUnder, plansToApprove, runningLanes, startedUnderReason } from '../../lib/board';
@@ -35,11 +35,12 @@ export interface CardAction {
  * one in flight and the dialogs they open. The card panel shows a card's actions as buttons; the
  * Tree and the Board offer the same ones in a row's "…" and context menus (DESIGN.md principle 6).
  * Check at HEAD reports through its job, which the card panel shows (`onCheck` opens it there);
+ * it needs a command to run, the subtask's own or its Project's default from the planner's context.
  * Triage answers with a verdict only the panel has room for, so it is offered with `onTriage` only.
  */
 export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (card: Card, t: TriageResult) => void; onCheck?: (card: Card) => void }> = {}) {
   const api = useApi();
-  const { cards, notify, openCard } = useShownBoard();
+  const { cards, notify, openCard, acceptCmds } = useShownBoard();
   const byId = useMemo(() => new Map(cards.map((c) => [c.id, c])), [cards]);
   const waiting = useMemo(() => new Set(plansToApprove(cards).map((p) => p.epic.id)), [cards]);
   const [busy, setBusy] = useState<{ card: string; key: string } | null>(null);
@@ -133,13 +134,20 @@ export function useCardActions({ onTriage, onCheck }: Readonly<{ onTriage?: (car
       actions.push({ key: 'revert', label: 'Revert…', icon: <Undo2 />, danger: true, title: leaf ? 'Revert its landing on the integration branch, and what landed on top of it.' : 'Revert every subtask that landed under it, and what landed on top of them.', onClick: () => setReverting(c) });
     }
     if (leaf && isLanded(c)) actions.push({ key: 'reopen', label: 'Reopen without reverting code', icon: <ListRestart />, onClick: () => reopen(c) });
-    if (leaf && c.status === 'doing' && !c.lane?.branch) actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Pending requests are withdrawn.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
+    // A move back to To do keeps split and change requests (ADR 0005 decision 8).
+    if (leaf && c.status === 'doing' && !c.lane?.branch) actions.push({ key: 'release', label: 'Release', icon: <Undo2 />, onClick: () => setReason({ title: `Release #${c.seq}?`, description: 'The subtask goes back to To do and its Task stops holding it. Its pending done, cancel and blocked requests are withdrawn; split and change requests stay for you to decide.', label: 'Comment (optional)', confirm: 'Release', required: false, run: (t) => api.planner.release(c.id, t) }) });
     // Not under a cancelled card: the service refuses it until that is restored.
     if (leaf && c.status === 'done' && !isLanded(c) && !cardPath(c, byId).some((a) => a.status === 'cancelled')) {
       actions.push({ key: 'todo', label: 'Back to To do', icon: <ListRestart />, onClick: () => setReason({ title: `Move #${c.seq} back to To do?`, description: 'The subtask goes back to To do for another attempt.', label: 'Comment (optional)', confirm: 'Back to To do', required: false, run: (t) => api.planner.status(c.id, 'todo', t) }) });
     }
     if (leaf && c.confirmed && c.status !== 'done' && c.status !== 'cancelled') {
-      actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
+      // With no command to run, its own or the Project's (a blank one is none), the service refuses it; unknown until read.
+      const reason = (c.accept_cmd ?? acceptCmds[c.project_id])?.trim() === '' ? `#${c.seq} has no acceptance command: set one under Owner only, or as the project's default.` : undefined;
+      actions.push({ key: 'check', label: 'Check at HEAD', icon: <SquareTerminal />, reason, onClick: () => void run(c.id, 'check', 'run the acceptance command', () => api.planner.check(c.id)).then((r) => r && onCheck?.(c)) });
+    }
+    // The blocked flag an accepted blocked request set (ADR 0005 §6, ADR 0006 §4.6): clearing it is the owner's go-ahead.
+    if (c.blocked && c.status !== 'cancelled') {
+      actions.push({ key: 'unblock', label: 'Clear blocked mark', icon: <LockOpen />, title: 'Let its Task finish it, and under an approved epic let uam start it again.', onClick: () => void run(c.id, 'unblock', 'clear the blocked mark', () => api.planner.edit(c.id, { blocked: false })) });
     }
     if (leaf && c.stale && onTriage) actions.push({ key: 'triage', label: 'Triage', icon: <Stethoscope />, onClick: () => void run(c.id, 'triage', 'triage the subtask', () => api.planner.triage(c.id)).then((r) => r && onTriage(c, r)) });
     // A started subtask keeps its plan until it is released: no move, no split. A story moves

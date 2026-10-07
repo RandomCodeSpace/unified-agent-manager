@@ -1,13 +1,14 @@
 import { useApi } from '../../ApiContext';
 import { Check, ChevronRight, ListPlus, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type SubmitEvent } from 'react';
-import { plannerErrorText, type Card, type CardKind, type ProviderWait } from '../../api';
-import { KIND_LABEL, STATUS_LABEL, approvedEpicOf, buildOutline, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, type OutlineNode, type RunSummary } from '../../lib/board';
+import { plannerErrorText, type Card, type CardKind, type CardPatch, type ProviderWait } from '../../api';
+import { KIND_LABEL, PRIO_LABEL, STATUS_LABEL, approvedEpicOf, buildOutline, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, type OutlineNode, type RunSummary } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/button';
 import { Chip } from '../ui/chip';
 import { Input } from '../ui/input';
 import type { ActionItem } from '../ui/menu';
+import { Select } from '../ui/select';
 import { CardMenuButton, CardMenus, useCardActions, useCardMenuHandle, type CardMenuHandle } from './actions';
 import { useShownBoard, type PlannerCreating, type PlannerUi } from './context';
 import { CardMarkers, KindIcon, ProgressRing, ProgressText, StatusMark, TaskChip, expiresIn } from './parts';
@@ -281,6 +282,8 @@ export function TreeView({ readOnly = false, waits = NO_WAITS }: Readonly<{ read
 
 const NO_WAITS: readonly ProviderWait[] = [];
 
+const EFFORTS = ['S', 'M', 'L'] as const;
+
 const indentOf = (level: number) => ({ paddingLeft: `${(level - 1) * 20 + 8}px` });
 
 /** The view state that opens the add form under `parent` (`''` for the root), unfolding it. */
@@ -483,21 +486,54 @@ function CreateForm({ kind, parent, onCreate, onCancel }: Readonly<{ kind: CardK
   );
 }
 
-/** Title and win condition in place; Enter saves both, Esc leaves them. Saving confirms nothing: a suggestion stays one. */
-export function CardEditor({ card, onSave, onCancel, extra }: Readonly<{ card: Card; onSave: (patch: { title: string; win_condition: string }) => void | Promise<void>; onCancel: () => void; extra?: ReactNode }>) {
+/**
+ * Title and win condition in place; Enter saves, Esc leaves them. `full` (the card panel's
+ * editor) also edits the description, effort, priority and labels (ADR 0005 §10). A save sends
+ * only the fields changed since the editor opened, so an edit made meanwhile stays, and closes
+ * the editor when nothing changed. Saving confirms nothing: a suggestion stays one.
+ */
+export function CardEditor({ card, onSave, onCancel, extra, full = false }: Readonly<{ card: Card; onSave: (patch: CardPatch) => void | Promise<void>; onCancel: () => void; extra?: ReactNode; full?: boolean }>) {
   const [title, setTitle] = useState(card.title);
   const [win, setWin] = useState(card.win_condition);
+  const [desc, setDesc] = useState(card.desc);
+  // The service gives every card an effort, S by default.
+  const [effort, setEffort] = useState<string>(card.effort || 'S');
+  const [prio, setPrio] = useState(String(card.prio));
+  const [labels, setLabels] = useState(card.labels.join(' '));
+  const [opened] = useState(card);
   const submit = (e: SubmitEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    void onSave({ title: title.trim(), win_condition: win.trim() });
+    const fields: CardPatch = {};
+    if (title.trim() !== opened.title) fields.title = title.trim();
+    if (win.trim() !== opened.win_condition) fields.win_condition = win.trim();
+    if (full) {
+      const tags = labels.split(/\s+/).filter(Boolean);
+      if (desc !== opened.desc) fields.desc = desc.trim();
+      if (effort !== (opened.effort || 'S')) fields.effort = effort as Card['effort'];
+      if (Number(prio) !== opened.prio) fields.prio = Number(prio);
+      if (tags.join(' ') !== opened.labels.join(' ')) fields.labels = tags;
+    }
+    if (Object.keys(fields).length === 0) return onCancel();
+    void onSave(fields);
   };
+  const escape = (e: KeyboardEvent<HTMLElement>) => e.key === 'Escape' && onCancel();
   return (
     // The browser's own context menu for its inputs (paste), not the view's card menu.
     <form aria-label={`Edit #${card.seq}`} className="flex flex-col gap-1.5 rounded-md bg-tint-well p-2" onSubmit={submit} onContextMenu={(e) => e.stopPropagation()}>
       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- F2 and double-click move focus into the editor they open. */}
-      <Input size="md" aria-label="Title" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
-      <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && onCancel()} />
+      <Input size="md" aria-label="Title" value={title} autoFocus onChange={(e) => setTitle(e.target.value)} onKeyDown={escape} />
+      <Input size="md" aria-label="Win condition" placeholder="What done means, in one line" value={win} onChange={(e) => setWin(e.target.value)} onKeyDown={escape} />
+      {full && (
+        <>
+          <textarea aria-label="Description" placeholder="Description, in Markdown" className="min-h-16 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none" value={desc} onChange={(e) => setDesc(e.target.value)} onKeyDown={escape} />
+          <span className="grid grid-cols-2 gap-1.5">
+            <Select aria-label="Effort" className="h-8" value={effort} onValueChange={setEffort} items={EFFORTS.map((e) => ({ value: e, label: `Effort ${e}` }))} />
+            <Select aria-label="Priority" className="h-8" value={prio} onValueChange={setPrio} items={Object.entries(PRIO_LABEL).map(([value, label]) => ({ value, label: `Priority ${label}` }))} />
+          </span>
+          <Input size="md" aria-label="Labels" placeholder="Labels, separated by spaces" value={labels} onChange={(e) => setLabels(e.target.value)} onKeyDown={escape} />
+        </>
+      )}
       {extra}
       <span className="flex items-center gap-2">
         <Button type="submit" size="sm" variant="primary" disabled={!title.trim()}>

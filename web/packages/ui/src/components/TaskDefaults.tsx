@@ -163,7 +163,8 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
           disabled={disabled || !!noEffort}
           aria-describedby={noEffort ? `${prefix}-effort-hint` : undefined}
           items={[{ value: '', label: 'Default' }, ...(model?.efforts ?? []).map((e) => ({ value: e, label: effortLabel(e) }))]}
-          onValueChange={(effort) => onChange({ ...value, effort })}
+          // Base UI resets the value to null when a new model's levels drop the one it held: that is the default effort.
+          onValueChange={(effort) => onChange({ ...value, effort: effort ?? '' })}
         />
       </Field>
       <Field id={`${prefix}-context-size`} label="Context size" hintVisible={!!noContext} hint={noContext || (value.context_size === 'long_context' ? 'Long context may cost more.' : undefined)}>
@@ -176,7 +177,8 @@ export function TaskDefaultsFields({ prefix, value, disabled, onChange }: Readon
             ...(sizes.some((s) => s.id === 'default') ? [] : [{ value: 'default', label: 'Default' }]),
             ...sizes.map((s) => ({ value: s.id, label: `${sizeLabel(s.id)} · ${s.tokens.toLocaleString()}` })),
           ]}
-          onValueChange={(context_size) => onChange({ ...value, context_size })}
+          // As for effort: a size the new model lacks resets to null, which is the default size.
+          onValueChange={(context_size) => onChange({ ...value, context_size: context_size ?? 'default' })}
         />
       </Field>
       <div className="col-span-full">

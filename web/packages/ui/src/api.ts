@@ -746,7 +746,7 @@ export interface ImportReport {
 }
 
 /** The fields an owner edit may carry (`PATCH /api/board/cards/{ref}`); it confirms no suggestion. */
-export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 'prio' | 'effort' | 'due' | 'labels' | 'checklist' | 'accept_cmd' | 'paths' | 'project_id'>>;
+export type CardPatch = Partial<Pick<Card, 'title' | 'desc' | 'win_condition' | 'prio' | 'effort' | 'due' | 'labels' | 'checklist' | 'blocked' | 'accept_cmd' | 'paths' | 'project_id'>>;
 
 /** What Settle decides for each subtask the Task holds (§5). */
 export type HoldDecision = { action: 'keep' | 'release' | 'cancel'; comment: string };

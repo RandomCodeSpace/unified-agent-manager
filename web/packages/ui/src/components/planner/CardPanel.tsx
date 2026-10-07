@@ -2,7 +2,7 @@ import { useApi } from '../../ApiContext';
 import { ArrowLeft, FolderInput, GitBranch, GitCommitHorizontal, Link2, ListChecks, Pencil, Plus, Sparkles, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { plannerErrorText, type Card, type CardDetail, type ChecklistItem, type ProviderWait } from '../../api';
-import { approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, runText } from '../../lib/board';
+import { PRIO_LABEL, approvedEpicOf, cardPath, isStarted, linkTargets, lockedReason, openBlockerSeqs, pauseLabel, plansToApprove, providerWait, runSummary, runsNow, runText } from '../../lib/board';
 import { cn } from '../../lib/cn';
 import { Loading, Markdown, Note, relTime, timeAgo, useApp } from '../common';
 import { PanelHeader, SidePanel } from '../Subagents';
@@ -79,6 +79,17 @@ function RunLine({ summary }: Readonly<{ summary: ReturnType<typeof runSummary> 
   return <p className="text-caption text-muted tabular-nums">{runText(summary)}</p>;
 }
 
+/**
+ * What a card's blocked mark holds back (ADR 0006 §4.6): only a subtask's own mark holds work back,
+ * and a done or cancelled one's has nothing left to hold. Null for no note.
+ */
+function blockedNote(c: Card): string | null {
+  if (!c.blocked || c.status === 'cancelled') return null;
+  if (c.kind !== 'subtask') return `Marked blocked: on ${c.kind === 'epic' ? 'an epic' : 'a story'} the mark holds nothing back.`;
+  if (c.status === 'done') return null;
+  return "Marked blocked: its Task can't finish it, and under an approved epic uam won't start it. Clear blocked mark when the blocker is gone.";
+}
+
 function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId: ReadonlyMap<string, Card>; onOpen: (id: string) => void; waits: readonly ProviderWait[] }>) {
   const api = useApi();
   const { projects, jobs, cards } = useShownBoard();
@@ -92,6 +103,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
   const busy = cardActions.busy?.key ?? null;
   const run = <T,>(key: string, verb: string, op: () => Promise<T>) => cardActions.run(c.id, key, verb, op);
   const unassigned = !c.project_id;
+  const blocked = unassigned ? null : blockedNote(c);
   const leaf = c.kind === 'subtask';
   // A started subtask keeps its plan (ADR 0005 decision 8); ticks and the owner's own fields go on.
   const locked = lockedReason(c);
@@ -140,6 +152,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
           {editing ? (
             <CardEditor
               card={c}
+              full
               onCancel={() => setEditing(false)}
               onSave={async (patch) => {
                 setEditing(false);
@@ -153,7 +166,7 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
                 <p className={cn('text-ui [overflow-wrap:anywhere]', c.win_condition ? 'text-body' : 'text-muted')}>{c.win_condition ? <><span className="text-muted">Done means: </span>{c.win_condition}</> : 'No win condition yet.'}</p>
               </div>
               {!unassigned && !locked && (
-                <Button size="icon" aria-label="Edit title and win condition" className="text-muted" onClick={() => setEditing(true)}>
+                <Button size="icon" aria-label="Edit card" className="text-muted" onClick={() => setEditing(true)}>
                   <Pencil />
                 </Button>
               )}
@@ -167,11 +180,13 @@ function CardBody({ card: c, byId, onOpen, waits }: Readonly<{ card: Card; byId:
             <CardMarkers card={c} blockers={openBlockerSeqs(c, byId)} pause={pauseLabel(c, byId)} toApprove={c.run ? (plansToApprove(cards).find((p) => p.epic.id === c.id)?.proposals ?? 0) : 0} waiting={providerWait(c, waits)} />
             {c.pinned_sha && <span className="flex items-center gap-1" title="HEAD at the last owner touch"><GitCommitHorizontal aria-hidden="true" className="size-3" />{c.pinned_sha.slice(0, 7)}</span>}
             {c.effort && <span>Effort {c.effort}</span>}
+            {PRIO_LABEL[c.prio] && <span>Priority {PRIO_LABEL[c.prio]}</span>}
             {c.due && <span>Due {c.due}</span>}
             {c.labels.map((l) => <Chip key={l} fill="well">{l}</Chip>)}
           </div>
           {runsNow(c) && <RunLine summary={runSummary(c, byId)} />}
           {locked && !unassigned && <Note tone="muted">{locked}</Note>}
+          {blocked && <Note>{blocked}</Note>}
           {job?.status === 'running' && <Loading label="Suggesting…" delay={0} />}
           {job?.status === 'failed' && <Note tone="error">Suggesting failed{job.error ? `: ${job.error}` : '.'}</Note>}
           {checking?.status === 'running' && <Loading label="Checking at HEAD…" delay={0} />}
