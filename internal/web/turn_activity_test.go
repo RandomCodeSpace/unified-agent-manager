@@ -63,6 +63,25 @@ func TestStopReasonPrecedencePersistsAndClearsAtTheNextTurn(t *testing.T) {
 	}
 }
 
+// A Stop that arrives as the turn completes on its own explains nothing
+// later: the next turn's own cancellation reports the provider's reason.
+func TestStopReasonOfAStopThatLostTheRaceIsDropped(t *testing.T) {
+	for _, end := range []agentapi.TurnState{agentapi.TurnCompleted, agentapi.TurnFailed} {
+		m, prov, _ := newTestManager(t)
+		sum, conv := createSession(t, m, prov)
+		conv.EmitTurn(agentapi.TurnWorking, "")
+		if _, err := m.Cancel(sum.ID); err != nil {
+			t.Fatal(err)
+		}
+		conv.EmitTurn(end, "")
+		conv.EmitTurn(agentapi.TurnWorking, "")
+		conv.Emit(cancelledTurn("autopilot_credit_limit"))
+		if got, _ := m.Summary(sum.ID); got.StopReason != stopCreditLimit || got.StateDetail != "Autopilot stopped at its credit limit" {
+			t.Errorf("after a %s turn: stop reason %q, detail %q", end, got.StopReason, got.StateDetail)
+		}
+	}
+}
+
 func TestStopReasonForEachProviderCode(t *testing.T) {
 	for reason, want := range map[string]string{
 		"autopilot_credit_limit": stopCreditLimit,

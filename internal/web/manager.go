@@ -2187,6 +2187,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		s.setBase(StateWorking, "")
 	case agentapi.TurnCompleted:
 		s.setBase(StateCompleted, "")
+		// A stop that lost the race to the turn's end must not explain a
+		// later one.
+		s.stopReason, s.stopBy = "", ""
 		// The whole turn is over, steers included: the queue may go on.
 		m.kickDrainLocked(s)
 	case agentapi.TurnCancelled:
@@ -2200,6 +2203,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 			detail = clipRunes(displaytext.Sanitize(turn.Error), maxDetailRunes)
 		}
 		s.setBase(StateFailed, detail)
+		s.stopReason, s.stopBy = "", ""
 		m.pauseQueueLocked(s)
 		m.kickSignedOutLocked(s, detail)
 	}
