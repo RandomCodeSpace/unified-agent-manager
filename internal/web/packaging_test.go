@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/base64"
 	"io/fs"
@@ -37,8 +39,9 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	get := func(path string) *httptest.ResponseRecorder {
+	get := func(path string, accept ...string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
+		r.Header["Accept-Encoding"] = accept
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		return w
@@ -51,9 +54,29 @@ func TestEmbeddedFrontendPackaging(t *testing.T) {
 	if len(assets) < 2 {
 		t.Fatal("embedded index must reference compiled JS and CSS")
 	}
+	startup := []string{"/", "/" + frameDocument}
 	for _, asset := range assets {
 		if w := get(asset[1]); w.Code != http.StatusOK || w.Body.Len() == 0 {
 			t.Fatalf("embedded asset %s: %d, %d bytes", asset[1], w.Code, w.Body.Len())
+		}
+		startup = append(startup, asset[1])
+	}
+	// The page, its scripts and styles and the diagram frame go as the build
+	// compressed them (web/scripts/precompress.mjs).
+	for _, path := range startup {
+		name := cmp.Or(strings.TrimPrefix(path, "/"), indexDocument)
+		for coding, suffix := range map[string]string{"br": ".br", "gzip": ".gz"} {
+			want, err := fs.ReadFile(embedded, "dist/"+name+suffix)
+			if err != nil {
+				t.Fatalf("embedded %s has no %s copy: %v", name, coding, err)
+			}
+			w := get(path, coding)
+			if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != coding || !bytes.Equal(w.Body.Bytes(), want) {
+				t.Fatalf("%s for %s: %d %q, %d bytes", path, coding, w.Code, w.Header().Get("Content-Encoding"), w.Body.Len())
+			}
+			if coding == "gzip" && !bytes.Equal(gunzipResponse(t, w.Body), get(path).Body.Bytes()) {
+				t.Fatalf("the gzip copy of %s differs from it", name)
+			}
 		}
 	}
 	// The diagram frame: one classic inline script, since the frame's own

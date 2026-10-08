@@ -23,7 +23,7 @@ test('the theme matches the system unless the browser stored Light or Dark', () 
 });
 
 test('the pre-paint script picks the scheme lib/theme.ts does', () => {
-  const script = readFileSync(new URL('../public/theme.js', import.meta.url), 'utf8');
+  const script = readFileSync(new URL('../src/theme.js', import.meta.url), 'utf8');
   for (const stored of [null, 'light', 'dark', 'garbage']) {
     for (const systemDark of [false, true]) {
       const root = { dataset: {} };

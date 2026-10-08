@@ -17,7 +17,7 @@ var responseGzipPool = sync.Pool{New: func() any {
 func serveCompressed(w http.ResponseWriter, r *http.Request, next http.Handler) {
 	writer := &compressedResponse{
 		ResponseWriter: w,
-		acceptsGzip:    acceptsGzip(r.Header.Values(headerAcceptEncoding)),
+		acceptsGzip:    acceptsCoding(r.Header.Values(headerAcceptEncoding), "gzip"),
 		head:           r.Method == http.MethodHead,
 		ranged:         r.Header.Get("Range") != "",
 	}
@@ -25,16 +25,17 @@ func serveCompressed(w http.ResponseWriter, r *http.Request, next http.Handler) 
 	next.ServeHTTP(writer, r)
 }
 
-// An explicit gzip preference takes precedence over a wildcard, including a
-// refusal or invalid quality. Tokens must match in full, never by substring.
-func acceptsGzip(values []string) bool {
+// acceptsCoding reports whether Accept-Encoding allows coding (lower case). An
+// explicit preference takes precedence over a wildcard, including a refusal or
+// invalid quality. Tokens must match in full, never by substring.
+func acceptsCoding(values []string, coding string) bool {
 	explicit, wildcard := false, false
-	seenGzip := false
+	seen := false
 	for _, value := range values {
 		for _, entry := range strings.Split(value, ",") {
-			coding, _, _ := strings.Cut(entry, ";")
-			coding = strings.ToLower(strings.TrimSpace(coding))
-			if coding != "gzip" && coding != "*" {
+			name, _, _ := strings.Cut(entry, ";")
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name != coding && name != "*" {
 				continue
 			}
 			_, params, err := mime.ParseMediaType(entry)
@@ -44,16 +45,16 @@ func acceptsGzip(values []string) bool {
 			} else {
 				allowed = allowed && len(params) == 0
 			}
-			if coding == "gzip" {
-				// A refusal also wins over a duplicate positive gzip entry.
-				explicit = allowed && (!seenGzip || explicit)
-				seenGzip = true
+			if name == coding {
+				// A refusal also wins over a duplicate positive entry.
+				explicit = allowed && (!seen || explicit)
+				seen = true
 			} else {
 				wildcard = allowed
 			}
 		}
 	}
-	return explicit || (!seenGzip && wildcard)
+	return explicit || (!seen && wildcard)
 }
 
 func positiveQuality(q string) bool {

@@ -6,6 +6,10 @@ export default defineConfig({
   base: '/',
   publicDir: 'packages/ui/public',
   plugins: [react(), tailwindcss(), diagramFrame(), mockAttachmentRoute()],
+  // The theme script must run before the first paint, so it stays a classic script, which Vite
+  // does not bundle (and warns so): a build copies it to assets/ under a content hash instead,
+  // cached for good like the bundle.
+  html: { additionalAssetSources: { script: { srcAttributes: ['src'], filter: ({ attributes }) => attributes.type !== 'module' } } },
   build: {
     outDir: '../internal/web/dist',
     emptyOutDir: true,
