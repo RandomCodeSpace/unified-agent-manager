@@ -143,6 +143,12 @@ type backgroundTasksEvent struct {
 	BackgroundTasks agentapi.BackgroundTasks `json:"background_tasks"`
 }
 
+type turnActivityEvent struct {
+	Seq          uint64       `json:"seq"`
+	SessionID    string       `json:"session_id"`
+	TurnActivity TurnActivity `json:"turn_activity"`
+}
+
 type interactionEvent struct {
 	Seq         uint64               `json:"seq"`
 	SessionID   string               `json:"session_id"`

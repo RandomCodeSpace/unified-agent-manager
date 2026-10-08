@@ -1708,6 +1708,8 @@ type conversation struct {
 	reportEmptyTasks  bool
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
+	// act is the running turn's live activity (activity.go).
+	act activity
 	// byom is what the session has of the custom models.
 	byom registered
 	// selected is the model this client last selected: at create or by
@@ -2925,6 +2927,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.tools.observe(ev)
 	}
 	agentID := agentOf(ev)
+	if c.observeActivityLocked(ev, agentID) {
+		return
+	}
 	switch d := ev.Data.(type) {
 	case *rpc.AssistantMessageDeltaData:
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
@@ -3174,6 +3179,7 @@ func (c *conversation) emitUsageLocked() {
 }
 
 func (c *conversation) startTurnLocked() {
+	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
 	c.idleUnresolved, c.taskCompleted = false, false
 	c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
@@ -3190,12 +3196,13 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
 	switch {
 	case aborted != nil && *aborted:
-		turn.State = agentapi.TurnCancelled
+		turn.State, turn.Reason = agentapi.TurnCancelled, c.act.abortReason
 		c.expireLocked()
 	case c.turnErr != "":
 		turn.State, turn.Error = agentapi.TurnFailed, c.turnErr
 	}
 	c.turnErr, c.turnModel = "", ""
+	c.act = activity{}
 	c.undeliveredLocked(turn.State, at)
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
 }
@@ -3594,6 +3601,12 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, tc, cut || t.clippedInput[d.ToolCallID]
 		delete(t.clippedInput, d.ToolCallID)
+	case *rpc.SessionInfoData, *rpc.SessionWarningData:
+		text, shown := noticeText(d)
+		if !shown {
+			return it, false
+		}
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, text
 	case *rpc.SessionBinaryAssetData:
 		if len(t.assets) >= maxAssets {
 			clear(t.assets)

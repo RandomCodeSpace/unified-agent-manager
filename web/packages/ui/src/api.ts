@@ -625,6 +625,8 @@ export interface SessionSummary {
   compacting?: boolean;
   /** The open conversation's compaction threshold in percent: Settings' value when it opened; absent while none is open. */
   compact_threshold?: number;
+  /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command, an MCP server or the Copilot CLI; absent otherwise, also when the provider gave no reason. */
+  stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'remote' | 'mcp' | 'cli';
   queued?: number;
   state: SessionState;
   state_detail?: string;
@@ -745,7 +747,18 @@ export interface Subagent {
   tokens?: number;
   /** Tool calls it made over all runs: live while it runs, the provider's total once it ends. */
   tool_calls?: number;
+  /** Set while it runs and its current model call is being retried; live only. */
+  retry?: Retry;
 }
+
+/** A model call the provider is retrying: how many times so far, its reason code, and the failed attempt's HTTP status or a network failure. */
+export interface Retry { count: number; reason?: string; status?: number; network?: boolean; at: string }
+
+/** The conversation's todo list; not read yet, so never known. */
+export interface TodoView { known: boolean }
+
+/** The running turn's live activity: what the main agent says it is doing (`assistant.intent`) and a model call being retried; never persisted. */
+export interface TurnActivity { intent?: string; retry?: Retry; todos: TodoView }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {
@@ -908,6 +921,7 @@ export interface SessionDetail extends SessionSummary, Representation {
   /** Cursor for older subagents only Copilot's record still lists; absent when `subagents` has them all. */
   subagents_before?: string;
   background_tasks?: BackgroundTasks;
+  turn_activity?: TurnActivity;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1081,7 +1095,8 @@ export type UpdateData =
   | { name: 'submission'; seq: number; session_id: string; submission: Submission }
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
-  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks };
+  | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
+  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1101,6 +1116,7 @@ export const UPDATE_EVENTS = [
   'subagent',
   'background_tasks',
   'turn_timing',
+  'turn_activity',
 ] as const;
 
 export class ApiError extends Error {

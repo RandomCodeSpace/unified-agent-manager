@@ -762,6 +762,9 @@ const (
 	// finished compacting the main conversation; how it ended arrives as a
 	// notice item.
 	EventCompaction EventKind = "compaction"
+	// EventActivity replaces the running turn's live activity with
+	// Event.Activity; it is never persisted.
+	EventActivity EventKind = "activity"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -783,6 +786,31 @@ type Event struct {
 	Title string
 	// Compacting is the payload of EventCompaction.
 	Compacting bool
+	Activity   *Activity
+}
+
+// Activity is the main agent's live state in the running turn. The adapter
+// starts it afresh with each turn; the provider never records it.
+type Activity struct {
+	// Intent is what the main agent says it is doing, "" when it says
+	// nothing.
+	Intent string `json:"intent,omitempty"`
+	// Retry is set while the turn's current model call is being retried.
+	Retry *Retry `json:"retry,omitempty"`
+}
+
+// Retry describes a model call the provider is retrying.
+type Retry struct {
+	// Count is how many times the call was retried so far.
+	Count int `json:"count"`
+	// Reason is the provider's reason code, such as "rate_limited", when it
+	// gives one.
+	Reason string `json:"reason,omitempty"`
+	// Status is the HTTP status of the attempt that failed, 0 when unknown.
+	Status int `json:"status,omitempty"`
+	// Network is set when that attempt failed without a response.
+	Network bool      `json:"network,omitempty"`
+	At      time.Time `json:"at"`
 }
 
 // ItemKind classifies transcript entries.
@@ -934,6 +962,9 @@ type Turn struct {
 	Error string `json:"error,omitempty"`
 	// Model is the model the provider reported for this turn, when known.
 	Model string `json:"model,omitempty"`
+	// Reason is the provider's code for why a TurnCancelled turn stopped,
+	// such as "autopilot_credit_limit"; "" when it gave none.
+	Reason string `json:"reason,omitempty"`
 }
 
 // InteractionKind separates permission requests from questions.
@@ -1071,6 +1102,9 @@ type Subagent struct {
 	Tokens int64 `json:"tokens,omitempty"`
 	// ToolCalls is the number of tool calls it made, over all runs.
 	ToolCalls int64 `json:"tool_calls,omitempty"`
+	// Retry is set while its current model call is being retried. It is
+	// live only: the provider does not record retries.
+	Retry *Retry `json:"retry,omitempty"`
 	// Result is the start of the output its parent tool call recorded, when
 	// a read record has it but not that tool call's item.
 	Result string `json:"-"`

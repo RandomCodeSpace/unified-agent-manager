@@ -426,8 +426,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   updates the meter.
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Task says
-  so: the label above the message box (and, during a turn, the line at the
-  foot of the conversation) reads "Compacting the conversation…",
+  so: the status line above the message box (and, during a turn, the line
+  at the foot of the conversation) reads "Compacting the conversation…",
   the header chip and the Task's row read "Compacting…", and the Task sits
   under Working in the list (a request waiting for you still wins). When it
   ends a quiet notice stays in the conversation, "Compacted the conversation
@@ -436,6 +436,28 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   send meanwhile follow the usual Send now / After this turn rules. The
   service reports it as `compacting: true` on the Task summary, absent
   otherwise; it is live only and never saved.
+- **Status line**: while a Task works, the line above the message box says
+  what the agent says it is doing (Copilot derives it from its todo list),
+  else a calm verb, and for how long. A model call Copilot retries adds
+  "Retrying, attempt 2 · HTTP 429 · rate limited" until the call goes
+  through; a subagent's retry shows under its row. Click the line to jump to
+  the end of the conversation. After a stop it says why until the next turn
+  starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
+  "Stopped: credit limit" (autopilot's, with the credits used and turns),
+  "Stopped: remote command", "Stopped: MCP server" or "Stopped in the
+  Copilot CLI". The header says the same, and the Task row's tip says "You
+  stopped it" for yours. The service reports the reason as `stop_reason` on
+  the Task summary (`owner`, `time_limit`, `credit_limit`, `remote`, `mcp`
+  or `cli`, absent when there is none); it is saved with the stopped state
+  and cleared when the next turn starts. The running turn's intent and
+  retry come as `turn_activity`, in the Task snapshot and in `turn_activity`
+  events; they are live only and never saved.
+- **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
+  UAM, such as signing in again in Settings, and a link only when it is
+  https) and its authentication, model, MCP and notification messages show
+  as notices in the conversation, a subagent's in its own transcript, and
+  come back with the history. Its other messages (timing, context window,
+  snapshots, configuration, terminal tips) are not shown.
 - **Usage and credits**: for a provider that reports quota (Copilot has the
   `usage` capability), UAM reads the account's quotas when it starts, after
   each turn ends, and at most once a minute while a browser is open, and
@@ -652,9 +674,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   minutes, default 30) cancels the turn still running then, a turn waiting
   for your answer included; Stop also turns autopilot off, so an autopilot
   run that never finishes ends there as Stopped at the time limit. Its Task
-  then reads "Stopped at the routine's time limit (N min)" in the sidebar
-  and as its state's detail (`state_detail`), not "You stopped it", which
-  only a Stop of yours shows. Each run starts a normal Task in the Project,
+  then reads "Stopped: time limit" in its header and status line, and
+  "Stopped at the routine's time limit (N min)" in the sidebar and as its
+  state's detail (`state_detail`), not "You stopped it", which only a Stop
+  of yours shows. Each run starts a normal Task in the Project,
   named "<routine name> · <date and time>", with the routine's prompt as
   its first message. It shows in the sidebar and Needs you like any Task,
   begins with "Started by a routine.", and the API lists the routine as
@@ -1398,7 +1421,7 @@ States shown for each session:
 | working | The provider is running a turn |
 | awaiting permission / awaiting answer | The provider is waiting for you |
 | completed | The last turn finished |
-| cancelled | The last turn was stopped with Stop turn |
+| cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command, an MCP server or the Copilot CLI); `stop_reason` says which |
 | failed | The provider reported an error, or its process or event stream ended; the detail says which |
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
 | closed | The conversation was closed from the web interface, or the Task was imported and has not been sent a message yet |

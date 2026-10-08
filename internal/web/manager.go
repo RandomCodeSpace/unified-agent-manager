@@ -356,9 +356,16 @@ type webSession struct {
 	commandLedger      string
 	stopSeq            uint64
 	stopReason         string // what asked to stop the turn when not the owner; the cancelled state's detail
+	stopBy             string // the stop reason of uam's stop request (stopOwner, stopTimeLimit); "" when none
 	submissions        []Submission
 	last               *Submission
 	createReq          string
+	// stopCode is why the last turn was cancelled (SessionSummary.StopReason),
+	// until the next turn starts.
+	stopCode string
+	// turnActivity is the running turn's live activity (turn_activity.go);
+	// not persisted.
+	turnActivity TurnActivity
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -461,6 +468,7 @@ type persistKey struct {
 	mode                                                                                                             store.Mode
 	settledAt, archivedAt                                                                                            time.Time
 	outcome                                                                                                          string
+	stopReason                                                                                                       string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -527,7 +535,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, stopReason: s.stopCode}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -785,7 +793,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		if knownStates[web.Turn] {
 			s.base = web.Turn
 		}
-		s.detail = web.Detail
+		s.detail, s.stopCode = web.Detail, web.StopReason
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
@@ -1015,7 +1023,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
-		RerunOf: s.rerunOf, Outcome: s.outcome,
+		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
 	}
 }
 
@@ -1042,6 +1050,8 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot.Tasks = slices.Clone(snapshot.Tasks)
 		d.BackgroundTasks = &snapshot
 	}
+	activity := s.turnActivity
+	d.TurnActivity = &activity
 	if s.last != nil {
 		last := *s.last
 		d.LastSubmission = &last
@@ -1917,6 +1927,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
+				StopReason: key.stopReason,
 			},
 		})
 	}
@@ -2127,6 +2138,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventCompaction:
 		s.compacting = ev.Compacting
+	case agentapi.EventActivity:
+		if ev.Activity != nil {
+			m.applyActivityLocked(s, *ev.Activity)
+		}
 	case agentapi.EventUsage:
 		m.applyUsageLocked(s, ev.Usage)
 	case agentapi.EventTokens:
@@ -2158,6 +2173,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 }
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
+	m.turnActivityTurnLocked(s, turn.State)
 	m.observeTurnTimingLocked(s, turn.State)
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
@@ -2174,8 +2190,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		// The whole turn is over, steers included: the queue may go on.
 		m.kickDrainLocked(s)
 	case agentapi.TurnCancelled:
-		s.setBase(StateCancelled, s.stopReason)
-		s.stopReason = ""
+		code, detail := s.stopCause(turn.Reason)
+		s.setBase(StateCancelled, detail)
+		s.stopReason, s.stopBy, s.stopCode = "", "", code
 		m.pauseQueueLocked(s)
 	case agentapi.TurnFailed:
 		detail := "the provider reported that the turn failed"
@@ -3400,12 +3417,13 @@ func (m *Manager) cancelledLocked(s *webSession, reqID string) {
 // Cancel aborts the running turn at the owner's request. It is distinct from
 // a viewer leaving and from Close: the conversation stays open.
 func (m *Manager) Cancel(id string) (SessionSummary, error) {
-	return m.cancelBecause(id, "")
+	return m.cancelBecause(id, stopOwner, "")
 }
 
-// cancelBecause is Cancel by uam itself: reason says why, and becomes the
-// cancelled Task's detail. An empty reason is the owner's Stop.
-func (m *Manager) cancelBecause(id, reason string) (SessionSummary, error) {
+// cancelBecause is Cancel by uam itself: by is the stop reason it reports,
+// and reason says why, as the cancelled Task's detail. An empty reason is
+// the owner's Stop.
+func (m *Manager) cancelBecause(id, by, reason string) (SessionSummary, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SessionSummary{}, err
@@ -3427,7 +3445,7 @@ func (m *Manager) cancelBecause(id, reason string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusConflict, "no turn is running")
 	}
 	s.stopSeq++
-	s.stopReason = reason
+	s.stopReason, s.stopBy = reason, by
 	before := m.summaryLocked(s)
 	m.pauseQueueLocked(s)
 	m.changedLocked(s, before)

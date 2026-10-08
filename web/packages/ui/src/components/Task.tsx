@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleStop, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
@@ -9,6 +9,7 @@ import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
 import { showsFinish, shownState } from '../lib/tasks';
+import { stopWords } from '../lib/stop';
 import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './CommitPanel';
 import { PinnedChartsPanel } from './Chart';
@@ -27,7 +28,8 @@ import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
-import { Transcript, WorkingLabel } from './Transcript';
+import { Transcript } from './Transcript';
+import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
 import { HistoryAnchor } from './HistoryAnchor';
@@ -149,6 +151,8 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
   const renamable = canRename(session, actions);
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+  // "Stopped", with what stopped it when it was not you (lib/stop).
+  const stop = state === 'cancelled' ? stopWords(session) : null;
   const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
@@ -171,7 +175,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         {readOnly(session) ? (
           <Chip fill="outline">{stageLabel(session)}</Chip>
         ) : (
-          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
+          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
         )}
         {busy && <Spinner className="shrink-0" />}
         {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
@@ -753,9 +757,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const compacting = !!session.compacting && state === 'working';
   const finished = !historyLoading && showsFinish(session, liveItems, live);
   const turnEvidence = useTurnEvidence(session, changes, finished);
-  // Then the floating label stays up too, timed from the first of them to start.
+  // Then the status line stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
+  const line = statusLine(session, labelled, compacting, liveItems, session.history_index);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
@@ -842,19 +847,19 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
-          {/* The working label stays centred just above the composer; while it shows, "Jump to bottom" is an arrow beside it, so it never moves. */}
+          {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
+            <StatusLine line={line} session={session} since={agentsSince} hidden={false} onJump={scrollToBottom} />
+            <Appear show={jump && !!line} className="shrink-0">
+              <Tip label="Jump to bottom">
+                <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
+                  <ArrowDown />
+                </Button>
+              </Tip>
+            </Appear>
+          </div>
           <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-center px-3 *:pointer-events-auto">
-            <div className="relative flex">
-              <WorkingLabel working={labelled} compacting={compacting} since={agentsSince} items={liveItems} identityItems={session.history_index} turnTimings={session.turn_timings} />
-              <Appear show={jump && labelled} className="absolute top-0 left-full ml-2">
-                <Tip label="Jump to bottom">
-                  <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
-                    <ArrowDown />
-                  </Button>
-                </Tip>
-              </Appear>
-            </div>
-            <Appear show={jump && !labelled} className="shrink-0">
+            <Appear show={jump && !line} className="shrink-0">
               <Button variant="secondary" size="sm" className="shadow-float" onClick={jumpToBottom}>
                 <ArrowDown />
                 Jump to bottom

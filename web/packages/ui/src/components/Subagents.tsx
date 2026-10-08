@@ -20,6 +20,7 @@ import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
 import { Dot, Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, clockTime, useApp, useMedia } from './common';
 import { AgentItems } from './Transcript';
+import { SubagentRetry } from './StatusLine';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
 import { Input } from './ui/input';
@@ -641,6 +642,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
           Could not stop it: {stopError}
         </p>
       )}
+      {s.status === 'running' && s.retry && <SubagentRetry retry={s.retry} indent={32 + depth * 18} />}
     </div>
   );
 });

@@ -311,6 +311,26 @@ type SessionSummary struct {
 	// opened, which a later change reaches only when it reopens. Omitted
 	// while no conversation is open.
 	CompactThreshold int `json:"compact_threshold,omitempty"`
+	// StopReason says why the last turn was cancelled, while the Task is:
+	// owner (Stop), time_limit (a routine's), credit_limit (autopilot's),
+	// remote (a remote command), mcp (an MCP server) or cli (the Copilot
+	// CLI). Omitted otherwise, also when the provider gave no reason.
+	StopReason string `json:"stop_reason,omitempty"`
+}
+
+// TurnActivity is the open conversation's live activity in its running
+// turn: what the main agent says it is doing, a model call being retried,
+// and its todo list. It is never persisted.
+type TurnActivity struct {
+	Intent string          `json:"intent,omitempty"`
+	Retry  *agentapi.Retry `json:"retry,omitempty"`
+	Todos  TodoView        `json:"todos"`
+}
+
+// TodoView is the conversation's todo list. uam does not read it yet, so
+// it is never known.
+type TodoView struct {
+	Known bool `json:"known"`
 }
 
 // DiffStat totals a list of changed files.
@@ -335,6 +355,7 @@ type SessionDetail struct {
 	HistoryTruncated bool                      `json:"history_truncated"`
 	LastSubmission   *Submission               `json:"last_submission"`
 	BackgroundTasks  *agentapi.BackgroundTasks `json:"background_tasks,omitempty"`
+	TurnActivity     *TurnActivity             `json:"turn_activity,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or

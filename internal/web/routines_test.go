@@ -334,8 +334,8 @@ func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.State != StateCancelled || sum.StateDetail != "Stopped at the routine's time limit (5 min)" {
-		t.Fatalf("task = %s, %q", sum.State, sum.StateDetail)
+	if sum.State != StateCancelled || sum.StateDetail != "Stopped at the routine's time limit (5 min)" || sum.StopReason != stopTimeLimit {
+		t.Fatalf("task = %s, %q, %q", sum.State, sum.StateDetail, sum.StopReason)
 	}
 	// The owner's own Stop on a later turn records no such reason.
 	mustSubmit(t, m, run.TaskID, "try again", mustUUID(t), ModeSend, SubmissionAccepted)
@@ -343,8 +343,8 @@ func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	conv.EmitTurn(agentapi.TurnCancelled, "")
-	if sum, _ := m.Summary(run.TaskID); sum.State != StateCancelled || sum.StateDetail != "" {
-		t.Fatalf("task after the owner's stop = %s, %q", sum.State, sum.StateDetail)
+	if sum, _ := m.Summary(run.TaskID); sum.State != StateCancelled || sum.StateDetail != "" || sum.StopReason != stopOwner {
+		t.Fatalf("task after the owner's stop = %s, %q, %q", sum.State, sum.StateDetail, sum.StopReason)
 	}
 }
 

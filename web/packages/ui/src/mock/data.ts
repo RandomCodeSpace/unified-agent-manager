@@ -324,6 +324,7 @@ export function seed(): MockState {
       background_tasks_running: 1,
       capabilities: { ...CAPS, execution_modes: true },
       execution: { known: true, mode: 'interactive' },
+      turn_activity: { intent: 'Running the redraw tests', todos: { known: false } },
       background_tasks: {
         known: true,
         tasks: [
@@ -639,6 +640,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       name: 'Draft release notes',
       title: '',
       state: 'cancelled',
+      stop_reason: 'credit_limit',
+      execution: { known: true, mode: 'autopilot', objective: { id: 1, objective: 'Draft release notes for the last 12 commits.', status: 'paused', turn_count: 6, credits_used: 300, credit_limit: 300 } },
       created_at: ago(60 * 5 + 3),
       updated_at: ago(60 * 5),
       items: [
