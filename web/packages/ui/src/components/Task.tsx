@@ -51,7 +51,7 @@ interface Props {
   snapshotSeq: number;
   historyGeneration: number;
   active: boolean;
-  /** The event stream is up (the status line tells a turn the service cut off from one it lost track of). */
+  /** The event stream is up (the status line and transcript tell a turn the service cut off from one they lost track of). */
   connected: boolean;
   historyRequest: HistoryRequest | null;
   historyItemSeq: Record<string, number>;
@@ -822,6 +822,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               liveCard={!session.history_after}
               live={live && !session.history_after}
               working={working && !session.history_after}
+              connected={connected}
               provider={session.provider}
               workdir={session.workdir}
               footVerb={false}
