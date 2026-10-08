@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 	"unicode"
@@ -47,15 +48,21 @@ type declarationCall struct {
 // toolGate is the SDK registration observation every uam tool of one session
 // shares: their calls run only after catalog proved each of them is uam's
 // own, only for that session, and only until the tool list changes or stop.
-// mu also guards the tools' own call state.
+// After a change, reprove proves them again between turns. mu also guards
+// the tools' own call state.
 type toolGate struct {
-	mu          sync.Mutex
-	stopCtx     context.Context
-	stopCancel  context.CancelFunc
-	session     string
-	ready       bool
-	closed      bool
-	invalidated bool
+	mu         sync.Mutex
+	stopCtx    context.Context
+	stopCancel context.CancelFunc
+	session    string
+	ready      bool
+	closed     bool
+	// changes counts the tool list changes seen. A proof holds only if none
+	// came while it ran. One seen before it started is part of what it
+	// reads: the CLI lists the server's tools again when the server reports
+	// the change, and ToolCatalog's InitializeAndValidate, even called as
+	// the event arrives, waits for that listing (measured on CLI 1.0.93).
+	changes uint64
 }
 
 func newToolGate() *toolGate {
@@ -284,22 +291,69 @@ func (a sdkSessionAdapter) SetTools(ctx context.Context, tools []rpc.ProtocolExt
 	return err
 }
 
+// RebuildTools returns the session to the default agent, which it already
+// uses, because that builds the tool set again. After the session's first
+// turn, the catalog shows added tools at once but keeps removed ones until
+// the tool set is built again: at a turn's start, an agent change or a model
+// switch (measured on CLI 1.0.93). It refuses while a custom agent is
+// selected, which returning to the default agent would end.
+func (a sdkSessionAdapter) RebuildTools(ctx context.Context) error {
+	current, err := a.s.RPC.Agent.GetCurrent(ctx)
+	if err != nil {
+		return err
+	}
+	if current == nil || current.Agent != nil {
+		return errors.New("a custom agent is selected")
+	}
+	_, err = a.s.RPC.Agent.Deselect(ctx)
+	return err
+}
+
 // catalog proves originals are the session's uam tools: with the external
 // tools cleared, no tool has one of their names; with them restored, each
 // name is there exactly once, from no MCP server, and nothing else changed.
-func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ...copilot.Tool) error {
+// A proof that fails restores the tools, refused until one passes, so the
+// model's tool list stays as it was.
+func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ...copilot.Tool) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	d.mu.Lock()
+	changes := d.changes
+	d.mu.Unlock()
 	own := make(map[string]bool, len(originals))
 	definitions := make([]rpc.ProtocolExternalToolDefinition, 0, len(originals))
 	for _, tool := range originals {
 		own[tool.Name] = true
 		definitions = append(definitions, declarationDefinition(tool))
 	}
+	restored := false
+	defer func() {
+		d.mu.Lock()
+		closed := d.closed
+		d.mu.Unlock()
+		if err == nil || restored || closed {
+			return
+		}
+		// The proof's own deadline may be what failed it.
+		restoreCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if restoreErr := session.SetTools(restoreCtx, definitions); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore declaration tools: %w", restoreErr))
+		}
+	}()
 	if err := session.SetTools(ctx, []rpc.ProtocolExternalToolDefinition{}); err != nil {
 		return fmt.Errorf("clear declaration tools: %w", err)
 	}
 	before, err := session.ToolCatalog(ctx)
+	// A catalog still listing a cleared tool may predate the clear; one built
+	// again shows it. It only lists more than the session has, never less,
+	// so a catalog without the names proves them unshadowed either way.
+	if err == nil && slices.ContainsFunc(before, func(tool rpc.CurrentToolMetadata) bool { return own[tool.Name] }) {
+		if err := session.RebuildTools(ctx); err != nil {
+			return fmt.Errorf("rebuild the tool catalog: %w", err)
+		}
+		before, err = session.ToolCatalog(ctx)
+	}
 	if err != nil || before == nil || len(before) > maxDeclarationCatalog {
 		return errors.New("unshadowed declaration tool catalog is unavailable")
 	}
@@ -309,7 +363,7 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 		}
 	}
 	d.mu.Lock()
-	invalidated := d.closed || d.invalidated
+	invalidated := d.closed || d.changes != changes
 	d.mu.Unlock()
 	if invalidated || ctx.Err() != nil {
 		return errors.New("declaration catalog observation was invalidated")
@@ -317,6 +371,7 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	if err := session.SetTools(ctx, definitions); err != nil {
 		return fmt.Errorf("restore declaration tool: %w", err)
 	}
+	restored = true
 	after, err := session.ToolCatalog(ctx)
 	if err != nil || after == nil || len(after) > maxDeclarationCatalog {
 		return errors.New("restored declaration tool catalog is unavailable")
@@ -341,11 +396,25 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.closed || d.invalidated || ctx.Err() != nil {
+	if d.closed || d.changes != changes || ctx.Err() != nil {
 		return errors.New("declaration catalog observation was invalidated")
 	}
 	d.session, d.ready = session.ID(), true
 	return nil
+}
+
+// reprove proves originals again after a tool list change refused them.
+// Call it only between turns, before uam sends the next message: catalog
+// clears the session's tools for a moment. After a failed proof they stay
+// refused, and the next message tries again.
+func (d *toolGate) reprove(ctx context.Context, session sdkSession, originals ...copilot.Tool) error {
+	d.mu.Lock()
+	current := d.ready || d.closed
+	d.mu.Unlock()
+	if current {
+		return nil
+	}
+	return d.catalog(ctx, session, originals...)
 }
 
 func (d *toolGate) observe(ev copilot.SessionEvent) {
@@ -353,7 +422,8 @@ func (d *toolGate) observe(ev copilot.SessionEvent) {
 		return
 	}
 	d.mu.Lock()
-	d.ready, d.invalidated = false, true
+	d.ready = false
+	d.changes++
 	d.mu.Unlock()
 }
 

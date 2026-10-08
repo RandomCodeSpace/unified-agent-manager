@@ -261,10 +261,15 @@ type fakeSession struct {
 	catalog           []rpc.CurrentToolMetadata
 	catalogErr        error
 	catalogReads      int
+	catalogHook       func(read int) // runs during catalog read number read, from 0
 	toolCatalogs      []fakeToolCatalog
 	setToolErrors     []error
 	setTools          [][]rpc.ProtocolExternalToolDefinition
 	toolCalls         []string
+	// staleTools models CLI 1.0.93: from a turn's start, the catalog keeps
+	// the tools the turn started with until RebuildTools; held marks that.
+	staleTools, held bool
+	rebuildErr       error
 }
 
 type fakeToolCatalog struct {
@@ -274,20 +279,46 @@ type fakeToolCatalog struct {
 
 func (s *fakeSession) ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.toolCalls = append(s.toolCalls, "catalog")
 	i := s.catalogReads
 	s.catalogReads++
+	hook := s.catalogHook
+	s.mu.Unlock()
+	if hook != nil {
+		hook(i)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if i < len(s.toolCatalogs) {
 		return s.toolCatalogs[i].tools, s.toolCatalogs[i].err
 	}
-	if len(s.setTools) == 1 {
+	if s.clearedLocked() && !s.held {
 		return []rpc.CurrentToolMetadata{}, nil
 	}
 	return s.catalog, s.catalogErr
+}
+
+// clearedLocked reports whether the latest set cleared uam's tools.
+func (s *fakeSession) clearedLocked() bool {
+	n := len(s.setTools)
+	return n > 0 && len(s.setTools[n-1]) == 0
+}
+
+func (s *fakeSession) RebuildTools(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "rebuild")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.rebuildErr != nil {
+		return s.rebuildErr
+	}
+	s.held = false
+	return nil
 }
 
 func (s *fakeSession) SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error {
@@ -394,6 +425,9 @@ func (s *fakeSession) Send(_ context.Context, msg copilot.MessageOptions) (strin
 	s.sent = append(s.sent, msg.Prompt)
 	s.modes = append(s.modes, msg.Mode)
 	s.msgs = append(s.msgs, msg)
+	if s.staleTools {
+		s.held = !s.clearedLocked()
+	}
 	id := fmt.Sprintf("msg-%d", len(s.sent))
 	if s.returnID != nil {
 		id = *s.returnID
