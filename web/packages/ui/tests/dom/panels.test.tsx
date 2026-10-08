@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { headerRoom } from '../../src/components/Task';
 import { saveDensity } from '../../src/lib/density';
+import { VERBS } from '../../src/lib/verbs';
 import { log, openMenu, openTask, renderApp } from './render';
 
 describe('changes', () => {
@@ -302,6 +303,91 @@ describe('subagents', () => {
     expect(peek.getByText('3 tool calls')).toBeTruthy();
     await user.click(peek.getByRole('button', { name: 'Full transcript' }));
     expect(await (await panel()).findByRole('region', { name: 'Transcript of Run the accessibility linter' })).toBeTruthy();
+  });
+});
+
+// The ring turns only at the Task's state glyph and the step in progress; whatever else runs is still, in words and colour.
+describe('one working ring per place', () => {
+  const rings = (root: ParentNode) => [...root.querySelectorAll('.animate-spin')];
+
+  test('while subagents run, only the state glyph turns: their rows, the Subagents button and the Changes dot are still', async () => {
+    await openTask('t8');
+    const pane = document.querySelector('main')!;
+    const header = pane.querySelector('header')!;
+    // The header: the state chip turns; the Subagents button says how many run, still.
+    expect(rings(header).map((ring) => ring.parentElement?.parentElement?.textContent)).toEqual(['Working']);
+    const index = screen.getByRole('button', { name: /^Subagents, 5, 3 running/ });
+    expect(index.textContent).toContain('3 running');
+    // The live set's running rows: a still `accent` dot, "running" in their names.
+    const live = screen.getByRole('region', { name: 'Subagents at work' });
+    expect(rings(live)).toHaveLength(0);
+    const running = within(live).getAllByRole('button', { name: /, running/ });
+    expect(running.length).toBeGreaterThanOrEqual(2);
+    expect(running.every((row) => row.querySelector('.bg-accent'))).toBe(true);
+    // Their `task` calls are no step at the foot in Compact (the live set shows them), so the conversation does not turn.
+    expect(rings(screen.getByRole('region', { name: 'Conversation' }))).toHaveLength(0);
+    // Changed files keep a steady amber dot; nothing else pulses but the working label (Batch A's status line makes it still).
+    expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull();
+    const pulses = [...pane.querySelectorAll('.animate-pulse-dot')];
+    expect(pulses.map((dot) => dot.parentElement?.parentElement?.textContent)).toEqual([expect.stringContaining('Busy')]);
+    expect(rings(pane)).toHaveLength(1);
+  });
+
+  test('a running subagent\'s transcript turns only at its running call; its head says "Running", still', async () => {
+    const { user } = await openTask('t8');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    await user.click(live.getByRole('button', { name: /^Survey templates for missing alt text and labels, running/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Subagent transcript' });
+    const transcript = await within(dialog).findByRole('region', { name: 'Transcript of Survey templates for missing alt text and labels' });
+    expect(within(dialog).getByText('Running')).toBeTruthy();
+    // Its bash call is the step: the panel's one ring.
+    await waitFor(() => expect(rings(transcript)).toHaveLength(1));
+    expect(rings(dialog)).toHaveLength(1);
+  });
+
+  test('between steps a subagent\'s foot is its gerund, words only', async () => {
+    const { user } = await openTask('t8');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    await user.click(live.getByRole('button', { name: /^Verify store callers, running/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Subagent transcript' });
+    await within(dialog).findByText(new RegExp(`^(${VERBS.join('|')})…$`));
+    expect(rings(dialog)).toHaveLength(0);
+  });
+
+  test('Detailed: an open run hands its ring to the running call inside it', async () => {
+    saveDensity('detailed');
+    try {
+      const { user } = await openTask('t1');
+      const conversation = screen.getByRole('region', { name: 'Conversation' });
+      const run = rings(conversation)[0]?.closest<HTMLElement>('[data-activity] > button');
+      expect(rings(conversation)).toHaveLength(1);
+      expect(run).toBeTruthy();
+      await user.click(run!);
+      // Open, the run's chevron stands still in `accent` and the closed run of calls inside turns.
+      expect(rings(run!)).toHaveLength(0);
+      expect(run!.querySelector('.text-accent')).not.toBeNull();
+      const calls = await waitFor(() => {
+        const found = rings(conversation)[0]?.closest<HTMLElement>('[data-tool-run] > button');
+        expect(found).toBeTruthy();
+        return found!;
+      });
+      expect(rings(conversation)).toHaveLength(1);
+      await user.click(calls);
+      // Open too, the running call's own row is the step.
+      await waitFor(() => expect(rings(calls)).toHaveLength(0));
+      expect(rings(conversation)).toHaveLength(1);
+      expect(rings(conversation)[0].closest('[data-tool-run] > button')).toBeNull();
+    } finally {
+      saveDensity('compact');
+    }
+  });
+
+  test('a running background shell reads "Running" beside a still dot', async () => {
+    const { user } = await openTask('t1');
+    await user.click(screen.getByRole('button', { name: 'Background tasks: 1 running' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Background tasks' });
+    expect(within(dialog).getByText('Running').querySelector('.bg-accent')).not.toBeNull();
+    expect(rings(dialog)).toHaveLength(0);
   });
 });
 

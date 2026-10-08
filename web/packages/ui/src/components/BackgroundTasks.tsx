@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { Terminal } from 'lucide-react';
 import { useState } from 'react';
 import { describeError, type BackgroundTasks as Snapshot } from '../api';
-import { WorkingMark } from './common';
+import { Dot } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -11,8 +11,8 @@ import { Tip } from './ui/tooltip';
 
 /**
  * The Task's background shells in the composer toolbar (DESIGN.md Background tasks): the
- * working mark and how many run (else the terminal glyph and how many there were), and on a
- * click a popover listing each with its status, command and Stop.
+ * terminal glyph, `accent` while any runs, and how many run (else how many there were), and on a
+ * click a popover listing each with its status (a still dot and "Running"), command and Stop.
  */
 /** Why Stop is disabled, or what it does. */
 function stopTip(locked: boolean, known: boolean): string {
@@ -50,7 +50,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
       <Popover.Root>
         <Tip label={`Background tasks · ${status}`}>
           <Popover.Trigger render={<Button id="composer-background-tasks" size="sm" variant="subtle" aria-label={`Background tasks: ${status}`} className="px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" />}>
-            {/* The glyph turns `accent` while any runs; the ring is the list's, on demand. */}
+            {/* The glyph turns `accent` while any runs; the list says which, on demand. */}
             <Terminal aria-hidden="true" className={active ? 'text-accent' : 'text-faint'} />
             {active ? running : shown.tasks.length}
           </Popover.Trigger>
@@ -65,7 +65,7 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
                   <span className="min-w-0 flex-1 truncate text-body" title={task.description || task.command}>{task.description || 'Shell task'}</span>
                   {shown.known && task.status === 'running' ? (
                     <Chip tone="accent">
-                      <WorkingMark />
+                      <Dot tone="accent" />
                       Running
                     </Chip>
                   ) : (
