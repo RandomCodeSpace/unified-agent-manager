@@ -201,7 +201,9 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
     }).finally(() => { window.clearTimeout(timer); if (reads.current.get(key)?.controller === controller) reads.current.delete(key); });
     reads.current.set(key, { controller, promise });
     return promise;
-  }, [store.value.bodies, api, session.id, session.epoch]);
+    // The store is read when called: a dependency on its bodies would renew the context at every
+    // frame, and each renewal unregisters every body, whose release drops it from the store.
+  }, [store, api, session.id, session.epoch]);
   const context = useMemo(() => ({ compact, store, register, openAgent, retry, read, sessionId: session.id, disclosures }), [compact, store, register, openAgent, retry, read, session.id, disclosures]);
   return <Details.Provider value={context}>{children}</Details.Provider>;
 }

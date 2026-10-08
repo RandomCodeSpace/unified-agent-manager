@@ -212,6 +212,16 @@ func compactItemBytes(it compactItem) int {
 		tool := 64 + str("name", t.Name, false) + str("status", string(t.Status), false)
 		tool += str("title", t.Title, true) + str("input", t.Input, true) + str("output", t.Output, true) + str("display_arg", t.DisplayArg, true) + str("path", t.Path, true)
 		tool += field("has_input", 4) + field("has_output", 4)
+		if len(t.Tail) > 0 {
+			list := 32
+			for _, line := range t.Tail {
+				list += 8 + 64 + str("text", line.Text, false)
+				if line.Err {
+					list += field("err", 4)
+				}
+			}
+			tool += field("tail", list)
+		}
 		if len(t.FilePaths) > 0 {
 			list := 32
 			for _, path := range t.FilePaths {
@@ -481,6 +491,15 @@ func (m *Manager) publishBodyLocked(s *webSession, it agentapi.Item) {
 			return
 		}
 	}
+}
+func (m *Manager) publishBodyCurrentLocked(s *webSession, it agentapi.Item) {
+	m.broadcastFilteredLocked("body_current", s.id, bodySubscriber(it), func(seq uint64) any {
+		return struct {
+			detailBarrier
+			AgentID string `json:"agent_id"`
+			ItemID  string `json:"item_id"`
+		}{detailBarrier{seq, m.epoch, s.id}, it.AgentID, it.ID}
+	})
 }
 func (m *Manager) publishBodyDeltaLocked(s *webSession, it agentapi.Item, text string, output bool) {
 	name := "body_delta"

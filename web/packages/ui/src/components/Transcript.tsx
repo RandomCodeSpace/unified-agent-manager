@@ -16,6 +16,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
 import { CodeBlock, Dot, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
+import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -430,8 +431,9 @@ function liveAtFoot(items: Item[]): boolean {
 }
 
 /**
- * The live line at the foot of a running turn, where new output lands: the working mark and a
- * steady gerund ("Untangling…") while prose streams or the agent is between steps. The verb
+ * The live line at the foot of a running turn, where new output lands: a steady gerund
+ * ("Untangling…", words only: the working mark comes with a step or compacting) while prose
+ * streams or the agent is between steps. The verb
  * is picked from the id of the user message that began the turn, so it holds for the whole turn
  * and comes back the same after a reload. It steps aside while the last row is already live,
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
@@ -454,7 +456,7 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
       <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
         {current || (
           <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-            {text && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
+            {text && (compacting || step) && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
             <span className={cn('min-w-0 truncate', compacting ? 'text-badge-violet' : step?.tone === 'attention' && 'text-warning')} title={step?.label}>
               {text}
             </span>
@@ -465,20 +467,17 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
   );
 }
 
-/** The most of a running call's output the live step renders: its tail box shows only the last lines anyway. */
-const LIVE_OUTPUT_TAIL = 4000;
-
 /**
  * Compact (DESIGN.md live step): the step in progress at the turn's foot, unfolded. A thought
- * streaming is "Thinking…" over its text as it arrives; a call running is its tool row (mark,
- * name, argument) over the tail of its output. The text sits in a box at most 80px tall that
- * shows its newest lines, the older ones clipped above, so it never grows into a block and
- * nothing scrolls. It rises in; once the step ends it is gone from here and counted on the turn line.
+ * streaming is "Thinking…" over its text as it arrives, in a box at most 80px tall that shows its
+ * newest lines, the older ones clipped above, so it never grows into a block and nothing scrolls;
+ * a call running is its tool row (mark, name, argument) over its newest output lines, which its
+ * row carries (`LiveOutput`). It rises in; once the step ends it is gone from here and counted on the turn line.
  */
 function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
-  const { item: full, attach } = useItemBody(item, true);
   const thought = item.kind === 'reasoning';
-  const text = (thought ? full?.text : full?.tool?.output) ?? '';
+  const { item: full, attach } = useItemBody(item, thought);
+  const text = thought ? full?.text ?? '' : '';
   return (
     <div ref={attach} className="flex animate-rise flex-col gap-1">
       {thought ? (
@@ -487,17 +486,14 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
           <span>Thinking…</span>
         </div>
       ) : (
-        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} />
+        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} />
       )}
       {text.trim() && (
-        <div className={cn('flex max-h-20 flex-col justify-end overflow-hidden', thought ? 'relative pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-[\'\']' : 'ml-6 rounded-sm bg-code-bg px-2 py-1')}>
-          {thought ? (
-            <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
-          ) : (
-            <pre translate="no" className="shrink-0 font-mono text-code-sm whitespace-pre-wrap break-words text-muted">{text.slice(-LIVE_OUTPUT_TAIL)}</pre>
-          )}
+        <div className="relative flex max-h-20 flex-col justify-end overflow-hidden pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
+          <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
         </div>
       )}
+      {!thought && <LiveOutput lines={item.tool?.tail} className="ml-6" />}
     </div>
   );
 }
@@ -649,7 +645,8 @@ const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries
 
 /**
  * One run of work as a 24px `caption` row (DESIGN.md activity row): a chevron, or the
- * working mark while a call runs or thinking streams, and the summary, which updates in
+ * working mark while a call runs or thinking streams and the run is closed (open, the chevron
+ * turns `accent` and the running row inside has the mark), and the summary, which updates in
  * place as the run grows and truncates rather than wraps, so streaming never moves the
  * page. Failures turn it `error`, a call waiting for permission `attention`. It opens
  * through the shared height collapse onto the rows themselves, indented, each with its own
@@ -670,7 +667,7 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
     <div data-activity="" className={cn('flex flex-col', className)}>
       <button data-history-anchor={`activity-${identity}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} data-subagent-items={hosted.length ? JSON.stringify(hosted) : undefined} type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
         <span className="flex size-3.5 shrink-0 items-center justify-center">
-          {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
+          {active && !open ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90', active && 'text-accent')} />}
         </span>
         <span className="min-w-0 truncate tabular-nums">{label}</span>
       </button>
@@ -936,7 +933,7 @@ interface ToolRunProps {
   arrival: (id: string) => string;
 }
 
-/** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
+/** Consecutive tools share a compact disclosure; prose and questions stay in time order. While a call runs the closed run has the working mark; open, its glyph turns `accent` and the call's row has it. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
 const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approvals, arrival }: ToolRunProps) {
   const [open, setOpen] = useDisclosure(`tools:${items[0]?.agent_id ?? ''}:${identity}`);
   const [opened, setOpened] = useState(open);
@@ -945,7 +942,7 @@ const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approv
   return (
     <div data-tool-run="">
       <button data-history-anchor={`tools-${identity}`} data-history-items={JSON.stringify(items.map(item => item.id))} type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
-        {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
+        {active && !open ? <WorkingMark /> : <Terminal aria-hidden="true" className={cn('size-4 shrink-0', active && 'text-accent')} />}
         <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
@@ -1037,10 +1034,11 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
 
 /**
  * One tool call: mark, tool name (weight 500), its main argument in `code-sm` on one line,
- * and its approval when a request named it; expands to the full input and output. The
+ * and its approval when a request named it; expands to the full input and output, and while
+ * it runs its newest output lines (`tail`; the live step shows them under the row instead). The
  * images its result returned sit under the row, visible without expanding it.
  */
-export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string }) {
+export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className, tail = true }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string; tail?: boolean }) {
   const [open, setOpen] = useDisclosure(`tool:${item.agent_id ?? ''}:${item.id}`);
   // The details (code blocks) are mounted on the first open only.
   const [opened, setOpened] = useState(open);
@@ -1092,7 +1090,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           </div>
           {opened && (
             <Collapse open={open} appear>
-              <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}</div>
+              <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
             </Collapse>
           )}
         </div>

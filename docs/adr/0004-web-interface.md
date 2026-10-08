@@ -167,7 +167,11 @@ completion still send full `item` events. Clients without the parameter retain
 the full-item protocol. For every client, repeated rewrites of a running tool's
 output (a CLI's sliding tail window) send at most one full item per 250 ms, the
 latest on a trailing timer; any other change, completion included, sends at
-once. Sequence numbers are monotonic, not contiguous. Full
+once. A running shell call's `tool.tail` holds its newest output lines (at most
+10 of at most 512 bytes, `err` for stderr), which Copilot streams live as
+`tool.shell_output`; the compact row carries it, at most one row per 250 ms
+with the latest on a trailing timer, while the output's appends stay
+immediate. The completion clears it. Sequence numbers are monotonic, not contiguous. Full
 snapshots and subagent detail responses retain the complete current output.
 The browser batches transcript updates once per animation frame while visible.
 
@@ -693,7 +697,7 @@ reached the CLI after that idle, and the CLI starts a new turn with it. A
 main-agent `user.message` with `delivery: "idle"` reports `TurnWorking`, so
 that turn is tracked and can be stopped. When a steer arrives, Copilot also moves
 a running foreground shell command to the background. That completes the
-shell's tool call, and the adapter ignores the partial output the shell keeps
+shell's tool call, and the adapter ignores the output the shell keeps
 sending under the same call ID.
 
 ### HTTP additions and changes

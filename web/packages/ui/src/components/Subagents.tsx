@@ -18,7 +18,7 @@ import { FILTER_OVER, IDENTITY_LIMIT, PAGE_ROWS, countParts, countSubagents, fam
 import { useResizable } from '../lib/useResizable';
 import type { AgentTranscript } from '../state';
 import { useFileHintItems } from './FileReferences';
-import { Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, WorkingMark, clockTime, useApp, useMedia } from './common';
+import { Dot, Markdown, Note, Skeleton, Spinner, SubagentIdleIcon, clockTime, useApp, useMedia } from './common';
 import { AgentItems } from './Transcript';
 import { Button } from './ui/button';
 import { AlertDialog, Sheet, backdropClass, useConfirm } from './ui/dialog';
@@ -389,11 +389,14 @@ function Counts({ c, lead }: Readonly<{ c: SubagentCounts; lead?: ReactNode }>) 
   );
 }
 
-/** A subagent's state as a glyph (AgentChip's, without the word): the working mark, a check, a cross, the idle glyph, a dash. */
+/**
+ * A subagent's state as a glyph (AgentChip's, without the word): a still `accent` dot (the ring
+ * turns only at the Task's state and the running step), a check, a cross, the idle glyph, a dash.
+ */
 function SubagentMark({ status }: Readonly<{ status: SubagentStatus }>) {
   switch (status) {
     case 'running':
-      return <WorkingMark />;
+      return <Dot tone="accent" />;
     case 'completed':
       return <Check aria-hidden="true" className="size-3.5 shrink-0 text-success" strokeWidth={2.5} />;
     case 'failed':
@@ -1158,10 +1161,11 @@ const FILTERS: { key: IndexFilter; label: string; tone: string }[] = [
 const INDEX_ROWS = 100;
 
 /**
- * The Task header's subagents (DESIGN.md subagent index): the count, the working mark while one
- * runs, and a popover to find any of them: search, status filters, the subagents grouped by the
- * message that started their reply (newest first, each with Jump), the ones not placed in the
- * conversation and the older ones from the record. Picking a placed one scrolls to its row and
+ * The Task header's subagents (DESIGN.md subagent index): the count, and while any run an `accent`
+ * glyph and, with the labels, "· 2 running" (still: the ring is the Task state's), and a popover
+ * to find any of them: search, status filters, the subagents grouped by the message that started
+ * their reply (newest first, each with Jump), the ones not placed in the conversation and the
+ * older ones from the record. Picking a placed one scrolls to its row and
  * opens its transcript; picking one not placed opens its transcript by the header.
  */
 export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /** Why the last jump did not land, said where the reader is. */ error?: string }>) {
@@ -1195,13 +1199,13 @@ export function SubagentIndex({ labels, error }: Readonly<{ labels: boolean; /**
     >
       <Tip label="Subagents">
         <Popover.Trigger render={<Button id="subagents-link" size="md" aria-label={label} className="px-2 text-muted" />}>
-          <Bot />
+          <Bot className={running > 0 ? 'text-accent' : undefined} />
           {labels && <span>Subagents</span>}
           <span className="tabular-nums text-ink">
             {subagents.length}
             {before && '+'}
           </span>
-          {running > 0 && <WorkingMark />}
+          {labels && running > 0 && <span className="tabular-nums text-accent">· {running} running</span>}
           <ChevronDown className="text-muted" />
         </Popover.Trigger>
       </Tip>

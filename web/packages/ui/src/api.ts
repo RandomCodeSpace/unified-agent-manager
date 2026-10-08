@@ -663,8 +663,16 @@ export interface ToolCall {
   path?: string;
   has_input?: boolean;
   has_output?: boolean;
+  /** A running shell call's newest output lines, oldest first, at most 10; absent once it ends. */
+  tail?: OutputLine[];
   /** Client-only semantic outcome retained after page eviction. */
   question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
+}
+
+/** One line of a running shell call's output; `err` marks stderr. */
+export interface OutputLine {
+  text: string;
+  err?: boolean;
 }
 
 /** An image a tool's result returned, stored with the Task; served by the attachment route. */
