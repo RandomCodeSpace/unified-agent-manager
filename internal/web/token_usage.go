@@ -200,5 +200,6 @@ func (m *Manager) TokenUsage() TokenUsageReport {
 }
 
 func (s *Server) handleTokenUsage(w http.ResponseWriter, _ *http.Request) {
+	s.m.requestHarnessUsage()
 	writeJSON(w, http.StatusOK, s.m.TokenUsage())
 }

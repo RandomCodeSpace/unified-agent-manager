@@ -1804,8 +1804,10 @@ output is counted once. The 7-day and 30-day windows include today and use
 the service's local dates.
 
 UAM records SDK-reported Copilot task, subagent, and Background AI usage.
-The embedded `aiusage-core` library also reads local harness records once a
-minute, including Claude Code, Codex, OpenCode, and external Copilot sessions.
+The embedded `aiusage-core` library also reads local harness records,
+including Claude Code, Codex, OpenCode, and external Copilot sessions: every
+15 minutes, and when the Usage popover or token costs are read, at most once a
+minute. The popover first shows the last reading and its age.
 No aiusage CLI installation or provider billing API is needed. Rows identify
 the harness, even when several harnesses use the same model.
 
