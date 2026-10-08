@@ -1289,3 +1289,18 @@ func TestFilesOfADeletedTaskAreNotKept(t *testing.T) {
 		t.Fatal("a deleted task recorded the upload")
 	}
 }
+
+func TestTaskUploadDirStaysInsideTheUploadRoot(t *testing.T) {
+	m, _, _ := newTestManager(t)
+	root := m.uploadRoot()
+	id := mustUUID(t)
+	if got, want := m.taskUploadDir(id), filepath.Join(root, id); got != want {
+		t.Fatalf("taskUploadDir(%q) = %q, want %q", id, got, want)
+	}
+	for _, id := range []string{"..", "../x", "../../x", "a/../../x", "/x", "a/b"} {
+		got := m.taskUploadDir(id)
+		if rel, err := filepath.Rel(root, got); err != nil || !filepath.IsLocal(rel) {
+			t.Errorf("taskUploadDir(%q) = %q, outside %q", id, got, root)
+		}
+	}
+}
