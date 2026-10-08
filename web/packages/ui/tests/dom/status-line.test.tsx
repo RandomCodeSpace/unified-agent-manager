@@ -130,14 +130,26 @@ test('a turn starting says nothing of the last one: no line until its timing com
   // The Task works before the turn's timing comes: the last turn's verb is not this one's.
   view.rerender(draw(task({ turn_timings: [before] }), { items: old }));
   expect(screen.queryByRole('button')).toBeNull();
-  // Its timing came, its message not yet: the clock alone.
+  // Its timing came, its message not yet: "Working…" and the clock.
   view.rerender(draw(task({ turn_timings: [before, next] }), { items: old }));
   expect(screen.queryByText(`${turnVerb('u0')}…`)).toBeNull();
+  expect(screen.getByText('Working…')).toBeTruthy();
   expect(screen.getByText('<1s')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
   // The message landed and the timing links it: its own verb.
   view.rerender(draw(task({ turn_timings: [before, { ...next, user_item_id: 'u1' }] }), { items: [...old, { id: 'u1', kind: 'user', time: next.started_at }] as Item[] }));
   expect(screen.getByText(`${turnVerb('u1')}…`)).toBeTruthy();
+});
+
+test('a turn that came without a message (Copilot going on after a background shell) reads "Working…", still, as its name says', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(start + 5000);
+  const before = { ...timing, id: 'before', state: 'completed', ended_at: timing.started_at } as TurnTiming;
+  const view = render(draw(task({ turn_timings: [before, { ...timing, user_item_id: undefined }] }), { items: [{ id: 'u1', kind: 'user', time: timing.started_at }] as Item[] }));
+  expect(screen.getByText('Working…')).toBeTruthy();
+  expect(screen.getByText('5s')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
+  expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
 });
 
 const rows = (extra: Partial<Todo>[] = []): Todo[] =>

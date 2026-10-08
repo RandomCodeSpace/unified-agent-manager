@@ -138,7 +138,8 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
     <>
       {/* Still: this line says what, the ring is elsewhere. */}
       <Dot tone="accent" className={cn('size-1.5', line.compacting && 'bg-badge-violet')} />
-      {line.lead && <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead}…</span>}
+      {/* A turn without a linked message (yet, or ever: Copilot going on by itself) reads as its name does. */}
+      <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead || 'Working'}…</span>
       {more > 0 && <span className="shrink-0 tabular-nums text-muted max-sm:hidden">+{more}</span>}
       <Clock since={since} timing={timing} />
       {line.todo && <TodoSegment todo={line.todo} />}
