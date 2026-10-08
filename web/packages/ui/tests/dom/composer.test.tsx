@@ -1,6 +1,8 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import { UamApp } from '@uam/ui';
 import { api, newRequestId } from '../../src/api';
+import { install } from '../../src/mock/install';
 import { choose, composer, log, openMenu, openTask, renderApp } from './render';
 
 const sendButton = (name: string | RegExp) => screen.getByRole('button', { name });
@@ -296,6 +298,27 @@ describe('settings in the toolbar', () => {
     // The model picker replaces its skeleton once /api/meta answers, which can be after the snapshot.
     expect((await screen.findByRole('button', { name: /^Model: Auto\. This task is read-only\./ })).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('button', { name: /^Permissions and execution: Safe\. This task is read-only\./ })).toBeTruthy();
+  });
+
+  test("while the catalogs load, the pickers' slot keeps their height: one bar with the Loading line over it", async () => {
+    // The snapshot lands first and /api/meta waits, as it can on the service.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    history.replaceState(null, '', '/#task=t3');
+    install();
+    const mocked = window.fetch;
+    window.fetch = async (input, init) => {
+      if (String(input).includes('/api/meta')) await held;
+      return mocked(input, init);
+    };
+    render(<UamApp />);
+    const line = (await screen.findByText('Loading the model catalog…')).closest('output')!;
+    // Out of the flow over a bar in the pickers' 28px height, so the row, and the composer, do not move when they land.
+    expect(line.className).toContain('absolute');
+    expect(line.parentElement!.className).toContain('h-7');
+    release();
+    expect(await screen.findByRole('button', { name: /^Model: Auto/ })).toBeTruthy();
+    expect(screen.queryByText('Loading the model catalog…')).toBeNull();
   });
 
   test('a narrow toolbar folds the lower-priority labels first and keeps the model and the actions', async () => {
