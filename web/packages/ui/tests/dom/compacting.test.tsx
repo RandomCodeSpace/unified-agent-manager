@@ -1,12 +1,14 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { WorkingLabel } from '../../src/components/Transcript';
+import { StatusLine, statusLine } from '../../src/components/StatusLine';
 import { StateMark } from '../../src/components/common';
+import type { SessionDetail } from '../../src/api';
 
-test('while the conversation compacts, the working label and the state chip say so', () => {
-  const { container } = render(<WorkingLabel working compacting items={[]} />);
+test('while the conversation compacts, the status line and the state chip say so', () => {
+  const session = { id: 't', state: 'working', compacting: true, items: [], interactions: [], subagents: [] } as unknown as SessionDetail;
+  const { container } = render(<StatusLine line={statusLine(session, true, true, [])} session={session} hidden={false} onJump={() => {}} />);
   expect(container.textContent).toContain('Compacting the conversation…');
-  expect(screen.getByRole('status').textContent).toBe('Compacting the conversation');
+  expect(screen.getByRole('button', { name: 'Compacting the conversation. Jump to bottom' })).toBeTruthy();
   render(<StateMark state="working" label compacting text="Compacting…" />);
   expect(screen.getByText('Compacting…')).toBeTruthy();
   expect(screen.queryByText('Working')).toBeNull();

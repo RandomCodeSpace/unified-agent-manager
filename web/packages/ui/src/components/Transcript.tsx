@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { Fragment, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
@@ -8,13 +8,13 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, elapsedSince, foregroundItems, turnElapsed, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, foregroundItems, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
-import { CodeBlock, Dot, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -22,7 +22,6 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
-import { Appear } from './ui/appear';
 import { Tip } from './ui/tooltip';
 
 interface Props {
@@ -495,45 +494,6 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
       )}
       {!thought && <LiveOutput lines={item.tool?.tail} className="ml-6" />}
     </div>
-  );
-}
-
-/**
- * The main pane's working label (DESIGN.md working label), floating over the composer: while a
- * turn runs, the working mark, the turn's verb and how long the turn has been busy; what the
- * agent is doing stays in the transcript. It sits outside the transcript, so it stays in view at
- * any scroll position and whichever history page is loaded; `items` is the live tail. Its width
- * holds while the time counts up, so it never shifts. While the conversation compacts it says so in place of the verb.
- */
-export function WorkingLabel({ working, compacting = false, since, items, identityItems = items, turnTimings = [] }: Readonly<{ working: boolean; compacting?: boolean; since?: string; items: Item[]; identityItems?: Item[]; turnTimings?: TurnTiming[] }>) {
-  const [now, setNow] = useState(() => Date.now());
-  const timing = turnTimings.at(-1);
-  const ticking = working && (!!since || !timing?.paused_at);
-  const [wasTicking, setWasTicking] = useState(ticking);
-  if (ticking !== wasTicking) {
-    setWasTicking(ticking);
-    if (ticking) setNow(() => Date.now());
-  }
-  useEffect(() => {
-    if (!ticking) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [ticking]);
-  const lastUser = (list: Item[]) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
-  const turnId = lastUser(items) ?? lastUser(identityItems) ?? 'start';
-  // `since` times work that outlived the turn (subagents still running); otherwise the running turn's clock.
-  const elapsed = working ? (since ? elapsedSince(since, now) : timing?.state === 'working' ? turnElapsed(timing, now) : null) : null;
-  return (
-    <Appear show={working}>
-      {working && <output className="sr-only">{compacting ? 'Compacting the conversation' : 'Busy'}</output>}
-      <span aria-hidden="true" className="flex h-7 items-center gap-2 rounded-sm bg-raised px-2.5 text-caption text-muted shadow-float">
-        {/* The breath: the pulsing dot (opacity only), not a ring. */}
-        <Dot tone="accent" pulse className={cn('size-1.5', compacting && 'bg-badge-violet')} />
-        <span className={cn('whitespace-nowrap', compacting && 'text-badge-violet')}>{compacting ? 'Compacting the conversation' : turnVerb(turnId)}…</span>
-        {/* Under an hour the time is at most three characters wide: the slot holds them all. */}
-        {elapsed && <span className="min-w-[3ch] text-right tabular-nums text-faint">{elapsed}</span>}
-      </span>
-    </Appear>
   );
 }
 

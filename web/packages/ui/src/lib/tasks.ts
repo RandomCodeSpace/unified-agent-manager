@@ -1,4 +1,5 @@
 import type { Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
+import { stopWords } from './stop.ts';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
 
@@ -113,9 +114,9 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       return { label: 'Error', text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':
       return { label: 'Interrupted', text: 'Interrupted before it finished', tone: 'warning' };
-    // uam names what stopped it when it was not you (a routine's time limit).
+    // It names what stopped it when it was not you (a routine's time limit, autopilot's credit limit).
     case 'cancelled':
-      return { label: 'Stopped', text: s.state_detail || 'You stopped it', tone: 'muted' };
+      return { label: 'Stopped', text: stopWords(s).title, tone: 'muted' };
     case 'closed':
       return { label: 'Closed', text: 'Conversation closed', tone: 'muted' };
     default:

@@ -184,8 +184,16 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
   assert.equal(status({ state: 'cancelled' }), 'You stopped it');
+  assert.equal(status({ state: 'cancelled', stop_reason: 'owner' }), 'You stopped it');
   // uam stopped it, not the owner: the service says what did.
   assert.equal(status({ state: 'cancelled', state_detail: "Stopped at the routine's time limit (5 min)" }), "Stopped at the routine's time limit (5 min)");
+  assert.equal(status({ state: 'cancelled', stop_reason: 'time_limit', state_detail: "Stopped at the routine's time limit (5 min)" }), "Stopped at the routine's time limit (5 min)");
+  assert.equal(status({ state: 'cancelled', stop_reason: 'remote' }), 'Stopped: remote command');
+  assert.equal(status({ state: 'cancelled', stop_reason: 'cli', state_detail: 'Stopped in the Copilot CLI' }), 'Stopped in the Copilot CLI');
+  const objective = { id: 1, objective: 'Notes', status: 'paused', turn_count: 6, credits_used: 300, credit_limit: 300 };
+  assert.equal(status({ state: 'cancelled', stop_reason: 'credit_limit', execution: { known: true, objective } }), 'Autopilot stopped: credit limit reached · 300 of 300 credits used · 6 turns');
+  assert.equal(status({ state: 'cancelled', stop_reason: 'credit_limit' }), 'Autopilot stopped: credit limit reached');
+  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'cancelled', stop_reason: 'mcp' })).label, 'Stopped');
   assert.equal(status({ state: 'completed', stage: 'settled' }), 'Settled');
 });
 

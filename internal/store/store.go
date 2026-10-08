@@ -426,6 +426,9 @@ type WebState struct {
 	// UnseenEnd marks a Task that failed or was interrupted while no page
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
+	// StopReason says why the last turn was cancelled (owner, time_limit,
+	// credit_limit, remote, mcp or cli); empty otherwise.
+	StopReason string `json:"stop_reason,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -468,6 +471,7 @@ var knownWebStateFields = map[string]struct{}{
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},
+	"stop_reason":         {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007). Known,
 	// so it drops on the next save.
 	"retired": {},

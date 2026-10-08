@@ -255,6 +255,22 @@ test('background shell updates stay separate from foreground and reconnect inval
   assert.deepEqual(state.detail.background_tasks.tasks, []);
 });
 
+test('turn activity frames replace the open Task\'s activity in order, and a lost connection makes its list unknown', () => {
+  const working = { intent: 'Building the index page', retry: { count: 1, reason: 'rate_limited', status: 429, at: '2026-10-08T12:00:00Z' }, todos: { known: true } };
+  let state = loading();
+  state = update(state, { name: 'turn_activity', seq: 12, session_id: 'task', turn_activity: working });
+  assert.deepEqual(state.detail.turn_activity, working);
+  // Another Task's frame and an older one change nothing.
+  assert.equal(update(state, { name: 'turn_activity', seq: 13, session_id: 'other', turn_activity: { todos: { known: false } } }), state);
+  assert.equal(update(state, { name: 'turn_activity', seq: 12, session_id: 'task', turn_activity: { todos: { known: false } } }), state);
+  // Replaced whole: the turn's end clears the intent and the retry.
+  state = update(state, { name: 'turn_activity', seq: 14, session_id: 'task', turn_activity: { todos: { known: true } } });
+  assert.deepEqual(state.detail.turn_activity, { todos: { known: true } });
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.equal(state.detail.turn_activity.todos.known, false);
+  state = reducer(state, { type: 'snapshot', data: { seq: 15, projects: [], sessions: [], session: { ...state.detail, turn_activity: working } } });
+  assert.deepEqual(state.detail.turn_activity, working);
+});
 
 test('execution snapshots clear on null and become unknown on disconnect', () => {
   const execution = { known: true, mode: 'autopilot', objective: { id: 1, objective: 'A real objective', status: 'active', turn_count: 2 } };
@@ -406,7 +422,7 @@ test('every summary field a frame omits is cleared on the open Task, not only th
   const optional = {
     outcome: 'Changed 2 files', diff: { files: 2, additions: 3, deletions: 1 }, ask: { kind: 'question', title: 'Which?' }, event_at: '2026-10-01T10:00:00Z',
     state_detail: 'boom', context: { used: 1, limit: 2 }, usage: { ai_units: 1 }, stage: 'settled', settled_at: '2026-10-01T10:00:00Z',
-    archived_at: '2026-10-01T10:00:00Z', spawned_by: 'p', routine_id: 'r', rerun_of: 'o', compacting: true,
+    archived_at: '2026-10-01T10:00:00Z', spawned_by: 'p', routine_id: 'r', rerun_of: 'o', compacting: true, stop_reason: 'credit_limit',
   };
   let state = update(loading(), { name: 'session', seq: 11, session: { id: 'task', state: 'completed', ...optional } });
   assert.equal(state.detail.outcome, 'Changed 2 files');

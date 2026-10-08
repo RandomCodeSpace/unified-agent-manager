@@ -134,7 +134,7 @@ export function reducer(state: State, action: Action): State {
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
-        ? { ...state.detail, ...(state.detail.turn_timings ? { turn_timings: state.detail.turn_timings.map((timing) => timing.state === 'working' ? { ...timing, state: 'unknown' as const } : timing) } : {}), ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
+        ? { ...state.detail, ...(state.detail.turn_timings ? { turn_timings: state.detail.turn_timings.map((timing) => timing.state === 'working' ? { ...timing, state: 'unknown' as const } : timing) } : {}), ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.turn_activity ? { turn_activity: { ...state.detail.turn_activity, todos: { ...state.detail.turn_activity.todos, known: false } } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
         : state.detail;
       return { ...state, connection: action.status, detail };
     }
@@ -359,6 +359,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, turn_timings: upsert(detail.turn_timings ?? [], d.turn_timing) } };
         case 'background_tasks':
           return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
+        case 'turn_activity':
+          return { ...state, detail: { ...detail, turn_activity: d.turn_activity } };
       }
     }
   }
@@ -450,7 +452,7 @@ function upsert<T extends { id: string }>(list: T[], v: T): T[] {
 export const SUMMARY_KEYS = Object.keys({
   id: 1, project_id: 1, provider: 1, name: 1, title: 1, workdir: 1, conversation_id: 1, model: 1, last_model: 1, subagents_running: 1,
   background_tasks_running: 1, effort: 1, context_size: 1, context: 1, usage: 1, mode: 1, execution: 1, stage: 1, settled_at: 1,
-  archived_at: 1, spawned_by: 1, routine_id: 1, diff: 1, rerun_of: 1, outcome: 1, compacting: 1, compact_threshold: 1, queued: 1, state: 1, state_detail: 1,
+  archived_at: 1, spawned_by: 1, routine_id: 1, diff: 1, rerun_of: 1, outcome: 1, compacting: 1, compact_threshold: 1, stop_reason: 1, queued: 1, state: 1, state_detail: 1,
   open: 1, pending: 1, ask: 1, event_at: 1, created_at: 1, updated_at: 1, capabilities: 1,
 } satisfies Record<keyof SessionSummary, 1>) as (keyof SessionSummary)[];
 

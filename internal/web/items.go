@@ -742,6 +742,13 @@ func clampSubagent(in agentapi.Subagent) agentapi.Subagent {
 	in.ParentAgentID = clampText(in.ParentAgentID, maxLabelText)
 	in.Result = boundedResultSummary(in.Result)
 	in.Runs = agentapi.CapSubagentRuns(in.Runs)
+	// A retry is news only while it runs.
+	if in.Retry != nil && in.Status == agentapi.SubagentRunning {
+		r := cleanRetry(*in.Retry)
+		in.Retry = &r
+	} else {
+		in.Retry = nil
+	}
 	return in
 }
 

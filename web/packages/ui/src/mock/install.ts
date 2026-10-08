@@ -1150,7 +1150,7 @@ export function install(): { received: Received[] } {
             t.queue_paused = true;
             broadcast('queue', { session_id: t.id, queue: t.queue, paused: true }, t.id);
           }
-          touch(t, { state: 'cancelled', pending: 0 });
+          touch(t, { state: 'cancelled', pending: 0, stop_reason: 'owner' });
           return json(202, summary(t));
         }
         case 'close':

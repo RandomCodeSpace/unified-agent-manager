@@ -326,10 +326,9 @@ describe('one working ring per place', () => {
     expect(running.every((row) => row.querySelector('.bg-accent'))).toBe(true);
     // Their `task` calls are no step at the foot in Compact (the live set shows them), so the conversation does not turn.
     expect(rings(screen.getByRole('region', { name: 'Conversation' }))).toHaveLength(0);
-    // Changed files keep a steady amber dot; nothing else pulses but the working label (Batch A's status line makes it still).
+    // Changed files keep a steady amber dot, and the status line's dot is still: nothing in the pane pulses.
     expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull();
-    const pulses = [...pane.querySelectorAll('.animate-pulse-dot')];
-    expect(pulses.map((dot) => dot.parentElement?.parentElement?.textContent)).toEqual([expect.stringContaining('Busy')]);
+    expect(pane.querySelectorAll('.animate-pulse-dot')).toHaveLength(0);
     expect(rings(pane)).toHaveLength(1);
   });
 

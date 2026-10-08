@@ -10,7 +10,6 @@ import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
 import * as history from '../src/lib/historyState.ts';
 import * as subagentsLib from '../src/lib/subagents.ts';
-import { shownState } from '../src/lib/tasks.ts';
 
 // Render the real transcript component with local UI shells and no browser or data reads.
 const require = createRequire(import.meta.url);
@@ -51,7 +50,6 @@ const modules = {
   './common': { CodeBlock: element('pre'), Markdown: ({ text }) => React.createElement('p', null, text), SessionContext: React.createContext(''), WorkdirContext: React.createContext(''), Spinner: () => null, Dot: () => null, SubagentIdleIcon: () => null, WorkingMark: () => null, useApp: () => ({ meta: null }), clockTime: (at) => new Date(at).toISOString().slice(11, 19), dateTime: (at) => new Date(at).toISOString() },
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
   './LiveOutput': { LiveOutput: () => null },
-  './ui/appear': { Appear: ({ show, children }) => show ? children : null },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
@@ -278,16 +276,3 @@ test('Detailed: a reply past eight shows one grouped list at its first call, and
   }
 });
 
-test('the activity verb stays visible when a reused subagent is the only worker', () => {
-  const draw = (state, subagents_running) => renderToStaticMarkup(React.createElement(exports.WorkingLabel, {
-    working: shownState({ state, subagents_running }) === 'working',
-    since: '2026-09-28T12:00:00Z', items: [],
-  }));
-  for (const state of ['idle', 'completed']) {
-    assert.equal(draw(state, 0), '');
-    const working = draw(state, 1);
-    assert.match(working, /<output[^>]*>Busy<\/output>/);
-    assert.match(working, /Working…/);
-    assert.equal(draw(state, 0), '');
-  }
-});

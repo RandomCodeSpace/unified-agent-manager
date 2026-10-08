@@ -30,7 +30,7 @@ export const STATE_LABELS: Record<SessionState, string> = {
   awaiting_permission: 'Needs permission',
   awaiting_answer: 'Needs answer',
   completed: 'Finished',
-  cancelled: 'Cancelled',
+  cancelled: 'Stopped',
   failed: 'Failed',
   interrupted: 'Interrupted',
   closed: 'Closed',
@@ -127,12 +127,12 @@ export function useMedia(query: string): boolean {
  * finished ones, always with the word for assistive tech. `label` renders the word too,
  * as a chip; only the attention chip has a fill.
  */
-export function StateMark({ state, label = false, compacting = false, title, className, text = STATE_LABELS[state] ?? state }: Readonly<{ state: SessionState; label?: boolean; compacting?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…"). */ text?: string }>) {
+export function StateMark({ state, label = false, compacting = false, title, className, text = STATE_LABELS[state] ?? state, icon }: Readonly<{ state: SessionState; label?: boolean; compacting?: boolean; title?: string; className?: string; /** The word in place of the state's ("Compacting…", "Stopped: credit limit"). */ text?: string; /** The glyph in place of the state's. */ icon?: ReactNode }>) {
   const tone = STATE_TONE[state];
   // Keyed on the state, so a change fades the new glyph in (`base`) in the same 16px slot; the chip's colour transitions with it.
   const glyph = (
     <span key={state} className="flex animate-fade-in">
-      {compacting ? <Minimize2 aria-hidden="true" className="size-3.5 text-badge-violet" /> : <StateGlyph state={state} />}
+      {compacting ? <Minimize2 aria-hidden="true" className="size-3.5 text-badge-violet" /> : icon ?? <StateGlyph state={state} />}
     </span>
   );
   if (!label) {

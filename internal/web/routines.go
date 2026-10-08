@@ -330,7 +330,7 @@ func (m *Manager) checkRoutines() {
 	m.saveRoutinesLocked(slices.Sorted(maps.Keys(changed))...)
 	rs.mu.Unlock()
 	for _, id := range slices.Sorted(maps.Keys(cancels)) {
-		if _, err := m.cancelBecause(id, cancels[id]); err != nil {
+		if _, err := m.cancelBecause(id, stopTimeLimit, cancels[id]); err != nil {
 			log.Warn("cancel a routine run over its time limit failed", "session", id, "error", err)
 		}
 	}
