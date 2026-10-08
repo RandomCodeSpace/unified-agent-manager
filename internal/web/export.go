@@ -41,9 +41,15 @@ type exportTask struct {
 // ExportMarkdown returns Task id's conversation as Markdown and a file name
 // for it.
 func (m *Manager) ExportMarkdown(ctx context.Context, id string) ([]byte, string, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
+		return nil, "", err
+	}
 	m.mu.Lock()
-	s := m.sessions[id]
-	if s == nil {
+	if s.removed {
 		m.mu.Unlock()
 		return nil, "", newError(http.StatusNotFound, msgSessionNotFound)
 	}
@@ -292,7 +298,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(headerContentType, "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
+	if _, err := w.Write(body); err != nil { // #nosec G705 -- Markdown attachment with nosniff from ServeHTTP, never served as HTML.
 		log.Debug("write export failed", "error", err)
 	}
 }

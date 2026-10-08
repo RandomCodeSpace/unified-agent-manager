@@ -290,6 +290,9 @@ func (m *Manager) dropLocked(sub *Subscriber) {
 	// The idle close counts from when the last viewer left.
 	if s := m.sessions[sub.session]; s != nil {
 		s.activeAt = m.now()
+		if !s.historyRead {
+			m.releaseClosedHistoryLocked(s)
+		}
 	}
 	close(sub.gone)
 }

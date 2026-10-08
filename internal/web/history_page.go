@@ -54,10 +54,16 @@ func (m *Manager) OlderHistory(id, before string) (HistoryPage, error) {
 	if err != nil || len(boundary) == 0 || len(boundary) > 4096 {
 		return HistoryPage{}, newError(http.StatusBadRequest, "invalid history cursor")
 	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return HistoryPage{}, err
+	}
+	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+		return HistoryPage{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
+	if s.removed {
 		return HistoryPage{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	s.historyUsed = m.now()
