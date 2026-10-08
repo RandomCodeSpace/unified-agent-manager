@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -289,5 +292,119 @@ func TestToolOutputSlidingWindowPaced(t *testing.T) {
 	m.dropHistoryLocked(s)
 	if len(s.outputs) != 0 || state.timer.Stop() {
 		t.Fatal("history drop left pacing state/timer")
+	}
+}
+
+// A running shell's row shows its tail, which changes with every chunk: the
+// row goes out at most once per previewInterval, the latest on a trailing
+// timer, while the output's deltas stay immediate. The completion's row has
+// no tail.
+func TestToolOutputTailRowPaced(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	base := time.Now()
+	clock := base
+	m.mu.Lock()
+	m.now = func() time.Time { return clock }
+	s := m.sessions[sum.ID]
+	m.mu.Unlock()
+	start := base.UTC()
+	output, tail := "", []agentapi.OutputLine(nil)
+	emit := func(status agentapi.ToolStatus) {
+		m.mu.Lock()
+		m.upsertItemLocked(s, agentapi.Item{ID: "tool", Kind: agentapi.ItemTool, Time: start, Tool: &agentapi.ToolCall{Name: "bash", Input: "make", Status: status, Output: output, Tail: tail}}, true)
+		m.mu.Unlock()
+	}
+	emit(agentapi.ToolRunning)
+	main, _, err := m.subscribeView(sum.ID, true, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(main)
+	detail, _, err := m.subscribeDetail(sum.ID, "", []bodyRef{{"", "tool"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(detail)
+	key := itemKey("", "tool")
+	// due reports whether a held row is due on the clock; settle waits for
+	// its timer, which runs on real time.
+	due := func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		state := s.outputs[key]
+		return state != nil && state.timer != nil && !clock.Before(state.rowAt.Add(previewInterval))
+	}
+	settle := func() {
+		t.Helper()
+		for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			m.mu.Lock()
+			state := s.outputs[key]
+			pending := state != nil && state.timer != nil
+			m.mu.Unlock()
+			if !pending {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the held row was never sent")
+			}
+		}
+	}
+	// 20 chunks in a second.
+	for i := range 20 {
+		m.mu.Lock()
+		clock = base.Add(time.Duration(i) * 50 * time.Millisecond)
+		m.mu.Unlock()
+		if due() {
+			settle()
+		}
+		line := fmt.Sprintf("line %d", i)
+		output += line + "\n"
+		tail = append(slices.Clone(tail[max(0, len(tail)-9):]), agentapi.OutputLine{Text: line, Err: i%2 == 1})
+		emit(agentapi.ToolRunning)
+		var text string
+		decodeField(t, frameOf(t, detail, "body_output"), "text", &text)
+		if text != line+"\n" {
+			t.Fatalf("delta %d = %q", i, text)
+		}
+	}
+	settle()
+	var rows []frame
+	for {
+		select {
+		case raw := <-main.Frames():
+			if f := parseFrame(t, raw); f.event == "item" {
+				rows = append(rows, f)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	if len(rows) < 2 || len(rows) > 5 {
+		t.Fatalf("20 chunks in 1s sent %d rows, want 2 to 5", len(rows))
+	}
+	t.Logf("20 chunks in 1s: %d rows", len(rows))
+	var row compactItem
+	decodeField(t, rows[len(rows)-1], "item", &row)
+	if row.Tool == nil || !row.Tool.HasOutput || row.Tool.Output != "" || !reflect.DeepEqual(row.Tool.Tail, tail) {
+		t.Fatalf("last row = %+v, want the latest tail %+v", row.Tool, tail)
+	}
+	// The trailing row raised the sequence the browser's body waits for; the
+	// body it holds from the deltas is current.
+	if current := frameOf(t, detail, "body_current"); current.seq <= rows[len(rows)-1].seq {
+		t.Fatalf("body_current at %d, row at %d", current.seq, rows[len(rows)-1].seq)
+	}
+	output, tail = output+"exit 0", nil
+	emit(agentapi.ToolCompleted)
+	row = compactItem{}
+	decodeField(t, frameOf(t, main, "item"), "item", &row)
+	if row.Tool == nil || row.Tool.Status != agentapi.ToolCompleted || row.Tool.Tail != nil {
+		t.Fatalf("completed row = %+v", row.Tool)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(s.outputs) != 0 {
+		t.Fatal("completion left pacing state")
 	}
 }

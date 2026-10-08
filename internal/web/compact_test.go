@@ -827,6 +827,7 @@ func TestCompactWindowAccountingMatchesBrowser(t *testing.T) {
 		{ID: "chat界", Kind: agentapi.ItemAssistant, Text: "line\n<界😀>&", Time: now, EndedAt: now, AgentID: "agent", Delivery: "steer", Attachments: []agentapi.Attachment{{ID: "upload", Name: "文😀", MIME: "text/plain", Size: 20, NotNative: true}, {Name: "empty", MIME: ""}}},
 		{ID: "tool", Kind: agentapi.ItemTool, Text: "hidden", Time: now, Tool: &agentapi.ToolCall{Name: "edit", Title: "Edit file", Status: agentapi.ToolCompleted, Input: `{"path":"文😀.go","content":"hidden"}`, Output: "hidden"}, Images: []agentapi.Image{{ID: "image", MIME: "image/png", Name: "文", Size: 123}, {ID: "zero"}}, ImagesNote: "note"},
 		{ID: "ask", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: "<\n界", Output: "😀", Status: agentapi.ToolCompleted}},
+		{ID: "shell", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"make"}`, Output: "hidden", Tail: []agentapi.OutputLine{{Text: "ok 界"}, {Text: "", Err: true}, {Text: "warn 😀", Err: true}}}},
 		{ID: "thought", Kind: agentapi.ItemReasoning, Text: "hidden"},
 	} {
 		projected := projectItem(it)

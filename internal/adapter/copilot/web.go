@@ -3415,13 +3415,15 @@ func sandboxBypass(requested *bool, reason *string) string {
 }
 
 // transcript maps session events to transcript items. It keeps running tool
-// calls by id so start, partial and final results upsert one item.
+// calls by id so start, live output and final results upsert one item.
 type transcript struct {
 	tools map[string]*agentapi.ToolCall
 	// ended holds the IDs of recently completed tool calls. A shell command
 	// a steer moved to the background completes its call at once, then keeps
-	// streaming partial output under the same ID; that must not reopen it.
+	// streaming output under the same ID; that must not reopen it.
 	ended map[string]struct{}
+	// shells holds the live output of running shell calls by ID.
+	shells map[string]*shellOutput
 	// assets holds recent session.binary_asset events by asset ID. The CLI
 	// records one just before the tool completion that names it.
 	assets map[string]*rpc.SessionBinaryAssetData
@@ -3447,8 +3449,8 @@ func (t *transcript) clip(s string, n int) (string, bool) {
 	return out, len(out) < len(s)
 }
 
-// maxEndedTools bounds transcript.ended. Forgetting older IDs only lets a
-// partial result that arrives very late reopen its tool call.
+// maxEndedTools bounds transcript.ended. Forgetting older IDs only lets
+// shell output that arrives very late reopen its tool call.
 const maxEndedTools = 1024
 
 // maxAssets bounds transcript.assets. A tool result that names a forgotten
@@ -3456,7 +3458,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -3549,27 +3551,17 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
 		t.tools[d.ToolCallID] = tc
 		delete(t.ended, d.ToolCallID) // a new call reusing an ended ID
+		delete(t.shells, d.ToolCallID)
 		if cut {
 			t.clippedInput[d.ToolCallID] = true
 		} else {
 			delete(t.clippedInput, d.ToolCallID)
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
-	//lint:ignore SA1019 Copilot CLI 1.0.93 still sends it; moving to tool.shell_output removes this.
-	case *rpc.ToolExecutionPartialResultData:
-		if _, ended := t.ended[d.ToolCallID]; ended {
+	case *rpc.ToolShellOutputData:
+		if !t.shellOutput(d, &it) {
 			return it, false
 		}
-		tc := t.tool(d.ToolCallID)
-		// The CLI publishes the tool's current display output, not a text
-		// delta (its own UI replaces partialOutput too). Appending repeats
-		// every earlier line. Suppress repeated snapshots, including the cap.
-		output, cut := t.clip(d.PartialOutput, maxToolText)
-		if tc.Output == output {
-			return it, false
-		}
-		tc.Output = output
-		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut || t.clippedInput[d.ToolCallID]
 	case *rpc.ToolExecutionCompleteData:
 		if _, started := t.tools[d.ToolCallID]; started {
 			it.EndedAt = ev.Timestamp
@@ -3580,7 +3572,8 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			clear(t.ended)
 		}
 		t.ended[d.ToolCallID] = struct{}{}
-		tc.Status = agentapi.ToolCompleted
+		delete(t.shells, d.ToolCallID)
+		tc.Status, tc.Tail = agentapi.ToolCompleted, nil
 		cut := false
 		if d.Result != nil {
 			tc.Output, cut = t.clip(d.Result.Content, maxToolText)
