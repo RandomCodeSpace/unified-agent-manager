@@ -72,7 +72,8 @@ describe('evidence inside Changes', () => {
     expect(vcs.getAllByRole('button')).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
     expect(log().queryByText('Ran the tests')).toBeNull();
-    expect(trigger.querySelector('.bg-warning.animate-pulse-dot')).not.toBeNull();
+    expect(trigger.querySelector('.bg-warning')).not.toBeNull();
+    expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
     await user.click(trigger);
     const card = within(await screen.findByRole('region', { name: 'Finished — check the evidence' }));
     expect(card.queryByRole('region', { name: 'Commit' })).toBeNull();
@@ -186,12 +187,13 @@ describe('evidence inside Changes', () => {
     evidence.mockRestore();
   });
 
-  test('while the Task works, changed files pulse amber and open Changes without an evidence popover', async () => {
+  test('while the Task works, changed files show a steady amber dot and open Changes without an evidence popover', async () => {
     const { user } = await openTask('t1');
     expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
     const trigger = await screen.findByRole('button', { name: /^Open changes.*3 files$/ });
-    expect(trigger.querySelector('.bg-warning.animate-pulse-dot')).not.toBeNull();
+    expect(trigger.querySelector('.bg-warning')).not.toBeNull();
+    expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });
