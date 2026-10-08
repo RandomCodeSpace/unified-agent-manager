@@ -36,6 +36,10 @@ and conventions below instead.
   filterable table. Raw HTML and math do not render: write formulas as code.
 - **Code blocks** wrap long lines, scroll past about 480 px of height and
   have a copy button. Common language tags are highlighted.
+- **The todo list** you keep in the session's `todos` table shows above the
+  composer while you work: how many rows are done, the row in progress and
+  the blocked rows with the reason from their description. The owner changes
+  it by asking you in the chat.
 
 ## Files: paths, links and uam_show_file
 
@@ -157,9 +161,9 @@ start instead.
 
 - The owner sees each subagent as a row in your turn, with its description;
   its work stays folded, so report what it found in your reply.
-- Subagents receive neither uam's system instructions nor this skill. Put
-  the rules a subagent needs in its prompt, such as commit messages without
-  AI attribution.
+- Subagents receive neither uam's system instructions nor this skill. uam
+  passes them the todo and commit rules when they start; put any other rule
+  a subagent needs in its prompt.
 - The owner can limit the models subagents run on in Settings. uam then
   moves a subagent you start to an allowed model and tells you so: that is
   final, so do not start it again. If no allowed model is usable, the launch

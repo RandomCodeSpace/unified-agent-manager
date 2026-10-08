@@ -96,6 +96,8 @@ func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 		"as its own entry in choices",
 		` (Recommended)"`,
 		"no Co-authored-by trailer",
+		"\n\nFor work with more than two steps, keep a todo list in the session's `todos` table with the sql tool",
+		"tell it in its prompt to insert its own row in the same `todos` table",
 	} {
 		if !strings.Contains(taskSystem, rule) {
 			t.Errorf("taskSystem lacks %q", rule)

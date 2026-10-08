@@ -366,6 +366,8 @@ type webSession struct {
 	// turnActivity is the running turn's live activity (turn_activity.go);
 	// not persisted.
 	turnActivity TurnActivity
+	// todoBase is the todo list as the running or last turn found it.
+	todoBase TodoView
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -2141,6 +2143,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventActivity:
 		if ev.Activity != nil {
 			m.applyActivityLocked(s, *ev.Activity)
+		}
+	case agentapi.EventTodos:
+		if ev.Todos != nil {
+			m.applyTodosLocked(s, *ev.Todos)
 		}
 	case agentapi.EventUsage:
 		m.applyUsageLocked(s, ev.Usage)

@@ -754,10 +754,23 @@ export interface Subagent {
 /** A model call the provider is retrying: how many times so far, its reason code, and the failed attempt's HTTP status or a network failure. */
 export interface Retry { count: number; reason?: string; status?: number; network?: boolean; at: string }
 
-/** The conversation's todo list; not read yet, so never known. */
-export interface TodoView { known: boolean }
+export type TodoStatus = 'pending' | 'in_progress' | 'done' | 'blocked';
 
-/** The running turn's live activity: what the main agent says it is doing (`assistant.intent`) and a model call being retried; never persisted. */
+/** One row of the agents' todo list: `note` says why a blocked row is blocked; `agent_id` is the subagent that first wrote it, when uam could tell; `changed_at` is when its status last changed, as far as uam saw. */
+export interface Todo { id: string; title: string; status: TodoStatus; note?: string; agent_id?: string; changed_at?: string }
+
+/** Rows by status over the whole list: `open` is pending and in progress. */
+export interface TodoCounts { done?: number; total?: number; blocked?: number; open?: number; omitted?: number }
+
+/**
+ * The open conversation's todo list, which the agents keep in Copilot's session `todos` table:
+ * `known` is false while it could not be read or no conversation is open; `touched` once the
+ * running turn changed it (the last turn's answer between turns); the first 100 rows in the
+ * provider's order, `omitted` past them; `counts` over all; `now` the id of the row the work is at.
+ */
+export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omitted?: number; counts: TodoCounts; now?: string }
+
+/** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, and the todo list; never persisted. */
 export interface TurnActivity { intent?: string; retry?: Retry; todos: TodoView }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */

@@ -175,7 +175,14 @@ func TestWebReopenPublishesKnownEmptyShellSnapshot(t *testing.T) {
 	}
 	next := webHarness{p: h.p, fc: h.fc, fs: h.fc.sessions[len(h.fc.sessions)-1], conv: conv, sink: nextSink}
 	settleTasks(t, next, 1)
-	if got := nextSink.last().BackgroundTasks; got == nil || !got.Known || len(got.Tasks) != 0 {
+	// The todo list read on reopening may report after the shells.
+	var got *agentapi.BackgroundTasks
+	for _, e := range nextSink.all() {
+		if e.Kind == agentapi.EventBackgroundTasks {
+			got = e.BackgroundTasks
+		}
+	}
+	if got == nil || !got.Known || len(got.Tasks) != 0 {
 		t.Fatalf("successful empty refresh left old unknown shells: %+v", got)
 	}
 }

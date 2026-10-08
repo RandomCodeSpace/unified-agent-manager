@@ -6,7 +6,7 @@ import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Detail
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Square, X } from 'lucide-react';
-import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -369,7 +369,7 @@ export function useSubagentDisclosure(key: string, subagents: readonly Subagent[
 }
 
 // Identity tones as whole class names, so Tailwind sees them.
-const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
+export const DOT: Record<IdentityTone, string> = { violet: 'bg-badge-violet', pink: 'bg-badge-pink', cyan: 'bg-badge-cyan', amber: 'bg-badge-amber', teal: 'bg-badge-teal' };
 const PART_TONE: Record<CountPart['tone'], string> = { muted: 'text-muted', success: 'text-success', error: 'text-error', accent: 'text-accent' };
 const STATUS_WORD: Record<SubagentStatus, string> = { running: 'running', idle: 'idle', completed: 'completed', failed: 'failed', cancelled: 'stopped' };
 const STATUS_LABEL: Record<SubagentStatus, string> = { running: 'Running', idle: 'Idle', completed: 'Done', failed: 'Failed', cancelled: 'Stopped' };
@@ -996,7 +996,7 @@ function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack, onUp }: Rea
  * (nothing in it is live or focusable), so the panel reads as anchored to it. The page does not
  * scroll under the modal panel; a resize places it again.
  */
-function LiftedRow({ row }: Readonly<{ row: Element }>) {
+export function LiftedRow({ row }: Readonly<{ row: Element }>) {
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = host.current;
@@ -1023,25 +1023,48 @@ function LiftedRow({ row }: Readonly<{ row: Element }>) {
  * button closes it.
  */
 function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack, onUp }: Readonly<{ pinned: Pinned; onFull: () => void; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void; onUp: (id: string) => void }>) {
-  const popup = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ y: number; dy: number } | null>(null);
-  const follow = (dy: number) => {
-    if (popup.current) popup.current.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
-  };
   const close = (
     <BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}>
       <X />
     </BaseDialog.Close>
   );
   return (
-    <BaseDialog.Root open={pinned.open} onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
+    <BottomSheet open={pinned.open} onClose={onClose} onClosed={onClosed} label="Subagent" className={cn(pinned.full && 'h-[85dvh]')}>
+      {pinned.full ? (
+        <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} onUp={onUp} close={close} />
+      ) : (
+        <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden px-4 pb-4">
+          <div className="flex justify-end">{close}</div>
+          <PeekBody id={pinned.id} phone onFull={onFull} />
+        </div>
+      )}
+    </BottomSheet>
+  );
+}
+
+/**
+ * A sheet from the bottom over a dimmed page, at most 85% of the screen, under a grab handle:
+ * dragging the handle down closes it, as do Esc and a close button inside. A phone opens a
+ * subagent and the todo list in it.
+ */
+export function BottomSheet({ open, onClose, onClosed, label, className, backdropClassName, initialFocus, finalFocus, id, children }: Readonly<{ open: boolean; onClose: () => void; onClosed: () => void; label: string; className?: string; backdropClassName?: string; children: ReactNode } & Pick<ComponentProps<typeof BaseDialog.Popup>, 'initialFocus' | 'finalFocus' | 'id'>>) {
+  const popup = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y: number; dy: number } | null>(null);
+  const follow = (dy: number) => {
+    if (popup.current) popup.current.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+  };
+  return (
+    <BaseDialog.Root open={open} onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className={backdropClass} />
+        <BaseDialog.Backdrop className={cn(backdropClass, backdropClassName)} />
         <BaseDialog.Popup
           ref={popup}
+          id={id}
           data-popup=""
-          aria-label="Subagent"
-          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full', pinned.full && 'h-[85dvh]')}
+          aria-label={label}
+          initialFocus={initialFocus}
+          finalFocus={finalFocus}
+          className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full', className)}
         >
           <div
             aria-hidden="true"
@@ -1068,14 +1091,7 @@ function SubagentSheet({ pinned, onFull, onClose, onClosed, onChild, onBack, onU
           >
             <span className="h-1 w-9 rounded-full bg-hairline-strong" />
           </div>
-          {pinned.full ? (
-            <TranscriptBody pinned={pinned} phone onChild={onChild} onBack={onBack} onUp={onUp} close={close} />
-          ) : (
-            <div className="flex flex-col gap-2 overflow-y-auto overflow-x-hidden px-4 pb-4">
-              <div className="flex justify-end">{close}</div>
-              <PeekBody id={pinned.id} phone onFull={onFull} />
-            </div>
-          )}
+          {children}
         </BaseDialog.Popup>
       </BaseDialog.Portal>
     </BaseDialog.Root>

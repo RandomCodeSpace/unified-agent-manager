@@ -327,11 +327,25 @@ type TurnActivity struct {
 	Todos  TodoView        `json:"todos"`
 }
 
-// TodoView is the conversation's todo list. uam does not read it yet, so
-// it is never known.
+// TodoView is the open conversation's todo list.
 type TodoView struct {
+	// Known is false while the list could not be read, and while no
+	// conversation is open.
 	Known bool `json:"known"`
+	// Touched is set once the list changed in the running turn; it keeps
+	// the last turn's answer between turns.
+	Touched bool `json:"touched"`
+	// Todos holds the first maxTodoRows rows, in the provider's order.
+	Todos []agentapi.Todo `json:"todos"`
+	// Omitted counts the rows past them.
+	Omitted int `json:"omitted,omitempty"`
+	// Counts counts every row.
+	Counts TodoCounts `json:"counts"`
+	// Now is the id of the row in progress the work is at (todoNow).
+	Now string `json:"now,omitempty"`
 }
+
+type TodoCounts = store.TodoCounts
 
 // DiffStat totals a list of changed files.
 type DiffStat struct {
