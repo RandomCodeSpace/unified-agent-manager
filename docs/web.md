@@ -390,8 +390,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   project's design system (a `DESIGN.md`, tokens, its component library) first.
   uam writes both to `skills/<name>/SKILL.md` beside `sessions.json` at each
   start. uam also appends a system instruction asking
-  the agent to give a question's options as separate choices, with the
-  recommended option first and marked "(Recommended)", and to write commit
+  the agent to put results in its reply, since tool calls are folded, to
+  load the `uam` skill before it shows files, diagrams or charts, starts
+  another Task or starts subagents, to give a question's options as separate
+  choices, with the recommended option first and marked "(Recommended)", and
+  to write commit
   messages and pull or merge requests without a `Co-authored-by` trailer or
   any AI attribution unless you ask for one. Copilot's own co-author trailer
   is turned off for Tasks.
