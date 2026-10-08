@@ -209,10 +209,18 @@ func openProved(t *testing.T, fc *fakeClient) (agentapi.Conversation, *fakeSessi
 	if err != nil {
 		t.Fatal(err)
 	}
+	firstProof(conv)
 	if fs := fc.sessions[0]; !slices.Equal(fs.toolCalls, catalogProof) {
 		t.Fatalf("open tool RPCs = %v", fs.toolCalls)
 	}
 	return conv, fc.sessions[0], fc.create[0].Tools
+}
+
+// firstProof waits for the proof Open started to end.
+func firstProof(conv agentapi.Conversation) {
+	gate := conv.(*conversation).tools
+	gate.proof.Lock()
+	defer gate.proof.Unlock()
 }
 
 // toolsAnswer reports whether uam_show_file and notes_get run; they share
@@ -238,6 +246,45 @@ func toolsChanged(fs *fakeSession, id string) {
 // openProved's tools registered.
 func toolsRegistered(fs *fakeSession) bool {
 	return len(fs.setTools) > 0 && len(fs.setTools[len(fs.setTools)-1]) == 3
+}
+
+// The open does not wait for the first proof, which waits for the runtime's
+// tools to start. uam's tools refuse calls until it passes, and a message
+// sent meanwhile waits for it.
+func TestOpenDoesNotWaitForTheFirstProof(t *testing.T) {
+	reading, release := make(chan struct{}), make(chan struct{})
+	fc := &fakeClient{catalog: catalogOf(declarationToolName, "notes_get", "notes_list"), catalogHook: func(read int) {
+		if read == 0 {
+			close(reading)
+			<-release
+		}
+	}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{},
+		Tools: notesTools(), CallTool: (&hostCalls{}).call, ValidateFile: func(_ context.Context, p string) (string, error) { return filepath.Join("/tmp", p), nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-reading
+	tools := fc.create[0].Tools
+	if toolsAnswer(t, tools, "unproved") {
+		t.Fatal("uam's tools answered before the first proof passed")
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- conv.Send(context.Background(), agentapi.Prompt{Text: "first"}) }()
+	select {
+	case err := <-sent:
+		t.Fatalf("the message went before the first proof ended: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-sent; err != nil || !toolsAnswer(t, tools, "proved") {
+		t.Fatalf("message after the first proof = %v", err)
+	}
+	if fs := fc.sessions[0]; !slices.Equal(fs.toolCalls, catalogProof) || len(fs.sent) != 1 {
+		t.Fatalf("tool RPCs %v, sent %d", fs.toolCalls, len(fs.sent))
+	}
 }
 
 // A tool list change refuses uam's tools until the next turn starts: the
@@ -561,6 +608,7 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			firstProof(conv)
 			fs := fc.sessions[0]
 			var tools []copilot.Tool
 			if resume {
@@ -578,15 +626,28 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 			_ = conv.Close(context.Background())
 		})
 	}
-	// The clash is still there once the catalog is built again.
+	// The clash is still there once the catalog is built again: the first
+	// proof fails and leaves the tool refused, and the next message tries
+	// again and goes either way.
 	clash := fakeToolCatalog{tools: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}
-	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{clash, clash}}
+	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{clash, clash, clash, clash}}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	defer func() { _ = p.Shutdown(context.Background()) }()
 	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "collision", Workdir: t.TempDir(), Events: &recSink{}, ValidateFile: func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }})
-	if err == nil || !strings.Contains(err.Error(), "already exists") || conv != nil || !fc.sessions[0].disconnected ||
-		!slices.Equal(fc.sessions[0].toolCalls, []string{"clear", "catalog", "rebuild", "catalog", "restore", "disconnect"}) {
-		t.Fatalf("collision = %v, %v; calls=%v", conv, err, fc.sessions[0].toolCalls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstProof(conv)
+	fs, tool := fc.sessions[0], fc.create[0].Tools[0]
+	if _, err := invokeFile(tool, "clash", map[string]any{"path": "report.txt"}); err == nil || fs.disconnected ||
+		!slices.Equal(fs.toolCalls, []string{"clear", "catalog", "rebuild", "catalog", "restore"}) {
+		t.Fatalf("collision = %v; calls=%v", err, fs.toolCalls)
+	}
+	if err := conv.Send(context.Background(), agentapi.Prompt{Text: "after the clash"}); err != nil || len(fs.sent) != 1 || len(fs.toolCalls) != 10 {
+		t.Fatalf("send after the clash = %v; calls=%v", err, fs.toolCalls)
+	}
+	if _, err := invokeFile(tool, "still", map[string]any{"path": "report.txt"}); err == nil {
+		t.Fatal("a clashing declaration tool answered")
 	}
 }
 

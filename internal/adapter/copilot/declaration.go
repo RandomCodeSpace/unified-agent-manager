@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 )
@@ -51,6 +52,8 @@ type declarationCall struct {
 // After a change, reprove proves them again between turns. mu also guards
 // the tools' own call state.
 type toolGate struct {
+	// proof is held while a proof runs, so a message waits for one in flight.
+	proof      sync.Mutex
 	mu         sync.Mutex
 	stopCtx    context.Context
 	stopCancel context.CancelFunc
@@ -403,11 +406,31 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	return nil
 }
 
+// proveFirst starts the session's first proof without waiting for it. It
+// holds proof until the proof ends, so a message sent meanwhile waits for it
+// and the tools are never cleared during a turn. After a failed proof the
+// tools stay refused, and the next message tries again, as after a change.
+func (d *toolGate) proveFirst(session sdkSession, originals []copilot.Tool) {
+	d.proof.Lock()
+	go func() {
+		defer d.proof.Unlock()
+		err := d.catalog(d.stopCtx, session, originals...)
+		d.mu.Lock()
+		closed := d.closed
+		d.mu.Unlock()
+		if err != nil && !closed {
+			log.Warn("copilot uam tools stay refused until the next message", "conversation", session.ID(), "error", err)
+		}
+	}()
+}
+
 // reprove proves originals again after a tool list change refused them.
 // Call it only between turns, before uam sends the next message: catalog
 // clears the session's tools for a moment. After a failed proof they stay
 // refused, and the next message tries again.
 func (d *toolGate) reprove(ctx context.Context, session sdkSession, originals ...copilot.Tool) error {
+	d.proof.Lock()
+	defer d.proof.Unlock()
 	d.mu.Lock()
 	current := d.ready || d.closed
 	d.mu.Unlock()

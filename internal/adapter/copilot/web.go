@@ -979,13 +979,15 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		c.checkTodosLocked()
 	}
 	c.mu.Unlock()
-	if c.tools != nil {
-		if err := c.tools.catalog(ctx, sess, uamTools...); err != nil {
-			return nil, errors.Join(err, c.Close(ctx))
-		}
-	}
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
+	}
+	// The first proof waits for the runtime to start its tools, which
+	// includes connecting the built-in GitHub MCP server (over a second on
+	// CLI 1.0.93), so the open does not wait for it. The tools refuse calls
+	// until it passes, and a message waits for it.
+	if c.tools != nil {
+		c.tools.proveFirst(sess, uamTools)
 	}
 	c.control.Lock()
 	c.refreshExecution(ctx)
@@ -2242,8 +2244,9 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	if err := c.refreshCustomVision(ctx); err != nil {
 		return err
 	}
-	// No turn runs: the uam tools a tool list change refused are proved
-	// again. The message goes either way.
+	// No turn runs: once the first proof ends, the uam tools a failed proof
+	// or a tool list change refused are proved again. The message goes
+	// either way.
 	if c.tools != nil {
 		if err := c.tools.reprove(ctx, c.sess, c.uamTools...); err != nil {
 			log.Warn("copilot uam tools stay refused until the next message", "conversation", c.id, "error", err)
