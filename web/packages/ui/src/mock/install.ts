@@ -67,6 +67,16 @@ function json(status: number, body?: unknown): Response {
 
 const fail = (status: number, error: string, extra: Json = {}) => json(status, { error, ...extra });
 
+/**
+ * `window.setTimeout` for the mock's scripted waits, doing nothing once `window` is gone: a test environment
+ * removes it after its last test while a reply may still be under way, and the reply's next step would throw.
+ */
+function later(fn: () => void, ms: number) {
+  window.setTimeout(() => {
+    if (typeof window !== 'undefined') fn();
+  }, ms);
+}
+
 class FakeEventSource extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
@@ -88,7 +98,7 @@ class FakeEventSource extends EventTarget {
     const parsed = new URL(url, window.location.origin);
     this.session = parsed.searchParams.get('session');
     this.detail = parsed.pathname === '/api/events/detail' ? parsed.searchParams : null;
-    window.setTimeout(() => {
+    later(() => {
       if (this.readyState === 2) return;
       this.readyState = 1;
       this.onopen?.(new Event('open'));
@@ -315,7 +325,7 @@ export function install(): { received: Received[] } {
     if (parent?.tool && s.status === 'running') pushItem(t, { ...parent, tool: { ...parent.tool, status: done ? 'completed' : 'failed', output: done ? 'Finished. One file changed.' : error } });
     touch(t, { subagents_running: t.subagents.filter((x) => x.status === 'running').length });
   };
-  const wait = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+  const wait = (ms: number) => new Promise<void>((r) => later(r, ms));
 
   /** Streams reasoning, then an assistant reply, then a tool call, then a closing line, and completes the turn. */
   async function reply(t: MockTask, text: string, model = 'mai-code-1.1-flash') {
@@ -418,7 +428,7 @@ export function install(): { received: Received[] } {
         const agent = src.detail.get('agent');
         const items = t && agent ? t.agentItems[agent] : undefined;
         if (t && agent && items) {
-          window.setTimeout(() => {
+          later(() => {
             const start = Math.max(0, items.length - PAGE);
             src.emit('detail_snapshot', { seq, epoch, session_id: t.id, agent_id: agent, items: items.slice(start), before: start > 0 ? ARCHIVE_CURSOR + itemCursor(items[start].id) : '', archive: true });
             src.emit('detail_ready', { seq, epoch, session_id: t.id });
@@ -427,7 +437,7 @@ export function install(): { received: Received[] } {
         return () => sources.delete(src);
       }
       const emitSnapshot = () => src.emit('snapshot', { seq, projects: st.projects, settings: st.settings, usage: { quotas: [{ provider: 'copilot', type: 'ai_credits', used: 280, entitlement: 7000, remaining_percent: 96, unlimited: false, overage: 0 }], stale: false }, sessions: st.tasks.map(summary), session: t ? detail(t) : null });
-      if (slow) window.setTimeout(emitSnapshot, slow);
+      if (slow) later(emitSnapshot, slow);
       else emitSnapshot();
       if (t && !started.has(t.id)) {
         if (t.id === 't8') {
@@ -486,11 +496,11 @@ export function install(): { received: Received[] } {
       close() {
         if (socket.readyState === 3) return;
         socket.readyState = 3;
-        window.setTimeout(() => socket.onclose?.(new CloseEvent('close')), 0);
+        later(() => socket.onclose?.(new CloseEvent('close')), 0);
       },
     };
     const out = (text: string) => socket.readyState === 1 && socket.onmessage?.(new MessageEvent('message', { data: new TextEncoder().encode(text).buffer }));
-    window.setTimeout(() => {
+    later(() => {
       if (socket.readyState !== 0) return;
       socket.readyState = 1;
       socket.onopen?.(new Event('open'));
