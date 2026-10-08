@@ -80,6 +80,7 @@ func tokenCost(counts TokenCounts, rates *store.WebTokenPrice) *float64 {
 }
 
 func (s *Server) handleTokenPrices(w http.ResponseWriter, _ *http.Request) {
+	s.m.requestHarnessUsage() // Lists the models harnesses used.
 	s.m.mu.Lock()
 	models := map[string]ModelTokenPrice{}
 	add := func(provider, model string) { models[provider+"\x00"+model] = s.m.tokenPriceLocked(provider, model) }
