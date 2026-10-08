@@ -92,6 +92,17 @@ test('live tail updates while reading older messages do not move the reader or b
   bounded(state);
 });
 
+test('each item is measured once, however many frames re-bound the window', () => {
+  const reads = new Map();
+  const counted = record => new Proxy(record, { ownKeys(target) { reads.set(target.id, (reads.get(target.id) ?? 0) + 1); return Reflect.ownKeys(target); } });
+  let state = loaded([...transcript(200).map(counted), item('live', '')], 201);
+  // The snapshot bounds both the window and its live tail; the frames re-bound both again each time.
+  for (let seq = 11; seq <= 30; seq++) state = update(state, { name: 'delta', seq, item_id: 'live', kind: 'assistant', text: 'word ' });
+  assert.equal(state.detail.items.at(-1).text, 'word '.repeat(20));
+  assert.ok(reads.size >= TAIL_ITEMS);
+  assert.deepEqual(new Set(reads.values()), new Set([1]));
+});
+
 test('window snapshots preserve a huge message intact and directional cursors preserve Unicode identity', () => {
   const huge = item('巨大-🙂', '界'.repeat(ACTIVE_BYTES));
   let state = loaded([item('old'), huge], 2);
