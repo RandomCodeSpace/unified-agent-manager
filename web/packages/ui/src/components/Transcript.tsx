@@ -431,8 +431,9 @@ function liveAtFoot(items: Item[]): boolean {
 }
 
 /**
- * The live line at the foot of a running turn, where new output lands: the working mark and a
- * steady gerund ("Untangling…") while prose streams or the agent is between steps. The verb
+ * The live line at the foot of a running turn, where new output lands: a steady gerund
+ * ("Untangling…", words only: the working mark comes with a step or compacting) while prose
+ * streams or the agent is between steps. The verb
  * is picked from the id of the user message that began the turn, so it holds for the whole turn
  * and comes back the same after a reload. It steps aside while the last row is already live,
  * grows in when the turn starts and folds away when it ends or waits for the user; the turn's
@@ -455,7 +456,7 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
       <div className={cn(roomFor === turnId && 'min-h-[108px] pointer-coarse:min-h-[128px]')}>
         {current || (
           <div aria-hidden="true" className="flex h-6 items-center gap-2 text-caption text-muted">
-            {text && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
+            {text && (compacting || step) && (step?.tone === 'attention' && !compacting ? <MessageCircleQuestion aria-hidden="true" className="size-3.5 text-warning" /> : <WorkingMark className={compacting ? 'text-badge-violet' : undefined} />)}
             <span className={cn('min-w-0 truncate', compacting ? 'text-badge-violet' : step?.tone === 'attention' && 'text-warning')} title={step?.label}>
               {text}
             </span>
@@ -644,7 +645,8 @@ const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries
 
 /**
  * One run of work as a 24px `caption` row (DESIGN.md activity row): a chevron, or the
- * working mark while a call runs or thinking streams, and the summary, which updates in
+ * working mark while a call runs or thinking streams and the run is closed (open, the chevron
+ * turns `accent` and the running row inside has the mark), and the summary, which updates in
  * place as the run grows and truncates rather than wraps, so streaming never moves the
  * page. Failures turn it `error`, a call waiting for permission `attention`. It opens
  * through the shared height collapse onto the rows themselves, indented, each with its own
@@ -665,7 +667,7 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
     <div data-activity="" className={cn('flex flex-col', className)}>
       <button data-history-anchor={`activity-${identity}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} data-subagent-items={hosted.length ? JSON.stringify(hosted) : undefined} type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
         <span className="flex size-3.5 shrink-0 items-center justify-center">
-          {active ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />}
+          {active && !open ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90', active && 'text-accent')} />}
         </span>
         <span className="min-w-0 truncate tabular-nums">{label}</span>
       </button>
@@ -931,7 +933,7 @@ interface ToolRunProps {
   arrival: (id: string) => string;
 }
 
-/** Consecutive tools share a compact disclosure; prose and questions stay in time order. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
+/** Consecutive tools share a compact disclosure; prose and questions stay in time order. While a call runs the closed run has the working mark; open, its glyph turns `accent` and the call's row has it. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
 const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approvals, arrival }: ToolRunProps) {
   const [open, setOpen] = useDisclosure(`tools:${items[0]?.agent_id ?? ''}:${identity}`);
   const [opened, setOpened] = useState(open);
@@ -940,7 +942,7 @@ const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approv
   return (
     <div data-tool-run="">
       <button data-history-anchor={`tools-${identity}`} data-history-items={JSON.stringify(items.map(item => item.id))} type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
-        {active ? <WorkingMark /> : <Terminal aria-hidden="true" className="size-4 shrink-0" />}
+        {active && !open ? <WorkingMark /> : <Terminal aria-hidden="true" className={cn('size-4 shrink-0', active && 'text-accent')} />}
         <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
