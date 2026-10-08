@@ -3,6 +3,8 @@ package copilot
 import (
 	"context"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -258,5 +260,136 @@ func TestSDKSessionReadTodosFallsBack(t *testing.T) {
 	rt.set("session.plan.readSqlTodos", `{"rows":[]}`)
 	if _, err := s.ReadTodos(cancelled); err == nil || fallbacks() != before {
 		t.Fatalf("cancelled ReadTodos = %v, fallback reads %d", err, fallbacks()-before)
+	}
+}
+
+// turnEndOrder lists the turn states and todo lists ("todos") emitted
+// after the first n events, in order.
+func turnEndOrder(h webHarness, n int) []string {
+	var out []string
+	for _, e := range h.sink.all()[n:] {
+		switch e.Kind {
+		case agentapi.EventTodos:
+			out = append(out, "todos")
+		case agentapi.EventTurn:
+			out = append(out, string(e.Turn.State))
+		}
+	}
+	return out
+}
+
+// gateTodoReads makes each todo read report on entered, then wait for a
+// value on gate.
+func gateTodoReads(t *testing.T, s *fakeSession) (entered, gate chan struct{}) {
+	entered, gate = make(chan struct{}, 8), make(chan struct{})
+	s.mu.Lock()
+	s.todoHook = func() {
+		entered <- struct{}{}
+		<-gate
+	}
+	s.mu.Unlock()
+	t.Cleanup(func() { close(gate) })
+	return entered, gate
+}
+
+func TestWebTurnEndWaitsForTheTodoRead(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	order := func(n int, want ...string) {
+		t.Helper()
+		if got := turnEndOrder(h, n); !slices.Equal(got, want) {
+			t.Fatalf("events = %v, want %v", got, want)
+		}
+	}
+	// Nothing the reads have not seen: the turn ends at once.
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "hi"})
+	n := len(h.sink.all())
+	h.fs.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	order(n, "completed")
+
+	// A change no read has started on holds the end and reads at once,
+	// past the debounce; the list goes first, then the turn.
+	entered, gate := gateTodoReads(t, h.fs)
+	h.fs.setTodos(todoRow("a", "Step", "done"))
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
+	n = len(h.sink.all())
+	h.fs.onEvent(todosChanged("t1", "", 100))
+	h.fs.onEvent(ev("i2", &rpc.SessionIdleData{}))
+	<-entered
+	order(n)
+	gate <- struct{}{}
+	waitFor(t, "the turn end", func() bool { return len(turnEndOrder(h, n)) == 2 })
+	order(n, "todos", "completed")
+	time.Sleep(2 * todosDebounce)
+	if reads := h.fs.todoReadCount(); reads != 1 {
+		t.Fatalf("reads = %d: the debounce read was not dropped", reads)
+	}
+
+	// A read running at the end may have missed a change: the end waits
+	// for the read after it.
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "third"})
+	n = len(h.sink.all())
+	h.fs.onEvent(todosChanged("t2", "", 101))
+	<-entered
+	h.fs.setTodos(todoRow("a", "Step", "done"), todoRow("b", "Next", "pending"))
+	h.fs.onEvent(ev("i3", &rpc.SessionIdleData{}))
+	gate <- struct{}{}
+	<-entered
+	order(n, "todos")
+	gate <- struct{}{}
+	waitFor(t, "the turn end", func() bool { return len(turnEndOrder(h, n)) == 2 })
+	order(n, "todos", "completed")
+}
+
+func TestWebTurnEndIsReleasedByAStallTheNextTurnAndClose(t *testing.T) {
+	h := openWeb(t)
+	ctx := context.Background()
+	entered, gate := gateTodoReads(t, h.fs)
+	h.fs.setTodos(todoRow("a", "Step", "in_progress"))
+	ends := 0
+	hold := func() int {
+		t.Helper()
+		ends++
+		n := len(h.sink.all())
+		h.fs.onEvent(todosChanged("t"+strconv.Itoa(ends), "", 100))
+		h.fs.onEvent(ev("i"+strconv.Itoa(ends), &rpc.SessionIdleData{}))
+		<-entered
+		if got := turnEndOrder(h, n); len(got) != 0 {
+			t.Fatalf("the turn ended before its list was read: %v", got)
+		}
+		return n
+	}
+
+	// A stalled read lets the turn end go after todosTurnWait; its list
+	// follows when it comes.
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "hi"})
+	held := time.Now()
+	n := hold()
+	waitFor(t, "the released turn end", func() bool { return len(turnEndOrder(h, n)) == 1 })
+	if waited := time.Since(held); waited < todosTurnWait*9/10 {
+		t.Fatalf("released after %v", waited)
+	}
+	gate <- struct{}{}
+	waitFor(t, "the late list", func() bool { return len(turnEndOrder(h, n)) == 2 })
+	if got := turnEndOrder(h, n); !slices.Equal(got, []string{"completed", "todos"}) {
+		t.Fatalf("events = %v", got)
+	}
+
+	// The next turn's start emits a held end first.
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "again"})
+	n = hold()
+	_ = h.conv.Send(ctx, agentapi.Prompt{Text: "third"})
+	if got := turnEndOrder(h, n); !slices.Equal(got, []string{"completed", "working"}) {
+		t.Fatalf("events = %v", got)
+	}
+	gate <- struct{}{}
+
+	// So does closing the conversation.
+	n = hold()
+	if err := h.conv.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := turnEndOrder(h, n); !slices.Equal(got, []string{"completed"}) {
+		t.Fatalf("events = %v", got)
 	}
 }

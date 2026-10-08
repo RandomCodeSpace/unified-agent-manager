@@ -367,6 +367,9 @@ type TurnTiming struct {
 	InputTokens  int64 `json:"input_tokens,omitempty"`
 	OutputTokens int64 `json:"output_tokens,omitempty"`
 	GenerationMS int64 `json:"generation_ms,omitempty"`
+	// Todo counts the todo list as the turn left it, for a turn that
+	// changed it; its rows are kept beside the Task's uploads.
+	Todo TodoCounts `json:"todo,omitzero"`
 }
 
 // TodoCounts counts the rows of a conversation's todo list by status: Open

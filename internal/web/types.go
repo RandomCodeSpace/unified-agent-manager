@@ -347,6 +347,27 @@ type TodoView struct {
 
 type TodoCounts = store.TodoCounts
 
+// TurnTodos is the todo list as a turn that changed it left it, kept when
+// the turn ended (turn_todos.go): the rows it changed and the rows still
+// open, blocked, in progress and pending first, then done rows, newest
+// first, at most maxSnapshotTodos.
+type TurnTodos struct {
+	TimingID string    `json:"timing_id"`
+	EndedAt  time.Time `json:"ended_at"`
+	// Intent is the turn's last intent.
+	Intent string         `json:"intent,omitempty"`
+	Todos  []snapshotTodo `json:"todos"`
+	// Counts counts every row in scope; Omitted those past Todos.
+	Counts TodoCounts `json:"counts"`
+}
+
+// snapshotTodo is a kept row with the name its subagent had at the turn's
+// end.
+type snapshotTodo struct {
+	agentapi.Todo
+	Agent string `json:"agent,omitempty"`
+}
+
 // DiffStat totals a list of changed files.
 type DiffStat struct {
 	Files     int `json:"files"`

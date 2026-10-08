@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { METER_ROWS, todoCue, todoLine, todoSections, todoSentence, todoWord } from '../src/lib/todos.ts';
+import { KEPT_SNAPSHOTS, METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoCue, todoLine, todoSections, todoSentence, todoWord, turnTodoName } from '../src/lib/todos.ts';
 
 const row = (id, status, extra = {}) => ({ id, title: `Row ${id}`, status, ...extra });
 const view = (todos, extra = {}) => {
@@ -56,4 +56,33 @@ test('the reader\'s sections: Now first by the Now row, then Blocked, Next and D
   const sections = todoSections(view(todos, { now: 'd' }));
   assert.deepEqual(sections.map((s) => [s.label, s.todos.map((t) => t.id)]), [['Now', ['d', 'b']], ['Next', ['c']], ['Done', ['a', 'e']]]);
   assert.deepEqual(['in_progress', 'blocked', 'pending', 'done'].map(todoWord), ['Now', 'Blocked', 'Next', 'Done']);
+});
+
+test('a reply\'s foot names every count it has: done of total, then blocked and left open only when there are some', () => {
+  assert.equal(turnTodoName({ done: 7, total: 7 }), 'Todo at the end of this turn: 7 of 7 done');
+  assert.equal(turnTodoName({ total: 3, open: 3 }), 'Todo at the end of this turn: 0 of 3 done, 3 left open');
+  assert.equal(turnTodoName({ done: 5, total: 7, blocked: 1, open: 1 }), 'Todo at the end of this turn: 5 of 7 done, 1 blocked, 1 left open');
+  assert.equal(turnTodoName({ done: 1, total: 3, open: 2 }), 'Todo at the end of this turn: 1 of 3 done, 2 left open');
+});
+
+test('the kept list: Blocked, Left open and Done in the kept order; its facts say when, all done, and the rows not kept', () => {
+  const todos = [row('z', 'blocked'), row('y', 'in_progress'), row('p', 'pending'), row('w', 'done'), row('x', 'done')];
+  assert.deepEqual(snapshotSections(todos).map((s) => [s.label, s.todos.map((t) => t.id)]), [['Blocked', ['z']], ['Left open', ['y', 'p']], ['Done', ['w', 'x']]]);
+  assert.deepEqual(snapshotSections([row('w', 'done')]).map((s) => s.label), ['Done']);
+  assert.deepEqual(snapshotFacts({ done: 2, total: 5, blocked: 1, open: 2 }, '14:02'), ['As this turn left it, 14:02']);
+  assert.deepEqual(snapshotFacts({ done: 7, total: 7 }, '9:15'), ['As this turn left it, 9:15', 'all done']);
+  assert.deepEqual(snapshotFacts({ done: 0, total: 62, open: 62, omitted: 12 }, '9:15'), ['As this turn left it, 9:15', '12 more not shown']);
+});
+
+test('kept lists stay in memory up to a few, the least recently read going first', () => {
+  const snap = (id) => ({ timing_id: id, ended_at: '', todos: [], counts: {} });
+  for (let i = 0; i < KEPT_SNAPSHOTS; i++) keepSnapshot('task', `t${i}`, snap(`t${i}`));
+  // Reading t0 makes t1 the oldest.
+  assert.equal(recallSnapshot('task', 't0')?.timing_id, 't0');
+  keepSnapshot('task', 'new', snap('new'));
+  assert.equal(recallSnapshot('task', 't1'), undefined);
+  assert.equal(recallSnapshot('task', 't0')?.timing_id, 't0');
+  assert.equal(recallSnapshot('task', 'new')?.timing_id, 'new');
+  // Keyed by Task too.
+  assert.equal(recallSnapshot('other', 'new'), undefined);
 });

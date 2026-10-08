@@ -770,6 +770,9 @@ export interface TodoCounts { done?: number; total?: number; blocked?: number; o
  */
 export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omitted?: number; counts: TodoCounts; now?: string }
 
+/** A turn's todo list as uam kept it when the turn ended: the rows it changed and those still open, at most 50 (`counts.omitted` past them), each with the name its subagent had then. */
+export interface TurnTodos { timing_id: string; ended_at: string; intent?: string; todos: (Todo & { agent?: string })[]; counts: TodoCounts }
+
 /** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, and the todo list; never persisted. */
 export interface TurnActivity { intent?: string; retry?: Retry; todos: TodoView }
 
@@ -890,6 +893,8 @@ export interface TurnTiming {
   input_tokens?: number;
   output_tokens?: number;
   generation_ms?: number;
+  /** The todo list as the turn left it, for a turn that changed it; its rows come from `turnTodos`. */
+  todo?: TodoCounts;
 }
 
 export interface Representation {
@@ -1609,6 +1614,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     respond: (id: string, iid: string, answer: Answer) =>
       call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
+    turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
       call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),
     changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),

@@ -461,6 +461,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   one in Copilot's session `todos` table for work of more than two steps,
   reads it when it changes and when the Task's conversation reopens, and
   sends at most 100 rows with the counts of all.
+- **Each turn's todo list**: a turn that changed the list keeps it as it
+  left it. Its last reply's foot reads "Todo 5/7 · 1 blocked · 1 left open"
+  and stays on screen; clicking it opens that list by sections Blocked, Left
+  open and Done: the rows the turn changed and the rows still open, at most
+  50. The end of a turn waits up to a second for Copilot's last change to
+  the list to be read. The counts are saved with the turn's timing
+  (`turn_timings[].todo`), the rows in `turn-todos.jsonl` beside the Task's
+  attachments, which is deleted with the Task.
+  `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
+  settled or archived Task, or 404 when none were kept.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
   UAM, such as signing in again in Settings, and a link only when it is
   https) and its authentication, model, MCP and notification messages show
