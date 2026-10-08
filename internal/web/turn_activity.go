@@ -174,10 +174,13 @@ func todoCounts(rows []agentapi.Todo) TodoCounts {
 			c.Done++
 		case agentapi.TodoBlocked:
 			c.Blocked++
+		case agentapi.TodoInProgress:
+			c.InProgress++
 		default:
-			c.Open++
+			c.Pending++
 		}
 	}
+	c.Open = c.InProgress + c.Pending
 	return c
 }
 

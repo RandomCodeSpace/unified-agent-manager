@@ -437,7 +437,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       outcome: 'Explained how a dumb terminal is reported',
       created_at: ago(60),
       updated_at: ago(42),
-      turn_timings: [{ id: 'tt-t3', user_item_id: 'i1', started_at: ago(60), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200, todo: { done: 3, total: 5, blocked: 1, open: 1 } }],
+      turn_timings: [{ id: 'tt-t3', user_item_id: 'i1', started_at: ago(60), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200, todo: { done: 3, total: 6, blocked: 1, in_progress: 1, pending: 1, open: 2 } }],
       items: [
         { id: 'i1', kind: 'user', time: ago(60), text: 'Add a line to `uam doctor` that reports the detected terminal and glyph set.' },
         { id: 'r1', kind: 'reasoning', time: ago(58), text: '`doctor.go` prints rows through `printRow`; the terminal probe already exposes `term.Describe()`. One line plus a test.' },
@@ -561,7 +561,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: '',
       state: 'working',
       subagents_running: 2,
-      // The agents' todo list: two subagents' rows in progress, one blocked.
+      // The agents' todo list in all four stages: two subagents' rows in progress, one blocked, one to do.
       turn_activity: {
         todos: {
           known: true,
@@ -574,7 +574,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
             { id: 'headings', title: 'Fix the heading order', status: 'done', agent_id: 'a4', changed_at: ago(9) },
             { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending' },
           ],
-          counts: { done: 2, total: 6, blocked: 1, open: 3 },
+          counts: { done: 2, total: 6, blocked: 1, in_progress: 2, pending: 1, open: 3 },
           now: 'contrast',
         },
       },
@@ -1269,14 +1269,15 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
     },
     tasks, changes, commands, files, wholeTexts,
-    // t3's turn: one row blocked, one left for later, a subagent's row done.
+    // t3's turn, in all four stages: one row blocked, one cut short in progress, one left for later, a subagent's row done.
     turnTodos: {
       'tt-t3': {
         timing_id: 'tt-t3',
         ended_at: ago(42),
-        counts: { done: 3, total: 5, blocked: 1, open: 1 },
+        counts: { done: 3, total: 6, blocked: 1, in_progress: 1, pending: 1, open: 2 },
         todos: [
           { id: 'win', title: 'Check the line on Windows Terminal', status: 'blocked', note: 'No Windows machine is reachable from this session.', changed_at: ago(43) },
+          { id: 'mac', title: 'Check the line in macOS Terminal', status: 'in_progress', changed_at: ago(44) },
           { id: 'docs', title: 'Mention the line in docs/doctor.md', status: 'pending' },
           { id: 'test', title: 'Test the new doctor line', status: 'done', changed_at: ago(50) },
           { id: 'edit', title: 'Print the terminal and glyph set in uam doctor', status: 'done', changed_at: ago(55) },

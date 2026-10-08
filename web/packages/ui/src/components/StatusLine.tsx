@@ -1,13 +1,13 @@
 // The status line (DESIGN.md Status line): one quiet caption line over the composer. While the
 // Task works it says what the agent says it is doing (`assistant.intent`, else the turn's verb)
 // and for how long, and a model call being retried; after a stop it says why, until the next
-// turn. With a todo list the agents keep, it adds how far it got, the row in progress and the
-// blocked rows, and opens the list (`TodoReader`). It sits in the dock's overlap, outside the
+// turn. With a todo list the agents keep, it adds how far it got, the row in progress and each
+// open stage's count, and opens the list (`TodoReader`). It sits in the dock's overlap, outside the
 // scroller, so coming and going never moves the composer or the transcript. It is still: the ring
 // stays at the Task's state glyph and the running step. A subagent's retry stands under its row
 // instead (`SubagentRetry`).
 
-import { Ban, CircleStop, ListChecks, Minus, Pause, RotateCw } from 'lucide-react';
+import { CircleStop, ListChecks, Minus, Pause, RotateCw } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { LIVE, readOnly, type Item, type Retry, type SessionDetail, type TurnTiming } from '../api';
 import { cn } from '../lib/cn';
@@ -16,7 +16,7 @@ import { todoLine, todoSentence, type TodoLine } from '../lib/todos';
 import { elapsedSince, turnElapsed } from '../lib/transcript';
 import { turnVerb } from '../lib/verbs';
 import { Dot } from './common';
-import { PHONE, TodoMeter, TodoReader } from './Todos';
+import { PHONE, TodoMeter, TodoReader, TodoStages } from './Todos';
 
 /** What the line says. */
 export type Line =
@@ -42,7 +42,7 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     const key = turn ? turn.user_item_id : lastUser(items) ?? lastUser(identityItems) ?? 'start';
     const lead = activity?.intent || (key ? turnVerb(key) : '');
     const todo = todoLine(activity?.todos, turn?.started_at);
-    // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again, and its "+N" follows the lead.
+    // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
     return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
   }
   if (readOnly(session)) return null;
@@ -104,7 +104,6 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
             {shown.kind === 'working' ? (
               <>
                 {shown.lead || 'Working'}
-                {leadMore(shown) > 0 && `, and ${leadMore(shown)} more in progress`}
                 <ClockWords since={since} timing={timing} />
                 {shown.todo && todoSentence(shown.todo)}
                 {shown.retry && retrySentence(shown.retry)}
@@ -130,19 +129,14 @@ function retrySentence(retry: Retry): string {
   return `. ${lead}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }
 
-/** How many more rows are in progress when the lead is the row the work is at ("Now:" gave way to it). */
-const leadMore = (line: Extract<Line, { kind: 'working' }>) => (line.todo?.kind === 'list' && !line.todo.now ? line.todo.more : 0);
-
 function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind: 'working' }>; since?: string; timing?: TurnTiming }>) {
   const retry = line.retry && retryWords(line.retry);
-  const more = leadMore(line);
   return (
     <>
       {/* Still: this line says what, the ring is elsewhere. */}
       <Dot tone="accent" className={cn('size-1.5', line.compacting && 'bg-badge-violet')} />
       {/* A turn without a linked message (yet, or ever: Copilot going on by itself) reads as its name does. */}
       <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead || 'Working'}…</span>
-      {more > 0 && <span className="shrink-0 tabular-nums text-muted max-sm:hidden">+{more}</span>}
       <Clock since={since} timing={timing} />
       {line.todo && <TodoSegment todo={line.todo} />}
       {retry && (
@@ -157,20 +151,12 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
   );
 }
 
-/** "Todo 2/7", the meter, "Now: …" with "+2" when more rows are in progress, and "⊘ 1 blocked"; or the last turn's open rows. A phone keeps the counts and the blocked rows. */
+/**
+ * "Todo 2/7", the meter, "Now: …" (or "from the last turn" while this turn has not touched it),
+ * then each open stage's count: "◉ 2 in progress · ⊘ 1 blocked · ○ 3 to do". A phone keeps one
+ * line: the glyph, "2/7" and each stage's glyph and number in its colour; the words are in the name.
+ */
 function TodoSegment({ todo }: Readonly<{ todo: TodoLine }>) {
-  if (todo.kind === 'carried') {
-    return (
-      <>
-        <Sep />
-        <ListChecks className="size-3.5 shrink-0 text-muted" />
-        <span className="shrink-0 text-body max-sm:hidden">
-          Todo <span className="text-faint">·</span>
-        </span>
-        <span className="min-w-0 truncate text-body">{todo.open} open from the last turn</span>
-      </>
-    );
-  }
   return (
     <>
       <Sep />
@@ -180,22 +166,17 @@ function TodoSegment({ todo }: Readonly<{ todo: TodoLine }>) {
         {todo.done}/{todo.total}
       </span>
       {todo.meter && <TodoMeter statuses={todo.meter} className="max-sm:hidden" />}
-      {todo.now && (
-        // The row in progress gives way before the lead does.
-        <span className="min-w-0 shrink-[4] truncate text-body max-sm:hidden">
-          <span className="text-muted">Now:</span> {todo.now}
-        </span>
-      )}
-      {todo.now && todo.more > 0 && <span className="shrink-0 tabular-nums text-muted max-sm:hidden">+{todo.more}</span>}
-      {todo.blocked > 0 && (
-        <>
-          <Sep />
-          <span className="flex shrink-0 items-center gap-1 text-warning">
-            <Ban className="size-3" />
-            {todo.blocked} blocked
+      {/* The row in progress gives way before the lead does. */}
+      {todo.kind === 'carried' ? (
+        <span className="min-w-0 shrink-[4] truncate max-sm:hidden">from the last turn</span>
+      ) : (
+        todo.now && (
+          <span className="min-w-0 shrink-[4] truncate text-body max-sm:hidden">
+            <span className="text-muted">Now:</span> {todo.now}
           </span>
-        </>
+        )
       )}
+      <TodoStages tally={todo} sep={<span className="shrink-0 text-faint max-sm:hidden">·</span>} />
     </>
   );
 }

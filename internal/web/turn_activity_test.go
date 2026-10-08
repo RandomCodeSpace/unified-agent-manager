@@ -207,7 +207,7 @@ func TestTurnActivityTodosCountsNowAndCap(t *testing.T) {
 	if !v.Known || v.Touched || len(v.Todos) != maxTodoRows || v.Omitted != len(rows)-maxTodoRows {
 		t.Fatalf("view: known %v touched %v rows %d omitted %d", v.Known, v.Touched, len(v.Todos), v.Omitted)
 	}
-	if want := (TodoCounts{Total: len(rows), Done: 1 + maxTodoRows, Blocked: 1, Open: 6}); v.Counts != want {
+	if want := (TodoCounts{Total: len(rows), Done: 1 + maxTodoRows, Blocked: 1, InProgress: 4, Pending: 2, Open: 6}); v.Counts != want {
 		t.Fatalf("counts = %+v, want %+v", v.Counts, want)
 	}
 	// The latest change in progress, the main agent's at a tie, then the first.

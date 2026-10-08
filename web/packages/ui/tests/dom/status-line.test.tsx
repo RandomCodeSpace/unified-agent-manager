@@ -179,40 +179,62 @@ const listOf = (todos: Todo[], extra: Partial<TodoView> = {}): TodoView => ({
   known: true,
   touched: true,
   todos,
-  counts: { total: todos.length, done: todos.filter((t) => t.status === 'done').length, blocked: todos.filter((t) => t.status === 'blocked').length, open: todos.filter((t) => t.status === 'pending' || t.status === 'in_progress').length },
+  counts: {
+    total: todos.length,
+    done: todos.filter((t) => t.status === 'done').length,
+    blocked: todos.filter((t) => t.status === 'blocked').length,
+    in_progress: todos.filter((t) => t.status === 'in_progress').length,
+    pending: todos.filter((t) => t.status === 'pending').length,
+    open: todos.filter((t) => t.status === 'pending' || t.status === 'in_progress').length,
+  },
   now: 'b',
   ...extra,
 });
 const withTodos = (todos: TodoView, intent = 'Working on the site', extra: Partial<SessionDetail> = {}) => task({ turn_activity: { intent, todos }, subagents: [{ id: 'sub-1', name: 'Index page writer', status: 'running' } as Subagent], ...extra });
 
-test('the todo segment: counts, meter, Now with how many more, blocked in words; Now gives way to an intent that says it', () => {
+/** A stage's count on screen: its glyph, its number and its word (which a phone drops), in its colour. */
+const stage = (word: string) => {
+  const words = screen.getByText(word);
+  const count = words.parentElement!;
+  return { text: count.textContent, tone: count.className.match(/text-(accent|warning|muted|success)/)?.[1], glyph: !!count.querySelector('svg'), phoneDrops: words.className.includes('max-sm:hidden') };
+};
+
+test('the todo segment: done of total, meter, Now, every open stage counted in its colour behind its glyph; Now gives way to an intent that says it', () => {
   vi.useFakeTimers();
   vi.setSystemTime(start + 125_000);
   const view = render(draw(withTodos(listOf(rows()))));
-  const button = screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo 1 of 4 done, 1 blocked. Now: Build the index page, and 1 more in progress. Show the list' });
+  const button = screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Now: Build the index page. Show the list' });
   expect(button.getAttribute('aria-haspopup')).toBe('dialog');
   expect(button.getAttribute('aria-expanded')).toBe('false');
   expect(button.textContent).toContain('Todo 1/4');
   expect(screen.getByText('Build the index page')).toBeTruthy();
-  expect(screen.getByText('+1')).toBeTruthy();
-  // Blocked is a glyph and a word, never colour alone.
-  expect(screen.getByText('1 blocked')).toBeTruthy();
+  // The in-progress count says how many more there are: no "+1" beside Now.
+  expect(screen.queryByText('+1')).toBeNull();
+  // Each stage is a glyph, a number and a word, never colour alone; a phone keeps the glyph and the number.
+  expect(stage('in progress')).toEqual({ text: '2 in progress', tone: 'accent', glyph: true, phoneDrops: true });
+  expect(stage('blocked')).toEqual({ text: '1 blocked', tone: 'warning', glyph: true, phoneDrops: true });
+  // A stage with no rows is left out.
+  expect(screen.queryByText('to do')).toBeNull();
   // The meter: one segment per row.
   expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
-  // Copilot's intent is the row in progress: it leads, and "Now:" goes; how many more are in progress follows the lead.
+  // Copilot's intent is the row in progress: it leads, and "Now:" goes; the in-progress count says how many more there are, so no "+1" follows the lead.
   view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, and 1 more in progress, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
-  expect(screen.getByText('Build the index page…').nextElementSibling?.textContent).toBe('+1');
-  // The only row in progress: nothing follows the lead.
-  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
   expect(screen.queryByText('+1')).toBeNull();
-  // The last turn's list, not touched yet: its open rows, and the reader still opens.
+  expect(stage('in progress').text).toBe('2 in progress');
+  // The only row in progress: the count still says one is in progress.
+  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 in progress, 1 blocked, 1 to do. Show the list' })).toBeTruthy();
+  expect(screen.queryByText('+1')).toBeNull();
+  expect(stage('in progress').text).toBe('1 in progress');
+  expect(stage('to do')).toEqual({ text: '1 to do', tone: 'muted', glyph: true, phoneDrops: true });
+  // The last turn's list, not touched yet: the same counts, and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
-  expect(screen.getByText('3 open from the last turn')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo: 3 open from the last turn. Show the list' })).toBeTruthy();
+  expect(screen.getByText('from the last turn')).toBeTruthy();
+  expect(stage('in progress').text).toBe('2 in progress');
+  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo from the last turn: 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   // No list: the line jumps to the bottom as before.
   view.rerender(draw(withTodos({ known: false, touched: false, todos: [], counts: {} })));
   expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Jump to bottom' }).getAttribute('aria-haspopup')).toBeNull();
@@ -228,7 +250,12 @@ test('the reader opens on its heading beside the line, keeps focus inside, and E
   expect(line.getAttribute('aria-controls')).toBe(reader.id);
   await waitFor(() => expect(document.activeElement).toBe(within(reader).getByRole('heading', { name: 'Todo' })));
   // Sections with their rows; states and the subagent in words.
-  expect(within(reader).getByRole('region', { name: 'Now' }).textContent).toBe('Now2Build the index page, by Index page writer, NowBuild the about page, Now');
+  expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'Done']);
+  expect(within(reader).getByRole('region', { name: 'In progress' }).textContent).toBe('In progress2Build the index page, by Index page writer, In progressBuild the about page, In progress');
+  // Each eyebrow carries its stage's glyph, and its count in the stage's colour.
+  const eyebrow = within(reader).getByRole('heading', { name: 'Blocked' }).parentElement!;
+  expect(eyebrow.querySelector('svg.text-warning')).toBeTruthy();
+  expect(within(eyebrow).getByText('1').className).toContain('text-warning');
   expect(within(reader).getByRole('region', { name: 'Blocked' }).textContent).toContain('No token on this machine');
   expect(within(reader).getByText('Esc')).toBeTruthy();
   expect(within(reader).getByText('To change it, ask in the chat')).toBeTruthy();
@@ -282,7 +309,7 @@ test('the live region says a row done or newly blocked, at most one every 5s', (
   expect(region()).toBe('Working');
   view.rerender(draw(withTodos(listOf(rows([{ changed_at: at(7) }])))));
   act(() => vi.advanceTimersByTime(0));
-  expect(region()).toBe('1 of 4 done');
+  expect(region()).toBe('1 of 4 done, 2 in progress, 1 blocked');
   // A row blocked right after waits for the slot.
   view.rerender(draw(withTodos(listOf(rows([{ changed_at: at(7) }, {}, {}, { changed_at: at(8) }])))));
   act(() => vi.advanceTimersByTime(4000));

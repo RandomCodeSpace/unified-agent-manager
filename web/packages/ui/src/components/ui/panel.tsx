@@ -15,11 +15,12 @@ export function PanelHead({ scrolled, className, children }: Readonly<{ scrolled
   );
 }
 
-/** One section of a panel's body: an eyebrow label, a muted line beside it, an action at its end. */
-export function PanelSection({ label, meta, action, className, children }: Readonly<{ label: string; meta?: ReactNode; action?: ReactNode; className?: string; children: ReactNode }>) {
+/** One section of a panel's body: an eyebrow label behind an optional glyph, a muted line beside it, an action at its end. */
+export function PanelSection({ label, icon, meta, action, className, children }: Readonly<{ label: string; icon?: ReactNode; meta?: ReactNode; action?: ReactNode; className?: string; children: ReactNode }>) {
   return (
     <section aria-label={label} className={cn('flex min-w-0 flex-col gap-1.5', className)}>
       <div className="flex h-6 min-w-0 items-center gap-2">
+        {icon}
         <h3 className="shrink-0 text-eyebrow uppercase text-muted">{label}</h3>
         {meta && <span className="min-w-0 truncate text-caption text-muted">{meta}</span>}
         <span className="flex-1" />

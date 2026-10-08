@@ -7,12 +7,12 @@
 
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Ban, Check, Circle, CircleDot, ListChecks, X } from 'lucide-react';
-import { useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { Ban, Check, Circle, CircleDot, ListChecks, X, type LucideIcon } from 'lucide-react';
+import { Fragment, useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, isStatus, type Subagent, type Todo, type TodoCounts, type TodoStatus, type TodoView, type TurnTiming, type TurnTodos } from '../api';
 import { cn } from '../lib/cn';
-import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoSections, todoWord, turnTodoName, type TodoSection } from '../lib/todos';
+import { METER_ROWS, keepSnapshot, recallSnapshot, snapshotFacts, snapshotSections, todoSections, todoTally, todoWord, turnTodoName, type TodoSection, type TodoTally } from '../lib/todos';
 import { SessionContext, clockTime } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet, DOT as IDENTITY_DOT, LiftedRow, useSubagentReplies } from './Subagents';
@@ -23,26 +23,59 @@ import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 /** The narrow layout, where the reader is a sheet (as the subagents' is). */
 export const PHONE = '(max-width: 639px)';
 
-const SEGMENT: Record<TodoStatus, string> = { done: 'bg-success', in_progress: 'bg-accent', blocked: 'bg-warning', pending: 'bg-hairline-strong' };
+/** Each stage's colour, the same on every surface: its words, numbers and glyph (`text`) and its meter segments (`fill`). */
+const TONE: Record<TodoStatus, { text: string; fill: string }> = {
+  in_progress: { text: 'text-accent', fill: 'bg-accent' },
+  blocked: { text: 'text-warning', fill: 'bg-warning' },
+  pending: { text: 'text-muted', fill: 'bg-muted' },
+  done: { text: 'text-success', fill: 'bg-success' },
+};
+
+const GLYPH: Record<TodoStatus, LucideIcon> = { in_progress: CircleDot, blocked: Ban, pending: Circle, done: Check };
 
 /** One short segment per row in its state's colour; the words beside it always say the same. */
 export function TodoMeter({ statuses, className }: Readonly<{ statuses: readonly TodoStatus[]; className?: string }>) {
   return (
     <span aria-hidden="true" className={cn('flex shrink-0 items-center gap-0.5', className)}>
       {statuses.map((status, i) => (
-        <span key={i} className={cn('h-1 w-3 rounded-full', SEGMENT[status])} />
+        <span key={i} className={cn('h-1 w-3 rounded-full', TONE[status].fill)} />
       ))}
     </span>
   );
 }
 
-/** A row's state as a glyph, never a ring (the ring stays at the running step); `⊘` for blocked. */
-function TodoMark({ status }: Readonly<{ status: TodoStatus }>) {
-  const c = 'size-3.5 shrink-0';
-  if (status === 'done') return <Check aria-hidden="true" className={cn(c, 'text-success')} strokeWidth={2.5} />;
-  if (status === 'in_progress') return <CircleDot aria-hidden="true" className={cn(c, 'text-accent')} />;
-  if (status === 'blocked') return <Ban aria-hidden="true" className={cn(c, 'text-warning')} />;
-  return <Circle aria-hidden="true" className={cn(c, 'text-faint')} />;
+/** A stage's glyph in its colour, never a ring (the ring stays at the running step): `◉` in progress, `⊘` blocked, `○` to do, `✓` done. */
+function TodoMark({ status, className }: Readonly<{ status: TodoStatus; className?: string }>) {
+  const Glyph = GLYPH[status];
+  return <Glyph aria-hidden="true" className={cn('size-3.5 shrink-0', TONE[status].text, className)} strokeWidth={status === 'done' ? 2.5 : undefined} />;
+}
+
+/**
+ * The open stages' counts after "2/7", each behind `sep`, its glyph and number in its colour, then
+ * its words: "◉ 2 in progress · ⊘ 1 blocked · ○ 3 to do"; counts kept before the split add "1 open".
+ * A phone drops the words, never the glyphs (the names say them all), so no count is colour alone.
+ */
+export function TodoStages({ tally, sep }: Readonly<{ tally: TodoTally; sep: ReactNode }>) {
+  return (
+    <>
+      {tally.stages.map(({ status, n }) => (
+        <Fragment key={status}>
+          {sep}
+          <span className={cn('flex shrink-0 items-center gap-1 tabular-nums', TONE[status].text)}>
+            <TodoMark status={status} className="size-3" />
+            {n}
+            <span className="max-sm:hidden"> {todoWord(status).toLowerCase()}</span>
+          </span>
+        </Fragment>
+      ))}
+      {tally.open > 0 && (
+        <>
+          {sep}
+          <span className="shrink-0 tabular-nums">{tally.open} open</span>
+        </>
+      )}
+    </>
+  );
 }
 
 /** The subagent that first wrote a row: its identity dot, as on its row, and its name. */
@@ -97,7 +130,16 @@ function TodoBody({ parts, sheet, heading, close }: Readonly<{ parts: ReaderPart
       </PanelHead>
       <div className="flex min-h-0 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
         {parts.sections.map((section) => (
-          <PanelSection key={section.label} label={section.label} meta={`${section.todos.length}`}>
+          <PanelSection
+            key={section.status}
+            label={section.label}
+            icon={
+              <span className="flex w-4 shrink-0 justify-center">
+                <TodoMark status={section.status} className="size-3" />
+              </span>
+            }
+            meta={<span className={cn('tabular-nums', TONE[section.status].text)}>{section.todos.length}</span>}
+          >
             <ul>
               {section.todos.map((todo) => (
                 <TodoRow key={todo.id} todo={todo} name={todo.agent_id ? parts.name(todo) : undefined} />
@@ -125,8 +167,8 @@ function TodoBody({ parts, sheet, heading, close }: Readonly<{ parts: ReaderPart
 const dim = cn(backdropClass, 'duration-160');
 
 /**
- * The live list beside `anchor`, the status line: Now, Blocked, Next and Done; `view.touched`
- * unset says the running turn has not changed it yet.
+ * The live list beside `anchor`, the status line: In progress, Blocked, To do and Done;
+ * `view.touched` unset says the running turn has not changed it yet.
  */
 export function TodoReader({ view, subagents, ...shell }: Readonly<{
   id: string;
@@ -216,9 +258,10 @@ function Reader({ id, open, phone, anchor, side, label, parts, onClose, onClosed
 }
 
 /**
- * A reply's foot after its tokens, for a turn that changed the todo list: "Todo 5/7 · 1 blocked
- * · 1 left open" (a phone drops "Todo" and "left" into the button's name). It opens the list as
- * the turn left it, which uam kept when the turn ended; a list read stays in a small memory cache.
+ * A reply's foot after its tokens, for a turn that changed the todo list: "Todo 5/7 · 1 in
+ * progress · 1 blocked · 1 to do" (a phone drops "Todo" and the stages' words into the button's
+ * name). It opens the list as the turn left it, which uam kept when the turn ended; a list read
+ * stays in a small memory cache.
  */
 export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
   const api = useApi();
@@ -231,7 +274,7 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
   useEffect(() => () => reading.current?.abort(), []);
   const counts = timing.todo;
   if (!sessionId || !counts?.total) return null;
-  const { done = 0, total = 0, blocked = 0, open = 0 } = counts;
+  const tally = todoTally(counts);
   const show = () => {
     setReader({ open: true, phone: window.matchMedia(PHONE).matches });
     reading.current?.abort();
@@ -277,18 +320,9 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
         <ListChecks aria-hidden="true" className="size-3 shrink-0" />
         <span>
           <span className="max-sm:sr-only">Todo </span>
-          {done}/{total}
+          {tally.done}/{tally.total}
         </span>
-        {blocked > 0 && (
-          <span>
-            · <span className="text-warning">{blocked} blocked</span>
-          </span>
-        )}
-        {open > 0 && (
-          <span>
-            · {open} <span className="max-sm:sr-only">left </span>open
-          </span>
-        )}
+        <TodoStages tally={tally} sep={<span className="max-sm:hidden">·</span>} />
       </button>
       {reader && (
         <Reader id={id} open={reader.open} phone={reader.phone} anchor={button} side="bottom" label="Todo at the end of this turn" parts={parts} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />

@@ -7,12 +7,43 @@ import type { Todo, TodoCounts, TodoStatus, TodoView, TurnTodos } from '../api';
 /** The meter draws one segment per row, up to this many rows; past them the words say it alone. */
 export const METER_ROWS = 12;
 
+/** The stages in the order every surface gives them: the readers' sections, and the counts on the line and a reply's foot. */
+const STAGES: readonly TodoStatus[] = ['in_progress', 'blocked', 'pending', 'done'];
+
+const WORD: Record<TodoStatus, string> = { in_progress: 'In progress', blocked: 'Blocked', pending: 'To do', done: 'Done' };
+
+/** A stage's name: its reader section, and a row's state as words for those who cannot see its glyph. */
+export const todoWord = (status: TodoStatus) => WORD[status];
+
+/** One open stage and its rows. */
+export interface StageCount { status: TodoStatus; n: number }
+
+/**
+ * How far a list got: done of total, then the open stages with rows (in progress, blocked, to do)
+ * and `open`, the rows counts kept before uam split in progress from to do say only were one or
+ * the other.
+ */
+export interface TodoTally { done: number; total: number; stages: StageCount[]; open: number }
+
+export function todoTally(counts: TodoCounts): TodoTally {
+  const { done = 0, total = 0, in_progress = 0, blocked = 0, pending = 0, open = 0 } = counts;
+  const rows: Partial<Record<TodoStatus, number>> = { in_progress, blocked, pending };
+  const stages = STAGES.flatMap((status) => (rows[status] ? [{ status, n: rows[status] }] : []));
+  return { done, total, stages, open: Math.max(0, open - in_progress - pending) };
+}
+
+/** "2 of 7 done, 1 in progress, 1 blocked, 3 to do"; an unsplit count reads as `openWords` ("left open"). */
+export function tallyWords(tally: TodoTally, openWords = 'open'): string {
+  const rest = [...tally.stages.map((s) => `${s.n} ${WORD[s.status].toLowerCase()}`), tally.open ? `${tally.open} ${openWords}` : ''].filter(Boolean);
+  return [`${tally.done} of ${tally.total} done`, ...rest].join(', ');
+}
+
 /** The list on the status line, or undefined when the line says nothing of it. */
 export type TodoLine =
-  /** This turn touched the list: "Todo 2/7", the row the work is at and how many more are in progress, the blocked rows. */
-  | { kind: 'list'; done: number; total: number; blocked: number; now?: string; more: number; meter?: TodoStatus[]; cue?: TodoCue }
-  /** The running turn has not touched it yet, and the last turn left rows open (blocked ones too): "Todo · 3 open from the last turn". */
-  | { kind: 'carried'; open: number };
+  /** This turn touched the list: "Todo 2/7", the row the work is at, then each open stage's count. */
+  | ({ kind: 'list'; now?: string; meter?: TodoStatus[]; cue?: TodoCue } & TodoTally)
+  /** The running turn has not touched it yet, and the last turn left rows open (blocked ones too): the same counts, from the last turn. */
+  | ({ kind: 'carried'; meter?: TodoStatus[] } & TodoTally);
 
 /** One announcement: spoken once per key. */
 export interface TodoCue { key: string; words: string }
@@ -23,25 +54,16 @@ export interface TodoCue { key: string; words: string }
  */
 export function todoLine(view: TodoView | undefined, since?: string): TodoLine | undefined {
   if (!view?.known || !view.counts.total) return undefined;
-  const { done = 0, total = 0, blocked = 0, open = 0 } = view.counts;
-  if (!view.touched) return open + blocked > 0 ? { kind: 'carried', open: open + blocked } : undefined;
-  const running = view.todos.filter((t) => t.status === 'in_progress').length;
+  const tally = todoTally(view.counts);
+  const meter = tally.total <= METER_ROWS && view.todos.length === tally.total ? view.todos.map((t) => t.status) : undefined;
+  if (!view.touched) return tally.stages.length > 0 || tally.open > 0 ? { kind: 'carried', ...tally, meter } : undefined;
   const now = view.todos.find((t) => t.id === view.now)?.title;
-  return {
-    kind: 'list',
-    done,
-    total,
-    blocked,
-    now,
-    more: now ? Math.max(0, running - 1) : 0,
-    meter: total <= METER_ROWS && view.todos.length === total ? view.todos.map((t) => t.status) : undefined,
-    cue: todoCue(view, since),
-  };
+  return { kind: 'list', ...tally, now, meter, cue: todoCue(view, since) };
 }
 
 /**
  * The latest change this turn made that is news: a row turning blocked ("Blocked: …") or done
- * ("3 of 7 done"). Rows changed together share a time; a blocked one wins.
+ * ("3 of 7 done, 1 in progress, 3 to do"). Rows changed together share a time; a blocked one wins.
  */
 export function todoCue(view: TodoView, since?: string): TodoCue | undefined {
   const from = since ? Date.parse(since) : -Infinity;
@@ -55,60 +77,43 @@ export function todoCue(view: TodoView, since?: string): TodoCue | undefined {
   }
   if (!last) return undefined;
   if (last.status === 'blocked') return { key: `blocked ${last.id}`, words: `Blocked: ${last.title}` };
-  const { done = 0, total = 0 } = view.counts;
-  return { key: `done ${done}`, words: `${done} of ${total} done` };
+  return { key: `done ${view.counts.done ?? 0}`, words: tallyWords(todoTally(view.counts)) };
 }
 
 /** The status line's todo words in the button's sentence, after the clock. */
 export function todoSentence(line: TodoLine): string {
-  if (line.kind === 'carried') return `. Todo: ${line.open} open from the last turn`;
-  const now = line.now ? `. Now: ${line.now}${line.more ? `, and ${line.more} more in progress` : ''}` : '';
-  return `. Todo ${line.done} of ${line.total} done${line.blocked ? `, ${line.blocked} blocked` : ''}${now}`;
+  if (line.kind === 'carried') return `. Todo from the last turn: ${tallyWords(line)}`;
+  return `. Todo ${tallyWords(line)}${line.now ? `. Now: ${line.now}` : ''}`;
 }
 
-export interface TodoSection { label: 'Now' | 'Blocked' | 'Next' | 'Done' | 'Left open'; todos: Todo[] }
+export interface TodoSection { status: TodoStatus; label: string; todos: Todo[] }
 
-/** The reader's sections, empty ones left out: in progress (the Now row first), blocked, pending, done; each in the provider's order. */
-export function todoSections(view: TodoView): TodoSection[] {
-  const of = (status: TodoStatus) => view.todos.filter((t) => t.status === status);
-  const now = of('in_progress');
-  const first = now.findIndex((t) => t.id === view.now);
-  if (first > 0) now.unshift(...now.splice(first, 1));
-  const sections: TodoSection[] = [
-    { label: 'Now', todos: now },
-    { label: 'Blocked', todos: of('blocked') },
-    { label: 'Next', todos: of('pending') },
-    { label: 'Done', todos: of('done') },
-  ];
-  return sections.filter((s) => s.todos.length > 0);
+/** A reader's sections in the stages' order, empty ones left out, each in the order given; `now`, the row the work is at, first among those in progress. */
+function stageSections(todos: readonly Todo[], now?: string): TodoSection[] {
+  return STAGES.map((status) => {
+    const rows = todos.filter((t) => t.status === status);
+    const first = rows.findIndex((t) => t.id === now);
+    if (first > 0) rows.unshift(...rows.splice(first, 1));
+    return { status, label: WORD[status], todos: rows };
+  }).filter((s) => s.todos.length > 0);
 }
 
-const WORD: Record<TodoStatus, string> = { in_progress: 'Now', blocked: 'Blocked', pending: 'Next', done: 'Done' };
+/** The live reader's sections: In progress (the Now row first), Blocked, To do and Done, each in the provider's order. */
+export const todoSections = (view: TodoView) => stageSections(view.todos, view.now);
 
-/** A row's state as words, for those who cannot see its glyph. */
-export const todoWord = (status: TodoStatus) => WORD[status];
-
-/** A reply's foot button's name, from the counts uam kept when its turn ended (on screen "Todo 5/7 · 1 blocked · 1 left open"). */
+/** A reply's foot button's name, from the counts uam kept when its turn ended (on screen "Todo 5/7 · 1 in progress · 1 blocked"). */
 export function turnTodoName(counts: TodoCounts): string {
-  const { done = 0, total = 0, blocked = 0, open = 0 } = counts;
-  return `Todo at the end of this turn: ${done} of ${total} done${blocked ? `, ${blocked} blocked` : ''}${open ? `, ${open} left open` : ''}`;
+  return `Todo at the end of this turn: ${tallyWords(todoTally(counts), 'left open')}`;
 }
 
-/** The kept list's facts: when the turn left it (`clock`), "all done" when nothing was left, and the rows past those kept. */
+/** The kept list's facts: when the turn left it (`clock`), how many rows it left open or "all done", and the rows past those kept. */
 export function snapshotFacts(counts: TodoCounts, clock: string): string[] {
   const { blocked = 0, open = 0, omitted = 0 } = counts;
-  return [`As this turn left it, ${clock}`, blocked + open ? '' : 'all done', omitted ? `${omitted} more not shown` : ''].filter(Boolean);
+  return [`As this turn left it, ${clock}`, open ? `${open} left open` : blocked ? '' : 'all done', omitted ? `${omitted} more not shown` : ''].filter(Boolean);
 }
 
-/** The kept list's sections, empty ones left out: blocked, left open (in progress, then pending) and done (newest first), in the order uam kept them. */
-export function snapshotSections(todos: readonly Todo[]): TodoSection[] {
-  const sections: TodoSection[] = [
-    { label: 'Blocked', todos: todos.filter((t) => t.status === 'blocked') },
-    { label: 'Left open', todos: todos.filter((t) => t.status === 'in_progress' || t.status === 'pending') },
-    { label: 'Done', todos: todos.filter((t) => t.status === 'done') },
-  ];
-  return sections.filter((s) => s.todos.length > 0);
-}
+/** The kept list's sections, as the live reader's: In progress, Blocked, To do and Done (newest first), each in the order uam kept them. */
+export const snapshotSections = (todos: readonly Todo[]) => stageSections(todos);
 
 /** How many turn lists stay in memory: one never changes once its turn ended, and none is kept anywhere else. */
 export const KEPT_SNAPSHOTS = 8;
