@@ -302,7 +302,13 @@ export function reducer(state: State, action: Action): State {
       }
       const detail = state.detail;
       if (d.session_id !== detail?.id || d.seq <= state.detailSeq) return state;
+      const unchanged = state;
       state = { ...state, detailSeq: d.seq };
+      const bumped = state;
+      // A subagent's output that changes nothing here (its transcript is closed and its step the same) leaves the
+      // state as it was, so nothing renders. Its seq need not be kept: later frames carry higher ones, and a detail
+      // reply it no longer turns away resets every subagent transcript and step, all that such a frame changes.
+      const routed = (next: State) => (next === bumped ? unchanged : next);
       if (state.historyRequest?.loading && (d.name === 'items_trimmed' || ((d.name === 'item' || d.name === 'delta' || d.name === 'tool_output') && !d.agent_id))) {
         const request = state.historyRequest;
         const size = frameBytes(d);
@@ -322,13 +328,13 @@ export function reducer(state: State, action: Action): State {
           return { ...state, bodyVersions: {}, detailGeneration: state.detailGeneration + 1, detail: initialWindow({ ...detail, seq: d.seq, history: d.history, history_reason: d.history_reason, history_before: d.history_before, history_truncated: d.history_truncated, items: d.items, subagents: d.subagents, subagents_before: d.subagents_before }), agents: {}, agentSteps: {}, historyRequest: null, historyItemSeq: {} };
         case 'item':
           if (d.item.compact) state = { ...state, bodyVersions: { ...state.bodyVersions, [JSON.stringify([d.agent_id ?? '', d.item.id])]: d.seq } };
-          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
+          if (d.agent_id) return routed(withAgentFrame(state, d.agent_id, d));
           return withWindow(state, liveWindow(detail, detail.representation === 'compact-v1' && !detail.items.some(item => item.id === d.item.id) && (detail.history_after || !d.append) ? detail.items : upsertTranscriptItem(detail.items, d.item), d.append || detail.recent_items?.some(item => item.id === d.item.id) ? upsertTranscriptItem(detail.recent_items ?? detail.items, d.item) : detail.recent_items ?? detail.items, [d.item]));
         case 'delta':
-          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
+          if (d.agent_id) return routed(withAgentFrame(state, d.agent_id, d));
           return withWindow(state, liveWindow(detail, detail.representation !== 'compact-v1' || detail.items.some(item => item.id === d.item_id) ? appendDelta(detail.items, d.item_id, d.kind, d.text) : detail.items, detail.recent_items?.some(item => item.id === d.item_id) ? appendDelta(detail.recent_items, d.item_id, d.kind, d.text) : detail.recent_items ?? detail.items));
         case 'tool_output':
-          if (d.agent_id) return withAgentFrame(state, d.agent_id, d);
+          if (d.agent_id) return routed(withAgentFrame(state, d.agent_id, d));
           return withWindow(state, liveWindow(detail, appendToolOutput(detail.items, d.item_id, d.text), appendToolOutput(detail.recent_items ?? detail.items, d.item_id, d.text)));
         case 'items_trimmed': {
           const historyItemSeq = { ...state.historyItemSeq };
@@ -441,7 +447,7 @@ function upsert<T extends { id: string }>(list: T[], v: T): T[] {
  * listed here. The service omits empty ones (omitempty), so the open Task takes each from the
  * frame, and an absent key clears the old value.
  */
-const SUMMARY_KEYS = Object.keys({
+export const SUMMARY_KEYS = Object.keys({
   id: 1, project_id: 1, provider: 1, name: 1, title: 1, workdir: 1, conversation_id: 1, model: 1, last_model: 1, subagents_running: 1,
   background_tasks_running: 1, effort: 1, context_size: 1, context: 1, usage: 1, mode: 1, execution: 1, stage: 1, settled_at: 1,
   archived_at: 1, spawned_by: 1, routine_id: 1, diff: 1, rerun_of: 1, outcome: 1, compacting: 1, compact_threshold: 1, queued: 1, state: 1, state_detail: 1,

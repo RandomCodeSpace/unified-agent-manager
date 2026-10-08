@@ -1072,6 +1072,9 @@ export default function App() {
   // The tab title and the installed app's badge carry how many Tasks wait for the user; the title names the open Task.
   const localNeedsYouTasks = useMemo(() => needsYouCount(state.sessions, hasNews), [state.sessions, hasNews]);
   const needsYouTasks = localNeedsYouTasks + (federation?.otherAttention ?? 0);
+  // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
+  // Held across renders, so the memoised Task header holds while the Task streams.
+  const leading = useMemo(() => (narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1 pointer-coarse:-ml-2.5" /> : null), [narrow, drawerOpen, needsYouTasks]);
   const attention = needsYouTasks;
   // The title names what the pane shows, in the pane's own order; a new or untitled Task shows as "New task". Only real Tasks count as needing you.
   let shownName: string | null = null;
@@ -1173,8 +1176,6 @@ export default function App() {
     />
   );
 
-  // On a narrow screen the main pane's header starts with the drawer toggle; a collapsed wide sidebar keeps its toggle on the rail.
-  const leading = narrow ? <SidebarToggle id="sidebar-show" size="icon-md" open={drawerOpen} count={needsYouTasks} onToggle={() => setDrawerOpen((o) => !o)} className="-ml-1 pointer-coarse:-ml-2.5" /> : null;
   // The sidebar's column, animated between its width and the rail's.
   const columns = sidebarOpen ? 'grid-cols-[var(--spacing-rail)_minmax(0,1fr)]' : 'grid-cols-[var(--spacing-rail-collapsed)_minmax(0,1fr)]';
 
