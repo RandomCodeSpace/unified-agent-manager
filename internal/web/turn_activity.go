@@ -27,16 +27,16 @@ const (
 	stopCreditLimit = "credit_limit"
 	stopRemote      = "remote"
 	stopMCP         = "mcp"
-	stopCLI         = "cli"
 )
 
 // providerStops maps the provider's reasons for an aborted turn to a stop
-// reason and the cancelled state's detail. An unknown reason gives none.
+// reason and the cancelled state's detail. An unknown reason gives none, and
+// so does user_initiated: the CLI reports it for uam's own Stop too, so it
+// does not say who stopped the turn.
 var providerStops = map[string]struct{ code, detail string }{
 	"autopilot_credit_limit": {stopCreditLimit, "Autopilot stopped at its credit limit"},
 	"remote_command":         {stopRemote, "Stopped by a remote command"},
 	"user_abort":             {stopMCP, "Stopped by an MCP server"},
-	"user_initiated":         {stopCLI, "Stopped in the Copilot CLI"},
 }
 
 // stopCause says why a turn was cancelled: uam's own stop first (the
@@ -72,6 +72,7 @@ func (m *Manager) turnActivityTurnLocked(s *webSession, state agentapi.TurnState
 			return
 		}
 		s.todoBase, todos.Touched = todos, false
+		s.turnIntent = ""
 	}
 	m.setTurnActivityLocked(s, TurnActivity{Todos: todos})
 }
@@ -83,6 +84,9 @@ func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	if a.Retry != nil {
 		r := cleanRetry(*a.Retry)
 		next.Retry = &r
+	}
+	if next.Intent != "" {
+		s.turnIntent = next.Intent
 	}
 	m.setTurnActivityLocked(s, next)
 }

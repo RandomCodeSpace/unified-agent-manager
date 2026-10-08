@@ -2,7 +2,7 @@
 // it, the reader's sections, and what the live region announces. The service counts the rows
 // and picks the one the work is at; this only words them.
 
-import type { Todo, TodoStatus, TodoView } from '../api';
+import type { Todo, TodoCounts, TodoStatus, TodoView, TurnTodos } from '../api';
 
 /** The meter draws one segment per row, up to this many rows; past them the words say it alone. */
 export const METER_ROWS = 12;
@@ -66,7 +66,7 @@ export function todoSentence(line: TodoLine): string {
   return `. Todo ${line.done} of ${line.total} done${line.blocked ? `, ${line.blocked} blocked` : ''}${now}`;
 }
 
-export interface TodoSection { label: 'Now' | 'Blocked' | 'Next' | 'Done'; todos: Todo[] }
+export interface TodoSection { label: 'Now' | 'Blocked' | 'Next' | 'Done' | 'Left open'; todos: Todo[] }
 
 /** The reader's sections, empty ones left out: in progress (the Now row first), blocked, pending, done; each in the provider's order. */
 export function todoSections(view: TodoView): TodoSection[] {
@@ -87,3 +87,51 @@ const WORD: Record<TodoStatus, string> = { in_progress: 'Now', blocked: 'Blocked
 
 /** A row's state as words, for those who cannot see its glyph. */
 export const todoWord = (status: TodoStatus) => WORD[status];
+
+/** A reply's foot button's name, from the counts uam kept when its turn ended (on screen "Todo 5/7 · 1 blocked · 1 left open"). */
+export function turnTodoName(counts: TodoCounts): string {
+  const { done = 0, total = 0, blocked = 0, open = 0 } = counts;
+  return `Todo at the end of this turn: ${done} of ${total} done${blocked ? `, ${blocked} blocked` : ''}${open ? `, ${open} left open` : ''}`;
+}
+
+/** The kept list's facts: when the turn left it (`clock`), "all done" when nothing was left, and the rows past those kept. */
+export function snapshotFacts(counts: TodoCounts, clock: string): string[] {
+  const { blocked = 0, open = 0, omitted = 0 } = counts;
+  return [`As this turn left it, ${clock}`, blocked + open ? '' : 'all done', omitted ? `${omitted} more not shown` : ''].filter(Boolean);
+}
+
+/** The kept list's sections, empty ones left out: blocked, left open (in progress, then pending) and done (newest first), in the order uam kept them. */
+export function snapshotSections(todos: readonly Todo[]): TodoSection[] {
+  const sections: TodoSection[] = [
+    { label: 'Blocked', todos: todos.filter((t) => t.status === 'blocked') },
+    { label: 'Left open', todos: todos.filter((t) => t.status === 'in_progress' || t.status === 'pending') },
+    { label: 'Done', todos: todos.filter((t) => t.status === 'done') },
+  ];
+  return sections.filter((s) => s.todos.length > 0);
+}
+
+/** How many turn lists stay in memory: one never changes once its turn ended, and none is kept anywhere else. */
+export const KEPT_SNAPSHOTS = 8;
+const snapshots = new Map<string, TurnTodos>();
+
+/** A turn's list read before, now the most recently used. */
+export function recallSnapshot(task: string, timing: string): TurnTodos | undefined {
+  const key = `${task}\n${timing}`;
+  const snap = snapshots.get(key);
+  if (snap) {
+    snapshots.delete(key);
+    snapshots.set(key, snap);
+  }
+  return snap;
+}
+
+/** Keeps a turn's list read, dropping the least recently used past `KEPT_SNAPSHOTS`. */
+export function keepSnapshot(task: string, timing: string, snap: TurnTodos): void {
+  const key = `${task}\n${timing}`;
+  snapshots.delete(key);
+  snapshots.set(key, snap);
+  for (const old of snapshots.keys()) {
+    if (snapshots.size <= KEPT_SNAPSHOTS) break;
+    snapshots.delete(old);
+  }
+}

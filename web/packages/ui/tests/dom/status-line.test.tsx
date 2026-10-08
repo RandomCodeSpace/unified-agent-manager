@@ -9,7 +9,7 @@ import { turnVerb } from '../../src/lib/verbs';
 afterEach(() => vi.useRealTimers());
 
 const start = Date.parse('2026-09-28T12:00:00Z');
-const timing = { id: 'turn', state: 'working', started_at: new Date(start).toISOString() } as TurnTiming;
+const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: new Date(start).toISOString() } as TurnTiming;
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
 const objective = { id: 1, objective: 'Notes', status: 'paused' as const, turn_count: 6, credits_used: 300, credit_limit: 300 };
 
@@ -112,10 +112,32 @@ test('the live region speaks a turn start, a retry and a stop, at most one every
 
 test('the line stays while a subagent outlives the turn, with the verb', () => {
   for (const state of ['idle', 'completed'] as const) {
-    const line = (subagents_running: number) => statusLine(task({ state, subagents_running }), shownState({ state, subagents_running }) === 'working', false, []);
+    const line = (subagents_running: number) => statusLine(task({ state, subagents_running, turn_timings: [{ ...timing, ended_at: new Date(start + 9000).toISOString(), state: 'completed' }] }), shownState({ state, subagents_running }) === 'working', false, []);
     expect(line(0)).toBeNull();
-    expect(line(1)).toEqual({ kind: 'working', lead: turnVerb('start'), compacting: false, retry: undefined });
+    expect(line(1)).toEqual({ kind: 'working', lead: turnVerb('u1'), compacting: false, retry: undefined });
   }
+});
+
+test('a turn starting says nothing of the last one: no line until its timing comes, no verb until it links its message', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(start + 20_000);
+  const before = { id: 'before', user_item_id: 'u0', state: 'cancelled', started_at: new Date(start - 30_000).toISOString(), ended_at: new Date(start - 10_000).toISOString() } as TurnTiming;
+  const old = [{ id: 'u0', kind: 'user', time: before.started_at }] as Item[];
+  const next = { ...timing, user_item_id: undefined, started_at: new Date(start + 19_800).toISOString() };
+  expect(turnVerb('u0')).not.toBe(turnVerb('u1'));
+  const view = render(draw(task({ state: 'cancelled', stop_reason: 'owner', turn_timings: [before] }), { items: old }));
+  expect(screen.getByRole('button', { name: 'Stopped. Jump to bottom' })).toBeTruthy();
+  // The Task works before the turn's timing comes: the last turn's verb is not this one's.
+  view.rerender(draw(task({ turn_timings: [before] }), { items: old }));
+  expect(screen.queryByRole('button')).toBeNull();
+  // Its timing came, its message not yet: the clock alone.
+  view.rerender(draw(task({ turn_timings: [before, next] }), { items: old }));
+  expect(screen.queryByText(`${turnVerb('u0')}…`)).toBeNull();
+  expect(screen.getByText('<1s')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
+  // The message landed and the timing links it: its own verb.
+  view.rerender(draw(task({ turn_timings: [before, { ...next, user_item_id: 'u1' }] }), { items: [...old, { id: 'u1', kind: 'user', time: next.started_at }] as Item[] }));
+  expect(screen.getByText(`${turnVerb('u1')}…`)).toBeTruthy();
 });
 
 const rows = (extra: Partial<Todo>[] = []): Todo[] =>
@@ -150,10 +172,15 @@ test('the todo segment: counts, meter, Now with how many more, blocked in words;
   // The meter: one segment per row.
   expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
-  // Copilot's intent is the row in progress: it leads, and "Now:" goes.
+  // Copilot's intent is the row in progress: it leads, and "Now:" goes; how many more are in progress follows the lead.
   view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Build the index page, and 1 more in progress, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
+  expect(screen.getByText('Build the index page…').nextElementSibling?.textContent).toBe('+1');
+  // The only row in progress: nothing follows the lead.
+  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.queryByText('+1')).toBeNull();
   // The last turn's list, not touched yet: its open rows, and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
   expect(screen.getByText('3 open from the last turn')).toBeTruthy();

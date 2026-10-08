@@ -449,11 +449,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   conversation. After a stop it says why until the next turn
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
-  "Stopped: remote command", "Stopped: MCP server" or "Stopped in the
-  Copilot CLI". The header says the same, and the Task row's tip says "You
-  stopped it" for yours. The service reports the reason as `stop_reason` on
-  the Task summary (`owner`, `time_limit`, `credit_limit`, `remote`, `mcp`
-  or `cli`, absent when there is none); it is saved with the stopped state
+  "Stopped: remote command" or "Stopped: MCP server". The header says the
+  same, and the Task row's tip says "You stopped it" for yours. The service
+  reports the reason as `stop_reason` on the Task summary (`owner`,
+  `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
+  none); it is saved with the stopped state
   and cleared when the next turn starts. The running turn's intent and
   retry come as `turn_activity`, in the Task snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
@@ -461,6 +461,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   one in Copilot's session `todos` table for work of more than two steps,
   reads it when it changes and when the Task's conversation reopens, and
   sends at most 100 rows with the counts of all.
+- **Each turn's todo list**: a turn that changed the list keeps it as it
+  left it. Its last reply's foot reads "Todo 5/7 · 1 blocked · 1 left open"
+  and stays on screen; clicking it opens that list by sections Blocked, Left
+  open and Done: the rows the turn changed and the rows still open, at most
+  50. The end of a turn waits up to a second for Copilot's last change to
+  the list to be read. The counts are saved with the turn's timing
+  (`turn_timings[].todo`), the rows in `turn-todos.jsonl` beside the Task's
+  attachments, which is deleted with the Task.
+  `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
+  settled or archived Task, or 404 when none were kept.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
   UAM, such as signing in again in Settings, and a link only when it is
   https) and its authentication, model, MCP and notification messages show
@@ -1430,7 +1440,7 @@ States shown for each session:
 | working | The provider is running a turn |
 | awaiting permission / awaiting answer | The provider is waiting for you |
 | completed | The last turn finished |
-| cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command, an MCP server or the Copilot CLI); `stop_reason` says which |
+| cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command or an MCP server); `stop_reason` says which |
 | failed | The provider reported an error, or its process or event stream ended; the detail says which |
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
 | closed | The conversation was closed from the web interface, or the Task was imported and has not been sent a message yet |

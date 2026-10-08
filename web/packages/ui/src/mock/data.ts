@@ -1,7 +1,7 @@
 // Development-only seed for the in-browser mock service (see install.ts).
 // Shapes are the wire shapes from src/api.ts. Paths and names are fictional.
 
-import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall } from '../api';
+import type { Command, Interaction, Item, Meta, PreviousSession, Project, SessionDetail, Settings, Subagent, ToolCall, TurnTodos } from '../api';
 
 export interface MockTask extends SessionDetail {
   /** Subagent transcripts keyed by agent id (served by the subagent route). */
@@ -35,6 +35,8 @@ export interface MockState {
   previous: Record<string, PreviousSession[]>;
   /** Whole texts of `clipped` items by item ID, for the item route; the items hold the shortened part. */
   wholeTexts: Record<string, string>;
+  /** The todo lists uam kept when turns ended, by timing ID, for the turn route. */
+  turnTodos: Record<string, TurnTodos>;
 }
 
 const NOW = Date.now();
@@ -435,7 +437,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       outcome: 'Explained how a dumb terminal is reported',
       created_at: ago(60),
       updated_at: ago(42),
-      turn_timings: [{ id: 'tt-t3', user_item_id: 'i1', started_at: ago(60), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200 }],
+      turn_timings: [{ id: 'tt-t3', user_item_id: 'i1', started_at: ago(60), ended_at: ago(42), state: 'completed', input_tokens: 48210, output_tokens: 1860, generation_ms: 41200, todo: { done: 3, total: 5, blocked: 1, open: 1 } }],
       items: [
         { id: 'i1', kind: 'user', time: ago(60), text: 'Add a line to `uam doctor` that reports the detected terminal and glyph set.' },
         { id: 'r1', kind: 'reasoning', time: ago(58), text: '`doctor.go` prints rows through `printRow`; the terminal probe already exposes `term.Describe()`. One line plus a test.' },
@@ -1266,5 +1268,20 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       task_defaults: { provider: 'copilot', model: 'claude-haiku-4.5', effort: 'high', context_size: 'long_context', mode: 'safe' },
       custom_models: [{ name: 'openrouter', display_name: 'Qwen3 Coder', base_url: 'https://openrouter.ai/api/v1', model_id: 'qwen/qwen3-coder', api_key_env: 'UAM_BYOM_OPENROUTER', key_present: false }],
     },
-    tasks, changes, commands, files, wholeTexts };
+    tasks, changes, commands, files, wholeTexts,
+    // t3's turn: one row blocked, one left for later, a subagent's row done.
+    turnTodos: {
+      'tt-t3': {
+        timing_id: 'tt-t3',
+        ended_at: ago(42),
+        counts: { done: 3, total: 5, blocked: 1, open: 1 },
+        todos: [
+          { id: 'win', title: 'Check the line on Windows Terminal', status: 'blocked', note: 'No Windows machine is reachable from this session.', changed_at: ago(43) },
+          { id: 'docs', title: 'Mention the line in docs/doctor.md', status: 'pending' },
+          { id: 'test', title: 'Test the new doctor line', status: 'done', changed_at: ago(50) },
+          { id: 'edit', title: 'Print the terminal and glyph set in uam doctor', status: 'done', changed_at: ago(55) },
+          { id: 'probe', title: 'Find where the terminal probe is exposed', status: 'done', agent_id: 'a1', agent: 'explore', changed_at: ago(57) },
+        ],
+      },
+    } };
 }

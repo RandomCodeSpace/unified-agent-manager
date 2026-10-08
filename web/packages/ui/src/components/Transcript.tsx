@@ -18,6 +18,7 @@ import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMa
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { TurnTodo } from './Todos';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -144,16 +145,24 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   let after = userItemId ?? 'start';
   // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
   let ownMessage = false;
+  let footLive = live;
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
-    const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
+    // A turn that ended is over, also while the next one starts before its message lands: it keeps its
+    // end, and a call it left running is not the running step. A row begun after its end is a turn's that came without one.
+    const ended = Date.parse(timing?.ended_at ?? '');
+    const begunSince = (entry: Entry) => !!entry.item && !(Date.parse(entry.item.time) < ended);
+    const open = !timing?.ended_at || group.some(begunSince);
+    const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live: live && open });
     if (!group.length) {
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
     }
-    const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
-    const gctx = { ...ctx, live: groupLive };
-    if (last && working) showedWorking = true;
+    const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && begunSince(entry));
+    const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
+    if (last) footLive = groupLive;
+    const runs = last && working && open;
+    if (runs) showedWorking = true;
     // One status row heads the turn and keeps its slot while it runs, so "Took 12s" lands there
     // at the end and streamed content lands below it: nothing on screen moves at either moment.
     if (compact) {
@@ -170,7 +179,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
       out.push(
         <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-          {(last && working) || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={last && working} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
+          {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
           {renderCompact(group, gctx, product, own)}
           {changedLine && changed.length > 0 && <ChangedLine files={changed} latest={last && liveCard} onOpen={onOpenChanges} />}
         </div>,
@@ -179,7 +188,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       const nodes = renderEntries(group, gctx, product);
       out.push(
         <div key={`turn-${after}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-          {last && working ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
+          {runs ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
           {nodes}
         </div>,
       );
@@ -201,7 +210,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
-  const step = compact && working && !compacting ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const step = compact && working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
   const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
@@ -691,7 +700,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time. */ timing?: TurnTiming; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -720,7 +729,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
@@ -732,6 +741,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
             </time>
           )}
           {timing && <TurnTokens timing={timing} />}
+          {timing && <TurnTodo timing={timing} />}
         </div>
       )}
       {menuReady && (

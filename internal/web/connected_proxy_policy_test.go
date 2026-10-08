@@ -46,6 +46,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"PUT", "/api/configuration/skills/name", true},
 		{"DELETE", "/api/configuration/skills/name", true},
 		{"GET", "/api/usage/prices", true},
+		{"GET", "/api/sessions/task/turns/turn/todos", true},
+		{"POST", "/api/sessions/task/turns/turn/todos", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},

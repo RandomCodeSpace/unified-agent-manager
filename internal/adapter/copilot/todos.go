@@ -25,6 +25,9 @@ const (
 	maxTodos          = 200
 	maxTodoTitleRunes = 200
 	maxTodoNoteRunes  = 300
+	// todosTurnWait bounds how long a turn's end waits for the read of the
+	// list it left.
+	todosTurnWait = time.Second
 )
 
 // todoReads is the conversation's todo list and the reads that keep it.
@@ -40,6 +43,10 @@ type todoReads struct {
 	timer           *time.Timer
 	// reading is set while a read runs; again asks it for one more.
 	reading, again bool
+	// held is a turn's end waiting for the read of the list it left, and
+	// release emits it if that read stalls (emitTurnEndLocked).
+	held    *agentapi.Turn
+	release *time.Timer
 }
 
 // todoWindow is the agents that changed the list in a span ("" for the
@@ -113,6 +120,8 @@ func (c *conversation) readTodos(sess sdkSession) {
 		c.mu.Lock()
 		t := &c.todos
 		t.flight, t.pending = t.pending, todoWindow{}
+		// A turn end held before this read started waits for its list.
+		held := t.held
 		c.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), webTasksTimeout)
 		rows, err := sess.ReadTodos(ctx)
@@ -129,6 +138,9 @@ func (c *conversation) readTodos(sess sdkSession) {
 			}
 		default:
 			c.emitTodosLocked(t.apply(rows))
+		}
+		if held != nil && t.held == held {
+			c.releaseTurnLocked()
 		}
 		t.flight = todoWindow{}
 		again := t.again && !c.closed
@@ -198,6 +210,48 @@ func (c *conversation) emitTodosLocked(list agentapi.TodoList) {
 	t.last = &list
 	snapshot := list
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTodos, Todos: &snapshot})
+}
+
+// emitTurnEndLocked emits a turn's end once the todo list is as the turn
+// left it, so the Manager keeps that list with the turn. With changes no
+// read has started on, or a read running that may have missed some, it
+// holds the turn and reads at once, past the debounce; the read emits the
+// list, then the turn. todosTurnWait releases it if the read stalls, and so
+// do the next turn's start, Close and exitLocked. The read runs on its own
+// goroutine: this runs on the SDK's event goroutine.
+func (c *conversation) emitTurnEndLocked(turn agentapi.Turn) {
+	t := &c.todos
+	if len(t.pending.agents) == 0 && !t.reading {
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
+		return
+	}
+	c.releaseTurnLocked()
+	if t.timer != nil {
+		t.timer.Stop()
+		t.timer = nil
+	}
+	var release *time.Timer
+	release = time.AfterFunc(todosTurnWait, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.todos.release == release {
+			c.releaseTurnLocked()
+		}
+	})
+	t.held, t.release = &turn, release
+	c.checkTodosLocked()
+}
+
+// releaseTurnLocked emits the held turn end, if any.
+func (c *conversation) releaseTurnLocked() {
+	t := &c.todos
+	if t.held == nil {
+		return
+	}
+	turn := t.held
+	t.release.Stop()
+	t.held, t.release = nil, nil
+	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: turn})
 }
 
 // ReadTodos reads the session's todo rows through the experimental plan

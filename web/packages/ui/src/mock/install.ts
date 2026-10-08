@@ -1207,6 +1207,11 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       return historyPage(t.items, HELD, url);
     }
+    // A turn's todo list as it left it, from `turnTodos`.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/turns\/([^/]+)\/todos$/)) && method === 'GET') {
+      const kept = find(decodeURIComponent(r[1])) && st.turnTodos[decodeURIComponent(r[2])];
+      return kept ? json(200, kept) : fail(404, 'no todo list was kept for that turn');
+    }
     // An item's body: whole, a clipped item's from `wholeTexts`.
     if ((r = m(/^\/api\/sessions\/([^/]+)\/items\/([^/]+)$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

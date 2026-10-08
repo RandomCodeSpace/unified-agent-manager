@@ -13,7 +13,6 @@ const SHORT: Record<StopReason, string> = {
   credit_limit: 'Stopped: credit limit',
   remote: 'Stopped: remote command',
   mcp: 'Stopped: MCP server',
-  cli: 'Stopped in the Copilot CLI',
 };
 
 export interface StopWords {

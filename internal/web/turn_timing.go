@@ -37,6 +37,9 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 	timing := s.turnTimings[s.activeTiming]
 	timing.EndedAt, timing.State = m.now(), string(state)
 	finishTimingPause(&timing, timing.EndedAt)
+	// The todo list as the turn left it: its counts are written with this
+	// timing, its rows by the same flush (turn_todos.go).
+	timing.Todo = m.snapshotTodosLocked(s, timing)
 	s.turnTimings[s.activeTiming] = timing
 	s.activeTiming = -1
 	s.pendingTimingUser = ""

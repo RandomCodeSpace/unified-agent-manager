@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { api, type Item } from '../../src/api';
+import { ApiContext } from '../../src/ApiContext';
+import { ApiError, api, type Item, type TurnTiming, type TurnTodos } from '../../src/api';
 import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
@@ -106,6 +108,100 @@ describe('messages', () => {
     expect(streamed?.has('a2')).toBe(false);
     // A new timing for the turn is a new foot.
     expect(replyEnds(items, [{ ...timings[0], output_tokens: 1000 }, timings[1]], true)?.get('a1')).not.toBe(before?.get('a1'));
+  });
+
+  test("a turn that changed the todo list names it in its reply's foot, kept in view, and opens the list as the turn left it", async () => {
+    const user = userEvent.setup();
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const items: Item[] = [
+      { id: 'u1', kind: 'user', time: at(0), text: 'Plan the site' },
+      { id: 'a1', kind: 'assistant', time: at(5), text: 'Planned.' },
+    ];
+    const timing: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed', output_tokens: 940, todo: { done: 1, total: 4, blocked: 1, open: 2 } };
+    const snap: TurnTodos = {
+      timing_id: 't1',
+      ended_at: at(6),
+      counts: timing.todo!,
+      todos: [
+        { id: 'z', title: 'Sign in to the registry', status: 'blocked', note: 'No token on this machine' },
+        { id: 'y', title: 'Build the index page', status: 'in_progress', agent_id: 'sub-1', agent: 'Index page writer' },
+        { id: 'p', title: 'Write the README', status: 'pending' },
+        { id: 'w', title: 'Plan the pages', status: 'done' },
+      ],
+    };
+    const turnTodos = vi.fn(async () => snap);
+    const draw = (timings: TurnTiming[], sessionId = 'todo-task') => (
+      <ApiContext.Provider value={{ ...api, turnTodos }}>
+        <Transcript sessionId={sessionId} items={items} turnTimings={timings} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />
+      </ApiContext.Provider>
+    );
+    const view = render(draw([timing]));
+    const button = screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 blocked, 2 left open' });
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(button.textContent).toBe('Todo 1/4· 1 blocked· 2 left open');
+    // The words beside the tokens, and the foot stays in view without a hover.
+    const foot = button.parentElement!;
+    expect(foot.textContent).toContain('940 tokens · Todo 1/4');
+    expect(foot.className).toContain('opacity-100');
+
+    await user.click(button);
+    const reader = await screen.findByRole('dialog', { name: 'Todo at the end of this turn' });
+    expect(button.getAttribute('aria-controls')).toBe(reader.id);
+    await waitFor(() => expect(document.activeElement).toBe(within(reader).getByRole('heading', { name: 'Todo' })));
+    const clock = new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    expect(await within(reader).findByText(`As this turn left it, ${clock}`)).toBeTruthy();
+    expect(turnTodos).toHaveBeenCalledWith('todo-task', 't1', expect.any(AbortSignal));
+    expect(within(reader).getByRole('region', { name: 'Blocked' }).textContent).toBe('Blocked1Sign in to the registryNo token on this machine, Blocked');
+    expect(within(reader).getByRole('region', { name: 'Left open' }).textContent).toBe('Left open2Build the index page, by Index page writer, NowWrite the README, Next');
+    expect(within(reader).getByRole('region', { name: 'Done' }).textContent).toBe('Done1Plan the pages, Done');
+    expect(within(reader).getByText('Kept by uam when the turn ended')).toBeTruthy();
+    expect(within(reader).getByText('Esc')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(button);
+
+    // Opened again, even from a new foot, it reads the copy kept in memory.
+    view.rerender(draw([{ ...timing }]));
+    await user.click(screen.getByRole('button', { name: /^Todo at the end of this turn/ }));
+    expect(await screen.findByText('Kept by uam when the turn ended')).toBeTruthy();
+    expect(turnTodos).toHaveBeenCalledTimes(1);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // A list no longer kept says so; a turn that did not change the list has nothing in its foot.
+    turnTodos.mockRejectedValueOnce(new ApiError(404, 'no todo list was kept for that turn'));
+    view.rerender(draw([timing], 'other-task'));
+    await user.click(screen.getByRole('button', { name: /^Todo at the end of this turn/ }));
+    expect(await screen.findByText('This turn’s list is no longer kept')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    view.rerender(draw([{ ...timing, todo: undefined }]));
+    expect(screen.queryByRole('button', { name: /^Todo at the end of this turn/ })).toBeNull();
+    expect(screen.getByText('Planned.').closest('[data-history-anchor]')!.parentElement!.textContent).not.toContain('Todo');
+  });
+
+  test("a phone opens a turn's list as a sheet with a close button", async () => {
+    const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
+    happy.setViewport({ width: 390, height: 844 });
+    try {
+      const user = userEvent.setup();
+      const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+      const timing: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed', todo: { done: 2, total: 2 } };
+      const turnTodos = vi.fn(async (): Promise<TurnTodos> => ({ timing_id: 't1', ended_at: at(6), counts: { done: 2, total: 2 }, todos: [{ id: 'a', title: 'One', status: 'done' }, { id: 'b', title: 'Two', status: 'done' }] }));
+      render(
+        <ApiContext.Provider value={{ ...api, turnTodos }}>
+          <Transcript sessionId="phone-task" items={[{ id: 'u1', kind: 'user', time: at(0), text: 'Go' }, { id: 'a1', kind: 'assistant', time: at(5), text: 'Went.' }]} turnTimings={[timing]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" liveCard />
+        </ApiContext.Provider>,
+      );
+      await user.click(screen.getByRole('button', { name: 'Todo at the end of this turn: 2 of 2 done' }));
+      const sheet = await screen.findByRole('dialog', { name: 'Todo at the end of this turn' });
+      expect(await within(sheet).findByText(/^As this turn left it, .* · all done$/)).toBeTruthy();
+      expect(within(sheet).queryByText('Esc')).toBeNull();
+      await user.click(within(sheet).getByRole('button', { name: 'Close' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    } finally {
+      happy.setViewport({ width: 1024, height: 768 });
+    }
   });
 
   test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {
@@ -225,6 +321,45 @@ describe('activity', () => {
     expect(raw.closest('.group\\/code')?.textContent).toContain('commandRawls ~/projects/sky-dodge');
     await user.click(raw);
     await waitFor(() => expect(conversation().textContent).toContain('{"command":"ls ~/projects/sky-dodge"}'));
+  });
+
+  test.each(['detailed', 'compact'] as const)('a call a stopped turn left running is not the running step while the next turn starts (%s)', (density) => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
+    const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled' };
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const ring = () => view.container.querySelector('.animate-spin');
+    const view = render(draw([stopped], false));
+    expect(ring()).toBeNull();
+    // The Task works before the next turn's timing comes, then before its message lands.
+    view.rerender(draw([stopped], true));
+    expect(ring()).toBeNull();
+    expect(view.container.textContent).not.toContain('Running');
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true));
+    expect(ring()).toBeNull();
+    // The next turn's own call is its running step.
+    view.rerender(draw([stopped, { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' }], true, [...items, { id: 'u2', kind: 'user', time: at(10), text: 'Again' }, bash('c2', 12)]));
+    expect(ring()).toBeTruthy();
+  });
+
+  test.each(['detailed', 'compact'] as const)('a stopped turn keeps its end and its reply foot while the next turn starts (%s)', (density) => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
+    const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const view = render(draw([stopped], false));
+    const ends = () => [view.container.textContent?.includes('Took 5s'), within(view.getByText('Counting.').closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent?.includes('940 tokens')];
+    expect(ends()).toEqual([true, true]);
+    // The Task works before the next turn's timing comes, then before its message lands: the stopped turn stays as it ended.
+    view.rerender(draw([stopped], true));
+    expect(ends()).toEqual([true, true]);
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true));
+    expect(ends()).toEqual([true, true]);
+    // A row begun after the end is a turn's that came without a message: it runs.
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true, [...items, bash('c2', 12)]));
+    expect(view.container.textContent).not.toContain('Took 5s');
   });
 
   test('a turn that ended with nothing in it says there was no reply', () => {

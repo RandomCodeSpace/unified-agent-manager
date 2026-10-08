@@ -255,16 +255,8 @@ func (m *Manager) storeUpload(s *webSession, u *upload, data []byte) error {
 // writeUpload stores data and its record owner-only: 0700 directories and
 // 0600 files.
 func writeUpload(root, dir string, u *upload, data []byte) error {
-	for _, d := range []string{root, dir} {
-		if err := os.Mkdir(d, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		if info, err := os.Lstat(d); err != nil || !info.IsDir() {
-			return fmt.Errorf("%s is not a directory", d)
-		}
-		if err := os.Chmod(d, 0o700); err != nil { // #nosec G302 -- owner-only directory; needs the execute bit.
-			return err
-		}
+	if err := privateDirs(root, dir); err != nil {
+		return err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, u.ID), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- dir is UAM's; the ID is a generated UUID.
 	if err != nil {
@@ -278,6 +270,22 @@ func writeUpload(root, dir string, u *upload, data []byte) error {
 		return err
 	}
 	return writeUploadRecord(dir, u)
+}
+
+// privateDirs makes each of dirs, in order, an owner-only (0700) directory.
+func privateDirs(dirs ...string) error {
+	for _, d := range dirs {
+		if err := os.Mkdir(d, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		if info, err := os.Lstat(d); err != nil || !info.IsDir() {
+			return fmt.Errorf("%s is not a directory", d)
+		}
+		if err := os.Chmod(d, 0o700); err != nil { // #nosec G302 -- owner-only directory; needs the execute bit.
+			return err
+		}
+	}
+	return nil
 }
 
 // writeUploadRecord replaces <id>.json atomically.

@@ -367,6 +367,9 @@ type TurnTiming struct {
 	InputTokens  int64 `json:"input_tokens,omitempty"`
 	OutputTokens int64 `json:"output_tokens,omitempty"`
 	GenerationMS int64 `json:"generation_ms,omitempty"`
+	// Todo counts the todo list as the turn left it, for a turn that
+	// changed it; its rows are kept beside the Task's uploads.
+	Todo TodoCounts `json:"todo,omitzero"`
 }
 
 // TodoCounts counts the rows of a conversation's todo list by status: Open
@@ -437,7 +440,7 @@ type WebState struct {
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
 	// StopReason says why the last turn was cancelled (owner, time_limit,
-	// credit_limit, remote, mcp or cli); empty otherwise.
+	// credit_limit, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
 
 	unknown map[string]json.RawMessage

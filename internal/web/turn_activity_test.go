@@ -87,7 +87,7 @@ func TestStopReasonForEachProviderCode(t *testing.T) {
 		"autopilot_credit_limit": stopCreditLimit,
 		"remote_command":         stopRemote,
 		"user_abort":             stopMCP,
-		"user_initiated":         stopCLI,
+		"user_initiated":         "",
 		"":                       "",
 		"something_new":          "",
 	} {
