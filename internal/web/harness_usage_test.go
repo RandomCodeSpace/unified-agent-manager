@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -332,5 +334,93 @@ func TestHarnessUsageCalendarWindows(t *testing.T) {
 	m.now = func() time.Time { return now.AddDate(0, 0, 1) }
 	if got := m.TokenUsage(); got.Collection.Status != "partial" || got.Periods["today"].Total.Total != 0 {
 		t.Fatal("stale yesterday cache claimed to be today's data")
+	}
+}
+
+// passCounter stands in for every harness: a collection pass discovers once.
+type passCounter struct {
+	adapter.Adapter
+	passes chan<- struct{}
+}
+
+func (passCounter) ID() string { return "counter" }
+
+func (p passCounter) Discover(context.Context, adapter.DiscoverConfig) ([]adapter.Source, error) {
+	p.passes <- struct{}{}
+	return nil, nil
+}
+
+func startHarnessCollector(t *testing.T, m *Manager, ledger *corestore.Ledger) <-chan struct{} {
+	t.Helper()
+	passes := make(chan struct{}, 8)
+	m.harness.adapters = adapter.NewRegistry(passCounter{passes: passes})
+	m.wg.Add(1)
+	go m.harnessUsageLoop(ledger)
+	t.Cleanup(func() { m.cancel(); m.wg.Wait() })
+	return passes
+}
+
+func expectHarnessPass(t *testing.T, passes <-chan struct{}, want bool) {
+	t.Helper()
+	wait := 100 * time.Millisecond
+	if want {
+		wait = 10 * time.Second
+	}
+	select {
+	case <-passes:
+		if !want {
+			t.Fatal("unexpected collection pass")
+		}
+	case <-time.After(wait):
+		if want {
+			t.Fatal("no collection pass")
+		}
+	}
+}
+
+// A pass can re-read a harness's whole history, so without a reader the
+// collector stays idle; a reader starts one at most once a minute.
+func TestHarnessUsageCollectsWhenRead(t *testing.T) {
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
+	m, ledger := harnessTestManager(t, now)
+	var clock atomic.Int64
+	clock.Store(now.UnixNano())
+	m.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	passes := startHarnessCollector(t, m, ledger)
+	expectHarnessPass(t, passes, true) // at startup
+	expectHarnessPass(t, passes, false)
+	m.requestHarnessUsage()
+	expectHarnessPass(t, passes, false) // read within the minute
+	clock.Add(int64(time.Minute))
+	m.requestHarnessUsage()
+	expectHarnessPass(t, passes, true)
+	m.requestHarnessUsage()
+	expectHarnessPass(t, passes, false)
+}
+
+func TestHarnessUsageCollectsInBackground(t *testing.T) {
+	old := harnessUsageInterval
+	harnessUsageInterval = 10 * time.Millisecond
+	t.Cleanup(func() { harnessUsageInterval = old })
+	m, ledger := harnessTestManager(t, time.Now())
+	passes := startHarnessCollector(t, m, ledger)
+	for range 3 {
+		expectHarnessPass(t, passes, true)
+	}
+}
+
+func TestTokenReadsRequestHarnessUsage(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	ts.m.harness = &harnessUsage{wake: make(chan struct{}, 1)}
+	auth := ts.login(t, "127.0.0.1:8260")
+	for _, path := range []string{"/api/usage/tokens", "/api/usage/prices"} {
+		if w := ts.do(http.MethodGet, path, "", auth); w.Code != http.StatusOK {
+			t.Fatalf("%s = %d", path, w.Code)
+		}
+		select {
+		case <-ts.m.harness.wake:
+		default:
+			t.Fatalf("%s did not request a collection pass", path)
+		}
 	}
 }
