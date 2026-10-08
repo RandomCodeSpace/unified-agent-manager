@@ -92,6 +92,8 @@ class FakeEventSource extends EventTarget {
       if (this.readyState === 2) return;
       this.readyState = 1;
       this.onopen?.(new Event('open'));
+      // As in a browser, listeners hear it too (the connected notices stream reports on it).
+      this.dispatchEvent(new Event('open'));
       this.detach = hooks.attach(this);
     }, 30);
   }

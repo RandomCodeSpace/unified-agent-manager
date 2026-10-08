@@ -89,7 +89,7 @@ export function setNotificationSource(source: NotificationSource | null): void {
   if (source?.id === notificationSource?.id && source?.generation === notificationSource?.generation) return;
   notificationSource = source;
   viewing = null;
-  report(true);
+  report();
 }
 
 /** A stored value as a mode; anything else is off. */
@@ -225,21 +225,28 @@ export async function disableNotifications(): Promise<void> {
 }
 
 let viewing: string | null = null;
-/** What the service last heard this tab shows; undefined before the first report. */
-let reported: string | undefined;
+/**
+ * Where this tab reports what it shows: this instance's event stream (`local`, POST /api/viewing) and the connected
+ * notices stream (`remote`). A service keeps a report only for an open stream of the tab, so none goes before its
+ * stream opens; `heard` is what it last heard, undefined before the first report and after a failed one.
+ */
+const reports: Record<'local' | 'remote', { open: boolean; heard?: string }> = { local: { open: false }, remote: { open: false } };
 
-/** Tells the service the Task this tab shows while it is visible ("" otherwise), when that changed or `again`. */
-function report(again = false): void {
+/** Tells each service the Task this tab shows while it is visible ("" otherwise), when what it holds changed or its stream just `opened`. */
+function report(opened?: 'local' | 'remote'): void {
   const task = document.visibilityState === 'visible' ? (viewing ?? '') : '';
-  const key = `${notificationSource?.id ?? ''}:${notificationSource?.generation ?? ''}:${task}`;
-  if (!again && key === reported) return;
-  reported = key;
-  const local = api.viewing(notificationSource ? '' : task);
-  const remote = fetch('/api/connected-notifications/viewing', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page: PAGE_ID, connection_id: notificationSource?.id ?? '', generation: notificationSource?.generation ?? 0, task: notificationSource ? task : '' }),
-  });
-  void Promise.all([local, remote.then((response) => { if (!response.ok) throw new Error('viewing unavailable'); })]).catch(() => { reported = undefined; });
+  const local = notificationSource ? '' : task;
+  const remote = JSON.stringify({ page: PAGE_ID, connection_id: notificationSource?.id ?? '', generation: notificationSource?.generation ?? 0, task: notificationSource ? task : '' });
+  if (reports.local.open && (opened === 'local' || reports.local.heard !== local)) {
+    reports.local.heard = local;
+    void api.viewing(local).catch(() => { reports.local.heard = undefined; });
+  }
+  if (reports.remote.open && (opened === 'remote' || reports.remote.heard !== remote)) {
+    reports.remote.heard = remote;
+    void fetch('/api/connected-notifications/viewing', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: remote })
+      .then((response) => { if (!response.ok) throw new Error('viewing unavailable'); })
+      .catch(() => { reports.remote.heard = undefined; });
+  }
 }
 
 /** The Task this page shows, if any; it is not announced while the page is visible, and the service pushes nothing for it. */
@@ -250,7 +257,8 @@ export function setViewing(id: string | null): void {
 
 /** A new event stream opened: the service learns again what this tab shows, for that stream. */
 export function streamOpened(): void {
-  report(true);
+  reports.local.open = true;
+  report('local');
 }
 
 function openTask(target: NotificationTarget): void {
@@ -271,7 +279,7 @@ export function startNotifications(): () => void {
   container?.addEventListener('message', onMessage);
   container?.startMessages();
   const stream = typeof EventSource === 'undefined' ? null : new EventSource(`/api/connected-notifications/events?page=${encodeURIComponent(PAGE_ID)}`);
-  stream?.addEventListener('open', () => report(true));
+  stream?.addEventListener('open', () => { reports.remote.open = true; report('remote'); });
   stream?.addEventListener('notify', (event) => {
     try {
       const notice = JSON.parse((event as MessageEvent<string>).data) as Notice;
@@ -295,6 +303,8 @@ export function startNotifications(): () => void {
     publishAttention([]);
     container?.removeEventListener('message', onMessage);
     document.removeEventListener('visibilitychange', onVisibility);
+    // Signed out (or gone), this tab's streams close with it: the next sign-in reports afresh.
+    for (const place of Object.values(reports)) { place.open = false; place.heard = undefined; }
   };
 }
 
