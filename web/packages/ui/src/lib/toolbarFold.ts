@@ -31,10 +31,32 @@ function fits(row: FoldRow): boolean {
   return true;
 }
 
-/** Applies the fewest folds with which the row fits, all of them when none does; returns how many. */
+/** Gives the row its first n folds; writes only a change, since every write restyles the row and the next read lays it out. */
+function fold(row: FoldRow, n: number): void {
+  const value = FOLDS.slice(0, n).join(' ');
+  if (row.dataset.fold !== value) row.dataset.fold = value;
+}
+
+/**
+ * Applies the fewest folds with which the row fits, all of them when none does; returns how many. It steps from the
+ * folds the row already carries rather than from none, since every step is a layout: a row that still fits checks
+ * once, and once more to rule out one fold fewer when it carries any. More folds never make the row wider, so the
+ * first step that fits (or stops fitting) settles it.
+ */
 export function foldToFit(row: FoldRow): number {
-  for (let n = 0; ; n++) {
-    row.dataset.fold = FOLDS.slice(0, n).join(' ');
-    if (n === FOLDS.length || fits(row)) return n;
+  let n = row.dataset.fold ? row.dataset.fold.split(' ').length : 0;
+  fold(row, n);
+  if (fits(row)) {
+    for (; n > 0; n--) {
+      fold(row, n - 1);
+      if (!fits(row)) break;
+    }
+    fold(row, n);
+    return n;
   }
+  while (n < FOLDS.length) {
+    fold(row, ++n);
+    if (n === FOLDS.length || fits(row)) break;
+  }
+  return n;
 }
