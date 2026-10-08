@@ -368,6 +368,11 @@ type webSession struct {
 	turnActivity TurnActivity
 	// todoBase is the todo list as the running or last turn found it.
 	todoBase TodoView
+	// turnIntent is the running turn's last intent, for its todo snapshot.
+	turnIntent string
+	// turnTodos are the todo snapshots of ended turns that flush has yet to
+	// append to the Task's turn-todos.jsonl (turn_todos.go).
+	turnTodos []TurnTodos
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -1912,10 +1917,15 @@ func (m *Manager) flush() (err error) {
 	defer func() { err = errors.Join(err, m.flushTokenLedger()) }()
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
+	var kept []keptTodos
 	for id := range m.dirty {
 		s := m.sessions[id]
 		if s == nil {
 			continue
+		}
+		timings := slices.Clone(s.turnTimings)
+		if len(s.turnTodos) > 0 {
+			kept = append(kept, keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings})
 		}
 		key := s.key()
 		var commandResult json.RawMessage
@@ -1925,7 +1935,7 @@ func (m *Manager) flush() (err error) {
 		patches = append(patches, recordPatch{
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
-				Turn: key.turn, TurnTimings: slices.Clone(s.turnTimings), RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
+				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
@@ -1937,6 +1947,10 @@ func (m *Manager) flush() (err error) {
 	m.mu.Unlock()
 	if len(patches) == 0 {
 		return nil
+	}
+	// Turn todo snapshots land before the counts that point at them.
+	for _, k := range kept {
+		m.appendTurnTodos(k)
 	}
 	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {

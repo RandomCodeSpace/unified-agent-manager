@@ -72,6 +72,7 @@ func (m *Manager) turnActivityTurnLocked(s *webSession, state agentapi.TurnState
 			return
 		}
 		s.todoBase, todos.Touched = todos, false
+		s.turnIntent = ""
 	}
 	m.setTurnActivityLocked(s, TurnActivity{Todos: todos})
 }
@@ -83,6 +84,9 @@ func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 	if a.Retry != nil {
 		r := cleanRetry(*a.Retry)
 		next.Retry = &r
+	}
+	if next.Intent != "" {
+		s.turnIntent = next.Intent
 	}
 	m.setTurnActivityLocked(s, next)
 }

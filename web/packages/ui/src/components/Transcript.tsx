@@ -18,6 +18,7 @@ import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMa
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { TurnTodo } from './Todos';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -691,7 +692,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time. */ timing?: TurnTiming; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
@@ -720,7 +721,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', copied && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
@@ -732,6 +733,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, fo
             </time>
           )}
           {timing && <TurnTokens timing={timing} />}
+          {timing && <TurnTodo timing={timing} />}
         </div>
       )}
       {menuReady && (

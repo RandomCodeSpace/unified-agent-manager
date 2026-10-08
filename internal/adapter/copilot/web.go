@@ -2550,6 +2550,7 @@ func (c *conversation) Close(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
+	c.releaseTurnLocked()
 	perms := c.expireLocked()
 	c.endIdleLocked()
 	c.closed = true
@@ -2638,6 +2639,7 @@ func (c *conversation) exitLocked(reason string) {
 	if c.closed {
 		return
 	}
+	c.releaseTurnLocked()
 	c.expireLocked()
 	clear(c.pending)
 	c.endIdleLocked()
@@ -3193,6 +3195,7 @@ func (c *conversation) emitUsageLocked() {
 }
 
 func (c *conversation) startTurnLocked() {
+	c.releaseTurnLocked()
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
 	c.idleUnresolved, c.taskCompleted = false, false
@@ -3218,7 +3221,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	c.turnErr, c.turnModel = "", ""
 	c.act = activity{}
 	c.undeliveredLocked(turn.State, at)
-	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &turn})
+	c.emitTurnEndLocked(turn)
 }
 
 // undeliveredLocked reports each steer the ending turn did not use as a
