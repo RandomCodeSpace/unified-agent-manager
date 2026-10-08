@@ -25,6 +25,9 @@ export default defineConfig({
             { name: 'vendor-react', test: /[\\/]node_modules[\\/](?:react|react-dom|scheduler)[\\/]/, tags: ['$initial'] },
             { name: 'vendor-ui', test: /[\\/]node_modules[\\/]@(?:base-ui|floating-ui)[\\/]/, tags: ['$initial'] },
             { name: 'vendor-markdown', test: /[\\/]node_modules[\\/](?:react-markdown|remark-breaks|remark-gfm)[\\/]/, tags: ['$initial'] },
+            // On demand: ECharts but its chart types in one chunk, rather than dozens of fragments
+            // the types share; each drawing loads its types beside it (EChart.tsx).
+            { name: 'echarts', test: /[\\/]node_modules[\\/](?:tslib|zrender|echarts(?![\\/]lib[\\/]chart[\\/]))[\\/]/ },
           ],
         },
       },

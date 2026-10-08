@@ -16,6 +16,34 @@ const axesKey = (range: ZoomRange) => JSON.stringify([axisIndexes(range.xAxisInd
 // ECharts keeps a legend's resolved entries (series or data names) only on its model.
 type LegendModel = { get(key: 'show' | 'selectedMode'): unknown; getData(): { get(key: 'name'): unknown }[]; isSelected(name: string): boolean };
 const legendModel = (drawing: EChartsType) => (drawing as unknown as { getModel(): { getComponent(type: string): LegendModel | undefined } }).getModel().getComponent('legend');
+// The series types the service accepts (chartOptionSeries in internal/web/chart_options.go). A
+// drawing loads the ones it uses beside the library; importing one registers it. The library
+// refuses any other type.
+const CHART_TYPES: Record<string, () => Promise<unknown>> = {
+  line: () => import('echarts/lib/chart/line'),
+  bar: () => import('echarts/lib/chart/bar'),
+  pie: () => import('echarts/lib/chart/pie'),
+  scatter: () => import('echarts/lib/chart/scatter'),
+  effectScatter: () => import('echarts/lib/chart/effectScatter'),
+  radar: () => import('echarts/lib/chart/radar'),
+  tree: () => import('echarts/lib/chart/tree'),
+  treemap: () => import('echarts/lib/chart/treemap'),
+  sunburst: () => import('echarts/lib/chart/sunburst'),
+  boxplot: () => import('echarts/lib/chart/boxplot'),
+  candlestick: () => import('echarts/lib/chart/candlestick'),
+  heatmap: () => import('echarts/lib/chart/heatmap'),
+  parallel: () => import('echarts/lib/chart/parallel'),
+  lines: () => import('echarts/lib/chart/lines'),
+  graph: () => import('echarts/lib/chart/graph'),
+  sankey: () => import('echarts/lib/chart/sankey'),
+  funnel: () => import('echarts/lib/chart/funnel'),
+  gauge: () => import('echarts/lib/chart/gauge'),
+  pictorialBar: () => import('echarts/lib/chart/pictorialBar'),
+  themeRiver: () => import('echarts/lib/chart/themeRiver'),
+  chord: () => import('echarts/lib/chart/chord'),
+};
+const chartTypes = (option: EChartsOption) => [...new Set([option.series ?? []].flat().map((series) => series?.type))]
+  .map((type) => (type && Object.hasOwn(CHART_TYPES, type) ? CHART_TYPES[type]() : undefined));
 
 /** A locally bundled SVG drawing. */
 export function EChart({ option, width, height, className, label, zoomControls = false, controlsContainer, legend }: Readonly<{
@@ -58,7 +86,7 @@ export function EChart({ option, width, height, className, label, zoomControls =
       setReady(false);
       setFailure(cause instanceof Error && cause.message ? cause.message.split('\n')[0] : 'the drawing library rejected its options');
     };
-    void import('../lib/echarts').then(({ init }) => {
+    void Promise.all([import('../lib/echarts'), ...chartTypes(option)]).then(([{ init }]) => {
       if (!active) return;
       try {
         const drawing = chart.current ??= init(element, undefined, { renderer: 'svg', width: element.clientWidth || width, height: element.clientHeight || height });
