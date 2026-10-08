@@ -207,8 +207,8 @@ export function ProjectBadge({ badge, className }: Readonly<{ badge: Badge; clas
 }
 
 /** A tiny dot in a tone; used for connection status and unread marks. */
-export function Dot({ tone, className, pulse = false }: Readonly<{ tone: Tone; className?: string; pulse?: boolean }>) {
-  return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], pulse && 'animate-pulse-dot', className)} />;
+export function Dot({ tone, className }: Readonly<{ tone: Tone; className?: string }>) {
+  return <span aria-hidden="true" className={cn('inline-block size-2 shrink-0 rounded-full', TONE_BG[tone], className)} />;
 }
 
 import { Spinner } from './ui/spinner';

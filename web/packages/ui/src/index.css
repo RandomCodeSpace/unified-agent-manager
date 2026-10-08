@@ -157,22 +157,12 @@
   --spacing-picker: min(320px, 40dvh);
   --spacing-picker-phone: 40dvh;
 
-  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
   --animate-spin: spin 1s linear infinite;
   --animate-flash: flash 1.4s var(--ease-app);
   --animate-rise: rise 240ms var(--ease-app);
   --animate-fade-in: fade-in 160ms var(--ease-app);
   --animate-slide-in: slide-in 240ms var(--ease-app);
 
-  @keyframes pulse-dot {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.4;
-    }
-  }
   @keyframes spin {
     to {
       transform: rotate(360deg);
