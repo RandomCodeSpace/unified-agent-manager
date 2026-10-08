@@ -82,6 +82,25 @@ func (f grantFixture) entry(id string) *tempGrant {
 	return g.entries[id]
 }
 
+// expire fires the grant's expiry timer and waits for the revoke it runs to
+// return. entry.ctx closes Done before the cancellation reaches reader contexts
+// derived from it and before the retained descriptor closes; the revoke holds
+// g.mu until both are done.
+func (f grantFixture) expire(t *testing.T, entry *tempGrant) {
+	t.Helper()
+	g := f.ts.srv.grants
+	g.mu.Lock()
+	entry.timer.Reset(time.Millisecond)
+	g.mu.Unlock()
+	<-entry.ctx.Done()
+	g.mu.Lock()
+	revoked := entry.revoked
+	g.mu.Unlock()
+	if !revoked {
+		t.Fatal("expiry did not revoke the grant")
+	}
+}
+
 func TestTempGrantHTTPContract(t *testing.T) {
 	f := newGrantFixture(t)
 	base := "/api/sessions/" + f.task.ID + "/file-grants"
@@ -517,10 +536,7 @@ func TestTempGrantReaderCancellationAndCleanup(t *testing.T) {
 			case "revoke":
 				g.revoke("127.0.0.1:8260", f.task.ID, grant.ID)
 			case "expire":
-				g.mu.Lock()
-				entry.timer.Reset(time.Millisecond)
-				g.mu.Unlock()
-				<-entry.ctx.Done()
+				f.expire(t, entry)
 			case "delete":
 				if _, err := f.ts.m.Archive(f.task.ID); err != nil {
 					t.Fatal(err)
@@ -558,10 +574,7 @@ func TestTempGrantReaderCancellationAndCleanup(t *testing.T) {
 				if action == "revoke" {
 					g.revoke("127.0.0.1:8260", f.task.ID, grant.ID)
 				} else {
-					g.mu.Lock()
-					entry.timer.Reset(time.Millisecond)
-					g.mu.Unlock()
-					<-entry.ctx.Done()
+					f.expire(t, entry)
 				}
 			}
 			w := f.ts.do("GET", grant.URL, "")
