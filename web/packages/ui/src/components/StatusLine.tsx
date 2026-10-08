@@ -28,14 +28,16 @@ export type Line =
  * The line for a Task, or null when it has nothing to say. `working`: a turn runs, or subagents
  * outlived it; the turn's verb comes from the user message its timing links, so a turn starting
  * (the Task works before its message lands) has none until then, never the last turn's.
+ * `connected`: the event stream is up, so a timing marked unknown is the service's (a turn a
+ * restart or close cut off), not the running one this page lost track of while it reconnects.
  */
-export function statusLine(session: SessionDetail, working: boolean, compacting: boolean, items: Item[], identityItems?: Item[]): Line | null {
+export function statusLine(session: SessionDetail, working: boolean, compacting: boolean, items: Item[], identityItems?: Item[], connected = true): Line | null {
   if (working) {
     const lastUser = (list: Item[] = []) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting };
     const turn = session.turn_timings?.at(-1);
-    // The Task runs a turn whose timing has not come yet: all there is belongs to the last turn.
-    if (turn?.ended_at && LIVE.includes(session.state)) return null;
+    // The Task runs a turn whose timing has not come yet: all there is belongs to the last turn, which ended or was cut off.
+    if ((turn?.ended_at || (connected && turn?.state === 'unknown')) && LIVE.includes(session.state)) return null;
     const activity = session.turn_activity;
     const key = turn ? turn.user_item_id : lastUser(items) ?? lastUser(identityItems) ?? 'start';
     const lead = activity?.intent || (key ? turnVerb(key) : '');

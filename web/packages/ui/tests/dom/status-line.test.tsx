@@ -13,8 +13,8 @@ const timing = { id: 'turn', user_item_id: 'u1', state: 'working', started_at: n
 const task = (extra: Partial<SessionDetail> = {}) => ({ id: 't', state: 'working', items: [], interactions: [], subagents: [], turn_timings: [timing], ...extra }) as SessionDetail;
 const objective = { id: 1, objective: 'Notes', status: 'paused' as const, turn_count: 6, credits_used: 300, credit_limit: 300 };
 
-function draw(session: SessionDetail, { working = session.state === 'working', items = [] as Item[], since = undefined as string | undefined, onJump = () => {} } = {}) {
-  return <StatusLine line={statusLine(session, working, !!session.compacting, items)} session={session} since={since} hidden={false} onJump={onJump} />;
+function draw(session: SessionDetail, { working = session.state === 'working', items = [] as Item[], since = undefined as string | undefined, onJump = () => {}, connected = true } = {}) {
+  return <StatusLine line={statusLine(session, working, !!session.compacting, items, undefined, connected)} session={session} since={since} hidden={false} onJump={onJump} />;
 }
 
 test('the clock excludes approval and question waits, including after remount', () => {
@@ -150,6 +150,22 @@ test('a turn that came without a message (Copilot going on after a background sh
   expect(screen.getByText('5s')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Working, under a minute. Jump to bottom' })).toBeTruthy();
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
+});
+
+test('a turn a restart or close cut off lends the next one no verb while it starts; a dropped stream keeps the running turn\'s', () => {
+  // The service marks such a turn unknown, without an end.
+  const cut = { ...timing, user_item_id: 'u0', state: 'unknown' } as TurnTiming;
+  const old = [{ id: 'u0', kind: 'user', time: cut.started_at }] as Item[];
+  // You reopen the Task with a message: it starts, then works, before the new turn's timing comes.
+  for (const state of ['starting', 'working'] as const) {
+    const view = render(draw(task({ state, turn_timings: [cut] }), { working: true, items: old }));
+    expect(screen.queryByText(`${turnVerb('u0')}…`)).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+    view.unmount();
+  }
+  // The page lost its stream and marked the running turn unknown itself: the turn may still run.
+  render(draw(task({ turn_timings: [cut] }), { items: old, connected: false }));
+  expect(screen.getByText(`${turnVerb('u0')}…`)).toBeTruthy();
 });
 
 const rows = (extra: Partial<Todo>[] = []): Todo[] =>
