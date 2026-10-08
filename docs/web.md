@@ -440,8 +440,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   what the agent says it is doing (Copilot derives it from its todo list),
   else a calm verb, and for how long. A model call Copilot retries adds
   "Retrying, attempt 2 · HTTP 429 · rate limited" until the call goes
-  through; a subagent's retry shows under its row. Click the line to jump to
-  the end of the conversation. After a stop it says why until the next turn
+  through; a subagent's retry shows under its row. With a todo list it also
+  says how far the agents got ("Todo 2/7"), the row in progress and how many
+  rows are blocked, or, while the turn has not touched the list yet, how many
+  the last turn left open; clicking it then opens the list, by sections Now,
+  Blocked, Next and Done, with the subagent that wrote each row when uam
+  could tell. Without a list, clicking it jumps to the end of the
+  conversation. After a stop it says why until the next turn
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
   "Stopped: remote command", "Stopped: MCP server" or "Stopped in the
@@ -451,7 +456,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   or `cli`, absent when there is none); it is saved with the stopped state
   and cleared when the next turn starts. The running turn's intent and
   retry come as `turn_activity`, in the Task snapshot and in `turn_activity`
-  events; they are live only and never saved.
+  events; they are live only and never saved. So is the todo list
+  (`turn_activity.todos`): uam asks the agents, subagents included, to keep
+  one in Copilot's session `todos` table for work of more than two steps,
+  reads it when it changes and when the Task's conversation reopens, and
+  sends at most 100 rows with the counts of all.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
   UAM, such as signing in again in Settings, and a link only when it is
   https) and its authentication, model, MCP and notification messages show

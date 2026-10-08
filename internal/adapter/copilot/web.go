@@ -116,6 +116,8 @@ type sdkSession interface {
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	// ListTasks returns the tasks the CLI tracks, subagents included.
 	ListTasks(ctx context.Context) ([]rpc.TaskInfo, error)
+	// ReadTodos reads the rows of the session's todo list (todos.go).
+	ReadTodos(ctx context.Context) ([]rpc.PlanSQLTodosRow, error)
 	// MessageSubagent sends a follow-up to one agent task.
 	MessageSubagent(ctx context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error)
 	Events(ctx context.Context) ([]copilot.SessionEvent, error)
@@ -839,15 +841,19 @@ func media(c rpc.ModelCapabilities) *agentapi.Media {
 // folded tool calls, the agent loads the built-in uam skill before using what
 // uam renders or provides (an agent rarely loads it from its description
 // alone), a question's options arrive as choices the composer lists and
-// pre-selects, and commits and pull requests carry no agent attribution. Task
-// sessions also set CoauthorEnabled false, which drops the CLI's own co-author
-// tool and commit-trailer instructions. Utility sessions replace the message.
-// Subagents do not receive it.
+// pre-selects, commits and pull requests carry no agent attribution, and work
+// of several steps keeps the todo list uam shows (todos.go). Task sessions
+// also set CoauthorEnabled false, which drops the CLI's own co-author tool and
+// commit-trailer instructions. Utility sessions replace the message.
+// Subagents do not receive it: subagentStart gives them the todo and commit
+// rules.
 const taskSystem = `This conversation is a uam Task: the owner reads it in a browser, often on a phone, where your tool calls and their output are folded away. Put what the owner needs in your reply: results, the errors that matter, decisions and next steps. Load the uam skill before you show the owner a file, image, diagram or chart, start another Task, or start subagents.
 
 When you ask the owner a question with ask_user, pass each answer option as its own entry in choices rather than listing the options in the question text. Put the option you recommend first and end its label with " (Recommended)". When several options may apply together, end the question itself with " (Choose any that apply)".
 
-Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.`
+Write commit messages and pull or merge request titles and descriptions as the owner's own work: no Co-authored-by trailer and no line crediting an AI, agent or tool, unless the owner asks for one.
+
+For work with more than two steps, keep a todo list in the session's ` + "`todos`" + ` table with the sql tool: insert the steps first, then set each to in_progress when you start it and done right when it is finished (blocked, with the reason in description, when stuck). When you start a subagent, tell it in its prompt to insert its own row in the same ` + "`todos`" + ` table, keep it current and set it done when it finishes.`
 
 func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
 	if req.Events == nil {
@@ -905,7 +911,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnUserInputRequest:    c.askUser,
 			OnExitPlanModeRequest: refusePlanExit,
 			OnEvent:               c.onEvent,
-			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse},
+			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -929,7 +935,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnUserInputRequest:    c.askUser,
 			OnExitPlanModeRequest: refusePlanExit,
 			OnEvent:               c.onEvent,
-			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse},
+			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
@@ -965,6 +971,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if req.ConversationID != "" || c.relist {
 		c.relist = false
 		c.checkTasksLocked()
+	}
+	if req.ConversationID != "" {
+		c.checkTodosLocked()
 	}
 	c.mu.Unlock()
 	if c.tools != nil {
@@ -1710,6 +1719,8 @@ type conversation struct {
 	turnModel string
 	// act is the running turn's live activity (activity.go).
 	act activity
+	// todos is the todo list and its reads (todos.go).
+	todos todoReads
 	// byom is what the session has of the custom models.
 	byom registered
 	// selected is the model this client last selected: at create or by
@@ -2928,6 +2939,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	}
 	agentID := agentOf(ev)
 	if c.observeActivityLocked(ev, agentID) {
+		return
+	}
+	if c.observeTodosLocked(ev, agentID) {
 		return
 	}
 	switch d := ev.Data.(type) {

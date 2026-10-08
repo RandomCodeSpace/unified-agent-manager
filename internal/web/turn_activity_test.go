@@ -180,3 +180,121 @@ func TestSubagentRetryIsCleanAndOnlyWhileRunning(t *testing.T) {
 		t.Fatalf("completed subagent kept its retry: %+v", got[0].Retry)
 	}
 }
+
+func todosEvent(known bool, rows ...agentapi.Todo) agentapi.Event {
+	return agentapi.Event{Kind: agentapi.EventTodos, Todos: &agentapi.TodoList{Known: known, Todos: rows}}
+}
+
+func TestTurnActivityTodosCountsNowAndCap(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	at := func(sec int64) time.Time { return time.Unix(sec, 0) }
+	rows := []agentapi.Todo{
+		{ID: "a", Title: " Plan \x1b[1mit ", Status: agentapi.TodoDone, ChangedAt: at(10)},
+		{ID: "b", Title: "Build", Status: agentapi.TodoInProgress, AgentID: "sub-1", ChangedAt: at(20)},
+		{ID: "c", Title: "Test", Status: agentapi.TodoInProgress, ChangedAt: at(20)},
+		{ID: "d", Title: "Ship", Status: agentapi.TodoBlocked, Note: "needs\nsign-in", ChangedAt: at(15)},
+		{ID: "e", Title: "Docs", Status: agentapi.TodoPending, Note: "not a reason"},
+		{ID: "f", Title: strings.Repeat("t", 300), Status: "archived"},
+		{ID: "g", Title: "Same time, later in order", Status: agentapi.TodoInProgress, ChangedAt: at(20)},
+		{ID: "h", Title: "Older", Status: agentapi.TodoInProgress, ChangedAt: at(5)},
+	}
+	for i := range maxTodoRows {
+		rows = append(rows, agentapi.Todo{ID: "r" + strings.Repeat("x", i), Title: "Row", Status: agentapi.TodoDone})
+	}
+	conv.Emit(todosEvent(true, rows...))
+	v := detail(t, m, sum.ID).TurnActivity.Todos
+	if !v.Known || v.Touched || len(v.Todos) != maxTodoRows || v.Omitted != len(rows)-maxTodoRows {
+		t.Fatalf("view: known %v touched %v rows %d omitted %d", v.Known, v.Touched, len(v.Todos), v.Omitted)
+	}
+	if want := (TodoCounts{Total: len(rows), Done: 1 + maxTodoRows, Blocked: 1, Open: 6}); v.Counts != want {
+		t.Fatalf("counts = %+v, want %+v", v.Counts, want)
+	}
+	// The latest change in progress, the main agent's at a tie, then the first.
+	if v.Now != "c" {
+		t.Fatalf("now = %q", v.Now)
+	}
+	if a, d, e, f := v.Todos[0], v.Todos[3], v.Todos[4], v.Todos[5]; a.Title != "Plan it" || d.Note != "needs sign-in" || e.Note != "" || f.Status != agentapi.TodoPending || f.Title != strings.Repeat("t", maxTodoTitleRunes)+"…" {
+		t.Fatalf("rows = %+v", v.Todos[:6])
+	}
+	// None in progress: no row is Now.
+	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone}))
+	if v := detail(t, m, sum.ID).TurnActivity.Todos; v.Now != "" || v.Omitted != 0 || v.Counts != (TodoCounts{Total: 1, Done: 1}) {
+		t.Fatalf("done view = %+v", v)
+	}
+}
+
+func TestTurnActivityTodosTouchedOnlyByTheRunningTurnAndNeverWritten(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	at := func(sec int64) time.Time { return time.Unix(sec, 0) }
+	todos := func() TodoView {
+		t.Helper()
+		return detail(t, m, sum.ID).TurnActivity.Todos
+	}
+	plan := []agentapi.Todo{{ID: "a", Title: "Plan", Status: agentapi.TodoDone, ChangedAt: at(10)}, {ID: "b", Title: "Build", Status: agentapi.TodoInProgress, ChangedAt: at(10)}}
+
+	// A turn that writes the list touches it, and the answer stays after it.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(todosEvent(true, plan...))
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	if v := todos(); !v.Touched || v.Counts.Open != 1 {
+		t.Fatalf("first turn = %+v", v)
+	}
+
+	// The next turn finds it untouched, through its model calls, until the
+	// list changes; the same list again changes nothing.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	s := m.sessions[sum.ID]
+	revision, persisted := s.timingRevision, s.persisted
+	m.mu.Unlock()
+	conv.Emit(todosEvent(true, plan...))
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	if v := todos(); v.Touched {
+		t.Fatal("an unchanged list touched the turn")
+	}
+	done := []agentapi.Todo{plan[0], {ID: "b", Title: "Build", Status: agentapi.TodoDone, ChangedAt: at(30)}}
+	conv.Emit(todosEvent(true, done...))
+	if v := todos(); !v.Touched || v.Counts.Done != 2 {
+		t.Fatalf("changed list = %+v", v)
+	}
+	// Todo changes write nothing to sessions.json.
+	m.mu.Lock()
+	durable, timing := s.persisted == persisted && s.key() == persisted, s.timingRevision == revision
+	m.mu.Unlock()
+	if !durable || !timing {
+		t.Fatalf("todos changed what is written: key unchanged %v, timing revision unchanged %v", durable, timing)
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+
+	// Between turns nothing touches it.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	conv.Emit(todosEvent(true, append(done, agentapi.Todo{ID: "c", Title: "Late", Status: agentapi.TodoPending, ChangedAt: at(40)})...))
+	if v := todos(); v.Touched || v.Counts.Total != 3 {
+		t.Fatalf("between turns = %+v", v)
+	}
+
+	// A list unknown when the turn started (read again on reopening): rows
+	// without a newer change leave it untouched.
+	conv.Emit(todosEvent(false, done...))
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone}, agentapi.Todo{ID: "b", Title: "Build", Status: agentapi.TodoDone}))
+	if v := todos(); v.Touched || !v.Known {
+		t.Fatalf("reread list = %+v", v)
+	}
+	conv.Emit(todosEvent(true, agentapi.Todo{ID: "a", Title: "Plan", Status: agentapi.TodoDone}, agentapi.Todo{ID: "b", Title: "Build", Status: agentapi.TodoInProgress, ChangedAt: at(50)}))
+	if v := todos(); !v.Touched {
+		t.Fatalf("changed reread list = %+v", v)
+	}
+
+	// Once the conversation is gone the list is not known.
+	conv.Exit("gone")
+	if v := todos(); v.Known || len(v.Todos) != 2 {
+		t.Fatalf("after exit = %+v", v)
+	}
+}

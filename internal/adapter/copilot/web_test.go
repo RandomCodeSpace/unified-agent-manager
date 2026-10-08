@@ -73,6 +73,8 @@ type fakeClient struct {
 	// the journal a read had pinned.
 	expireRead int
 	grow       []copilot.SessionEvent
+	// todos are the todo rows of the sessions resumed afterwards.
+	todos []rpc.PlanSQLTodosRow
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -183,7 +185,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -238,6 +240,10 @@ type fakeSession struct {
 	tasks             []rpc.TaskInfo
 	taskLists         int
 	tasksErr          error
+	todoRows          []rpc.PlanSQLTodosRow
+	todoReads         int
+	todosErr          error
+	todoHook          func() // runs while the todos are being read
 	subMessages       []string
 	subMessageResult  *rpc.TasksSendMessageResult
 	subMessageErr     error
@@ -330,6 +336,16 @@ func (s *fakeSession) ListTasks(context.Context) ([]rpc.TaskInfo, error) {
 	defer s.mu.Unlock()
 	s.taskLists++
 	return append([]rpc.TaskInfo(nil), s.tasks...), s.tasksErr
+}
+
+func (s *fakeSession) ReadTodos(context.Context) ([]rpc.PlanSQLTodosRow, error) {
+	if s.todoHook != nil {
+		s.todoHook()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.todoReads++
+	return slices.Clone(s.todoRows), s.todosErr
 }
 
 func (s *fakeSession) MessageSubagent(_ context.Context, agentID, message string) (*rpc.TasksSendMessageResult, error) {

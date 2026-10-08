@@ -369,6 +369,16 @@ type TurnTiming struct {
 	GenerationMS int64 `json:"generation_ms,omitempty"`
 }
 
+// TodoCounts counts the rows of a conversation's todo list by status: Open
+// is pending and in progress, and Omitted the rows a bounded copy left out.
+type TodoCounts struct {
+	Done    int `json:"done,omitempty"`
+	Total   int `json:"total,omitempty"`
+	Blocked int `json:"blocked,omitempty"`
+	Open    int `json:"open,omitempty"`
+	Omitted int `json:"omitted,omitempty"`
+}
+
 // WebState is the small durable part of a web session. Transcripts stay with
 // the provider; lifecycle metadata and request outcomes survive a service
 // restart.

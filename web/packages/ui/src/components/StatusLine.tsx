@@ -1,22 +1,26 @@
 // The status line (DESIGN.md Status line): one quiet caption line over the composer. While the
 // Task works it says what the agent says it is doing (`assistant.intent`, else the turn's verb)
 // and for how long, and a model call being retried; after a stop it says why, until the next
-// turn. It sits in the dock's overlap, outside the scroller, so coming and going never moves the
-// composer or the transcript. It is still: the ring stays at the Task's state glyph and the
-// running step. A subagent's retry stands under its row instead (`SubagentRetry`).
+// turn. With a todo list the agents keep, it adds how far it got, the row in progress and the
+// blocked rows, and opens the list (`TodoReader`). It sits in the dock's overlap, outside the
+// scroller, so coming and going never moves the composer or the transcript. It is still: the ring
+// stays at the Task's state glyph and the running step. A subagent's retry stands under its row
+// instead (`SubagentRetry`).
 
-import { CircleStop, Minus, Pause, RotateCw } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Ban, CircleStop, ListChecks, Minus, Pause, RotateCw } from 'lucide-react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { readOnly, type Item, type Retry, type SessionDetail, type TurnTiming } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
+import { todoLine, todoSentence, type TodoLine } from '../lib/todos';
 import { elapsedSince, turnElapsed } from '../lib/transcript';
 import { turnVerb } from '../lib/verbs';
 import { Dot } from './common';
+import { PHONE, TodoMeter, TodoReader } from './Todos';
 
 /** What the line says. */
 export type Line =
-  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry }
+  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine }
   | { kind: 'stopped'; short: string; long: string; notYours: boolean }
   | { kind: 'paused'; text: string };
 
@@ -29,7 +33,10 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     const lastUser = (list: Item[] = []) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting };
     const activity = session.turn_activity;
-    return { kind: 'working', lead: activity?.intent || turnVerb(lastUser(items) ?? lastUser(identityItems) ?? 'start'), compacting, retry: activity?.retry };
+    const lead = activity?.intent || turnVerb(lastUser(items) ?? lastUser(identityItems) ?? 'start');
+    const todo = todoLine(activity?.todos, session.turn_timings?.at(-1)?.started_at);
+    // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
+    return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined, more: 0 } : todo };
   }
   if (readOnly(session)) return null;
   if (session.state === 'cancelled' && session.stop_reason) {
@@ -46,8 +53,8 @@ const Sep = () => <span className="shrink-0 text-faint">·</span>;
 /**
  * The line as one button. Its name is one sentence (sr-only), the words on screen are hidden from
  * assistive tech, and a polite live region beside it speaks only what `useCue` lets through.
- * Pressing it shows the end of the conversation, where the work is. `hidden` gives its place to
- * another strip.
+ * Pressing it opens the todo list when the line shows one, else shows the end of the
+ * conversation, where the work is. `hidden` gives its place to another strip.
  */
 export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
   line: Line | null;
@@ -60,13 +67,29 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
   const shown = hidden ? null : line;
   const timing = session.turn_timings?.at(-1);
   const cue = useCue(shown, timing?.id ?? '');
+  const list = shown?.kind === 'working' ? shown.todo : undefined;
+  const view = session.turn_activity?.todos;
+  const readerId = useId();
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
+  // Phone or not is chosen as it opens, so a resize does not remount it.
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
+  // With the list gone from the line (the turn ended, the conversation closed), the reader closes too.
+  if (reader?.open && !list) setReader({ ...reader, open: false });
   return (
     <>
       <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {shown ? cue : ''}
       </div>
       {shown && (
-        <button type="button" onClick={onJump} className="flex h-8 max-w-full min-w-0 items-center rounded-sm bg-canvas px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover pointer-coarse:h-11">
+        <button
+          ref={setButton}
+          type="button"
+          onClick={list ? () => setReader({ open: true, phone: window.matchMedia(PHONE).matches }) : onJump}
+          aria-haspopup={list ? 'dialog' : undefined}
+          aria-expanded={list ? !!reader?.open : undefined}
+          aria-controls={list && reader?.open ? readerId : undefined}
+          className="flex h-8 max-w-full min-w-0 items-center rounded-sm bg-canvas px-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover pointer-coarse:h-11"
+        >
           <span key={shown.kind} aria-hidden="true" className="flex min-w-0 animate-fade-in items-center gap-1.5 sm:gap-2">
             {shown.kind === 'working' ? <Working line={shown} since={since} timing={timing} /> : shown.kind === 'stopped' ? <Stopped line={shown} /> : <Paused text={shown.text} />}
           </span>
@@ -75,6 +98,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
               <>
                 {shown.lead}
                 <ClockWords since={since} timing={timing} />
+                {shown.todo && todoSentence(shown.todo)}
                 {shown.retry && retrySentence(shown.retry)}
               </>
             ) : shown.kind === 'stopped' ? (
@@ -82,9 +106,12 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
             ) : (
               shown.text
             )}
-            . Jump to bottom
+            {list ? '. Show the list' : '. Jump to bottom'}
           </span>
         </button>
+      )}
+      {reader && view && (
+        <TodoReader id={readerId} open={reader.open} phone={reader.phone} anchor={button} view={view} subagents={session.subagents} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />
       )}
     </>
   );
@@ -103,12 +130,56 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
       <Dot tone="accent" className={cn('size-1.5', line.compacting && 'bg-badge-violet')} />
       <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead}…</span>
       <Clock since={since} timing={timing} />
+      {line.todo && <TodoSegment todo={line.todo} />}
       {retry && (
         <>
           <Sep />
           <RotateCw className="size-3 shrink-0 text-muted" />
           <span className="shrink-0 text-body">{retry.lead}</span>
           {retry.parts.length > 0 && <span className="min-w-0 shrink-[2] truncate max-sm:hidden">· {retry.parts.join(' · ')}</span>}
+        </>
+      )}
+    </>
+  );
+}
+
+/** "Todo 2/7", the meter, "Now: …" with "+2" when more rows are in progress, and "⊘ 1 blocked"; or the last turn's open rows. A phone keeps the counts and the blocked rows. */
+function TodoSegment({ todo }: Readonly<{ todo: TodoLine }>) {
+  if (todo.kind === 'carried') {
+    return (
+      <>
+        <Sep />
+        <ListChecks className="size-3.5 shrink-0 text-muted" />
+        <span className="shrink-0 text-body max-sm:hidden">
+          Todo <span className="text-faint">·</span>
+        </span>
+        <span className="min-w-0 truncate text-body">{todo.open} open from the last turn</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <Sep />
+      <ListChecks className="size-3.5 shrink-0 text-muted" />
+      <span className="shrink-0 tabular-nums text-body">
+        <span className="max-sm:hidden">Todo </span>
+        {todo.done}/{todo.total}
+      </span>
+      {todo.meter && <TodoMeter statuses={todo.meter} className="max-sm:hidden" />}
+      {todo.now && (
+        // The row in progress gives way before the lead does.
+        <span className="min-w-0 shrink-[4] truncate text-body max-sm:hidden">
+          <span className="text-muted">Now:</span> {todo.now}
+        </span>
+      )}
+      {todo.now && todo.more > 0 && <span className="shrink-0 tabular-nums text-muted max-sm:hidden">+{todo.more}</span>}
+      {todo.blocked > 0 && (
+        <>
+          <Sep />
+          <span className="flex shrink-0 items-center gap-1 text-warning">
+            <Ban className="size-3" />
+            {todo.blocked} blocked
+          </span>
         </>
       )}
     </>
@@ -200,6 +271,7 @@ function cueOf(line: Line | null, turnId: string): [key: string, words: string] 
   if (line?.kind === 'working') {
     if (line.compacting) return [`compacting ${turnId}`, 'Compacting the conversation'];
     if (line.retry) return [`retry ${line.retry.count} ${line.retry.at}`, retryWords(line.retry).cue];
+    if (line.todo?.kind === 'list' && line.todo.cue) return [`${line.todo.cue.key} ${turnId}`, line.todo.cue.words];
     return [`turn ${turnId}`, 'Working'];
   }
   if (line?.kind === 'stopped') return [`stop ${turnId}`, line.short];
@@ -207,9 +279,9 @@ function cueOf(line: Line | null, turnId: string): [key: string, words: string] 
 }
 
 /**
- * What the live region says: a turn starting, compaction, a retry of the main agent's call, and a
- * stop, each once, at most one every 5s. Never the clock or the intent, and nothing for what was
- * already on screen when the line mounted.
+ * What the live region says: a turn starting, compaction, a retry of the main agent's call, a todo
+ * row done ("3 of 7 done") or blocked ("Blocked: …"), and a stop, each once, at most one every 5s.
+ * Never the clock or the intent, and nothing for what was already on screen when the line mounted.
  */
 function useCue(line: Line | null, turnId: string): string {
   const [key, words] = cueOf(line, turnId);

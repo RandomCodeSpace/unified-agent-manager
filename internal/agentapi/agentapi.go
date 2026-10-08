@@ -765,6 +765,9 @@ const (
 	// EventActivity replaces the running turn's live activity with
 	// Event.Activity; it is never persisted.
 	EventActivity EventKind = "activity"
+	// EventTodos replaces the conversation's todo list with Event.Todos; it
+	// is never persisted.
+	EventTodos EventKind = "todos"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -787,6 +790,7 @@ type Event struct {
 	// Compacting is the payload of EventCompaction.
 	Compacting bool
 	Activity   *Activity
+	Todos      *TodoList
 }
 
 // Activity is the main agent's live state in the running turn. The adapter
@@ -1178,6 +1182,37 @@ type BackgroundTask struct {
 	StartedAt   time.Time `json:"started_at,omitzero"`
 	EndedAt     time.Time `json:"ended_at,omitzero"`
 }
+
+// TodoList is the todo list the agents keep in the conversation.
+type TodoList struct {
+	// Known is false when the list could not be read.
+	Known bool   `json:"known"`
+	Todos []Todo `json:"todos"`
+}
+
+// Todo is one row of a TodoList, in the provider's order.
+type Todo struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Status is pending, in_progress, done or blocked.
+	Status string `json:"status"`
+	// Note says why a blocked row is blocked; "" for the others.
+	Note string `json:"note,omitempty"`
+	// AgentID is the subagent that first wrote the row; "" for the main
+	// agent or when that is not known.
+	AgentID string `json:"agent_id,omitempty"`
+	// ChangedAt is when its status last changed, as far as uam saw it;
+	// zero when it was first seen on opening the conversation.
+	ChangedAt time.Time `json:"changed_at,omitzero"`
+}
+
+// Todo statuses.
+const (
+	TodoPending    = "pending"
+	TodoInProgress = "in_progress"
+	TodoDone       = "done"
+	TodoBlocked    = "blocked"
+)
 
 // FileDiff is one provider-recorded file change. Before/After hold full file
 // text when available; Patch holds a unified diff when that is what the

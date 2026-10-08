@@ -324,7 +324,7 @@ export function seed(): MockState {
       background_tasks_running: 1,
       capabilities: { ...CAPS, execution_modes: true },
       execution: { known: true, mode: 'interactive' },
-      turn_activity: { intent: 'Running the redraw tests', todos: { known: false } },
+      turn_activity: { intent: 'Running the redraw tests', todos: { known: false, touched: false, todos: [], counts: {} } },
       background_tasks: {
         known: true,
         tasks: [
@@ -559,6 +559,23 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       title: '',
       state: 'working',
       subagents_running: 2,
+      // The agents' todo list: two subagents' rows in progress, one blocked.
+      turn_activity: {
+        todos: {
+          known: true,
+          touched: true,
+          todos: [
+            { id: 'plan', title: 'Split the audit into markup and contrast', status: 'done', changed_at: ago(11) },
+            { id: 'alt', title: 'Survey templates for missing alt text and labels', status: 'in_progress', agent_id: 'a1', changed_at: ago(10) },
+            { id: 'contrast', title: 'Check contrast of the theme tokens', status: 'in_progress', agent_id: 'a2', changed_at: ago(1) },
+            { id: 'lint', title: 'Run the accessibility linter', status: 'blocked', note: 'axe-core is not installed in this project.', agent_id: 'a3', changed_at: ago(10) },
+            { id: 'headings', title: 'Fix the heading order', status: 'done', agent_id: 'a4', changed_at: ago(9) },
+            { id: 'summary', title: 'Summarise the fixes in the reply', status: 'pending' },
+          ],
+          counts: { done: 2, total: 6, blocked: 1, open: 3 },
+          now: 'contrast',
+        },
+      },
       created_at: ago(12),
       updated_at: ago(2),
       items: [

@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { StatusLine, statusLine } from '../../src/components/StatusLine';
-import type { Item, SessionDetail, TurnTiming } from '../../src/api';
+import type { Item, SessionDetail, Subagent, Todo, TodoView, TurnTiming } from '../../src/api';
 import { shownState } from '../../src/lib/tasks';
 import { turnVerb } from '../../src/lib/verbs';
 
@@ -115,4 +116,115 @@ test('the line stays while a subagent outlives the turn, with the verb', () => {
     expect(line(0)).toBeNull();
     expect(line(1)).toEqual({ kind: 'working', lead: turnVerb('start'), compacting: false, retry: undefined });
   }
+});
+
+const rows = (extra: Partial<Todo>[] = []): Todo[] =>
+  [
+    { id: 'a', title: 'Plan the pages', status: 'done' },
+    { id: 'b', title: 'Build the index page', status: 'in_progress', agent_id: 'sub-1' },
+    { id: 'c', title: 'Build the about page', status: 'in_progress' },
+    { id: 'd', title: 'Sign in to the registry', status: 'blocked', note: 'No token on this machine' },
+  ].map((row, i) => ({ ...row, ...extra[i] }) as Todo);
+const listOf = (todos: Todo[], extra: Partial<TodoView> = {}): TodoView => ({
+  known: true,
+  touched: true,
+  todos,
+  counts: { total: todos.length, done: todos.filter((t) => t.status === 'done').length, blocked: todos.filter((t) => t.status === 'blocked').length, open: todos.filter((t) => t.status === 'pending' || t.status === 'in_progress').length },
+  now: 'b',
+  ...extra,
+});
+const withTodos = (todos: TodoView, intent = 'Working on the site', extra: Partial<SessionDetail> = {}) => task({ turn_activity: { intent, todos }, subagents: [{ id: 'sub-1', name: 'Index page writer', status: 'running' } as Subagent], ...extra });
+
+test('the todo segment: counts, meter, Now with how many more, blocked in words; Now gives way to an intent that says it', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(start + 125_000);
+  const view = render(draw(withTodos(listOf(rows()))));
+  const button = screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo 1 of 4 done, 1 blocked. Now: Build the index page, and 1 more in progress. Show the list' });
+  expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(button.textContent).toContain('Todo 1/4');
+  expect(screen.getByText('Build the index page')).toBeTruthy();
+  expect(screen.getByText('+1')).toBeTruthy();
+  // Blocked is a glyph and a word, never colour alone.
+  expect(screen.getByText('1 blocked')).toBeTruthy();
+  // The meter: one segment per row.
+  expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
+  expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
+  // Copilot's intent is the row in progress: it leads, and "Now:" goes.
+  view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.queryByText('Now:')).toBeNull();
+  // The last turn's list, not touched yet: its open rows, and the reader still opens.
+  view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
+  expect(screen.getByText('3 open from the last turn')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Todo: 3 open from the last turn. Show the list' })).toBeTruthy();
+  // No list: the line jumps to the bottom as before.
+  view.rerender(draw(withTodos({ known: false, touched: false, todos: [], counts: {} })));
+  expect(screen.getByRole('button', { name: 'Working on the site, 2 minutes. Jump to bottom' }).getAttribute('aria-haspopup')).toBeNull();
+});
+
+test('the reader opens on its heading beside the line, keeps focus inside, and Esc gives it back to the line', async () => {
+  const user = userEvent.setup();
+  render(draw(withTodos(listOf(rows()))));
+  const line = screen.getByRole('button', { name: /Show the list$/ });
+  await user.click(line);
+  const reader = await screen.findByRole('dialog', { name: 'Todo' });
+  expect(line.getAttribute('aria-expanded')).toBe('true');
+  expect(line.getAttribute('aria-controls')).toBe(reader.id);
+  await waitFor(() => expect(document.activeElement).toBe(within(reader).getByRole('heading', { name: 'Todo' })));
+  // Sections with their rows; states and the subagent in words.
+  expect(within(reader).getByRole('region', { name: 'Now' }).textContent).toBe('Now2Build the index page, by Index page writer, NowBuild the about page, Now');
+  expect(within(reader).getByRole('region', { name: 'Blocked' }).textContent).toContain('No token on this machine');
+  expect(within(reader).getByText('Esc')).toBeTruthy();
+  expect(within(reader).getByText('To change it, ask in the chat')).toBeTruthy();
+  // The page behind is out of reach: focus stays in the reader.
+  for (let i = 0; i < 3; i++) {
+    await user.tab();
+    expect(reader.contains(document.activeElement)).toBe(true);
+  }
+  await user.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(document.activeElement).toBe(line);
+  expect(line.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('a phone gets the list as a sheet with a close button and no key hints', async () => {
+  const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
+  happy.setViewport({ width: 390, height: 844 });
+  try {
+    const user = userEvent.setup();
+    render(draw(withTodos(listOf(rows()))));
+    await user.click(screen.getByRole('button', { name: /Show the list$/ }));
+    const sheet = await screen.findByRole('dialog', { name: 'Todo' });
+    expect(within(sheet).queryByText('Esc')).toBeNull();
+    expect(within(sheet).getByText('To change it, ask in the chat')).toBeTruthy();
+    await user.click(within(sheet).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  } finally {
+    happy.setViewport({ width: 1024, height: 768 });
+  }
+});
+
+test('the live region says a row done or newly blocked, at most one every 5s', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(start);
+  const region = () => screen.getByRole('status').textContent;
+  const at = (s: number) => new Date(start + s * 1000).toISOString();
+  const view = render(draw(task({ state: 'idle' })));
+  view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
+  act(() => vi.advanceTimersByTime(0));
+  expect(region()).toBe('Working');
+  // Writing the list is not news; a row done is.
+  view.rerender(draw(withTodos(listOf(rows()))));
+  act(() => vi.advanceTimersByTime(6000));
+  expect(region()).toBe('Working');
+  view.rerender(draw(withTodos(listOf(rows([{ changed_at: at(7) }])))));
+  act(() => vi.advanceTimersByTime(0));
+  expect(region()).toBe('1 of 4 done');
+  // A row blocked right after waits for the slot.
+  view.rerender(draw(withTodos(listOf(rows([{ changed_at: at(7) }, {}, {}, { changed_at: at(8) }])))));
+  act(() => vi.advanceTimersByTime(4000));
+  expect(region()).toBe('');
+  act(() => vi.advanceTimersByTime(1000));
+  expect(region()).toBe('Blocked: Sign in to the registry');
 });
