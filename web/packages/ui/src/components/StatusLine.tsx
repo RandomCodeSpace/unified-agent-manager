@@ -9,7 +9,7 @@
 
 import { Ban, CircleStop, ListChecks, Minus, Pause, RotateCw } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { readOnly, type Item, type Retry, type SessionDetail, type TurnTiming } from '../api';
+import { LIVE, readOnly, type Item, type Retry, type SessionDetail, type TurnTiming } from '../api';
 import { cn } from '../lib/cn';
 import { retryWords, stopWords } from '../lib/stop';
 import { todoLine, todoSentence, type TodoLine } from '../lib/todos';
@@ -26,15 +26,20 @@ export type Line =
 
 /**
  * The line for a Task, or null when it has nothing to say. `working`: a turn runs, or subagents
- * outlived it; the turn's verb comes from the user message that began it.
+ * outlived it; the turn's verb comes from the user message its timing links, so a turn starting
+ * (the Task works before its message lands) has none until then, never the last turn's.
  */
 export function statusLine(session: SessionDetail, working: boolean, compacting: boolean, items: Item[], identityItems?: Item[]): Line | null {
   if (working) {
     const lastUser = (list: Item[] = []) => [...list].reverse().find((item) => item.kind === 'user' && !item.delivery)?.id;
     if (compacting) return { kind: 'working', lead: 'Compacting the conversation', compacting };
+    const turn = session.turn_timings?.at(-1);
+    // The Task runs a turn whose timing has not come yet: all there is belongs to the last turn.
+    if (turn?.ended_at && LIVE.includes(session.state)) return null;
     const activity = session.turn_activity;
-    const lead = activity?.intent || turnVerb(lastUser(items) ?? lastUser(identityItems) ?? 'start');
-    const todo = todoLine(activity?.todos, session.turn_timings?.at(-1)?.started_at);
+    const key = turn ? turn.user_item_id : lastUser(items) ?? lastUser(identityItems) ?? 'start';
+    const lead = activity?.intent || (key ? turnVerb(key) : '');
+    const todo = todoLine(activity?.todos, turn?.started_at);
     // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
     return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined, more: 0 } : todo };
   }
@@ -96,7 +101,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
           <span className="sr-only">
             {shown.kind === 'working' ? (
               <>
-                {shown.lead}
+                {shown.lead || 'Working'}
                 <ClockWords since={since} timing={timing} />
                 {shown.todo && todoSentence(shown.todo)}
                 {shown.retry && retrySentence(shown.retry)}
@@ -128,7 +133,7 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
     <>
       {/* Still: this line says what, the ring is elsewhere. */}
       <Dot tone="accent" className={cn('size-1.5', line.compacting && 'bg-badge-violet')} />
-      <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead}…</span>
+      {line.lead && <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead}…</span>}
       <Clock since={since} timing={timing} />
       {line.todo && <TodoSegment todo={line.todo} />}
       {retry && (

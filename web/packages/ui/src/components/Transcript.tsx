@@ -145,6 +145,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   let after = userItemId ?? 'start';
   // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
   let ownMessage = false;
+  let footLive = live;
   const flush = (last = false, boundary = true) => {
     const timing = timingForTurn(turnTimings, userItemId);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live });
@@ -152,8 +153,12 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
     }
-    const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id));
-    const gctx = { ...ctx, live: groupLive };
+    // A turn that ended is over, also while the next one starts before its message lands: a call it
+    // left running is not the running step. A row begun after its end is a turn's that came without one.
+    const ended = Date.parse(timing?.ended_at ?? '');
+    const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && !(Date.parse(entry.item.time) < ended));
+    const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
+    if (last) footLive = groupLive;
     if (last && working) showedWorking = true;
     // One status row heads the turn and keeps its slot while it runs, so "Took 12s" lands there
     // at the end and streamed content lands below it: nothing on screen moves at either moment.
@@ -202,7 +207,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
-  const step = compact && working && !compacting ? currentStep(items, { live, streamingId: ctx.streamingId, approvals: linked }, own) : null;
+  const step = compact && working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
   const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
