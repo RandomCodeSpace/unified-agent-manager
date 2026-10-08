@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -378,30 +377,33 @@ func expectHarnessPass(t *testing.T, passes <-chan struct{}, want bool) {
 	}
 }
 
+// withHarnessIntervals shortens the collector's cadence for a test. The
+// collector spaces passes by at least a second however short the view interval.
+func withHarnessIntervals(t *testing.T, background, view time.Duration) {
+	oldBackground, oldView := harnessUsageInterval, harnessUsageViewInterval
+	harnessUsageInterval, harnessUsageViewInterval = background, view
+	t.Cleanup(func() { harnessUsageInterval, harnessUsageViewInterval = oldBackground, oldView })
+}
+
 // A pass can re-read a harness's whole history, so without a reader the
-// collector stays idle; a reader starts one at most once a minute.
+// collector stays idle; reads start one, at most once per view interval.
 func TestHarnessUsageCollectsWhenRead(t *testing.T) {
-	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
-	m, ledger := harnessTestManager(t, now)
-	var clock atomic.Int64
-	clock.Store(now.UnixNano())
-	m.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	withHarnessIntervals(t, time.Hour, time.Second)
+	m, ledger := harnessTestManager(t, time.Now())
 	passes := startHarnessCollector(t, m, ledger)
 	expectHarnessPass(t, passes, true) // at startup
-	expectHarnessPass(t, passes, false)
+	started := time.Now()
 	m.requestHarnessUsage()
-	expectHarnessPass(t, passes, false) // read within the minute
-	clock.Add(int64(time.Minute))
 	m.requestHarnessUsage()
-	expectHarnessPass(t, passes, true)
-	m.requestHarnessUsage()
+	expectHarnessPass(t, passes, true) // both reads, in one pass
+	if waited := time.Since(started); waited < harnessUsageViewInterval/2 {
+		t.Fatalf("a read started a pass %v after the last one", waited)
+	}
 	expectHarnessPass(t, passes, false)
 }
 
 func TestHarnessUsageCollectsInBackground(t *testing.T) {
-	old := harnessUsageInterval
-	harnessUsageInterval = 10 * time.Millisecond
-	t.Cleanup(func() { harnessUsageInterval = old })
+	withHarnessIntervals(t, 10*time.Millisecond, time.Millisecond)
 	m, ledger := harnessTestManager(t, time.Now())
 	passes := startHarnessCollector(t, m, ledger)
 	for range 3 {
