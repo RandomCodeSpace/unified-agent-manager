@@ -450,7 +450,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
   "Stopped: remote command" or "Stopped: MCP server". The header says the
-  same, and the Task row's tip says "You stopped it" for yours. The service
+  same, and the Task row's tip says "You stopped it" for a Stop uam
+  recorded as yours, else plain "Stopped". The service
   reports the reason as `stop_reason` on the Task summary (`owner`,
   `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
   none); it is saved with the stopped state
