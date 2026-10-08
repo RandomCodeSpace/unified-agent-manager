@@ -19,7 +19,7 @@ import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel,
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Markdown, Note, Skeleton, Spinner, useApp } from './common';
+import { Loading, Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerQuestion } from './Interactions';
@@ -1465,7 +1465,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           </>
         )}
         {catalogPending ? (
-          <Skeleton label="Loading the model catalog…" rows={1} className="w-48" rowClassName="h-5 w-full" />
+          // One bar in the pickers' 28px height with the delayed Loading line over it, so the row keeps its height and
+          // the composer does not move when the catalogs land. It grows from no width to 192px, so it never folds or wraps the row.
+          <div className="relative flex h-7 max-w-48 grow basis-0 items-center overflow-hidden">
+            <div aria-hidden="true" className="h-5 w-full rounded-sm bg-sunken" />
+            <Loading label="Loading the model catalog…" className="absolute inset-0 min-h-0 px-2 whitespace-nowrap" />
+          </div>
         ) : (
           <>
         <Picker
