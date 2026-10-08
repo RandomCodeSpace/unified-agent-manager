@@ -249,6 +249,12 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
   if (!data) return <Skeleton label="Loading MCP servers…" rows={2} />;
   if (!data.available) return <Note>No provider here manages MCP servers.</Note>;
   const pending = removal.target;
+  // Copilot CLI 1.0.93 leaves its built-in GitHub server out of discovery, though every task has it, so the
+  // setting's row shows either way.
+  const servers: McpServer[] =
+    githubMcp && !data.servers.some((s) => s.source === 'builtin' && s.name === GITHUB_MCP)
+      ? [...data.servers, { name: GITHUB_MCP, type: '', env: [], headers: [], enabled: githubMcp.on, source: 'builtin' }]
+      : data.servers;
   return (
     <div className="flex flex-col gap-3">
       <Note className="max-w-3xl">
@@ -262,10 +268,10 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
           </Button>
         </SectionAction>
       )}
-      {data.servers.length === 0 && !draft && <Note>No MCP servers yet.</Note>}
-      {data.servers.length > 0 && (
+      {servers.length === 0 && !draft && <Note>No MCP servers yet.</Note>}
+      {servers.length > 0 && (
         <ul aria-label="MCP servers" className="flex flex-col">
-          {data.servers.map((s) => {
+          {servers.map((s) => {
             const own = s.source === 'user';
             const lockedStdio = s.type === 'stdio' && !terminal;
             const github = s.source === 'builtin' && s.name === GITHUB_MCP ? githubMcp : undefined;
@@ -275,7 +281,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-2">
                     <span className="min-w-0 break-all text-ui font-medium text-ink">{s.name}</span>
-                    <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>
+                    {(s.type || !github) && <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>}
                     {!own && <Chip>{SOURCE_LABEL[s.source] ?? s.source}</Chip>}
                     {!enabled && <span className="text-meta text-muted">Off</span>}
                   </div>

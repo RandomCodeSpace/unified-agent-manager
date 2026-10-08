@@ -43,7 +43,8 @@ export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
   let signedIn = false;
   let pending: { task: string; state: string } | null = null;
 
-  const list = () => json(200, { available: true, stdio_allowed: terminal(), servers: servers.map(view) });
+  // Like Copilot CLI 1.0.93's discovery, the instance's list leaves the built-in GitHub server out; tasks have it.
+  const list = () => json(200, { available: true, stdio_allowed: terminal(), servers: servers.filter((s) => s.name !== 'github-mcp-server').map(view) });
 
   function status(task: string): McpStatus[] {
     const disabled = off.get(task) ?? new Set();
