@@ -158,7 +158,10 @@ test('Settings of a selected peer read and write only that peer and name it in t
   await user.click(await screen.findByRole('button', { name: 'Settings', exact: true }));
   await screen.findByRole('heading', { name: 'Settings · This instance', level: 1 });
   expect(screen.getByRole('combobox', { name: 'Active instance' }).textContent).toContain('This instance');
-  // From the switch on only B's Settings are mounted: no read or write may reach home or C.
+  // Home's Settings reads its account, CLI and MCP servers once its catalog and settings arrive, which can be after
+  // its heading shows; they go before the switch. From the switch on only B's Settings are mounted: no read or write
+  // may reach home or C.
+  await waitFor(() => expect(['/api/providers/copilot/account', '/api/providers/copilot/cli', '/api/mcp'].every(path => calls.some(call => call.owner === '' && call.path === path))).toBe(true));
   const switched = calls.length;
   await chooseInstance(user, /^Workstation B/);
   await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
