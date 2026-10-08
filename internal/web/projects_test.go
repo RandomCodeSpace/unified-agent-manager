@@ -579,7 +579,7 @@ func TestRestartAndViewingKeepUpdatedAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.RefreshModels()
+	<-m.RefreshModels()
 	if err := m.View(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +637,7 @@ func TestModelCatalogValidationAndRefresh(t *testing.T) {
 	m.mu.Lock()
 	m.now = func() time.Time { return base.Add(6 * time.Minute) }
 	m.mu.Unlock()
-	m.RefreshModels()
+	<-m.RefreshModels()
 	if prov.ModelsCalls() != calls+1 || m.Providers()[0].Models[1].ID != "new" {
 		t.Fatalf("stale catalog not refreshed: %+v", m.Providers()[0].Models)
 	}
@@ -645,7 +645,7 @@ func TestModelCatalogValidationAndRefresh(t *testing.T) {
 	m.mu.Lock()
 	m.now = func() time.Time { return base.Add(12 * time.Minute) }
 	m.mu.Unlock()
-	m.RefreshModels()
+	<-m.RefreshModels()
 	if prov.ModelsCalls() != calls+2 || m.Providers()[0].Models[1].ID != "new" {
 		t.Fatalf("failed refresh replaced the catalog: %+v", m.Providers()[0].Models)
 	}

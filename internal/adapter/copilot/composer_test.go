@@ -54,8 +54,8 @@ func TestWebSkillDirectoriesOnCreateAndResume(t *testing.T) {
 	}
 }
 
-// Every Task session, created or resumed, appends the ask_user and
-// no-attribution rules to Copilot's system message and turns the CLI's
+// Every Task session, created or resumed, appends the Task rules
+// (taskSystem) to Copilot's system message and turns the CLI's
 // co-author trailer off; a utility session keeps only its own message.
 func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	h := openWeb(t)
@@ -83,6 +83,29 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 	}
 	if got := h.fc.create[1].SystemMessage; got == nil || got.Mode != "replace" || got.Content != "Write a title." {
 		t.Fatalf("utility system message = %+v", got)
+	}
+}
+
+// taskSystem carries the rules every turn needs, since an agent rarely loads
+// the uam skill on its own: results in the reply, the pointer to the skill,
+// the ask_user conventions the composer reads, and no agent attribution.
+func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
+	for _, rule := range []string{
+		"folded away. Put what the owner needs in your reply",
+		"Load the uam skill before you show the owner a file, image, diagram or chart, start another Task, or start subagents.",
+		"as its own entry in choices",
+		` (Recommended)"`,
+		"no Co-authored-by trailer",
+	} {
+		if !strings.Contains(taskSystem, rule) {
+			t.Errorf("taskSystem lacks %q", rule)
+		}
+	}
+	// The multiple-choice marker taskSystem teaches is the one questionText reads.
+	_, marker, ok := strings.Cut(taskSystem, `end the question itself with "`)
+	marker, _, _ = strings.Cut(marker, `"`)
+	if text, multiple := questionText("Which targets?" + marker); !ok || !multiple || text != "Which targets?" {
+		t.Errorf("marker %q: questionText = %q, %v", marker, text, multiple)
 	}
 }
 
