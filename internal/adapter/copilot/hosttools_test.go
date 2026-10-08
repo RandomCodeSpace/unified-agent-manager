@@ -106,6 +106,7 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			firstProof(conv)
 			var registered []copilot.Tool
 			if resume {
 				registered = fc.resume[0].Tools
@@ -177,12 +178,14 @@ func TestHostToolsRegisterBesideDeclarationAndAnswer(t *testing.T) {
 	}
 }
 
-// Open fails, and leaves no session connected, unless every uam tool is
-// uam's own in the catalog.
+// uam's tools refuse every call unless a proof finds each of them uam's own
+// in the catalog. A failed first proof leaves the conversation open, and the
+// next message tries again.
 func TestHostToolCatalogRefusals(t *testing.T) {
 	server, name := "notes", "notes_list"
 	mcpNotes := rpc.CurrentToolMetadata{Name: "notes_list", MCPServerName: &server, MCPToolName: &name}
 	own := catalogOf(declarationToolName, "notes_get", "notes_list")
+	validate := func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }
 	for label, tc := range map[string]struct {
 		catalogs []fakeToolCatalog
 		want     string
@@ -194,17 +197,25 @@ func TestHostToolCatalogRefusals(t *testing.T) {
 		"other changed": {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(slices.Clone(own), rpc.CurrentToolMetadata{Name: "bash"})}}, "changed or is ambiguous"},
 	} {
 		t.Run(label, func(t *testing.T) {
+			calls := &hostCalls{}
+			gate, tools, err := sessionTools("session", validate, notesTools(), calls.call)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gate.stop()
+			if err := gate.catalog(context.Background(), &fakeSession{id: "session", toolCatalogs: tc.catalogs}, tools...); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("proof = %v", err)
+			}
 			fc := &fakeClient{toolCatalogs: tc.catalogs}
 			p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-			calls := &hostCalls{}
-			conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{}, Tools: notesTools(), CallTool: calls.call,
-				ValidateFile: func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }})
-			if err == nil || conv != nil || !strings.Contains(err.Error(), tc.want) || !fc.sessions[0].disconnected {
-				t.Fatalf("open = %v, %v; calls %v", conv, err, fc.sessions[0].toolCalls)
+			conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{}, Tools: notesTools(), CallTool: calls.call, ValidateFile: validate})
+			if err != nil {
+				t.Fatal(err)
 			}
-			if _, err := callTool(fc.create[0].Tools[1], "session", "call", map[string]any{}); err == nil || len(calls.recorded()) != 0 {
-				t.Fatalf("an unverified host tool answered: %v", err)
+			firstProof(conv)
+			if _, err := callTool(fc.create[0].Tools[1], "session", "call", map[string]any{}); err == nil || len(calls.recorded()) != 0 || fc.sessions[0].disconnected {
+				t.Fatalf("an unverified host tool answered: %v; calls %v", err, fc.sessions[0].toolCalls)
 			}
 		})
 	}

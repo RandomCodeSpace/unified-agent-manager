@@ -66,6 +66,7 @@ type fakeClient struct {
 	importProbes  int
 	catalog       []rpc.CurrentToolMetadata
 	catalogErr    error
+	catalogHook   func(read int)
 	toolCatalogs  []fakeToolCatalog
 	setToolErrors []error
 	// expireRead makes the read with that number (from 1) append grow to
@@ -173,7 +174,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
