@@ -30,11 +30,11 @@ export default defineConfig(
     languageOptions: { globals: globals.serviceworker },
   },
   {
-    files: ['packages/ui/public/theme.js'],
+    files: ['packages/ui/src/theme.js'],
     languageOptions: { globals: globals.browser },
   },
   {
-    files: ['packages/ui/tests/**/*.mjs', 'vite.config.ts', 'eslint.config.js'],
+    files: ['packages/ui/tests/**/*.mjs', 'scripts/**/*.mjs', 'vite.config.ts', 'eslint.config.js'],
     languageOptions: { globals: globals.node },
   },
 );

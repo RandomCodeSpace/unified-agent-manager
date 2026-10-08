@@ -11,8 +11,7 @@ import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, w
 import { showsFinish, shownState } from '../lib/tasks';
 import { stopWords } from '../lib/stop';
 import type { ChangesTurn } from './Changes';
-import { SetUpGitButton } from './CommitPanel';
-import { PinnedChartsPanel } from './Chart';
+import { SetUpGitButton } from './SetUpGitButton';
 import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
@@ -41,6 +40,8 @@ import { Tip } from './ui/tooltip';
 const FilesSheet = lazy(() => import('./Files'));
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
 const ChangesSheet = lazy(() => import('./Changes').then((m) => ({ default: m.ChangesSheet })));
+/** The pinned charts load with their first opening, never with the Task. */
+const PinnedChartsPanel = lazy(() => import('./Chart').then((m) => ({ default: m.PinnedChartsPanel })));
 
 interface Props {
   session: SessionDetail;
@@ -883,7 +884,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
       {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
       {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
-      {chartsPresence.mounted && project && <PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} />}
+      {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
       {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>

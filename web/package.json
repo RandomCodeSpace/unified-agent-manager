@@ -12,7 +12,7 @@
     "test": "node --experimental-strip-types --test packages/ui/tests/*.test.mjs",
     "test:dom": "vitest run",
     "prebuild": "npm run lint && npm test",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/precompress.mjs ../internal/web/dist",
     "preview": "vite preview"
   },
   "dependencies": {

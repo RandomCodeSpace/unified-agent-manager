@@ -441,6 +441,13 @@ deadlines and cancellation. Compression therefore does not wait for a stream
 to close before delivering an event or heartbeat. On return, pooled writers are
 closed and reset to `io.Discard` so they retain no response or connection.
 
+The build also writes a brotli (`.br`) and a gzip level 9 (`.gz`) copy beside
+each HTML, JavaScript, CSS, SVG and manifest file (`web/scripts/precompress.mjs`,
+Node's own zlib). The static handler sends the copy the request accepts, brotli
+first, with the file's own type, cache policy and validators; range requests,
+files whose extension gives no type and files without a copy take the paths
+above. API responses and event streams are unchanged.
+
 ## Consequences
 
 - Closing the browser or losing the tunnel has no provider-side effect.

@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -40,13 +41,21 @@ func TestCompressionNegotiation(t *testing.T) {
 		{"gzip, gzip;q=0", false}, {"*;q=no", false},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
-			if got := acceptsGzip([]string{tc.value}); got != tc.want {
-				t.Fatalf("acceptsGzip(%q) = %v, want %v", tc.value, got, tc.want)
+			if got := acceptsCoding([]string{tc.value}, "gzip"); got != tc.want {
+				t.Fatalf("acceptsCoding(%q, gzip) = %v, want %v", tc.value, got, tc.want)
 			}
 		})
 	}
-	if acceptsGzip([]string{"*", "gzip;q=0"}) || !acceptsGzip([]string{"br", "gzip"}) {
+	if acceptsCoding([]string{"*", "gzip;q=0"}, "gzip") || !acceptsCoding([]string{"br", "gzip"}, "gzip") {
 		t.Fatal("negotiation ignored a second header field")
+	}
+	for value, want := range map[string]bool{
+		"gzip, deflate, br, zstd": true, "br": true, "BR;q=0.5": true, "br;q=0": false, "gzip": false,
+		"brotli": false, "*": true, "*, br;q=0": false, "br;q=0, *": false,
+	} {
+		if got := acceptsCoding([]string{value}, "br"); got != want {
+			t.Fatalf("acceptsCoding(%q, br) = %v, want %v", value, got, want)
+		}
 	}
 }
 
@@ -249,6 +258,96 @@ func TestCompressionStaticHTTPAndSecurity(t *testing.T) {
 		if w.Code != tc.want || w.Header().Get("Content-Encoding") != "" || w.Header().Get("Content-Security-Policy") != contentSecurity {
 			t.Fatalf("security refusal changed: %d %v", w.Code, w.Header())
 		}
+	}
+}
+
+func gzipBytes(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	w := gzip.NewWriter(&b)
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// The build's compressed copies of static files are sent as they are, by
+// Accept-Encoding, with the file's own type, caching and validators; anything
+// else keeps the identity bytes or the per-response gzip.
+func TestStaticPrecompressedCopies(t *testing.T) {
+	assets := frameAssets()
+	app, frame, style, index := assets["assets/app.js"].Data, assets["diagram-frame.html"].Data, assets["assets/style.css"].Data, assets["index.html"].Data
+	// The brotli copies are opaque here: the service never decodes or checks them.
+	assets["assets/app.js.br"] = &fstest.MapFile{Data: []byte("brotli app")}
+	assets["assets/app.js.gz"] = &fstest.MapFile{Data: gzipBytes(t, app)}
+	assets["assets/style.css.gz"] = &fstest.MapFile{Data: gzipBytes(t, style)}
+	assets["diagram-frame.html.br"] = &fstest.MapFile{Data: []byte("brotli frame")}
+	assets["index.html.br"] = &fstest.MapFile{Data: []byte("brotli index")}
+	assets["LICENSE"] = &fstest.MapFile{Data: []byte(strings.Repeat("license text ", 20))}
+	assets["LICENSE.br"] = &fstest.MapFile{Data: []byte("not sent: no type to send it as")}
+	ts := newTestServer(t, ServerConfig{Assets: assets})
+	etag := ts.do(http.MethodGet, "/diagram-frame.html", "").Header().Get("ETag")
+	for _, tc := range []struct {
+		name, method, path, accept, ranged, match string
+		status                                    int
+		encoding                                  string
+		body                                      []byte
+	}{
+		{name: "brotli first", path: "/assets/app.js", accept: "gzip, deflate, br, zstd", encoding: "br", body: []byte("brotli app")},
+		{name: "gzip copy", path: "/assets/app.js", accept: "gzip", encoding: "gzip", body: assets["assets/app.js.gz"].Data},
+		{name: "brotli refused", path: "/assets/app.js", accept: "br;q=0, gzip", encoding: "gzip", body: assets["assets/app.js.gz"].Data},
+		{name: "no encoding", path: "/assets/app.js", body: app},
+		{name: "identity", path: "/assets/app.js", accept: "identity", body: app},
+		{name: "head", method: http.MethodHead, path: "/assets/app.js", accept: "br", encoding: "br"},
+		{name: "range", path: "/assets/app.js", accept: "br, gzip", ranged: "bytes=0-6", status: http.StatusPartialContent, body: app[:7]},
+		{name: "missing brotli copy", path: "/assets/style.css", accept: "br", body: style},
+		{name: "gzip copy without brotli", path: "/assets/style.css", accept: "br, gzip", encoding: "gzip", body: assets["assets/style.css.gz"].Data},
+		{name: "missing gzip copy", path: "/diagram-frame.html", accept: "gzip", encoding: "gzip", body: gzipBytes(t, frame)},
+		{name: "frame", path: "/diagram-frame.html", accept: "br", encoding: "br", body: []byte("brotli frame")},
+		{name: "frame revalidated", path: "/diagram-frame.html", accept: "br", match: etag, status: http.StatusNotModified},
+		{name: "app route", path: "/sessions/abc", accept: "br", encoding: "br", body: []byte("brotli index")},
+		{name: "index", path: "/", accept: "gzip", encoding: "gzip", body: gzipBytes(t, index)},
+		{name: "untyped", path: "/LICENSE", accept: "br, gzip", encoding: "gzip", body: gzipBytes(t, assets["LICENSE"].Data)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			method, status := cmp.Or(tc.method, http.MethodGet), cmp.Or(tc.status, http.StatusOK)
+			opts := []reqOpt{withHeader("Accept-Encoding", tc.accept)}
+			if tc.ranged != "" {
+				opts = append(opts, withHeader("Range", tc.ranged))
+			}
+			if tc.match != "" {
+				opts = append(opts, withHeader("If-None-Match", tc.match))
+			}
+			w := ts.do(method, tc.path, "", opts...)
+			identity := ts.do(http.MethodGet, tc.path, "")
+			h := w.Header()
+			if w.Code != status || h.Get("Content-Encoding") != tc.encoding || h.Get("Vary") != "Accept-Encoding" {
+				t.Fatalf("%s %s = %d %q, Vary %q", method, tc.path, w.Code, h.Get("Content-Encoding"), h.Get("Vary"))
+			}
+			// Per-response gzip carries the original body: compare what it decodes to.
+			got := w.Body.Bytes()
+			if tc.encoding == "gzip" && !bytes.Equal(got, tc.body) {
+				got, tc.body = gunzipResponse(t, bytes.NewReader(got)), gunzipResponse(t, bytes.NewReader(tc.body))
+			}
+			if !bytes.Equal(got, tc.body) {
+				t.Fatalf("body = %q, want %q", got, tc.body)
+			}
+			for _, header := range []string{"Cache-Control", "Content-Security-Policy", "X-Frame-Options", "ETag"} {
+				if h.Get(header) != identity.Header().Get(header) {
+					t.Fatalf("%s = %q, identity has %q", header, h.Get(header), identity.Header().Get(header))
+				}
+			}
+			if status == http.StatusOK && h.Get("Content-Type") != identity.Header().Get("Content-Type") {
+				t.Fatalf("Content-Type = %q, identity has %q", h.Get("Content-Type"), identity.Header().Get("Content-Type"))
+			}
+			// An encoded body goes without a length, as per-response gzip does.
+			if want := strconv.Itoa(len(tc.body)); status == http.StatusOK && tc.encoding == "" && h.Get("Content-Length") != want || tc.encoding != "" && h.Get("Content-Length") != "" {
+				t.Fatalf("Content-Length = %q for %q", h.Get("Content-Length"), tc.encoding)
+			}
+		})
 	}
 }
 

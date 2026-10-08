@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { getInstanceByDom } from 'echarts/core';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { EChartsOption } from 'echarts';
 import { StrictMode } from 'react';
 import { expect, test, vi } from 'vitest';
@@ -173,6 +175,14 @@ const examples: Record<string, EChartsOption> = {
   themeRiver: { singleAxis: { type: 'time' }, series: [{ type: 'themeRiver', data: [['2026-01-01', 10, 'a'], ['2026-01-02', 20, 'a'], ['2026-01-01', 5, 'b'], ['2026-01-02', 10, 'b']] }] },
   chord: { series: [{ type: 'chord', data: [{ name: 'a' }, { name: 'b' }], links: [{ source: 'a', target: 'b', value: 2 }] }] },
 };
+
+// Each drawing loads only the chart types it uses (EChart.tsx), so every type the service accepts
+// must draw here: the examples are exactly chartOptionSeries.
+test('the examples cover every series type the service accepts', () => {
+  const source = readFileSync(join(import.meta.dirname, '../../../../../internal/web/chart_options.go'), 'utf8');
+  const accepted = /var chartOptionSeries = \[\]string\{([^}]*)\}/.exec(source)?.[1] ?? '';
+  expect(Object.keys(examples).sort()).toEqual([...accepted.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort());
+});
 
 test.each(Object.entries(examples))('%s draws actual series geometry deterministically', async (kind, options) => {
   const option = chartOption({ kind: 'echarts', title: kind, labels: [], series: [], options }, { width: 480, height: 300 });

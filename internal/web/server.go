@@ -1360,6 +1360,44 @@ func (s *Server) serveAsset(w http.ResponseWriter, r *http.Request, name string)
 			w.Header().Set(headerCacheControl, "public, max-age=86400")
 		}
 	}
+	if sibling := s.precompressed(w, r, name); sibling != nil {
+		defer func() { _ = sibling.Close() }()
+		content = sibling.(io.ReadSeeker)
+	}
 	http.ServeContent(w, r, name, info.ModTime(), content)
 	return true
+}
+
+// precompressed opens the build's compressed copy of name (web/scripts/precompress.mjs)
+// that the request accepts, brotli before gzip, and sets its encoding and type.
+// Ranges keep the identity bytes, as response compression does, and so does a
+// name whose type its extension does not tell, so that no type is sniffed from
+// compressed bytes. Caching and validators stay as set for name.
+func (s *Server) precompressed(w http.ResponseWriter, r *http.Request, name string) fs.File {
+	h := w.Header()
+	kind := h.Get(headerContentType)
+	if kind == "" {
+		kind = mime.TypeByExtension(path.Ext(name))
+	}
+	if kind == "" || r.Header.Get("Range") != "" {
+		return nil
+	}
+	accepted := r.Header.Values(headerAcceptEncoding)
+	for _, c := range [...]struct{ coding, suffix string }{{"br", ".br"}, {"gzip", ".gz"}} {
+		if !acceptsCoding(accepted, c.coding) {
+			continue
+		}
+		f, err := s.assets.Open(name + c.suffix)
+		if err != nil {
+			continue
+		}
+		if _, ok := f.(io.ReadSeeker); !ok {
+			_ = f.Close()
+			continue
+		}
+		h.Set(headerContentType, kind)
+		h.Set(headerContentEncoding, c.coding)
+		return f
+	}
+	return nil
 }

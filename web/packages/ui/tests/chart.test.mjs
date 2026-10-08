@@ -3,6 +3,11 @@ import test from 'node:test';
 import { chartCsv, chartHeight, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
 import { init } from '../src/lib/echarts.ts';
+import * as charts from 'echarts/charts';
+import { use } from 'echarts/core';
+
+// The app loads each chart type with its first drawing (EChart.tsx); these tests draw with init directly.
+use(Object.values(charts));
 
 const chart = {
   title: 'Commits "per" day',

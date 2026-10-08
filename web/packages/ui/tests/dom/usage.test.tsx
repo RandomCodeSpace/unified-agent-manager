@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import { AppContext, dateTime, timeAgo, type AppContextValue } from '../../src/components/common';
-import { UsageButton } from '../../src/components/Usage';
+import { UsageButton } from '../../src/components/UsageButton';
 import { tokenPriceFixture, tokenUsageFixture } from '../../src/mock/token-usage';
 import { composer, renderApp, sidebar } from './render';
 

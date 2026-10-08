@@ -1,6 +1,6 @@
 // The Theme setting, kept per browser (`uam.theme`): Light, Dark, or Match system (the default),
 // which follows the OS colour scheme as it changes. The page's scheme is `data-theme="light|dark"`
-// on <html>, which index.css keys the dark tokens on. public/theme.js sets it before the first
+// on <html>, which index.css keys the dark tokens on. src/theme.js sets it before the first
 // paint with the same rule, so a dark page never flashes light; this module keeps it current.
 
 import { useSyncExternalStore } from 'react';
