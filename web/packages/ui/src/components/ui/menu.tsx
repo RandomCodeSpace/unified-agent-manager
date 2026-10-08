@@ -154,8 +154,8 @@ export const Menu = {
   },
   RadioItem({ className, children, description, ...props }: ComponentProps<typeof BaseMenu.RadioItem> & { description?: ReactNode }) {
     return (
-      <BaseMenu.RadioItem className={cn(itemClass, 'items-start pl-7', className)} {...props}>
-        <BaseMenu.RadioItemIndicator className="absolute top-2 left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent">
+      <BaseMenu.RadioItem className={cn(itemClass, 'pl-7', description && 'items-start', className)} {...props}>
+        <BaseMenu.RadioItemIndicator className={cn('absolute left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent', description ? 'top-2' : 'top-1/2 -translate-y-1/2')}>
           <Check strokeWidth={2.5} />
         </BaseMenu.RadioItemIndicator>
         <span className="flex min-w-0 flex-1 flex-col">
