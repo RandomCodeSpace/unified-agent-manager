@@ -1228,6 +1228,7 @@ export default function App() {
         snapshotSeq={state.snapshotSeq}
         historyGeneration={state.detailGeneration}
         active={!stale}
+        connected={state.connection === 'connected'}
         historyRequest={state.historyRequest}
         historyItemSeq={state.historyItemSeq}
         onHistoryReset={() => { recentTasks.remove(shown.id); confirmedDetail.current = null; setStreamKey(k => k + 1); }}

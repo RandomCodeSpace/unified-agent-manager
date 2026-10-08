@@ -20,7 +20,7 @@ export interface StopWords {
   short: string;
   /** The status line on a wide screen: a credit limit adds the autopilot run's numbers. */
   long: string;
-  /** The tooltip and the Task row's text: "You stopped it", or what did. */
+  /** The tooltip and the Task row's text: "You stopped it" after your Stop, or what did. */
   title: string;
   /** Something other than your Stop did it. */
   notYours: boolean;
@@ -28,11 +28,12 @@ export interface StopWords {
 
 /**
  * A cancelled Task's words. Without a known reason (an older service, or a provider that gave
- * none) it is "Stopped", and the tooltip keeps the service's detail when it has one.
+ * none) it is "Stopped", and the tooltip keeps the service's detail when it has one: no reason
+ * is not your Stop, as Copilot reports uam's Stop and any other alike.
  */
 export function stopWords(s: Pick<SessionSummary, 'stop_reason' | 'state_detail' | 'execution'>): StopWords {
   const reason = s.stop_reason && s.stop_reason in SHORT ? s.stop_reason : undefined;
-  if (!reason || reason === 'owner') return { short: 'Stopped', long: 'Stopped', title: (!reason && s.state_detail) || 'You stopped it', notYours: false };
+  if (!reason || reason === 'owner') return { short: 'Stopped', long: 'Stopped', title: reason ? 'You stopped it' : s.state_detail || 'Stopped', notYours: false };
   const short = SHORT[reason];
   const title = s.state_detail || short;
   if (reason !== 'credit_limit') return { short, long: reason === 'time_limit' ? title : short, title, notYours: true };

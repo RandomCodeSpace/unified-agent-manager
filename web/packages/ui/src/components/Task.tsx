@@ -51,6 +51,8 @@ interface Props {
   snapshotSeq: number;
   historyGeneration: number;
   active: boolean;
+  /** The event stream is up (the status line and transcript tell a turn the service cut off from one they lost track of). */
+  connected: boolean;
   historyRequest: HistoryRequest | null;
   historyItemSeq: Record<string, number>;
   onHistoryReset: () => void;
@@ -254,7 +256,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
 
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
   const api = useApi();
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
@@ -760,7 +762,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the status line stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
-  const line = statusLine(session, labelled, compacting, liveItems, session.history_index);
+  const line = statusLine(session, labelled, compacting, liveItems, session.history_index, connected);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
@@ -820,6 +822,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               liveCard={!session.history_after}
               live={live && !session.history_after}
               working={working && !session.history_after}
+              connected={connected}
               provider={session.provider}
               workdir={session.workdir}
               footVerb={false}

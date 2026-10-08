@@ -362,6 +362,30 @@ describe('activity', () => {
     expect(view.container.textContent).not.toContain('Took 5s');
   });
 
+  test.each(['detailed', 'compact'] as const)('a call a turn the service cut off left running is not the running step while the next turn starts; a dropped stream keeps it (%s)', (density) => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
+    // A restart or close cut the turn off: the service marks it unknown, without an end.
+    const cut: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'unknown' };
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const ring = () => view.container.querySelector('.animate-spin');
+    const view = render(draw([cut], false));
+    expect(ring()).toBeNull();
+    // You reopen the Task with a message: it works before the next turn's timing comes, then before its message lands.
+    view.rerender(draw([cut], true));
+    expect(ring()).toBeNull();
+    expect(view.container.textContent).not.toContain('Running');
+    view.rerender(draw([cut, { id: 't2', started_at: at(10), state: 'working' }], true));
+    expect(ring()).toBeNull();
+    // A row begun since the next turn started is a turn's that came without a message: it runs.
+    view.rerender(draw([cut, { id: 't2', started_at: at(10), state: 'working' }], true, [...items, bash('c2', 12)]));
+    expect(ring()).toBeTruthy();
+    // The page lost its stream and marked the running turn unknown itself: its call may still run.
+    view.rerender(draw([cut], true, items, false));
+    expect(ring()).toBeTruthy();
+  });
+
   test('a turn that ended with nothing in it says there was no reply', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [
