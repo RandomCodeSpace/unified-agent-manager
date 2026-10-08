@@ -298,7 +298,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(headerContentType, "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(body); err != nil {
+	if _, err := w.Write(body); err != nil { // #nosec G705 -- Markdown attachment with nosniff from ServeHTTP, never served as HTML.
 		log.Debug("write export failed", "error", err)
 	}
 }
