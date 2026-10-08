@@ -40,8 +40,8 @@ export function tallyWords(tally: TodoTally, openWords = 'open'): string {
 
 /** The list on the status line, or undefined when the line says nothing of it. */
 export type TodoLine =
-  /** This turn touched the list: "Todo 2/7", the row the work is at and how many more are in progress (for the lead when it says that row), then each open stage's count. */
-  | ({ kind: 'list'; now?: string; more: number; meter?: TodoStatus[]; cue?: TodoCue } & TodoTally)
+  /** This turn touched the list: "Todo 2/7", the row the work is at, then each open stage's count. */
+  | ({ kind: 'list'; now?: string; meter?: TodoStatus[]; cue?: TodoCue } & TodoTally)
   /** The running turn has not touched it yet, and the last turn left rows open (blocked ones too): the same counts, from the last turn. */
   | ({ kind: 'carried'; meter?: TodoStatus[] } & TodoTally);
 
@@ -57,9 +57,8 @@ export function todoLine(view: TodoView | undefined, since?: string): TodoLine |
   const tally = todoTally(view.counts);
   const meter = tally.total <= METER_ROWS && view.todos.length === tally.total ? view.todos.map((t) => t.status) : undefined;
   if (!view.touched) return tally.stages.length > 0 || tally.open > 0 ? { kind: 'carried', ...tally, meter } : undefined;
-  const running = view.todos.filter((t) => t.status === 'in_progress').length;
   const now = view.todos.find((t) => t.id === view.now)?.title;
-  return { kind: 'list', ...tally, now, more: now ? Math.max(0, running - 1) : 0, meter, cue: todoCue(view, since) };
+  return { kind: 'list', ...tally, now, meter, cue: todoCue(view, since) };
 }
 
 /**

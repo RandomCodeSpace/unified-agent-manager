@@ -32,11 +32,11 @@ test('a touched list: done of total, each open stage in the readers\' order, the
   const todos = [row('a', 'done'), row('b', 'in_progress'), row('c', 'in_progress'), row('d', 'blocked'), row('e', 'pending'), row('f', 'pending')];
   const line = todoLine(view(todos, { now: 'c' }));
   const stages = [{ status: 'in_progress', n: 2 }, { status: 'blocked', n: 1 }, { status: 'pending', n: 2 }];
-  assert.deepEqual(line, { kind: 'list', done: 1, total: 6, stages, open: 0, now: 'Row c', more: 1, meter: ['done', 'in_progress', 'in_progress', 'blocked', 'pending', 'pending'], cue: undefined });
+  assert.deepEqual(line, { kind: 'list', done: 1, total: 6, stages, open: 0, now: 'Row c', meter: ['done', 'in_progress', 'in_progress', 'blocked', 'pending', 'pending'], cue: undefined });
   // The in-progress count says how many more there are; the sentence says it once.
   assert.equal(todoSentence(line), '. Todo 1 of 6 done, 2 in progress, 1 blocked, 2 to do. Now: Row c');
-  // No row named Now: no "+N" for the lead either.
-  assert.equal(todoLine(view(todos)).more, 0);
+  // No row named Now: the counts alone.
+  assert.equal(todoSentence(todoLine(view(todos))), '. Todo 1 of 6 done, 2 in progress, 1 blocked, 2 to do');
   // Stages with no rows are left out.
   assert.equal(todoSentence(todoLine(view([row('a', 'done')]))), '. Todo 1 of 1 done');
   assert.equal(todoSentence(todoLine(view([row('a', 'done'), row('b', 'pending')]))), '. Todo 1 of 2 done, 1 to do');

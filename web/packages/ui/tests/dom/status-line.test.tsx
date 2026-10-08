@@ -218,12 +218,13 @@ test('the todo segment: done of total, meter, Now, every open stage counted in i
   // The meter: one segment per row.
   expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
-  // Copilot's intent is the row in progress: it leads, and "Now:" goes; how many more are in progress follows the lead.
+  // Copilot's intent is the row in progress: it leads, and "Now:" goes; the in-progress count says how many more there are, so no "+1" follows the lead.
   view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, and 1 more in progress, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 2 in progress, 1 blocked. Show the list' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
-  expect(screen.getByText('Build the index page…').nextElementSibling?.textContent).toBe('+1');
-  // The only row in progress: nothing follows the lead, and the count still says one is in progress.
+  expect(screen.queryByText('+1')).toBeNull();
+  expect(stage('in progress').text).toBe('2 in progress');
+  // The only row in progress: the count still says one is in progress.
   view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
   expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 in progress, 1 blocked, 1 to do. Show the list' })).toBeTruthy();
   expect(screen.queryByText('+1')).toBeNull();
