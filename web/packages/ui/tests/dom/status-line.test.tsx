@@ -223,6 +223,13 @@ test('a phone gets the list as a sheet with a close button and no key hints', as
     render(draw(withTodos(listOf(rows()))));
     await user.click(screen.getByRole('button', { name: /Show the list$/ }));
     const sheet = await screen.findByRole('dialog', { name: 'Todo' });
+    // Modal, as the desktop reader: Tab stays in the sheet and the page behind is hidden from assistive tech.
+    expect(sheet.getAttribute('aria-modal')).toBe('true');
+    expect(screen.queryByRole('button', { name: /Show the list$/ })).toBeNull();
+    for (let i = 0; i < 3; i++) {
+      await user.tab();
+      expect(sheet.contains(document.activeElement)).toBe(true);
+    }
     expect(within(sheet).queryByText('Esc')).toBeNull();
     expect(within(sheet).getByText('To change it, ask in the chat')).toBeTruthy();
     await user.click(within(sheet).getByRole('button', { name: 'Close' }));

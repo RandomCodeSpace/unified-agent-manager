@@ -1062,6 +1062,7 @@ export function BottomSheet({ open, onClose, onClosed, label, className, backdro
           id={id}
           data-popup=""
           aria-label={label}
+          aria-modal="true"
           initialFocus={initialFocus}
           finalFocus={finalFocus}
           className={cn('fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-lg bg-raised pb-[env(safe-area-inset-bottom)] text-body shadow-modal outline-hidden transition-transform duration-240 ease-app data-starting-style:translate-y-full data-ending-style:translate-y-full', className)}
