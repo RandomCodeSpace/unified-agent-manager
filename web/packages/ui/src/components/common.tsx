@@ -241,14 +241,28 @@ export function relTime(iso: string, now = Date.now()): string {
   return `${Math.round(h / 24)}d`;
 }
 
+/**
+ * One formatter per format, made on first use: the Date methods build one per call, about an eighth of the CPU time
+ * of history scrolling on a phone. They keep the locale and time zone the page loaded with.
+ */
+const formats = new Map<string, Intl.DateTimeFormat>();
+function formatted(at: Date | string, name: string, options: Intl.DateTimeFormatOptions): string {
+  const date = new Date(at);
+  // As the Date methods: an unreadable time reads "Invalid Date" (a formatter would throw).
+  if (Number.isNaN(date.getTime())) return 'Invalid Date';
+  let format = formats.get(name);
+  if (!format) formats.set(name, (format = new Intl.DateTimeFormat(undefined, options)));
+  return format.format(date);
+}
+
 /** A clock time in the browser's locale ("2:05 PM" or "14:05"); `seconds` adds them for step timelines. */
 export function clockTime(at: Date | string, seconds = false): string {
-  return new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', ...(seconds && { second: '2-digit' }) });
+  return formatted(at, seconds ? 'clock-seconds' : 'clock', { hour: 'numeric', minute: '2-digit', ...(seconds && { second: '2-digit' }) });
 }
 
 /** A full date and time in the browser's locale ("Oct 5, 2026, 2:05 PM"): tooltips and records. */
 export function dateTime(at: Date | string): string {
-  return new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return formatted(at, 'date-time', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** A past time in words: "just now", else "5m ago". */
