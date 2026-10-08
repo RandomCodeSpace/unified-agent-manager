@@ -11,12 +11,6 @@ linters:
     - unused
     - errcheck
     - misspell
-  exclusions:
-    rules:
-      # Copilot CLI 1.0.93 still sends tool.execution_partial_result. Moving
-      # live shell output to tool.shell_output removes this exclusion.
-      - linters: [staticcheck]
-        text: "SA1019: rpc.ToolExecutionPartialResultData"
 
 formatters:
   enable:

@@ -16,6 +16,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { ChartCard } from './Chart';
 import { CodeBlock, Dot, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
+import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -466,20 +467,17 @@ function WorkingTail({ working, turnId, step, verb = true, current, compacting =
   );
 }
 
-/** The most of a running call's output the live step renders: its tail box shows only the last lines anyway. */
-const LIVE_OUTPUT_TAIL = 4000;
-
 /**
  * Compact (DESIGN.md live step): the step in progress at the turn's foot, unfolded. A thought
- * streaming is "Thinking…" over its text as it arrives; a call running is its tool row (mark,
- * name, argument) over the tail of its output. The text sits in a box at most 80px tall that
- * shows its newest lines, the older ones clipped above, so it never grows into a block and
- * nothing scrolls. It rises in; once the step ends it is gone from here and counted on the turn line.
+ * streaming is "Thinking…" over its text as it arrives, in a box at most 80px tall that shows its
+ * newest lines, the older ones clipped above, so it never grows into a block and nothing scrolls;
+ * a call running is its tool row (mark, name, argument) over its newest output lines, which its
+ * row carries (`LiveOutput`). It rises in; once the step ends it is gone from here and counted on the turn line.
  */
 function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; live: boolean; sessionId: string; approvals?: Interaction[] }>) {
-  const { item: full, attach } = useItemBody(item, true);
   const thought = item.kind === 'reasoning';
-  const text = (thought ? full?.text : full?.tool?.output) ?? '';
+  const { item: full, attach } = useItemBody(item, thought);
+  const text = thought ? full?.text ?? '' : '';
   return (
     <div ref={attach} className="flex animate-rise flex-col gap-1">
       {thought ? (
@@ -488,17 +486,14 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
           <span>Thinking…</span>
         </div>
       ) : (
-        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} />
+        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} />
       )}
       {text.trim() && (
-        <div className={cn('flex max-h-20 flex-col justify-end overflow-hidden', thought ? 'relative pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-[\'\']' : 'ml-6 rounded-sm bg-code-bg px-2 py-1')}>
-          {thought ? (
-            <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
-          ) : (
-            <pre translate="no" className="shrink-0 font-mono text-code-sm whitespace-pre-wrap break-words text-muted">{text.slice(-LIVE_OUTPUT_TAIL)}</pre>
-          )}
+        <div className="relative flex max-h-20 flex-col justify-end overflow-hidden pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
+          <Markdown text={text} className="md-quiet shrink-0 text-ui text-muted" streaming />
         </div>
       )}
+      {!thought && <LiveOutput lines={item.tool?.tail} className="ml-6" />}
     </div>
   );
 }
@@ -1039,10 +1034,11 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
 
 /**
  * One tool call: mark, tool name (weight 500), its main argument in `code-sm` on one line,
- * and its approval when a request named it; expands to the full input and output. The
+ * and its approval when a request named it; expands to the full input and output, and while
+ * it runs its newest output lines (`tail`; the live step shows them under the row instead). The
  * images its result returned sit under the row, visible without expanding it.
  */
-export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string }) {
+export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className, tail = true }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string; tail?: boolean }) {
   const [open, setOpen] = useDisclosure(`tool:${item.agent_id ?? ''}:${item.id}`);
   // The details (code blocks) are mounted on the first open only.
   const [opened, setOpened] = useState(open);
@@ -1094,7 +1090,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
           </div>
           {opened && (
             <Collapse open={open} appear>
-              <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}</div>
+              <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
             </Collapse>
           )}
         </div>

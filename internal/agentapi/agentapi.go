@@ -886,6 +886,15 @@ type ToolCall struct {
 	// Declaration is display intent from a completed host tool call. It is
 	// neither file provenance nor authority to open the path.
 	Declaration *FileDeclaration `json:"declaration,omitempty"`
+	// Tail is the newest output lines of a running shell call, oldest first,
+	// at most 10, each at most 512 bytes; nil once the call ends.
+	Tail []OutputLine `json:"tail,omitempty"`
+}
+
+// OutputLine is one line of a running shell call's output.
+type OutputLine struct {
+	Text string `json:"text"`
+	Err  bool   `json:"err,omitempty"` // stream "stderr"; stdout and terminal are false
 }
 
 // FileDeclaration contains only bounded display metadata. Opening still

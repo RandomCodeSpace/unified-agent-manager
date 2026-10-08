@@ -115,6 +115,9 @@ func itemSize(it agentapi.Item) int {
 		if d := it.Tool.Declaration; d != nil {
 			n += len(d.ArtifactID) + len(d.Path) + len(d.Title) + len(d.TypeHint)
 		}
+		for _, line := range it.Tool.Tail {
+			n += len(line.Text)
+		}
 	}
 	return n
 }
@@ -233,24 +236,7 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 	removed := s.trimItems()
 	if publish {
 		defer m.publishItemsTrimmedLocked(s, removed)
-		if m.holdToolOutputLocked(s, previous, it) {
-			return
-		}
-		if suffix, ok := toolOutputSuffix(previous, it); ok {
-			if suffix == "" {
-				return
-			}
-			m.broadcastFilteredLocked("tool_output", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && sub.toolDeltas }, func(seq uint64) any {
-				return toolOutputEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: it.ID, Text: suffix}
-			})
-			m.broadcastFilteredLocked("item", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && !sub.toolDeltas }, func(seq uint64) any {
-				return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
-			})
-			if previous.Tool.Output == "" {
-				m.publishCompactItemLocked(s, it, false)
-			}
-			m.publishBodyDeltaLocked(s, it, suffix, true)
-			m.itemPreviewLocked(s, it)
+		if m.paceToolOutputLocked(s, previous, it) {
 			return
 		}
 		// The browser's row is the previous item's projection.
@@ -260,49 +246,38 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 }
 
 // toolOutputOnly reports whether next is previous, still running, with only
-// its output changed.
+// its live output changed: its output and tail.
 func toolOutputOnly(previous, next agentapi.Item) bool {
 	if previous.Tool == nil || next.Tool == nil || next.Kind != agentapi.ItemTool || next.Tool.Status != agentapi.ToolRunning {
 		return false
 	}
 	tool := *previous.Tool
-	tool.Output = next.Tool.Output
+	tool.Output, tool.Tail = next.Tool.Output, next.Tool.Tail
 	previous.Tool = &tool
 	return reflect.DeepEqual(previous, next)
 }
 
-// Only append-only output with otherwise identical metadata can be a delta.
-// Starts, rewrites, status changes, images and completion remain full items.
-func toolOutputSuffix(previous, next agentapi.Item) (string, bool) {
-	if !toolOutputOnly(previous, next) || !strings.HasPrefix(next.Tool.Output, previous.Tool.Output) {
-		return "", false
-	}
-	return next.Tool.Output[len(previous.Tool.Output):], true
-}
-
-// toolOutputState paces the full publications of one running tool.
+// toolOutputState paces the publications of one running tool: at is the
+// last whole one, rowAt the last of its row. A pending timer publishes the
+// latest item, whole when the browser's copy can no longer follow it by
+// deltas, its row when that changed.
 type toolOutputState struct {
-	at    time.Time
-	timer *time.Timer
+	at, rowAt  time.Time
+	timer      *time.Timer
+	whole, row bool
 }
 
-// holdToolOutputLocked reports whether it held back a running tool's output
-// that replaces rather than extends the previous one, as a CLI's sliding
-// tail window does: such output is published whole at most once per
-// previewInterval, the latest on a trailing timer. Growing output stays a
-// delta; any other change, its row's included, ends the pacing and is
-// published at once.
-func (m *Manager) holdToolOutputLocked(s *webSession, previous, it agentapi.Item) bool {
+// paceToolOutputLocked publishes a change to a running tool's live output
+// and reports whether it took the change; any other change it leaves to the
+// caller to publish at once, ending the pacing. Growing output goes out at
+// once as deltas. Output that replaces rather than extends the previous one,
+// as a CLI's sliding tail window does, is published whole, and the row,
+// which shows the tail, as it changes; each at most once per
+// previewInterval, the latest on a trailing timer.
+func (m *Manager) paceToolOutputLocked(s *webSession, previous, it agentapi.Item) bool {
 	key := itemKey(it.AgentID, it.ID)
 	state := s.outputs[key]
-	// While a publication is pending the browser's copy is older than
-	// previous, so no delta applies to it.
-	pending := state != nil && state.timer != nil
-	outputOnly := toolOutputOnly(previous, it)
-	if outputOnly && !pending && strings.HasPrefix(it.Tool.Output, previous.Tool.Output) {
-		return false
-	}
-	if !outputOnly || !sameCompactRow(previous, it) {
+	if !toolOutputOnly(previous, it) {
 		if state != nil {
 			if state.timer != nil {
 				state.timer.Stop()
@@ -311,9 +286,6 @@ func (m *Manager) holdToolOutputLocked(s *webSession, previous, it agentapi.Item
 		}
 		return false
 	}
-	if pending {
-		return true
-	}
 	if state == nil {
 		if s.outputs == nil {
 			s.outputs = map[string]*toolOutputState{}
@@ -321,15 +293,63 @@ func (m *Manager) holdToolOutputLocked(s *webSession, previous, it agentapi.Item
 		state = &toolOutputState{}
 		s.outputs[key] = state
 	}
-	wait := previewInterval - m.now().Sub(state.at)
-	if state.at.IsZero() || wait <= 0 {
-		state.at = m.now()
-		return false
+	now := m.now()
+	state.row = state.row || !sameCompactRow(previous, it)
+	// While a whole publication is pending the browser's copy is older than
+	// previous, so no delta applies to it.
+	if state.whole || !strings.HasPrefix(it.Tool.Output, previous.Tool.Output) {
+		if state.whole {
+			return true
+		}
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+		if wait := previewInterval - now.Sub(state.at); !state.at.IsZero() && wait > 0 {
+			state.whole = true
+			m.toolOutputTimerLocked(s, key, state, wait)
+			return true
+		}
+		m.publishToolOutputLocked(s, state, it)
+		return true
 	}
-	state.timer = time.AfterFunc(wait, func() {
+	suffix := it.Tool.Output[len(previous.Tool.Output):]
+	if suffix != "" {
+		m.broadcastFilteredLocked("tool_output", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && sub.toolDeltas }, func(seq uint64) any {
+			return toolOutputEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, ItemID: it.ID, Text: suffix}
+		})
+		m.broadcastFilteredLocked("item", s.id, func(sub *Subscriber) bool { return legacySubscriber(sub) && !sub.toolDeltas }, func(seq uint64) any {
+			return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it}
+		})
+	}
+	// The row goes first: the browser holds a body current once a frame
+	// reaches the row's sequence.
+	if state.row && state.timer == nil {
+		if wait := previewInterval - now.Sub(state.rowAt); !state.rowAt.IsZero() && wait > 0 {
+			m.toolOutputTimerLocked(s, key, state, wait)
+		} else {
+			state.rowAt, state.row = now, false
+			m.publishCompactItemLocked(s, it, false)
+			if suffix == "" {
+				// No delta follows to keep the browser's body current, as
+				// when the output reached its cap and only the tail moves.
+				m.publishBodyCurrentLocked(s, it)
+			}
+		}
+	}
+	if suffix != "" {
+		m.publishBodyDeltaLocked(s, it, suffix, true)
+		m.itemPreviewLocked(s, it)
+	}
+	return true
+}
+
+// toolOutputTimerLocked publishes what state holds back after wait.
+func (m *Manager) toolOutputTimerLocked(s *webSession, key string, state *toolOutputState, wait time.Duration) {
+	var timer *time.Timer
+	timer = time.AfterFunc(wait, func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.closed || m.sessions[s.id] != s || s.outputs[key] != state {
+		if m.closed || m.sessions[s.id] != s || s.outputs[key] != state || state.timer != timer {
 			return
 		}
 		state.timer = nil
@@ -338,10 +358,28 @@ func (m *Manager) holdToolOutputLocked(s *webSession, previous, it agentapi.Item
 			delete(s.outputs, key)
 			return
 		}
-		state.at = m.now()
-		m.publishItemLocked(s, s.items[i], false, false)
+		if state.whole {
+			m.publishToolOutputLocked(s, state, s.items[i])
+			return
+		}
+		// The deltas kept the browser's body current; the row alone would
+		// raise the sequence it waits for.
+		state.rowAt, state.row = m.now(), false
+		m.publishCompactItemLocked(s, s.items[i], false)
+		m.publishBodyCurrentLocked(s, s.items[i])
 	})
-	return true
+	state.timer = timer
+}
+
+// publishToolOutputLocked publishes a running tool whole, with its row when
+// that changed.
+func (m *Manager) publishToolOutputLocked(s *webSession, state *toolOutputState, it agentapi.Item) {
+	row := state.row
+	state.at, state.timer, state.whole, state.row = m.now(), nil, false, false
+	if row {
+		state.rowAt = state.at
+	}
+	m.publishItemLocked(s, it, false, row)
 }
 
 // agentItems returns the retained items of one agent ("" for the main

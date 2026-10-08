@@ -329,13 +329,15 @@ export function install(): { received: Received[] } {
     const tid = nextId('c');
     const started = now();
     pushItem(t, { id: tid, kind: 'tool', time: started, tool: { name: 'bash', title: 'go test ./...', status: 'running', input: 'go test ./... -count=1' } });
-    // The output streams while the call runs, as Copilot reports it: the whole output so far each time.
+    // The output streams while the call runs: the whole output so far each time, its newest lines as the tail.
     let output = '';
+    const lines: string[] = [];
     for (const pkg of ['internal/agentapi', 'internal/adapter/copilot', 'internal/web', 'internal/vterm']) {
       await wait(700);
       if (!busy(t)) return;
-      output += `ok  \t${pkg}\t0.${pkg.length}s\n`;
-      pushItem(t, { id: tid, kind: 'tool', time: started, tool: { name: 'bash', title: 'go test ./...', status: 'running', input: 'go test ./... -count=1', output } });
+      lines.push(`ok  \t${pkg}\t0.${pkg.length}s`);
+      output += `${lines.at(-1)}\n`;
+      pushItem(t, { id: tid, kind: 'tool', time: started, tool: { name: 'bash', title: 'go test ./...', status: 'running', input: 'go test ./... -count=1', output, tail: lines.slice(-10).map(text => ({ text })) } });
     }
     await wait(700);
     if (!busy(t)) return;
