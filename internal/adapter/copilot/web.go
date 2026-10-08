@@ -112,6 +112,9 @@ type sdkSession interface {
 	// ToolCatalog and SetTools verify the declaration's visible name at open.
 	ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error)
 	SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error
+	// RebuildTools has the CLI build the session's tool set again, so
+	// ToolCatalog drops the tools removed since the last build.
+	RebuildTools(ctx context.Context) error
 	Abort(ctx context.Context) error
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	// ListTasks returns the tasks the CLI tracks, subagents included.

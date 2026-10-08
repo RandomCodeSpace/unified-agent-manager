@@ -187,7 +187,7 @@ func TestHostToolCatalogRefusals(t *testing.T) {
 		catalogs []fakeToolCatalog
 		want     string
 	}{
-		"name clash":    {[]fakeToolCatalog{{tools: catalogOf("notes_list")}}, "notes_list already exists in the unshadowed tool catalog"},
+		"name clash":    {[]fakeToolCatalog{{tools: catalogOf("notes_list")}, {tools: catalogOf("notes_list")}}, "notes_list already exists in the unshadowed tool catalog"},
 		"from MCP":      {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(catalogOf(declarationToolName, "notes_get"), mcpNotes)}}, "notes_list has ambiguous tool origin"},
 		"one missing":   {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: own[:2]}}, "changed or is ambiguous"},
 		"one repeated":  {[]fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: append(slices.Clone(own), own[1])}}, "changed or is ambiguous"},
@@ -455,7 +455,8 @@ func TestRunUtilityRegistersOnlyItsHostTools(t *testing.T) {
 // deletes its session.
 func TestRunUtilityRefusesAClashingTool(t *testing.T) {
 	calls := &hostCalls{}
-	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{{tools: catalogOf("notes_get")}}, reply: func(context.Context, copilot.MessageOptions) (string, error) { return "sent", nil }}
+	clash := fakeToolCatalog{tools: catalogOf("notes_get")}
+	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{clash, clash}, reply: func(context.Context, copilot.MessageOptions) (string, error) { return "sent", nil }}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
 	_, err := p.RunUtility(context.Background(), agentapi.UtilityRequest{Model: "gpt-6-luna", Purpose: "summary", Prompt: "Split it", Tools: notesTools(), CallTool: calls.call})

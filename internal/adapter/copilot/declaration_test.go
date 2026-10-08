@@ -174,8 +174,8 @@ func TestDeclarationStartupListChangeInvalidatesCatalog(t *testing.T) {
 	d := newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
 	tool := d.tool()
 	s := &changingDeclarationCatalog{fakeSession: &fakeSession{id: "session", catalog: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}, declaration: d}
-	if err := d.catalog(context.Background(), s, tool); err == nil || len(s.setTools) != 1 {
-		t.Fatalf("startup change accepted: %v; tool sets=%d", err, len(s.setTools))
+	if err := d.catalog(context.Background(), s, tool); err == nil || len(s.setTools) != 2 || len(s.setTools[1]) != 1 {
+		t.Fatalf("startup change accepted or tools left cleared: %v; tool sets=%v", err, s.setTools)
 	}
 	// A change seen while the restored catalog is read also invalidates it.
 	d = newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
@@ -234,6 +234,12 @@ func toolsChanged(fs *fakeSession, id string) {
 	fs.onEvent(ev(id, &rpc.MCPToolsListChangedData{ServerName: "notes"}))
 }
 
+// toolsRegistered reports whether the latest SetTools left all three of
+// openProved's tools registered.
+func toolsRegistered(fs *fakeSession) bool {
+	return len(fs.setTools) > 0 && len(fs.setTools[len(fs.setTools)-1]) == 3
+}
+
 // A tool list change refuses uam's tools until the next turn starts: the
 // proof runs before uam sends that message, never during a turn and never
 // on the change itself.
@@ -286,8 +292,8 @@ func TestToolListChangeDuringTheProofKeepsToolsRefused(t *testing.T) {
 			if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil || !slices.Equal(fs.sent, []string{"next"}) {
 				t.Fatalf("send = %v; sent %v", err, fs.sent)
 			}
-			if fs.catalogReads != read+1 || toolsAnswer(t, tools, "overlapped") {
-				t.Fatalf("a proof the change overlapped holds: tool RPCs %v", fs.toolCalls)
+			if fs.catalogReads != read+1 || toolsAnswer(t, tools, "overlapped") || !toolsRegistered(fs) {
+				t.Fatalf("a proof the change overlapped holds or left the tools cleared: tool RPCs %v", fs.toolCalls)
 			}
 			fs.catalogHook = nil
 			fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
@@ -298,8 +304,8 @@ func TestToolListChangeDuringTheProofKeepsToolsRefused(t *testing.T) {
 	}
 }
 
-// A failed or timed-out proof leaves the tools refused and still sends the
-// message; the turn after tries again.
+// A failed or timed-out proof leaves the tools refused but registered, and
+// still sends the message; the turn after tries again.
 func TestFailedProofKeepsToolsRefusedUntilALaterOnePasses(t *testing.T) {
 	fail := errors.New("offline")
 	for name, fc := range map[string]*fakeClient{
@@ -316,8 +322,8 @@ func TestFailedProofKeepsToolsRefusedUntilALaterOnePasses(t *testing.T) {
 			if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil || !slices.Equal(fs.sent, []string{"next"}) {
 				t.Fatalf("send = %v; sent %v", err, fs.sent)
 			}
-			if len(fs.toolCalls) <= 4 || toolsAnswer(t, tools, "failed") {
-				t.Fatalf("failed proof: tool RPCs %v", fs.toolCalls)
+			if len(fs.toolCalls) <= 4 || toolsAnswer(t, tools, "failed") || !toolsRegistered(fs) {
+				t.Fatalf("failed proof answered or left the tools cleared: tool RPCs %v", fs.toolCalls)
 			}
 			fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
 			if err := conv.Send(ctx, agentapi.Prompt{Text: "after"}); err != nil || !toolsAnswer(t, tools, "retried") {
@@ -338,7 +344,9 @@ func TestShadowingMCPToolStaysRefusedAfterTheProof(t *testing.T) {
 		catalogs []fakeToolCatalog
 		reads    int // per proof
 	}{
-		"in the cleared catalog": {[]fakeToolCatalog{{tools: empty}, {tools: own}, {tools: []rpc.CurrentToolMetadata{shadow}}, {tools: []rpc.CurrentToolMetadata{shadow}}}, 1},
+		// The cleared catalog is built again and still has it.
+		"in the cleared catalog": {[]fakeToolCatalog{{tools: empty}, {tools: own}, {tools: []rpc.CurrentToolMetadata{shadow}}, {tools: []rpc.CurrentToolMetadata{shadow}},
+			{tools: []rpc.CurrentToolMetadata{shadow}}, {tools: []rpc.CurrentToolMetadata{shadow}}}, 2},
 		"beside uam's own": {[]fakeToolCatalog{{tools: empty}, {tools: own}, {tools: empty}, {tools: append(slices.Clone(own), shadow)},
 			{tools: empty}, {tools: append(slices.Clone(own), shadow)}}, 2},
 	} {
@@ -350,7 +358,7 @@ func TestShadowingMCPToolStaysRefusedAfterTheProof(t *testing.T) {
 				if err := conv.Send(ctx, agentapi.Prompt{Text: fmt.Sprint("turn ", turn)}); err != nil {
 					t.Fatal(err)
 				}
-				if fs.catalogReads != 2+turn*tc.reads || toolsAnswer(t, tools, fmt.Sprint("shadowed-", turn)) {
+				if fs.catalogReads != 2+turn*tc.reads || toolsAnswer(t, tools, fmt.Sprint("shadowed-", turn)) || !toolsRegistered(fs) {
 					t.Fatalf("turn %d: shadowed tools answered or were not proved; tool RPCs %v", turn, fs.toolCalls)
 				}
 				if _, err := callTool(tools[2], "session", fmt.Sprint("shadowed-list-", turn), map[string]any{}); err == nil {
@@ -359,6 +367,52 @@ func TestShadowingMCPToolStaysRefusedAfterTheProof(t *testing.T) {
 				fs.onEvent(ev(fmt.Sprint("idle-", turn), &rpc.SessionIdleData{}))
 			}
 		})
+	}
+}
+
+// After the session's first turn, the CLI's catalog keeps a cleared tool
+// until the tool set is built again. The proof builds it again, so the
+// first message after a change already has working tools.
+func TestStaleCatalogIsBuiltAgainForTheNextMessage(t *testing.T) {
+	conv, fs, tools := openProved(t, &fakeClient{})
+	fs.staleTools = true
+	ctx := context.Background()
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	toolsChanged(fs, "mid-turn")
+	fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Concat(catalogProof, []string{"clear", "catalog", "rebuild", "catalog", "restore", "catalog"})
+	if !slices.Equal(fs.toolCalls, want) || !toolsAnswer(t, tools, "next") {
+		t.Fatalf("first message after the change: tool RPCs %v", fs.toolCalls)
+	}
+}
+
+// A catalog that cannot be built again, as while a custom agent is
+// selected, cannot prove the clear: the tools stay registered and refused,
+// and a later message proves them once it can.
+func TestToolsStayRefusedWhileTheCatalogCannotBeBuiltAgain(t *testing.T) {
+	conv, fs, tools := openProved(t, &fakeClient{})
+	fs.staleTools, fs.rebuildErr = true, errors.New("a custom agent is selected")
+	ctx := context.Background()
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	toolsChanged(fs, "mid-turn")
+	fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(fs.toolCalls[4:], "rebuild") || toolsAnswer(t, tools, "unbuilt") || !toolsRegistered(fs) {
+		t.Fatalf("unbuilt catalog: tool RPCs %v, sets %d", fs.toolCalls, len(fs.setTools))
+	}
+	fs.onEvent(ev("idle-2", &rpc.SessionIdleData{}))
+	fs.rebuildErr = nil
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "after"}); err != nil || !toolsAnswer(t, tools, "built") {
+		t.Fatalf("retry = %v; tool RPCs %v", err, fs.toolCalls)
 	}
 }
 
@@ -524,11 +578,14 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 			_ = conv.Close(context.Background())
 		})
 	}
-	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}}}
+	// The clash is still there once the catalog is built again.
+	clash := fakeToolCatalog{tools: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}
+	fc := &fakeClient{toolCatalogs: []fakeToolCatalog{clash, clash}}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	defer func() { _ = p.Shutdown(context.Background()) }()
 	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "collision", Workdir: t.TempDir(), Events: &recSink{}, ValidateFile: func(context.Context, string) (string, error) { return "/tmp/report.txt", nil }})
-	if err == nil || conv != nil || !fc.sessions[0].disconnected || len(fc.sessions[0].setTools) != 1 {
+	if err == nil || !strings.Contains(err.Error(), "already exists") || conv != nil || !fc.sessions[0].disconnected ||
+		!slices.Equal(fc.sessions[0].toolCalls, []string{"clear", "catalog", "rebuild", "catalog", "restore", "disconnect"}) {
 		t.Fatalf("collision = %v, %v; calls=%v", conv, err, fc.sessions[0].toolCalls)
 	}
 }
