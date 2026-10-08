@@ -117,7 +117,7 @@ describe('messages', () => {
       { id: 'u1', kind: 'user', time: at(0), text: 'Plan the site' },
       { id: 'a1', kind: 'assistant', time: at(5), text: 'Planned.' },
     ];
-    const timing: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed', output_tokens: 940, todo: { done: 1, total: 4, blocked: 1, open: 2 } };
+    const timing: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed', output_tokens: 940, todo: { done: 1, total: 4, blocked: 1, in_progress: 1, pending: 1, open: 2 } };
     const snap: TurnTodos = {
       timing_id: 't1',
       ended_at: at(6),
@@ -136,9 +136,16 @@ describe('messages', () => {
       </ApiContext.Provider>
     );
     const view = render(draw([timing]));
-    const button = screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 blocked, 2 left open' });
+    const button = screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 in progress, 1 blocked, 1 to do' });
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
-    expect(button.textContent).toBe('Todo 1/4· 1 blocked· 2 left open');
+    expect(button.textContent).toBe('Todo 1/4·1 in progress·1 blocked·1 to do');
+    // Each stage in its colour behind its glyph; a phone drops the words, never the glyphs.
+    for (const [word, tone] of [['in progress', 'text-accent'], ['blocked', 'text-warning'], ['to do', 'text-muted']]) {
+      const words = within(button).getByText(word);
+      expect(words.className).toContain('max-sm:hidden');
+      expect(words.parentElement!.className).toContain(tone);
+      expect(words.parentElement!.querySelector('svg')).toBeTruthy();
+    }
     // The words beside the tokens, and the foot stays in view without a hover.
     const foot = button.parentElement!;
     expect(foot.textContent).toContain('940 tokens · Todo 1/4');
@@ -149,10 +156,13 @@ describe('messages', () => {
     expect(button.getAttribute('aria-controls')).toBe(reader.id);
     await waitFor(() => expect(document.activeElement).toBe(within(reader).getByRole('heading', { name: 'Todo' })));
     const clock = new Date(at(6)).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    expect(await within(reader).findByText(`As this turn left it, ${clock}`)).toBeTruthy();
+    expect(await within(reader).findByText(`As this turn left it, ${clock} · 2 left open`)).toBeTruthy();
     expect(turnTodos).toHaveBeenCalledWith('todo-task', 't1', expect.any(AbortSignal));
     expect(within(reader).getByRole('region', { name: 'Blocked' }).textContent).toBe('Blocked1Sign in to the registryNo token on this machine, Blocked');
-    expect(within(reader).getByRole('region', { name: 'Left open' }).textContent).toBe('Left open2Build the index page, by Index page writer, NowWrite the README, Next');
+    // The live reader's stages, in its order.
+    expect(within(reader).getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['In progress', 'Blocked', 'To do', 'Done']);
+    expect(within(reader).getByRole('region', { name: 'In progress' }).textContent).toBe('In progress1Build the index page, by Index page writer, In progress');
+    expect(within(reader).getByRole('region', { name: 'To do' }).textContent).toBe('To do1Write the README, To do');
     expect(within(reader).getByRole('region', { name: 'Done' }).textContent).toBe('Done1Plan the pages, Done');
     expect(within(reader).getByText('Kept by uam when the turn ended')).toBeTruthy();
     expect(within(reader).getByText('Esc')).toBeTruthy();
@@ -175,6 +185,9 @@ describe('messages', () => {
     expect(await screen.findByText('This turn’s list is no longer kept')).toBeTruthy();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // Counts kept before uam split in progress from to do: the open rows stay one count.
+    view.rerender(draw([{ ...timing, todo: { done: 1, total: 4, blocked: 1, open: 2 } }]));
+    expect(screen.getByRole('button', { name: 'Todo at the end of this turn: 1 of 4 done, 1 blocked, 2 left open' }).textContent).toBe('Todo 1/4·1 blocked·2 open');
     view.rerender(draw([{ ...timing, todo: undefined }]));
     expect(screen.queryByRole('button', { name: /^Todo at the end of this turn/ })).toBeNull();
     expect(screen.getByText('Planned.').closest('[data-history-anchor]')!.parentElement!.textContent).not.toContain('Todo');

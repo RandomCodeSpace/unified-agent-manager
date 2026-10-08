@@ -759,8 +759,8 @@ export type TodoStatus = 'pending' | 'in_progress' | 'done' | 'blocked';
 /** One row of the agents' todo list: `note` says why a blocked row is blocked; `agent_id` is the subagent that first wrote it, when uam could tell; `changed_at` is when its status last changed, as far as uam saw. */
 export interface Todo { id: string; title: string; status: TodoStatus; note?: string; agent_id?: string; changed_at?: string }
 
-/** Rows by status over the whole list: `open` is pending and in progress. */
-export interface TodoCounts { done?: number; total?: number; blocked?: number; open?: number; omitted?: number }
+/** Rows by status over the whole list: `open` is `in_progress` plus `pending`, and counts kept before uam split those two carry `open` alone. */
+export interface TodoCounts { done?: number; total?: number; blocked?: number; in_progress?: number; pending?: number; open?: number; omitted?: number }
 
 /**
  * The open conversation's todo list, which the agents keep in Copilot's session `todos` table:

@@ -442,11 +442,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   long. A model call Copilot retries adds
   "Retrying, attempt 2 · HTTP 429 · rate limited" until the call goes
   through; a subagent's retry shows under its row. With a todo list it also
-  says how far the agents got ("Todo 2/7"), the row in progress and how many
-  rows are blocked, or, while the turn has not touched the list yet, how many
-  the last turn left open; clicking it then opens the list, by sections Now,
-  Blocked, Next and Done, with the subagent that wrote each row when uam
-  could tell. Without a list, clicking it jumps to the end of the
+  says how far the agents got ("Todo 2/7"), the row the work is at and how
+  many rows are in each open stage, "1 in progress · 1 blocked · 3 to do",
+  each in its own colour behind its own glyph (a phone shows the glyphs and
+  numbers), or, while the turn has not touched the list yet, the same counts
+  from the last turn; clicking it then opens the list, by sections In
+  progress, Blocked, To do and Done, with the subagent that wrote each row
+  when uam could tell. Without a list, clicking it jumps to the end of the
   conversation. After a stop it says why until the next turn
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
@@ -462,15 +464,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (`turn_activity.todos`): uam asks the agents, subagents included, to keep
   one in Copilot's session `todos` table for work of more than two steps,
   reads it when it changes and when the Task's conversation reopens, and
-  sends at most 100 rows with the counts of all.
+  sends at most 100 rows with the counts of all: `done`, `total`,
+  `in_progress`, `pending` and `blocked`, a stage with no rows left out, and
+  `open`, `in_progress` plus `pending`.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
-  left it. Its last reply's foot reads "Todo 5/7 · 1 blocked · 1 left open"
-  and stays on screen; clicking it opens that list by sections Blocked, Left
-  open and Done: the rows the turn changed and the rows still open, at most
-  50. The end of a turn waits up to a second for Copilot's last change to
-  the list to be read. The counts are saved with the turn's timing
-  (`turn_timings[].todo`), the rows in `turn-todos.jsonl` beside the Task's
-  attachments, which is deleted with the Task.
+  left it. Its last reply's foot reads "Todo 4/7 · 1 in progress · 1 blocked
+  · 1 to do" and stays on screen; clicking it opens that list by the same
+  sections as the live one: the rows the turn changed and the rows still
+  open, at most 50. The end of a turn waits up to a second for Copilot's last
+  change to the list to be read. The counts are saved with the turn's timing
+  (`turn_timings[].todo`, as above), the rows in `turn-todos.jsonl` beside the
+  Task's attachments, which is deleted with the Task. Counts saved before uam
+  split `in_progress` from `pending` carry `open` alone, and the foot then
+  reads "1 open".
   `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
   settled or archived Task, or 404 when none were kept.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in

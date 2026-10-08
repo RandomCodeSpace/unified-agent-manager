@@ -37,10 +37,11 @@ and conventions below instead.
 - **Code blocks** wrap long lines, scroll past about 480 px of height and
   have a copy button. Common language tags are highlighted.
 - **The todo list** you keep in the session's `todos` table shows above the
-  composer while you work: how many rows are done, the row in progress and
-  the blocked rows with the reason from their description. Each reply that
-  changed it keeps the list as the turn left it. The owner changes it by
-  asking you in the chat.
+  composer while you work: how many rows are done, the row in progress, and
+  how many are in progress, blocked and to do, each stage in its own colour;
+  the list shows blocked rows with the reason from their description. Each
+  reply that changed it keeps the list as the turn left it. The owner
+  changes it by asking you in the chat.
 
 ## Files: paths, links and uam_show_file
 
