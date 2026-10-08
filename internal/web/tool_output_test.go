@@ -395,6 +395,17 @@ func TestToolOutputTailRowPaced(t *testing.T) {
 	if current := frameOf(t, detail, "body_current"); current.seq <= rows[len(rows)-1].seq {
 		t.Fatalf("body_current at %d, row at %d", current.seq, rows[len(rows)-1].seq)
 	}
+	// Past the output cap only the tail moves: a row sent at once still
+	// leaves the browser's body current.
+	m.mu.Lock()
+	clock = clock.Add(time.Second)
+	m.mu.Unlock()
+	tail = append(slices.Clone(tail[1:]), agentapi.OutputLine{Text: "capped"})
+	emit(agentapi.ToolRunning)
+	capped := frameOf(t, main, "item")
+	if current := frameOf(t, detail, "body_current"); current.seq <= capped.seq {
+		t.Fatalf("tail-only row at %d, body_current at %d", capped.seq, current.seq)
+	}
 	output, tail = output+"exit 0", nil
 	emit(agentapi.ToolCompleted)
 	row = compactItem{}

@@ -329,6 +329,11 @@ func (m *Manager) paceToolOutputLocked(s *webSession, previous, it agentapi.Item
 		} else {
 			state.rowAt, state.row = now, false
 			m.publishCompactItemLocked(s, it, false)
+			if suffix == "" {
+				// No delta follows to keep the browser's body current, as
+				// when the output reached its cap and only the tail moves.
+				m.publishBodyCurrentLocked(s, it)
+			}
 		}
 	}
 	if suffix != "" {
