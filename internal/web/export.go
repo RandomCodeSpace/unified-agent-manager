@@ -41,9 +41,15 @@ type exportTask struct {
 // ExportMarkdown returns Task id's conversation as Markdown and a file name
 // for it.
 func (m *Manager) ExportMarkdown(ctx context.Context, id string) ([]byte, string, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
+		return nil, "", err
+	}
 	m.mu.Lock()
-	s := m.sessions[id]
-	if s == nil {
+	if s.removed {
 		m.mu.Unlock()
 		return nil, "", newError(http.StatusNotFound, msgSessionNotFound)
 	}

@@ -976,6 +976,9 @@ func (m *Manager) TurnEvidence(ctx context.Context, id string, since, until time
 	if err != nil {
 		return TurnEvidence{}, err
 	}
+	if err := m.waitReleasedHistory(ctx, s); err != nil {
+		return TurnEvidence{}, err
+	}
 	out := TurnEvidence{Checks: []EvidenceCheck{}, Claims: []EvidenceClaim{}, Files: []TurnFile{}}
 	m.mu.Lock()
 	if until.IsZero() {

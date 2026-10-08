@@ -53,6 +53,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 	convID, workdir := s.convID, s.workdir
 	ctx, cancel := context.WithCancel(m.ctx)
 	s.historyCancel = cancel
+	s.historyDone = ctx.Done()
 	s.historyGen++
 	gen := s.historyGen
 	m.wg.Add(1)
@@ -126,6 +127,10 @@ func (m *Manager) readSlot(ctx context.Context) (func(), error) {
 // shows as cancelled, as it does when a conversation closes.
 func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
 	before := m.summaryLocked(s)
+	s.historyRecordFailed = false
+	if len(s.items) == 0 {
+		s.truncated = false
+	}
 	m.noteHistoryLocked(s, h, true)
 	for i := range h.Subagents {
 		switch h.Subagents[i].Status {
@@ -170,6 +175,7 @@ func (m *Manager) historyUnavailableLocked(s *webSession, reason string) {
 // record already in memory still counts. The items are live from now on and
 // are no longer dropped when idle.
 func (m *Manager) openedHistoryLocked(s *webSession, withHistory bool, err error) {
+	s.historyRecordFailed = withHistory && err != nil
 	switch {
 	case withHistory && err == nil:
 		s.history, s.historyReason = HistoryLoaded, ""
@@ -289,11 +295,80 @@ func (m *Manager) dropHistoryLocked(s *webSession) {
 	s.stopPreviews()
 	s.itemSeq = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
-	s.activity = nil
+	closed := s.conv == nil && (s.stage != StageActive || s.base == StateClosed)
+	if !closed {
+		s.activity = nil
+	}
 	s.archiveGone, s.subagentsArchived, s.subagentTails = false, false, nil
 	m.archive.forget(s.id)
 	s.subagents, s.subIdx, s.subagentsOlder, s.subagentHead = nil, map[string]*agentapi.Subagent{}, false, 0
 	s.history, s.historyReason, s.historyRead, s.historyBytes = "", "", false, 0
+	// Closed Tasks still have a recorded transcript after any cache eviction.
+	s.truncated = closed && m.pagerLocked(s) != nil
+}
+
+// releaseClosedHistoryLocked frees a live transcript once its conversation
+// has closed and its last viewer left. Recorded histories retain their
+// existing cache lifetime after a subsequent view reloads them.
+func (m *Manager) releaseClosedHistoryLocked(s *webSession) {
+	if s.conv != nil || s.opening != nil || s.history != HistoryLoaded || s.historyRecordFailed ||
+		(s.stage == StageActive && s.base != StateClosed) || m.pagerLocked(s) == nil {
+		return
+	}
+	if _, ok := m.providers[s.provider].(agentapi.HistoryReader); !ok {
+		return
+	}
+	if _, ok := m.providers[s.provider].(agentapi.SubagentPager); !ok && len(s.subagents) != 0 {
+		return
+	}
+	for sub := range m.subs {
+		if sub.session == s.id {
+			return
+		}
+	}
+	for _, item := range s.items {
+		if item.SteerStatus != "" {
+			return // The provider has not recorded this local receipt yet.
+		}
+	}
+	m.cancelHistoryLocked(s)
+	m.dropHistoryLocked(s)
+}
+
+// waitReleasedHistory restores an evicted live transcript for reads that
+// need its retained items or evidence. Compact pages and bodies instead
+// read their requested windows directly from the record.
+func (m *Manager) waitReleasedHistory(ctx context.Context, s *webSession) error {
+	m.mu.Lock()
+	if s.conv != nil || s.opening != nil || len(s.items) != 0 ||
+		(s.stage == StageActive && s.base != StateClosed) || s.historyRead || s.history == HistoryLoaded {
+		m.mu.Unlock()
+		return nil
+	}
+	m.viewHistoryLocked(s)
+	done, gen := s.historyDone, s.historyGen
+	m.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch {
+	case s.removed:
+		return newError(http.StatusNotFound, msgSessionNotFound)
+	case s.historyGen != gen:
+		return newError(http.StatusConflict, msgHistoryChanged)
+	case s.history == HistoryLoaded:
+		return nil
+	case s.history == HistoryUnavailable:
+		return newError(http.StatusServiceUnavailable, "%s", s.historyReason)
+	default:
+		return newError(http.StatusConflict, msgHistoryChanged)
+	}
 }
 
 // Drop the least recently viewed cached histories until the total fits. Open

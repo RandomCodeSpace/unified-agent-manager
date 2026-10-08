@@ -422,8 +422,8 @@ type RerunRequest struct {
 	RequestID string `json:"request_id"`
 }
 
-// maxRerunRead is how many of the record's newest items Rerun reads for the
-// last message when none is held.
+// maxRerunRead bounds each recorded window searched for the last message
+// when that message is no longer held.
 const maxRerunRead = 200
 
 // Rerun creates a Task in Task id's Project with its settings, the model
@@ -432,9 +432,15 @@ const maxRerunRead = 200
 // again. The effort and context size go back to their defaults with another
 // model.
 func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+		return SessionSummary{}, err
+	}
 	m.mu.Lock()
-	s := m.sessions[id]
-	if s == nil {
+	if s.removed {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
@@ -453,7 +459,7 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		read = m.windowReadLocked(s, "", "", maxRerunRead, 0)
 	}
 	m.mu.Unlock()
-	if read != nil {
+	for read != nil {
 		w, err := m.readArchive(read)
 		if err != nil {
 			return SessionSummary{}, err
@@ -463,6 +469,10 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 				text = w.items[i].Text
 			}
 		}
+		if text != "" || w.start || len(w.items) == 0 || w.items[0].ID == read.req.ItemID {
+			break
+		}
+		read.req.ItemID = w.items[0].ID
 	}
 	if strings.TrimSpace(text) == "" {
 		return SessionSummary{}, newError(http.StatusConflict, "this task has no message to run again")

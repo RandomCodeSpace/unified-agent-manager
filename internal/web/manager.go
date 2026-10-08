@@ -406,7 +406,9 @@ type webSession struct {
 	// when a viewer last asked for it, historyFailed when a read last failed.
 	history, historyReason     string
 	historyRead                bool
+	historyRecordFailed        bool // the latest live record read failed
 	historyCancel              context.CancelFunc
+	historyDone                <-chan struct{}
 	historyGen                 uint64
 	historyBytes               int
 	historyUsed, historyFailed time.Time
@@ -430,8 +432,8 @@ type webSession struct {
 	edits     map[string]time.Time
 	turnStart time.Time
 	// activity is what the turn evidence keeps of the main agent's items,
-	// by ID (turn_evidence.go); dropped with an evicted transcript, which
-	// notes them again when it is read.
+	// by ID (turn_evidence.go). Closed and staged Tasks retain these bounded
+	// facts without item bodies; other evicted transcripts rebuild them.
 	activity               map[string]activity
 	editsKnown             bool
 	diff                   *DiffStat
@@ -1120,18 +1122,39 @@ func (m *Manager) Detail(id string) (SessionDetail, error) {
 
 // Subagent returns one subagent of a session with its retained transcript.
 func (m *Manager) Subagent(id, agentID string) (SubagentDetail, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s := m.sessions[id]
-	if s == nil {
-		return SubagentDetail{}, newError(http.StatusNotFound, msgSessionNotFound)
+	s, err := m.lookup(id)
+	if err != nil {
+		return SubagentDetail{}, err
 	}
-	m.viewHistoryLocked(s)
-	sa := s.subIdx[agentID]
-	if sa == nil {
-		return SubagentDetail{}, newError(http.StatusNotFound, msgSubagentNotFound)
+	if err := m.waitReleasedHistory(m.ctx, s); err != nil {
+		return SubagentDetail{}, err
 	}
-	return SubagentDetail{Seq: m.seq, Subagent: *sa, Items: s.agentItems(agentID)}, nil
+	var fresh *archiveWindow
+	for {
+		m.mu.Lock()
+		if s.removed {
+			m.mu.Unlock()
+			return SubagentDetail{}, newError(http.StatusNotFound, msgSessionNotFound)
+		}
+		m.viewHistoryLocked(s)
+		sa := s.subIdx[agentID]
+		if sa == nil {
+			m.mu.Unlock()
+			return SubagentDetail{}, newError(http.StatusNotFound, msgSubagentNotFound)
+		}
+		v := m.viewLocked(s, agentID, fresh)
+		if v.missing && fresh == nil {
+			read := m.windowReadLocked(s, agentID, "", archiveWindowItems, 0)
+			m.mu.Unlock()
+			if fresh, err = m.readArchive(read); err != nil {
+				return SubagentDetail{}, err
+			}
+			continue
+		}
+		d := SubagentDetail{Seq: m.seq, Subagent: *sa, Items: append([]agentapi.Item(nil), v.items...)}
+		m.mu.Unlock()
+		return d, nil
+	}
 }
 
 func (m *Manager) projectsLocked() []Project {
@@ -3726,6 +3749,7 @@ func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
 	m.forgetBackgroundTaskStateLocked(s)
 	m.pauseQueueLocked(s)
 	s.setBase(StateClosed, "")
+	m.releaseClosedHistoryLocked(s)
 	return conv
 }
 
@@ -3886,6 +3910,9 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 		s.settledAt = time.Time{}
 	}
 	s.stage = to
+	if to != StageActive {
+		m.releaseClosedHistoryLocked(s)
+	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 	if conv != nil {
