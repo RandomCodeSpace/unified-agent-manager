@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
-import { Fragment, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
@@ -13,8 +13,7 @@ import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { ImageThumbs, ItemAttachments } from './Attachments';
-import { ChartCard } from './Chart';
-import { CodeBlock, Markdown, SessionContext, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
+import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
@@ -24,6 +23,9 @@ import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
+
+/** A chart card loads with the first chart shown, never with the app; meanwhile it stands as the card does while its rows load. */
+const ChartCard = lazy(() => import('./Chart').then((m) => ({ default: m.ChartCard })));
 
 interface Props {
   /** The Task, for the attachment routes. */
@@ -1105,7 +1107,7 @@ function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessi
 const CallProduct = memo(function CallProduct({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
   return (
     <div data-history-anchor={item.id} className={className}>
-      {isChartCall(item) && sessionId ? <ChartCard sessionId={sessionId} callId={item.id} /> : <ToolImages item={item} sessionId={sessionId} />}
+      {isChartCall(item) && sessionId ? <Suspense fallback={<Skeleton label="Loading the chart…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />}><ChartCard sessionId={sessionId} callId={item.id} /></Suspense> : <ToolImages item={item} sessionId={sessionId} />}
     </div>
   );
 });

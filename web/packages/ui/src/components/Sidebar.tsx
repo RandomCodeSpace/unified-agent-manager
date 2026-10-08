@@ -13,7 +13,7 @@ import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
 import { ContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
-import { UsageButton } from './Usage';
+import { UsageButton } from './UsageButton';
 import { restartNotice } from './UamService';
 
 /** Project-level navigation and actions. */

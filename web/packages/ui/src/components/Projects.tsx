@@ -1,11 +1,10 @@
 import { ApiContext, useApi } from '../ApiContext';
 import type { Machine, MachineChoice } from '../FederationContext';
 import { Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
-import { useRef, useState, type SubmitEvent } from 'react';
+import { Suspense, lazy, useRef, useState, type SubmitEvent } from 'react';
 import { describeError, isStatus, type Project, type SessionSummary } from '../api';
 import { Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
-import { FolderPicker } from './FolderPicker';
 import { PreviousSessionsDialog, canImport } from './PreviousSessions';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
@@ -13,6 +12,9 @@ import { AlertDialog, Dialog } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
+
+/** The folder picker loads with its first Browse, never with the app. */
+const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
 /** Shared by the three dialogs: `open` drives the transition, `onClosed` fires after it, then the owner unmounts. */
@@ -143,20 +145,22 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
         {picker.mounted && (
           <Collapse open={browsing} appear soft onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
             <ApiContext.Provider value={api}>
-              <FolderPicker
-                key={machine}
-                id="add-dir-picker"
-                start={dir}
-                onUse={(p) => {
-                  setDir(p);
-                  setBrowsing(false);
-                  first.current?.focus();
-                }}
-                onClose={() => {
-                  setBrowsing(false);
-                  browse.current?.focus();
-                }}
-              />
+              <Suspense fallback={null}>
+                <FolderPicker
+                  key={machine}
+                  id="add-dir-picker"
+                  start={dir}
+                  onUse={(p) => {
+                    setDir(p);
+                    setBrowsing(false);
+                    first.current?.focus();
+                  }}
+                  onClose={() => {
+                    setBrowsing(false);
+                    browse.current?.focus();
+                  }}
+                />
+              </Suspense>
             </ApiContext.Provider>
           </Collapse>
         )}
