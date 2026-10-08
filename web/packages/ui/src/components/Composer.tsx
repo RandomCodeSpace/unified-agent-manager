@@ -369,7 +369,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   const textarea = useRef<HTMLTextAreaElement>(null);
   // The control row folds to fit its width (lib/toolbarFold) whenever that or its contents change. Folding writes one
-  // attribute on the row, never state, so a resize does not render the composer.
+  // attribute on the row, never state, so a resize does not render the composer. The row renders with no folds, so
+  // a row with room is never written to, and opening a Task forces no layout here.
   const toolbar = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const row = toolbar.current;
@@ -1425,7 +1426,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           (lib/toolbarFold), the model's last. The actions are glyphs, named for screen readers and in their tooltips;
           while a turn runs they stay on the row and wrap under it only when the pickers cannot keep their touch targets
           beside them. */}
-      <div ref={toolbar} className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
+      <div ref={toolbar} data-fold="" className={cn('flex items-center gap-0.5 px-2 pt-1 pb-2 data-[fold~=wrap]:flex-wrap data-[fold~=wrap]:gap-y-1', twoChoices && 'max-sm:flex-wrap max-sm:gap-y-1')}>
         {!locked && (
           <>
             <input

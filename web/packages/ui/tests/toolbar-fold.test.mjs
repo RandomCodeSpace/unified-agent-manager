@@ -3,13 +3,17 @@ import test from 'node:test';
 import { FOLDS, SQUEEZE_MIN, foldToFit } from '../src/lib/toolbarFold.ts';
 
 // A row whose widths follow how many folds it carries: `need[n]` is its content width with n folds, and the
-// squeezable label shows `label[n]` of its `full` width (0: hidden, so nothing to show).
+// squeezable label shows `label[n]` of its `full` width (0: hidden, so nothing to show). `checks` counts layout
+// reads (each check reads the row's scrollWidth first) and `writes` the fold attribute's writes.
 function row(width, need, label = [], full = 120) {
+  let fold;
   const r = {
-    dataset: {},
+    checks: 0,
+    writes: 0,
+    dataset: { get fold() { return fold; }, set fold(value) { r.writes++; fold = value; } },
     clientWidth: width,
     get folds() { return r.dataset.fold ? r.dataset.fold.split(' ').length : 0; },
-    get scrollWidth() { return Math.max(width, need[Math.min(r.folds, need.length - 1)]); },
+    get scrollWidth() { r.checks++; return Math.max(r.clientWidth, need[Math.min(r.folds, need.length - 1)]); },
     querySelectorAll: () => {
       const shown = () => label[Math.min(r.folds, label.length - 1)];
       return label.length ? [{ get scrollWidth() { return shown() ? full : 0; }, get clientWidth() { return shown(); } }] : [];
@@ -60,4 +64,39 @@ test('a row that widens again unfolds', () => {
   const wide = row(1000, need);
   wide.dataset.fold = narrow.dataset.fold;
   assert.equal(foldToFit(wide), 0);
+});
+
+test('the fold at each width is pinned, whether the row narrows or widens into it', () => {
+  const need = [900, 820, 760, 650, 600, 520];
+  const expected = [[1000, 0], [900, 0], [899, 1], [800, 2], [700, 3], [620, 4], [560, 5], [500, FOLDS.length]];
+  const stepping = row(1000, need);
+  for (const [width, folds] of [...expected, ...expected.slice().reverse()]) {
+    stepping.clientWidth = width;
+    const fresh = row(width, need);
+    assert.equal(foldToFit(fresh), folds, `from none at ${width}px`);
+    assert.equal(foldToFit(stepping), folds, `from the last fold at ${width}px`);
+    assert.equal(stepping.dataset.fold, fresh.dataset.fold);
+  }
+});
+
+test('a row with room checks its layout once and writes nothing', () => {
+  const r = row(900, [700]);
+  foldToFit(r);
+  r.checks = r.writes = 0;
+  assert.equal(foldToFit(r), 0);
+  assert.deepEqual({ checks: r.checks, writes: r.writes }, { checks: 1, writes: 0 });
+});
+
+test('a folded row steps from its folds instead of unfolding every one and folding them again', () => {
+  const r = row(600, [900, 820, 760, 650, 600, 520]);
+  assert.equal(foldToFit(r), 4);
+  // Still fits: checked where it is, then with one fold fewer, which is put back. Starting from none took five checks.
+  r.checks = r.writes = 0;
+  assert.equal(foldToFit(r), 4);
+  assert.deepEqual({ checks: r.checks, writes: r.writes }, { checks: 2, writes: 2 });
+  // Narrower by one fold: one check where it is, one with the next fold.
+  r.clientWidth = 560;
+  r.checks = r.writes = 0;
+  assert.equal(foldToFit(r), 5);
+  assert.deepEqual({ checks: r.checks, writes: r.writes }, { checks: 2, writes: 1 });
 });
