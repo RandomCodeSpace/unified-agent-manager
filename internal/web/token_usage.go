@@ -120,10 +120,7 @@ func (m *Manager) recordTokensLocked(provider string, usage agentapi.TokenUsage)
 	d.add(counts)
 	m.tokens.Days[key] = d
 	m.tokens.revision++
-	select {
-	case m.wake <- struct{}{}:
-	default:
-	}
+	m.flushLaterLocked()
 }
 
 // The caller holds persistMu; only the snapshot is taken under mu.

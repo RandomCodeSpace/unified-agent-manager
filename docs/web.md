@@ -1856,7 +1856,10 @@ intervals are saved before inference and closed on disconnect, so replayed
 OTEL does not count the same call twice and later terminal usage can count.
 Existing daily totals remain in `web-token-usage.json`; local harness records
 and collection checkpoints live in `web-token-usage.db` beside it. Both survive
-task removal and have no retention cutoff. Since older daily totals lack call
+task removal and have no retention cutoff. A model call's counts, in these
+totals and on the turn's timing in `sessions.json`, are saved with the turn's
+end or the Task's next change, at the latest 30 seconds after the call, so a
+crash loses at most that much. Since older daily totals lack call
 identities, external Copilot history is imported only after a saved one-time
 cutover. Other harnesses can contribute older local history. After an unclean
 shutdown, an ownership interval without a known end is excluded through

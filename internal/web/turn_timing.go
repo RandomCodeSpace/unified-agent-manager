@@ -68,7 +68,9 @@ func (m *Manager) updateTurnTimingPauseLocked(s *webSession) {
 }
 
 // A model call's usage lands on the running turn: tokens in and out, and the
-// call's duration. Subagent calls count too; they are the turn's work.
+// call's duration. Subagent calls count too; they are the turn's work. It is
+// not a durable change of its own: the turn's end or another change writes
+// it, or a flush lazyFlushDelay later.
 func (m *Manager) countTurnTokensLocked(s *webSession, usage agentapi.TokenUsage) {
 	if s.activeTiming < 0 || (usage.Input == 0 && usage.Output == 0) {
 		return
@@ -78,7 +80,9 @@ func (m *Manager) countTurnTokensLocked(s *webSession, usage agentapi.TokenUsage
 	timing.OutputTokens += usage.Output
 	timing.GenerationMS += usage.DurationMS
 	s.turnTimings[s.activeTiming] = timing
-	m.publishTurnTimingLocked(s, timing)
+	m.dirty[s.id] = struct{}{}
+	m.flushLaterLocked()
+	m.broadcastTurnTimingLocked(s, timing)
 }
 
 func finishTimingPause(timing *TurnTiming, end time.Time) {
@@ -126,7 +130,12 @@ func (m *Manager) forgetTurnTimingLocked(s *webSession) {
 	m.publishTurnTimingLocked(s, timing)
 }
 
+// publishTurnTimingLocked sends timing and makes it a durable change.
 func (m *Manager) publishTurnTimingLocked(s *webSession, timing TurnTiming) {
 	s.timingRevision++
+	m.broadcastTurnTimingLocked(s, timing)
+}
+
+func (m *Manager) broadcastTurnTimingLocked(s *webSession, timing TurnTiming) {
 	m.broadcastLocked("turn_timing", s.id, func(seq uint64) any { return turnTimingEvent{Seq: seq, SessionID: s.id, TurnTiming: timing} })
 }
