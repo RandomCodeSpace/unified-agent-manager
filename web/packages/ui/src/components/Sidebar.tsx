@@ -745,7 +745,7 @@ export const Sidebar = memo(function Sidebar({
 
       {connection !== 'connected' && (
         <output className={cn('mx-2 mb-2 flex items-start gap-2 rounded-sm px-2 py-1.5 text-caption', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
-          <Dot tone={conn} pulse className="mt-1.5" />
+          <Dot tone={conn} className="mt-1.5" />
           {CONNECTION_TEXT[connection]}
         </output>
       )}

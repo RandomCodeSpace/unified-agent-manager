@@ -85,7 +85,7 @@ function ServerRow({ s, busy, signingIn, onToggle, onRestart, onSignIn, children
             {s.source && SOURCE[s.source] && <span className="text-meta text-muted">{SOURCE[s.source]}</span>}
           </span>
           <span className="flex items-center gap-1.5 text-meta text-muted">
-            <Dot tone={state.tone} pulse={s.status === 'pending'} />
+            <Dot tone={state.tone} />
             {state.label}
             {tools.length > 0 && (
               <>

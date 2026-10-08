@@ -21,3 +21,9 @@ test('the composer toolbar folds (lib/toolbarFold) match the row attribute, and 
   const shown = css.indexOf(':where([data-fold~="more"]) .sm\\:in-data-');
   assert.ok(hidden >= 0 && shown > hidden, 'the More fold comes after sm:hidden');
 });
+
+test('only the ring loops: the stylesheet has no other endless animation', () => {
+  const source = readFileSync(`${base}/index.css`, 'utf8');
+  const endless = source.split('\n').filter((line) => /\binfinite\b/.test(line));
+  assert.deepEqual(endless.map((line) => line.trim()), ['--animate-spin: spin 1s linear infinite;']);
+});

@@ -1115,7 +1115,7 @@ export default function App() {
   if (auth === 'checking') {
     return (
       <main className="grid h-dvh place-items-center text-caption text-muted" aria-busy="true">
-        <Brand className="animate-pulse-dot" />
+        <Brand />
       </main>
     );
   }
@@ -1313,7 +1313,7 @@ export default function App() {
               {federation?.pendingRoute && <p role="status" className="px-4 py-2 text-caption">Opening the connected instance…</p>}
               {connection !== 'connected' && (
                 <output className={cn('flex items-center gap-2 px-4 py-1.5 text-caption animate-fade-in', connection === 'offline' ? 'bg-error-wash text-error' : 'bg-warning-wash text-warning')}>
-                  <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
+                  <Dot tone={connection === 'offline' ? 'error' : 'warning'} />
                   {CONNECTION_TEXT[connection]}
                 </output>
               )}
@@ -1347,7 +1347,7 @@ export default function App() {
               )}
               {stale && state.previousCached && (
                 <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
-                  <Dot tone="accent" pulse /> Refreshing task…
+                  <Dot tone="accent" /> Refreshing task…
                 </output>
               )}
               <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1456,7 +1456,7 @@ function PaneHeader({ leading, connection }: Readonly<{ leading: React.ReactNode
       <span className="flex-1" />
       {connection && connection !== 'connected' && (
         <output className="flex items-center gap-1.5 text-caption text-warning" title={CONNECTION_TEXT[connection]}>
-          <Dot tone={connection === 'offline' ? 'error' : 'warning'} pulse />
+          <Dot tone={connection === 'offline' ? 'error' : 'warning'} />
           <span className="sr-only">{CONNECTION_TEXT[connection]}</span>
         </output>
       )}
