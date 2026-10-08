@@ -36,6 +36,32 @@ func TestBuiltinSkillsHaveFrontmatter(t *testing.T) {
 	}
 }
 
+// The uam skill documents every tool a Task gets from uam, and points agents
+// at those tools rather than uam's web API.
+func TestUamSkillCoversHostTools(t *testing.T) {
+	data, err := builtinSkills.ReadFile("skills/uam/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := string(data)
+	tools, _ := (&Manager{}).taskToolsLocked("task", false)
+	names := []string{"uam_show_file"}
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	for _, name := range names {
+		if !strings.Contains(skill, "`"+name+"`") {
+			t.Errorf("SKILL.md does not document %s", name)
+		}
+	}
+	if !strings.Contains(skill, "Do not call uam's web API or read its credentials") {
+		t.Error("SKILL.md lacks the rule against calling uam's web API")
+	}
+	if strings.Contains(skill, "/api/") {
+		t.Error("SKILL.md names a web API route")
+	}
+}
+
 func TestInstallSkillsWritesAndRefreshes(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "skills")
 	if err := installSkills(dir); err != nil {

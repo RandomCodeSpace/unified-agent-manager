@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { handleNotice, NOTIFY_KEY, PUSH_GRACE_MS, SEEN_KEY, setViewing, setNotificationSource, startNotifications, type Notice } from '../../src/lib/notify';
+import { handleNotice, NOTIFY_KEY, PUSH_GRACE_MS, SEEN_KEY, setViewing, setNotificationSource, startNotifications, streamOpened, type Notice } from '../../src/lib/notify';
 import { renderApp, sidebar } from './render';
 
 /** A browser's Notification API: permission granted (or not) on request, and every notification shown. */
@@ -148,6 +148,40 @@ describe('notifications', () => {
     await handleNotice(notice({ session_id: 't3', seq: 8 }));
     expect(shown.map((n) => n.title)).toEqual(['Fix it needs you: Which colour?']);
   });
+  test('each service hears what the tab shows once its stream is open, and again only when that changes for it', async () => {
+    const posts: string[] = [];
+    vi.stubGlobal('fetch', async (input: string) => { posts.push(input); return new Response(null, { status: 204 }); });
+    const streams: EventTarget[] = [];
+    vi.stubGlobal('EventSource', class extends EventTarget {
+      constructor() { super(); streams.push(this); }
+      close() {}
+    });
+    const stop = startNotifications();
+    const settled = async (expected: string[]) => { await new Promise((r) => setTimeout(r, 0)); expect(posts.splice(0)).toEqual(expected); };
+    try {
+      // Before a stream opens its service has nowhere to keep it.
+      setViewing('task-a');
+      await settled([]);
+      streams[0].dispatchEvent(new Event('open'));
+      await settled(['/api/connected-notifications/viewing']);
+      streamOpened();
+      await settled(['/api/viewing']);
+      // A Task on this instance is this instance's to know; the connected notices still hold none.
+      setViewing('task-b');
+      await settled(['/api/viewing']);
+      setViewing('task-b');
+      await settled([]);
+      // A connected instance on screen: this instance shows nothing, the notices hold its Task.
+      setNotificationSource({ id: 'saved-b', instance_id: 'b', generation: 3 });
+      await settled(['/api/viewing', '/api/connected-notifications/viewing']);
+      setViewing('t3');
+      await settled(['/api/connected-notifications/viewing']);
+    } finally {
+      stop();
+      setNotificationSource(null);
+    }
+  });
+
   test('connected notices qualify visibility and cancel pending fallback after removal', async () => {
     const { shown, FakeNotification } = fakeNotifications('granted');
     FakeNotification.permission = 'granted';

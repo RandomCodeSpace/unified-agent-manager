@@ -447,7 +447,7 @@ func TestTitleModelRoute(t *testing.T) {
 	}
 	ts.prov.SetModels([]agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6)}, nil)
 	setNow(ts.m, time.Now().Add(2*time.Hour))
-	ts.m.RefreshModels()
+	<-ts.m.RefreshModels()
 	if w := ts.do(http.MethodGet, "/api/meta", "", auth); !strings.Contains(w.Body.String(), `"cheapest_model":"cheap"`) {
 		t.Fatalf("GET /api/meta = %s", w.Body)
 	}

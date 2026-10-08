@@ -257,6 +257,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 
 type webSession struct {
 	previews map[string]*subagentPreviewState
+	outputs  map[string]*toolOutputState
 	itemSeq  map[string]uint64
 
 	// op serializes provider-facing operations on this session. It is never
@@ -888,23 +889,31 @@ func loadModels(ctx context.Context, p agentapi.Provider) ([]agentapi.Model, err
 }
 
 // RefreshModels reloads the catalog of every available provider whose copy
-// is older than modelsMaxAge. A failed load keeps the previous catalog and is
-// retried after modelsMaxAge.
-func (m *Manager) RefreshModels() {
+// is older than modelsMaxAge. It waits only for providers with no models
+// yet: one that has some keeps serving them while it reloads. The returned
+// channel is closed once every reload it started has finished. A failed load
+// keeps the previous catalog and is retried after modelsMaxAge.
+func (m *Manager) RefreshModels() <-chan struct{} {
+	var all, empty sync.WaitGroup
 	m.mu.Lock()
-	var stale []agentapi.Provider
 	for _, name := range m.order {
-		if m.infos[name].Available && !m.fetching[name] && m.now().Sub(m.modelsAt[name]) >= modelsMaxAge {
-			m.fetching[name] = true
-			stale = append(stale, m.providers[name])
+		info := m.infos[name]
+		if m.closed || !info.Available || m.fetching[name] || m.now().Sub(m.modelsAt[name]) < modelsMaxAge {
+			continue
 		}
-	}
-	m.mu.Unlock()
-	var wg sync.WaitGroup
-	for _, p := range stale {
-		wg.Add(1)
+		m.fetching[name] = true
+		p, wait := m.providers[name], len(info.Models) == 0
+		m.wg.Add(1)
+		all.Add(1)
+		if wait {
+			empty.Add(1)
+		}
 		go func() {
-			defer wg.Done()
+			defer m.wg.Done()
+			defer all.Done()
+			if wait {
+				defer empty.Done()
+			}
 			models, err := loadModels(m.ctx, p)
 			m.mu.Lock()
 			defer m.mu.Unlock()
@@ -919,7 +928,14 @@ func (m *Manager) RefreshModels() {
 			m.infos[p.Name()] = info
 		}()
 	}
-	wg.Wait()
+	m.mu.Unlock()
+	empty.Wait()
+	done := make(chan struct{})
+	go func() {
+		all.Wait()
+		close(done)
+	}()
+	return done
 }
 
 // Providers lists every provider with its availability.

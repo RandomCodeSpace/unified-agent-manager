@@ -6,7 +6,7 @@ import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
-import { initialState, reducer } from './state';
+import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
 import { Home } from './components/Home';
@@ -137,7 +137,7 @@ export default function App() {
   const federation = useFederation();
   const onAuth = federation?.onAuth;
   const onRoute = federation?.onRoute;
-  const onEvent = federation?.onEvent;
+  const forwardEvent = federation?.onEvent;
   const onTerminal = federation?.onTerminal;
   const onHomeVersion = federation?.onHomeVersion;
   const initialPath = federation?.initialPath;
@@ -260,9 +260,15 @@ export default function App() {
   // Signed out for any reason (sign-out, a 401, sign-in required): no transcript stays in this browser.
   useEffect(() => { if (auth === 'out') clearArchive(); }, [auth]);
 
-  // Custom models are part of the model lists, so a change to them reloads the catalogs; `metaAttempt` is a Retry after a failure.
-  const customModels = JSON.stringify(state.settings.custom_models ?? []);
+  // `metaAttempt` is a Retry after a failure, or a change to the custom models: they are part of the model lists. The
+  // list is unknown until the first snapshot, which only shows what the first read already had.
+  const customModels = state.loaded ? JSON.stringify(state.settings.custom_models ?? []) : null;
   const [metaAttempt, setMetaAttempt] = useState(0);
+  const [readModels, setReadModels] = useState(customModels);
+  if (customModels !== readModels) {
+    setReadModels(customModels);
+    if (customModels !== null && readModels !== null) setMetaAttempt(increment);
+  }
   useEffect(() => {
     if (auth !== 'in') return;
     lastCheck.current = Date.now();
@@ -277,7 +283,7 @@ export default function App() {
         setMeta(null);
         setMetaError(describeError(e));
       });
-  }, [api, auth, customModels, metaAttempt, metaCache]);
+  }, [api, auth, metaAttempt, metaCache]);
 
   /**
    * A redeploy shows as the stream reconnecting, so the version is read again once the stream
@@ -412,6 +418,16 @@ export default function App() {
     document.addEventListener('visibilitychange', markShown);
     return () => document.removeEventListener('visibilitychange', markShown);
   }, []);
+
+  // The stream hands what it hears to the federation's copy of this machine through whichever handler is current, so
+  // the handler appearing or going does not reopen it. Forwarding that starts while it is open (a first connection
+  // added) reopens it once, so the copy starts from a snapshot.
+  const onEvent = useEffectEvent((action: Action) => forwardEvent?.(action));
+  const [forwarding, setForwarding] = useState(!!forwardEvent);
+  if (forwarding !== !!forwardEvent) {
+    setForwarding(!!forwardEvent);
+    if (forwardEvent) setStreamKey(increment);
+  }
 
   // One EventSource at a time, scoped to the selected session.
   useEffect(() => {
@@ -565,7 +581,7 @@ export default function App() {
       // Deltas still queued belong to this stream; the next one starts with a snapshot.
       cancelAnimationFrame(frame);
     };
-  }, [auth, state.selectedId, streamKey, markViewed, checkVersion, recentTasks, api, FILTER_KEY, LOOKED_KEY, VIEWED_KEY, onEvent]);
+  }, [auth, state.selectedId, streamKey, markViewed, checkVersion, recentTasks, api, FILTER_KEY, LOOKED_KEY, VIEWED_KEY]);
 
   const hasNews = useMemo(() => newsReader(state.selectedId, viewed, loadedAt), [state.selectedId, viewed, loadedAt]);
   // The owner's last look at the Task just opened, read before this visit marks it: "Since you left" starts there.

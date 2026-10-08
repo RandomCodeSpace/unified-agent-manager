@@ -128,11 +128,15 @@ func itemKey(agentID, id string) string {
 	return agentID + "\x00" + id
 }
 
-func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item, appendItem bool) {
+// row publishes the compact list row too; a caller omits it when the row
+// shows nothing new.
+func (m *Manager) publishItemLocked(s *webSession, it agentapi.Item, appendItem, row bool) {
 	m.broadcastFilteredLocked("item", s.id, legacySubscriber, func(seq uint64) any {
 		return itemEvent{Seq: seq, SessionID: s.id, AgentID: it.AgentID, Item: it, Append: appendItem}
 	})
-	m.publishCompactItemLocked(s, it, appendItem)
+	if row {
+		m.publishCompactItemLocked(s, it, appendItem)
+	}
 	m.publishBodyLocked(s, it)
 	m.itemPreviewLocked(s, it)
 }
@@ -195,7 +199,7 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 			s.itemBytes += itemSize(old)
 			m.markItemMutationLocked(s, old)
 			if publish {
-				m.publishItemLocked(s, old, false)
+				m.publishItemLocked(s, old, false, true)
 			}
 		}
 	}
@@ -229,6 +233,9 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 	removed := s.trimItems()
 	if publish {
 		defer m.publishItemsTrimmedLocked(s, removed)
+		if m.holdToolOutputLocked(s, previous, it) {
+			return
+		}
 		if suffix, ok := toolOutputSuffix(previous, it); ok {
 			if suffix == "" {
 				return
@@ -246,24 +253,95 @@ func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool
 			m.itemPreviewLocked(s, it)
 			return
 		}
-		m.publishItemLocked(s, it, previous.ID == "" || moveIdleSteer)
+		// The browser's row is the previous item's projection.
+		sameRow := previous.ID != "" && !moveIdleSteer && sameCompactRow(previous, it)
+		m.publishItemLocked(s, it, previous.ID == "" || moveIdleSteer, !sameRow)
 	}
+}
+
+// toolOutputOnly reports whether next is previous, still running, with only
+// its output changed.
+func toolOutputOnly(previous, next agentapi.Item) bool {
+	if previous.Tool == nil || next.Tool == nil || next.Kind != agentapi.ItemTool || next.Tool.Status != agentapi.ToolRunning {
+		return false
+	}
+	tool := *previous.Tool
+	tool.Output = next.Tool.Output
+	previous.Tool = &tool
+	return reflect.DeepEqual(previous, next)
 }
 
 // Only append-only output with otherwise identical metadata can be a delta.
 // Starts, rewrites, status changes, images and completion remain full items.
 func toolOutputSuffix(previous, next agentapi.Item) (string, bool) {
-	if previous.Tool == nil || next.Tool == nil || next.Kind != agentapi.ItemTool || next.Tool.Status != agentapi.ToolRunning || !strings.HasPrefix(next.Tool.Output, previous.Tool.Output) {
+	if !toolOutputOnly(previous, next) || !strings.HasPrefix(next.Tool.Output, previous.Tool.Output) {
 		return "", false
 	}
-	output := previous.Tool.Output
-	tool := *previous.Tool
-	tool.Output = next.Tool.Output
-	previous.Tool = &tool
-	if !reflect.DeepEqual(previous, next) {
-		return "", false
+	return next.Tool.Output[len(previous.Tool.Output):], true
+}
+
+// toolOutputState paces the full publications of one running tool.
+type toolOutputState struct {
+	at    time.Time
+	timer *time.Timer
+}
+
+// holdToolOutputLocked reports whether it held back a running tool's output
+// that replaces rather than extends the previous one, as a CLI's sliding
+// tail window does: such output is published whole at most once per
+// previewInterval, the latest on a trailing timer. Growing output stays a
+// delta; any other change, its row's included, ends the pacing and is
+// published at once.
+func (m *Manager) holdToolOutputLocked(s *webSession, previous, it agentapi.Item) bool {
+	key := itemKey(it.AgentID, it.ID)
+	state := s.outputs[key]
+	// While a publication is pending the browser's copy is older than
+	// previous, so no delta applies to it.
+	pending := state != nil && state.timer != nil
+	outputOnly := toolOutputOnly(previous, it)
+	if outputOnly && !pending && strings.HasPrefix(it.Tool.Output, previous.Tool.Output) {
+		return false
 	}
-	return next.Tool.Output[len(output):], true
+	if !outputOnly || !sameCompactRow(previous, it) {
+		if state != nil {
+			if state.timer != nil {
+				state.timer.Stop()
+			}
+			delete(s.outputs, key)
+		}
+		return false
+	}
+	if pending {
+		return true
+	}
+	if state == nil {
+		if s.outputs == nil {
+			s.outputs = map[string]*toolOutputState{}
+		}
+		state = &toolOutputState{}
+		s.outputs[key] = state
+	}
+	wait := previewInterval - m.now().Sub(state.at)
+	if state.at.IsZero() || wait <= 0 {
+		state.at = m.now()
+		return false
+	}
+	state.timer = time.AfterFunc(wait, func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed || m.sessions[s.id] != s || s.outputs[key] != state {
+			return
+		}
+		state.timer = nil
+		i, ok := s.itemIdx[key]
+		if !ok {
+			delete(s.outputs, key)
+			return
+		}
+		state.at = m.now()
+		m.publishItemLocked(s, s.items[i], false, false)
+	})
+	return true
 }
 
 // agentItems returns the retained items of one agent ("" for the main
@@ -380,7 +458,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 		if _, kept := s.itemIdx[itemKey(it.AgentID, it.ID)]; !kept {
 			continue
 		}
-		m.publishItemLocked(s, it, false)
+		m.publishItemLocked(s, it, false, true)
 	}
 	m.publishItemsTrimmedLocked(s, removed)
 }

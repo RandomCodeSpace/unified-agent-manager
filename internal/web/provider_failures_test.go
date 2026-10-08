@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -179,9 +180,92 @@ func TestFailedCustomCatalogReloadIsRetriedOnTheNextRefresh(t *testing.T) {
 	}
 	prov.SetModels([]agentapi.Model{{ID: "own"}, {ID: "acme/coder"}}, nil)
 	reads := prov.ModelsCalls()
-	m.RefreshModels()
+	<-m.RefreshModels()
 	if ids := modelIDs(m, "fake"); prov.ModelsCalls() != reads+1 || !slices.Equal(ids, []string{"own", "acme/coder"}) {
 		t.Fatalf("models after refresh = %v, reads %d -> %d", ids, reads, prov.ModelsCalls())
+	}
+}
+
+// gatedCatalog reads its catalog once gate is closed.
+type gatedCatalog struct {
+	*agenttest.Provider
+	gate chan struct{}
+}
+
+func (p *gatedCatalog) Models(ctx context.Context) ([]agentapi.Model, error) {
+	select {
+	case <-p.gate:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return p.Provider.Models(ctx)
+}
+
+// startGated starts a manager whose fake catalog is read at once until the
+// gate is replaced.
+func startGated(t *testing.T, models []agentapi.Model, err error) (*Manager, *gatedCatalog) {
+	t.Helper()
+	open := make(chan struct{})
+	close(open)
+	prov := &gatedCatalog{agenttest.NewProvider("fake", allCaps), open}
+	prov.SetModels(models, err)
+	return startManager(t, openTestStore(t), prov), prov
+}
+
+// /api/meta answers from a stale catalog at once while one reload runs in
+// the background; the catalog is replaced when it lands.
+func TestMetaServesAStaleCatalogWhileItReloads(t *testing.T) {
+	m, prov := startGated(t, []agentapi.Model{{ID: "old"}}, nil)
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m, prov: prov.Provider}
+	prov.SetModels([]agentapi.Model{{ID: "new"}}, nil)
+	setNow(m, time.Now().Add(modelsMaxAge))
+	reads := prov.ModelsCalls()
+	prov.gate = make(chan struct{})
+	reloaded, again := m.RefreshModels(), m.RefreshModels()
+	answered := make(chan string, 1)
+	go func() { answered <- ts.do(http.MethodGet, "/api/meta", "", withCookie(ts)).Body.String() }()
+	select {
+	case body := <-answered:
+		if !strings.Contains(body, `"id":"old"`) {
+			t.Fatalf("GET /api/meta during the reload = %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("GET /api/meta waited for the reload")
+	}
+	close(prov.gate)
+	within(t, "the reload", reloaded)
+	within(t, "the second refresh", again)
+	if ids := modelIDs(m, "fake"); !slices.Equal(ids, []string{"new"}) || prov.ModelsCalls() != reads+1 {
+		t.Fatalf("models after the reload = %v, reads %d -> %d", ids, reads, prov.ModelsCalls())
+	}
+}
+
+// With no models yet the refresh is waited for, so the first catalog shown
+// is never an empty one by accident.
+func TestRefreshWaitsForAFirstCatalog(t *testing.T) {
+	m, prov := startGated(t, nil, errors.New("catalog service down"))
+	prov.SetModels([]agentapi.Model{{ID: "a"}}, nil)
+	setNow(m, time.Now().Add(modelsMaxAge))
+	prov.gate = make(chan struct{})
+	returned := make(chan struct{})
+	go func() {
+		m.RefreshModels()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+		t.Fatal("RefreshModels returned before the first catalog loaded")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(prov.gate)
+	within(t, "the first catalog", returned)
+	if ids := modelIDs(m, "fake"); !slices.Equal(ids, []string{"a"}) {
+		t.Fatalf("models after the first load = %v", ids)
 	}
 }
 

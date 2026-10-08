@@ -304,7 +304,10 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/** Rows enter, leave and move with a view transition when the Task list changes (type "sessions"); every other render, the selection included, leaves them to their CSS transitions. */
+/**
+ * Rows enter, leave and move with a view transition when the Task list changes (type "sessions"); every other render, the selection included, leaves them to their CSS transitions.
+ * An update that keeps the rows' order (a Task's state, time or title) repaints them in place: `update` applies only while the order changes (TaskRow `moves`).
+ */
 const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
 const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
 const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
@@ -389,8 +392,9 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
+ * `moves`: this render changes the rows' order, so the row slides to its place with the Task list's view transition.
  */
-function TaskRow({ session: s, project, selected, compact = false, tabStop, rowKey = s.id, machine }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine }>) {
+function TaskRow({ session: s, project, selected, compact = false, tabStop, moves, rowKey = s.id, machine }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean; tabStop: boolean; moves: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine }>) {
   const app = useApp();
   // Another machine's rows read its own marks; the machine on screen reads App's, which follow the open Task.
   const hasNews = machine && !machine.active ? machine.hasNews : app.hasNews;
@@ -496,7 +500,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop, rowK
   );
 
   return (
-    <ViewTransition name={machine && !machine.active ? `task-${machine.id}-${s.id}` : `task-${s.id}`} update={ROW_TRANSITION} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
+    <ViewTransition name={machine && !machine.active ? `task-${machine.id}-${s.id}` : `task-${s.id}`} update={moves ? ROW_TRANSITION : 'none'} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
       <li>
         <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
           <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
@@ -638,9 +642,18 @@ export const Sidebar = memo(function Sidebar({
   const searching = !!query.trim();
   const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Settled', settled, settledOpen, selectedKey), ...shelfKeys('Archived', archived, archivedOpen, selectedKey)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
+  // The rows' order on screen. A Task list update moves the rows (the "sessions" view transition) only when it changes
+  // that order; one that changes Tasks in place (state, time, title) repaints them without a transition.
+  const layout = keys.join('\n');
+  const shown = useRef(layout);
+  useLayoutEffect(() => {
+    shown.current = layout;
+  }, [layout]);
+  // eslint-disable-next-line react-hooks/refs -- the rows move from the order last committed, which only a commit can record.
+  const moves = shown.current !== layout;
   const anyProject = useAnyProject(projects);
   const renderRow = (r: ListRow, compact = false) => {
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} session={r.task} selected={r.key === selectedKey} compact={compact} tabStop={r.key === tabStop} />;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} session={r.task} selected={r.key === selectedKey} compact={compact} tabStop={r.key === tabStop} moves={moves} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
