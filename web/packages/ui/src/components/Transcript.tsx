@@ -67,7 +67,12 @@ const NO_ROWS: ReadonlyMap<string, ReactNode> = new Map();
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
 function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
   const [initial] = useState(() => new Set(ids));
-  return useCallback((id: string) => (initial.has(id) || historyItemSeq?.[id] !== undefined ? '' : 'animate-rise'), [initial, historyItemSeq]);
+  // The map is new with every frame; read through a ref it no longer changes the callback. A row's own
+  // entry changes with its item (a frame or a history page replaces it), which re-renders the row anyway.
+  const seq = useRef(historyItemSeq);
+  // eslint-disable-next-line react-hooks/refs -- written before any row calls it in this render, so every call reads the frame being rendered.
+  seq.current = historyItemSeq;
+  return useCallback((id: string) => (initial.has(id) || seq.current?.[id] !== undefined ? '' : 'animate-rise'), [initial]);
 }
 
 /**
@@ -261,7 +266,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
 /** The tip on a turn's duration slot: whether the time shown was recorded. */
 const durationTitle = (elapsed: string | null) => (elapsed ? 'Recorded foreground turn duration' : 'Turn duration was not recorded.');
 
-function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
+const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagents = NO_SUBAGENTS, calls = subagents.length, chip = true, tones = NO_TONES }: Readonly<{ id: string; agentId?: string; working: boolean; timing?: TurnTiming; summary: TurnSummary; entries: Entry[]; ctx: RenderContext; /** The subagents the reply spawned: a chip beside the counts that opens their list under the line. */ subagents?: Subagent[]; /** The reply's `task` calls, loaded or not. */ calls?: number; /** False while the live card shows the same subagents (an open list keeps it). */ chip?: boolean; tones?: ReadonlyMap<string, IdentityTone> }>) {
   // Item IDs are local to their agent; main-turn identities stay unchanged.
   const scope = agentId ? 'agent-turn' : 'turn';
   const scopedId = agentId ? encodeURIComponent(JSON.stringify([agentId, id])) : id;
@@ -335,7 +340,14 @@ function TurnHead({ id, agentId, working, timing, summary, entries, ctx, subagen
       )}
     </div>
   );
-}
+}, (a, b) => {
+  const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
+  // Its counts and its timeline follow from its entries and these context fields alone, as an `ActivityRun`'s do; `summary` is rebuilt every render.
+  return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
+    && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.approvals === b.ctx.approvals
+    && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
+    && a.entries.every((e) => !e.item || a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item));
+});
 
 /**
  * A turn's whole timeline, in order, under its head row: each thought (its text `muted` on
@@ -800,8 +812,11 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
 /** What the last reply of a turn shows in its foot: when the turn ended and, when known, its timing. */
 interface ReplyEnd { at: string; timing?: TurnTiming }
 
+/** Each reply's last foot: an unchanged one keeps its identity, so its memoised `Turn` holds while other rows stream. */
+const replyEndOf = new WeakMap<Item, ReplyEnd>();
+
 /** The end of each turn, keyed by the turn's last assistant message, so that reply alone carries the foot: the time the turn ended and the whole turn's tokens, from the user's message to the agent stopping. A turn still working has no end yet, so its replies show nothing. */
-function replyEnds(items: Item[], timings: TurnTiming[], working: boolean): ReadonlyMap<string, ReplyEnd> | undefined {
+export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean): ReadonlyMap<string, ReplyEnd> | undefined {
   const lastReply = new Map<string, Item>();
   let turn: string | undefined;
   for (const item of items) {
@@ -816,7 +831,14 @@ function replyEnds(items: Item[], timings: TurnTiming[], working: boolean): Read
     const timing = timingOf.get(userItemId);
     // Without a recorded timing, only the live last turn can still be working.
     const ended = timing ? timing.state !== 'working' : !(working && userItemId === turn);
-    if (ended) out.set(reply.id, { at: timing?.ended_at ?? reply.time, timing });
+    if (!ended) continue;
+    const at = timing?.ended_at ?? reply.time;
+    let end = replyEndOf.get(reply);
+    if (end?.at !== at || end.timing !== timing) {
+      end = { at, timing };
+      replyEndOf.set(reply, end);
+    }
+    out.set(reply.id, end);
   }
   return out;
 }
