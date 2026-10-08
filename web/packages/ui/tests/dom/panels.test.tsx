@@ -326,8 +326,8 @@ describe('one working ring per place', () => {
     expect(running.every((row) => row.querySelector('.bg-accent'))).toBe(true);
     // Their `task` calls are no step at the foot in Compact (the live set shows them), so the conversation does not turn.
     expect(rings(screen.getByRole('region', { name: 'Conversation' }))).toHaveLength(0);
-    // Changed files keep a steady amber dot, and the status line's dot is still: nothing in the pane pulses.
-    expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull();
+    // Changed files keep a steady amber dot (once the changes load), and the status line's dot is still: nothing in the pane pulses.
+    await waitFor(() => expect(document.getElementById('changes-link')!.querySelector('.bg-warning:not(.animate-pulse-dot)')).not.toBeNull());
     expect(pane.querySelectorAll('.animate-pulse-dot')).toHaveLength(0);
     expect(rings(pane)).toHaveLength(1);
   });
