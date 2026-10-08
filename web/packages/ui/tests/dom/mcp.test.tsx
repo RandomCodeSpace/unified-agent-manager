@@ -28,6 +28,35 @@ describe('MCP servers', () => {
     expect(await list.findByText('https://notes.example.com/mcp')).toBeTruthy();
   });
 
+  test("the built-in GitHub server is off by default, and its switch is UAM's own setting for every task", async () => {
+    const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
+    const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
+    const list = within(await section.findByRole('list', { name: 'MCP servers' }));
+    const github = list.getByRole('switch', { name: 'Use github-mcp-server in tasks' });
+    const row = within(github.closest('li')!);
+    expect(github.getAttribute('aria-checked')).toBe('false');
+    expect(row.getByText('Off')).toBeTruthy();
+    expect(document.getElementById(github.getAttribute('aria-describedby')!)?.textContent).toMatch(/not shared with the copilot command\. Off by default/);
+    // Only the built-in GitHub server gets the setting's switch; other built-in servers stay read-only.
+    expect(list.queryAllByRole('switch', { name: /in tasks$/ })).toHaveLength(1);
+    await user.click(github);
+    await waitFor(() => expect(github.getAttribute('aria-checked')).toBe('true'));
+    expect(row.queryByText('Off')).toBeNull();
+  });
+
+  test('a Task leaves the built-in GitHub server off until Settings turns it on, and can still turn it on for itself', async () => {
+    const { user } = await openTask('t1');
+    const menu = await openMenu(user, 'Task actions');
+    await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
+    const servers = within(await dialog.findByRole('list', { name: "This task's MCP servers" }));
+    const github = servers.getByRole('switch', { name: 'Use github-mcp-server in this task' });
+    expect(github.getAttribute('aria-checked')).toBe('false');
+    await user.click(github);
+    await waitFor(() => expect(github.getAttribute('aria-checked')).toBe('true'));
+  });
+
   test('a stored header value stays write-only when the server is edited', async () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
@@ -63,8 +92,9 @@ describe('MCP servers', () => {
     await user.click(form.getByRole('button', { name: 'Finish sign-in' }));
     await waitFor(() => expect(dialog.queryByRole('form', { name: 'Sign in to tracker' })).toBeNull());
     expect(servers.queryByText('Needs sign-in')).toBeNull();
-    // Off for this task only.
-    await user.click(servers.getByRole('switch', { name: 'Use docs-search in this task' }));
-    expect(await servers.findByText('Off for this task')).toBeTruthy();
+    // Off for this task only (the built-in GitHub server is already off: Settings leaves it off).
+    const docs = servers.getByRole('switch', { name: 'Use docs-search in this task' });
+    await user.click(docs);
+    expect(await within(docs.closest('li')!).findByText('Off for this task')).toBeTruthy();
   });
 });

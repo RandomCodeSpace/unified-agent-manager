@@ -36,6 +36,16 @@ interface Draft {
 export const TYPE_LABEL: Record<string, string> = { stdio: 'Command', http: 'HTTP', sse: 'SSE' };
 const SOURCE_LABEL: Record<string, string> = { plugin: 'From a plugin', builtin: 'Built in', managed: 'Managed' };
 export const STDIO_OFF = 'A server that runs a command runs it on this machine for anyone signed in, so adding or editing one needs Settings → Shell access → Terminal on.';
+/** Copilot's built-in GitHub MCP server: UAM's own setting (`Settings.github_mcp`) turns it on or off for tasks. */
+const GITHUB_MCP = 'github-mcp-server';
+const GITHUB_MCP_HELP = "UAM's own switch, not shared with the copilot command. Off by default: starting it takes about a second each time a task opens, and a message sent meanwhile waits. A change reaches open tasks too.";
+
+/** Settings → GitHub MCP server as saved now, and how to change it. */
+export interface GithubMcpSetting {
+  on: boolean;
+  saving: boolean;
+  onChange: (on: boolean) => void;
+}
 
 const stored = (s: McpSecret[]): SecretRow[] => s.map((e) => ({ key: e.key, value: '', stored: e.set }));
 
@@ -188,8 +198,9 @@ function ServerDetail({ s }: Readonly<{ s: McpServer }>) {
  * command line on this machine), edited through the provider's API. Env and header values
  * are write-only. Changes reach new Tasks; an open Task picks them up when it reconnects.
  * Adding or editing a server that runs a command needs Terminal on (the service checks too).
+ * The built-in GitHub server's switch is UAM's own setting instead, offered when the instance has it.
  */
-export function McpServersSettings({ terminal }: Readonly<{ /** Settings → Shell access → Terminal as saved now; the list's own copy is from its last read. */ terminal: boolean }>) {
+export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Settings → Shell access → Terminal as saved now; the list's own copy is from its last read. */ terminal: boolean; githubMcp?: GithubMcpSetting }>) {
   const api = useApi();
   const [data, setData] = useState<McpServers | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -257,6 +268,8 @@ export function McpServersSettings({ terminal }: Readonly<{ /** Settings → She
           {data.servers.map((s) => {
             const own = s.source === 'user';
             const lockedStdio = s.type === 'stdio' && !terminal;
+            const github = s.source === 'builtin' && s.name === GITHUB_MCP ? githubMcp : undefined;
+            const enabled = github ? github.on : s.enabled;
             return (
               <li key={s.name} className="flex min-h-12 items-start gap-3 py-2">
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -264,9 +277,10 @@ export function McpServersSettings({ terminal }: Readonly<{ /** Settings → She
                     <span className="min-w-0 break-all text-ui font-medium text-ink">{s.name}</span>
                     <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>
                     {!own && <Chip>{SOURCE_LABEL[s.source] ?? s.source}</Chip>}
-                    {!s.enabled && <span className="text-meta text-muted">Off</span>}
+                    {!enabled && <span className="text-meta text-muted">Off</span>}
                   </div>
                   <ServerDetail s={s} />
+                  {github && <p id="github-mcp-help" className="text-meta text-muted">{GITHUB_MCP_HELP}</p>}
                 </div>
                 {own && (
                   <div className="flex shrink-0 items-center gap-1">
@@ -279,6 +293,11 @@ export function McpServersSettings({ terminal }: Readonly<{ /** Settings → She
                       Remove
                     </Button>
                     <Switch aria-label={`Use ${s.name} in new tasks`} checked={s.enabled} disabled={!!busy} onCheckedChange={(on) => void run(s.name, () => api.enableMcpServer(s.name, on))} />
+                  </div>
+                )}
+                {github && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Switch aria-label={`Use ${s.name} in tasks`} aria-describedby="github-mcp-help" checked={github.on} disabled={github.saving} onCheckedChange={github.onChange} />
                   </div>
                 )}
               </li>

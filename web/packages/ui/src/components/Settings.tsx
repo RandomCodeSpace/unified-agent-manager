@@ -756,7 +756,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Section>}
           {(['agents', 'skills', 'hooks', 'instructions'] as const).map((kind) => visited.has(kind) && <Section key={kind} hidden={section !== kind} id={kind} title={SETTINGS_SECTIONS.find((item) => item.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>)}
           {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section hidden={section !== 'mcp'} id="mcp" title="MCP servers">
-            <McpServersSettings terminal={!!settings.terminal} />
+            <McpServersSettings terminal={!!settings.terminal} githubMcp={(meta?.providers ?? []).some((p) => p.capabilities.github_mcp) ? { on: !!settings.github_mcp, saving, onChange: (github_mcp) => void save({ github_mcp }) } : undefined} />
           </Section>}
           <Section hidden={section !== 'browser'} id="browser" title="This browser">
             {api.owner && <Note>Kept in this browser, not on {api.owner.label}: these apply whichever instance is on screen.</Note>}

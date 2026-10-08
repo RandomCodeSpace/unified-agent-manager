@@ -592,6 +592,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	// The catalogs include the custom models, so providers get them first.
 	m.setCustomModels(cfg.WebSettings.CustomModels)
 	m.setSubagentModels(cfg.WebSettings.SubagentModels)
+	m.setGitHubMCP(cfg.WebSettings.GitHubMCP)
 	m.mu.Lock()
 	maps.Copy(m.links, cfg.WebAccountLinks)
 	m.mu.Unlock()
@@ -642,7 +643,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
-		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold}
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1396,6 +1397,7 @@ func (m *Manager) Settings() Settings {
 // store.MaxUtilityDailyLimit; pointing at nil puts the default back.
 // CompactionThreshold works the same way, store.MinCompactionThreshold to
 // store.MaxCompactionThreshold; the default itself is stored as nil.
+// GitHubMCP reaches open Tasks too (agentapi.GitHubMCPUser).
 type SettingsPatch struct {
 	TokenPrices    *map[string]map[string]store.WebTokenPrice
 	SendDefault    *string
@@ -1409,6 +1411,7 @@ type SettingsPatch struct {
 	// SuggestReplies turns suggested replies on or off.
 	SuggestReplies      *bool
 	CompactionThreshold **int
+	GitHubMCP           *bool
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1558,6 +1561,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.Terminal != nil {
 		next.Terminal = *p.Terminal
 	}
+	if p.GitHubMCP != nil {
+		next.GitHubMCP = *p.GitHubMCP
+	}
 	if len(hidden) > 0 {
 		next.HiddenModels = withProviders(current.HiddenModels, hidden)
 	}
@@ -1589,7 +1595,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -1598,6 +1604,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.Terminal = next.Terminal
+		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.SuggestReplies = next.SuggestReplies
@@ -1618,6 +1625,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	if subagentsChanged {
 		m.setSubagentModels(next.SubagentModels)
+	}
+	if next.GitHubMCP != current.GitHubMCP {
+		m.setGitHubMCP(next.GitHubMCP)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1713,6 +1723,16 @@ func (m *Manager) setSubagentModels(byProvider map[string][]string) {
 	for _, name := range m.order {
 		if u, ok := m.providers[name].(agentapi.SubagentModelUser); ok {
 			u.SetSubagentModels(byProvider[name])
+		}
+	}
+}
+
+// setGitHubMCP turns the built-in GitHub MCP server on or off in each
+// provider that has one.
+func (m *Manager) setGitHubMCP(on bool) {
+	for _, name := range m.order {
+		if u, ok := m.providers[name].(agentapi.GitHubMCPUser); ok {
+			u.SetGitHubMCP(on)
 		}
 	}
 }

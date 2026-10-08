@@ -380,11 +380,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   skills, and `@` references files.
 - **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
   for the directory: your and the project's skills, the project's custom
-  agents, custom instructions, hooks in `.github/hooks/`, and the built-in
-  GitHub MCP server. Hooks run their commands without asking, as they do in
-  the terminal. Every Task also gets uam's built-in `uam` skill, which tells
-  the agent what uam is and how its replies and files show here, and the
-  built-in `uam-design` skill, which gives design
+  agents, custom instructions, hooks in `.github/hooks/`, and your MCP
+  servers; the built-in GitHub MCP server only while Settings → MCP servers
+  turns it on (see MCP servers). Hooks run their commands without asking,
+  as they do in the terminal. Every Task also gets uam's built-in `uam`
+  skill, which tells the agent what uam is and how its replies and files
+  show here, and the built-in `uam-design` skill, which gives design
   defaults for web and UI work such as prototypes. `uam-design` is a fallback:
   it tells the agent to follow your own instructions and design skills and the
   project's design system (a `DESIGN.md`, tokens, its component library) first.
@@ -1492,7 +1493,8 @@ only through the Copilot runtime's API; it never writes the file itself.
 **Settings → MCP servers** lists the configured servers: name, type, the
 command line or address, the names of its environment variables or headers
 (values show as `••••`), and a switch for whether new Tasks start it.
-Servers from a plugin or built into Copilot are listed read-only. **Add
+Servers from a plugin or built into Copilot are listed read-only, except
+the built-in GitHub server, `github-mcp-server` (below). **Add
 server** and **Edit** take a name, a type, and then either a command,
 arguments (one per line, passed as typed with no shell) and an optional
 absolute working folder, or an address. Environment variable and header
@@ -1500,6 +1502,16 @@ values are write-only: no response carries them, an edit shows a stored
 value as `•••• set`, leaving it empty keeps it and typing replaces it. Put
 keys in a header, not in the address: the address is shown to anyone signed
 in, and one with a user name or password in it is refused.
+
+**The built-in GitHub server** has its own switch on its row, and it is
+uam's setting rather than Copilot's: the `copilot` command on this host is
+not affected. It is off by default, also on an install that never saved it.
+While it is off, every Copilot Task created or reopened leaves the server
+off, and so do Utility calls. Starting it took over a second each time a
+Task opened (measured on Copilot CLI 1.0.93), and a message sent meanwhile
+waited for it. Turning the switch on or off also reaches open Tasks at once:
+their next turn has the GitHub tools, or no longer has them. A connected
+instance has its own setting, shown when that instance offers it.
 
 **Security.** A stdio server is a command run on this host as the uam user.
 Adding or editing one is therefore allowed only while Settings → Shell
@@ -1512,8 +1524,9 @@ removing it need no Terminal.
 as that Task's conversation sees it: Connected (with its tools; tap the
 count to list them), Failed (with the error and **Restart**), Needs
 sign-in, Starting, or Off for this task. The switch turns a server off or on
-for this Task only, until its conversation closes. A conversation keeps the
-servers it started with: changes in Settings reach new Tasks, and an open
+for this Task only, until its conversation closes or the built-in GitHub
+server's setting changes. Otherwise a conversation keeps the servers it
+started with: other changes in Settings reach new Tasks, and an open
 Task picks them up with **Reconnect with current settings**, which closes
 and reopens its conversation (refused while a turn, queued prompt, subagent
 or background task is running). Opening the dialog opens the Task's

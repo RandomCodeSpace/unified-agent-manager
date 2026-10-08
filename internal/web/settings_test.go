@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
@@ -358,4 +361,84 @@ func TestOpenTaskReportsItsCompactionThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitUntil(t, "the reopened threshold", func() bool { return threshold(sum.ID) == 60 })
+}
+
+// githubMCPProvider records each GitHub MCP switch it is given, as the
+// Copilot adapter takes them.
+type githubMCPProvider struct {
+	agentapi.Provider
+	mu       sync.Mutex
+	switches []bool
+}
+
+func (p *githubMCPProvider) SetGitHubMCP(on bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.switches = append(p.switches, on)
+}
+
+func (p *githubMCPProvider) given() []bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.switches)
+}
+
+// The built-in GitHub MCP server is off until Settings turns it on, also for
+// a store saved before the setting existed; the setting is checked, stored,
+// streamed, given to the provider and kept across a restart.
+func TestGitHubMCPSetting(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Update(func(cfg *store.Config) error { cfg.WebSettings.Terminal = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	prov := &githubMCPProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	m := startManager(t, st, prov)
+	if m.Settings().GitHubMCP || !slices.Equal(prov.given(), []bool{false}) {
+		t.Fatalf("default = %v, provider given %v", m.Settings().GitHubMCP, prov.given())
+	}
+	srv, err := NewServer(ServerConfig{Manager: m, Token: testToken, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ts := &testServer{srv: srv, m: m}
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	patch := func(body string, want int) string {
+		t.Helper()
+		w := ts.do(http.MethodPatch, "/api/settings", body, withCookie(ts))
+		if w.Code != want {
+			t.Fatalf("PATCH %s = %d %s, want %d", body, w.Code, w.Body, want)
+		}
+		return strings.TrimSpace(w.Body.String())
+	}
+	for _, body := range []string{`{"github_mcp":null}`, `{"github_mcp":"true"}`, `{"github_mcp":1}`} {
+		if got := patch(body, http.StatusBadRequest); !strings.Contains(got, "github_mcp must be true or false") {
+			t.Fatalf("PATCH %s = %s", body, got)
+		}
+	}
+	on := `{"send_default":"steer","terminal":true,"github_mcp":true}`
+	if got := patch(`{"github_mcp":true}`, http.StatusOK); got != on {
+		t.Fatalf("PATCH github_mcp = %s", got)
+	}
+	if f := frameOf(t, sub, "settings"); string(f.data["settings"]) != on {
+		t.Fatalf("settings frame = %s", f.data["settings"])
+	}
+	if cfg, err := st.Load(); err != nil || !cfg.WebSettings.GitHubMCP {
+		t.Fatalf("stored settings = %+v, %v", cfg.WebSettings, err)
+	}
+	// No change gives the provider nothing.
+	patch(`{"github_mcp":true}`, http.StatusOK)
+	if !slices.Equal(prov.given(), []bool{false, true}) {
+		t.Fatalf("provider given %v", prov.given())
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again := &githubMCPProvider{Provider: agenttest.NewProvider("fake", allCaps)}
+	if !startManager(t, st, again).Settings().GitHubMCP || !slices.Equal(again.given(), []bool{true}) {
+		t.Fatalf("after a restart the provider was given %v", again.given())
+	}
 }

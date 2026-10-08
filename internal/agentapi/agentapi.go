@@ -90,6 +90,8 @@ type Capabilities struct {
 	CLIUpdate bool `json:"cli_update,omitempty"`
 	// SubagentModels is true when the provider implements SubagentModelUser.
 	SubagentModels bool `json:"subagent_models,omitempty"`
+	// GitHubMCP is true when the provider implements GitHubMCPUser.
+	GitHubMCP bool `json:"github_mcp,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -207,6 +209,14 @@ type CustomModelUser interface {
 // empty list lifts the limit.
 type SubagentModelUser interface {
 	SetSubagentModels(models []string)
+}
+
+// GitHubMCPUser is implemented by a provider whose runtime has a built-in
+// GitHub MCP server. SetGitHubMCP turns it on or off for every conversation
+// opened or reopened afterwards, and for the open ones. It is off until the
+// first call.
+type GitHubMCPUser interface {
+	SetGitHubMCP(on bool)
 }
 
 // CustomModel is an OpenAI-compatible model the owner brought. Its model ID

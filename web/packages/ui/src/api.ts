@@ -49,6 +49,8 @@ export interface Capabilities {
   cli_update?: boolean;
   /** The models the provider's subagents may use can be limited (`Settings.subagent_models`). */
   subagent_models?: boolean;
+  /** Its built-in GitHub MCP server is turned on and off for Tasks by `Settings.github_mcp`. */
+  github_mcp?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -405,6 +407,8 @@ export interface Settings {
   utility_daily_limit?: number;
   /** The share of the context, in percent (50 to 90), at which a Task's conversation starts compacting; omitted for the default, 80. PATCH null puts it back. */
   compact_threshold?: number | null;
+  /** Whether Tasks, open ones included, start the provider's built-in GitHub MCP server; absent while off, the default. */
+  github_mcp?: boolean;
 }
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
