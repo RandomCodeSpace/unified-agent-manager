@@ -4,7 +4,7 @@ import { api, type Item } from '../../src/api';
 import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
-import { ToolRow, Transcript } from '../../src/components/Transcript';
+import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { saveDensity } from '../../src/lib/density';
 import { composer, log, openMenu, openTask } from './render';
 
@@ -86,6 +86,26 @@ describe('messages', () => {
     view.rerender(<Transcript sessionId="s" items={items} turnTimings={[turnTimings[0], { ...turnTimings[1], ended_at: at(16), state: 'completed' as const, output_tokens: 1210, generation_ms: 5000 }]} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
     expect(foot(view, 'On it.')).toBeNull();
     expect(foot(view, 'Patching.')).toContain('1.2K tokens · 242 tok/s');
+  });
+
+  test("an ended turn's foot keeps its identity while the next reply streams, so that reply's row is not drawn again", () => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const items: Item[] = [
+      { id: 'u1', kind: 'user', time: at(0), text: 'Hello' },
+      { id: 'a1', kind: 'assistant', time: at(2), text: 'Found it.' },
+      { id: 'u2', kind: 'user', time: at(10), text: 'Fix it' },
+      { id: 'a2', kind: 'assistant', time: at(12), text: 'Patching' },
+    ];
+    const timings = [
+      { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(6), state: 'completed' as const, output_tokens: 940 },
+      { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' as const },
+    ];
+    const before = replyEnds(items, timings, true);
+    const streamed = replyEnds([...items.slice(0, -1), { ...items[3], text: 'Patching the test' }], timings, true);
+    expect(streamed?.get('a1')).toBe(before?.get('a1'));
+    expect(streamed?.has('a2')).toBe(false);
+    // A new timing for the turn is a new foot.
+    expect(replyEnds(items, [{ ...timings[0], output_tokens: 1000 }, timings[1]], true)?.get('a1')).not.toBe(before?.get('a1'));
   });
 
   test('a line break typed with Shift+Enter stays a line break in the sent message', async () => {

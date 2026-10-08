@@ -4,9 +4,17 @@ export const ACTIVE_ITEMS = 150;
 export const ACTIVE_BYTES = 4 * 1024 * 1024;
 export const TAIL_ITEMS = 50;
 
-/** Account retained strings and records without copying or serializing their text. */
+// An item is never changed in place (an update replaces the record), so each one is measured once.
+const accounted = new WeakMap<Item, number>();
+
+/** Account retained strings and records without copying or serializing their text; each record once. */
 export function accountItem(item: Item): number {
-  return account(item);
+  let bytes = accounted.get(item);
+  if (bytes === undefined) {
+    bytes = account(item);
+    accounted.set(item, bytes);
+  }
+  return bytes;
 }
 
 function account(value: unknown): number {

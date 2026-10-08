@@ -347,6 +347,20 @@ test("a subagent's latest step is kept from live frames before its transcript is
   assert.deepEqual(state.agentSteps, {});
 });
 
+test('a frame that changes nothing returns the same state, while a dropped transcript frame still turns away older replies', () => {
+  let state = reducer(initialState, { type: 'select', id: 'task' });
+  state = reducer(state, { type: 'snapshot', data: { seq: 10, projects: [], sessions: [], session: { id: 'task', items: [], interactions: [], subagents: [running] } } });
+  state = update(state, delta(11, 'a'));
+  // The subagent's transcript is closed and its step is the same: nothing for the view to redraw.
+  assert.equal(update(state, delta(12, 'b')), state);
+  assert.equal(reducer(state, { type: 'updates', data: [delta(12, 'b'), delta(13, 'c')] }), state);
+  // A delta for an item no page has brought yet is dropped but keeps its seq: a reply from before it would bring that item without its text.
+  const held = { id: 'task', representation: 'compact-v1', epoch: 'e', items: [{ id: 'held', kind: 'assistant', time: '', text: 'held' }], history_before: 'older', interactions: [], subagents: [] };
+  state = reducer({ ...initialState, selectedId: 'task' }, { type: 'snapshot', data: { seq: 10, projects: [], sessions: [], session: held } });
+  state = update(state, { name: 'delta', seq: 12, session_id: 'task', item_id: 'unfetched', kind: 'assistant', text: 'x' });
+  assert.equal(reducer(state, { type: 'detail_loaded', detail: { ...held, seq: 11 } }), state);
+});
+
 test('nothing counts as loaded until the first snapshot, and a lost connection does not unload it', () => {
   assert.equal(initialState.loaded, false);
   let state = reducer(initialState, { type: 'connection', status: 'offline' });

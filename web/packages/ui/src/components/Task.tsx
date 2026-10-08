@@ -1,9 +1,9 @@
 import { useApi } from '../ApiContext';
 import { ArrowDown, ChartLine, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
-import { Suspense, lazy, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionSummary, type TaskDefaults } from '../api';
-import type { AgentTranscript, HistoryRequest } from '../state';
+import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
+import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -90,6 +90,164 @@ export function headerRoom(width: number): 'wide' | 'snug' | 'tight' {
   if (!width || width >= 1000) return 'wide';
   return width >= 600 ? 'snug' : 'tight';
 }
+
+interface HeaderProps {
+  scrolled: boolean;
+  leading?: ReactNode;
+  /** The Task, read for its summary alone: the comparator below holds the header through frames that change nothing else. */
+  session: SessionSummary;
+  hasSubagents: boolean;
+  project: Project | undefined;
+  state: SessionState;
+  compacting: boolean;
+  changes: ChangesData | null;
+  evidenceAvailable: boolean;
+  evidenceError: string;
+  sheetOpen: boolean;
+  onOpenChanges: () => void;
+  filesOpen: boolean;
+  onToggleFiles: () => void;
+  chartsOpen: boolean;
+  onToggleCharts: () => void;
+  terminal: boolean;
+  terminalOpen: boolean;
+  onTerminal: (projectId: string) => void;
+  locateError: string;
+  onMcp: (open: boolean) => void;
+}
+
+/** The Task's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. */
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
+  const actions = useTaskActions();
+  const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
+  const busy = !!actions.busy[session.id];
+  const name = taskName(session);
+  const noGit = project?.no_git;
+  const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
+  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
+  // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
+  const phone = useMedia(PHONE);
+  const header = useRef<HTMLElement>(null);
+  const [room, setRoom] = useState<'wide' | 'snug' | 'tight'>('wide');
+  useLayoutEffect(() => {
+    const el = header.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const measure = () => setRoom(headerRoom(el.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const labels = !phone && room === 'wide';
+  const fold = phone || room === 'tight';
+  const folded: ActionItem[] = [];
+  if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: onToggleFiles });
+  const pinned = project?.charts ?? 0;
+  if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
+  if (fold && terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
+  const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
+  if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
+  const renamable = canRename(session, actions);
+  const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+  const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
+
+  return (
+    <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
+      {leading}
+      <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
+        {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
+        {renaming ? (
+          <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+        ) : (
+          <h1
+            className="min-w-0 truncate text-display-sm text-ink"
+            title={name || undefined}
+            onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
+          >
+            <TaskTitle session={session} />
+          </h1>
+        )}
+        <InstanceName />
+        {readOnly(session) ? (
+          <Chip fill="outline">{stageLabel(session)}</Chip>
+        ) : (
+          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
+        )}
+        {busy && <Spinner className="shrink-0" />}
+        {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
+        {renamable && !renaming && (
+          <Tip label="Rename">
+            <Button size="icon" aria-label="Rename task" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+              <Pencil />
+            </Button>
+          </Tip>
+        )}
+        {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
+        {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
+      </div>
+      {/* The branch-named Changes control and its evidence cue, beside the title. */}
+      {noGit ? (
+        <>
+          <Popover.Root>
+            <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
+              <TriangleAlert />
+              <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
+            </Popover.Trigger>
+            <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
+              <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
+              <Popover.Description>
+                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
+              </Popover.Description>
+              {noGit === 'not_repository' && <SetUpGitButton session={session} />}
+            </Popover.Content>
+          </Popover.Root>
+          {vcs}
+        </>
+      ) : (
+        <>
+          <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
+            {vcs}
+          </div>
+          {!fold && (
+            <Tip label={`Files in ${project?.name ?? 'the project'}`}>
+              <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={onToggleFiles}>
+                <FolderTree />
+                {labels && <span>Files</span>}
+              </Button>
+            </Tip>
+          )}
+        </>
+      )}
+      {pinned > 0 && !fold && (
+        <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
+          <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={onToggleCharts}>
+            <ChartLine />
+            {labels && <span>Charts</span>}
+            <span className="tabular-nums text-ink">{pinned}</span>
+          </Button>
+        </Tip>
+      )}
+      {terminal && project && !fold && (
+        <Tip label={`Terminal in ${project.name}`}>
+          <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
+            <SquareTerminal />
+            {labels && <span>Terminal</span>}
+          </Button>
+        </Tip>
+      )}
+      {hasSubagents && <SubagentIndex labels={labels} error={locateError} />}
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
+          <Ellipsis />
+        </Menu.Trigger>
+        <Menu.Content align="end">
+          <Menu.Actions items={items} />
+        </Menu.Content>
+      </Menu.Root>
+    </header>
+  );
+}, (a, b) => (Object.keys(a) as (keyof HeaderProps)[]).every((key) => a[key] === b[key] || (key === 'session' && SUMMARY_KEYS.every((field) => a.session[field] === b.session[field]))));
+
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
 export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
@@ -250,8 +408,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     }
   }
   const [scrolled, sentinel] = useScrolled();
-  const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
-  const busy = !!actions.busy[session.id];
 
   // The badge count follows turn boundaries and completed file-changing tools. The open sheet
   // also reports its refreshed default list; a tool completion during a badge read queues another.
@@ -588,12 +744,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const failure = session.state === 'failed' ? session.state_detail?.toLowerCase() ?? '' : '';
   const noticed = !!failure && foregroundItems(liveItems).some((i) => i.kind === 'notice' && (i.text ?? '').toLowerCase().includes(failure));
 
-  const name = taskName(session);
   // Recorded history still on its way with nothing to show yet: a skeleton, not the "New task" intro.
   const historyLoading = session.history === 'loading' && session.items.length === 0;
   // Without git there is nothing for Changes or Files to show: a warning stands in their place (DESIGN.md D3).
   const noGit = project?.no_git;
-  const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   // A subagent still running after the turn, or compacting, keeps the Task Working (lib/tasks shownState).
   const state = shownState(session);
   const compacting = !!session.compacting && state === 'working';
@@ -602,37 +756,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Then the floating label stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
-  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
-  // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
-  const phone = useMedia(PHONE);
-  const header = useRef<HTMLElement>(null);
-  const [room, setRoom] = useState<'wide' | 'snug' | 'tight'>('wide');
-  useLayoutEffect(() => {
-    const el = header.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const measure = () => setRoom(headerRoom(el.clientWidth));
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
   // Warm the Changes sheet's code once the Task is on screen, so the first View changes opens at once.
   useEffect(() => {
     const timer = window.setTimeout(() => void import('./Changes'), 2000);
     return () => window.clearTimeout(timer);
   }, []);
-  const labels = !phone && room === 'wide';
-  const fold = phone || room === 'tight';
-  const folded: ActionItem[] = [];
-  if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: toggleFiles });
-  const pinned = project?.charts ?? 0;
-  if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: toggleCharts });
-  if (fold && settings.terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
-  const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
-  if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => setMcpOpen(true) });
-  const renamable = canRename(session, actions);
-  const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  const vcs = (!noGit || turnEvidence.available || turnEvidence.error) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={turnEvidence.available} onOpen={openChanges} />;
 
   return (
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
@@ -641,99 +769,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
-          {leading}
-          <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
-            {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
-            {renaming ? (
-              <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
-            ) : (
-              <h1
-                className="min-w-0 truncate text-display-sm text-ink"
-                title={name || undefined}
-                onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
-              >
-                <TaskTitle session={session} />
-              </h1>
-            )}
-            <InstanceName />
-            {readOnly(session) ? (
-              <Chip fill="outline">{stageLabel(session)}</Chip>
-            ) : (
-              <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : undefined} title={compacting ? 'Compacting the conversation' : state !== session.state ? runningTitle : detail} className="shrink-0" />
-            )}
-            {busy && <Spinner className="shrink-0" />}
-            {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
-            {renamable && !renaming && (
-              <Tip label="Rename">
-                <Button size="icon" aria-label="Rename task" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
-                  <Pencil />
-                </Button>
-              </Tip>
-            )}
-            {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
-            {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
-          </div>
-          {/* The branch-named Changes control and its evidence cue, beside the title. */}
-          {noGit ? (
-            <>
-              <Popover.Root>
-                <Popover.Trigger render={<Button id="no-git" size="md" className="px-2 text-warning" />}>
-                  <TriangleAlert />
-                  <span className="max-sm:sr-only">{noGit === 'not_installed' ? 'Git not installed' : 'Not a Git repository'}</span>
-                </Popover.Trigger>
-                <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
-                  <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
-                  <Popover.Description>
-                    {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
-                  </Popover.Description>
-                  {noGit === 'not_repository' && <SetUpGitButton session={session} />}
-                </Popover.Content>
-              </Popover.Root>
-              {vcs}
-            </>
-          ) : (
-            <>
-              <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
-                {vcs}
-              </div>
-              {!fold && (
-                <Tip label={`Files in ${project?.name ?? 'the project'}`}>
-                  <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={toggleFiles}>
-                    <FolderTree />
-                    {labels && <span>Files</span>}
-                  </Button>
-                </Tip>
-              )}
-            </>
-          )}
-          {pinned > 0 && !fold && (
-            <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
-              <Button id="charts-link" size="md" aria-pressed={chartsOpen} aria-label={`Pinned charts, ${pinned}`} className="px-2 text-muted" onClick={toggleCharts}>
-                <ChartLine />
-                {labels && <span>Charts</span>}
-                <span className="tabular-nums text-ink">{pinned}</span>
-              </Button>
-            </Tip>
-          )}
-          {settings.terminal && project && !fold && (
-            <Tip label={`Terminal in ${project.name}`}>
-              <Button id="terminal-link" size="md" aria-pressed={terminalOpen} aria-label="Terminal" className="px-2 text-muted" onClick={() => onTerminal(project.id)}>
-                <SquareTerminal />
-                {labels && <span>Terminal</span>}
-              </Button>
-            </Tip>
-          )}
-          {session.subagents.length > 0 && <SubagentIndex labels={labels} error={locateError} />}
-          <Menu.Root modal={false}>
-            <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
-              <Ellipsis />
-            </Menu.Trigger>
-            <Menu.Content align="end">
-              <Menu.Actions items={items} />
-            </Menu.Content>
-          </Menu.Root>
-        </header>
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
