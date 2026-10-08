@@ -1070,7 +1070,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (the branch button in the Task header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
   agent did before what it says it did. While there is evidence, the
-  branch button's name adds "evidence available" and its dot pulses.
+  branch button's name adds "evidence available" and its dot turns amber.
   It never uses a model; fixed rules in the service read the whole turn,
   however long, and the outcome line reads the same result. The section
   appears once that reading arrives and shows only the parts below that
@@ -1320,8 +1320,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   When git is installed, the warning offers "Set up git here", which runs
   `git init` in the project folder (only when it is in no repository) and
   brings Changes and Files back.
-- **Loading indicators**: task activity, subagents, tool calls, request loading
-  and busy buttons share a quiet ring. Labels and skeleton bars stay still.
+- **Loading indicators**: during a turn a quiet ring turns only at the Task's
+  state and at the step in progress; running subagents and background shells
+  show a still dot and say "Running". Request loading and busy buttons share
+  the same ring. Labels and skeleton bars stay still.
   Brief request waits keep the existing 300ms delay. Motion → Match system
   makes the ring static when the OS requests reduced motion.
 - **Sidebar**: all unsettled Tasks across every Project share one flat list
@@ -1779,8 +1781,10 @@ output is counted once. The 7-day and 30-day windows include today and use
 the service's local dates.
 
 UAM records SDK-reported Copilot task, subagent, and Background AI usage.
-The embedded `aiusage-core` library also reads local harness records once a
-minute, including Claude Code, Codex, OpenCode, and external Copilot sessions.
+The embedded `aiusage-core` library also reads local harness records,
+including Claude Code, Codex, OpenCode, and external Copilot sessions: every
+15 minutes, and when the Usage popover or token costs are read, at most once a
+minute. The popover first shows the last reading and its age.
 No aiusage CLI installation or provider billing API is needed. Rows identify
 the harness, even when several harnesses use the same model.
 

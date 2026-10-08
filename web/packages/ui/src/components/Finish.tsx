@@ -104,7 +104,7 @@ export function ChangesButton({ branch, label, compact, sheetOpen, changes, evid
       <GitBranch aria-hidden="true" />
       {label && <span className={cn('truncate', compact ? 'max-w-24' : 'max-w-40')}>{branch ?? 'Changes'}</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
-      <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', needsReview ? 'bg-warning animate-pulse-dot' : 'bg-faint')} />
+      <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', needsReview ? 'bg-warning' : 'bg-faint')} />
     </Button>
   );
 }

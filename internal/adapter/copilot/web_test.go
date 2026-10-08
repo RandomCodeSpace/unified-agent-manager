@@ -1,7 +1,5 @@
 package copilot
 
-//lint:file-ignore SA1019 Copilot CLI 1.0.93 still sends tool.execution_partial_result; moving to tool.shell_output removes this.
-
 import (
 	"bytes"
 	"context"
@@ -15,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -595,8 +594,8 @@ func TestWebDeltasAndFinalMessageShareOneItem(t *testing.T) {
 func TestWebToolEventsUpsertOneItem(t *testing.T) {
 	h := openWeb(t)
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash", Arguments: map[string]any{"command": "ls"}}))
-	h.fs.onEvent(ev("e2", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "a"}))
-	h.fs.onEvent(ev("e3", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: strings.Repeat("b", maxToolText)}))
+	h.fs.onEvent(ev("e2", &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: 0, Text: "a\n"}))
+	h.fs.onEvent(ev("e3", &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: 1, Text: "b"}))
 	h.fs.onEvent(ev("e4", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "done"}}))
 	h.fs.onEvent(ev("e5", &rpc.ToolExecutionStartData{ToolCallID: "t2", ToolName: "view"}))
 	h.fs.onEvent(ev("e6", &rpc.ToolExecutionCompleteData{ToolCallID: "t2", Error: &rpc.ToolExecutionCompleteError{Message: "no such file"}}))
@@ -606,8 +605,8 @@ func TestWebToolEventsUpsertOneItem(t *testing.T) {
 	}
 	want := []agentapi.ToolCall{
 		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`},
-		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a"},
-		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: strings.Repeat("b", maxToolText)},
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a\n", Tail: []agentapi.OutputLine{{Text: "a"}}},
+		{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"ls"}`, Output: "a\nb", Tail: []agentapi.OutputLine{{Text: "a"}, {Text: "b"}}},
 		{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"ls"}`, Output: "done"},
 		{Name: "view", Status: agentapi.ToolRunning},
 		{Name: "view", Status: agentapi.ToolFailed, Output: "no such file"},
@@ -618,41 +617,82 @@ func TestWebToolEventsUpsertOneItem(t *testing.T) {
 		if i >= 4 {
 			id = "t2"
 		}
-		if evs[i].Kind != agentapi.EventItem || it.ID != id || it.Kind != agentapi.ItemTool || *it.Tool != w {
+		if evs[i].Kind != agentapi.EventItem || it.ID != id || it.Kind != agentapi.ItemTool || !reflect.DeepEqual(*it.Tool, w) {
 			t.Fatalf("event %d = %+v tool %+v, want %+v", i, it, it.Tool, w)
 		}
 	}
 }
 
-func TestWebToolPartialOutputReplacesCumulativeSnapshots(t *testing.T) {
+// tool.shell_output chunks are deltas: they append, a repeated or older
+// sequence is dropped, and past maxToolText the output stays its head while
+// the tail keeps following the newest lines. The completion clears the tail.
+func TestWebShellOutputAppendsAndTailFollows(t *testing.T) {
 	h := openWeb(t)
 	h.fs.onEvent(ev("start", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
-	// The live CLI shell sends its output so far, including a repeated final
-	// partial. Appending these produced 14 lines from a four-line command.
-	for i, output := range []string{"one\n", "one\ntwo\n", "one\ntwo\nthree\n", "one\ntwo\nthree\nfour\n", "one\ntwo\nthree\nfour\n"} {
-		h.fs.onEvent(ev(fmt.Sprint(i), &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: output}))
-		if got := h.sink.last().Item.Tool.Output; got != output {
-			t.Fatalf("partial %d = %q, want %q", i, got, output)
-		}
+	shell := func(seq int64, text string) {
+		h.fs.onEvent(ev(fmt.Sprint("s", seq), &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: seq, Text: text}))
 	}
-	if got := len(h.sink.all()); got != 5 {
-		t.Fatalf("start and four changed partials emitted %d events, want 5", got)
+	for i, chunk := range []string{"one\n", "two\n", "three\n"} {
+		shell(int64(i), chunk)
 	}
-	// A replacement need not extend the previous output.
-	h.fs.onEvent(ev("rewrite", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "replaced"}))
-	if got := h.sink.last().Item.Tool.Output; got != "replaced" {
-		t.Fatalf("replacement = %q", got)
+	if got := h.sink.last().Item.Tool.Output; got != "one\ntwo\nthree\n" {
+		t.Fatalf("appended output = %q", got)
+	}
+	count := len(h.sink.all())
+	shell(2, "three\n")
+	shell(1, "two\n")
+	if got := len(h.sink.all()); got != count {
+		t.Fatalf("an applied sequence emitted again: %d -> %d", count, got)
 	}
 	long := strings.Repeat("x", maxToolText)
-	h.fs.onEvent(ev("cap", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: long}))
-	count := len(h.sink.all())
-	h.fs.onEvent(ev("past-cap", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: long + "more"}))
-	if got := len(h.sink.all()); got != count {
-		t.Fatalf("unchanged capped output emitted another event: %d -> %d", count, got)
+	shell(3, long)
+	it := h.sink.last().Item
+	if !it.Clipped || it.Tool.Output != "one\ntwo\nthree\n"+long[:maxToolText-len("one\ntwo\nthree\n")] {
+		t.Fatalf("capped output: clipped %v, %d bytes", it.Clipped, len(it.Tool.Output))
+	}
+	head := it.Tool.Output
+	for i := range 12 {
+		shell(int64(4+i), fmt.Sprintf("\nline %d", i))
+	}
+	it = h.sink.last().Item
+	var tail []string
+	for _, line := range it.Tool.Tail {
+		tail = append(tail, line.Text)
+	}
+	if !it.Clipped || it.Tool.Output != head || strings.Join(tail, "|") != "line 2|line 3|line 4|line 5|line 6|line 7|line 8|line 9|line 10|line 11" {
+		t.Fatalf("past the cap: clipped %v, head kept %v, tail %q", it.Clipped, it.Tool.Output == head, tail)
 	}
 	h.fs.onEvent(ev("end", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "final"}}))
-	if it := h.sink.last().Item; it.Tool.Status != agentapi.ToolCompleted || it.Tool.Output != "final" {
+	if it := h.sink.last().Item; it.Tool.Status != agentapi.ToolCompleted || it.Tool.Output != "final" || it.Tool.Tail != nil {
 		t.Fatalf("completion = %+v", it.Tool)
+	}
+}
+
+// stderr lines are marked; stdout, an omitted stream and terminal output are
+// not. Each stream keeps its own unfinished line until a chunk ends it, and a
+// line is cut at maxTailLine bytes.
+func TestWebShellOutputTailStreamsAndSplitLines(t *testing.T) {
+	h := openWeb(t)
+	h.fs.onEvent(ev("start", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
+	stream := func(s rpc.ToolShellOutputStream) *rpc.ToolShellOutputStream { return &s }
+	chunks := []rpc.ToolShellOutputData{
+		{Text: "out-1\nou"},
+		{Stream: stream(rpc.ToolShellOutputStreamStderr), Text: "err-1\ner"},
+		{Stream: stream(rpc.ToolShellOutputStreamStdout), Text: "t-2\n"},
+		{Stream: stream(rpc.ToolShellOutputStreamTerminal), Text: "term\n" + strings.Repeat("é", maxTailLine)},
+		{Stream: stream(rpc.ToolShellOutputStreamStderr), Text: "r-2"},
+	}
+	for i, d := range chunks {
+		d.ToolCallID, d.Sequence = "t1", int64(i)
+		h.fs.onEvent(ev(fmt.Sprint("s", i), &d))
+	}
+	it := h.sink.last().Item
+	want := []agentapi.OutputLine{{Text: "out-1"}, {Text: "err-1", Err: true}, {Text: "ou" + "t-2"}, {Text: "term"}, {Text: "er" + "r-2", Err: true}, {Text: strings.Repeat("é", maxTailLine/2)}}
+	if !reflect.DeepEqual(it.Tool.Tail, want) {
+		t.Fatalf("tail = %+v\nwant %+v", it.Tool.Tail, want)
+	}
+	if got := it.Tool.Output; !strings.HasPrefix(got, "out-1\nouerr-1\nert-2\nterm\n") || !strings.HasSuffix(got, "r-2") {
+		t.Fatalf("output keeps arrival order: %q", got)
 	}
 }
 
@@ -1317,7 +1357,7 @@ func TestWebHistory(t *testing.T) {
 		eph(ev("e3", &rpc.AssistantMessageDeltaData{MessageID: "m1", DeltaContent: "Do"})),
 		ev("e4", &rpc.AssistantMessageData{MessageID: "m1", Content: "Done."}),
 		ev("e5", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "edit"}),
-		eph(ev("e6", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "…"})),
+		eph(ev("e6", &rpc.ToolShellOutputData{ToolCallID: "t1", Text: "…"})),
 		ev("e7", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "ok"}}),
 		ev("e8", &rpc.AssistantMessageData{MessageID: "m2"}),
 		ev("e9", &rpc.SessionErrorData{Message: "quota"}),
@@ -1504,12 +1544,12 @@ func TestWebSteerTheTurnDidNotUseIsReportedOnce(t *testing.T) {
 }
 
 // A steer moves a running shell to the background: the call completes, and
-// the shell's later output arrives as partial results under the same ID.
+// the shell's later output arrives under the same ID.
 func TestWebBackgroundedShellOutputKeepsTheCallCompleted(t *testing.T) {
 	h := openWeb(t)
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
 	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "moved to background"}}))
-	h.fs.onEvent(ev("e3", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "first-done\n"}))
+	h.fs.onEvent(ev("e3", &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: 7, Text: "first-done\n"}))
 	evs := h.sink.all()
 	if last := evs[len(evs)-1].Item; len(evs) != 2 || last.Tool.Name != "bash" || last.Tool.Status != agentapi.ToolCompleted {
 		t.Fatalf("events = %d, last tool %+v", len(evs), last.Tool)
@@ -1554,9 +1594,9 @@ func TestWebToolStartReusingAnEndedIDStreamsItsOutput(t *testing.T) {
 	h.fs.onEvent(ev("e1", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
 	h.fs.onEvent(ev("e2", &rpc.ToolExecutionCompleteData{ToolCallID: "t1", Success: true}))
 	h.fs.onEvent(ev("e3", &rpc.ToolExecutionStartData{ToolCallID: "t1", ToolName: "bash"}))
-	h.fs.onEvent(ev("e4", &rpc.ToolExecutionPartialResultData{ToolCallID: "t1", PartialOutput: "second\n"}))
+	h.fs.onEvent(ev("e4", &rpc.ToolShellOutputData{ToolCallID: "t1", Sequence: 0, Text: "second\n"}))
 	last := h.sink.last().Item
-	if last == nil || last.Tool == nil || last.Tool.Status != agentapi.ToolRunning || last.Tool.Output != "second\n" {
+	if last == nil || last.Tool == nil || last.Tool.Status != agentapi.ToolRunning || last.Tool.Output != "second\n" || len(last.Tool.Tail) != 1 {
 		t.Fatalf("last item = %+v", last)
 	}
 }

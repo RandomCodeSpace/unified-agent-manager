@@ -36,13 +36,23 @@ type harnessUsage struct {
 	collection HarnessCollection
 	today      string
 	periods    map[string][]corestore.Bucket
+	adapters   *adapter.Registry
+	wake       chan struct{} // a reader of the totals asks for a fresh pass
 }
+
+// A pass re-reads every source that changed, and Claude Code re-reads every
+// transcript on any change: tens of CPU-seconds on a busy machine. The totals
+// are rarely read, so a pass runs every harnessUsageInterval in the background
+// and, while someone reads them, at most once per harnessUsageViewInterval.
+var harnessUsageInterval = 15 * time.Minute
+
+const harnessUsageViewInterval = time.Minute
 
 func (m *Manager) prepareHarnessUsage() (*corestore.Ledger, error) {
 	if m.usageHome == "" {
 		return nil, nil
 	}
-	m.harness = &harnessUsage{collection: HarnessCollection{Status: "starting", CopilotSince: m.now()}}
+	m.harness = &harnessUsage{collection: HarnessCollection{Status: "starting", CopilotSince: m.now()}, adapters: all.Default(), wake: make(chan struct{}, 1)}
 	if m.tokens.CopilotSince.IsZero() {
 		// Legacy daily totals have no call identities. Import external Copilot
 		// only after this durable boundary, while preserving those totals.
@@ -185,28 +195,48 @@ func (m *Manager) harnessUsageLoop(ledger *corestore.Ledger) {
 			log.Warn("close harness usage ledger failed", "error", err)
 		}
 	}()
-	err := collect.Run(m.ctx, time.Minute, all.Default(), usageOnlyStore{Ledger: ledger, m: m}, adapter.DiscoverConfig{Home: m.usageHome},
-		collect.WithoutRaw(), collect.WithCycleCallback(func(stats collect.CycleStats, cycleErr error) {
-			if m.ctx.Err() != nil {
+	background := time.NewTimer(harnessUsageInterval)
+	defer background.Stop()
+	for {
+		started := m.now()
+		stats, cycleErr := collect.RunOnce(m.ctx, m.harness.adapters, usageOnlyStore{Ledger: ledger, m: m}, adapter.DiscoverConfig{Home: m.usageHome}, collect.WithoutRaw())
+		if m.ctx.Err() != nil {
+			return
+		}
+		if err := m.refreshHarnessUsage(m.ctx, ledger.Reader, len(stats.Errors) > 0 || cycleErr != nil); err != nil {
+			m.mu.Lock()
+			m.harness.collection.Status = "partial"
+			m.mu.Unlock()
+			log.Warn("summarize harness usage failed", "error", err)
+		}
+		if cycleErr != nil || len(stats.Errors) > 0 {
+			// Source errors may contain local paths. Keep the browser's
+			// status small and never copy source payloads into its response.
+			log.Warn("harness usage collection incomplete", "sources", stats.Sources, "failed", stats.SourcesFailed, "errors", len(stats.Errors))
+		}
+		background.Reset(harnessUsageInterval)
+		for waiting := true; waiting; {
+			select {
+			case <-m.ctx.Done():
 				return
+			case <-background.C:
+				waiting = false
+			case <-m.harness.wake:
+				waiting = m.now().Sub(started) < harnessUsageViewInterval
 			}
-			if err := m.refreshHarnessUsage(m.ctx, ledger.Reader, len(stats.Errors) > 0 || cycleErr != nil); err != nil {
-				m.mu.Lock()
-				m.harness.collection.Status = "partial"
-				m.mu.Unlock()
-				log.Warn("summarize harness usage failed", "error", err)
-			}
-			if cycleErr != nil || len(stats.Errors) > 0 {
-				// Source errors may contain local paths. Keep the browser's
-				// status small and never copy source payloads into its response.
-				log.Warn("harness usage collection incomplete", "sources", stats.Sources, "failed", stats.SourcesFailed, "errors", len(stats.Errors))
-			}
-		}))
-	if err != nil {
-		m.mu.Lock()
-		m.harness.collection.Status = "unavailable"
-		m.mu.Unlock()
-		log.Warn("harness usage collector stopped", "error", err)
+		}
+	}
+}
+
+// requestHarnessUsage asks for a fresh pass because someone reads the totals.
+// It never blocks; the collector limits how often a view starts a pass.
+func (m *Manager) requestHarnessUsage() {
+	if m.harness == nil {
+		return
+	}
+	select {
+	case m.harness.wake <- struct{}{}:
+	default:
 	}
 }
 
