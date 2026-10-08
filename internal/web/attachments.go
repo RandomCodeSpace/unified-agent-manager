@@ -72,8 +72,11 @@ func (m *Manager) uploadRoot() string {
 	return filepath.Join(filepath.Dir(m.store.Path()), uploadsDir)
 }
 
+// taskUploadDir is a Task's directory under uploadRoot. Task ids are UUIDs
+// uam generates; cleaning the id as a rooted path first keeps any other value
+// inside uploadRoot too.
 func (m *Manager) taskUploadDir(taskID string) string {
-	return filepath.Join(m.uploadRoot(), taskID)
+	return filepath.Join(m.uploadRoot(), filepath.Clean("/"+taskID))
 }
 
 // sniff returns the MIME type UAM stores and sends for data, from the bytes

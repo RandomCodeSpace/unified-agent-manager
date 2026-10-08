@@ -43,6 +43,8 @@ interface Props {
   live: boolean;
   /** A turn is running (not merely waiting for the user): the last item is still streaming. */
   working: boolean;
+  /** The event stream is up: a turn timing marked unknown is then one the service cut off, not one this page lost track of. */
+  connected?: boolean;
   /** Provider id used to resolve subagent model names. */
   provider: string;
   /** The Task's directory, for links to its files. */
@@ -84,7 +86,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line (Compact) or rows in its activity (Detailed), and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, workdir, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -150,9 +152,12 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
     const timing = timingForTurn(turnTimings, userItemId);
     // A turn that ended is over, also while the next one starts before its message lands: it keeps its
     // end, and a call it left running is not the running step. A row begun after its end is a turn's that came without one.
-    const ended = Date.parse(timing?.ended_at ?? '');
+    // So is a turn the service cut off (unknown without an end) while the stream is up, up to the next turn's start.
+    const cut = connected && timing?.state === 'unknown' && !timing.ended_at;
+    const end = cut ? turnTimings[turnTimings.indexOf(timing) + 1]?.started_at : timing?.ended_at;
+    const ended = end ? Date.parse(end) : cut ? Infinity : Number.NaN;
     const begunSince = (entry: Entry) => !!entry.item && !(Date.parse(entry.item.time) < ended);
-    const open = !timing?.ended_at || group.some(begunSince);
+    const open = !(timing?.ended_at || cut) || group.some(begunSince);
     const showEnd = showTurnEnd(timing, { hasContent: group.length > 0, boundary, last, live: live && open });
     if (!group.length) {
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);

@@ -438,7 +438,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   otherwise; it is live only and never saved.
 - **Status line**: while a Task works, the line above the message box says
   what the agent says it is doing (Copilot derives it from its todo list),
-  else a calm verb, and for how long. A model call Copilot retries adds
+  else a calm verb ("Working…" for a turn without a message), and for how
+  long. A model call Copilot retries adds
   "Retrying, attempt 2 · HTTP 429 · rate limited" until the call goes
   through; a subagent's retry shows under its row. With a todo list it also
   says how far the agents got ("Todo 2/7"), the row in progress and how many
@@ -450,7 +451,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
   "Stopped: remote command" or "Stopped: MCP server". The header says the
-  same, and the Task row's tip says "You stopped it" for yours. The service
+  same, and the Task row's tip says "You stopped it" for a Stop uam
+  recorded as yours, else plain "Stopped". The service
   reports the reason as `stop_reason` on the Task summary (`owner`,
   `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
   none); it is saved with the stopped state
