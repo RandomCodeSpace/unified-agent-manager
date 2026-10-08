@@ -449,11 +449,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   conversation. After a stop it says why until the next turn
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
-  "Stopped: remote command", "Stopped: MCP server" or "Stopped in the
-  Copilot CLI". The header says the same, and the Task row's tip says "You
-  stopped it" for yours. The service reports the reason as `stop_reason` on
-  the Task summary (`owner`, `time_limit`, `credit_limit`, `remote`, `mcp`
-  or `cli`, absent when there is none); it is saved with the stopped state
+  "Stopped: remote command" or "Stopped: MCP server". The header says the
+  same, and the Task row's tip says "You stopped it" for yours. The service
+  reports the reason as `stop_reason` on the Task summary (`owner`,
+  `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
+  none); it is saved with the stopped state
   and cleared when the next turn starts. The running turn's intent and
   retry come as `turn_activity`, in the Task snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
@@ -1440,7 +1440,7 @@ States shown for each session:
 | working | The provider is running a turn |
 | awaiting permission / awaiting answer | The provider is waiting for you |
 | completed | The last turn finished |
-| cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command, an MCP server or the Copilot CLI); `stop_reason` says which |
+| cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command or an MCP server); `stop_reason` says which |
 | failed | The provider reported an error, or its process or event stream ended; the detail says which |
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
 | closed | The conversation was closed from the web interface, or the Task was imported and has not been sent a message yet |

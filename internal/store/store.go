@@ -440,7 +440,7 @@ type WebState struct {
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
 	// StopReason says why the last turn was cancelled (owner, time_limit,
-	// credit_limit, remote, mcp or cli); empty otherwise.
+	// credit_limit, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
 
 	unknown map[string]json.RawMessage
