@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -330,5 +331,104 @@ func TestTurnTimingSumsModelCallUsage(t *testing.T) {
 	got := detail(t, m, sum.ID).TurnTimings
 	if len(got) != 1 || got[0].InputTokens != 2000 || got[0].OutputTokens != 500 || got[0].GenerationMS != 10000 {
 		t.Fatalf("turn usage=%+v", got)
+	}
+}
+
+// savedTiming reads the session's only turn timing from sessions.json, or a
+// zero one while none is saved.
+func savedTiming(t *testing.T, st *store.Store, key string) TurnTiming {
+	t.Helper()
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := cfg.Sessions[key]
+	if !ok || rec.Web == nil || len(rec.Web.TurnTimings) != 1 {
+		return TurnTiming{}
+	}
+	return rec.Web.TurnTimings[0]
+}
+
+// fileOf stats path; nil while it does not exist. Both files are replaced by
+// a rename, so a write shows as another file.
+func fileOf(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info
+}
+
+func sameFile(a, b os.FileInfo) bool {
+	return a == nil && b == nil || a != nil && b != nil && os.SameFile(a, b) && a.ModTime().Equal(b.ModTime())
+}
+
+// savedTokens reads the input tokens the token ledger file holds.
+func savedTokens(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	again := NewManager(st, nil)
+	if err := again.loadTokenLedger(); err != nil {
+		t.Fatal(err)
+	}
+	return int64(again.TokenUsage().Periods["lifetime"].Total.Input)
+}
+
+// A model call is not worth rewriting sessions.json and the token ledger: its
+// counts go out live and reach both files when the turn ends.
+func TestModelCallUsageIsSavedWithTheTurnEnd(t *testing.T) {
+	old := lazyFlushDelay
+	lazyFlushDelay = time.Hour
+	t.Cleanup(func() { lazyFlushDelay = old })
+	m, prov, st := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	key := store.Key(prov.Name(), sum.ID)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	waitUntil(t, "the turn start saved", func() bool { return savedTiming(t, st, key).ID != "" })
+	time.Sleep(50 * time.Millisecond)
+	before, ledgerBefore := fileOf(t, st.Path()), fileOf(t, m.tokenLedgerPath())
+	for range 20 {
+		conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 10, Output: 1, DurationMS: 100}})
+	}
+	if got := detail(t, m, sum.ID).TurnTimings[0]; got.InputTokens != 200 {
+		t.Fatalf("live counts=%+v", got)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if !sameFile(before, fileOf(t, st.Path())) {
+		t.Fatal("a model call rewrote sessions.json")
+	}
+	if !sameFile(ledgerBefore, fileOf(t, m.tokenLedgerPath())) {
+		t.Fatal("a model call rewrote the token ledger")
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the turn's counts saved", func() bool {
+		got := savedTiming(t, st, key)
+		return got.EndedAt.After(got.StartedAt) && got.InputTokens == 200 && got.OutputTokens == 20 && got.GenerationMS == 2000
+	})
+	if got := savedTokens(t, st); got != 200 {
+		t.Fatalf("ledger input=%d", got)
+	}
+}
+
+// A long turn still saves its counts: lazyFlushDelay after the first unsaved one.
+func TestModelCallUsageIsSavedWithinTheLazyFlushDelay(t *testing.T) {
+	old := lazyFlushDelay
+	lazyFlushDelay = 20 * time.Millisecond
+	t.Cleanup(func() { lazyFlushDelay = old })
+	m, prov, st := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	key := store.Key(prov.Name(), sum.ID)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 30, Output: 3}})
+	waitUntil(t, "the counts saved mid-turn", func() bool { return savedTiming(t, st, key).InputTokens == 30 })
+	if got := savedTiming(t, st, key); !got.EndedAt.IsZero() {
+		t.Fatalf("turn ended: %+v", got)
+	}
+	waitUntil(t, "the ledger saved", func() bool { return savedTokens(t, st) == 30 })
+	if got := detail(t, m, sum.ID).TurnTimings[0]; got.InputTokens != 30 {
+		t.Fatalf("live counts=%+v", got)
 	}
 }

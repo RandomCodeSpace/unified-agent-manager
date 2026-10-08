@@ -124,6 +124,8 @@ type Manager struct {
 	accountAt map[string]time.Time
 	sessions  map[string]*webSession
 	dirty     map[string]struct{}
+	// lazyFlush is true while a flush waits for lazyFlushDelay (flushLaterLocked).
+	lazyFlush bool
 	creating  map[string]chan struct{}
 	epoch     string
 	seq       uint64
@@ -1907,6 +1909,30 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 		default:
 		}
 	}
+}
+
+// lazyFlushDelay bounds how long a model call's token counts wait in memory:
+// the next flush writes them, or one this long after the first unsaved count.
+// Model calls come too often to rewrite sessions.json and the token ledger for
+// each; Shutdown's flush writes what is left.
+var lazyFlushDelay = 30 * time.Second
+
+// flushLaterLocked schedules a flush lazyFlushDelay after the first change
+// since the last one it scheduled.
+func (m *Manager) flushLaterLocked() {
+	if m.lazyFlush {
+		return
+	}
+	m.lazyFlush = true
+	time.AfterFunc(lazyFlushDelay, func() {
+		m.mu.Lock()
+		m.lazyFlush = false
+		m.mu.Unlock()
+		select {
+		case m.wake <- struct{}{}:
+		default:
+		}
+	})
 }
 
 func (m *Manager) persistLoop() {
