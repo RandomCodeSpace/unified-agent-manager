@@ -645,6 +645,9 @@ type WebSettings struct {
 	// MaxCompactionThreshold; nil means the provider default
 	// (DefaultCompactionThreshold).
 	CompactionThreshold *int `json:"compact_threshold,omitempty"`
+	// GitHubMCP lets Tasks start the provider's built-in GitHub MCP server.
+	// Off when absent.
+	GitHubMCP bool `json:"github_mcp,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -873,6 +876,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"utility_daily_limit": {},
 	"suggest_replies":     {},
 	"compact_threshold":   {},
+	"github_mcp":          {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},

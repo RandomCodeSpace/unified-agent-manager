@@ -1,6 +1,7 @@
 // The in-browser fake's MCP servers (docs/web.md, MCP servers): a user-wide list with a
 // remote server, a command server and a built-in one, and each Task's view of them. A
-// command server needs Terminal on; values are never returned. Signing in to "tracker"
+// command server needs Terminal on; values are never returned. Tasks start the built-in
+// GitHub server only while Settings turns it on, as the service does. Signing in to "tracker"
 // accepts any pasted 127.0.0.1 address with the state the fake issued.
 
 import type { McpServer, McpServerInput, McpStatus } from '../api';
@@ -34,10 +35,11 @@ const view = (s: Stored): McpServer => ({
   headers: Object.keys(s.headers).sort().map((key) => ({ key, set: true })),
 });
 
-export function mcpMock(terminal: () => boolean) {
+export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
   let servers = seed();
-  // Per Task: servers turned off, and whether tracker has signed in.
+  // Per Task: servers turned off or on in it, and whether tracker has signed in.
   const off = new Map<string, Set<string>>();
+  const on = new Map<string, Set<string>>();
   let signedIn = false;
   let pending: { task: string; state: string } | null = null;
 
@@ -45,10 +47,11 @@ export function mcpMock(terminal: () => boolean) {
 
   function status(task: string): McpStatus[] {
     const disabled = off.get(task) ?? new Set();
+    const enabled = on.get(task) ?? new Set();
     return servers
       .filter((s) => s.enabled)
       .map((s): McpStatus => {
-        if (disabled.has(s.name)) return { name: s.name, status: 'disabled', source: s.source };
+        if (disabled.has(s.name) || (s.name === 'github-mcp-server' && !githubMcp() && !enabled.has(s.name))) return { name: s.name, status: 'disabled', source: s.source };
         if (s.name === 'echo') return { name: s.name, status: 'failed', error: 'failed to spawn MCP server process: No such file or directory (os error 2)' };
         if (s.name === 'tracker' && !signedIn) return { name: s.name, status: 'needs-auth', remote: true };
         const tools =
@@ -107,13 +110,21 @@ export function mcpMock(terminal: () => boolean) {
       if (method !== 'POST') return null;
       if (action === 'reconnect') {
         off.delete(task);
+        on.delete(task);
         return json(200, { servers: status(task) });
       }
       if (action === 'enable' || action === 'disable') {
         const set = off.get(task) ?? new Set<string>();
-        if (action === 'disable') set.add(name);
-        else set.delete(name);
+        const turnedOn = on.get(task) ?? new Set<string>();
+        if (action === 'disable') {
+          set.add(name);
+          turnedOn.delete(name);
+        } else {
+          set.delete(name);
+          turnedOn.add(name);
+        }
         off.set(task, set);
+        on.set(task, turnedOn);
         return json(200, { servers: status(task) });
       }
       if (action === 'restart') return fail(502, 'restart the MCP server: failed to spawn MCP server process: No such file or directory (os error 2)');

@@ -176,6 +176,9 @@ type Settings struct {
 	// a Task's conversation starts compacting; omitted for the provider
 	// default, store.DefaultCompactionThreshold.
 	CompactionThreshold *int `json:"compact_threshold,omitempty"`
+	// GitHubMCP lets Tasks start the provider's built-in GitHub MCP server
+	// (agentapi.GitHubMCPUser); omitted while off, the default.
+	GitHubMCP bool `json:"github_mcp,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment

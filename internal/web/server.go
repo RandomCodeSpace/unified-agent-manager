@@ -637,6 +637,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			patch.CustomModels = &list
+		case "github_mcp":
+			patch.GitHubMCP = new(bool)
+			if json.Unmarshal(raw, patch.GitHubMCP) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "github_mcp must be true or false")
+				return
+			}
 		case "suggest_replies":
 			patch.SuggestReplies = new(bool)
 			if json.Unmarshal(raw, patch.SuggestReplies) != nil || string(raw) == "null" {

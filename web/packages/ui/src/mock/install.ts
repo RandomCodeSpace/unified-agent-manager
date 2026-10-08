@@ -193,7 +193,7 @@ export function install(): { received: Received[] } {
   const cli = cliMock(st.meta);
   const service = serviceMock(st.meta);
   const configuration = configurationMock(() => !!st.settings.terminal);
-  const mcp = mcpMock(() => !!st.settings.terminal);
+  const mcp = mcpMock(() => !!st.settings.terminal, () => !!st.settings.github_mcp);
   const charts = chartMock(st.projects, (project) => broadcast('project', { project }));
   const assist = assistMock({
     broadcast: (name, payload) => broadcast(name, payload),
@@ -708,7 +708,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
       if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
@@ -730,6 +730,11 @@ export function install(): { received: Received[] } {
       if (body.terminal !== undefined) {
         if (typeof body.terminal !== 'boolean') return fail(400, 'terminal must be true or false');
         st.settings = { ...st.settings, terminal: body.terminal };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.github_mcp !== undefined) {
+        if (typeof body.github_mcp !== 'boolean') return fail(400, 'github_mcp must be true or false');
+        st.settings = { ...st.settings, github_mcp: body.github_mcp };
         broadcast('settings', { settings: st.settings });
       }
       if (body.task_defaults !== undefined) {

@@ -5,14 +5,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/daemonruntime"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // mcpStatuses maps the CLI's MCP server states to the contract's.
@@ -31,6 +34,57 @@ var mcpStatuses = map[rpc.MCPServerStatus]string{
 func mcpStatus(s rpc.MCPServerStatus) string {
 	return cmp.Or(mcpStatuses[s], string(s))
 }
+
+// githubMCPServer is the CLI's built-in GitHub MCP server. Sessions start it
+// only while the owner turns it on: connecting it took over a second of every
+// open and reopen on CLI 1.0.93.
+const githubMCPServer = "github-mcp-server"
+
+// SetGitHubMCP turns the built-in GitHub MCP server on or off for sessions
+// opened or resumed afterwards, and in the open ones through the session's
+// own switch, which their Task's MCP dialog also turns.
+func (p *webProvider) SetGitHubMCP(on bool) {
+	p.customMu.Lock()
+	changed := p.githubMCP != on
+	p.githubMCP = on
+	p.customMu.Unlock()
+	if !changed {
+		return
+	}
+	p.mu.Lock()
+	convs := slices.Collect(maps.Keys(p.convs))
+	p.mu.Unlock()
+	for _, c := range convs {
+		go c.syncGitHubMCP(context.Background())
+	}
+}
+
+// disabledMCPServers lists the servers a session opened now leaves off.
+func (p *webProvider) disabledMCPServers() []string {
+	p.customMu.Lock()
+	defer p.customMu.Unlock()
+	if p.githubMCP {
+		return nil
+	}
+	return []string{githubMCPServer}
+}
+
+// syncGitHubMCP turns the server in c on or off as the setting is when it
+// runs, after any earlier switch of c ended. mcpSwitchTimeout bounds it, not
+// ctx's cancellation.
+func (c *conversation) syncGitHubMCP(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mcpSwitchTimeout)
+	defer cancel()
+	c.githubSwitch.Lock()
+	defer c.githubSwitch.Unlock()
+	on := len(c.p.disabledMCPServers()) == 0
+	if err := c.SetMCPServerEnabled(ctx, githubMCPServer, on); err != nil && !errors.Is(err, agentapi.ErrClosed) {
+		log.Warn("switch copilot github mcp server failed", "conversation", c.id, "on", on, "error", err)
+	}
+}
+
+// mcpSwitchTimeout bounds turning a server on or off in an open session.
+const mcpSwitchTimeout = 45 * time.Second
 
 // mcpSignInMessage is what the CLI's loopback page says once a sign-in
 // finished; the browser that sees it may be on another machine.

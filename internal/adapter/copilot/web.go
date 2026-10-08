@@ -348,12 +348,14 @@ type webProvider struct {
 	usageSessionRecorder func(string, bool) error
 	usageMu              sync.Mutex
 	usageOwned           map[string]sdkClient
-	// customMu guards custom, the owner's custom models, and subagent, the
-	// models subagents may use (empty for any); it is never held with mu,
-	// which a CLI start holds for long.
-	customMu sync.Mutex
-	custom   []agentapi.CustomModel
-	subagent []string
+	// customMu guards custom, the owner's custom models, subagent, the
+	// models subagents may use (empty for any), and githubMCP, whether
+	// sessions start the built-in GitHub MCP server; it is never held with
+	// mu, which a CLI start holds for long.
+	customMu  sync.Mutex
+	custom    []agentapi.CustomModel
+	subagent  []string
+	githubMCP bool
 	// quotaMu guards live, the quota snapshots by type from the latest model
 	// call's response since this CLI started. account.getQuota keeps
 	// returning what the CLI read at sign-in, so these supersede it.
@@ -425,7 +427,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -697,6 +699,7 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		EnableHostGitOperations:            copilot.Bool(false),
 		EnableSessionStore:                 copilot.Bool(false),
 		EnableSkills:                       copilot.Bool(false),
+		DisabledMCPServers:                 p.disabledMCPServers(),
 		InfiniteSessions:                   &copilot.InfiniteSessionConfig{Enabled: copilot.Bool(false)},
 		Memory:                             &copilot.MemoryConfiguration{Enabled: false},
 		SystemMessage:                      &copilot.SystemMessageConfig{Mode: "replace", Content: req.System},
@@ -896,6 +899,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return &rpc.PermissionDecisionNoResult{}, nil
 	}
 	compaction := infiniteSessions(req.CompactionThreshold)
+	disabled := p.disabledMCPServers()
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
@@ -920,6 +924,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			// hooks. The owner turned it on for web Tasks (#176).
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
+			DisabledMCPServers:    disabled,
 			InfiniteSessions:      compaction,
 		})
 	} else {
@@ -942,6 +947,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
+			DisabledMCPServers:    disabled,
 			InfiniteSessions:      compaction,
 		})
 	}
@@ -982,10 +988,14 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
 	}
+	// SetGitHubMCP does not see a session it changes during the open.
+	if !slices.Equal(p.disabledMCPServers(), disabled) {
+		go c.syncGitHubMCP(ctx)
+	}
 	// The first proof waits for the runtime to start its tools, which
-	// includes connecting the built-in GitHub MCP server (over a second on
-	// CLI 1.0.93), so the open does not wait for it. The tools refuse calls
-	// until it passes, and a message waits for it.
+	// includes connecting the built-in GitHub MCP server when it is on (over
+	// a second on CLI 1.0.93), so the open does not wait for it. The tools
+	// refuse calls until it passes, and a message waits for it.
 	if c.tools != nil {
 		c.tools.proveFirst(sess, uamTools)
 	}
@@ -1719,7 +1729,10 @@ type conversation struct {
 	execution         *agentapi.ExecutionState
 	executionRevision uint64
 	control           sync.Mutex
-	reportEmptyTasks  bool
+	// githubSwitch is held while the built-in GitHub MCP server is turned
+	// on or off, so the last switch applies the latest setting.
+	githubSwitch     sync.Mutex
+	reportEmptyTasks bool
 	// turnModel is the model of the turn's latest main-agent model call.
 	turnModel string
 	// act is the running turn's live activity (activity.go).
