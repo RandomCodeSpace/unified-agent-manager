@@ -64,9 +64,9 @@ export function Select({
                   value={it.value}
                   disabled={it.disabled || it.hidden}
                   hidden={it.hidden}
-                  className={cn(itemClass, 'items-start pr-3 pl-7', it.hidden && 'hidden')}
+                  className={cn(itemClass, 'pr-3 pl-7', it.description && 'items-start', it.hidden && 'hidden')}
                 >
-                  <BaseSelect.ItemIndicator className="absolute top-2 left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent">
+                  <BaseSelect.ItemIndicator className={cn('absolute left-2 flex text-accent [&_svg]:size-3.5 [&_svg]:text-accent', it.description ? 'top-2' : 'top-1/2 -translate-y-1/2')}>
                     <Check strokeWidth={2.5} />
                   </BaseSelect.ItemIndicator>
                   <span className="flex min-w-0 flex-col">
