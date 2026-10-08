@@ -193,6 +193,7 @@ func TestCompactDetailBodiesOrderingCompletionAndIdentity(t *testing.T) {
 	frameOf(t, detail, "body_output")
 	noFrame(t, main, "hidden output suffix")
 	// A rewrite, final suffix, and correction after completion are authoritative.
+	// Only the status change alters the row on main.
 	for _, tc := range []struct {
 		output string
 		status agentapi.ToolStatus
@@ -200,18 +201,21 @@ func TestCompactDetailBodiesOrderingCompletionAndIdentity(t *testing.T) {
 		m.mu.Lock()
 		m.upsertItemLocked(s, makeItem("", tc.output, tc.status), true)
 		m.mu.Unlock()
-		summary := frameOf(t, main, "item")
 		body := frameOf(t, detail, "body")
 		decodeField(t, body, "item", &item)
-		if summary.seq >= body.seq || item.Tool.Output != tc.output || item.Tool.Status != tc.status {
-			t.Fatal("authoritative body lost/reordered")
+		if item.Tool.Output != tc.output || item.Tool.Status != tc.status {
+			t.Fatal("authoritative body lost")
+		}
+		if tc.output != "rewrite FINAL" {
+			noFrame(t, main, "unchanged row")
+		} else if frameOf(t, main, "item").seq >= body.seq {
+			t.Fatal("body preceded row change")
 		}
 	}
 	// Final-only output never depends on a prior delta.
 	m.mu.Lock()
 	m.upsertItemLocked(s, makeItem("helper", "only final", agentapi.ToolCompleted), true)
 	m.mu.Unlock()
-	frameOf(t, detail, "item")
 	body := frameOf(t, detail, "body")
 	decodeField(t, body, "item", &item)
 	if item.Tool.Output != "only final" {

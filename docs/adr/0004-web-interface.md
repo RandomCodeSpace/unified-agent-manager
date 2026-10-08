@@ -164,7 +164,10 @@ a subscriber.
 The browser opts in with `&tool_output=delta`. Output-only appends to running
 tools then send only the new text; starts, rewrites, metadata changes and
 completion still send full `item` events. Clients without the parameter retain
-the full-item protocol. Sequence numbers are monotonic, not contiguous. Full
+the full-item protocol. For every client, repeated rewrites of a running tool's
+output (a CLI's sliding tail window) send at most one full item per 250 ms, the
+latest on a trailing timer; any other change, completion included, sends at
+once. Sequence numbers are monotonic, not contiguous. Full
 snapshots and subagent detail responses retain the complete current output.
 The browser batches transcript updates once per animation frame while visible.
 
@@ -258,9 +261,10 @@ and are staged until readiness. Live compact agent events
 use `item`, `delta`, and `items_trimmed`; revealed bodies use `body` replacement,
 `body_delta`, or `body_output`. A real history replacement sends `detail_reset`.
 
-Sequences are comparable only within one epoch. A compact mutation precedes its
-authoritative body replacement, and the browser tracks each affected body's
-coverage separately from unrelated main or detail events. Completion does not
+Sequences are comparable only within one epoch. A compact mutation, sent only
+when the row it shows changes, precedes its authoritative body replacement, and
+the browser tracks each affected body's coverage separately from unrelated main
+or detail events. Completion does not
 make a body immutable: final-only output, final suffixes, rewrites and later
 corrections still reach an open view. Request/connection identity also prevents
 callbacks from abandoned loads applying to a new selection.

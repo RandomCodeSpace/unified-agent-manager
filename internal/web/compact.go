@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -244,6 +245,14 @@ func projectItem(it agentapi.Item) compactItem {
 		out.Tool = &projected
 	}
 	return out
+}
+
+// sameCompactRow reports whether a and b project to the same row. The
+// projected tool shadows the embedded one, which is never sent.
+func sameCompactRow(a, b agentapi.Item) bool {
+	ra, rb := projectItem(a), projectItem(b)
+	ra.Item.Tool, rb.Item.Tool = nil, nil
+	return reflect.DeepEqual(ra, rb)
 }
 func compactPage(items []agentapi.Item, end int) compactHistoryPage {
 	start, size := end, 0

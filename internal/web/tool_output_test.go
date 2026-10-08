@@ -158,3 +158,136 @@ func TestToolOutputSnapshotAndMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestToolOutputUnchangedRowNotRepublished(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	main, _, err := m.subscribeView(sum.ID, true, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(main)
+	start := time.Now().UTC()
+	upsert := func(it agentapi.Item) {
+		it.Time = start
+		m.mu.Lock()
+		m.upsertItemLocked(m.sessions[sum.ID], it, true)
+		m.mu.Unlock()
+	}
+	tool := func(output string, status agentapi.ToolStatus) agentapi.Item {
+		return agentapi.Item{ID: "tool", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: "pwd", Status: status, Output: output}}
+	}
+	upsert(agentapi.Item{ID: "reply", Kind: agentapi.ItemAssistant, Text: "done"})
+	upsert(tool("one", agentapi.ToolCompleted))
+	frameOf(t, main, "item")
+	frameOf(t, main, "item")
+	// Identical items and output the row does not show leave it as it is.
+	for _, it := range []agentapi.Item{{ID: "reply", Kind: agentapi.ItemAssistant, Text: "done"}, tool("one", agentapi.ToolCompleted), tool("two", agentapi.ToolCompleted)} {
+		upsert(it)
+		noFrame(t, main, "unchanged row")
+	}
+	upsert(tool("two", agentapi.ToolFailed))
+	var row compactItem
+	decodeField(t, frameOf(t, main, "item"), "item", &row)
+	if row.ID != "tool" || row.Tool == nil || row.Tool.Status != agentapi.ToolFailed {
+		t.Fatalf("changed row = %+v", row)
+	}
+}
+
+func TestToolOutputSlidingWindowPaced(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, _ := createSession(t, m, prov)
+	clock := time.Now()
+	m.mu.Lock()
+	m.now = func() time.Time { return clock }
+	s := m.sessions[sum.ID]
+	m.mu.Unlock()
+	start := clock.UTC()
+	emit := func(id, output string, status agentapi.ToolStatus) {
+		m.mu.Lock()
+		m.upsertItemLocked(s, agentapi.Item{ID: id, Kind: agentapi.ItemTool, Time: start, Tool: &agentapi.ToolCall{Name: "bash", Input: "seq 9", Status: status, Output: output}}, true)
+		m.mu.Unlock()
+	}
+	emit("tool", "", agentapi.ToolRunning)
+	main, _, err := m.subscribeView(sum.ID, true, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(main)
+	detail, _, err := m.subscribeDetail(sum.ID, "", []bodyRef{{"", "tool"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(detail)
+	delta := func(want string) {
+		t.Helper()
+		var text string
+		decodeField(t, frameOf(t, detail, "body_output"), "text", &text)
+		if text != want {
+			t.Fatalf("delta %q, want %q", text, want)
+		}
+	}
+	body := func(want string, status agentapi.ToolStatus) {
+		t.Helper()
+		var it agentapi.Item
+		decodeField(t, frameOf(t, detail, "body"), "item", &it)
+		if it.Tool.Output != want || it.Tool.Status != status {
+			t.Fatalf("body %q %s, want %q %s", it.Tool.Output, it.Tool.Status, want, status)
+		}
+	}
+	// Growing output is a delta.
+	emit("tool", "row 1\n", agentapi.ToolRunning)
+	frameOf(t, main, "item")
+	delta("row 1\n")
+	// The first window that replaces it is sent at once, later ones within
+	// the interval wait, growth included, and the timer sends the latest.
+	emit("tool", "row 2\n", agentapi.ToolRunning)
+	body("row 2\n", agentapi.ToolRunning)
+	for _, window := range []string{"row 3\n", "row 4\n", "row 4\nrow 5\n"} {
+		emit("tool", window, agentapi.ToolRunning)
+		noFrame(t, detail, "held window")
+	}
+	body("row 4\nrow 5\n", agentapi.ToolRunning)
+	noFrame(t, main, "unchanged row")
+	// Then growth is a delta again, and a window after the interval is sent at once.
+	emit("tool", "row 4\nrow 5\nrow 6\n", agentapi.ToolRunning)
+	delta("row 6\n")
+	m.mu.Lock()
+	clock = clock.Add(previewInterval)
+	m.mu.Unlock()
+	emit("tool", "row 7\n", agentapi.ToolRunning)
+	body("row 7\n", agentapi.ToolRunning)
+	// Completion sends the final output at once and stops the pending timer.
+	emit("tool", "row 8\n", agentapi.ToolRunning)
+	noFrame(t, detail, "held window")
+	m.mu.Lock()
+	state := s.outputs[itemKey("", "tool")]
+	m.mu.Unlock()
+	if state == nil || state.timer == nil {
+		t.Fatal("window not held")
+	}
+	emit("tool", "row 8\nexit 0", agentapi.ToolCompleted)
+	body("row 8\nexit 0", agentapi.ToolCompleted)
+	frameOf(t, main, "item")
+	m.mu.Lock()
+	if len(s.outputs) != 0 || state.timer.Stop() {
+		t.Fatal("completion left pacing state/timer")
+	}
+	m.mu.Unlock()
+	time.Sleep(2 * previewInterval)
+	noFrame(t, detail, "stopped timer")
+	// Dropping the Task's history stops a pending timer too.
+	emit("other", "a", agentapi.ToolRunning)
+	emit("other", "b", agentapi.ToolRunning)
+	emit("other", "c", agentapi.ToolRunning)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state = s.outputs[itemKey("", "other")]
+	if state == nil || state.timer == nil {
+		t.Fatal("second window not held")
+	}
+	m.dropHistoryLocked(s)
+	if len(s.outputs) != 0 || state.timer.Stop() {
+		t.Fatal("history drop left pacing state/timer")
+	}
+}

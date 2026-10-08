@@ -87,4 +87,10 @@ func (s *webSession) stopPreviews() {
 		}
 	}
 	s.previews = nil
+	for _, state := range s.outputs {
+		if state.timer != nil {
+			state.timer.Stop()
+		}
+	}
+	s.outputs = nil
 }

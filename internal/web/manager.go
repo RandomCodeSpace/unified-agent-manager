@@ -257,6 +257,7 @@ func NewManager(st *store.Store, providers []agentapi.Provider) *Manager {
 
 type webSession struct {
 	previews map[string]*subagentPreviewState
+	outputs  map[string]*toolOutputState
 	itemSeq  map[string]uint64
 
 	// op serializes provider-facing operations on this session. It is never
