@@ -261,6 +261,7 @@ type fakeSession struct {
 	catalog           []rpc.CurrentToolMetadata
 	catalogErr        error
 	catalogReads      int
+	catalogHook       func(read int) // runs during catalog read number read, from 0
 	toolCatalogs      []fakeToolCatalog
 	setToolErrors     []error
 	setTools          [][]rpc.ProtocolExternalToolDefinition
@@ -274,17 +275,24 @@ type fakeToolCatalog struct {
 
 func (s *fakeSession) ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.toolCalls = append(s.toolCalls, "catalog")
 	i := s.catalogReads
 	s.catalogReads++
+	hook := s.catalogHook
+	s.mu.Unlock()
+	if hook != nil {
+		hook(i)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if i < len(s.toolCatalogs) {
 		return s.toolCatalogs[i].tools, s.toolCatalogs[i].err
 	}
-	if len(s.setTools) == 1 {
+	// The latest set cleared uam's tools.
+	if n := len(s.setTools); n > 0 && len(s.setTools[n-1]) == 0 {
 		return []rpc.CurrentToolMetadata{}, nil
 	}
 	return s.catalog, s.catalogErr

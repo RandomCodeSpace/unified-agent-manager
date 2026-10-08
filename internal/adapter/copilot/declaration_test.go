@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -181,6 +182,204 @@ func TestDeclarationStartupListChangeInvalidatesCatalog(t *testing.T) {
 	s = &changingDeclarationCatalog{fakeSession: &fakeSession{id: "session", catalog: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}, declaration: d, at: 2}
 	if err := d.catalog(context.Background(), s, d.tool()); err == nil || !strings.Contains(err.Error(), "invalidated") || d.ready {
 		t.Fatalf("restored-catalog change accepted: %v", err)
+	}
+	// A change seen before the proof starts is part of what it reads.
+	d = newDeclarationTool(func(context.Context, string) (string, error) { return "/tmp/report.txt", nil })
+	defer d.stop()
+	d.observe(ev("earlier", &rpc.MCPToolsListChangedData{}))
+	if err := d.catalog(context.Background(), &fakeSession{id: "session", catalog: []rpc.CurrentToolMetadata{{Name: declarationToolName}}}, d.tool()); err != nil || !d.ready {
+		t.Fatalf("proof after an earlier change = %v, ready %v", err, d.ready)
+	}
+}
+
+// catalogProof is the tool RPCs of one proof that reaches its end.
+var catalogProof = []string{"clear", "catalog", "restore", "catalog"}
+
+// openProved opens a conversation whose uam_show_file and sample host tools
+// the open proved, and returns them in that order.
+func openProved(t *testing.T, fc *fakeClient) (agentapi.Conversation, *fakeSession, []copilot.Tool) {
+	t.Helper()
+	if fc.catalog == nil && fc.toolCatalogs == nil {
+		fc.catalog = catalogOf(declarationToolName, "notes_get", "notes_list")
+	}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", Workdir: t.TempDir(), Events: &recSink{},
+		Tools: notesTools(), CallTool: (&hostCalls{}).call, ValidateFile: func(_ context.Context, p string) (string, error) { return filepath.Join("/tmp", p), nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs := fc.sessions[0]; !slices.Equal(fs.toolCalls, catalogProof) {
+		t.Fatalf("open tool RPCs = %v", fs.toolCalls)
+	}
+	return conv, fc.sessions[0], fc.create[0].Tools
+}
+
+// toolsAnswer reports whether uam_show_file and notes_get run; they share
+// one gate, so one running without the other fails the test.
+func toolsAnswer(t *testing.T, tools []copilot.Tool, call string) bool {
+	t.Helper()
+	_, fileErr := invokeFile(tools[0], call+"-file", map[string]any{"path": "report.txt"})
+	_, hostErr := callTool(tools[1], "session", call+"-host", map[string]any{"ref": "#1"})
+	if (fileErr == nil) != (hostErr == nil) {
+		t.Fatalf("%s: uam_show_file %v, notes_get %v", call, fileErr, hostErr)
+	}
+	if fileErr != nil && !strings.Contains(fileErr.Error(), "unavailable") {
+		t.Fatalf("%s: refusal %v", call, fileErr)
+	}
+	return fileErr == nil
+}
+
+func toolsChanged(fs *fakeSession, id string) {
+	fs.onEvent(ev(id, &rpc.MCPToolsListChangedData{ServerName: "notes"}))
+}
+
+// A tool list change refuses uam's tools until the next turn starts: the
+// proof runs before uam sends that message, never during a turn and never
+// on the change itself.
+func TestToolListChangeIsProvedAgainBeforeTheNextTurn(t *testing.T) {
+	conv, fs, tools := openProved(t, &fakeClient{})
+	ctx := context.Background()
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil || !toolsAnswer(t, tools, "proved") || len(fs.toolCalls) != 4 {
+		t.Fatalf("first turn = %v; tool RPCs %v", err, fs.toolCalls)
+	}
+	toolsChanged(fs, "mid-turn")
+	if toolsAnswer(t, tools, "changed") {
+		t.Fatal("uam's tools answered after a tool list change")
+	}
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "busy"}); !errors.Is(err, agentapi.ErrBusy) {
+		t.Fatalf("send during the turn = %v", err)
+	}
+	if err := conv.Steer(ctx, agentapi.Prompt{Text: "steer"}); err != nil {
+		t.Fatal(err)
+	}
+	fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	if len(fs.toolCalls) != 4 || toolsAnswer(t, tools, "idle") {
+		t.Fatalf("proved again before the next message: tool RPCs %v", fs.toolCalls)
+	}
+	fs.beforeReturn = func(string) {
+		if !slices.Equal(fs.toolCalls, slices.Concat(catalogProof, catalogProof)) {
+			t.Errorf("tool RPCs when the message went = %v", fs.toolCalls)
+		}
+	}
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
+		t.Fatal(err)
+	}
+	if !toolsAnswer(t, tools, "next") {
+		t.Fatal("uam's tools stayed refused after the next turn's proof")
+	}
+}
+
+// A change seen while the proof runs leaves the tools refused; the turn
+// after proves them again.
+func TestToolListChangeDuringTheProofKeepsToolsRefused(t *testing.T) {
+	for _, read := range []int{2, 3} {
+		t.Run(map[int]string{2: "cleared read", 3: "restored read"}[read], func(t *testing.T) {
+			conv, fs, tools := openProved(t, &fakeClient{})
+			ctx := context.Background()
+			toolsChanged(fs, "first")
+			fs.catalogHook = func(i int) {
+				if i == read {
+					toolsChanged(fs, "again")
+				}
+			}
+			if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil || !slices.Equal(fs.sent, []string{"next"}) {
+				t.Fatalf("send = %v; sent %v", err, fs.sent)
+			}
+			if fs.catalogReads != read+1 || toolsAnswer(t, tools, "overlapped") {
+				t.Fatalf("a proof the change overlapped holds: tool RPCs %v", fs.toolCalls)
+			}
+			fs.catalogHook = nil
+			fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+			if err := conv.Send(ctx, agentapi.Prompt{Text: "after"}); err != nil || !toolsAnswer(t, tools, "after") {
+				t.Fatalf("the following turn did not prove them again: %v; tool RPCs %v", err, fs.toolCalls)
+			}
+		})
+	}
+}
+
+// A failed or timed-out proof leaves the tools refused and still sends the
+// message; the turn after tries again.
+func TestFailedProofKeepsToolsRefusedUntilALaterOnePasses(t *testing.T) {
+	fail := errors.New("offline")
+	for name, fc := range map[string]*fakeClient{
+		"clear fails":     {setToolErrors: []error{nil, nil, fail}},
+		"read times out":  {toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: catalogOf(declarationToolName, "notes_get", "notes_list")}, {err: context.DeadlineExceeded}}},
+		"restore fails":   {setToolErrors: []error{nil, nil, nil, fail}},
+		"restored misses": {toolCatalogs: []fakeToolCatalog{{tools: []rpc.CurrentToolMetadata{}}, {tools: catalogOf(declarationToolName, "notes_get", "notes_list")}, {tools: []rpc.CurrentToolMetadata{}}, {tools: catalogOf(declarationToolName)}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fc.catalog = catalogOf(declarationToolName, "notes_get", "notes_list")
+			conv, fs, tools := openProved(t, fc)
+			ctx := context.Background()
+			toolsChanged(fs, "changed")
+			if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil || !slices.Equal(fs.sent, []string{"next"}) {
+				t.Fatalf("send = %v; sent %v", err, fs.sent)
+			}
+			if len(fs.toolCalls) <= 4 || toolsAnswer(t, tools, "failed") {
+				t.Fatalf("failed proof: tool RPCs %v", fs.toolCalls)
+			}
+			fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+			if err := conv.Send(ctx, agentapi.Prompt{Text: "after"}); err != nil || !toolsAnswer(t, tools, "retried") {
+				t.Fatalf("retry = %v; tool RPCs %v", err, fs.toolCalls)
+			}
+		})
+	}
+}
+
+// An MCP tool with a uam tool's name keeps every uam tool refused, at every
+// turn's proof.
+func TestShadowingMCPToolStaysRefusedAfterTheProof(t *testing.T) {
+	server, raw := "notes", "notes_list"
+	shadow := rpc.CurrentToolMetadata{Name: "notes_list", MCPServerName: &server, MCPToolName: &raw}
+	own := catalogOf(declarationToolName, "notes_get", "notes_list")
+	empty := []rpc.CurrentToolMetadata{}
+	for name, tc := range map[string]struct {
+		catalogs []fakeToolCatalog
+		reads    int // per proof
+	}{
+		"in the cleared catalog": {[]fakeToolCatalog{{tools: empty}, {tools: own}, {tools: []rpc.CurrentToolMetadata{shadow}}, {tools: []rpc.CurrentToolMetadata{shadow}}}, 1},
+		"beside uam's own": {[]fakeToolCatalog{{tools: empty}, {tools: own}, {tools: empty}, {tools: append(slices.Clone(own), shadow)},
+			{tools: empty}, {tools: append(slices.Clone(own), shadow)}}, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			conv, fs, tools := openProved(t, &fakeClient{toolCatalogs: tc.catalogs})
+			ctx := context.Background()
+			toolsChanged(fs, "shadowed")
+			for turn := 1; turn <= 2; turn++ {
+				if err := conv.Send(ctx, agentapi.Prompt{Text: fmt.Sprint("turn ", turn)}); err != nil {
+					t.Fatal(err)
+				}
+				if fs.catalogReads != 2+turn*tc.reads || toolsAnswer(t, tools, fmt.Sprint("shadowed-", turn)) {
+					t.Fatalf("turn %d: shadowed tools answered or were not proved; tool RPCs %v", turn, fs.toolCalls)
+				}
+				if _, err := callTool(tools[2], "session", fmt.Sprint("shadowed-list-", turn), map[string]any{}); err == nil {
+					t.Fatalf("turn %d: the shadowed notes_list answered", turn)
+				}
+				fs.onEvent(ev(fmt.Sprint("idle-", turn), &rpc.SessionIdleData{}))
+			}
+		})
+	}
+}
+
+// A close while the proof runs leaves the tools refused, and a closed
+// conversation proves nothing.
+func TestCloseDuringTheProofKeepsToolsRefused(t *testing.T) {
+	conv, fs, tools := openProved(t, &fakeClient{})
+	ctx := context.Background()
+	toolsChanged(fs, "changed")
+	fs.catalogHook = func(i int) {
+		if i == 2 {
+			_ = conv.Close(ctx)
+		}
+	}
+	_ = conv.Send(ctx, agentapi.Prompt{Text: "next"})
+	if fs.catalogReads != 3 || toolsAnswer(t, tools, "closed") {
+		t.Fatalf("a proof the close overlapped holds: tool RPCs %v", fs.toolCalls)
+	}
+	calls := len(fs.toolCalls)
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "after close"}); !errors.Is(err, agentapi.ErrClosed) || len(fs.toolCalls) != calls {
+		t.Fatalf("send after close = %v; tool RPCs %v", err, fs.toolCalls)
 	}
 }
 

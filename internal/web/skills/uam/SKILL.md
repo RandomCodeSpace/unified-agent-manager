@@ -191,7 +191,9 @@ start instead.
 
 ## When a uam tool is unavailable
 
-A uam tool can answer that it is unavailable, for instance after an MCP
-server changed its tools mid-conversation. Carry on without it: a path in
+A uam tool can answer that it is unavailable, or be missing from your
+tools, for instance after an MCP server changed its tools mid-conversation.
+uam checks its tools again before the Task's next message, so they are
+usually back at the next turn. Until then, carry on without them: a path in
 your reply still becomes a file chip, and a Markdown table can stand in for
-a chart.
+a chart. Do not retry the call in the same turn.

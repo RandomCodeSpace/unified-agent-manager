@@ -877,7 +877,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if err != nil {
 		return nil, err
 	}
-	c.tools = gate
+	c.tools, c.uamTools = gate, uamTools
 	if req.ConversationID == "" {
 		c.selected = req.Model
 	}
@@ -1726,8 +1726,9 @@ type conversation struct {
 	// selected is the model this client last selected: at create or by
 	// SetModel; "" until then on a resumed session.
 	selected string
-	// tools gates the session's uam tools; nil when it has none.
-	tools *toolGate
+	// tools gates the session's uam tools, uamTools; nil when it has none.
+	tools    *toolGate
+	uamTools []copilot.Tool
 	// usage is the latest main-agent context report, kept so a model call's
 	// cache report can be sent with it.
 	usage agentapi.Context
@@ -2237,6 +2238,13 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	}
 	if err := c.refreshCustomVision(ctx); err != nil {
 		return err
+	}
+	// No turn runs: the uam tools a tool list change refused are proved
+	// again. The message goes either way.
+	if c.tools != nil {
+		if err := c.tools.reprove(ctx, c.sess, c.uamTools...); err != nil {
+			log.Warn("copilot uam tools stay refused until the next message", "conversation", c.id, "error", err)
+		}
 	}
 	if _, err := c.sess.Send(ctx, msg); err != nil {
 		return c.sendError(err)
