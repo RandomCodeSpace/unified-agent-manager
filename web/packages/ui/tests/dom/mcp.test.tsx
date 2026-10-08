@@ -28,7 +28,7 @@ describe('MCP servers', () => {
     expect(await list.findByText('https://notes.example.com/mcp')).toBeTruthy();
   });
 
-  test("the built-in GitHub server is off by default, and its switch is UAM's own setting for every task", async () => {
+  test("the built-in GitHub server is off by default, and its switch is UAM's own setting for every task, though discovery leaves it out", async () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
