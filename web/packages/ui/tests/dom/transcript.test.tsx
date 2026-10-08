@@ -323,6 +323,45 @@ describe('activity', () => {
     await waitFor(() => expect(conversation().textContent).toContain('{"command":"ls ~/projects/sky-dodge"}'));
   });
 
+  test.each(['detailed', 'compact'] as const)('a call a stopped turn left running is not the running step while the next turn starts (%s)', (density) => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
+    const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled' };
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const ring = () => view.container.querySelector('.animate-spin');
+    const view = render(draw([stopped], false));
+    expect(ring()).toBeNull();
+    // The Task works before the next turn's timing comes, then before its message lands.
+    view.rerender(draw([stopped], true));
+    expect(ring()).toBeNull();
+    expect(view.container.textContent).not.toContain('Running');
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true));
+    expect(ring()).toBeNull();
+    // The next turn's own call is its running step.
+    view.rerender(draw([stopped, { id: 't2', user_item_id: 'u2', started_at: at(10), state: 'working' }], true, [...items, { id: 'u2', kind: 'user', time: at(10), text: 'Again' }, bash('c2', 12)]));
+    expect(ring()).toBeTruthy();
+  });
+
+  test.each(['detailed', 'compact'] as const)('a stopped turn keeps its end and its reply foot while the next turn starts (%s)', (density) => {
+    const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
+    const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
+    const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const view = render(draw([stopped], false));
+    const ends = () => [view.container.textContent?.includes('Took 5s'), within(view.getByText('Counting.').closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent?.includes('940 tokens')];
+    expect(ends()).toEqual([true, true]);
+    // The Task works before the next turn's timing comes, then before its message lands: the stopped turn stays as it ended.
+    view.rerender(draw([stopped], true));
+    expect(ends()).toEqual([true, true]);
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true));
+    expect(ends()).toEqual([true, true]);
+    // A row begun after the end is a turn's that came without a message: it runs.
+    view.rerender(draw([stopped, { id: 't2', started_at: at(10), state: 'working' }], true, [...items, bash('c2', 12)]));
+    expect(view.container.textContent).not.toContain('Took 5s');
+  });
+
   test('a turn that ended with nothing in it says there was no reply', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const items: Item[] = [

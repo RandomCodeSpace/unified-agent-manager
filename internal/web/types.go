@@ -313,8 +313,8 @@ type SessionSummary struct {
 	CompactThreshold int `json:"compact_threshold,omitempty"`
 	// StopReason says why the last turn was cancelled, while the Task is:
 	// owner (Stop), time_limit (a routine's), credit_limit (autopilot's),
-	// remote (a remote command), mcp (an MCP server) or cli (the Copilot
-	// CLI). Omitted otherwise, also when the provider gave no reason.
+	// remote (a remote command) or mcp (an MCP server). Omitted otherwise,
+	// also when the provider gave no reason.
 	StopReason string `json:"stop_reason,omitempty"`
 }
 

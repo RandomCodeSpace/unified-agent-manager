@@ -625,8 +625,8 @@ export interface SessionSummary {
   compacting?: boolean;
   /** The open conversation's compaction threshold in percent: Settings' value when it opened; absent while none is open. */
   compact_threshold?: number;
-  /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command, an MCP server or the Copilot CLI; absent otherwise, also when the provider gave no reason. */
-  stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'remote' | 'mcp' | 'cli';
+  /** Why the last turn was cancelled, while the Task is (lib/stop): your Stop, a routine's time limit, autopilot's credit limit, a remote command or an MCP server; absent otherwise, also when the provider gave no reason. */
+  stop_reason?: 'owner' | 'time_limit' | 'credit_limit' | 'remote' | 'mcp';
   queued?: number;
   state: SessionState;
   state_detail?: string;
