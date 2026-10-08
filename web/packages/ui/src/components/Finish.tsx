@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { CheckCircle2, CircleDashed, CircleX, FileDiff, GitBranch, History, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { describeError, type Changes, type CheckKind, type EvidenceCheck, type Item, type SessionDetail, type TurnEvidence } from '../api';
 import { cn } from '../lib/cn';
 import { formatMs } from '../lib/transcript';
@@ -65,6 +65,11 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
   const turnEnd = session.turn_timings?.at(-1)?.ended_at;
   const key = `${session.id}:${session.updated_at}:${turnEnd}`;
   const [result, setResult] = useState<{ key: string; evidence: TurnEvidence | null; error: string } | null>(null);
+  // The evidence names the files Changes lists, so a Changes refresh listing other files (an edit, a commit) reads it
+  // again. The first list was read alongside the evidence: it changes nothing, nor does a refresh that lists the same.
+  const listed = useMemo(() => changes && JSON.stringify(changes.files), [changes]);
+  const [tree, setTree] = useState({ listed, version: 0 });
+  if (listed !== null && listed !== tree.listed) setTree({ listed, version: tree.listed === null ? tree.version : tree.version + 1 });
   useEffect(() => {
     if (!finished) return;
     const controller = new AbortController();
@@ -74,7 +79,7 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
       if (!controller.signal.aborted) setResult({ key, evidence: null, error: describeError(e) });
     });
     return () => controller.abort();
-  }, [session.id, session.history, key, changes, finished, api]);
+  }, [session.id, session.history, key, tree.version, finished, api]);
   const evidence = finished && result?.key === key ? result.evidence : null;
   const error = finished && result?.key === key ? result.error : '';
   const available = !!evidence && (evidence.checks.length > 0 || evidence.claims.length > 0 || evidence.files.length > 0);

@@ -1,7 +1,9 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and branch evidence (mock t20).
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
+import { UamApp } from '@uam/ui';
 import { api, type TurnEvidence } from '../../src/api';
+import { install } from '../../src/mock/install';
 import { log, openTask, sidebar } from './render';
 
 const before = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
@@ -152,6 +154,18 @@ describe('evidence inside Changes', () => {
     expect(card.queryByRole('button', { name: 'Review changes' })).toBeNull();
     expect(card.queryByRole('region', { name: 'Commit' })).toBeNull();
     for (const part of section.children) expect(part.textContent?.trim()).not.toBe('');
+  });
+
+  test('opening a finished Task reads its evidence once, not again when Changes first lists its files', async () => {
+    const evidence = vi.spyOn(api, 'evidence');
+    history.replaceState(null, '', '/#task=t20');
+    install();
+    // Without StrictMode's development double mount: the reads a production page makes.
+    render(<UamApp />);
+    await screen.findByRole('button', { name: /files, evidence available/ });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
+    evidence.mockRestore();
   });
 
   test('no card flashes while the evidence loads', async () => {

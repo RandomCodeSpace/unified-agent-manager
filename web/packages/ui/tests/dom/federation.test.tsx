@@ -9,7 +9,7 @@ import { createApiClient, type ConnectedInstance } from '../../src/api';
 const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'notices-v1'];
 const record = (id: string, label: string): ConnectedInstance => ({ id, instance_id: `instance-${id}`, label, base_url: `https://${id}.example`, enabled: true, generation: 1, has_key: true, version: 'test', protocol_major: 1, capabilities, allow_private: false });
 
-function federated(hash = '', records = [record('b', 'Workstation B'), record('c', 'Workstation C')]) {
+function federated(hash = '', records = [record('b', 'Workstation B'), record('c', 'Workstation C')], strict = true) {
   history.replaceState(null, '', `/${hash}`);
   const owners = ['', 'b', 'c'].map(id => {
     const mock = install();
@@ -41,7 +41,7 @@ function federated(hash = '', records = [record('b', 'Workstation B'), record('c
     return stream;
   } });
   const user = userEvent.setup();
-  const view = render(<StrictMode><UamApp /></StrictMode>);
+  const view = render(strict ? <StrictMode><UamApp /></StrictMode> : <UamApp />);
   return { user, calls, streams, owners, ...view, expireHome() { expired = true; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, replaceRegistry(next: ConnectedInstance[]) { registry = next; act(() => document.dispatchEvent(new Event('visibilitychange'))); }, setRegistry(next: ConnectedInstance[]) { registry = next; } };
 }
 
@@ -455,6 +455,58 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   await waitFor(() => expect(shelf()).toBe(settled + 1));
   expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b']);
   expect(window.location.hash).not.toContain('connection=b');
+});
+
+test('a page load opens one stream, reads the catalogs once and reports what it shows once per stream', async () => {
+  // Without StrictMode's development double mount: the requests a production page makes.
+  const { user, calls, streams, owners } = federated('', [record('b', 'Workstation B')], false);
+  // As on a real page, the registry answers after this instance's stream has sent its first snapshot.
+  const answer = window.fetch;
+  window.fetch = async (input, init) => {
+    if (String(input).endsWith('/api/connections')) await new Promise((r) => setTimeout(r, 200));
+    return answer(input, init);
+  };
+  const rows = await taskRows();
+  const remote = await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await new Promise((r) => setTimeout(r, 300));
+  // The connections arrive after this instance's stream opened: it stays open.
+  expect(streams.filter(entry => entry.owner === '' && entry.path.startsWith('/api/events?'))).toHaveLength(1);
+  expect(calls.filter(call => call.owner === '' && call.path === '/api/meta')).toHaveLength(1);
+  expect(calls.filter(call => call.path.endsWith('/viewing')).map(call => call.path).sort()).toEqual(['/api/connected-notifications/viewing', '/api/viewing']);
+  // A later change to the custom models, part of the model lists, reads the catalogs again.
+  await act(async () => { await owners[0].fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom_models: [] }) }); });
+  await waitFor(() => expect(calls.filter(call => call.owner === '' && call.path === '/api/meta')).toHaveLength(2));
+  // Its snapshot still reached the machine list: on B, this instance's rows show before its own stream there opens.
+  const Live = window.EventSource;
+  window.EventSource = new Proxy(Live, { construct(target, args: [string]) {
+    const stream = new target(args[0]);
+    if (args[0].startsWith('/api/events?')) stream.close();
+    return stream;
+  } });
+  await user.click(remote);
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  expect((await taskRows()).getByRole('button', { name: /Explain how the CPR probe decides the glyph set/, description: 'This instance' })).toBeTruthy();
+});
+
+test('a first connection added while the page is open restarts the stream once, so the machine list starts from a snapshot', async () => {
+  const { user, owners, streams, replaceRegistry } = federated('', [], false);
+  await (await taskRows()).findByRole('button', { name: /Explain how the CPR probe decides the glyph set/ });
+  // Renamed while there is no machine list to keep it in.
+  await act(async () => { await owners[0].fetch('/api/sessions/t2', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Renamed before pairing' }) }); });
+  await (await taskRows()).findByRole('button', { name: /Renamed before pairing/ });
+  replaceRegistry([record('b', 'Workstation B')]);
+  const remote = await (await taskRows()).findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  await waitFor(() => expect(streams.filter(entry => entry.owner === '' && entry.path.startsWith('/api/events?'))).toHaveLength(2));
+  // On B, this instance's rows come from that snapshot: its own stream there never opens here.
+  const Live = window.EventSource;
+  window.EventSource = new Proxy(Live, { construct(target, args: [string]) {
+    const stream = new target(args[0]);
+    if (args[0].startsWith('/api/events?')) stream.close();
+    return stream;
+  } });
+  await user.click(remote);
+  await waitFor(() => expect(window.location.hash).toContain('connection=b'));
+  expect((await taskRows()).getByRole('button', { name: /Renamed before pairing/, description: 'This instance' })).toBeTruthy();
 });
 
 test('switching the instance in Settings keeps the section and shows the known state at once', async () => {

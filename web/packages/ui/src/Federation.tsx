@@ -363,11 +363,15 @@ export default function Federation() {
   const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
   const pendingRoute = authenticated && !registryRead && hasIdentity(window.location.hash);
   const unavailable = routeError || (active && !selectedSource ? 'This connection is unavailable. Open an enabled instance to continue.' : null);
+  // The view's stream feeds the machine list's copy of its machine while there are connections, and also before the registry
+  // says whether there are any, so the copy has the stream's first snapshot. Neither this nor the catalog cache may appear
+  // with the registry: the view would reopen its stream and read the catalogs again.
+  const onEvent = connections.length || !registryRead ? onActiveEvent : undefined;
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :
-      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent: connections.length ? onActiveEvent : undefined, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
-        ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, metaCache, carry }) }}>
+      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
+        ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, carry }) }}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
     <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent tasks keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
