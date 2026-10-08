@@ -65,7 +65,7 @@ func TestTurnTodosScopeCapAndCountsOnTheTiming(t *testing.T) {
 	conv.Emit(todosEvent(true, left...))
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	first := lastTiming(t, m, sum.ID)
-	if want := (TodoCounts{Total: 4, Done: 2, Blocked: 1, Open: 1}); first.Todo != want {
+	if want := (TodoCounts{Total: 4, Done: 2, Blocked: 1, InProgress: 1, Open: 1}); first.Todo != want {
 		t.Fatalf("timing counts = %+v, want %+v", first.Todo, want)
 	}
 	rec, err := m.TurnTodos(sum.ID, first.ID)
@@ -89,7 +89,7 @@ func TestTurnTodosScopeCapAndCountsOnTheTiming(t *testing.T) {
 	conv.Emit(todosEvent(true, more...))
 	conv.Emit(cancelledTurn(""))
 	second := lastTiming(t, m, sum.ID)
-	if want := (TodoCounts{Total: 62, Blocked: 1, Open: 61, Omitted: 62 - maxSnapshotTodos}); second.Todo != want {
+	if want := (TodoCounts{Total: 62, Blocked: 1, InProgress: 1, Pending: 60, Open: 61, Omitted: 62 - maxSnapshotTodos}); second.Todo != want {
 		t.Fatalf("capped counts = %+v, want %+v", second.Todo, want)
 	}
 	rec, err = m.TurnTodos(sum.ID, second.ID)
@@ -153,8 +153,13 @@ func TestTurnTodosOneAppendNoSecondWriteAndReload(t *testing.T) {
 	// same flush appends the rows and writes the counts.
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	var published TurnTiming
-	decodeField(t, frameOf(t, sub, "turn_timing"), "turn_timing", &published)
-	want := TodoCounts{Total: 2, Done: 1, Open: 1}
+	ended := frameOf(t, sub, "turn_timing")
+	decodeField(t, ended, "turn_timing", &published)
+	want := TodoCounts{Total: 2, Done: 1, Pending: 1, Open: 1}
+	// The split's wire names; a stage with no rows is left out.
+	if wire := string(ended.data["turn_timing"]); !strings.Contains(wire, `"todo":{"done":1,"total":2,"pending":1,"open":1}`) {
+		t.Fatalf("turn_timing frame = %s", wire)
+	}
 	m.mu.Lock()
 	revised := s.timingRevision - revision
 	m.mu.Unlock()

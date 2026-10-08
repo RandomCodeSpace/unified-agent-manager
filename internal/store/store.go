@@ -372,14 +372,18 @@ type TurnTiming struct {
 	Todo TodoCounts `json:"todo,omitzero"`
 }
 
-// TodoCounts counts the rows of a conversation's todo list by status: Open
-// is pending and in progress, and Omitted the rows a bounded copy left out.
+// TodoCounts counts the rows of a conversation's todo list by status:
+// Open is InProgress plus Pending, the only split counts written before
+// those two were (so Open past their sum is rows of either), and Omitted
+// the rows a bounded copy left out.
 type TodoCounts struct {
-	Done    int `json:"done,omitempty"`
-	Total   int `json:"total,omitempty"`
-	Blocked int `json:"blocked,omitempty"`
-	Open    int `json:"open,omitempty"`
-	Omitted int `json:"omitted,omitempty"`
+	Done       int `json:"done,omitempty"`
+	Total      int `json:"total,omitempty"`
+	Blocked    int `json:"blocked,omitempty"`
+	InProgress int `json:"in_progress,omitempty"`
+	Pending    int `json:"pending,omitempty"`
+	Open       int `json:"open,omitempty"`
+	Omitted    int `json:"omitted,omitempty"`
 }
 
 // WebState is the small durable part of a web session. Transcripts stay with
