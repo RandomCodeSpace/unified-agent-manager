@@ -40,8 +40,8 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     const key = turn ? turn.user_item_id : lastUser(items) ?? lastUser(identityItems) ?? 'start';
     const lead = activity?.intent || (key ? turnVerb(key) : '');
     const todo = todoLine(activity?.todos, turn?.started_at);
-    // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
-    return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined, more: 0 } : todo };
+    // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again, and its "+N" follows the lead.
+    return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
   }
   if (readOnly(session)) return null;
   if (session.state === 'cancelled' && session.stop_reason) {
@@ -102,6 +102,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
             {shown.kind === 'working' ? (
               <>
                 {shown.lead || 'Working'}
+                {leadMore(shown) > 0 && `, and ${leadMore(shown)} more in progress`}
                 <ClockWords since={since} timing={timing} />
                 {shown.todo && todoSentence(shown.todo)}
                 {shown.retry && retrySentence(shown.retry)}
@@ -127,13 +128,18 @@ function retrySentence(retry: Retry): string {
   return `. ${lead}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }
 
+/** How many more rows are in progress when the lead is the row the work is at ("Now:" gave way to it). */
+const leadMore = (line: Extract<Line, { kind: 'working' }>) => (line.todo?.kind === 'list' && !line.todo.now ? line.todo.more : 0);
+
 function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind: 'working' }>; since?: string; timing?: TurnTiming }>) {
   const retry = line.retry && retryWords(line.retry);
+  const more = leadMore(line);
   return (
     <>
       {/* Still: this line says what, the ring is elsewhere. */}
       <Dot tone="accent" className={cn('size-1.5', line.compacting && 'bg-badge-violet')} />
       {line.lead && <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead}…</span>}
+      {more > 0 && <span className="shrink-0 tabular-nums text-muted max-sm:hidden">+{more}</span>}
       <Clock since={since} timing={timing} />
       {line.todo && <TodoSegment todo={line.todo} />}
       {retry && (

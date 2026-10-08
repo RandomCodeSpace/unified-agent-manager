@@ -172,10 +172,15 @@ test('the todo segment: counts, meter, Now with how many more, blocked in words;
   // The meter: one segment per row.
   expect(view.container.querySelectorAll('.h-1.w-3').length).toBe(4);
   expect(view.container.querySelector('.animate-spin, .animate-pulse-dot')).toBeNull();
-  // Copilot's intent is the row in progress: it leads, and "Now:" goes.
+  // Copilot's intent is the row in progress: it leads, and "Now:" goes; how many more are in progress follows the lead.
   view.rerender(draw(withTodos(listOf(rows()), 'Build the index page')));
-  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Build the index page, and 1 more in progress, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
   expect(screen.queryByText('Now:')).toBeNull();
+  expect(screen.getByText('Build the index page…').nextElementSibling?.textContent).toBe('+1');
+  // The only row in progress: nothing follows the lead.
+  view.rerender(draw(withTodos(listOf(rows([{}, {}, { status: 'pending' }])), 'Build the index page')));
+  expect(screen.getByRole('button', { name: 'Build the index page, 2 minutes. Todo 1 of 4 done, 1 blocked. Show the list' })).toBeTruthy();
+  expect(screen.queryByText('+1')).toBeNull();
   // The last turn's list, not touched yet: its open rows, and the reader still opens.
   view.rerender(draw(withTodos(listOf(rows(), { touched: false }))));
   expect(screen.getByText('3 open from the last turn')).toBeTruthy();
