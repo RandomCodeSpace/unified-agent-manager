@@ -1333,6 +1333,9 @@ func newSubagentFold(req agentapi.SubagentRequest) *subagentFold {
 func (f *subagentFold) add(ev copilot.SessionEvent) {
 	id := agentOf(ev)
 	switch d := ev.Data.(type) {
+	case *rpc.ToolExecutionStartData:
+		f.log.noteCall(d)
+		return
 	case *rpc.ToolExecutionCompleteData:
 		if parent := f.log.byCall[d.ToolCallID]; f.log.byID[parent] != nil && d.Result != nil {
 			f.change(parent, func(sa *agentapi.Subagent) { sa.Result = clip(d.Result.Content, webResultBytes) })
@@ -3385,6 +3388,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 	case *rpc.ToolExecutionStartData:
 		// Its item follows.
+		c.subs.noteCall(d)
 		if sa, ok := c.subs.count(ev); ok {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
@@ -4126,12 +4130,26 @@ func agentOf(ev copilot.SessionEvent) string {
 type subagentLog struct {
 	byID   map[string]*agentapi.Subagent
 	byCall map[string]string          // spawning tool call ID -> agent ID
+	asked  map[string]string          // spawning tool call ID -> the call's description
 	tools  map[string]map[string]bool // agent ID -> tool call IDs counted live
 	order  []string
 }
 
 func newSubagentLog() *subagentLog {
-	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}, tools: map[string]map[string]bool{}}
+	return &subagentLog{byID: map[string]*agentapi.Subagent{}, byCall: map[string]string{}, asked: map[string]string{}, tools: map[string]map[string]bool{}}
+}
+
+// noteCall keeps what a task call asked its subagent to do, in the call's own
+// words: a predefined agent's description says only what that agent is for,
+// the same on every spawn.
+func (l *subagentLog) noteCall(d *rpc.ToolExecutionStartData) {
+	if d.ToolName != taskTool {
+		return
+	}
+	args, _ := d.Arguments.(map[string]any)
+	if text, _ := args["description"].(string); strings.TrimSpace(text) != "" {
+		l.asked[d.ToolCallID] = displaytext.Sanitize(strings.TrimSpace(text))
+	}
 }
 
 // apply folds a subagent.* event into the log and returns the changed record,
@@ -4153,7 +4171,7 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		if len(sa.Runs) == 0 {
 			sa.StartRun(ev.Timestamp, agentapi.SubagentTriggerSpawn)
 		}
-		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), d.AgentDescription
+		sa.ParentToolCallID, sa.Name, sa.Description = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), cmp.Or(l.asked[d.ToolCallID], d.AgentDescription)
 		if d.ParentID != nil {
 			sa.ParentAgentID = *d.ParentID
 		}
@@ -4188,6 +4206,9 @@ func (l *subagentLog) apply(ev copilot.SessionEvent) (agentapi.Subagent, bool) {
 		callID, name, status = d.ToolCallID, subagentName(d.AgentDisplayName, d.AgentName), agentapi.SubagentFailed
 		errMsg = clip(displaytext.Sanitize(d.Error), maxErrorText)
 		tokens, toolCalls = d.TotalTokens, d.TotalToolCalls
+	case *rpc.ToolExecutionStartData:
+		l.noteCall(d)
+		return agentapi.Subagent{}, false
 	default:
 		return agentapi.Subagent{}, false
 	}

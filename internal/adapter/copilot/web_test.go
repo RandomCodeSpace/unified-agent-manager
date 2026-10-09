@@ -2814,3 +2814,39 @@ func TestWebAskUserMultipleChoice(t *testing.T) {
 		t.Fatalf("reply = %+v, %v", r.resp, r.err)
 	}
 }
+
+func TestWebSubagentDescriptionIsWhatItsCallAsked(t *testing.T) {
+	// A predefined agent reports the same description on every spawn; the task call's own words say what this one does.
+	events := []copilot.SessionEvent{
+		ev("c1", &rpc.ToolExecutionStartData{ToolCallID: "call_1", ToolName: "task", Arguments: map[string]any{"description": "Verify RTK installed", "agent_type": "task"}}),
+		agentEv("s1", "agent-1", &rpc.SubagentStartedData{ToolCallID: "call_1", AgentName: "task", AgentDescription: "Execute development commands like tests and builds"}),
+		ev("c2", &rpc.ToolExecutionStartData{ToolCallID: "call_2", ToolName: "task", Arguments: map[string]any{"agent_type": "explore"}}),
+		agentEv("s2", "agent-2", &rpc.SubagentStartedData{ToolCallID: "call_2", AgentName: "explore", AgentDescription: "Explores the codebase"}),
+	}
+	want := []string{"Verify RTK installed", "Explores the codebase"}
+	check := func(where string, subs []agentapi.Subagent) {
+		t.Helper()
+		if len(subs) != len(want) {
+			t.Fatalf("%s: subagents = %+v", where, subs)
+		}
+		for i, s := range subs {
+			if s.Description != want[i] {
+				t.Fatalf("%s: %s description = %q, want %q", where, s.ID, s.Description, want[i])
+			}
+		}
+	}
+	check("recorded", history(events).Subagents)
+
+	h := openWeb(t)
+	_ = h.conv.Send(context.Background(), agentapi.Prompt{Text: "delegate"})
+	for _, e := range events {
+		h.fs.onEvent(e)
+	}
+	var live []agentapi.Subagent
+	for _, e := range h.sink.all() {
+		if e.Kind == agentapi.EventSubagent && e.Subagent.Status == agentapi.SubagentRunning && e.Subagent.Tokens == 0 {
+			live = append(live, *e.Subagent)
+		}
+	}
+	check("live", live)
+}

@@ -300,6 +300,14 @@ describe('subagents', () => {
     expect(rows.slice(1, 5).every((name) => /, running/.test(name))).toBe(true);
   });
 
+  test('a running subagent\'s row says what it is doing now, not only what it was asked', async () => {
+    await openTask('t22');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    const row = live.getByRole('button', { name: /^Audit package web\/src\/lib, running · List the exported symbols of web\/src\/lib that nothing calls\./ });
+    expect(row.textContent).toContain('Reading transcript.ts · step 4');
+    expect(row.textContent).not.toContain('List the exported symbols');
+  });
+
   test('a long reply\'s list takes a filter by name or result; no subagent takes a follow-up', async () => {
     const { user } = await openTask('t22');
     await user.click(log().getByRole('button', { name: /^22 subagents · [\d.]+M tokens · 20 done · 2 failed/ }));

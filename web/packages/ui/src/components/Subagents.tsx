@@ -561,6 +561,8 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const phone = useScope((d) => d.phone) ?? false;
   const open = useScope((d) => d.pinned === s.id) ?? false;
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
+  // While it runs, what it is doing now (its latest step), so a row says more than what it was asked.
+  const doing = useScope((d) => (s.status === 'running' ? rowSummary(d.summaries, s) : '')) ?? '';
   // Keyboard focus peeks too, after the same moment; the peek never takes the focus.
   const triggerId = useId();
   const focusTimer = useRef(0);
@@ -568,14 +570,15 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   if (!scope) return null;
   const name = s.name || 'Subagent';
   // What it was asked to do, in a few words (the `task` call's description): the name is often only the agent's kind.
-  const about = s.description && s.description.trim().toLowerCase() !== name.toLowerCase() ? s.description : '';
+  const asked = s.description && s.description.trim().toLowerCase() !== name.toLowerCase() ? s.description : '';
+  const about = doing || asked;
   const parentId = s.parent_tool_call_id;
   const failure = s.status === 'failed' ? s.error : '';
   const props = {
     type: 'button' as const,
     'data-subagent-toggle': '',
     'aria-haspopup': 'dialog' as const,
-    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}${about ? ` · ${about}` : ''}`,
+    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}${asked ? ` · ${asked}` : ''}`,
     className: cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11', open && 'bg-tint-selected hover:bg-tint-selected'),
     style: { paddingLeft: `${8 + depth * 18}px` },
   };
@@ -588,7 +591,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
       {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
       <span className={cn('min-w-0 truncate', about ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
       {about && (
-        <span className="min-w-0 flex-1 truncate text-muted max-sm:hidden" title={about}>
+        <span className="min-w-0 flex-1 truncate text-muted max-sm:hidden" title={doing && asked ? `${asked}\n${doing}` : about}>
           {about}
         </span>
       )}
