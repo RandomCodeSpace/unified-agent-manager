@@ -778,6 +778,8 @@ const (
 	// EventTodos replaces the conversation's todo list with Event.Todos; it
 	// is never persisted.
 	EventTodos EventKind = "todos"
+	// EventMCPStatus replaces lightweight state of the open conversation's servers.
+	EventMCPStatus EventKind = "mcp_status"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -801,6 +803,7 @@ type Event struct {
 	Compacting bool
 	Activity   *Activity
 	Todos      *TodoList
+	MCPStatus  *MCPStatusSnapshot
 }
 
 // Activity is the main agent's live state in the running turn. The adapter

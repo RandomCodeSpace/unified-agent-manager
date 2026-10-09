@@ -10,6 +10,18 @@ const delta = (seq, text) => ({ name: 'delta', seq, session_id: 'task', agent_id
 const update = (state, data) => reducer(state, { type: 'update', data });
 const loaded = (state, seq, items, subagent = running) => reducer(state, { type: 'agent_loaded', sessionId: 'task', agentId: 'helper', seq, items, subagent });
 
+test('MCP status follows the selected stream, rejects older frames, and releases state on close', () => {
+  const snapshot = { supported: true, ready: true, servers: [{ name: 'notes', status: 'connected' }] };
+  let state = { ...initialState, selectedId: 'task', snapshotSeq: 10, detailSeq: 10, detail: { id: 'task', open: true, items: [], mcp_status: { supported: true, ready: false, servers: [] } } };
+  const event = { name: 'mcp_status', seq: 11, session_id: 'task', mcp_status: snapshot };
+  assert.equal(update(state, { ...event, session_id: 'other' }), state);
+  state = update(state, event);
+  assert.deepEqual(state.detail.mcp_status, snapshot);
+  assert.equal(update(state, { ...event, seq: 10, mcp_status: { ...snapshot, servers: [] } }), state);
+  state = update(state, { name: 'session', seq: 12, session: { id: 'task', open: false, state: 'closed' } });
+  assert.deepEqual(state.detail.mcp_status, { supported: true, ready: false, servers: [] });
+});
+
 test('leaving a subagent releases its buffer and ignores late output and fetch replies', () => {
   let state = update(loading(), delta(11, 'buffered'));
   state = reducer(state, { type: 'agent_unloaded', sessionId: 'task', agentId: 'helper' });

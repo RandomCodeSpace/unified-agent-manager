@@ -103,11 +103,12 @@ export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
         return list();
       }
     }
-    if ((r = path.match(/^\/api\/sessions\/([^/]+)\/mcp(?:\/(reconnect)|\/servers\/([^/]+)\/(enable|disable|restart|sign-in|sign-in\/finish))?$/))) {
+    if ((r = path.match(/^\/api\/sessions\/([^/]+)\/mcp(?:\/(reconnect)|\/servers\/([^/]+)\/(tools|enable|disable|restart|sign-in|sign-in\/finish))?$/))) {
       const task = decodeURIComponent(r[1]);
       const name = r[3] ? decodeURIComponent(r[3]) : '';
       const action = r[2] ?? r[4];
       if (method === 'GET' && !action) return json(200, { servers: status(task) });
+      if (method === 'GET' && action === 'tools') return json(200, { tools: status(task).find((s) => s.name === name)?.tools ?? [] });
       if (method !== 'POST') return null;
       if (action === 'reconnect') {
         off.delete(task);

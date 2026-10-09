@@ -944,6 +944,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   subagents_before?: string;
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
+  /** Live MCP state only; descriptions are fetched for an expanded server. */
+  mcp_status?: McpStatusSnapshot;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1118,7 +1120,8 @@ export type UpdateData =
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
-  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity };
+  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
+  | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1139,6 +1142,7 @@ export const UPDATE_EVENTS = [
   'background_tasks',
   'turn_timing',
   'turn_activity',
+  'mcp_status',
 ] as const;
 
 export class ApiError extends Error {
@@ -1267,14 +1271,33 @@ export interface McpTool {
 }
 
 /** One MCP server as a Task's conversation sees it. */
-export interface McpStatus {
+export interface McpServerStatus {
   name: string;
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled' | 'stopped' | 'not_configured' | (string & {});
   error?: string;
   source?: string;
   /** A remote server, which may need a sign-in. */
   remote?: boolean;
+  needs_reconnect?: boolean;
+}
+
+export interface McpStatus extends McpServerStatus {
   tools?: McpTool[];
+}
+
+export interface McpStatusSnapshot {
+  /** Typed status capability, independent of whether an event was observed. */
+  supported: boolean;
+  /** A full initial snapshot is available. */
+  ready: boolean;
+  servers: McpServerStatus[];
+  truncated?: boolean;
+}
+
+export interface McpTaskStatus {
+  servers: McpStatus[];
+  /** Absent from older services. */
+  mcp_status?: McpStatusSnapshot;
 }
 
 /** A started MCP sign-in: the page to open (none when a kept sign-in sufficed) and whether the address the browser ends on can be pasted back. */
@@ -1652,9 +1675,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     updateMcpServer: (name: string, body: McpServerInput) => call<McpServers>('PUT', `/api/mcp/servers/${enc(name)}`, body),
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
-    taskMcp: (id: string) => call<{ servers: McpStatus[] }>('GET', `/api/sessions/${enc(id)}/mcp`),
-    taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}`),
-    reconnectTaskMcp: (id: string) => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/reconnect`),
+    taskMcp: (id: string, summary = false) => call<McpTaskStatus>('GET', `/api/sessions/${enc(id)}/mcp${summary ? '?summary=1' : ''}`),
+    taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}?summary=1`),
+    reconnectTaskMcp: (id: string) => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/reconnect?summary=1`),
+    taskMcpTools: (id: string, name: string) => call<{ tools: McpTool[] }>('GET', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/tools`),
     startMcpSignIn: (id: string, name: string, again: boolean) => call<McpSignIn>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in`, { again }),
     finishMcpSignIn: (id: string, name: string, url: string) => call<void>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in/finish`, { url }),
     routines: (projectId: string) => call<{ routines: Routine[] }>('GET', `/api/projects/${enc(projectId)}/routines`),

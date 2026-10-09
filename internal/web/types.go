@@ -386,14 +386,15 @@ type SessionDetail struct {
 	TurnTimings []TurnTiming `json:"turn_timings"`
 	SessionSummary
 	// Seq orders this snapshot against events on the same service.
-	Seq              uint64                    `json:"seq"`
-	Items            []agentapi.Item           `json:"items"`
-	Interactions     []agentapi.Interaction    `json:"interactions"`
-	Subagents        []agentapi.Subagent       `json:"subagents"`
-	HistoryTruncated bool                      `json:"history_truncated"`
-	LastSubmission   *Submission               `json:"last_submission"`
-	BackgroundTasks  *agentapi.BackgroundTasks `json:"background_tasks,omitempty"`
-	TurnActivity     *TurnActivity             `json:"turn_activity,omitempty"`
+	Seq              uint64                      `json:"seq"`
+	Items            []agentapi.Item             `json:"items"`
+	Interactions     []agentapi.Interaction      `json:"interactions"`
+	Subagents        []agentapi.Subagent         `json:"subagents"`
+	HistoryTruncated bool                        `json:"history_truncated"`
+	LastSubmission   *Submission                 `json:"last_submission"`
+	BackgroundTasks  *agentapi.BackgroundTasks   `json:"background_tasks,omitempty"`
+	TurnActivity     *TurnActivity               `json:"turn_activity,omitempty"`
+	MCPStatus        *agentapi.MCPStatusSnapshot `json:"mcp_status,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or

@@ -361,6 +361,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
         case 'turn_activity':
           return { ...state, detail: { ...detail, turn_activity: d.turn_activity } };
+        case 'mcp_status':
+          return { ...state, detail: { ...detail, mcp_status: d.mcp_status } };
       }
     }
   }
@@ -462,6 +464,7 @@ function withSession(state: State, s: SessionSummary): State {
   if (detail?.id === s.id) {
     const next: Record<string, unknown> = { ...detail };
     for (const key of SUMMARY_KEYS) next[key] = s[key];
+    if (!s.open && detail.mcp_status) next.mcp_status = { supported: detail.mcp_status.supported, ready: false, servers: [] };
     merged = next as unknown as SessionDetail;
   }
   return { ...state, sessions: upsert(state.sessions, s), detail: merged };

@@ -353,6 +353,8 @@ type webSession struct {
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 	backgroundTasks  *agentapi.BackgroundTasks
 	execution        *agentapi.ExecutionState
+	mcpStatus        *agentapi.MCPStatusSnapshot
+	mcpRevision      uint64
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -1061,6 +1063,11 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot := *s.backgroundTasks
 		snapshot.Tasks = slices.Clone(snapshot.Tasks)
 		d.BackgroundTasks = &snapshot
+	}
+	if s.mcpStatus != nil {
+		snapshot := *s.mcpStatus
+		snapshot.Servers = slices.Clone(snapshot.Servers)
+		d.MCPStatus = &snapshot
 	}
 	activity := s.turnActivity
 	d.TurnActivity = &activity
@@ -2210,6 +2217,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventBackgroundTasks:
 		if ev.BackgroundTasks != nil {
 			m.backgroundTasksLocked(s, *ev.BackgroundTasks)
+		}
+	case agentapi.EventMCPStatus:
+		if ev.MCPStatus != nil {
+			m.mcpStatusLocked(s, *ev.MCPStatus)
 		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {
