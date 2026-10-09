@@ -1256,6 +1256,8 @@ function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string;
   switch (asked.outcome) {
     case 'declined':
       return { answer: 'Declined', tone: 'text-muted' };
+    case 'cancelled':
+      return { answer: 'Cancelled', tone: 'text-muted' };
     case 'failed':
       return { answer: asked.error ? `Failed: ${asked.error}` : 'Failed', tone: 'text-error' };
     case 'answered':
@@ -1263,6 +1265,7 @@ function settledAnswer(asked: AskedQuestion): { marker?: string; answer: string;
     default:
       return { answer: 'Not answered', tone: 'text-muted' };
   }
+  if (asked.link) return { answer: 'Done', tone: 'text-muted' };
   if (!answer) return { answer: 'Answered', tone: 'text-muted' };
   if (asked.questions.length > 1) return { marker: 'You answered', answer, tone: 'text-ink' };
   // Picked: the answer is chosen labels and nothing else; anything more was typed.

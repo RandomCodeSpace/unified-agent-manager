@@ -809,7 +809,7 @@ export interface ToolCall {
   /** A running shell call's newest output lines, oldest first, at most 10; absent once it ends. */
   tail?: OutputLine[];
   /** Client-only semantic outcome retained after page eviction. */
-  question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
+  question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }
 
 /** One line of a running shell call's output; `err` marks stderr. */

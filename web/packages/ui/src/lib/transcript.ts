@@ -168,7 +168,7 @@ const QUESTION_TONE: Record<InteractionState, 'ok' | 'denied' | 'gone'> = { pend
 export function approvalMark(ix: Interaction): { word: string; full: string; tone: 'ok' | 'denied' | 'gone' } {
   const resolution = ix.resolution ? ` · ${ix.resolution}` : '';
   const full = `${ix.title} · ${STATE_TEXT[ix.state]}${resolution}`;
-  if (ix.kind === 'question') return { word: STATE_TEXT[ix.state].toLowerCase(), full, tone: QUESTION_TONE[ix.state] };
+  if (ix.kind === 'question') return { word: ix.elicitation && ix.state === 'rejected' && ix.resolution === CANCELLED ? CANCELLED : STATE_TEXT[ix.state].toLowerCase(), full, tone: QUESTION_TONE[ix.state] };
   if (ix.resolution === YOLO_RESOLUTION) return { word: 'auto', full, tone: 'ok' };
   if (ix.resolution === ASSISTED_RESOLUTION) return { word: 'reviewed', full, tone: 'ok' };
   switch (ix.state) {
@@ -280,8 +280,10 @@ export interface AskedQuestion {
   answer?: string;
   /** Choices the answer named, so they can be marked. */
   chosen: string[];
-  /** `none`: the call ended without an answer (a restart, a stopped turn). */
-  outcome: 'pending' | 'answered' | 'declined' | 'failed' | 'none';
+  /** `none`: the call ended without an answer (a restart, a stopped turn); `cancelled`: an elicitation dismissed without declining it. */
+  outcome: 'pending' | 'answered' | 'declined' | 'cancelled' | 'failed' | 'none';
+  /** An elicitation link the user opened and confirmed: there is no answer text. */
+  link?: boolean;
   /** What the tool reported when it failed. */
   error?: string;
 }
@@ -292,6 +294,8 @@ const ANSWER = /^User\s+(?:selected|responded|answered)\s*:\s*/i;
 export const DECLINED_OUTPUT = 'The user was unable to respond due to an error';
 /** What UAM's adapter tells the CLI when the user declines; a failed call may carry it. */
 const DECLINED_ERROR = 'the user declined to answer';
+/** The service's resolution of an elicitation dismissed without declining it. */
+const CANCELLED = 'cancelled';
 /** Legacy answered resolution, "Answered: a, b; c". */
 const RESOLVED = /^Answered:\s*/;
 
@@ -332,12 +336,13 @@ export function questionOf(tool: ToolCall | undefined, interaction: Interaction 
   }
   switch (state) {
     case 'answered': {
+      if (interaction!.elicitation?.mode === 'url') return { ...answered(q, ''), link: true };
       // A bare "answered" is the service's state word, not the answer: the text is not recorded here.
       const text = (interaction!.resolution ?? '').replace(RESOLVED, '').trim();
       return answered(q, /^answered$/i.test(text) ? '' : text);
     }
     case 'rejected':
-      q.outcome = 'declined';
+      q.outcome = interaction!.elicitation && interaction!.resolution === CANCELLED ? 'cancelled' : 'declined';
       return q;
     case 'expired':
       q.outcome = 'none';
@@ -537,7 +542,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
     else if (interaction) decided++;
   }
   const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
-  const [answeredQs, declinedQs, unanswered] = [asked('answered'), asked('declined'), asked('none')];
+  const [answeredQs, declinedQs, cancelledQs, unanswered] = [asked('answered'), asked('declined'), asked('cancelled'), asked('none')];
   const counts = toolCounts(calls, live);
   const { done, noResult } = counts;
   const failed = counts.failed + asked('failed');
@@ -558,7 +563,7 @@ export function summarizeActivity(entries: Entry[], { live, streamingId, approva
     now = 'Thinking…';
   }
   const label = [
-    sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
+    sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, cancelledQs && `cancelled ${noun(cancelledQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
     failed && `${failed} failed`,
     noResult && `${noResult} without a result`,
     unanswered && `${noun(unanswered, 'question')} not answered`,
@@ -832,6 +837,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
     quiet(other && noun(other, 'tool')),
     quiet(asked('answered') && `${noun(asked('answered'), 'question')} answered`),
     quiet(asked('declined') && `${noun(asked('declined'), 'question')} declined`),
+    quiet(asked('cancelled') && `${noun(asked('cancelled'), 'question')} cancelled`),
     quiet(decided && `${noun(decided, 'request')} decided`),
     failed && { text: `${failed} failed`, tone: 'error' as const },
     quiet(noResult && `${noResult} without a result`),
