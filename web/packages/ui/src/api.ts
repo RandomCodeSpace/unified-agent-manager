@@ -1228,6 +1228,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
   plan_version?: number;
+  /** The provider's scratch plan file, once known. */
+  plan_path?: string;
   schedules?: ScheduleSnapshot | null;
   /** Live MCP state only; descriptions are fetched for an expanded server. */
   mcp_status?: McpStatusSnapshot;
@@ -1415,7 +1417,7 @@ export type UpdateData =
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
   | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
-  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number }
+  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number; plan_path?: string }
   | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null }
   | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot };
 

@@ -362,7 +362,7 @@ export function reducer(state: State, action: Action): State {
         case 'turn_activity':
           return { ...state, detail: { ...detail, turn_activity: d.turn_activity } };
         case 'plan_version':
-          return { ...state, detail: { ...detail, plan_version: d.plan_version } };
+          return { ...state, detail: { ...detail, plan_version: d.plan_version, plan_path: d.plan_path ?? detail.plan_path } };
         case 'schedules':
           return { ...state, detail: { ...detail, schedules: d.schedules } };
         case 'mcp_status':

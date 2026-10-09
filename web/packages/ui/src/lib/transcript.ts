@@ -722,6 +722,15 @@ export interface ActivityContext {
   streamingId?: string;
   /** Requests by the tool item they sit on. */
   approvals?: Map<string, Interaction[]>;
+  /** The Task's scratch plan file (`scratchPlan`): editing it changes no file of the Task. */
+  scratch?: (path: string) => boolean;
+}
+
+/** Whether a changed path is exactly the provider's scratch plan file: a relative path is in `workdir`, as the service compares it. */
+export function scratchPlan(planPath: string | undefined, workdir: string): ((path: string) => boolean) | undefined {
+  if (!planPath) return undefined;
+  const clean = (path: string) => path.split('/').filter((part, i) => part !== '.' && (part !== '' || i === 0)).join('/');
+  return (path) => clean(path.startsWith('/') ? path : `${workdir}/${path}`) === clean(planPath);
 }
 
 export interface SummaryPart {
@@ -797,7 +806,7 @@ export function summarizeTurn(entries: Entry[], ctx: ActivityContext): TurnSumma
       case 'file': {
         if (CHANGE_TOOLS.includes(name)) {
           const paths = changePaths(t);
-          for (const p of paths.length ? paths : [item.id]) changed.add(p);
+          for (const p of paths.length ? paths : [item.id]) if (!ctx.scratch?.(p)) changed.add(p);
         } else read.add(t.path ?? (mainArgument(name, t.input) || item.id));
         break;
       }
@@ -914,13 +923,13 @@ export function callProduct(item: Item): 'chart' | 'images' | null {
   return (item.images?.length ?? 0) > 0 || !!item.images_note ? 'images' : null;
 }
 
-/** The distinct paths the turn's completed edit, write, create and apply_patch calls named, in order. */
-export function changedFiles(entries: Entry[]): string[] {
+/** The distinct paths the turn's completed edit, write, create and apply_patch calls named, in order, but the scratch plan. */
+export function changedFiles(entries: Entry[], scratch?: (path: string) => boolean): string[] {
   const out: string[] = [];
   for (const { item } of entries) {
     const t = item?.tool;
     if (item?.kind !== 'tool' || t?.status !== 'completed' || !CHANGE_TOOLS.includes(t.name.toLowerCase())) continue;
-    for (const path of changePaths(t)) if (!out.includes(path)) out.push(path);
+    for (const path of changePaths(t)) if (!out.includes(path) && !scratch?.(path)) out.push(path);
   }
   return out;
 }

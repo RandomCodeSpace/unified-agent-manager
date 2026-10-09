@@ -8,7 +8,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import type { Density } from '../lib/density';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, currentStep, duration, foregroundItems, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentStep, duration, foregroundItems, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
@@ -44,6 +44,8 @@ interface Props {
   turnTimings?: TurnTiming[];
   planVersion?: number;
   planAvailable?: boolean;
+  /** The provider's scratch plan file; its edits are not the turn's changed files. */
+  planPath?: string;
   /** The Task's requests; the decided ones join the turns, the pending ones stay cards. */
   interactions: Interaction[];
   /** The Task's subagents; the main transcript draws them (a `SubagentScope` holds the rest), a subagent's own passes none. */
@@ -107,7 +109,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line (Compact) or rows in its activity (Detailed), and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, planVersion, planAvailable, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -150,6 +152,7 @@ export function Transcript({ sessionId, planVersion, planAvailable, agentId, ite
   };
   const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const scratch = scratchPlan(planPath, workdir);
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart in both densities, the images its result returned in Compact.
@@ -195,8 +198,8 @@ export function Transcript({ sessionId, planVersion, planAvailable, agentId, ite
     if (compact) {
       // Compact: the head row carries the turn's counts and opens its timeline; only promoted
       // entries stand in the answer, and a steer bubble sits in the turn at its place.
-      const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked });
-      const changed = changedFiles(group);
+      const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked, scratch });
+      const changed = changedFiles(group, scratch);
       const first = (group[0].item ?? group[0].interaction).id;
       const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
       const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;

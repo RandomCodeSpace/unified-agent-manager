@@ -1098,6 +1098,7 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 	}
 	d := SessionDetail{
 		PlanVersion:      s.planVersion,
+		PlanPath:         s.planPath,
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
 		TurnTimings:      timings,
@@ -2290,15 +2291,19 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			m.upsertInteractionLocked(s, *ev.Interaction)
 		}
 	case agentapi.EventPlanPath:
+		path := s.planPath
 		m.notePlanPathLocked(s, ev.PlanPath)
-		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion {
-			s.planVersion = ev.PlanVersion
+		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion || s.planPath != path {
+			if ev.PlanVersion != 0 {
+				s.planVersion = ev.PlanVersion
+			}
 			m.broadcastLocked("plan_version", s.id, func(seq uint64) any {
 				return struct {
 					Seq         uint64 `json:"seq"`
 					SessionID   string `json:"session_id"`
 					PlanVersion uint64 `json:"plan_version"`
-				}{seq, s.id, s.planVersion}
+					PlanPath    string `json:"plan_path,omitempty"`
+				}{seq, s.id, s.planVersion, s.planPath}
 			})
 		}
 	case agentapi.EventSubagent:

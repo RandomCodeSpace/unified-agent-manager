@@ -162,6 +162,10 @@ func TestPlanScratchExclusionUsesOnlyTheKnownExactPath(t *testing.T) {
 	if s.isPlanPath("docs/plan.md") || s.isPlanPath(filepath.Join(s.workdir, "plan.md")) {
 		t.Fatal("basename was treated as a scratch plan identity")
 	}
+	// The browser excludes the same exact file from a turn's changed files.
+	if d := m.detailLocked(s); d.PlanPath != planPath {
+		t.Fatalf("detail plan path = %q", d.PlanPath)
+	}
 }
 
 func TestPlanActivityBelongsOnlyToTheCurrentTurn(t *testing.T) {

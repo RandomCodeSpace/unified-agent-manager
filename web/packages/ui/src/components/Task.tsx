@@ -843,6 +843,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             <Transcript
               sessionId={session.id}
               planVersion={session.plan_version}
+              planPath={session.plan_path}
               planAvailable={session.open}
               items={visibleItems}
               identityItems={session.history_index}
