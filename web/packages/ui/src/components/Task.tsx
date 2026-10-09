@@ -342,6 +342,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // A subagent's peek or transcript is open: the view keeps that subagent's row where it is, whatever
   // arrives above or below it, so the row stays under the pointer and beside its panel.
   const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
+  const log = useRef<HTMLDivElement>(null);
   const keepHeld = () => {
     const h = held.current, el = scroller.current;
     if (!h || !el) return;
@@ -351,7 +352,14 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       held.current = { ...h, el: row, top: top ?? 0 };
       return;
     }
-    if (top !== h.top) el.scrollTop += top - h.top;
+    if (top === h.top) return;
+    // At a turn's end its last message lands above the row while its status leaves below it: the view,
+    // already at its foot, has no room to scroll by that much. The content grows by what is missing
+    // until the hold ends.
+    const want = el.scrollTop + top - h.top;
+    const short = want - (el.scrollHeight - el.clientHeight);
+    if (short > 0 && log.current) log.current.style.minHeight = `${log.current.offsetHeight + short}px`;
+    el.scrollTop = want;
   };
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
@@ -530,7 +538,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
-  const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
@@ -551,6 +558,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       return;
     }
     held.current = null;
+    if (log.current) log.current.style.minHeight = '';
     const el = scroller.current;
     if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
   }, [session.history_after]);
