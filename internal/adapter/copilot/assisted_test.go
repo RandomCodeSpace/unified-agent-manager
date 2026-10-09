@@ -26,6 +26,20 @@ func (s *fakeSession) SetPermissionMode(_ context.Context, req *rpc.PermissionsS
 	return &rpc.PermissionsSetModeResult{Mode: req.Mode, Success: true}, nil
 }
 
+func (s *fakeSession) GetPermissionMode(context.Context) (*rpc.PermissionsGetModeResult, error) {
+	s.mu.Lock()
+	hook := s.getMode
+	mode := rpc.PermissionModeManual
+	if n := len(s.permModes); n > 0 {
+		mode = s.permModes[n-1].Mode
+	}
+	s.mu.Unlock()
+	if hook != nil {
+		return hook()
+	}
+	return &rpc.PermissionsGetModeResult{Mode: mode}, nil
+}
+
 func openAssisted(t *testing.T, fc *fakeClient, model string) (agentapi.Conversation, error) {
 	t.Helper()
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
@@ -110,5 +124,44 @@ func TestPermissionRequestCarriesOnlyAnAssistedModeReview(t *testing.T) {
 	}
 	if got["p2"] != (agentapi.AssistedReview{}) || got["p3"] != (agentapi.AssistedReview{}) {
 		t.Fatalf("review outside assisted mode = %+v %+v", got["p2"], got["p3"])
+	}
+}
+
+func TestAssistedPermissionsOnReadsTheRuntimeModeBack(t *testing.T) {
+	fc := &fakeClient{}
+	conv, err := openAssisted(t, fc, "gpt-6-luna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := conv.(agentapi.AssistedPermissionSetter)
+	fs := fc.sessions[0]
+	for name, tc := range map[string]struct {
+		res     *rpc.PermissionsGetModeResult
+		err     error
+		on      bool
+		failure string
+	}{
+		"assisted":    {res: &rpc.PermissionsGetModeResult{Mode: rpc.PermissionModeAssisted}, on: true},
+		"manual":      {res: &rpc.PermissionsGetModeResult{Mode: rpc.PermissionModeManual}},
+		"allow-all":   {res: &rpc.PermissionsGetModeResult{Mode: rpc.PermissionModeAllowAll}, failure: "allow-all"},
+		"no result":   {failure: "no permission mode"},
+		"error":       {err: errors.New("down"), failure: "get permission mode"},
+		"unsupported": {err: &copilot.RPCError{Code: -32601}, failure: agentapi.ErrUnsupported.Error()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs.mu.Lock()
+			fs.getMode = func() (*rpc.PermissionsGetModeResult, error) { return tc.res, tc.err }
+			fs.mu.Unlock()
+			on, err := reader.AssistedPermissionsOn(context.Background())
+			if on != tc.on || (err == nil) != (tc.failure == "") || err != nil && !strings.Contains(err.Error(), tc.failure) {
+				t.Fatalf("read back = %v, %v", on, err)
+			}
+		})
+	}
+	if err := conv.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.AssistedPermissionsOn(context.Background()); !errors.Is(err, agentapi.ErrClosed) {
+		t.Fatalf("closed read back = %v", err)
 	}
 }

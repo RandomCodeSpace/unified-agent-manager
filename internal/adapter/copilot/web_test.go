@@ -277,6 +277,8 @@ type fakeSession struct {
 	permMode         func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	permModes        []*rpc.PermissionsSetModeRequest
 	sentAtPermMode   int // sends before the first permission mode change
+	// getMode answers GetPermissionMode; nil reports the last applied mode.
+	getMode func() (*rpc.PermissionsGetModeResult, error)
 }
 
 type fakeToolCatalog struct {

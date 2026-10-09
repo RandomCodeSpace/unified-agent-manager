@@ -33,19 +33,38 @@ func assistedManager(t *testing.T) (*Manager, *agenttest.Provider, *store.Store)
 	return startManager(t, st, prov), prov, st
 }
 
+// modeConversation models the runtime's permission mode: a change applies
+// unless err is set, and also with it when applyOnError (a lost reply);
+// readErr fails reading it back.
 type modeConversation struct {
 	*agenttest.Conversation
-	mu   sync.Mutex
-	sets []string
-	err  error
+	mu           sync.Mutex
+	sets         []string
+	err, readErr error
+	applyOnError bool
+	on           bool
 }
 
 func (c *modeConversation) SetAssistedPermissions(_ context.Context, approvalModel string) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.sets = append(c.sets, approvalModel)
-	err := c.err
-	c.mu.Unlock()
-	return err
+	if c.err == nil || c.applyOnError {
+		c.on = approvalModel != ""
+	}
+	return c.err
+}
+
+func (c *modeConversation) AssistedPermissionsOn(context.Context) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.on, c.readErr
+}
+
+func (c *modeConversation) script(err, readErr error, applyOnError bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.err, c.readErr, c.applyOnError = err, readErr, applyOnError
 }
 
 func (c *modeConversation) calls() []string {
@@ -175,7 +194,7 @@ func TestSetModeAssistedChangesTheOpenConversationFirst(t *testing.T) {
 		err    error
 		status int
 	}{{errors.New("runtime refused"), http.StatusBadGateway}, {agentapi.ErrUnsupported, http.StatusConflict}} {
-		c.err = tc.err
+		c.script(tc.err, nil, false)
 		if _, err := m.SetMode(sum.ID, "assisted"); statusOf(err) != tc.status {
 			t.Fatalf("refused switch = %v, want %d", err, tc.status)
 		}
@@ -254,6 +273,10 @@ func (c *assistedCommands) SetAssistedPermissions(context.Context, string) error
 	return nil
 }
 
+func (c *assistedCommands) AssistedPermissionsOn(context.Context) (bool, error) {
+	return false, errors.New("not read back here")
+}
+
 // /allow-all runs with the Task's op lock held; leaving assisted from it must
 // not take that lock again.
 func TestPermissionCommandLeavesAssistedWithoutDeadlock(t *testing.T) {
@@ -292,6 +315,11 @@ type blockingModeConversation struct {
 	*agenttest.Conversation
 	entered, release chan struct{}
 	err              error
+}
+
+// AssistedPermissionsOn: a refused switch off leaves the runtime assisted.
+func (c *blockingModeConversation) AssistedPermissionsOn(context.Context) (bool, error) {
+	return true, nil
 }
 
 func (c *blockingModeConversation) SetAssistedPermissions(_ context.Context, approvalModel string) error {
@@ -365,5 +393,69 @@ func TestAssistedIsRefusedForTaskDefaultsAndRoutines(t *testing.T) {
 	cfg, err := st.Load()
 	if err != nil || len(cfg.WebRoutines) != 1 || cfg.WebRoutines[r.ID].Mode != store.ModeYolo {
 		t.Fatalf("stored routines = %+v, %v", cfg.WebRoutines, err)
+	}
+}
+
+// A failed or timed-out change may still have applied: the runtime's mode is
+// read back and adopted, and the change succeeds if it took.
+func TestFailedModeChangeAdoptsTheModeReadBack(t *testing.T) {
+	m, prov, _ := assistedManager(t)
+	sum, base := createTask(t, m, prov, "safe")
+	c := attachModeSetter(m, sum.ID, base)
+
+	c.script(errors.New("reply lost"), nil, true)
+	if got, err := m.SetMode(sum.ID, "assisted"); err != nil || got.Mode != "assisted" || got.ModeUnknown {
+		t.Fatalf("applied despite the error = %+v, %v", got, err)
+	}
+	c.script(context.DeadlineExceeded, nil, false)
+	if _, err := m.SetMode(sum.ID, "safe"); statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("timed-out switch = %v", err)
+	}
+	if d := detail(t, m, sum.ID); d.Mode != "assisted" || d.ModeUnknown {
+		t.Fatalf("after a timed-out switch the runtime still reviews: %q unknown %v", d.Mode, d.ModeUnknown)
+	}
+	c.script(context.DeadlineExceeded, nil, true)
+	if got, err := m.SetMode(sum.ID, "yolo"); err != nil || got.Mode != "yolo" || got.ModeUnknown {
+		t.Fatalf("timed out but applied = %+v, %v", got, err)
+	}
+}
+
+// An unreadable mode is unknown, never the old one: nothing is allowed
+// automatically until a later change sets the mode again.
+func TestUnreadableModeIsUnknownAndAllowsNothing(t *testing.T) {
+	m, prov, _ := assistedManager(t)
+	sum, base := createTask(t, m, prov, "assisted")
+	c := attachModeSetter(m, sum.ID, base)
+	c.on = true
+	mustSubmit(t, m, sum.ID, "work", mustUUID(t), ModeSend, SubmissionAccepted)
+	base.EmitTurn(agentapi.TurnWorking, "")
+
+	c.script(errors.New("reply lost"), errors.New("runtime gone quiet"), false)
+	if _, err := m.SetMode(sum.ID, "yolo"); statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("unconfirmed switch = %v", err)
+	}
+	if d := detail(t, m, sum.ID); !d.ModeUnknown {
+		t.Fatalf("unreadable mode shown as %q", d.Mode)
+	}
+	base.EmitInteraction(reviewed("approved", "approve", "gpt-6-luna"))
+	base.EmitInteraction(onceRequest("plain", ""))
+	time.Sleep(30 * time.Millisecond)
+	for _, id := range []string{"approved", "plain"} {
+		if ix := interactionOf(t, m, sum.ID, id); ix.State != agentapi.InteractionPending || ix.Auto {
+			t.Fatalf("%s with an unknown mode = %+v", id, ix)
+		}
+	}
+
+	c.script(nil, nil, false)
+	calls := len(c.calls())
+	got, err := m.SetMode(sum.ID, "assisted")
+	if err != nil || got.Mode != "assisted" || got.ModeUnknown || len(c.calls()) != calls+1 {
+		t.Fatalf("set again = %+v, %v, runtime calls %d", got, err, len(c.calls())-calls)
+	}
+	waitUntil(t, "the approved request allowed", func() bool {
+		return interactionOf(t, m, sum.ID, "approved").Resolution == assistedResolution
+	})
+	if ix := interactionOf(t, m, sum.ID, "plain"); ix.State != agentapi.InteractionPending {
+		t.Fatalf("unreviewed request = %+v", ix)
 	}
 }

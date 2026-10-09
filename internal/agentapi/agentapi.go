@@ -514,6 +514,9 @@ type OpenRequest struct {
 // approvalModel is "". It fails unless the runtime reports the mode applied.
 type AssistedPermissionSetter interface {
 	SetAssistedPermissions(ctx context.Context, approvalModel string) error
+	// AssistedPermissionsOn reads the runtime's mode back, for when a change
+	// failed or timed out: true when assisted review is on, false when off.
+	AssistedPermissionsOn(ctx context.Context) (bool, error)
 }
 
 // AssistedReview is a provider's assisted review of one permission request.

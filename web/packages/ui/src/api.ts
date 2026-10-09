@@ -656,6 +656,8 @@ export interface SessionSummary {
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
   mode?: PermissionMode;
+  /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
+  mode_unknown?: boolean;
   execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
