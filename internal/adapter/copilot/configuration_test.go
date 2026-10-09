@@ -24,6 +24,40 @@ type configurationFakeClient struct {
 	instructions          *rpc.ServerInstructionSourceList
 	err                   error
 	projects, directories []string
+	toggles               []string
+}
+
+func (f *configurationFakeClient) SetSkillDisabled(_ context.Context, name string, disabled bool) error {
+	f.toggles = append(f.toggles, fmt.Sprint(name, "=", disabled))
+	return f.err
+}
+
+func TestConfigurationSkillGlobalSetting(t *testing.T) {
+	client := &configurationFakeClient{fakeClient: &fakeClient{}}
+	provider := newWebProvider(func() (sdkClient, error) { return client, nil }, time.Hour)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	if err := provider.SetSkillGloballyDisabled(context.Background(), "review", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SetSkillGloballyDisabled(context.Background(), "review", false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(client.toggles, []string{"review=true", "review=false"}) {
+		t.Fatalf("native toggles = %v", client.toggles)
+	}
+	client.err = &copilot.RPCError{Code: -32601, Message: "private detail"}
+	if err := provider.SetSkillGloballyDisabled(context.Background(), "review", true); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("absent method = %v", err)
+	}
+	client.err = &copilot.RPCError{Code: -32000, Message: "private detail"}
+	if err := provider.SetSkillGloballyDisabled(context.Background(), "review", true); err == nil || errors.Is(err, agentapi.ErrUnsupported) || strings.Contains(err.Error(), "private detail") {
+		t.Fatalf("native failure = %v", err)
+	}
+	absent := newWebProvider(func() (sdkClient, error) { return &fakeClient{}, nil }, time.Hour)
+	t.Cleanup(func() { _ = absent.Shutdown(context.Background()) })
+	if err := absent.SetSkillGloballyDisabled(context.Background(), "review", true); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("absent client capability = %v", err)
+	}
 }
 
 func (f *configurationFakeClient) DiscoverSkills(_ context.Context, projects, directories []string) (*rpc.ServerSkillList, error) {

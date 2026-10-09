@@ -34,3 +34,11 @@ type ConfigurationDiscoverer interface {
 	DiscoverHooks(ctx context.Context, projectPaths []string) (ConfigurationCatalog, error)
 	DiscoverInstructions(ctx context.Context, projectPaths []string) (ConfigurationCatalog, error)
 }
+
+// SkillGlobalSetter optionally adds a name to, or removes it from, the
+// provider's global disabled-skills list. The change applies to every skill
+// with that name in every project and leaves other names untouched.
+// ErrUnsupported means the runtime has no such setting.
+type SkillGlobalSetter interface {
+	SetSkillGloballyDisabled(ctx context.Context, name string, disabled bool) error
+}

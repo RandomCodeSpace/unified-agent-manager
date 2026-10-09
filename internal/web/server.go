@@ -196,6 +196,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/configuration/{kind}/draft", s.handleDraftConfiguration)
 	mux.HandleFunc("POST /api/configuration/skills/list", s.handleListSkillSource)
 	mux.HandleFunc("POST /api/configuration/skills/install", s.handleInstallSkills)
+	mux.HandleFunc("POST /api/configuration/skills/global-disabled", s.handleSkillGlobalSetting)
 	mux.HandleFunc("PUT /api/configuration/{kind}/{name}", s.handleSaveConfiguration)
 	mux.HandleFunc("DELETE /api/configuration/{kind}/{name}", s.handleSaveConfiguration)
 	mux.HandleFunc("GET /api/usage", s.handleUsage)

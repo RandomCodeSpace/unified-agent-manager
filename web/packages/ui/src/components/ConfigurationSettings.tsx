@@ -377,6 +377,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const removal = useConfirm<{ file: ConfigurationFile; projectId: string }>();
   const activation = useConfirm<{ file: ConfigurationFile; projectId: string }>();
   const discard = useConfirm<boolean>();
+  const globalSkill = useConfirm<{ name: string; enabled: boolean }>();
   const label = LABELS[kind];
   const locked = kind !== 'instructions' && !terminal;
   const copilot = meta?.providers.find((provider) => provider.name === 'copilot');
@@ -499,6 +500,16 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     } catch (e) { setError(describeError(e)); activation.close(); }
     finally { setBusy(false); }
   }
+  async function setGlobalSkill() {
+    const target = globalSkill.target;
+    if (!target) return;
+    setBusy(true); setError(null); setSuccess(null);
+    try {
+      await api.setSkillGloballyDisabled(target.name, target.enabled, projectId);
+      globalSkill.close(); setSuccess(`${target.name} turned ${target.enabled ? 'off' : 'on'} in Copilot's global setting. New and reopened tasks use it.`); refresh();
+    } catch (e) { setError(describeError(e)); globalSkill.close(); }
+    finally { setBusy(false); }
+  }
   const discoveredFiles = data ? kind === 'instructions' ? data.instruction_files ?? [data.instructions] : data[kind] : [];
   const files = kind === 'skills' ? discoveredFiles.filter((file) => !file.error) : discoveredFiles;
   const conflictDetails = data?.conflict_details?.filter((detail) => detail.kind === kind) ?? [];
@@ -598,6 +609,10 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
                 <p className="text-caption text-muted">Copilot: {file.native.display_name || file.native.name}{file.native.display_name && file.native.display_name !== file.native.name ? ` (${file.native.name})` : ''} · {NATIVE_SOURCES[file.native.source] ?? (file.native.source || 'Other')}</p>
                 {file.native.description && <p className="break-words text-caption text-muted">{file.native.description}</p>}
                 {file.native.enabled === false && <Note>Disabled globally in Copilot. This is separate from the file toggle.</Note>}
+                {kind === 'skills' && file.native.enabled !== undefined && <p className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
+                  Copilot global setting: {file.native.enabled ? 'On' : 'Off'}
+                  <Button size="sm" aria-label={`Turn ${file.native.enabled ? 'off' : 'on'} ${file.native.name} globally in Copilot`} disabled={locked || busy || installing || generating || !!draft} onClick={() => file.native && globalSkill.ask({ name: file.native.name, enabled: file.native.enabled !== false })}>{file.native.enabled ? 'Turn off globally' : 'Turn on globally'}</Button>
+                </p>}
               </>}
               {file.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
               {file.path && <PathText path={file.path} className="text-muted" />}
@@ -622,6 +637,10 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     {viewed && <ConfigurationViewer file={viewed.file} kind={viewed.kind} draftOpen={!!draft} onClose={() => setViewed(null)} />}
     <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running tasks keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
     <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running tasks keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
+    <AlertDialog {...globalSkill.props} title={`Turn ${globalSkill.target?.enabled ? 'off' : 'on'} ${globalSkill.target?.name ?? 'skill'} in Copilot globally?`} description={`Copilot global setting. ${globalSkill.target?.enabled ? 'Adds this name to' : 'Removes this name from'} Copilot's disabled skills list for every project and task on this server. It applies to every skill named ${globalSkill.target?.name ?? ''}, including these listed here:`} confirmLabel={globalSkill.target?.enabled ? 'Turn off globally' : 'Turn on globally'} busy={busy} onConfirm={() => void setGlobalSkill()}>
+      <ul className="my-1 flex flex-col gap-1 text-caption">{files.filter((file) => file.native?.name === globalSkill.target?.name).map((file) => <li key={`${file.native?.source}:${file.path}`} className="break-all"><span className="font-medium">{NATIVE_SOURCES[file.native?.source ?? ''] ?? (file.native?.source || 'Other')}</span>{file.path && <span className="font-mono text-meta text-muted"> {file.path}</span>}</li>)}</ul>
+      <p className="text-caption text-muted">No file is renamed or changed; each file's Disable/Enable stays separate. Running tasks keep their current configuration.</p>
+    </AlertDialog>
     <AlertDialog {...discard.props} title="Reload saved version?" description="Discards your unsaved draft and loads the file currently saved on the server. Copy any changes you want to keep before continuing." confirmLabel="Discard draft and reload" busy={busy} onConfirm={() => void reloadSaved()} />
   </div>;
 }
