@@ -249,6 +249,8 @@ function useScope<T>(select: (d: ScopeData) => T): T | undefined {
   return useSyncExternalStore(scope?.store.subscribe ?? NO_SUBSCRIBE, () => (scope ? select(scope.store.data) : undefined));
 }
 const useActions = () => useContext(SubagentContext)?.actions;
+/** Scrolls the conversation to a tool call's row, opening what folds it; undefined outside a Task. */
+export const useLocateItem = () => useContext(SubagentContext)?.actions.locate;
 
 /** `next` itself when any element differs from `kept` (by reference), else `kept`: a list rebuilt with the same members stays the same list. */
 function useKept<T>(next: readonly T[]): readonly T[] {

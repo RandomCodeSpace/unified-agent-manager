@@ -12,6 +12,8 @@ import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentS
 import { groupIdentities } from '../lib/historyState';
 import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
+import { receipts, type Stamp } from '../lib/receipts';
+import { Receipts } from './Receipts';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
@@ -151,7 +153,8 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
     ) : null;
   };
   const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
-  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const stamps = new Map<string, Stamp[]>();
+  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const scratch = scratchPlan(planPath, workdir);
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
@@ -187,6 +190,11 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
     if (!group.length) {
       if (showEnd) out.push(<TurnStatus key={`end-${timing!.id}`} timing={timing} empty={ownMessage && (!last || liveCard)} />);
       return;
+    }
+    // The turn's last reply, once the turn is over, gets its receipts from the turn's calls (the main agent's, held here).
+    if (!agentId && !open) {
+      const reply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
+      if (reply?.text && ctx.replyEnd?.has(reply.id)) stamps.set(reply.id, stampsFor(reply, group.flatMap((e) => (e.item ? [e.item] : []))));
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && begunSince(entry));
     const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
@@ -277,7 +285,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -548,6 +556,8 @@ interface RenderContext {
   thoughtEnd: Map<string, string>;
   /** For the last reply of each ended turn: when the turn ended and its timing, so that reply alone carries the foot with the time and the turn's tokens. */
   replyEnd?: ReadonlyMap<string, ReplyEnd>;
+  /** For the last reply of each ended turn: its claims stamped against the turn's record (lib/receipts). */
+  receipts?: ReadonlyMap<string, Stamp[]>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -636,7 +646,7 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: ReadonlyMap<strin
     // A reasoning item the provider closed without any text has nothing to show.
     if (item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
     flush();
-    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
+    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
   }
   flush();
   return out;
@@ -841,6 +851,17 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
 /** What the last reply of a turn shows in its foot: when the turn ended and, when known, its timing. */
 interface ReplyEnd { at: string; timing?: TurnTiming; userItemId: string }
 
+/** A reply's stamps, kept while the reply and the calls they read are unchanged, so a memoised turn holds. */
+const stampsOf = new WeakMap<Item, { key: string; stamps: Stamp[] }>();
+function stampsFor(reply: Item, items: Item[]): Stamp[] {
+  const key = items.map((i) => (i.kind === 'tool' ? `${i.id}:${i.tool?.status}:${i.tool?.exit_code ?? ''}:${i.tool?.file_edits?.length ?? 0}` : '')).join('|');
+  const held = stampsOf.get(reply);
+  if (held?.key === key) return held.stamps;
+  const stamps = receipts(reply.text ?? '', items);
+  stampsOf.set(reply, { key, stamps });
+  return stamps;
+}
+
 /** Each reply's last foot: an unchanged one keeps its identity, so its memoised `Turn` holds while other rows stream. */
 const replyEndOf = new WeakMap<Item, ReplyEnd>();
 
@@ -879,7 +900,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className }: { it
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[] }
 
 function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   const attachments = item.attachments ?? [];
@@ -913,7 +934,7 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps }: MessageParts) {
   const onBranch = replyActions?.branch;
   const onRewind = replyActions?.rewind;
   const onEdit = replyActions?.edit;
@@ -922,6 +943,7 @@ function assistantMessage({ item, text, streaming = false, className, whole, end
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
+        {stamps && <Receipts stamps={stamps} />}
       </div>
     </Copyable>
   );
@@ -1376,7 +1398,7 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; replyActions?: ReplyActions; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; replyActions?: ReplyActions; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
@@ -1384,7 +1406,7 @@ export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvail
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className }) : noticeRow({ item, text: item.text ?? '', className });
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':
