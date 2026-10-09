@@ -401,6 +401,9 @@ type webSession struct {
 	// turnTodos are the todo snapshots of ended turns that flush has yet to
 	// append to the Task's turn-todos.jsonl (turn_todos.go).
 	turnTodos []TurnTodos
+	// planRecords are the plan review snapshots and aliases flush has yet
+	// to append to the Task's plan-reviews.jsonl (plan.go).
+	planRecords []planReviewRecord
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -2058,6 +2061,7 @@ func (m *Manager) flush() (err error) {
 	patches := make([]recordPatch, 0, len(m.dirty))
 	var kept []keptTodos
 	var keptChanges []keptTurnChanges
+	var keptPlans []keptPlanReviews
 	for id := range m.dirty {
 		s := m.sessions[id]
 		if s == nil {
@@ -2069,6 +2073,9 @@ func (m *Manager) flush() (err error) {
 		}
 		if len(s.turnChanges) > 0 {
 			keptChanges = append(keptChanges, keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings})
+		}
+		if len(s.planRecords) > 0 {
+			keptPlans = append(keptPlans, keptPlanReviews{s: s, records: slices.Clone(s.planRecords)})
 		}
 		key := s.key()
 		var commandResult json.RawMessage
@@ -2097,6 +2104,9 @@ func (m *Manager) flush() (err error) {
 	}
 	for _, k := range keptChanges {
 		m.appendTurnChanges(k)
+	}
+	for _, k := range keptPlans {
+		m.appendPlanReviews(k)
 	}
 	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {
@@ -2260,6 +2270,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 				s.invalidateNativeDiff()
 			}
 			s.linkUploadsLocked(&it)
+			m.notePlanAliasLocked(s, it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
 			if s.noteEdits(it) {

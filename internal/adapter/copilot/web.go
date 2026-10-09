@@ -1805,6 +1805,7 @@ type conversation struct {
 	execution              *agentapi.ExecutionState
 	executionRevision      uint64
 	plans                  planVersions
+	planAnswered           []answeredPlan
 	planStopped            bool   // Stop/end refuses late callbacks from the same foreground turn
 	planEpoch              uint64 // expiry/new foreground turn invalidates outside-lock plan reads
 	planPath               string
@@ -3407,7 +3408,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 		return
 	}
+	var decided string
+	if d, ok := ev.Data.(*rpc.ExitPlanModeCompletedData); ok {
+		decided = c.decidedPlanLocked(d)
+	}
 	for _, it := range c.tr.items(ev) {
+		if decided != "" && it.Plan != nil {
+			it.Plan.RequestID = decided
+		}
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 	}
 }

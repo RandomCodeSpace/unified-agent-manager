@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -569,5 +570,49 @@ func TestSDKNativePlanModeRequiresReadbackAndNoModelHandoff(t *testing.T) {
 		if err := session.SetExecutionMode(t.Context(), rpc.SessionModePlan); err == nil {
 			t.Fatal("plan mode accepted an unsupported model handoff or deferred implementation")
 		}
+	}
+}
+
+// The native request ID of a live plan receipt is not the review's ID: the
+// receipt names the review its answer decided, so the reader finds the
+// snapshot UAM kept for it. Another decision is not attributed to it.
+func TestLivePlanReceiptNamesTheReviewItDecided(t *testing.T) {
+	h := openWeb(t)
+	callback := h.fc.create[0].OnExitPlanModeRequest
+	done := make(chan struct{})
+	go func() {
+		_, _ = callback(copilot.ExitPlanModeRequest{Summary: "Migrate", PlanContent: "# Plan", Actions: []string{"interactive"}}, copilot.ExitPlanModeInvocation{})
+		close(done)
+	}()
+	waitFor(t, "pending native plan review", func() bool { return pendingPlan(h.sink) != nil })
+	ix := pendingPlan(h.sink)
+	if !strings.HasPrefix(ix.ID, "plan-") {
+		t.Fatalf("review ID = %q", ix.ID)
+	}
+	if err := h.conv.Respond(context.Background(), ix.ID, agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	receipt := func(native string, approved bool, action string) *agentapi.Item {
+		d := &rpc.ExitPlanModeCompletedData{RequestID: native, Approved: copilot.Bool(approved)}
+		if action != "" {
+			a := rpc.ExitPlanModeAction(action)
+			d.SelectedAction = &a
+		}
+		h.fs.onEvent(ev("completed-"+native, d))
+		for _, e := range slices.Backward(h.sink.all()) {
+			if e.Kind == agentapi.EventItem && e.Item.ID == "plan-"+native {
+				return e.Item
+			}
+		}
+		t.Fatalf("no receipt for %s", native)
+		return nil
+	}
+	const native = "5b0c9b0e-6f1d-4d0a-9c39-0c7f3b1f2a11"
+	if it := receipt("aaaaaaaa-0000-4000-8000-000000000000", false, ""); it.Plan == nil || it.Plan.RequestID != "aaaaaaaa-0000-4000-8000-000000000000" {
+		t.Fatalf("unmatched decision = %+v", it.Plan)
+	}
+	if it := receipt(native, true, "interactive"); it.Plan == nil || it.Plan.RequestID != ix.ID {
+		t.Fatalf("decided receipt = %+v", it.Plan)
 	}
 }

@@ -710,6 +710,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 		s.interactions = append(s.interactions, cur)
 		s.ixIdx[ix.ID] = cur
 		s.trimInteractions()
+		m.keepPlanReviewLocked(s, ix)
 	}
 	// Claimed first, so the browser never sees a yolo request wait for the user.
 	m.autoAllowLocked(s, cur)

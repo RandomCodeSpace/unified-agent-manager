@@ -230,3 +230,41 @@ func TestYoloNeverAnswersAPlanReview(t *testing.T) {
 		t.Fatalf("yolo answered the plan review: %+v, responds %d", ix, len(conv.Responds()))
 	}
 }
+
+// The provider's journal may hold no review bodies: a review's bounded
+// snapshot is kept by UAM under the review ID the browser reads, and under
+// the provider's request ID its transcript receipt carries, before and after
+// the answer, the close and a restart.
+func TestPlanReaderServesKeptReviewsByBothIDs(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	const review, native = "plan-QJ2W5Z7KXN3M4R6T8V2B4D6F8H", "5b0c9b0e-6f1d-4d0a-9c39-0c7f3b1f2a11"
+	conv.EmitInteraction(agentapi.Interaction{ID: review, Kind: agentapi.InteractionPlanReview, Title: "Plan ready", State: agentapi.InteractionPending, Time: time.Now(), Plan: &agentapi.PlanReview{RequestID: review, Summary: "Preserve data", Revision: 2, Content: "# Plan v2", Previous: "# Plan v1", Actions: []agentapi.PlanAction{agentapi.PlanInteractive}}})
+	read := func(m *Manager, rid string) agentapi.PlanReview {
+		t.Helper()
+		plan, err := m.PlanReview(t.Context(), sum.ID, rid)
+		if err != nil || plan.RequestID != rid || plan.Content != "# Plan v2" || plan.Previous != "# Plan v1" || plan.Revision != 2 {
+			t.Fatalf("read %s = %+v, %v", rid, plan, err)
+		}
+		return plan
+	}
+	read(m, review)
+	if _, err := m.Answer(sum.ID, review, agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}}); err != nil {
+		t.Fatal(err)
+	}
+	conv.EmitItem(agentapi.Item{ID: "plan-" + native, Kind: agentapi.ItemNotice, Text: "Plan approved\nImplement interactively", Plan: &agentapi.PlanReview{RequestID: review}})
+	read(m, review)
+	read(m, native)
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := startManager(t, st, prov)
+	read(restarted, review)
+	read(restarted, native)
+	if _, err := restarted.PlanReview(t.Context(), sum.ID, "plan-unknown"); statusOf(err) != http.StatusConflict && statusOf(err) != http.StatusNotFound {
+		t.Fatalf("unknown review = %v", err)
+	}
+}
