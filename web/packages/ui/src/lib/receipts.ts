@@ -38,11 +38,16 @@ function cleanPath(s: string): string {
   return s.replace(/^\.\//, '').replace(/:\d+(?:[-–:]\d+)?$/, '').replace(/[.,;:)\]]+$/, '');
 }
 
+/** Files named without an extension that still read as files. */
+const BARE_FILES = /(^|\/)(Makefile|Dockerfile|Caddyfile|LICENSE|CHANGELOG|README|Gemfile|Rakefile|Procfile|Justfile)$/;
+
+/** A file path: its last segment has a file extension (or is a known bare file name), so a model id, a directory or a package path is not one. */
 function looksLikePath(s: string): boolean {
   if (/\s/.test(s) || /^(https?:|[a-z]+:\/\/)/i.test(s) || s.startsWith('-') || s.length > 200) return false;
   if (/[<>|*?"']/.test(s)) return false;
   const p = cleanPath(s);
-  return p.length > 1 && (p.includes('/') ? !/^\/\/|\s/.test(p) && /[a-z0-9]/i.test(p) : EXTENSIONS.test(p));
+  const last = p.slice(p.lastIndexOf('/') + 1);
+  return p.length > 1 && last.length > 0 && (EXTENSIONS.test(last) || BARE_FILES.test(p));
 }
 
 function looksLikeCommand(s: string): boolean {
@@ -167,3 +172,6 @@ export function receipts(text: string, items: readonly Item[]): Stamp[] {
 }
 
 export const allVerified = (stamps: readonly Stamp[]) => stamps.length > 0 && stamps.every((s) => s.verdict === 'verified');
+
+/** Every claim is unseen with no evidence either way (a turn whose work subagents did): one line says so instead of a stamp each. */
+export const allUnseen = (stamps: readonly Stamp[]) => stamps.length > 0 && stamps.every((s) => s.verdict === 'unseen' && !s.itemId);
