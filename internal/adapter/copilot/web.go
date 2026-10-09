@@ -981,6 +981,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
+	c.checkSchedulesLocked()
 	if req.ConversationID != "" || c.relist {
 		c.relist = false
 		c.checkTasksLocked()
@@ -1730,6 +1731,7 @@ type conversation struct {
 	// instead.
 	idleUnresolved    bool
 	backgroundTasks   *agentapi.BackgroundTasks
+	schedules         scheduleReads
 	execution         *agentapi.ExecutionState
 	executionRevision uint64
 	control           sync.Mutex
@@ -2584,6 +2586,7 @@ func (c *conversation) Close(ctx context.Context) error {
 	c.releaseTurnLocked()
 	perms := c.expireLocked()
 	c.endIdleLocked()
+	c.stopSchedulesLocked()
 	c.closed = true
 	clear(c.pending)
 	c.mu.Unlock()
@@ -2675,6 +2678,7 @@ func (c *conversation) exitLocked(reason string) {
 	clear(c.pending)
 	c.endIdleLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+	c.stopSchedulesLocked()
 	c.closed = true
 }
 
@@ -2978,6 +2982,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	switch d := ev.Data.(type) {
+	case *rpc.SessionScheduleCreatedData, *rpc.SessionScheduleCancelledData, *rpc.SessionScheduleRearmedData:
+		c.checkSchedulesLocked()
+		return
 	case *rpc.AssistantMessageDeltaData:
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return
@@ -3061,6 +3068,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.linkQuestionLocked(d, agentID, time.Now())
 		return
 	case *rpc.AssistantTurnStartData:
+		if agentID == "" {
+			c.refreshActiveSchedulesLocked()
+		}
 		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
 			c.startTurnLocked()
@@ -3143,6 +3153,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
 	case *rpc.SessionIdleData:
+		if agentID == "" {
+			c.refreshActiveSchedulesLocked()
+		}
 		// Copilot CLI 1.0.89 reports the autopilot mode on the idle that ends
 		// a run after task_complete too; only a task_complete tells them apart.
 		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) && !c.taskCompleted {
