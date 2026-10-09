@@ -806,7 +806,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
-        {mcpOpen && <McpTaskDialog sessionId={session.id} onClose={() => setMcpOpen(false)} />}
+        {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
           <div className="shrink-0 px-3 pt-2 sm:px-4 md:px-6">

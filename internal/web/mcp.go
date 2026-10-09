@@ -358,8 +358,13 @@ func (m *Manager) taskMCP(id string) (agentapi.MCPController, error) {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
+	return m.taskMCPLocked(s)
+}
+
+// taskMCPLocked retains the caller's operation lock across a metadata read.
+func (m *Manager) taskMCPLocked(s *webSession) (agentapi.MCPController, error) {
 	m.mu.Lock()
-	err = s.readOnlyLocked()
+	err := s.readOnlyLocked()
 	supported := m.infos[s.provider].Capabilities.MCP
 	m.mu.Unlock()
 	if err != nil {
@@ -664,6 +669,7 @@ func (s *Server) mcpRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/mcp/servers/{name}", s.handleRemoveMCPServer)
 	mux.HandleFunc("GET /api/sessions/{id}/mcp", s.handleTaskMCP)
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/reconnect", s.handleReconnectTaskMCP)
+	mux.HandleFunc("GET /api/sessions/{id}/mcp/servers/{name}/tools", s.handleTaskMCPTools)
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/enable", s.handleTaskMCPAction("enable"))
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/disable", s.handleTaskMCPAction("disable"))
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/restart", s.handleTaskMCPAction("restart"))
@@ -721,12 +727,30 @@ func (s *Server) handleRemoveMCPServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTaskMCP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("summary") == "1" {
+		snapshot, err := s.m.TaskMCPStatus(r.PathValue("id"))
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"servers": snapshot.Servers, "mcp_status": snapshot})
+		return
+	}
 	servers, err := s.m.TaskMCP(r.PathValue("id"))
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": servers})
+}
+
+func (s *Server) handleTaskMCPTools(w http.ResponseWriter, r *http.Request) {
+	tools, err := s.m.TaskMCPTools(r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tools": tools})
 }
 
 func (s *Server) handleTaskMCPAction(action string) http.HandlerFunc {

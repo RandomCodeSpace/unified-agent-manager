@@ -955,6 +955,7 @@ func (m *Manager) schedulesLocked(s *webSession, snapshot *agentapi.ScheduleSnap
 }
 
 func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
+	m.forgetMCPStatusLocked(s)
 	m.forgetTurnTimingLocked(s)
 	m.forgetTodosLocked(s)
 	if s.schedules != nil {

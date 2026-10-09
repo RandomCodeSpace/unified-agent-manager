@@ -372,7 +372,9 @@ type webSession struct {
 	execution        *agentapi.ExecutionState
 	// schedules is the open conversation's native schedule display
 	// metadata; replaced whole, never persisted.
-	schedules *agentapi.ScheduleSnapshot
+	schedules   *agentapi.ScheduleSnapshot
+	mcpStatus   *agentapi.MCPStatusSnapshot
+	mcpRevision uint64
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -1111,6 +1113,11 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot := *s.schedules
 		snapshot.Entries = slices.Clone(snapshot.Entries)
 		d.Schedules = &snapshot
+	}
+	if s.mcpStatus != nil {
+		snapshot := *s.mcpStatus
+		snapshot.Servers = slices.Clone(snapshot.Servers)
+		d.MCPStatus = &snapshot
 	}
 	activity := s.turnActivity
 	d.TurnActivity = &activity
@@ -2293,6 +2300,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventSchedules:
 		if ev.Schedules != nil {
 			m.schedulesLocked(s, ev.Schedules)
+		}
+	case agentapi.EventMCPStatus:
+		if ev.MCPStatus != nil {
+			m.mcpStatusLocked(s, *ev.MCPStatus)
 		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {

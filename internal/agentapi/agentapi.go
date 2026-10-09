@@ -970,6 +970,8 @@ const (
 	// EventModelSelection reports provider-confirmed main-agent model settings,
 	// never the owner's consent to a requested change.
 	EventModelSelection EventKind = "model_selection"
+	// EventMCPStatus replaces lightweight state of the open conversation's servers.
+	EventMCPStatus EventKind = "mcp_status"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -997,6 +999,7 @@ type Event struct {
 	Activity       *Activity
 	Todos          *TodoList
 	ModelSelection *ModelSelection
+	MCPStatus      *MCPStatusSnapshot
 }
 
 // ModelSelection contains confirmed settings. Nil optional fields mean the

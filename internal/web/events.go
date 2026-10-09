@@ -150,6 +150,12 @@ type schedulesEvent struct {
 	Schedules *agentapi.ScheduleSnapshot `json:"schedules"`
 }
 
+type mcpStatusEvent struct {
+	Seq       uint64                     `json:"seq"`
+	SessionID string                     `json:"session_id"`
+	MCPStatus agentapi.MCPStatusSnapshot `json:"mcp_status"`
+}
+
 type turnActivityEvent struct {
 	Seq          uint64       `json:"seq"`
 	SessionID    string       `json:"session_id"`

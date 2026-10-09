@@ -1020,6 +1020,13 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.control.Lock()
 	c.refreshExecution(ctx)
 	c.control.Unlock()
+	c.mu.Lock()
+	if _, ok := sess.(mcpSession); ok {
+		snapshot := copyMCPStatus(c.mcpStatus)
+		snapshot.Supported = true
+		c.publishMCPStatusLocked(snapshot)
+	}
+	c.mu.Unlock()
 	return c, nil
 }
 
@@ -1767,6 +1774,8 @@ type conversation struct {
 	planVersion            uint64
 	lastPlanChange         string
 	planReading, planAgain bool
+	mcpStatus              agentapi.MCPStatusSnapshot
+	mcpRevision            uint64
 	control                sync.Mutex
 	// githubSwitch is held while the built-in GitHub MCP server is turned
 	// on or off, so the last switch applies the latest setting.
@@ -3057,6 +3066,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	if c.observeTodosLocked(ev, agentID) {
+		return
+	}
+	if c.observeMCPStatusLocked(ev, agentID) {
 		return
 	}
 	switch d := ev.Data.(type) {

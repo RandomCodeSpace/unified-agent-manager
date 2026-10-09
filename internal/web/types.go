@@ -407,7 +407,8 @@ type SessionDetail struct {
 	BackgroundTasks  *agentapi.BackgroundTasks `json:"background_tasks,omitempty"`
 	TurnActivity     *TurnActivity             `json:"turn_activity,omitempty"`
 	// Schedules is the open conversation's native schedules, display only.
-	Schedules *agentapi.ScheduleSnapshot `json:"schedules,omitempty"`
+	Schedules *agentapi.ScheduleSnapshot  `json:"schedules,omitempty"`
+	MCPStatus *agentapi.MCPStatusSnapshot `json:"mcp_status,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or
