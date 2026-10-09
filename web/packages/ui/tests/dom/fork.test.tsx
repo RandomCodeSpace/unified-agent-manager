@@ -116,4 +116,25 @@ describe('native task branching', () => {
     expect(dismiss.mock.calls[1]).toEqual(['t3', { user_item_id: request.user_item_id, model: request.model }]);
     expect(fork).toHaveBeenCalledTimes(1);
   });
+
+  test('a saved result that could not be added offers Add the existing branch, then Dismiss', async () => {
+    const { forked } = fixture();
+    const saved = new ApiError(404, 'could not add the existing branch: unknown project', { code: 'fork_saved' });
+    const fork = vi.spyOn(api, 'fork').mockRejectedValueOnce(saved).mockRejectedValueOnce(saved).mockImplementationOnce(async () => forked());
+    const dismiss = vi.spyOn(api, 'dismissFork');
+    const { user } = await openTask('t3');
+    await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[0]);
+    await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
+    const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
+    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await picker.findByText(/The Copilot session for this branch exists/);
+    expect(picker.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+    await user.click(picker.getByRole('button', { name: 'Add the existing branch' }));
+    await picker.findByText(/could not add the existing branch/);
+    await user.click(picker.getByRole('button', { name: 'Add the existing branch' }));
+    await screen.findByRole('heading', { level: 1, name: 'Native branch' });
+    expect(fork).toHaveBeenCalledTimes(3);
+    expect(new Set(fork.mock.calls.map(call => JSON.stringify(call[1]))).size).toBe(1);
+    expect(dismiss).not.toHaveBeenCalled();
+  });
 });

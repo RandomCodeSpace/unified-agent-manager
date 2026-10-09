@@ -58,7 +58,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		}
 		s.op.Unlock()
 		locked = false
-		return m.registerFork(*pending)
+		return savedFork(m.registerFork(*pending))
 	}
 	m.mu.Lock()
 	if err := m.forkAllowedLocked(s); err != nil {
@@ -200,7 +200,17 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	// RemoveProject. The source no longer needs to be held after the copy.
 	s.op.Unlock()
 	locked = false
-	return m.registerFork(reservation)
+	return savedFork(m.registerFork(reservation))
+}
+
+// savedFork marks a failed registration of a saved native result, which the
+// picker can add again or dismiss; the Copilot session is never deleted.
+func savedFork(sum SessionSummary, err error) (SessionSummary, error) {
+	if err == nil || errors.Is(err, errForkUncertain) {
+		return sum, err
+	}
+	status, msg := errorStatus(err)
+	return SessionSummary{}, &Error{Status: status, Code: "fork_saved", Message: "could not add the existing branch: " + msg}
 }
 
 func (m *Manager) forkAllowedLocked(s *webSession) error {
@@ -252,6 +262,11 @@ func (m *Manager) recordedFork(source string, req ForkRequest) (SessionSummary, 
 			return SessionSummary{}, nil, newError(http.StatusConflict, "this branch request ID was already used for a different selection")
 		}
 		return SessionSummary{}, &pending, nil
+	}
+	for _, pending := range cfg.WebForks {
+		if pending.ProviderSessionID != "" && forkMatches(pending.Lineage, source, req) {
+			return SessionSummary{}, &pending, nil
+		}
 	}
 	return SessionSummary{}, nil, nil
 }
@@ -310,9 +325,10 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	return m.Summary(s.id)
 }
 
-// DismissFork clears the one uncertain reservation for this source, owner
-// message and model, so a later explicit request may fork again. It never
-// touches a saved native result, and it waits for an in-flight fork.
+// DismissFork clears the one unresolved reservation for this source, owner
+// message and model, uncertain or saved but unregistered, so a later explicit
+// request may fork again. It deletes no Copilot session and waits for an
+// in-flight fork.
 func (m *Manager) DismissFork(id string, req ForkRequest) error {
 	if req.UserItemID == "" || len(req.UserItemID) > 256 || strings.ContainsAny(req.UserItemID, "\x00\r\n") {
 		return newError(http.StatusBadRequest, "choose an exact recorded owner message")
@@ -328,13 +344,10 @@ func (m *Manager) DismissFork(id string, req ForkRequest) error {
 			if !forkMatches(pending.Lineage, id, req) {
 				continue
 			}
-			if pending.ProviderSessionID != "" {
-				return newError(http.StatusConflict, "this branch has a saved result; it is not uncertain")
-			}
 			delete(cfg.WebForks, requestID)
 			return nil
 		}
-		return newError(http.StatusNotFound, "no uncertain branch request for that reply and model")
+		return newError(http.StatusNotFound, "no unresolved branch request for that reply and model")
 	})
 }
 

@@ -379,27 +379,50 @@ func TestForkDismissClearsExactlyThatUncertainReservation(t *testing.T) {
 	}
 }
 
-func TestForkDismissKeepsAKnownResultAndWaitsForAnInFlightFork(t *testing.T) {
+func TestForkSavedResultIsAddedOrDismissedWithoutForking(t *testing.T) {
 	m, p, st, source := taskForkManager(t)
-	known := ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}
+	saved := ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}
 	m.mu.Lock()
 	project := m.projects[source.ProjectID]
 	m.mu.Unlock()
-	p.forkHook = func(agentapi.ForkRequest) (string, error) {
+	removeProject := func() {
 		m.mu.Lock()
 		delete(m.projects, source.ProjectID)
 		m.mu.Unlock()
-		return "native-known", nil
 	}
-	if _, err := m.Fork(source.ID, known); err == nil {
-		t.Fatal("registration succeeded in removed project")
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { removeProject(); return "native-saved", nil }
+	if _, err := m.Fork(source.ID, saved); errCode(err) != "fork_saved" {
+		t.Fatalf("registration failure = %v, want fork_saved", err)
+	}
+	// A fresh picker request for the same reply and model adds the saved result; it never forks again.
+	again := ForkRequest{UserItemID: saved.UserItemID, Model: saved.Model, RequestID: mustUUID(t)}
+	if _, err := m.Fork(source.ID, again); errCode(err) != "fork_saved" || p.forkCount() != 1 {
+		t.Fatalf("add while the project is gone = %v, calls %d", err, p.forkCount())
+	}
+	if err := m.DismissFork(source.ID, ForkRequest{UserItemID: saved.UserItemID, Model: saved.Model}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pendingForks(t, st)) != 0 {
+		t.Fatal("dismiss left the saved reservation")
 	}
 	m.mu.Lock()
 	m.projects[source.ProjectID] = project
 	m.mu.Unlock()
-	if err := m.DismissFork(source.ID, known); statusOf(err) != http.StatusConflict || pendingForks(t, st)[known.RequestID].ProviderSessionID != "native-known" {
-		t.Fatalf("dismiss of a known result = %v", err)
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { removeProject(); return "native-added", nil }
+	if _, err := m.Fork(source.ID, saved); errCode(err) != "fork_saved" {
+		t.Fatalf("registration failure = %v, want fork_saved", err)
 	}
+	m.mu.Lock()
+	m.projects[source.ProjectID] = project
+	m.mu.Unlock()
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: saved.UserItemID, Model: saved.Model, RequestID: mustUUID(t)})
+	if err != nil || branch.ConversationID != "native-added" || p.forkCount() != 2 || len(pendingForks(t, st)) != 0 {
+		t.Fatalf("add existing branch = %+v %v, calls %d", branch, err, p.forkCount())
+	}
+}
+
+func TestForkDismissWaitsForAnInFlightFork(t *testing.T) {
+	m, p, st, source := taskForkManager(t)
 	release, started := make(chan struct{}), make(chan struct{})
 	p.forkHook = func(agentapi.ForkRequest) (string, error) {
 		close(started)

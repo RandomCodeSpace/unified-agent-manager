@@ -25,6 +25,8 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [uncertain, setUncertain] = useState(false);
+  // A saved native result could not be added; adding retries registration only, never the fork.
+  const [saved, setSaved] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const offered = !model || !!info?.models.some(m => m.id === model);
   const alive = useRef(false);
@@ -43,6 +45,7 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
         if (!alive.current) return;
         setError(describeError(e));
         setUncertain(errorCode(e) === 'fork_uncertain');
+        setSaved(errorCode(e) === 'fork_saved');
       },
     ).finally(() => { if (alive.current) setBusy(false); });
   };
@@ -69,10 +72,11 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
         ]} />
         {error && <Note tone="error" role="alert">{error}</Note>}
         {uncertain && <Note>A Copilot session may still exist for this branch. Dismiss clears this request so you can branch again; it does not delete that session.</Note>}
+        {saved && <Note>The Copilot session for this branch exists. Add the existing branch tries again; Dismiss clears this request and does not delete that session.</Note>}
         <div className="flex justify-end gap-2">
-          {uncertain && <Button variant="ghost" onClick={dismiss} loading={dismissing}>Dismiss</Button>}
+          {(uncertain || saved) && <Button variant="ghost" onClick={dismiss} loading={dismissing} disabled={busy}>Dismiss</Button>}
           <Button variant="ghost" onClick={onClose} disabled={busy || dismissing}>Cancel</Button>
-          <Button variant="primary" onClick={confirm} loading={busy} disabled={uncertain || !offered}>Branch task</Button>
+          <Button variant="primary" onClick={confirm} loading={busy} disabled={uncertain || !offered}>{saved ? 'Add the existing branch' : 'Branch task'}</Button>
         </div>
       </Popover.Content>
     </Popover.Root>
