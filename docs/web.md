@@ -1524,12 +1524,16 @@ removing it need no Terminal.
 as that Task's conversation sees it: Connected (with its tools; tap the
 count to list them), Failed (with the error and **Restart**), Needs
 sign-in, Starting, or Off for this task. The switch turns a server off or on
-for this Task only, until its conversation closes or the built-in GitHub
-server's setting changes. Otherwise a conversation keeps the servers it
+for this Task only, until its configuration reloads, its conversation closes,
+or the built-in GitHub server's setting changes. Otherwise a conversation keeps the servers it
 started with: other changes in Settings reach new Tasks, and an open
-Task picks them up with **Reconnect with current settings**, which closes
-and reopens its conversation (refused while a turn, queued prompt, subagent
-or background task is running). Opening the dialog opens the Task's
+Task picks them up with **Apply current settings**, which reloads its
+configuration while keeping the conversation open when the runtime supports
+it. Prompt and tool changes apply on the next turn. Older runtimes close
+and reopen instead. The action is refused while a turn, queued prompt,
+subagent or background task is running, or another client holds the
+conversation. A failed reload can have applied some changes; uam reports
+the failure without closing or retrying it. Opening the dialog opens the Task's
 conversation if it was closed; nothing is sent to the agent.
 
 **Signing in to a remote server.** A server that uses OAuth shows Needs

@@ -134,8 +134,8 @@ function ServerRow({ s, busy, signingIn, onToggle, onRestart, onSignIn, children
  * A Task's MCP servers (task menu → MCP servers): each server's state as this Task's
  * conversation sees it, its tools, a switch that turns it off or on for this Task only,
  * Restart for one that failed, and the sign-in of a remote server that needs one, finished
- * from a remote browser by pasting the address it ended on. Reconnect reopens the
- * conversation so it starts the servers Settings configures now.
+ * from a remote browser by pasting the address it ended on. Applying settings
+ * reloads the conversation's configuration for its next turn.
  */
 export function McpTaskDialog({ sessionId, onClose }: Readonly<{ sessionId: string; onClose: () => void }>) {
   const api = useApi();
@@ -213,15 +213,15 @@ export function McpTaskDialog({ sessionId, onClose }: Readonly<{ sessionId: stri
       onOpenChange={setOpen}
       onClosed={onClose}
       title="MCP servers"
-      description="The tool servers this task's agent can use. Switches here last until the conversation closes; Settings → MCP servers sets what new tasks start with."
+      description="The tool servers this task's agent can use. Switches here last until configuration reloads or the conversation closes. Apply current settings to refresh configuration for the next turn."
       footer={
         <Button size="lg" loading={busy === 'reconnect'} disabled={!!busy || !!signIn} onClick={() => void run('reconnect', () => api.reconnectTaskMcp(sessionId))}>
-          Reconnect with current settings
+          Apply current settings
         </Button>
       }
     >
       {!servers && !error && <Skeleton label="Reading this task's MCP servers…" rows={3} />}
-      {servers && servers.length === 0 && <Note>This task has no MCP servers. Add one in Settings → MCP servers, then reconnect.</Note>}
+      {servers && servers.length === 0 && <Note>This task has no MCP servers. Add one in Settings → MCP servers, then apply current settings.</Note>}
       {servers && servers.length > 0 && (
         <ul aria-label="This task's MCP servers" className="flex flex-col">
           {servers.map((s) => (

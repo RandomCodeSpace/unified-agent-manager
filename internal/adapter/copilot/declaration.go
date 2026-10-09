@@ -444,6 +444,10 @@ func (d *toolGate) observe(ev copilot.SessionEvent) {
 	if _, changed := ev.Data.(*rpc.MCPToolsListChangedData); !changed {
 		return
 	}
+	d.invalidate()
+}
+
+func (d *toolGate) invalidate() {
 	d.mu.Lock()
 	d.ready = false
 	d.changes++

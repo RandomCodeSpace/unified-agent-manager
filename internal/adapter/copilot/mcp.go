@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -193,6 +194,10 @@ func (a sdkSessionAdapter) MCPRestart(ctx context.Context, name string) error {
 
 func (a sdkSessionAdapter) MCPLogin(ctx context.Context, req *rpc.MCPOauthLoginRequest) (*rpc.MCPOauthLoginResult, error) {
 	return a.s.RPC.MCP.Oauth().Login(ctx, req)
+}
+
+func (a sdkSessionAdapter) ReloadCustomizations(ctx context.Context) (*rpc.CustomizationsReloadResult, error) {
+	return a.s.RPC.Customizations.Reload(ctx)
 }
 
 func (p *webProvider) mcpClient(ctx context.Context) (mcpConfigClient, error) {
@@ -382,6 +387,46 @@ func (c *conversation) mcp() (mcpSession, error) {
 		return nil, agentapi.ErrUnsupported
 	}
 	return ms, nil
+}
+
+func (c *conversation) ReloadCustomizations(ctx context.Context) error {
+	c.control.Lock()
+	defer c.control.Unlock()
+	if c.isClosed() {
+		return agentapi.ErrClosed
+	}
+	r, ok := c.sess.(interface {
+		ReloadCustomizations(context.Context) (*rpc.CustomizationsReloadResult, error)
+	})
+	if !ok {
+		return agentapi.ErrUnsupported
+	}
+	res, err := r.ReloadCustomizations(ctx)
+	var rpcErr *copilot.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+		return agentapi.ErrUnsupported
+	}
+	// Reload can refresh non-MCP tool sources too, even before a failure.
+	// The next send reuses the existing catalog proof before tools can run.
+	if c.tools != nil {
+		c.tools.invalidate()
+	}
+	if err != nil {
+		return fmt.Errorf("reload task configuration (some changes may already have applied): %s", rpcText(err))
+	}
+	if res == nil {
+		return errors.New("reload task configuration returned an empty result; some changes may already have applied")
+	}
+	failures := slices.Clone(res.Errors)
+	for _, outcome := range res.Outcomes {
+		if outcome.Status == rpc.CustomizationReloadStatusFailed {
+			failures = append(failures, string(outcome.Subsystem)+": "+deref(outcome.Detail))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("reload task configuration (some changes may already have applied): %s", rpcText(errors.New(strings.Join(failures, "; "))))
+	}
+	return nil
 }
 
 // MCPStatus lists the session's servers, with the tools of each connected
