@@ -406,7 +406,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   label and location. Hook commands, instruction contents and descriptions are
   not included. Project discovery includes the runtime's global sources.
   Existing file edits and Disable/Enable still use the selected scope's exact
-  file and revision; a globally disabled skill or hook is labelled separately. Plugin, built-in, remote and
+  file and revision; a globally disabled skill or hook is labelled separately.
+  Each discovered skill also has a separately labelled Copilot global setting:
+  Turn off globally / Turn on globally asks for confirmation, then adds or
+  removes that one name in Copilot's disabled skills list. It applies to every
+  skill with that name in every project, needs Terminal on like the file
+  toggle, and never renames or edits a file. Plugin, built-in, remote and
   other definitions outside the file editor show read-only metadata. Discovery
   failures or limits are reported while managed files and disabled-file recovery
   remain available. Older runtimes without discovery keep the existing file view.

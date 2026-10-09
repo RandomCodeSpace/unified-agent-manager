@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,13 @@ type configurationProvider struct {
 	skillsErr, agentsErr  error
 	hooksErr              error
 	projects, directories [][]string
+	toggles               []string
+	toggleErr             error
+}
+
+func (p *configurationProvider) SetSkillGloballyDisabled(_ context.Context, name string, disabled bool) error {
+	p.toggles = append(p.toggles, fmt.Sprint(name, "=", disabled))
+	return p.toggleErr
 }
 
 func (p *configurationProvider) DiscoverSkills(_ context.Context, projects, directories []string) (agentapi.ConfigurationCatalog, error) {
@@ -214,5 +222,109 @@ func TestConfigurationDiscoveryHooksAndInstructionsStayMetadata(t *testing.T) {
 	p.hooksErr = errors.New("private hook failure")
 	if cfg, err = m.Configuration("project"); err != nil || len(cfg.Hooks) != 1 || !cfg.Hooks[0].Editable || cfg.Discovery["hooks"].Ready || !cfg.Discovery["instructions"].Ready {
 		t.Fatalf("failed hook discovery erased managed files: %+v, %v", cfg, err)
+	}
+}
+
+func TestConfigurationSkillGlobalSettingLeavesFiles(t *testing.T) {
+	m := configurationManager(t)
+	file, err := m.SaveConfiguration("project", "skills", "folder-name", configurationInput{Content: testSkillDefinition}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	p := &configurationProvider{Provider: agenttest.NewProvider("fake", agentapi.Capabilities{}), skills: agentapi.ConfigurationCatalog{Definitions: []agentapi.ConfigurationDefinition{{ID: "review", Name: "review", Source: "project", Path: file.Path, Enabled: &enabled}, {ID: "review", Name: "review", Source: "plugin", Enabled: &enabled}}}}
+	attachConfigurationProvider(m, p)
+	before, err := m.Configuration("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = m.SetSkillGloballyDisabled("project", "review", true); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.toggles, []string{"review=true"}) || !slices.Equal(p.projects[len(p.projects)-1], []string{m.projects["project"].Dir}) {
+		t.Fatalf("toggles = %v; projects = %v", p.toggles, p.projects)
+	}
+	after, err := m.Configuration("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Skills) != len(before.Skills) || after.Skills[0].Path != file.Path || after.Skills[0].Revision != file.Revision || after.Skills[0].Disabled {
+		t.Fatalf("global setting changed the project file: %+v", after.Skills)
+	}
+	if _, err = os.Stat(file.Path + disabledConfigurationSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("global setting renamed a file: %v", err)
+	}
+	for _, tc := range []struct {
+		name, skill string
+		status      int
+		setup       func()
+	}{
+		{"unknown name", "missing", http.StatusNotFound, nil},
+		{"empty name", "", http.StatusBadRequest, nil},
+		{"padded name", " review", http.StatusBadRequest, nil},
+		{"control character", "review\x1b[31m", http.StatusBadRequest, nil},
+		{"oversized name", strings.Repeat("r", 257), http.StatusBadRequest, nil},
+		{"unknown project", "review", http.StatusNotFound, func() { delete(m.projects, "gone") }},
+		{"terminal off", "review", http.StatusForbidden, func() { m.settings.Terminal = false }},
+		{"discovery failed", "review", http.StatusBadGateway, func() { m.settings.Terminal = true; p.skillsErr = errors.New("private") }},
+		{"unsupported", "review", http.StatusConflict, func() { p.skillsErr = nil; p.toggleErr = agentapi.ErrUnsupported }},
+		{"native failure", "review", http.StatusBadGateway, func() { p.toggleErr = errors.New("native skill setting failed") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setup != nil {
+				tc.setup()
+			}
+			calls := len(p.toggles)
+			project := "project"
+			if tc.name == "unknown project" {
+				project = "gone"
+			}
+			err := m.SetSkillGloballyDisabled(project, tc.skill, true)
+			if configurationStatus(err) != tc.status {
+				t.Fatalf("status = %d (%v), want %d", configurationStatus(err), err, tc.status)
+			}
+			wantCalls := calls
+			if tc.name == "unsupported" || tc.name == "native failure" {
+				wantCalls++
+			}
+			if len(p.toggles) != wantCalls {
+				t.Fatalf("toggles = %v", p.toggles)
+			}
+		})
+	}
+	m.providers["fake"] = p.Provider
+	if err = m.SetSkillGloballyDisabled("project", "review", true); configurationStatus(err) != http.StatusConflict {
+		t.Fatalf("absent capability = %v", err)
+	}
+}
+
+func TestConfigurationSkillGlobalSettingHTTP(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("COPILOT_HOME", filepath.Join(t.TempDir(), ".copilot"))
+	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
+	ts.m.settings.Terminal = true
+	enabled := false
+	p := &configurationProvider{Provider: agenttest.NewProvider("fake", agentapi.Capabilities{}), skills: agentapi.ConfigurationCatalog{Definitions: []agentapi.ConfigurationDefinition{{ID: "review", Name: "review", Source: "personal-copilot", Enabled: &enabled}}}}
+	ts.m.mu.Lock()
+	ts.m.order = []string{"fake"}
+	ts.m.providers = map[string]agentapi.Provider{"fake": p}
+	ts.m.infos = map[string]ProviderInfo{"fake": {Available: true}}
+	ts.m.mu.Unlock()
+	for _, body := range []string{`{"name":"review"}`, `{"disabled":true}`, `{"name":"review","disabled":"yes"}`} {
+		if w := ts.do(http.MethodPost, "/api/configuration/skills/global-disabled", body, withCookie(ts)); w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid body %s = %d %s", body, w.Code, w.Body)
+		}
+	}
+	if len(p.toggles) != 0 {
+		t.Fatalf("invalid bodies changed the setting: %v", p.toggles)
+	}
+	if w := ts.do(http.MethodPost, "/api/configuration/skills/global-disabled", `{"name":"review","disabled":false}`, withCookie(ts)); w.Code != http.StatusNoContent {
+		t.Fatalf("enable = %d %s", w.Code, w.Body)
+	}
+	if !slices.Equal(p.toggles, []string{"review=false"}) {
+		t.Fatalf("toggles = %v", p.toggles)
+	}
+	if w := ts.do(http.MethodPost, "/api/configuration/skills/global-disabled", `{"name":"review","disabled":true}`); w.Code != http.StatusUnauthorized {
+		t.Fatalf("signed-out request = %d", w.Code)
 	}
 }

@@ -45,6 +45,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"POST", "/api/configuration/skills/install", true},
 		{"PUT", "/api/configuration/skills/name", true},
 		{"DELETE", "/api/configuration/skills/name", true},
+		// Same policy as the skill file toggle above: Settings writes are allowed.
+		{"POST", "/api/configuration/skills/global-disabled", true},
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},

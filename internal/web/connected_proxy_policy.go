@@ -65,6 +65,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"PATCH /api/routines/{id}",
 		"PATCH /api/sessions/{id}",
 		"PATCH /api/settings",
+		"POST /api/configuration/skills/global-disabled",
 		"POST /api/configuration/skills/install",
 		"POST /api/configuration/skills/list",
 		"POST /api/configuration/{kind}/draft",

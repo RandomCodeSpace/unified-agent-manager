@@ -41,6 +41,38 @@ func (a sdkClientAdapter) DiscoverInstructions(ctx context.Context, projectPaths
 	return a.c.RPC.Instructions.Discover(ctx, &rpc.InstructionsDiscoverRequest{ProjectPaths: projectPaths})
 }
 
+type skillSettingClient interface {
+	SetSkillDisabled(context.Context, string, bool) error
+}
+
+func (a sdkClientAdapter) SetSkillDisabled(ctx context.Context, name string, disabled bool) error {
+	_, err := a.c.RPC.Skills.Config().SetSkillDisabled(ctx, &rpc.SkillsConfigSetSkillDisabledRequest{Name: name, Disabled: disabled})
+	return err
+}
+
+// SetSkillGloballyDisabled atomically updates one name in Copilot's global
+// disabled-skills list; other names are left untouched.
+func (p *webProvider) SetSkillGloballyDisabled(ctx context.Context, name string, disabled bool) error {
+	client, err := p.ensureStarted(ctx)
+	if err != nil {
+		return errors.New("native skill setting could not start")
+	}
+	c, ok := client.(skillSettingClient)
+	if !ok {
+		return agentapi.ErrUnsupported
+	}
+	err = c.SetSkillDisabled(ctx, name, disabled)
+	var rpcErr *copilot.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+		return agentapi.ErrUnsupported
+	}
+	if err != nil {
+		// Native errors can contain provider details.
+		return errors.New("native skill setting failed")
+	}
+	return nil
+}
+
 func (p *webProvider) configurationClient(ctx context.Context) (configurationDiscoveryClient, error) {
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
