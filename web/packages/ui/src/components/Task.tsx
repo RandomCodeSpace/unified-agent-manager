@@ -343,7 +343,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // arrives above or below it, so the row stays under the pointer and beside its panel.
   const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
   const log = useRef<HTMLDivElement>(null);
-  const keepHeld = () => {
+  const keepHeld = useCallback(() => {
     const h = held.current, el = scroller.current;
     if (!h || !el) return;
     const row = h.row();
@@ -360,7 +360,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const short = want - (el.scrollHeight - el.clientHeight);
     if (short > 0 && log.current) log.current.style.minHeight = `${log.current.offsetHeight + short}px`;
     el.scrollTop = want;
-  };
+  }, []);
+  // A row moves without the content's size changing (one part shrinking above it as another grows below,
+  // a transition): while it is held, every change and every frame checks it.
+  const watching = useRef<{ changes: MutationObserver; frame: number } | null>(null);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
@@ -536,7 +539,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     }
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
-  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
+  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions, keepHeld]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
   useEffect(() => {
     const el = scroller.current, content = log.current;
@@ -548,20 +551,36 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [keepHeld]);
 
   // Once the peek or transcript closes, a view at the bottom catches up with what came meanwhile.
   const hold = useCallback((row: (() => Element | null) | null) => {
     if (row) {
       const el = row();
       held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0 };
+      if (!watching.current && log.current) {
+        const changes = new MutationObserver(keepHeld);
+        changes.observe(log.current, { subtree: true, childList: true, characterData: true, attributes: true });
+        const w = { changes, frame: 0 };
+        const tick = () => {
+          keepHeld();
+          w.frame = requestAnimationFrame(tick);
+        };
+        w.frame = requestAnimationFrame(tick);
+        watching.current = w;
+      }
       return;
     }
     held.current = null;
+    if (watching.current) {
+      watching.current.changes.disconnect();
+      cancelAnimationFrame(watching.current.frame);
+      watching.current = null;
+    }
     if (log.current) log.current.style.minHeight = '';
     const el = scroller.current;
     if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
-  }, [session.history_after]);
+  }, [session.history_after, keepHeld]);
 
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
