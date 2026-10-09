@@ -134,6 +134,14 @@ func TestFleetRegistryMarksMismatchAndProxyRefusesWork(t *testing.T) {
 	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
 		t.Fatalf("branch dismissal reached a mismatched connection: %s", data)
 	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/rewind"), RewindRequest{UserItemID: "u1", Mode: "conversation", Token: "t", RequestID: mustUUID(t)}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("task rewind reached a mismatched connection: %s", data)
+	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/rewind/release"), map[string]string{"request_id": mustUUID(t)}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("rewind release reached a mismatched connection: %s", data)
+	}
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/providers/copilot/account"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/settings"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/sessions"), nil, http.StatusOK)

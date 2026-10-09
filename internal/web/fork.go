@@ -226,6 +226,9 @@ func (m *Manager) forkAllowedLocked(s *webSession) error {
 	if s.opening != nil {
 		return newError(http.StatusConflict, "wait for the task to finish opening before branching")
 	}
+	if err := s.rewindHoldLocked(); err != nil {
+		return err
+	}
 	return s.settleableLocked()
 }
 

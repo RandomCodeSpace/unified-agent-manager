@@ -29,6 +29,7 @@ import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
 import { ForkPicker } from './Fork';
+import { RewindHold, RewindPanel } from './Rewind';
 import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -278,6 +279,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [output, setOutput] = useState<CommandOutput | null>(null);
   const [fork, setFork] = useState<{ userItemId: string; anchor: HTMLElement | null } | null>(null);
   const chooseFork = useCallback((userItemId: string, anchor: HTMLElement | null) => setFork({ userItemId, anchor }), []);
+  const [rewindAt, setRewindAt] = useState<{ userItemId: string; anchor: HTMLElement | null } | null>(null);
+  const chooseRewind = useCallback((userItemId: string, anchor: HTMLElement | null) => setRewindAt({ userItemId, anchor }), []);
   const alive = useRef(false);
   useEffect(() => {
     alive.current = true;
@@ -843,8 +846,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
               changedLine={!noGit}
               onBranch={session.capabilities.fork && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseFork : undefined}
+              onRewind={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseRewind : undefined}
             />
             </HistoryAnchor>
+            {rewindAt && active && connected && <RewindPanel session={session} userItemId={rewindAt.userItemId} anchor={rewindAt.anchor} onClose={() => setRewindAt(null)} />}
+            {session.rewind && <RewindHold session={session} />}
             {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {cards.map((i) => (

@@ -26,6 +26,9 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		return sub, nil
 	}
 	err := s.readOnlyLocked()
+	if err == nil {
+		err = s.rewindHoldLocked()
+	}
 	if s.removed {
 		err = newError(http.StatusNotFound, msgSessionNotFound)
 	}

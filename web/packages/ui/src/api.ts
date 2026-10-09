@@ -32,6 +32,8 @@ export interface Capabilities {
   history: boolean;
   /** Recorded owner-turn prefixes can be copied natively, without resending prompts. */
   fork?: boolean;
+  /** An open conversation's recorded suffix can be rewound natively, with a preview first. */
+  rewind?: boolean;
   context_size?: boolean;
   /** An already-open conversation can report native context categories and sources on demand. */
   context_breakdown?: boolean;
@@ -713,6 +715,8 @@ export interface SessionSummary {
   /** Native recorded-history lineage, separate from a last-message rerun. */
   fork_of?: string;
   fork_user_item_id?: string;
+  /** A native rewind that holds the Task until it is reconciled; absent otherwise. */
+  rewind?: RewindStatus;
   /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */
   outcome?: string;
   /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
@@ -1005,6 +1009,48 @@ export interface PreviousSession {
   created_at: string;
   updated_at: string;
   in_use: boolean;
+}
+
+export type RewindMode = 'conversation' | 'conversation-and-files';
+/** What rewinding to before an owner message would discard and restore. `token` binds the confirmation. */
+export interface RewindPreview {
+  user_item_id: string;
+  token: string;
+  /** Owner prompts discarded, this one included. */
+  turns: number;
+  files_available: boolean;
+  files_reason?: string;
+  /** Native forward counts over the discarded turns; a rewind shows their inverse. */
+  files: TurnChangeCounts & { entries?: { path: string; kind: string; additions?: number; deletions?: number }[] };
+}
+/** Every native outcome is kept with the presence of its optional fields. */
+export interface RewindResult {
+  outcome: string;
+  error?: string;
+  events_removed?: number;
+  restored_files: string[];
+  skipped_files: { path: string; reason: string }[];
+  restored_omitted?: number;
+  skipped_omitted?: number;
+}
+export interface RewindReceipt {
+  request_id: string;
+  user_item_id: string;
+  mode: RewindMode;
+  /** pending and applied clear after the conversation is read again; uncertain only by an explicit reconcile. */
+  state: 'pending' | 'applied' | 'uncertain' | 'done';
+  result?: RewindResult;
+  reconcile_failed?: boolean;
+  /** The owner released the hold while the outcome stayed unknown. */
+  released?: boolean;
+}
+export interface RewindStatus {
+  request_id: string;
+  state: 'pending' | 'applied' | 'uncertain';
+  mode: RewindMode;
+  outcome?: string;
+  /** The reread could not establish the outcome: the explicit release is offered. */
+  reconcile_failed?: boolean;
 }
 
 export interface TurnChangeCounts {
@@ -1742,6 +1788,14 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/fork`, body),
     /** Clears the unresolved branch request for this reply and model; a Copilot session may still exist for it. */
     dismissFork: (id: string, body: { user_item_id: string; model: string }) => call<void>('POST', `/api/sessions/${enc(id)}/fork/dismiss`, body),
+    /** Readonly: what rewinding to before this owner message would remove and restore. */
+    rewindPreview: (id: string, userItemId: string, signal?: AbortSignal) => call<RewindPreview>('GET', `/api/sessions/${enc(id)}/rewind/preview?user_item_id=${enc(userItemId)}`, undefined, false, signal),
+    /** Executes a confirmed preview once; a repeated request ID returns its receipt. */
+    rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind`, body),
+    /** Rereads the conversation and releases a Task held by an applied or uncertain rewind; never rewinds again. */
+    reconcileRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
+    /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
+    releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
     prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
