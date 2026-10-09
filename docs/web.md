@@ -801,7 +801,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the status line labels current, touched SQL Todo progress **Plan**; an old
   or unavailable list is never treated as progress on the new plan. Only the
   exact provider-reported scratch-plan file is excluded from Task changes;
-  project files named `plan.md` still count.
+  project files named `plan.md` still count. Native session changes exclude
+  it only when its path matches exactly; a relative path whose workspace
+  root is unknown or ambiguous stays listed.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,

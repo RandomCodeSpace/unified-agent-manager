@@ -144,7 +144,12 @@ func (m *Manager) notePlanPathLocked(s *webSession, path string) {
 	if !filepath.IsAbs(path) || len(path) > maxGrantPathBytes || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) {
 		return
 	}
-	s.planPath = filepath.Clean(path)
+	if path = filepath.Clean(path); path != s.planPath {
+		// The provider filters the scratch file from its own diff, so a
+		// total read before this identity is stale.
+		s.invalidateNativeDiff()
+	}
+	s.planPath = path
 	changed := false
 	for edit := range s.edits {
 		if s.isPlanPath(edit) {
