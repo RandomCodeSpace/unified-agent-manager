@@ -156,7 +156,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
-  const vcs = (!noGit || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
+  const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
     <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -203,7 +203,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
             <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
               <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
               <Popover.Description>
-                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has no Changes or Files view.
+                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has {session.capabilities.session_diff ? 'no Files or All changes view.' : 'no Changes or Files view.'}
               </Popover.Description>
               {noGit === 'not_repository' && <SetUpGitButton session={session} />}
             </Popover.Content>

@@ -62,7 +62,11 @@ type Capabilities struct {
 	// SessionDiff is true when the provider records per-conversation file
 	// changes (Conversation.Diff). Workspace Git diffs are separate.
 	SessionDiff bool `json:"session_diff"`
-	History     bool `json:"history"`
+	// SessionDiffNeedsTracking limits the default native scope to Tasks that
+	// opted into capture before their first turn. Explicit session reads still
+	// report the provider's current availability for legacy conversations.
+	SessionDiffNeedsTracking bool `json:"-"`
+	History                  bool `json:"history"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
 	// Usage is the second exception: the provider implements QuotaReporter
@@ -1228,13 +1232,18 @@ const (
 // text when available; Patch holds a unified diff when that is what the
 // provider returns.
 type FileDiff struct {
-	Path      string `json:"path"`
-	Status    string `json:"status,omitempty"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Before    string `json:"before,omitempty"`
-	After     string `json:"after,omitempty"`
-	Patch     string `json:"patch,omitempty"`
+	// CountsUnknown distinguishes omitted/binary patches from zero changes.
+	CountsUnknown bool   `json:"counts_unknown,omitempty"`
+	Binary        bool   `json:"binary,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	OldPath       string `json:"old_path,omitempty"`
+	Path          string `json:"path"`
+	Status        string `json:"status,omitempty"`
+	Additions     int    `json:"additions"`
+	Deletions     int    `json:"deletions"`
+	Before        string `json:"before,omitempty"`
+	After         string `json:"after,omitempty"`
+	Patch         string `json:"patch,omitempty"`
 }
 
 // BackgroundTaskController stops a provider-owned shell process independently

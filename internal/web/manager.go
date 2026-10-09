@@ -434,9 +434,13 @@ type webSession struct {
 	// activity is what the turn evidence keeps of the main agent's items,
 	// by ID (turn_evidence.go). Closed and staged Tasks retain these bounded
 	// facts without item bodies; other evicted transcripts rebuild them.
-	activity               map[string]activity
-	editsKnown             bool
-	diff                   *DiffStat
+	activity      map[string]activity
+	editsKnown    bool
+	diff          *DiffStat
+	nativeChanges bool
+	// An on-demand native read started before later activity cannot restore
+	// the now-unknown total after that activity invalidates it.
+	nativeDiffRevision     uint64
 	diffRunning, diffDirty bool
 
 	// rerunOf is the Task whose last message this one ran again (assist.go).
@@ -809,6 +813,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.projectID, s.model, s.title = web.ProjectID, web.Model, cleanTitle(web.Title)
 		s.terminalID = web.TerminalSession
 		s.imported = web.Imported
+		s.nativeChanges = web.NativeChanges
 		s.spawnedBy = web.SpawnedBy
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
@@ -1026,12 +1031,16 @@ func (m *Manager) lookup(id string) (*webSession, error) {
 
 func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	permissions, questions := s.pendingKinds()
+	capabilities := m.infos[s.provider].Capabilities
+	if capabilities.SessionDiffNeedsTracking && !s.nativeChanges {
+		capabilities.SessionDiff = false
+	}
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
-		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: m.infos[s.provider].Capabilities, Queued: len(s.queue),
+		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
@@ -2008,7 +2017,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
-				StopReason: key.stopReason,
+				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
 		})
 	}
@@ -2179,6 +2188,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventItem:
 		if ev.Item != nil && ev.Item.ID != "" {
 			it := clampItem(*ev.Item, m.now())
+			if startsTurn(it) || it.Tool != nil && (it.Tool.Status == agentapi.ToolCompleted || it.Tool.Status == agentapi.ToolFailed) {
+				s.invalidateNativeDiff()
+			}
 			s.linkUploadsLocked(&it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
@@ -2262,6 +2274,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 }
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
+	s.invalidateNativeDiff()
 	m.turnActivityTurnLocked(s, turn.State)
 	m.observeTurnTimingLocked(s, turn.State)
 	if turn.State != agentapi.TurnWorking {
@@ -2419,6 +2432,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.spawnedBy = req.spawnedBy
 	s.routineID = req.routineID
 	s.rerunOf = req.rerunOf
+	s.nativeChanges = prov.Capabilities().SessionDiffNeedsTracking
 	// A new conversation has no earlier record: everything streams in.
 	s.history = HistoryLoaded
 	s.editsKnown = true
@@ -2443,7 +2457,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
 	}
 	var check func(*store.Config) error
 	if req.spawnedBy != "" {

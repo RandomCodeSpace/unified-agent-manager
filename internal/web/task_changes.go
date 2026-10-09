@@ -42,6 +42,16 @@ var errScope = newError(http.StatusBadRequest, "scope must be %q, %q, %q or %q",
 // diffDelay batches a burst of edits into one recount of the Task's total.
 var diffDelay = time.Second
 
+// invalidateNativeDiff leaves the header total unknown until another
+// on-demand native read. Even a failed tool can have committed partial edits.
+// The caller holds Manager.mu and publishes its event's changed summary.
+func (s *webSession) invalidateNativeDiff() {
+	if s.nativeChanges {
+		s.diff = nil
+		s.nativeDiffRevision++
+	}
+}
+
 // noteEdits records it in s's evidence, edits and turn start and reports
 // whether an edit completed, so the total needs a recount. An edit counts
 // once it completed, at when it ended: one still running may yet fail.
@@ -90,7 +100,7 @@ func (m *Manager) noteHistoryLocked(s *webSession, h agentapi.History, whole boo
 // kickDiffLocked recounts s's total in the background, after diffDelay,
 // once more if it is kicked again meanwhile.
 func (m *Manager) kickDiffLocked(s *webSession) {
-	if m.closed || s.removed || len(s.edits) == 0 && s.diff == nil {
+	if m.closed || s.removed || s.nativeChanges || len(s.edits) == 0 && s.diff == nil {
 		return
 	}
 	if s.diffRunning {
@@ -214,7 +224,9 @@ func (m *Manager) gitChanges(ctx context.Context, id, scope string) (Changes, er
 		return out, nil
 	}
 	m.mu.Lock()
-	m.setDiffLocked(s, l.stat())
+	if !s.nativeChanges {
+		m.setDiffLocked(s, l.stat())
+	}
 	m.mu.Unlock()
 	out.Counts = &ScopeCounts{Task: len(l.task), Turn: len(l.turn), Workspace: len(l.all.Files)}
 	if scope != ScopeWorkspace {

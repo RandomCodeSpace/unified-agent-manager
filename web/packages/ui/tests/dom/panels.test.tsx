@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
+import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
 import { saveDensity } from '../../src/lib/density';
 import { VERBS } from '../../src/lib/verbs';
@@ -63,6 +64,25 @@ describe('changes', () => {
     const stored = JSON.parse(localStorage.getItem('uam.review.t1') ?? 'null') as { viewed: Record<string, string>; comments: unknown[] } | null;
     expect(Object.keys(stored?.viewed ?? {})).toHaveLength(1);
     expect(stored?.comments).toEqual([]);
+  });
+
+  test('native Task changes remain reachable in a project without Git', async () => {
+    const original = mockData.seed;
+    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
+      const state = original();
+      const task = state.tasks.find(t => t.id === 't6')!;
+      task.capabilities = { ...task.capabilities, session_diff: true };
+      return state;
+    });
+    try {
+      const { user } = await openTask('t6');
+      expect(await screen.findByRole('button', { name: /^Open changes/ })).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Browse files' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
+      expect(await screen.findByText(/no Files or All changes view/)).toBeTruthy();
+    } finally {
+      seed.mockRestore();
+    }
   });
 
   test('a project without Git offers no changes, and says why', async () => {

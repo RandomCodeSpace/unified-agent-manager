@@ -390,6 +390,9 @@ type TodoCounts struct {
 // the provider; lifecycle metadata and request outcomes survive a service
 // restart.
 type WebState struct {
+	// NativeChanges records capture requested before this Task's first turn.
+	// It is not inferred when an older/imported conversation is resumed.
+	NativeChanges bool `json:"native_changes,omitempty"`
 	// Turn is the last known session state (for example "working" or
 	// "completed").
 	Turn        string       `json:"turn,omitempty"`

@@ -125,6 +125,7 @@ export function ChangesSheet({
     }
   }
   const shownPath = path && files.some((f) => f.path === path) ? path : (turnFile(files.map((f) => f.path), turnPaths) ?? files[0]?.path ?? null);
+  const countsKnown = files.every(f => !f.counts_unknown);
   const adds = files.reduce((n, f) => n + f.additions, 0);
   const dels = files.reduce((n, f) => n + f.deletions, 0);
   const label = data ? data.label : `${projectName} vs HEAD`;
@@ -276,7 +277,7 @@ export function ChangesSheet({
         <InstanceName />
         {data?.supported && (
           <span className="min-w-0 truncate text-caption tabular-nums text-muted">
-            {files.length} {files.length === 1 ? 'file' : 'files'}{adds > 0 && <> · <span className="text-success">+{adds}</span></>}{dels > 0 && <> <span className="text-error">−{dels}</span></>}
+            {files.length} {files.length === 1 ? 'file' : 'files'}{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}{!countsKnown && <> · line counts unavailable</>}
             {files.length > 0 && <> · {viewedCount} of {files.length} viewed</>}
           </span>
         )}
@@ -312,7 +313,7 @@ export function ChangesSheet({
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any task or source.' : label}
       </p>
       {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
-      {adds + dels > LARGE_CHANGE && (
+      {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}
       <ul className="max-h-[40%] shrink-0 overflow-y-auto overflow-x-hidden p-1" aria-busy={!data && !error ? true : undefined}>
@@ -447,9 +448,11 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
                 </span>
               )}
             </span>
-            <span className="tabular-nums">
-              <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
-            </span>
+            {f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">—</span> : (
+              <span className="tabular-nums">
+                <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
+              </span>
+            )}
           </button>
           <Menu.Root modal={false}>
             <Menu.Trigger render={<Button size="icon-sm" aria-label={`Actions for ${f.path}`} className="absolute top-1/2 right-1 -translate-y-1/2 text-muted opacity-0 transition-opacity group-hover/file:opacity-100 focus-visible:opacity-100 data-open:opacity-100 pointer-coarse:opacity-100" />}>
@@ -483,7 +486,7 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
   onRemoveComment?: (id: string) => void;
 }>) {
   const patch = useMemo<StructuredPatch | null | Error>(() => {
-    if (!file) return null;
+    if (!file || file.binary || file.truncated || file.counts_unknown) return null;
     try {
       if (file.patch) return parsePatch(file.patch)[0] ?? null;
       return structuredPatch(file.path, file.path, file.before ?? '', file.after ?? '');
@@ -495,6 +498,9 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
 
   const warning = error ? <Note tone="error" role="alert" className="p-3">{error}</Note> : null;
   if (!file) return warning ?? <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
+  if (file.truncated) return <>{warning}<Note className="p-3">The diff exceeded its size limit and is unavailable.</Note></>;
+  if (file.binary) return <>{warning}<Note className="p-3">Binary file: no textual diff is available.</Note></>;
+  if (file.counts_unknown) return <>{warning}<Note className="p-3">Line counts and a textual diff are unavailable for this change.</Note></>;
   if (patch instanceof Error) return <>{warning}<Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note></>;
   if (!patch || patch.hunks.length === 0) return <>{warning}<Note className="p-3">No textual changes in {path}.</Note></>;
 
