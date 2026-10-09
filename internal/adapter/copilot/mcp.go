@@ -200,6 +200,10 @@ func (a sdkSessionAdapter) ReloadCustomizations(ctx context.Context) (*rpc.Custo
 	return a.s.RPC.Customizations.Reload(ctx)
 }
 
+func (a sdkSessionAdapter) MCPComplete(ctx context.Context, req *rpc.MCPOauthCompleteRequest) (*rpc.SessionMCPOauthCompleteResult, error) {
+	return a.s.RPC.MCP.Oauth().Complete(ctx, req)
+}
+
 func (p *webProvider) mcpClient(ctx context.Context) (mcpConfigClient, error) {
 	client, err := p.ensureStarted(ctx)
 	if err != nil {
@@ -514,4 +518,51 @@ func (c *conversation) MCPSignIn(ctx context.Context, name string, again bool) (
 		return "", fmt.Errorf("start the sign-in: %s", rpcText(err))
 	}
 	return deref(res.AuthorizationURL), nil
+}
+
+func (c *conversation) MCPSignInCallback(ctx context.Context, name string, again bool, redirectURI string) (agentapi.MCPCallbackSignIn, error) {
+	ms, err := c.mcp()
+	if err != nil {
+		return agentapi.MCPCallbackSignIn{}, err
+	}
+	if _, ok := c.sess.(interface {
+		MCPComplete(context.Context, *rpc.MCPOauthCompleteRequest) (*rpc.SessionMCPOauthCompleteResult, error)
+	}); !ok {
+		return agentapi.MCPCallbackSignIn{}, agentapi.ErrUnsupported
+	}
+	client, message := "uam", mcpSignInMessage
+	req := &rpc.MCPOauthLoginRequest{ServerName: name, ClientName: &client, CallbackSuccessMessage: &message, RedirectURI: &redirectURI}
+	if again {
+		req.ForceReauth = &again
+	}
+	res, err := ms.MCPLogin(ctx, req)
+	var rpcErr *copilot.RPCError
+	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+		return agentapi.MCPCallbackSignIn{}, agentapi.ErrUnsupported
+	}
+	if err != nil {
+		// RPC diagnostics may contain the authorization URL or callback query.
+		return agentapi.MCPCallbackSignIn{}, errors.New("the provider could not start MCP sign-in through the public callback; authorization may already have started")
+	}
+	if res == nil || (deref(res.AuthorizationURL) != "" && deref(res.AuthorizationID) == "") {
+		return agentapi.MCPCallbackSignIn{}, errors.New("the provider did not return a usable public MCP sign-in")
+	}
+	return agentapi.MCPCallbackSignIn{AuthorizationID: deref(res.AuthorizationID), URL: deref(res.AuthorizationURL)}, nil
+}
+
+func (c *conversation) CompleteMCPSignIn(ctx context.Context, authorizationID, callbackURL string) error {
+	if c.isClosed() {
+		return agentapi.ErrClosed
+	}
+	ms, ok := c.sess.(interface {
+		MCPComplete(context.Context, *rpc.MCPOauthCompleteRequest) (*rpc.SessionMCPOauthCompleteResult, error)
+	})
+	if !ok {
+		return agentapi.ErrUnsupported
+	}
+	res, err := ms.MCPComplete(ctx, &rpc.MCPOauthCompleteRequest{AuthorizationID: authorizationID, CallbackURL: callbackURL})
+	if err != nil || res == nil {
+		return errors.New("the provider could not complete MCP sign-in; start the sign-in again")
+	}
+	return nil
 }

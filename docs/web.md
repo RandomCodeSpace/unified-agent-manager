@@ -1618,19 +1618,27 @@ conversation if it was closed; nothing is sent to the agent.
 
 **Signing in to a remote server.** A server that uses OAuth shows Needs
 sign-in. **Sign in** asks Copilot for the provider's sign-in page and shows
-a link to open it in a new tab. After you approve, the provider sends the
-browser to an address on `127.0.0.1` or `localhost`, where Copilot waits on
-this host. On the host's own desktop that finishes the sign-in by itself.
-From any other computer that page does not load; copy the whole address
-from the address bar, paste it into the dialog and choose **Finish
-sign-in**: the service passes it to Copilot's waiting listener on this host.
-It accepts only an address with the exact port, path and `state` of the
-sign-in it started for that Task and server, for 10 minutes and once, and
-never follows a redirect. Copilot keeps the sign-in for later Tasks and the
-`copilot` command. A connected remote server offers **Sign in again**, which
-discards the kept sign-in first. If the provider's redirect is not a
-loopback address, finish in that tab or sign in on the host by running
-`copilot` there and using `/mcp`.
+a link to open it in a new tab. When the browser's host matches a configured
+HTTPS `--public-origin` and the provider supports public callbacks, finish
+in that tab and return to the Task. The provider SDK handles discovery,
+PKCE, code exchange, credential storage and connecting the server. UAM
+accepts its callback only for that Task's current conversation, for 10
+minutes and once; closing or reopening the conversation invalidates it.
+The dialog updates through live server status; use **Refresh** if needed.
+
+Without a matching HTTPS public origin or provider callback support,
+the existing loopback flow remains: the provider sends the browser to an
+address on `127.0.0.1` or `localhost`, where Copilot waits on this host. On
+the host's own desktop it finishes by itself. From another computer that
+page does not load; copy the whole address from the address bar, paste it
+into the dialog and choose **Finish sign-in**. UAM passes only the exact
+port, path and `state` of that Task/server's pending sign-in to the waiting
+listener, for 10 minutes and once, without following redirects. A supported
+public-callback failure is reported and does not start another login.
+Copilot keeps the sign-in for later Tasks and the `copilot` command. A
+connected remote server offers **Sign in again**, which discards the kept
+sign-in first. If the provider's legacy redirect is not a loopback address,
+finish in that tab or run `copilot` on the host and use `/mcp`.
 
 ## Install as an app
 

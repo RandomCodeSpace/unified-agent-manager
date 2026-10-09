@@ -3,6 +3,44 @@ import { describe, expect, test, vi } from 'vitest';
 import { openMenu, openTask, renderApp } from './render';
 
 describe('MCP servers', () => {
+  test.each(['Sign in', 'Sign in again'])('a public callback finishes in its own tab for %s', async (action) => {
+    const { user } = renderApp('#task=t1');
+    const Source = window.EventSource;
+    let stream: EventSource | undefined;
+    window.EventSource = class extends Source {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        if (String(url).startsWith('/api/events?session=t1')) this.addEventListener('snapshot', (e) => { stream = e.target as EventSource; });
+      }
+    };
+    await screen.findByRole('region', { name: 'Conversation' });
+    await waitFor(() => expect(stream).toBeDefined());
+    const original = window.fetch;
+    const fetch = vi.spyOn(window, 'fetch');
+    fetch.mockImplementation((input, init) => String(input).endsWith('/sign-in') ? Promise.resolve(new Response(JSON.stringify({ url: 'https://authorize.example/login', callback: true }))) : original(input, init));
+    try {
+      const menu = await openMenu(user, 'Task actions');
+      await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
+      const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
+      await dialog.findByRole('list', { name: "This task's MCP servers" });
+      await user.click(dialog.getByRole('button', { name: action, exact: true }));
+      const name = action === 'Sign in' ? 'tracker' : 'docs-search';
+      const form = within(await dialog.findByRole('form', { name: `Sign in to ${name}` }));
+      expect(form.getByText(/Finish in that tab, then return to this task/)).toBeTruthy();
+      expect(form.queryByRole('textbox', { name: 'Address the browser ended on' })).toBeNull();
+      expect(form.queryByText(/server machine instead/)).toBeNull();
+      const send = (seq: number, status: string) => act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name, status, remote: true }] } }) })));
+      send(1_000_001, 'pending');
+      expect(dialog.getByRole('form', { name: `Sign in to ${name}` })).toBeTruthy();
+      send(1_000_002, 'connected');
+      await waitFor(() => expect(dialog.queryByRole('form', { name: `Sign in to ${name}` })).toBeNull());
+      expect(dialog.getByRole('button', { name: 'Apply current settings' })).toHaveProperty('disabled', false);
+      expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/sign-in/finish'))).toHaveLength(0);
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   test('an older service still reads one expanded server through its existing rich endpoint', async () => {
     const { user } = await openTask('t1');
     const original = window.fetch;
