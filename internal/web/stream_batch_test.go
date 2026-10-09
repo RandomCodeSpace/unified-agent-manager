@@ -152,7 +152,11 @@ func BenchmarkStreamQueuedFlush(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer compressor.Close()
+			defer func() {
+				if err := compressor.Close(); err != nil {
+					b.Error(err)
+				}
+			}()
 			bytesPerRun := len(bytes.Join(frames, nil))
 			var flushes int
 			b.ReportAllocs()
