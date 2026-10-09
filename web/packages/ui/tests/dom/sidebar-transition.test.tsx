@@ -50,6 +50,30 @@ async function home() {
 const row = (id: string) => document.querySelector(`nav[aria-label="Tasks"] [data-task-row="${id}"]`);
 
 describe('Task list view transition', () => {
+  test('a minute refreshes an unchanged Task time without a view transition', async () => {
+    // Keep the mock's request timeouts real; only the relative-time interval advances.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      const { send, active } = await home();
+      const updatedAt = new Date(now - 3 * 60_000).toISOString();
+      send('session', { session: { ...active, updated_at: updatedAt } });
+      await waitFor(() => expect(row(active.id)?.querySelector('time')?.textContent).toBe('3m'));
+      await act(async () => {});
+      startViewTransition.mockClear();
+
+      clock.mockReturnValue(now + 60_000);
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(row(active.id)?.querySelector('time')?.textContent).toBe('4m');
+      expect(row(active.id)?.querySelector('time')?.getAttribute('datetime')).toBe(updatedAt);
+      expect(startViewTransition).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   test('a Task changing in place (state, title, time) repaints its row without one', async () => {
     const { send, active } = await home();
     send('session', { session: { ...active, state: 'failed', name: 'Changed in place', updated_at: new Date().toISOString() } });

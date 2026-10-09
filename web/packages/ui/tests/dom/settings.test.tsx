@@ -52,7 +52,7 @@ describe('settings', () => {
   async function customModelSettings(change?: (context: AppContextValue) => void) {
     install();
     const fixture = seed();
-    const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: vi.fn(), narrow: false, hasNews: () => false, usage: null, refreshMeta: vi.fn() };
+    const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: vi.fn(), narrow: false, usage: null, refreshMeta: vi.fn() };
     context.settings.custom_models = [{ name: 'ollama', base_url: 'https://ollama.com/v1', api_key_env: 'UAM_BYOM_OLLAMA', model_id: 'deepseek-v4.1-flash', display_name: 'DeepSeek V4.1 Flash', key_present: true }];
     context.meta!.providers.find((p) => p.name === 'copilot')!.models.push({ id: 'ollama/deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash' });
     change?.(context);

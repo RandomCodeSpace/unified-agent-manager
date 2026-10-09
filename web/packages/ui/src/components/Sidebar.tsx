@@ -4,7 +4,7 @@ import { ViewTransition, memo, useEffect, useId, useLayoutEffect, useMemo, useRe
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { encodeEntity } from '../lib/instanceIdentity';
-import { filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus } from '../lib/tasks';
+import { filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
@@ -394,15 +394,10 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
  * `tabStop`: the row holds the list's one tab stop.
  * `moves`: this render changes the rows' order, so the row slides to its place with the Task list's view transition.
  */
-function TaskRow({ session: s, project, selected, compact = false, tabStop, moves, rowKey = s.id, machine }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; compact?: boolean; tabStop: boolean; moves: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine }>) {
-  const app = useApp();
-  // Another machine's rows read its own marks; the machine on screen reads App's, which follow the open Task.
-  const hasNews = machine && !machine.active ? machine.hasNews : app.hasNews;
+const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, tabStop, moves, rowKey = s.id, machine }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; tabStop: boolean; moves: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
-  const unread = hasNews(s);
-  const attention = needsYouNow(s, hasNews);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
   // The menu's own Settle item, shown on hover only while its rules allow it.
@@ -511,7 +506,7 @@ function TaskRow({ session: s, project, selected, compact = false, tabStop, move
       </li>
     </ViewTransition>
   );
-}
+});
 
 /* ---------- Shelf (Settled / Archived) ---------- */
 
@@ -582,6 +577,7 @@ export const Sidebar = memo(function Sidebar({
   projects,
   sessions,
   selectedId,
+  hasNews,
   actions,
   connection,
   version,
@@ -592,6 +588,7 @@ export const Sidebar = memo(function Sidebar({
   projects: Project[];
   sessions: SessionSummary[];
   selectedId: string | null;
+  hasNews: Unread;
   actions: WorkspaceActions;
   connection: Connection;
   version?: string;
@@ -602,7 +599,7 @@ export const Sidebar = memo(function Sidebar({
   // With connected instances, every machine's Tasks in one list; the machine on screen is this App's own state.
   const machines = federation?.machines;
   const carry = machines ? federation.carry : undefined;
-  useMinuteTick();
+  const minute = useMinuteTick();
   const [query, setQueryState] = useState(() => carry?.read().query ?? '');
   const setQuery = (value: string) => {
     setQueryState(value);
@@ -653,7 +650,9 @@ export const Sidebar = memo(function Sidebar({
   const moves = shown.current !== layout;
   const anyProject = useAnyProject(projects);
   const renderRow = (r: ListRow, compact = false) => {
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} session={r.task} selected={r.key === selectedKey} compact={compact} tabStop={r.key === tabStop} moves={moves} />;
+    // Inactive machines keep their own read marks; the active one follows App's open Task.
+    const reader = r.machine && !r.machine.active ? r.machine.hasNews : hasNews;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} tabStop={r.key === tabStop} moves={moves} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;

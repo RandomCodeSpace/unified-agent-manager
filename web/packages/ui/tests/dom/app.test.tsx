@@ -1,5 +1,6 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { renderApp, sidebar } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
@@ -361,6 +362,33 @@ describe('task lifecycle', () => {
     await user.clear(input);
     await user.type(input, 'Doctor terminal row{Enter}');
     await waitFor(() => expect(header().textContent).toBe('Doctor terminal row'));
+  });
+
+  test.each([
+    { saved: 'Name changed elsewhere', requests: 0, name: 'the latest name' },
+    { saved: 'Doctor: add terminal line', requests: 1, name: 'the previous name' },
+  ])('rename uses the latest session when the open editor saves $name', async ({ saved, requests }) => {
+    const { user } = renderApp('#task=t3');
+    await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
+    await user.click(screen.getByRole('button', { name: 'Rename task' }));
+    const input = await screen.findByRole('textbox', { name: 'Task name' });
+    const fetch = vi.spyOn(window, 'fetch');
+    try {
+      // Another client updates the summary while this editor keeps its original text.
+      await act(async () => { await api.rename('t3', 'Name changed elsewhere'); });
+      await waitFor(() => expect(document.querySelector('[data-task-row="t3"]')?.textContent).toContain('Name changed elsewhere'));
+      expect(input).toHaveProperty('value', 'Doctor: add terminal line');
+      fetch.mockClear();
+
+      await user.clear(input);
+      await user.type(input, `${saved}{Enter}`);
+      await waitFor(() => expect(header().textContent).toBe(saved));
+      const patches = fetch.mock.calls.filter(([url, options]) => String(url).endsWith('/api/sessions/t3') && options?.method === 'PATCH');
+      expect(patches).toHaveLength(requests);
+      if (requests) expect(JSON.parse(String(patches[0][1]?.body))).toEqual({ name: saved });
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   test('a busy task cannot be settled and says why', async () => {

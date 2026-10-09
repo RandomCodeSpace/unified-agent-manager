@@ -152,6 +152,8 @@ export default function App() {
     const known = seed?.loaded ? { loaded: true, projects: seed.projects, sessions: seed.sessions, settings: seed.settings, usage: seed.usage } : {};
     return { ...s, ...known, selectedId: hashSelection(initialPath) };
   });
+  const latestSessions = useRef(state.sessions);
+  useLayoutEffect(() => { latestSessions.current = state.sessions; }, [state.sessions]);
   const [recentTasks] = useState(() => new RecentTasks());
   const confirmedDetail = useRef<SessionDetail | null>(null);
   useLayoutEffect(() => {
@@ -606,8 +608,8 @@ export default function App() {
   }, [narrow]);
   const ownerSettings = useMemo(() => api.owner ? { ...state.settings, terminal: state.settings.terminal && api.supports('terminal-v1') } : state.settings, [api, state.settings]);
   const ctx = useMemo(
-    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, hasNews, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage }),
-    [meta, metaError, state.loaded, narrow, hasNews, ownerSettings, state.usage, refreshMeta, openUsage],
+    () => ({ meta, metaError, loaded: state.loaded, dispatch, narrow, settings: ownerSettings, usage: state.usage, refreshMeta, openUsage }),
+    [meta, metaError, state.loaded, narrow, ownerSettings, state.usage, refreshMeta, openUsage],
   );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
@@ -991,7 +993,7 @@ export default function App() {
       cancelRename: () => setRenaming(null),
       rename: async (id, name) => {
         setRenaming(null);
-        const current = state.sessions.find((s) => s.id === id);
+        const current = latestSessions.current.find((s) => s.id === id);
         if (!current || current.name === name) return;
         await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
       },
@@ -1005,7 +1007,7 @@ export default function App() {
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, state.sessions, runTask, api, openTaskDialog, rerun],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1185,6 +1187,7 @@ export default function App() {
       projects={state.projects}
       sessions={state.sessions}
       selectedId={state.selectedId}
+      hasNews={hasNews}
       actions={actions}
       connection={connection}
       version={meta?.version}

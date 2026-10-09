@@ -84,8 +84,6 @@ export interface AppContextValue {
   loaded: boolean;
   dispatch: (a: Action) => void;
   narrow: boolean;
-  /** Tasks with activity the user has not looked at yet (UI-local). */
-  hasNews: (s: SessionSummary) => boolean;
   /** The service's settings (the send default the composer follows). */
   settings: Settings;
   usage: AccountUsage | null;
@@ -101,7 +99,6 @@ export const AppContext = createContext<AppContextValue>({
   loaded: false,
   dispatch: () => {},
   narrow: false,
-  hasNews: () => false,
   settings: DEFAULT_SETTINGS,
   usage: null,
   refreshMeta: () => {},
