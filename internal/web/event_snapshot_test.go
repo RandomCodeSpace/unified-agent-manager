@@ -44,6 +44,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	s.turnActivity.Todos.Todos = []agentapi.Todo{{ID: "old"}}
 	s.turnTimings = []store.TurnTiming{{ID: "turn", State: "completed", Changes: &store.TurnChangeCounts{Status: "available", EventID: "old", Files: 1, Additions: 1}}}
 	s.rewind = &store.WebRewind{RequestID: "old", State: rewindUncertain, Mode: "conversation", Discarded: []string{"old"}, Result: []byte(`{"outcome":"success"}`)}
+	s.schedules = &agentapi.ScheduleSnapshot{Supported: true, Known: true, Entries: []agentapi.ScheduleEntry{{ID: "1", Cron: "old"}}}
 	m.mu.Unlock()
 	return m, sum.ID, func() {
 		m.mu.Lock()
@@ -63,6 +64,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.last.CommandResult.Options[0].Name, s.turnActivity.Retry.Reason, s.turnActivity.Todos.Todos[0].ID = "changed", "changed", "changed"
 		s.turnTimings[0].Changes.EventID, s.turnTimings[0].Changes.Files = "changed", 9
 		s.rewind.RequestID, s.rewind.State, s.rewind.Discarded[0], s.rewind.Result[2] = "changed", rewindApplied, "changed", 'X'
+		s.schedules.Entries[0].Cron = "changed"
 	}
 }
 

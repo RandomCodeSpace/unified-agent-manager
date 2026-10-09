@@ -32,6 +32,7 @@ import { ForkPicker } from './Fork';
 import { RewindHold, RewindPanel } from './Rewind';
 import type { Editing } from './EditResend';
 import { CUT } from './Details';
+import { Schedules } from './Schedules';
 import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -894,6 +895,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
             <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} onJump={scrollToBottom} />
+            <Schedules snapshot={session.schedules} open={session.open} />
             <Appear show={jump && !!line} className="shrink-0">
               <Tip label="Jump to bottom">
                 <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>

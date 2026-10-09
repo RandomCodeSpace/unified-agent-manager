@@ -918,6 +918,8 @@ const (
 	EventSubagent EventKind = "subagent"
 	// EventBackgroundTasks replaces the live background shell task snapshot.
 	EventBackgroundTasks EventKind = "background_tasks"
+	// EventSchedules replaces open-conversation native schedule display metadata.
+	EventSchedules EventKind = "schedules"
 	// EventContext reports main-agent context usage; it is never persisted.
 	EventContext EventKind = "context"
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
@@ -950,6 +952,7 @@ type Event struct {
 	PlanVersion     uint64 // lightweight invalidation from native plan_changed
 	Subagent        *Subagent
 	BackgroundTasks *BackgroundTasks
+	Schedules       *ScheduleSnapshot
 	Context         *Context
 	Usage           *Usage
 	Tokens          *TokenUsage
