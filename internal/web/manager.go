@@ -286,6 +286,9 @@ type webSession struct {
 	titleWait *titlePlan
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
+	// asking is set while an aside question waits for its answer (aside.go);
+	// not persisted.
+	asking bool
 	// compactAt is the compaction threshold, in percent, the conversation
 	// was last opened with; not persisted.
 	compactAt int
@@ -3934,9 +3937,9 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 
 // runsOrWaitsLocked reports whether s's open conversation still runs or
 // waits for anything: a turn, an answer, queued prompts, subagents,
-// background tasks or an active objective.
+// background tasks, an active objective or an aside question.
 func (s *webSession) runsOrWaitsLocked() bool {
-	if s.settleableLocked() != nil || s.runningSubagents() > 0 {
+	if s.asking || s.settleableLocked() != nil || s.runningSubagents() > 0 {
 		return true
 	}
 	if t := s.backgroundTasks; t != nil && (!t.Known || slices.ContainsFunc(t.Tasks, func(task agentapi.BackgroundTask) bool {

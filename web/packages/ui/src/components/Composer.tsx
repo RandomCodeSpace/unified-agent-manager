@@ -14,6 +14,7 @@ import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
+import { AskAside } from './AskAside';
 import { ComposerUsage } from './ComposerUsage';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
@@ -1593,6 +1594,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         />
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
         <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
+        {session.capabilities.aside && !locked && !newTask && <AskAside session={session} />}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {settingsLocked || fixedTuning ? (
           <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>

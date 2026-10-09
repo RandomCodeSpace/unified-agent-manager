@@ -89,6 +89,8 @@ type Capabilities struct {
 	// UsageMetrics advertises an on-demand native conversation reader, separate
 	// from account quotas and the combined EventUsage total.
 	UsageMetrics bool `json:"usage_metrics,omitempty"`
+	// Aside is true when the provider's conversations implement AsideAsker.
+	Aside bool `json:"aside,omitempty"`
 	// Titles is true when the provider implements Titler and its
 	// conversations implement SetTitle, so a chosen model can title a Task.
 	Titles bool `json:"titles"`

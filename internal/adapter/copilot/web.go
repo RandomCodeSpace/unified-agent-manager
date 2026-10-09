@@ -429,7 +429,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -1804,6 +1804,8 @@ type conversation struct {
 	// taskRPC orders task-list reads and follow-up sends, so a list read from
 	// before a send never overwrites the follow-up it started.
 	taskRPC sync.Mutex
+	// aside cancels the wait of the aside question in flight (aside.go).
+	aside context.CancelFunc
 }
 
 type steer struct {
@@ -2654,6 +2656,9 @@ func (c *conversation) Close(ctx context.Context) error {
 	c.stopSchedulesLocked()
 	c.closed = true
 	clear(c.pending)
+	if c.aside != nil {
+		c.aside()
+	}
 	c.mu.Unlock()
 	c.p.forget(c)
 	if c.tools != nil {
