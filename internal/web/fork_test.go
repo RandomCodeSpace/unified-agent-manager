@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -313,5 +315,116 @@ func TestForkRejectsInvalidModelBusyHolderAndChangedSourceBeforeRPC(t *testing.T
 				t.Fatal("definite refusal left an uncertain reservation")
 			}
 		})
+	}
+}
+
+func pendingForks(t *testing.T, st *store.Store) map[string]store.WebFork {
+	t.Helper()
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.WebForks
+}
+
+func TestForkSourceDeleteClearsOnlyItsReservations(t *testing.T) {
+	m, p, st, source := taskForkManager(t)
+	other, err := m.Create(CreateRequest{ProjectID: source.ProjectID, Provider: "fake", Model: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishTurn(p.Last(), "second", "second reply")
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { return "", agentapi.ErrForkUncertain }
+	mine, kept := ForkRequest{UserItemID: "u-original", RequestID: mustUUID(t)}, ForkRequest{UserItemID: "u-second", RequestID: mustUUID(t)}
+	if _, err := m.Fork(source.ID, mine); err == nil {
+		t.Fatal("uncertain result reported success")
+	}
+	if _, err := m.Fork(other.ID, kept); err == nil {
+		t.Fatal("uncertain result reported success")
+	}
+	if _, err := m.Archive(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending := pendingForks(t, st)
+	if _, ok := pending[mine.RequestID]; ok || len(pending) != 1 || pending[kept.RequestID].Lineage.SourceTaskID != other.ID {
+		t.Fatalf("pending after deleting the source = %+v", pending)
+	}
+}
+
+func TestForkDismissClearsExactlyThatUncertainReservation(t *testing.T) {
+	m, p, st, source := taskForkManager(t)
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { return "", agentapi.ErrForkUncertain }
+	dismissed, kept := ForkRequest{UserItemID: "u-original", Model: "", RequestID: mustUUID(t)}, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}
+	for _, req := range []ForkRequest{dismissed, kept} {
+		if _, err := m.Fork(source.ID, req); errCode(err) != "fork_uncertain" {
+			t.Fatalf("fork = %v, want uncertain", err)
+		}
+	}
+	if err := m.DismissFork(source.ID, ForkRequest{UserItemID: dismissed.UserItemID, Model: dismissed.Model}); err != nil {
+		t.Fatal(err)
+	}
+	if pending := pendingForks(t, st); len(pending) != 1 || pending[kept.RequestID].Lineage.Model != "a" {
+		t.Fatalf("pending after dismiss = %+v", pending)
+	}
+	if err := m.DismissFork(source.ID, dismissed); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("second dismiss = %v, want 404", err)
+	}
+	// Only an explicit new request after Dismiss reaches the provider again.
+	p.forkHook = nil
+	if _, err := m.Fork(source.ID, ForkRequest{UserItemID: dismissed.UserItemID, Model: dismissed.Model, RequestID: mustUUID(t)}); err != nil || p.forkCount() != 3 {
+		t.Fatalf("fork after dismiss = %v, calls %d", err, p.forkCount())
+	}
+}
+
+func TestForkDismissKeepsAKnownResultAndWaitsForAnInFlightFork(t *testing.T) {
+	m, p, st, source := taskForkManager(t)
+	known := ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}
+	m.mu.Lock()
+	project := m.projects[source.ProjectID]
+	m.mu.Unlock()
+	p.forkHook = func(agentapi.ForkRequest) (string, error) {
+		m.mu.Lock()
+		delete(m.projects, source.ProjectID)
+		m.mu.Unlock()
+		return "native-known", nil
+	}
+	if _, err := m.Fork(source.ID, known); err == nil {
+		t.Fatal("registration succeeded in removed project")
+	}
+	m.mu.Lock()
+	m.projects[source.ProjectID] = project
+	m.mu.Unlock()
+	if err := m.DismissFork(source.ID, known); statusOf(err) != http.StatusConflict || pendingForks(t, st)[known.RequestID].ProviderSessionID != "native-known" {
+		t.Fatalf("dismiss of a known result = %v", err)
+	}
+	release, started := make(chan struct{}), make(chan struct{})
+	p.forkHook = func(agentapi.ForkRequest) (string, error) {
+		close(started)
+		<-release
+		return "", agentapi.ErrForkUncertain
+	}
+	flying := ForkRequest{UserItemID: "u-original", Model: "", RequestID: mustUUID(t)}
+	forked := make(chan error, 1)
+	go func() { _, err := m.Fork(source.ID, flying); forked <- err }()
+	<-started
+	done := make(chan error, 1)
+	go func() { done <- m.DismissFork(source.ID, flying) }()
+	select {
+	case err := <-done:
+		t.Fatalf("dismiss returned during the native call: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-forked; errCode(err) != "fork_uncertain" {
+		t.Fatalf("fork = %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pendingForks(t, st)[flying.RequestID]; ok {
+		t.Fatal("dismiss left the uncertain reservation")
 	}
 }

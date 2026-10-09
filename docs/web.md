@@ -948,7 +948,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   source remains intact, and the new Task links back to it. Both Tasks use the
   same Project and current files. This creates no Git branch or isolated
   workspace. If the native result is uncertain, UAM keeps the request and
-  refuses to create another branch automatically.
+  refuses to create another branch automatically. The picker's **Dismiss**
+  clears that one request so you can branch again; a Copilot session may still
+  exist for it. Deleting the source Task also clears its unresolved requests.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,

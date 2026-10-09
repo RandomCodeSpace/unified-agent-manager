@@ -25,6 +25,7 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [uncertain, setUncertain] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
   const offered = !model || !!info?.models.some(m => m.id === model);
   const alive = useRef(false);
   useEffect(() => {
@@ -45,8 +46,18 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
       },
     ).finally(() => { if (alive.current) setBusy(false); });
   };
+  // Clears only this reply and model's unresolved request, so a later explicit choice may branch again.
+  const dismiss = () => {
+    if (dismissing) return;
+    setDismissing(true);
+    setError('');
+    api.dismissFork(session.id, { user_item_id: userItemId, model }).then(
+      () => { if (alive.current) onClose(); },
+      (e: unknown) => { if (alive.current) setError(describeError(e)); },
+    ).finally(() => { if (alive.current) setDismissing(false); });
+  };
   return (
-    <Popover.Root open onOpenChange={open => { if (!open && !busy) onClose(); }} modal={false}>
+    <Popover.Root open onOpenChange={open => { if (!open && !busy && !dismissing) onClose(); }} modal={false}>
       <Popover.Content anchor={anchor} className="w-80 max-w-[calc(100vw-16px)] max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
         <Popover.Title>Branch from here</Popover.Title>
         <Popover.Description>
@@ -57,8 +68,10 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
           ...choices.map(({ model: m, note }) => ({ value: m.id, label: m.name || m.id, disabled: note === 'Not offered now' })),
         ]} />
         {error && <Note tone="error" role="alert">{error}</Note>}
+        {uncertain && <Note>A Copilot session may still exist for this branch. Dismiss clears this request so you can branch again; it does not delete that session.</Note>}
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          {uncertain && <Button variant="ghost" onClick={dismiss} loading={dismissing}>Dismiss</Button>}
+          <Button variant="ghost" onClick={onClose} disabled={busy || dismissing}>Cancel</Button>
           <Button variant="primary" onClick={confirm} loading={busy} disabled={uncertain || !offered}>Branch task</Button>
         </div>
       </Popover.Content>

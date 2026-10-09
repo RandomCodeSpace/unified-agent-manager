@@ -1631,6 +1631,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** A new Task in the same Project with the same settings (or `model`) whose first message is this Task's last one. */
     rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
     fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/fork`, body),
+    /** Clears the unresolved branch request for this reply and model; a Copilot session may still exist for it. */
+    dismissFork: (id: string, body: { user_item_id: string; model: string }) => call<void>('POST', `/api/sessions/${enc(id)}/fork/dismiss`, body),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
     prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>

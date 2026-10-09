@@ -95,4 +95,25 @@ describe('native task branching', () => {
     await user.click(picker.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Branch from here' })).toBeNull());
   });
+
+  test('Dismiss clears only the unresolved request for this reply and model, never reforking', async () => {
+    fixture();
+    const fork = vi.spyOn(api, 'fork').mockRejectedValue(new ApiError(409, 'Branch outcome is unknown', { code: 'fork_uncertain' }));
+    const dismiss = vi.spyOn(api, 'dismissFork').mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValueOnce(undefined);
+    const { user } = await openTask('t3');
+    await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[0]);
+    await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
+    const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
+    expect(picker.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await picker.findByText(/A Copilot session may still exist/);
+    await user.click(picker.getByRole('button', { name: 'Dismiss' }));
+    await picker.findByText('Connection lost');
+    await user.click(picker.getByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Branch from here' })).toBeNull());
+    expect(dismiss).toHaveBeenCalledTimes(2);
+    const request = fork.mock.calls[0][1];
+    expect(dismiss.mock.calls[1]).toEqual(['t3', { user_item_id: request.user_item_id, model: request.model }]);
+    expect(fork).toHaveBeenCalledTimes(1);
+  });
 });

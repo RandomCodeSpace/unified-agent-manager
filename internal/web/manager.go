@@ -1862,6 +1862,12 @@ func (m *Manager) deleteTask(id string) error {
 		if rec, ok := cfg.Sessions[key]; ok && rec.ID == s.id && rec.Surface == store.SurfaceWeb {
 			delete(cfg.Sessions, key)
 		}
+		// Its unresolved branch requests can no longer be reconciled.
+		for requestID, pending := range cfg.WebForks {
+			if pending.Provider == s.provider && pending.Lineage.SourceTaskID == s.id {
+				delete(cfg.WebForks, requestID)
+			}
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("delete web session: %w", err)

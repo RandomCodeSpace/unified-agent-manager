@@ -310,6 +310,46 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	return m.Summary(s.id)
 }
 
+// DismissFork clears the one uncertain reservation for this source, owner
+// message and model, so a later explicit request may fork again. It never
+// touches a saved native result, and it waits for an in-flight fork.
+func (m *Manager) DismissFork(id string, req ForkRequest) error {
+	if req.UserItemID == "" || len(req.UserItemID) > 256 || strings.ContainsAny(req.UserItemID, "\x00\r\n") {
+		return newError(http.StatusBadRequest, "choose an exact recorded owner message")
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	return m.store.Update(func(cfg *store.Config) error {
+		for requestID, pending := range cfg.WebForks {
+			if !forkMatches(pending.Lineage, id, req) {
+				continue
+			}
+			if pending.ProviderSessionID != "" {
+				return newError(http.StatusConflict, "this branch has a saved result; it is not uncertain")
+			}
+			delete(cfg.WebForks, requestID)
+			return nil
+		}
+		return newError(http.StatusNotFound, "no uncertain branch request for that reply and model")
+	})
+}
+
+func (s *Server) handleDismissFork(w http.ResponseWriter, r *http.Request) {
+	var req ForkRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := s.m.DismissFork(r.PathValue("id"), req); err != nil {
+		writeFailure(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleFork(w http.ResponseWriter, r *http.Request) {
 	var req ForkRequest
 	if !decodeBody(w, r, &req) {
