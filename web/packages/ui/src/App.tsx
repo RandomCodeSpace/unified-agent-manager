@@ -155,6 +155,8 @@ export default function App() {
   const latestSessions = useRef(state.sessions);
   useLayoutEffect(() => { latestSessions.current = state.sessions; }, [state.sessions]);
   const [recentTasks] = useState(() => new RecentTasks());
+  // Selection restarts the stream; only a changed membership needs another full storage sweep.
+  const sweptMembership = useRef<{ owner: string; tasks: Set<string>; projects: Set<string> } | null>(null);
   const confirmedDetail = useRef<SessionDetail | null>(null);
   useLayoutEffect(() => {
     confirmedDetail.current = auth === 'in' && state.connection === 'connected' ? state.detail && recentProjection(state.detail) : null;
@@ -260,7 +262,12 @@ export default function App() {
 
   useEffect(() => { if (auth !== 'in') recentTasks.clear(); }, [auth, recentTasks]);
   // Signed out for any reason (sign-out, a 401, sign-in required): no transcript stays in this browser.
-  useEffect(() => { if (auth === 'out') clearArchive(); }, [auth]);
+  useEffect(() => {
+    if (auth === 'out') {
+      sweptMembership.current = null;
+      clearArchive();
+    }
+  }, [auth]);
 
   // `metaAttempt` is a Retry after a failure, or a change to the custom models: they are part of the model lists. The
   // list is unknown until the first snapshot, which only shows what the first read already had.
@@ -449,6 +456,8 @@ export default function App() {
     };
     es.onerror = () => {
       if (!alive) return;
+      // Missed removal events during a disconnect must not suppress the reconnect's cleanup.
+      sweptMembership.current = null;
       wasDown.current = true;
       if (es.readyState !== EventSource.CLOSED) {
         dispatch({ type: 'connection', status: 'reconnecting' });
@@ -512,16 +521,28 @@ export default function App() {
       // This stream is new to the service: it learns again which Task this tab shows.
       streamOpened();
       // Composer drafts of Tasks that no longer exist go with them.
-      try {
-        const prefix = api.owner ? api.storageKey('') : '';
-        const storageKeys = Object.keys(localStorage).filter(key => !prefix || key.startsWith(prefix)).map(key => prefix ? key.slice(prefix.length) : key);
-        for (const key of staleDraftKeys(storageKeys, data.sessions.map((s) => s.id), data.projects.map((p) => p.id))) localStorage.removeItem(api.storageKey(key));
-        for (const key of staleReviewKeys(Object.keys(localStorage).filter(key => api.owner ? key.startsWith(`uam.review.${api.cacheKey('')}`) : !key.startsWith('uam.review.@uam:')), data.sessions.map((s) => api.cacheKey(s.id)))) localStorage.removeItem(key);
-      } catch {
-        // Storage unavailable: nothing to sweep.
+      const taskIds = data.sessions.map((s) => s.id);
+      const projectIds = data.projects.map((p) => p.id);
+      const owner = api.storageKey('');
+      const previous = sweptMembership.current;
+      if (!previous || previous.owner !== owner || previous.tasks.size !== taskIds.length || previous.projects.size !== projectIds.length || !taskIds.every(id => previous.tasks.has(id)) || !projectIds.every(id => previous.projects.has(id))) {
+        // A failed sweep must retry even if the next snapshot lists the same IDs.
+        sweptMembership.current = null;
+        let swept = true;
+        try {
+          const prefix = api.owner ? owner : '';
+          const storageKeys = Object.keys(localStorage).filter(key => !prefix || key.startsWith(prefix)).map(key => prefix ? key.slice(prefix.length) : key);
+          for (const key of staleDraftKeys(storageKeys, taskIds, projectIds)) localStorage.removeItem(api.storageKey(key));
+          for (const key of staleReviewKeys(Object.keys(localStorage).filter(key => api.owner ? key.startsWith(`uam.review.${api.cacheKey('')}`) : !key.startsWith('uam.review.@uam:')), taskIds.map(id => api.cacheKey(id)))) localStorage.removeItem(key);
+        } catch {
+          // Storage unavailable: nothing to sweep.
+          swept = false;
+        }
+        if (!retainArchive(taskIds.map(id => api.cacheKey(id)), api.owner ? api.cacheKey('') : '')) swept = false;
+        if (swept) sweptMembership.current = { owner, tasks: new Set(taskIds), projects: new Set(projectIds) };
       }
       // So are their read and last-looked marks.
-      const live = new Set(data.sessions.map((s) => s.id));
+      const live = new Set(taskIds);
       try {
         const looked = readJSON<Record<string, string>>(LOOKED_KEY, {});
         if (!Object.keys(looked).every((id) => live.has(id))) localStorage.setItem(LOOKED_KEY, JSON.stringify(Object.fromEntries(Object.entries(looked).filter(([id]) => live.has(id)))));
@@ -538,7 +559,6 @@ export default function App() {
         }
         return next;
       });
-      retainArchive(data.sessions.map((s) => api.cacheKey(s.id)), api.owner ? api.cacheKey('') : '');
     });
     // A Task needs you or finished: a notification, when this browser asked for them (lib/notify.ts).
     es.addEventListener('notify', (e) => {
@@ -550,6 +570,7 @@ export default function App() {
         const data = { name, ...JSON.parse((e as MessageEvent).data) } as UpdateData;
         if (['session', 'session_removed', 'project', 'project_removed', 'settings', 'usage'].includes(data.name)) onEvent?.({ type: 'update', data });
         recentTasks.invalidate(data);
+        if (data.name === 'session_removed' || data.name === 'project_removed') sweptMembership.current = null;
         if (data.name === 'session_removed') forgetArchive(api.cacheKey(data.session_id));
         // Invalidations precede React's commit. A click in between must not
         // put the old confirmed reference straight back into the cache.
@@ -1170,6 +1191,7 @@ export default function App() {
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
+        sweptMembership.current = null;
         recentTasks.remove(id);
         forgetArchive(api.cacheKey(id));
         if (confirmedDetail.current?.id === id) confirmedDetail.current = null;
@@ -1402,6 +1424,7 @@ export default function App() {
                 onRoutines={() => showRoutines(dialog.project.id)}
                 onUpdated={(p) => dispatch({ type: 'upsert_project', project: p })}
                 onRemoved={(id) => {
+                  sweptMembership.current = null;
                   recentTasks.removeProject(id);
                   if (confirmedDetail.current?.project_id === id) confirmedDetail.current = null;
                   dispatch({ type: 'remove_project', id });

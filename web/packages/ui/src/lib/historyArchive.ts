@@ -50,10 +50,10 @@ function saveMarks(marks: Marks): boolean {
 /** Tasks the sweep dropped whole lose their marks. */
 export function unmarkTasks(tasks: Iterable<string>) {
   const marks = readMarks();
-  if (!marks) return;
+  if (!marks) return false;
   let changed = false;
   for (const task of tasks) if (task in marks) { delete marks[task]; changed = true; }
-  if (changed) saveMarks(marks);
+  return !changed || saveMarks(marks);
 }
 
 function mark(task: string): boolean {
@@ -96,14 +96,19 @@ export async function historyPage(task: string, agent: string, before: string, d
 export function forgetArchive(task: string) {
   const marks = readMarks();
   const marked = !!marks && task in marks;
-  if (marked) unmarkTasks([task]);
+  const unmarked = !marked || unmarkTasks([task]);
   if (marked || cache) void load().then(c => c.forget(task)).catch(() => {});
+  return !!marks && unmarked;
 }
 
-/** Tasks the service no longer lists (a snapshot) lose their pages, as their drafts do. */
+/** Tasks the service no longer lists lose their pages; false leaves the caller's sweep eligible for retry. */
 export function retainArchive(tasks: readonly string[], prefix = '') {
+  const marks = readMarks();
+  if (!marks) return false;
   const listed = new Set(tasks);
-  for (const task of Object.keys(readMarks() ?? {})) if ((prefix ? task.startsWith(prefix) : !task.startsWith('@uam:')) && !listed.has(task)) forgetArchive(task);
+  let retained = true;
+  for (const task of Object.keys(marks)) if ((prefix ? task.startsWith(prefix) : !task.startsWith('@uam:')) && !listed.has(task) && !forgetArchive(task)) retained = false;
+  return retained;
 }
 
 /** Sign-out and lost authentication: the whole database goes, whether or not this page loaded it. */

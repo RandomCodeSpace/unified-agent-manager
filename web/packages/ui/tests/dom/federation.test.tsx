@@ -82,6 +82,40 @@ test('owner switching restores separate drafts and keeps configuration requests 
   expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/configuration'))).toBe(false);
 });
 
+test('membership sweeps remain owner-scoped and skip unchanged remote Task selection', async () => {
+  const b = createApiClient(record('b', 'Workstation B'));
+  const c = createApiClient(record('c', 'Workstation C'));
+  for (const client of [b, c]) {
+    localStorage.setItem(client.storageKey('uam.draft.gone'), 'stale draft');
+    localStorage.setItem(`uam.review.${client.cacheKey('gone')}`, 'stale review');
+  }
+  localStorage.setItem('uam.history-archive', JSON.stringify({ [b.cacheKey('gone')]: 1, [c.cacheKey('gone')]: 1 }));
+  const { user, streams } = federated();
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  expect(localStorage.getItem(b.storageKey('uam.draft.gone'))).toBe('stale draft');
+  await user.click(rows.getByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' }));
+  await waitFor(() => expect(localStorage.getItem(b.storageKey('uam.draft.gone'))).toBeNull());
+  expect(localStorage.getItem(`uam.review.${b.cacheKey('gone')}`)).toBeNull();
+  expect(JSON.parse(localStorage.getItem('uam.history-archive')!)).toEqual({ [c.cacheKey('gone')]: 1 });
+  expect(localStorage.getItem(c.storageKey('uam.draft.gone'))).toBe('stale draft');
+  expect(localStorage.getItem(`uam.review.${c.cacheKey('gone')}`)).toBe('stale review');
+
+  const keys = vi.spyOn(Object, 'keys');
+  const reads = vi.spyOn(localStorage, 'getItem');
+  try {
+    const remoteRows = await taskRows();
+    await user.click(remoteRows.getByRole('button', { name: /Bump GitHub Actions pins/, description: 'Workstation B' }));
+    await waitFor(() => expect(streams.some(({ owner, path, stream }) => owner === 'b' && path.startsWith('/api/events?session=t4&') && stream.readyState === 1)).toBe(true));
+    await act(async () => {});
+    expect(keys.mock.calls.filter(([object]) => object === localStorage)).toHaveLength(0);
+    expect(reads.mock.calls.filter(([key]) => key === 'uam.history-archive')).toHaveLength(0);
+  } finally {
+    keys.mockRestore();
+    reads.mockRestore();
+  }
+});
+
 test('a remote deep link with a stale generation opens the Task on the connection at its current generation', async () => {
   const { calls } = federated('#task=t3&home=home-a&instance=instance-b&connection=b&generation=99');
   await screen.findByRole('region', { name: 'Conversation' });
