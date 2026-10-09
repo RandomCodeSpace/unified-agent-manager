@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { api, type PlanReview } from '../../src/api';
 import { ReadPlan } from '../../src/components/Plan';
 import * as data from '../../src/mock/data';
@@ -93,6 +93,20 @@ describe('native plan review', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Plan' })).toBeNull());
     expect(box().getByRole('radio', { name: 'Implement interactively' }).closest('fieldset')).toHaveProperty('disabled', false);
+  });
+  test('on a phone a long summary scrolls on its own, so every offered action stays reachable', async () => {
+    const [width, height] = [window.innerWidth, window.innerHeight];
+    onTestFinished(() => { window.innerWidth = width; window.innerHeight = height; });
+    window.innerWidth = 390;
+    window.innerHeight = 844;
+    fixture({ summary: 'Create the fixture file and its nested plan, then verify both markers. '.repeat(20) });
+    await openTask('t16');
+    const summary = box().getByText(/Create the fixture file/);
+    const scroller = summary.closest('.overflow-y-auto');
+    expect(scroller).toBeTruthy();
+    const actions = box().getAllByRole('radio');
+    expect(actions).toHaveLength(4);
+    for (const radio of actions) expect(scroller!.contains(radio)).toBe(false);
   });
   test('only offered actions appear, recommendation is staged, and a second click answers once', async () => {
     fixture();
