@@ -7,10 +7,12 @@ import { useApi } from '../ApiContext';
 import { describeError, type Item, type PlanAction, type PlanReview, type PlanDraft } from '../api';
 import { cn } from '../lib/cn';
 import { Markdown, Note } from './common';
+import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
+import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 
 export const PLAN_ACTION_LABEL: Record<PlanAction, string> = {
   autopilot: 'Implement in autopilot',
@@ -79,7 +81,7 @@ export function ReadPlan({ plan, sessionId, planVersion = 0, draftAvailable = tr
 function PlanReader({ id, open, phone, anchor, plan, error, current, draft, draftError, onCurrent, onClose, onClosed }: Readonly<{ id: string; open: boolean; phone: boolean; anchor: HTMLElement | null; plan: PlanReview | null; error: string; current: boolean; draft: PlanDraft | null; draftError: string; onCurrent?: () => void; onClose: () => void; onClosed: () => void }>) {
   const heading = useRef<HTMLHeadingElement>(null);
   const back = () => anchor;
-  const body = (close: ReactNode) => <PlanBody plan={plan} error={error} current={current} draft={draft} draftError={draftError} onCurrent={onCurrent} heading={heading} close={close} />;
+  const body = (close: ReactNode) => <PlanBody plan={plan} error={error} current={current} draft={draft} draftError={draftError} onCurrent={onCurrent} heading={heading} close={close} sheet={phone || !anchor} />;
   if (phone || !anchor) return <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label="Plan" className="h-[85dvh] duration-160" backdropClassName="duration-160" initialFocus={heading} finalFocus={back}>
     {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
   </BottomSheet>;
@@ -96,27 +98,37 @@ function PlanReader({ id, open, phone, anchor, plan, error, current, draft, draf
   </BasePopover.Root>;
 }
 
-function PlanBody({ plan, error, current, draft, draftError, onCurrent, heading, close }: Readonly<{ plan: PlanReview | null; error: string; current: boolean; draft: PlanDraft | null; draftError: string; onCurrent?: () => void; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode }>) {
+function PlanBody({ plan, error, current, draft, draftError, onCurrent, heading, close, sheet }: Readonly<{ plan: PlanReview | null; error: string; current: boolean; draft: PlanDraft | null; draftError: string; onCurrent?: () => void; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; sheet: boolean }>) {
   const [changes, setChanges] = useState(false);
   const diff = useMemo(() => changes && plan?.previous !== undefined ? diffLines(plan.previous, plan.content ?? '', { timeout: 100 }) : undefined, [changes, plan]);
+  const foot = current ? 'Current draft · This does not replace the reviewed snapshot' : 'Reviewed snapshot';
   return <>
-    <div className="flex shrink-0 items-center gap-2 border-b border-rule px-4 py-3">
-      <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 text-title outline-hidden">Plan{!current && plan?.revision ? <span className="ml-2 text-caption text-muted">Revision {plan.revision}</span> : null}</h2>
-      {onCurrent && <button type="button" aria-pressed={current} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={onCurrent}>{current ? 'Reviewed snapshot' : 'Current draft'}</button>}
-      {!current && plan?.previous && <button type="button" aria-pressed={changes} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={() => setChanges((value) => !value)}>{changes ? 'Read plan' : 'Show changes'}</button>}
-      {close}
+    <PanelHead className={cn('gap-1 pt-2 pb-2 pl-4', sheet ? 'pr-2' : 'pr-3')}>
+      <div className="flex min-h-7 min-w-0 items-center gap-2">
+        <FileText aria-hidden="true" className="size-4 shrink-0 text-muted" />
+        <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">Plan{!current && plan?.revision ? <span className="ml-2 text-caption text-muted">Revision {plan.revision}</span> : null}</h2>
+        {onCurrent && <button type="button" aria-pressed={current} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={onCurrent}>{current ? 'Reviewed snapshot' : 'Current draft'}</button>}
+        {!current && plan?.previous && <button type="button" aria-pressed={changes} className="rounded-sm px-2 py-1 text-caption text-muted hover:bg-tint-hover" onClick={() => setChanges((value) => !value)}>{changes ? 'Read plan' : 'Show changes'}</button>}
+        {close}
+      </div>
+    </PanelHead>
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-3">
+      <PanelSection label={current ? 'Draft' : changes ? 'Changes' : 'Reviewed plan'}>
+        {current ? draftError ? <Note tone="warn" role="alert">{draftError}</Note> : !draft ? <Note>Loading the current draft…</Note> : !draft.exists ? <Note>The current draft is missing or was deleted. The reviewed snapshot is still available.</Note> : <>
+          {draft.truncated && <Note tone="warn">The current draft is shortened.</Note>}
+          {draft.content ? <Markdown text={draft.content} /> : <Note>The current draft is empty.</Note>}
+        </> : error ? <Note tone="warn" role="alert">{error}</Note> : !plan ? <Note>Loading the reviewed plan…</Note> : <>
+          {plan.truncated && <Note tone="warn">This recorded plan is shortened. Do not approve a shortened snapshot.</Note>}
+          {plan.previous_unavailable ? <Note tone="warn">The previous reviewed revision is unavailable.</Note> : plan.previous_truncated && <Note tone="warn">The previous revision is shortened. These changes are incomplete.</Note>}
+          {changes ? diff ? <pre className="whitespace-pre-wrap break-words font-mono text-code-sm">{diff.map((part, index) => <span key={index} className={cn('block', part.added && 'bg-success/10 text-success', part.removed && 'bg-error/10 text-muted line-through')}>{part.value.split('\n').filter((line, i, all) => i < all.length - 1 || line).map((line) => `${part.added ? '+' : part.removed ? '−' : ' '} ${line}`).join('\n')}</span>)}</pre> : <Note>The revision is too large to compare here.</Note> : <Markdown text={plan.content ?? ''} />}
+        </>}
+      </PanelSection>
     </div>
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-      {current ? draftError ? <Note tone="warn" role="alert">{draftError}</Note> : !draft ? <Note>Loading the current draft…</Note> : !draft.exists ? <Note>The current draft is missing or was deleted. The reviewed snapshot is still available.</Note> : <>
-        {draft.truncated && <Note tone="warn">The current draft is shortened.</Note>}
-        {draft.content ? <Markdown text={draft.content} /> : <Note>The current draft is empty.</Note>}
-      </> : error ? <Note tone="warn" role="alert">{error}</Note> : !plan ? <Note>Loading the reviewed plan…</Note> : <>
-        {plan.truncated && <Note tone="warn">This recorded plan is shortened. Do not approve a shortened snapshot.</Note>}
-        {plan.previous_unavailable ? <Note tone="warn">The previous reviewed revision is unavailable.</Note> : plan.previous_truncated && <Note tone="warn">The previous revision is shortened. These changes are incomplete.</Note>}
-        {changes ? diff ? <pre className="whitespace-pre-wrap break-words font-mono text-code-sm">{diff.map((part, index) => <span key={index} className={cn('block', part.added && 'bg-success/10 text-success', part.removed && 'bg-error/10 text-muted line-through')}>{part.value.split('\n').filter((line, i, all) => i < all.length - 1 || line).map((line) => `${part.added ? '+' : part.removed ? '−' : ' '} ${line}`).join('\n')}</span>)}</pre> : <Note>The revision is too large to compare here.</Note> : <Markdown text={plan.content ?? ''} />}
-      </>}
-    </div>
-    <div className="shrink-0 border-t border-rule px-4 py-2 text-caption text-faint">{current ? 'Current draft · This does not replace the reviewed snapshot' : 'Reviewed snapshot'} · Escape to close</div>
+    {sheet ? <p className="flex min-h-11 shrink-0 items-center px-4 pb-2 text-caption text-muted">{foot}</p> : <PanelFoot>
+      <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
+      <span className="flex-1" />
+      <span className="min-w-0 truncate">{foot}</span>
+    </PanelFoot>}
   </>;
 }
 

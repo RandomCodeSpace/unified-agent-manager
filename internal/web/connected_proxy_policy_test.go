@@ -47,6 +47,10 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"DELETE", "/api/configuration/skills/name", true},
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
+		// The plan reader's reviewed snapshot and current draft are reads, as the transcript is.
+		{"GET", "/api/sessions/task/plan", true},
+		{"GET", "/api/sessions/task/plan-reviews/review", true},
+		{"POST", "/api/sessions/task/plan", false},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},
 		{"GET", "/api/sessions/task/context", true},
 		{"GET", "/api/sessions/task/context?attribution=true", true},

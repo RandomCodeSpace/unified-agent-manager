@@ -143,6 +143,10 @@ describe('native plan review', () => {
     const reader = within(await screen.findByRole('dialog', { name: 'Plan' }));
     expect(reader.getByText('Revision 2')).toBeTruthy();
     expect(reader.getByText('Validate it.')).toBeTruthy();
+    // The shared anchored-reader parts: an eyebrow section and a keycap foot, no hairlines.
+    expect(reader.getByRole('region', { name: 'Reviewed plan' })).toBeTruthy();
+    expect(reader.getByText('Esc').tagName).toBe('KBD');
+    expect(screen.getByRole('dialog', { name: 'Plan' }).querySelector('.border-b, .border-t')).toBeNull();
     await user.click(reader.getByRole('button', { name: 'Show changes' }));
     expect(reader.getByText(/\+ 2\. Validate it\./)).toBeTruthy();
     await user.keyboard('{Escape}');

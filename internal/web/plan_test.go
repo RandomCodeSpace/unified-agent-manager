@@ -205,3 +205,27 @@ func TestPlanReviewNeedsOwnerAndDropsResolvedBodies(t *testing.T) {
 		t.Fatal("answer mutated the provider's emitted snapshot")
 	}
 }
+
+// Yolo answers permission requests only: a plan review waits for the owner's
+// explicit choice, when it arrives and when Yolo is chosen while it waits,
+// even one that carries an allow-once option.
+func TestYoloNeverAnswersAPlanReview(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	if _, err := m.SetMode(sum.ID, "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	review := agentapi.Interaction{ID: "plan-review", Kind: agentapi.InteractionPlanReview, Title: "Plan ready", State: agentapi.InteractionPending, Time: time.Now(),
+		Options: []agentapi.Option{{ID: "once", Label: "Allow", AllowOnce: true}},
+		Plan:    &agentapi.PlanReview{RequestID: "plan-review", Content: "# Plan", Actions: []agentapi.PlanAction{agentapi.PlanAutopilot}}}
+	conv.EmitInteraction(review)
+	for _, mode := range []string{"safe", "yolo"} {
+		if _, err := m.SetMode(sum.ID, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(30 * time.Millisecond)
+	if ix := interactionOf(t, m, sum.ID, review.ID); ix.State != agentapi.InteractionPending || ix.Auto || len(conv.Responds()) != 0 {
+		t.Fatalf("yolo answered the plan review: %+v, responds %d", ix, len(conv.Responds()))
+	}
+}
