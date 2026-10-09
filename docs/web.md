@@ -956,6 +956,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+- **Branch from here**: a finished reply's turn menu offers native recorded
+  history branching when the provider supports it. Its anchored model picker
+  copies the conversation through that reply into a new active Task, without
+  sending another message. Choose the same model, another offered model or
+  Default; a changed model starts with default effort and context size. The
+  source remains intact, and the new Task links back to it. Both Tasks use the
+  same Project and current files. This creates no Git branch or isolated
+  workspace. If the native result is uncertain, UAM keeps the request and
+  refuses to create another branch automatically. The picker's **Dismiss**
+  clears that one request so you can branch again; a Copilot session may still
+  exist for it. When the branch was created but could not be added as a Task
+  (for example, its Project was removed), the picker offers **Add the existing
+  branch**, which retries adding that saved session without branching again,
+  and **Dismiss**, which clears the request without deleting the Copilot
+  session. Deleting the source Task also clears its unresolved requests.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,
