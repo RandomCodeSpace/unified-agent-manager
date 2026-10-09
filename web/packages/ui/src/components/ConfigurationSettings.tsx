@@ -111,8 +111,11 @@ function FileError({ message, path, tone = 'error', role }: Readonly<{ message: 
   </div>;
 }
 
-/** Where a skill was found, for its group heading: the dot-directory holding `skills/` (.copilot, .github, .agents, .claude), or UAM's own. */
+const NATIVE_SOURCES: Record<string, string> = { project: 'Project', inherited: 'Inherited', 'personal-copilot': 'Global · Copilot', 'personal-agents': 'Global · Agents', user: 'Global', plugin: 'Plugin', builtin: 'Built in', custom: 'Custom', sdk: 'SDK', remote: 'Remote' };
+
+/** Runtime source when available, otherwise the existing file-directory group. */
 function skillSource(file: ConfigurationFile): string {
+  if (file.native) return NATIVE_SOURCES[file.native.source] ?? (file.native.source || 'Other');
   if (file.read_only_reason === 'Built-in skills are managed by UAM.') return 'Built in';
   return /[\\/](\.[^\\/]+)[\\/]skills[\\/]/.exec(file.path)?.[1] ?? 'Other';
 }
@@ -502,8 +505,9 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const unreadableSkills = kind === 'skills' ? discoveredFiles.filter((file) => file.error && !conflictDetails.some((detail) => detail.path === file.path)) : [];
   // Skills: the filter's matches, grouped by source in the order the service lists the sources (the scope's own first).
   const sources = [...new Set(files.map(skillSource))];
+  const discovery = kind === 'skills' || kind === 'agents' ? data?.discovery?.[kind] : undefined;
   const query = filter.trim().toLowerCase();
-  const shown = kind === 'skills' ? files.filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query)).sort((a, b) => sources.indexOf(skillSource(a)) - sources.indexOf(skillSource(b))) : files;
+  const shown = kind === 'skills' ? files.filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query) || file.native?.name.toLowerCase().includes(query) || file.native?.description?.toLowerCase().includes(query)).sort((a, b) => sources.indexOf(skillSource(a)) - sources.indexOf(skillSource(b))) : files;
   return <div className="flex min-w-0 flex-col gap-4">
     <Field id={`${kind}-scope`} label="Scope" hint={projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'}>
       <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={busy || installing || generating || !!draft} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={(id) => { setProjectId(id); setData(null); setGlobalData(null); setGlobalError(null); setLoadError(null); setError(null); setSuccess(null); setGenerationError(null); }} />
@@ -551,6 +555,9 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
       {draft && conflict && <div className="flex flex-wrap items-center gap-2"><Note>Your draft is kept above. Copy any changes you need before reloading the saved version.</Note><Button disabled={busy} variant="secondary" onClick={() => discard.ask(true)}>Reload saved version</Button></div>}
       {!draft && error && <Note tone="error" role="alert">{error}</Note>}
       {success && <Note role="status">{success}</Note>}
+      {discovery && !discovery.supported && <Note role="status">Native {kind} discovery is unavailable in this Copilot version. Showing managed files.</Note>}
+      {discovery?.supported && !discovery.ready && <Note tone="warn" role="status">Native {kind} discovery is incomplete. Managed files remain available.</Note>}
+      {discovery?.warnings?.map((warning, index) => <Note key={index} tone="warn" role="status">{warning}</Note>)}
       {conflictDetails.map((detail) => <FileError key={`${detail.path ?? ''}:${detail.message}`} tone="warn" role="status" message={detail.message} path={detail.path} />)}
       {unreadableSkills.map((file) => <FileError key={file.path} tone="warn" role="status" message={file.error?.startsWith('Skill ') ? file.error : `Skill unavailable: ${file.error}`} path={file.path} />)}
       {globalError && <Note tone="error" role="alert">Could not load Global definitions: {globalError} <Button size="sm" onClick={refresh}>Retry Global definitions</Button></Note>}
@@ -580,21 +587,26 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
         {shown.map((file, index) => {
           const source = kind === 'skills' ? skillSource(file) : '';
           const heading = source && source !== (index > 0 ? skillSource(shown[index - 1]) : '') ? `${source} · ${shown.filter((other) => skillSource(other) === source).length}` : '';
-          return <li key={file.path} className="flex min-w-0 flex-col gap-1.5 sm:col-span-full sm:grid sm:grid-cols-subgrid sm:items-start sm:gap-x-1">
+          return <li key={file.metadata_only ? `${file.native?.source}:${file.native?.id}:${file.path}` : file.path} className="flex min-w-0 flex-col gap-1.5 sm:col-span-full sm:grid sm:grid-cols-subgrid sm:items-start sm:gap-x-1">
             {heading && <h3 className="pt-1 text-caption font-medium text-muted sm:col-span-full">{heading}</h3>}
             <div className="min-w-0">
               <p className="flex flex-wrap items-baseline gap-x-2 text-ui font-medium">
                 {kind === 'instructions' ? fileName(file) : file.name}
                 {kind === 'skills' && files.some((other) => other !== file && other.name === file.name) && <span className="text-meta font-normal text-muted">in {source}</span>}
               </p>
+              {file.native && <>
+                <p className="text-caption text-muted">Copilot: {file.native.display_name || file.native.name}{file.native.display_name && file.native.display_name !== file.native.name ? ` (${file.native.name})` : ''} · {NATIVE_SOURCES[file.native.source] ?? (file.native.source || 'Other')}</p>
+                {file.native.description && <p className="break-words text-caption text-muted">{file.native.description}</p>}
+                {file.native.enabled === false && <Note>Disabled globally in Copilot. This is separate from the file toggle.</Note>}
+              </>}
               {file.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
-              <PathText path={file.path} className="text-muted" />
+              {file.path && <PathText path={file.path} className="text-muted" />}
               {!file.editable && <Note>{file.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown above.'}</Note>}
               {file.error && <FileError message={file.error} />}
               {kind === 'instructions' && !file.revision && <Note>No saved file at this path.</Note>}
             </div>
             <div className="flex flex-wrap gap-1 sm:contents">
-              <Button size="sm" className="sm:col-start-2" aria-label={`View ${kind === 'instructions' ? fileName(file) : `${label} ${file.name}`}`} onClick={() => viewFile(file, kind)}>View</Button>
+              {!file.metadata_only && <Button size="sm" className="sm:col-start-2" aria-label={`View ${kind === 'instructions' ? fileName(file) : `${label} ${file.name}`}`} onClick={() => viewFile(file, kind)}>View</Button>}
               {file.editable && !file.disabled && <Button size="sm" className="sm:col-start-3" disabled={locked || busy || installing || generating || !!draft} onClick={() => edit(file)}>{kind === 'instructions' ? `${file.revision ? 'Edit' : 'Add'} ${fileName(file)}` : 'Edit'}</Button>}
               {file.editable && file.revision && kind !== 'instructions' && <>
                 <Button size="sm" className="sm:col-start-4" disabled={locked || busy || installing || generating || !!draft} onClick={() => activation.ask({ file, projectId })}>{file.disabled ? 'Enable' : 'Disable'}</Button>

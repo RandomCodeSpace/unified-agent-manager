@@ -399,6 +399,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   messages and pull or merge requests without a `Co-authored-by` trailer or
   any AI attribution unless you ask for one. Copilot's own co-author trailer
   is turned off for Tasks.
+  Settings → Skills and Agents also show Copilot's native discovery metadata:
+  runtime names, sources, descriptions and global skill enablement. Project
+  discovery includes the runtime's global sources. Existing file edits and
+  Disable/Enable still use the selected scope's exact file and revision; a
+  globally disabled skill is labelled separately. Plugin, built-in, remote and
+  other definitions outside the file editor show read-only metadata. Discovery
+  failures or limits are reported while managed files and disabled-file recovery
+  remain available. Older runtimes without discovery keep the existing file view.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is

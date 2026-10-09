@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
 const maxConfigurationBytes = 256 << 10
@@ -23,31 +25,35 @@ const disabledConfigurationSuffix = ".uam-disabled"
 
 var configurationName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-// ConfigurationFile is an exact native Copilot file. Keeping its contents
-// intact preserves provider options that the guided form does not expose.
+// ConfigurationFile keeps an exact managed file and optional native metadata.
+// MetadataOnly rows describe runtime definitions without granting file access.
+// Keeping file contents intact preserves options the guided form cannot expose.
 type ConfigurationFile struct {
-	Name           string `json:"name"`
-	Path           string `json:"path"`
-	Content        string `json:"content"`
-	Revision       string `json:"revision"`
-	Editable       bool   `json:"editable"`
-	Disabled       bool   `json:"disabled,omitempty"`
-	Error          string `json:"error,omitempty"`
-	ReadOnlyReason string `json:"read_only_reason,omitempty"`
+	Name           string                            `json:"name"`
+	Path           string                            `json:"path"`
+	Content        string                            `json:"content"`
+	Revision       string                            `json:"revision"`
+	Editable       bool                              `json:"editable"`
+	Disabled       bool                              `json:"disabled,omitempty"`
+	Error          string                            `json:"error,omitempty"`
+	ReadOnlyReason string                            `json:"read_only_reason,omitempty"`
+	Native         *agentapi.ConfigurationDefinition `json:"native,omitempty"`
+	MetadataOnly   bool                              `json:"metadata_only,omitempty"`
 }
 
 type Configuration struct {
-	Scope            string                        `json:"scope"`
-	ProjectID        string                        `json:"project_id,omitempty"`
-	TerminalAllowed  bool                          `json:"terminal_allowed"`
-	Agents           []ConfigurationFile           `json:"agents"`
-	Skills           []ConfigurationFile           `json:"skills"`
-	Hooks            []ConfigurationFile           `json:"hooks"`
-	Instructions     ConfigurationFile             `json:"instructions"`
-	InstructionFiles []ConfigurationFile           `json:"instruction_files"`
-	Conflicts        []ConfigurationConflict       `json:"conflicts,omitempty"`
-	ConflictWarnings []string                      `json:"conflict_warnings,omitempty"`
-	ConflictDetails  []ConfigurationConflictDetail `json:"conflict_details,omitempty"`
+	Discovery        map[string]ConfigurationDiscovery `json:"discovery,omitempty"`
+	Scope            string                            `json:"scope"`
+	ProjectID        string                            `json:"project_id,omitempty"`
+	TerminalAllowed  bool                              `json:"terminal_allowed"`
+	Agents           []ConfigurationFile               `json:"agents"`
+	Skills           []ConfigurationFile               `json:"skills"`
+	Hooks            []ConfigurationFile               `json:"hooks"`
+	Instructions     ConfigurationFile                 `json:"instructions"`
+	InstructionFiles []ConfigurationFile               `json:"instruction_files"`
+	Conflicts        []ConfigurationConflict           `json:"conflicts,omitempty"`
+	ConflictWarnings []string                          `json:"conflict_warnings,omitempty"`
+	ConflictDetails  []ConfigurationConflictDetail     `json:"conflict_details,omitempty"`
 }
 
 // ConfigurationConflict identifies distinct files with the same filename or
@@ -451,6 +457,7 @@ func (m *Manager) Configuration(projectID string) (Configuration, error) {
 	m.configurationConflicts(&out, scope)
 	// Failed discoveries are diagnostics, not installed skills.
 	out.Skills = slices.DeleteFunc(out.Skills, func(file ConfigurationFile) bool { return file.Error != "" })
+	m.discoverConfiguration(&out, scope)
 	return out, nil
 }
 
