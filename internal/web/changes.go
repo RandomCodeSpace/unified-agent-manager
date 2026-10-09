@@ -25,6 +25,8 @@ import (
 const (
 	workspaceLabel = "Whole working tree compared with HEAD. It may include changes that were not made by this session."
 	sessionLabel   = "File changes the provider recorded for this conversation."
+	// closedSessionLabel heads the task scope served for a closed conversation.
+	closedSessionLabel = "Git-based fallback while this Task's conversation is closed: files its agent edited, compared with HEAD. Open the conversation to read its native changes."
 
 	gitTimeout       = 10 * time.Second
 	branchTimeout    = 2 * time.Second
@@ -54,6 +56,11 @@ func (m *Manager) Changes(ctx context.Context, id, scope string) (Changes, error
 		return m.gitChanges(ctx, id, scope)
 	case ScopeSession:
 		files, out, err := m.sessionDiff(ctx, id)
+		if err == nil && out.Scope == ScopeTask {
+			out, err = m.gitChanges(ctx, id, ScopeTask)
+			out.Label = closedSessionLabel
+			return out, err
+		}
 		if err != nil || !out.Supported {
 			return out, err
 		}
@@ -93,6 +100,9 @@ func (m *Manager) FileChange(ctx context.Context, id, scope, path string) (agent
 		files, out, err := m.sessionDiff(ctx, id)
 		if err != nil {
 			return agentapi.FileDiff{}, err
+		}
+		if out.Scope == ScopeTask {
+			return m.taskFileDiff(ctx, id, ScopeTask, path)
 		}
 		if !out.Supported {
 			return agentapi.FileDiff{}, newError(http.StatusConflict, "%s", out.Reason)
@@ -134,7 +144,9 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 	conv, gen, revision := s.conv, s.gen, s.nativeDiffRevision
 	m.mu.Unlock()
 	if conv == nil {
-		out.Reason = "Open this Task's conversation to read its native changes; All changes shows the current files"
+		// Closed: the callers serve the Git-attributed task scope instead,
+		// without resuming the conversation.
+		out.Scope = ScopeTask
 		return nil, out, nil
 	}
 	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
