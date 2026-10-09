@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -50,12 +51,20 @@ func (p *webProvider) ReadForkBoundary(ctx context.Context, req agentapi.ForkBou
 }
 
 func (p *webProvider) readForkBoundary(ctx context.Context, client sdkClient, req agentapi.ForkBoundaryRequest) (agentapi.ForkBoundary, error) {
+	boundary, _, _, err := p.readBoundary(ctx, client, req)
+	return boundary, err
+}
+
+// readBoundary also returns the visible root owner IDs from the selected one
+// on, newest MaxRewindDiscarded kept, and their total: a rewind's suffix.
+func (p *webProvider) readBoundary(ctx context.Context, client sdkClient, req agentapi.ForkBoundaryRequest) (agentapi.ForkBoundary, []string, int, error) {
 	if req.ConversationID == "" || req.UserItemID == "" || len(req.UserItemID) > 256 {
-		return agentapi.ForkBoundary{}, agentapi.ErrItemNotFound
+		return agentapi.ForkBoundary{}, nil, 0, agentapi.ErrItemNotFound
 	}
 	for attempt := 1; ; attempt++ {
 		var boundary agentapi.ForkBoundary
-		var matches int
+		var matches, turns int
+		var suffix []string
 		settled, taskComplete, invalid := false, false, false
 		err := p.readForward(ctx, &forkJournalClient{sdkClient: client}, req.ConversationID, func(ev copilot.SessionEvent) {
 			if ev.ID == "" || len(ev.ID) > 256 {
@@ -90,6 +99,13 @@ func (p *webProvider) readForkBoundary(ctx context.Context, client sdkClient, re
 						settled, taskComplete = false, false
 					}
 				}
+				if boundary.UserEventID != "" {
+					turns++
+					if len(suffix) == agentapi.MaxRewindDiscarded {
+						suffix = slices.Delete(suffix, 0, 1)
+					}
+					suffix = append(suffix, strings.Clone(id))
+				}
 			case *rpc.SessionTaskCompleteData:
 				taskComplete = true
 			case *rpc.SessionIdleData:
@@ -102,18 +118,18 @@ func (p *webProvider) readForkBoundary(ctx context.Context, client sdkClient, re
 			continue
 		}
 		if err != nil {
-			return agentapi.ForkBoundary{}, err
+			return agentapi.ForkBoundary{}, nil, 0, err
 		}
 		if invalid || matches > 1 {
-			return agentapi.ForkBoundary{}, errors.New("the recorded branch boundary is ambiguous")
+			return agentapi.ForkBoundary{}, nil, 0, errors.New("the recorded branch boundary is ambiguous")
 		}
 		if matches == 0 {
-			return agentapi.ForkBoundary{}, agentapi.ErrItemNotFound
+			return agentapi.ForkBoundary{}, nil, 0, agentapi.ErrItemNotFound
 		}
 		if !settled {
-			return agentapi.ForkBoundary{}, agentapi.ErrBusy
+			return agentapi.ForkBoundary{}, nil, 0, agentapi.ErrBusy
 		}
-		return boundary, nil
+		return boundary, suffix, turns, nil
 	}
 }
 

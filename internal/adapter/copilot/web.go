@@ -328,14 +328,15 @@ type webProvider struct {
 	pingEvery time.Duration
 	kick      chan struct{}
 
-	mu              sync.Mutex
-	client          sdkClient
-	stop            chan struct{} // closed to end the current watchdog
-	convs           map[*conversation]struct{}
-	shut            bool
-	importSupported bool
-	forkUnsupported bool
-	importProbed    bool
+	mu                sync.Mutex
+	client            sdkClient
+	stop              chan struct{} // closed to end the current watchdog
+	convs             map[*conversation]struct{}
+	shut              bool
+	importSupported   bool
+	forkUnsupported   bool
+	rewindUnsupported bool
+	importProbed      bool
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -428,7 +429,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, Fork: !p.forkUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {

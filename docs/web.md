@@ -955,6 +955,22 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   branch**, which retries adding that saved session without branching again,
   and **Dismiss**, which clears the request without deleting the Copilot
   session. Deleting the source Task also clears its unresolved requests.
+- **Rewind to before this prompt**: when the provider supports it, a finished
+  reply's turn menu also offers a native rewind of the open conversation. It
+  works only while the Task is idle, with nothing queued, waiting or running in
+  the background, and never resumes a closed conversation. Its anchored
+  preview names how many prompts go and, for **Conversation and files**, which
+  captured files return as they were before (a deleted file reads
+  `+458 restored`); **Conversation only** leaves files as they are. Files
+  changed after Copilot's last write are never overwritten; the result lists
+  them as kept. If the conversation or its files change before you confirm, the
+  preview is read again. UAM records the request before Copilot runs it, sends
+  it once, shows Copilot's outcome and per-file results, then reads the
+  conversation again. Copilot restores files before it shortens the
+  conversation, so a partial result can leave restored files with the
+  conversation unchanged. If the result is lost, the Task says so and refuses
+  new messages, branches and rewinds until you choose **Reread conversation**;
+  UAM never repeats the rewind itself. Recorded usage stays counted.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,

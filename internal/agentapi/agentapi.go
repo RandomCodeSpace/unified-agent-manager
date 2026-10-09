@@ -54,6 +54,9 @@ var (
 	// ErrForkUncertain means a native fork may exist, but its exact returned
 	// identity was not confirmed. A caller must not repeat the native RPC.
 	ErrForkUncertain = errors.New("conversation branch outcome is unknown")
+	// ErrRewindUncertain means a native rewind may have changed files or
+	// history, but its result was lost. A caller must not repeat the RPC.
+	ErrRewindUncertain = errors.New("conversation rewind outcome is unknown")
 )
 
 // Capabilities advertises what an adapter really supports. The UI hides or
@@ -72,6 +75,8 @@ type Capabilities struct {
 	History                  bool `json:"history"`
 	// Fork copies a recorded owner-turn prefix without resending messages.
 	Fork bool `json:"fork,omitempty"`
+	// Rewind discards an open conversation's recorded suffix natively.
+	Rewind bool `json:"rewind,omitempty"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
 	// Usage is the second exception: the provider implements QuotaReporter
@@ -676,6 +681,52 @@ type NativeTurnFile struct {
 	Kind      string `json:"kind"`
 	Additions int64  `json:"additions,omitempty"`
 	Deletions int64  `json:"deletions,omitempty"`
+}
+
+// HistoryRewinder is optional on an open Conversation. PreviewRewind is
+// readonly. Rewind issues the native request once: it has no idempotency key,
+// so any error after a possible side effect wraps ErrRewindUncertain, and
+// other errors guarantee nothing was sent.
+type HistoryRewinder interface {
+	PreviewRewind(ctx context.Context, userItemID string) (RewindPreview, error)
+	Rewind(ctx context.Context, userEventID, mode string) (RewindResult, error)
+}
+
+const (
+	RewindConversation         = "conversation"
+	RewindConversationAndFiles = "conversation-and-files"
+	MaxRewindDiscarded         = 2000
+	MaxRewindResultFiles       = 256
+)
+
+// RewindPreview binds the exact native boundary that begins the discarded
+// suffix. Discarded holds the newest discarded root owner item IDs; Turns
+// counts all of them. Files are the native forward counts over the suffix.
+type RewindPreview struct {
+	UserEventID    string            `json:"user_event_id"`
+	TailEventID    string            `json:"tail_event_id"`
+	Turns          int               `json:"turns"`
+	Discarded      []string          `json:"-"`
+	FilesAvailable bool              `json:"files_available"`
+	FilesReason    string            `json:"files_reason,omitempty"`
+	Files          NativeTurnChanges `json:"files"`
+}
+
+// RewindResult keeps every native outcome and the presence of its optional
+// fields. Lists are bounded; Omitted counts say how many paths were dropped.
+type RewindResult struct {
+	Outcome         string       `json:"outcome"`
+	Error           *string      `json:"error,omitempty"`
+	EventsRemoved   *int64       `json:"events_removed,omitempty"`
+	RestoredFiles   []string     `json:"restored_files"`
+	SkippedFiles    []RewindSkip `json:"skipped_files"`
+	RestoredOmitted int          `json:"restored_omitted,omitempty"`
+	SkippedOmitted  int          `json:"skipped_omitted,omitempty"`
+}
+
+type RewindSkip struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // Prompt is one user message: the text as typed, plus project files and

@@ -303,6 +303,8 @@ type SessionSummary struct {
 	// ForkOf is the source Task whose selected recorded prefix this Task copied.
 	ForkOf         string `json:"fork_of,omitempty"`
 	ForkUserItemID string `json:"fork_user_item_id,omitempty"`
+	// Rewind is a native rewind that still holds the Task until reconciled.
+	Rewind RewindStatus `json:"rewind,omitzero"`
 	// Outcome is a one-line summary of the last completed turn: a short
 	// phrase from the Utility model, when one ran, then what the turn's tool
 	// calls show (files changed, tests, failed commands). Omitted while a

@@ -484,6 +484,8 @@ type WebState struct {
 	RerunOf string `json:"rerun_of,omitempty"`
 	// Fork records a native prefix branch separately from a last-message rerun.
 	Fork *ForkLineage `json:"fork,omitempty"`
+	// Rewind is the latest native history rewind receipt.
+	Rewind *WebRewind `json:"rewind,omitempty"`
 	// Outcome is the one-line summary of the last completed turn.
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
@@ -534,6 +536,7 @@ var knownWebStateFields = map[string]struct{}{
 	"routine_id":          {},
 	"rerun_of":            {},
 	"fork":                {},
+	"rewind":              {},
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},
