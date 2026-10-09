@@ -517,6 +517,16 @@ export interface ConfigurationDraft {
   provider: string;
   utility_model: string;
 }
+export interface ConfigurationDefinition {
+  id: string;
+  name: string;
+  display_name?: string;
+  description?: string;
+  source: string;
+  path?: string;
+  enabled?: boolean;
+  user_invocable?: boolean;
+}
 export interface ConfigurationFile {
   name: string;
   path: string;
@@ -526,9 +536,12 @@ export interface ConfigurationFile {
   disabled?: boolean;
   read_only_reason?: string;
   error?: string;
+  native?: ConfigurationDefinition;
+  metadata_only?: boolean;
 }
 export interface Configuration {
   scope: 'global' | 'project';
+  discovery?: Partial<Record<'agents' | 'skills', { supported: boolean; ready: boolean; warnings?: string[] }>>;
   project_id?: string;
   terminal_allowed: boolean;
   agents: ConfigurationFile[];

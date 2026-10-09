@@ -774,3 +774,77 @@ describe('native configuration', () => {
     expect((await api.configuration()).skills.map((entry) => entry.name)).toContain('web-design-guidelines');
   });
 });
+
+
+describe('native discovery metadata', () => {
+  test('native runtime names and global disabled state preserve the exact file toggle', async () => {
+    const original = api.configuration;
+    let identity: ConfigurationFile | undefined;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      identity = result.skills[0];
+      result.skills[0].native = { id: 'authored-runtime-name', name: 'authored-runtime-name', description: 'A native skill description', source: 'personal-copilot', enabled: false };
+      result.discovery = { skills: { supported: true, ready: true } };
+      return result;
+    });
+    const toggle = vi.spyOn(api, 'setConfigurationDisabled');
+    try {
+      const { user, card } = await open('Skills');
+      expect(card.getByText('Copilot: authored-runtime-name · Global · Copilot')).toBeTruthy();
+      expect(card.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
+      expect(card.queryByText(/^Disabled — enable/)).toBeNull();
+      await user.type(card.getByRole('searchbox', { name: 'Filter skills' }), 'authored-runtime-name');
+      const row = within(card.getByRole('list', { name: 'skills in this scope' })).getByRole('listitem');
+      await user.click(within(row).getByRole('button', { name: 'Disable', exact: true }));
+      const dialog = within(await screen.findByRole('alertdialog'));
+      expect(dialog.getByText(identity!.path)).toBeTruthy();
+      await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
+      await waitFor(() => expect(toggle).toHaveBeenCalledWith('skills', identity!.name, { path: identity!.path, revision: identity!.revision, disabled: true }, ''));
+    } finally { read.mockRestore(); toggle.mockRestore(); }
+  });
+
+  test('pathless remote and plugin definitions show metadata without file actions', async () => {
+    const original = api.configuration;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      result.discovery = { agents: { supported: true, ready: true } };
+      result.agents.push(
+        { name: 'remote', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'remote-one', name: 'remote', source: 'remote', description: 'First remote definition' } },
+        { name: 'remote', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'remote-two', name: 'remote', source: 'remote', description: 'Second remote definition' } },
+        { name: 'plugin-agent', path: '/managed/plugin/agent.md', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'plugin:agent', name: 'plugin-agent', source: 'plugin', description: 'Plugin definition' } },
+      );
+      return result;
+    });
+    try {
+      const { card } = await open('Agents');
+      for (const description of ['First remote definition', 'Second remote definition', 'Plugin definition']) {
+        const row = card.getByText(description).closest('li')!;
+        expect(within(row).queryByRole('button')).toBeNull();
+      }
+      expect(card.getByText('/managed/plugin/agent.md')).toBeTruthy();
+      expect(card.getAllByText('Copilot: remote · Remote')).toHaveLength(2);
+      expect(card.getByRole('button', { name: 'View agent reviewer' })).toBeTruthy();
+      expect(card.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+    } finally { read.mockRestore(); }
+  });
+
+  test('native partial failure and unsupported discovery retain managed file editing', async () => {
+    const original = api.configuration;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      result.discovery = { skills: { supported: true, ready: false, warnings: ['Malformed native skill definition'] }, agents: { supported: false, ready: false } };
+      return result;
+    });
+    try {
+      const { user, card } = await open('Skills');
+      expect(card.getByText('Native skills discovery is incomplete. Managed files remain available.')).toBeTruthy();
+      expect(card.getByText('Malformed native skill definition')).toBeTruthy();
+      expect(card.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
+      const agents = within(await screen.findByRole('region', { name: 'Agents', exact: true }));
+      expect(await agents.findByText('Native agents discovery is unavailable in this Copilot version. Showing managed files.')).toBeTruthy();
+      expect(agents.getByRole('button', { name: 'View agent reviewer' })).toBeTruthy();
+      expect(agents.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+    } finally { read.mockRestore(); }
+  });
+});
