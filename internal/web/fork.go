@@ -65,7 +65,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		m.mu.Unlock()
 		return SessionSummary{}, err
 	}
-	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: req.Model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode)}
+	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: req.Model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode), Agent: s.agent}
 	if req.Model != s.model {
 		create.Effort, create.ContextSize = "", "default"
 	}
@@ -123,7 +123,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 	}
 	reservation := store.WebFork{
 		ID: targetID, Provider: prov.Name(), SourceConversationID: convID, ProjectID: create.ProjectID, Workdir: workdir,
-		Effort: create.Effort, ContextSize: create.ContextSize, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
+		Effort: create.Effort, ContextSize: create.ContextSize, Agent: create.Agent, Mode: mode, CreatedAt: m.now(), TailEventID: boundary.TailEventID,
 		Lineage: store.ForkLineage{SourceTaskID: id, UserItemID: req.UserItemID, UserEventID: boundary.UserEventID, ToEventID: boundary.ToEventID, RequestID: req.RequestID, Model: req.Model},
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -284,7 +284,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	if !validRequestID(fork.ID) || !validRequestID(fork.Lineage.RequestID) || !store.ValidProviderSessionID(fork.ProviderSessionID) || fork.ProviderSessionID == fork.SourceConversationID {
 		return SessionSummary{}, errForkUncertain
 	}
-	create := CreateRequest{ProjectID: fork.ProjectID, Provider: fork.Provider, Model: fork.Lineage.Model, Effort: fork.Effort, ContextSize: fork.ContextSize, Mode: string(fork.Mode)}
+	create := CreateRequest{ProjectID: fork.ProjectID, Provider: fork.Provider, Model: fork.Lineage.Model, Effort: fork.Effort, ContextSize: fork.ContextSize, Mode: string(fork.Mode), Agent: fork.Agent}
 	_, workdir, _, err := m.checkCreate(&create)
 	if err != nil {
 		return SessionSummary{}, err
@@ -293,10 +293,10 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusConflict, "the branch project directory changed")
 	}
 	s := newSession(fork.ID, fork.Provider, "", fork.Workdir, fork.ProviderSessionID, fork.CreatedAt)
-	s.projectID, s.model, s.effort, s.contextSize, s.mode = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode
+	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
 	s.base, s.fork = StateClosed, &fork.Lineage
 	rec := store.SessionRecord{ID: s.id, Agent: s.provider, Workdir: s.workdir, Mode: s.mode, CreatedAt: s.createdAt, LastSeenAt: s.createdAt, Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: s.convID,
-		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Fork: s.fork}}
+		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork}}
 	check := func(cfg *store.Config) error {
 		if existing, exists := cfg.Sessions[store.Key(fork.Provider, fork.ID)]; exists {
 			if existing.ID == fork.ID && existing.ProviderSessionID == fork.ProviderSessionID && existing.Web != nil && existing.Web.Fork != nil && existing.Web.Fork.RequestID == fork.Lineage.RequestID {

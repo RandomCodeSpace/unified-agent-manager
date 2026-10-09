@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -449,5 +450,110 @@ func TestForkDismissWaitsForAnInFlightFork(t *testing.T) {
 	}
 	if _, ok := pendingForks(t, st)[flying.RequestID]; ok {
 		t.Fatal("dismiss left the uncertain reservation")
+	}
+}
+
+// forkAgentProvider forks and lists custom agents; agents may change.
+type forkAgentProvider struct {
+	*taskForkProvider
+	agentsMu sync.Mutex
+	agents   []agentapi.ConfigurationDefinition
+}
+
+func (p *forkAgentProvider) setAgents(ids ...string) {
+	p.agentsMu.Lock()
+	defer p.agentsMu.Unlock()
+	p.agents = nil
+	for _, id := range ids {
+		p.agents = append(p.agents, agentapi.ConfigurationDefinition{ID: id, Name: id, Source: "project"})
+	}
+}
+
+func (p *forkAgentProvider) DiscoverAgents(context.Context, []string) (agentapi.ConfigurationCatalog, error) {
+	p.agentsMu.Lock()
+	defer p.agentsMu.Unlock()
+	return agentapi.ConfigurationCatalog{Definitions: slices.Clone(p.agents)}, nil
+}
+func (p *forkAgentProvider) DiscoverSkills(context.Context, []string, []string) (agentapi.ConfigurationCatalog, error) {
+	return agentapi.ConfigurationCatalog{}, nil
+}
+func (p *forkAgentProvider) DiscoverHooks(context.Context, []string) (agentapi.ConfigurationCatalog, error) {
+	return agentapi.ConfigurationCatalog{}, nil
+}
+func (p *forkAgentProvider) DiscoverInstructions(context.Context, []string) (agentapi.ConfigurationCatalog, error) {
+	return agentapi.ConfigurationCatalog{}, nil
+}
+
+func forkAgentManager(t *testing.T) (*Manager, *forkAgentProvider, *store.Store, SessionSummary) {
+	t.Helper()
+	caps := allCaps
+	caps.Fork, caps.Import, caps.ContextSize, caps.CustomAgents = true, true, true, true
+	p := &forkAgentProvider{taskForkProvider: &taskForkProvider{Pager: agenttest.NewPager("fake", caps)}}
+	p.SetModels(selectionModels(), nil)
+	p.setAgents("reviewer")
+	st := openTestStore(t)
+	m := startManager(t, st, p)
+	source, err := m.Create(CreateRequest{ProjectID: addProject(t, m, t.TempDir()), Provider: "fake", Model: "a", Agent: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishTurn(p.Last(), "original", "original reply")
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	return m, p, st, source
+}
+
+// A branch keeps the source's custom agent with its own selected model, and
+// its first open, on a later send, selects that agent and then the model.
+func TestForkInheritsTheSourceCustomAgent(t *testing.T) {
+	m, p, st, source := forkAgentManager(t)
+	p.forkHook = func(agentapi.ForkRequest) (string, error) {
+		p.SetHistory("native-copy", agentapi.History{Items: []agentapi.Item{{ID: "u-original", Kind: agentapi.ItemUser, Text: "original"}}})
+		return "native-copy", nil
+	}
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "b", RequestID: mustUUID(t)})
+	if err != nil || branch.Agent != "reviewer" || branch.Model != "b" || branch.Open || len(p.Opens()) != 1 {
+		t.Fatalf("branch = %+v, %v; opens %d", branch, err, len(p.Opens()))
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	if rec, _ := loadRecord(t, st, "fake", branch.ID); rec.Web == nil || rec.Web.Agent != "reviewer" || rec.Web.Model != "b" {
+		t.Fatalf("stored branch = %+v", rec.Web)
+	}
+	if _, err := m.Submit(branch.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	opened := p.Last()
+	if req := opened.Request(); req.ConversationID != branch.ConversationID || req.Agent != "reviewer" || req.Model != "b" || !slices.Equal(opened.ModelSets(), []string{"b"}) || len(opened.Sends()) != 1 {
+		t.Fatalf("first branch open %+v, model sets %q, sends %q", req, opened.ModelSets(), opened.Sends())
+	}
+}
+
+// A source agent that is no longer offered for the Project refuses the
+// branch before the native copy, and a saved native copy is not added with
+// the default agent either.
+func TestForkFailsClosedWhenTheSourceCustomAgentIsGone(t *testing.T) {
+	m, p, st, source := forkAgentManager(t)
+	p.setAgents()
+	if _, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}); statusOf(err) != http.StatusBadRequest || p.forkCount() != 0 || len(pendingForks(t, st)) != 0 {
+		t.Fatalf("gone agent = %v; forks %d", err, p.forkCount())
+	}
+	p.setAgents("reviewer")
+	p.forkHook = func(agentapi.ForkRequest) (string, error) { p.setAgents(); return "native-copy", nil }
+	req := ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)}
+	_, err := m.Fork(source.ID, req)
+	var failure *Error
+	if !errors.As(err, &failure) || failure.Code != "fork_saved" || p.forkCount() != 1 {
+		t.Fatalf("agent gone after the copy = %v; forks %d", err, p.forkCount())
+	}
+	if pending := pendingForks(t, st)[req.RequestID]; pending.ProviderSessionID != "native-copy" || pending.Agent != "reviewer" {
+		t.Fatalf("saved result = %+v", pending)
+	}
+	for _, sum := range m.List() {
+		if sum.ConversationID == "native-copy" {
+			t.Fatalf("branch added without its agent: %+v", sum)
+		}
 	}
 }
