@@ -25,6 +25,7 @@ type WebFork struct {
 	Workdir              string      `json:"workdir"`
 	Effort               string      `json:"effort,omitempty"`
 	ContextSize          string      `json:"context_size"`
+	Agent                string      `json:"agent,omitempty"`
 	Mode                 Mode        `json:"mode"`
 	CreatedAt            time.Time   `json:"created_at"`
 	TailEventID          string      `json:"tail_event_id"`

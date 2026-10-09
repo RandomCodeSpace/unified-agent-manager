@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -216,5 +217,59 @@ printf '%s\n' "$HISTFILE:$HISTSIZE" > "${BASH_SOURCE[0]%/*}/$1.result"
 	data, err := os.ReadFile(history)
 	if err != nil || string(data) != original {
 		t.Fatalf("history changed after shell shutdown: %q, %v", data, err)
+	}
+}
+
+// The CLI UAM starts gets the AUTO_APPROVAL feature flag that assisted
+// permissions need, added to any flags the service's environment sets, and
+// the rest of that environment unchanged.
+func TestSDKCLIEnvironmentEnablesAutoApproval(t *testing.T) {
+	for inherited, want := range map[string]string{
+		"":                      "AUTO_APPROVAL",
+		"AHP_CLIENT":            "AHP_CLIENT,AUTO_APPROVAL",
+		"AUTO_APPROVAL,FOO":     "AUTO_APPROVAL,FOO",
+		"FOO, AUTO_APPROVAL ,X": "FOO, AUTO_APPROVAL ,X",
+	} {
+		env := withAutoApproval([]string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=" + inherited})
+		if !slices.Equal(env, []string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=" + want}) {
+			t.Errorf("flags %q: env = %q", inherited, env)
+		}
+	}
+	if env := withAutoApproval([]string{"UAM_TEST_KEEP=inherited"}); !slices.Equal(env, []string{"UAM_TEST_KEEP=inherited", "COPILOT_CLI_ENABLED_FEATURE_FLAGS=AUTO_APPROVAL"}) {
+		t.Errorf("unset flags: env = %q", env)
+	}
+
+	// The started process sees it, and the service's own environment keeps
+	// what it had.
+	t.Setenv("COPILOT_OTEL_ENABLED", "false")
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is unavailable")
+	}
+	dir := t.TempDir()
+	t.Setenv("COPILOT_CLI_ENABLED_FEATURE_FLAGS", "AHP_CLIENT")
+	t.Setenv("UAM_TEST_OUTPUT", filepath.Join(dir, "environment"))
+	t.Setenv("UAM_TEST_KEEP", "inherited")
+	t.Setenv("PATH", dir)
+	script := "#!" + sh + "\nprintf '%s\\n%s\\n' \"$COPILOT_CLI_ENABLED_FEATURE_FLAGS\" \"$UAM_TEST_KEEP\" > \"$UAM_TEST_OUTPUT\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "copilot"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	client, err := newSDKClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.ForceStop()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.Start(ctx); err == nil {
+		t.Fatal("stub unexpectedly completed the SDK handshake")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "environment"))
+	if want := "AHP_CLIENT,AUTO_APPROVAL\ninherited\n"; err != nil || string(data) != want {
+		t.Fatalf("child environment = %q, %v; want %q", data, err, want)
+	}
+	if os.Getenv("COPILOT_CLI_ENABLED_FEATURE_FLAGS") != "AHP_CLIENT" {
+		t.Fatal("SDK client changed the service environment")
 	}
 }

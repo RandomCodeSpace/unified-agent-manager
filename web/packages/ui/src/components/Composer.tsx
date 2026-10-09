@@ -111,6 +111,7 @@ interface Choice {
   value: string;
   label: ReactNode;
   description?: ReactNode;
+  disabled?: boolean;
   /** Choices with a group are listed after the others under its label, e.g. a custom model's provider. */
   group?: string;
 }
@@ -1141,8 +1142,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }
   const modeChoices: Choice[] = [
     { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
-    // Opt-in where the provider supports it; a Task already in it keeps showing it.
-    ...(session.capabilities.assisted_permissions || mode === 'assisted' ? [{ value: 'assisted', label: 'Assisted', description: MODE_TEXT.assisted }] : []),
+    // Opt-in where the provider supports it; a Task already in it keeps showing it. A runtime that refused it shows why, disabled.
+    ...(session.capabilities.assisted_permissions || mode === 'assisted' || session.capabilities.assisted_unavailable
+      ? [{ value: 'assisted', label: 'Assisted', description: session.capabilities.assisted_unavailable ?? MODE_TEXT.assisted, disabled: !!session.capabilities.assisted_unavailable && mode !== 'assisted' }]
+      : []),
     { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
   ];
   // Yolo with autopilot is the riskiest pair: every way into it is confirmed first.
@@ -1158,7 +1161,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const permissionItems = (
     <Menu.RadioGroup value={modeUnknown ? '' : mode} onValueChange={(v) => chooseMode(v as PermissionMode)}>
       <Menu.Label>Permissions</Menu.Label>
-      {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
+      {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy || c.disabled}>{c.label}</Menu.RadioItem>)}
     </Menu.RadioGroup>
   );
   const executionSupported = !newTask && !!session.capabilities.execution_modes;

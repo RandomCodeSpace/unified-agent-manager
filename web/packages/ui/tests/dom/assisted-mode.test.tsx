@@ -25,6 +25,14 @@ test('a Task whose provider lacks assisted permissions does not offer it', async
   expect(menu.queryByRole('menuitemradio', { name: /^Assisted/ })).toBeNull();
 });
 
+test('a runtime that refused assisted shows it disabled with the reason', async () => {
+  const { user } = await openTask('t4');
+  const menu = await openMenu(user, /^Permissions and execution: Safe/);
+  const item = await menu.findByRole('menuitemradio', { name: /^Assisted/ });
+  expect(item.textContent).toContain('kept permission mode "manual"');
+  expect(item.getAttribute('aria-disabled')).toBe('true');
+});
+
 const session = { id: 't', capabilities: { permissions: true, questions: true } } as unknown as SessionDetail;
 const request: Interaction = { id: 'p', kind: 'permission', title: 'Write file', detail: 'a.txt', state: 'pending', time: '2026-10-09T00:00:00Z', options: [{ id: 'approve_once', label: 'Allow once', allow_once: true }, { id: 'reject', label: 'Deny', reject: true }] };
 

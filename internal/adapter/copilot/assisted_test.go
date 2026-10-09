@@ -3,7 +3,9 @@ package copilot
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,9 +44,14 @@ func (s *fakeSession) GetPermissionMode(context.Context) (*rpc.PermissionsGetMod
 
 func openAssisted(t *testing.T, fc *fakeClient, model string) (agentapi.Conversation, error) {
 	t.Helper()
+	return openAssistedConversation(t, fc, "", model)
+}
+
+func openAssistedConversation(t *testing.T, fc *fakeClient, convID, model string) (agentapi.Conversation, error) {
+	t.Helper()
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-	return p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: model})
+	return p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: convID, Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: model})
 }
 
 func TestOpenAppliesAssistedPermissionsWithTheExplicitReviewer(t *testing.T) {
@@ -90,16 +97,23 @@ func TestOpenFailsWhenTheRuntimeDoesNotApplyAssistedPermissions(t *testing.T) {
 		},
 		"no result": func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) { return nil, nil },
 	} {
-		t.Run(name, func(t *testing.T) {
-			fc := &fakeClient{permMode: hook}
-			conv, err := openAssisted(t, fc, "gpt-6-luna")
-			if err == nil || conv != nil || !strings.Contains(err.Error(), "assisted permissions") {
-				t.Fatalf("open = %v, %v", conv, err)
-			}
-			if fs := fc.sessions[0]; !fs.disconnected || len(fs.sent) != 0 {
-				t.Fatalf("refused session stayed open or was used: disconnected %v", fs.disconnected)
-			}
-		})
+		// A session the refused open created is deleted, not left behind;
+		// a resumed one is kept.
+		for open, convID := range map[string]string{"create": "", "resume": "conv"} {
+			t.Run(name+" "+open, func(t *testing.T) {
+				fc := &fakeClient{permMode: hook}
+				conv, err := openAssistedConversation(t, fc, convID, "gpt-6-luna")
+				if err == nil || conv != nil || !strings.Contains(err.Error(), "assisted permissions") {
+					t.Fatalf("open = %v, %v", conv, err)
+				}
+				if fs := fc.sessions[0]; !fs.disconnected || len(fs.sent) != 0 {
+					t.Fatalf("refused session stayed open or was used: disconnected %v", fs.disconnected)
+				}
+				if created := convID == ""; created != slices.Equal(fc.deleted, []string{"s-1"}) || (!created && len(fc.deleted) != 0) {
+					t.Fatalf("deleted %v", fc.deleted)
+				}
+			})
+		}
 	}
 }
 
@@ -163,5 +177,49 @@ func TestAssistedPermissionsOnReadsTheRuntimeModeBack(t *testing.T) {
 	}
 	if _, err := reader.AssistedPermissionsOn(context.Background()); !errors.Is(err, agentapi.ErrClosed) {
 		t.Fatalf("closed read back = %v", err)
+	}
+}
+
+// A runtime that keeps another mode when asked for assisted withdraws the
+// capability, with the reason, until a new CLI starts; a failed call does
+// not withdraw it.
+func TestRefusedAssistedModeIsWithdrawnUntilTheCLIRestarts(t *testing.T) {
+	var refuse atomic.Bool
+	refuse.Store(true)
+	fc := &fakeClient{permMode: func(req *rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) {
+		if refuse.Load() {
+			return &rpc.PermissionsSetModeResult{Mode: rpc.PermissionModeManual, Success: true}, nil
+		}
+		return &rpc.PermissionsSetModeResult{Mode: req.Mode, Success: true}, nil
+	}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	open := func() error {
+		_, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: "gpt-6-luna"})
+		return err
+	}
+	if err := open(); !errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("refused open = %v", err)
+	}
+	if caps := p.Capabilities(); caps.AssistedPermissions || !strings.Contains(caps.AssistedUnavailable, `"manual"`) {
+		t.Fatalf("after a refusal: assisted %t, reason %q", caps.AssistedPermissions, caps.AssistedUnavailable)
+	}
+	refuse.Store(false)
+	p.mu.Lock()
+	running := p.client
+	p.mu.Unlock()
+	p.fail(running, "restart")
+	if err := open(); err != nil {
+		t.Fatalf("open on a new CLI = %v", err)
+	}
+	if caps := p.Capabilities(); !caps.AssistedPermissions || caps.AssistedUnavailable != "" {
+		t.Fatalf("after a restart: assisted %t, reason %q", caps.AssistedPermissions, caps.AssistedUnavailable)
+	}
+
+	failing := &fakeClient{permMode: func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) {
+		return nil, errors.New("unknown model")
+	}}
+	if _, err := openAssisted(t, failing, "gpt-6-luna"); err == nil || errors.Is(err, agentapi.ErrUnsupported) {
+		t.Fatalf("failed call = %v", err)
 	}
 }

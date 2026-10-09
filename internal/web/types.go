@@ -396,6 +396,7 @@ type TurnTiming = store.TurnTiming
 
 type SessionDetail struct {
 	PlanVersion uint64       `json:"plan_version,omitempty"`
+	PlanPath    string       `json:"plan_path,omitempty"`
 	TurnTimings []TurnTiming `json:"turn_timings"`
 	SessionSummary
 	// Seq orders this snapshot against events on the same service.

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -454,5 +456,51 @@ func TestRewindReleaseOnlyAfterAFailedReconcile(t *testing.T) {
 				t.Fatalf("send after release = %v", err)
 			}
 		})
+	}
+}
+
+// The native preview reports only the recorded changes, so an outside edit
+// of a previewed file after the preview leaves it unchanged. The token also
+// binds each previewed file's state on disk: such an edit, even one keeping
+// the size and modification time, makes the confirmation stale.
+func TestRewindRefusesATokenTakenBeforeAnOutsideEdit(t *testing.T) {
+	m, _, st, sum, rc := rewindManager(t)
+	own := filepath.Join(t.TempDir(), "a.txt")
+	if err := os.WriteFile(own, []byte("agent edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rc.preview = func(user string) (agentapi.RewindPreview, error) {
+		p, err := secondTurnPreview(user)
+		p.Files.Entries[0].Path = own
+		return p, err
+	}
+	token := previewToken(t, m, sum.ID)
+	info, err := os.Stat(own)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(own, []byte("owner edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(own, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+		t.Fatal("stale rewind reached the provider")
+		return agentapi.RewindResult{}, nil
+	}
+	for _, mode := range []string{agentapi.RewindConversationAndFiles, agentapi.RewindConversation} {
+		if _, err := m.Rewind(sum.ID, RewindRequest{UserItemID: "u-second", Mode: mode, Token: token, RequestID: mustUUID(t)}); !errors.Is(err, errRewindStale) {
+			t.Fatalf("%s after an outside edit = %v", mode, err)
+		}
+	}
+	if rc.rewinds() != 0 || storedRewind(t, st, sum.ID) != nil {
+		t.Fatal("stale preview left a receipt or reached the provider")
+	}
+	rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+		return agentapi.RewindResult{Outcome: "applied"}, nil
+	}
+	if _, err := m.Rewind(sum.ID, RewindRequest{UserItemID: "u-second", Mode: agentapi.RewindConversationAndFiles, Token: previewToken(t, m, sum.ID), RequestID: mustUUID(t)}); err != nil || rc.rewinds() != 1 {
+		t.Fatalf("fresh preview = %v; rewinds %d", err, rc.rewinds())
 	}
 }

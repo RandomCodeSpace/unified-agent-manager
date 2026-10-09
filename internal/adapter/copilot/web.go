@@ -347,6 +347,9 @@ type webProvider struct {
 	forkUnsupported   bool
 	rewindUnsupported bool
 	importProbed      bool
+	// assistedRefused says why the running CLI refused assisted
+	// permissions; a new CLI is asked again.
+	assistedRefused string
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -395,11 +398,12 @@ func newSDKClient() (sdkClient, error) {
 
 // sdkClientAt points the SDK at the CLI at path, retaining the user's login
 // and configuration. Disable shell history in the runtime and its children
-// without changing the service environment or the manual web terminal.
-// export adds the local usage export; a client that runs no model leaves it
-// out, so it creates no export file.
+// and turn on the feature assisted permissions need, without changing the
+// service environment or the manual web terminal. export adds the local
+// usage export; a client that runs no model leaves it out, so it creates no
+// export file.
 func sdkClientAt(path string, export bool) sdkClient {
-	env := append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
 	var telemetry *copilot.TelemetryConfig
 	if export {
 		var err error
@@ -408,6 +412,31 @@ func sdkClientAt(path string, export bool) sdkClient {
 		}
 	}
 	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+}
+
+// cliFeatureFlags lists the CLI's enabled feature flags, comma-separated.
+const cliFeatureFlags = "COPILOT_CLI_ENABLED_FEATURE_FLAGS"
+
+// withAutoApproval returns a copy of env whose CLI feature flags include
+// AUTO_APPROVAL, the CLI's gate for the assisted permission mode, added to
+// the flags env sets, if any.
+func withAutoApproval(env []string) []string {
+	out := slices.Clone(env)
+	for i := len(out) - 1; i >= 0; i-- {
+		flags, ok := strings.CutPrefix(out[i], cliFeatureFlags+"=")
+		if !ok {
+			continue
+		}
+		switch {
+		case slices.ContainsFunc(strings.Split(flags, ","), func(f string) bool { return strings.TrimSpace(f) == "AUTO_APPROVAL" }):
+		case flags == "":
+			out[i] += "AUTO_APPROVAL"
+		default:
+			out[i] += ",AUTO_APPROVAL"
+		}
+		return out
+	}
+	return append(out, cliFeatureFlags+"=AUTO_APPROVAL")
 }
 
 func resolveCopilot() (string, error) {
@@ -439,7 +468,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: p.assistedRefused == "", AssistedUnavailable: p.assistedRefused}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -1025,7 +1054,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	// Before anything is sent, so no request is decided under another mode.
 	if req.AssistedApprovalModel != "" {
 		if err := c.SetAssistedPermissions(ctx, req.AssistedApprovalModel); err != nil {
-			return nil, errors.Join(fmt.Errorf("apply assisted permissions: %w", err), c.Close(ctx))
+			p.abandonOpen(ctx, client, c, req.ConversationID == "")
+			return nil, fmt.Errorf("apply assisted permissions: %w", err)
 		}
 	}
 	// The Task's custom agent is selected, with the Task's model kept,
@@ -1596,6 +1626,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
+	p.assistedRefused = ""
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()
 	p.live = nil
@@ -1800,6 +1831,7 @@ type conversation struct {
 	execution              *agentapi.ExecutionState
 	executionRevision      uint64
 	plans                  planVersions
+	planAnswered           []answeredPlan
 	planStopped            bool   // Stop/end refuses late callbacks from the same foreground turn
 	planEpoch              uint64 // expiry/new foreground turn invalidates outside-lock plan reads
 	planPath               string
@@ -3402,7 +3434,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		}
 		return
 	}
+	var decided string
+	if d, ok := ev.Data.(*rpc.ExitPlanModeCompletedData); ok {
+		decided = c.decidedPlanLocked(d)
+	}
 	for _, it := range c.tr.items(ev) {
+		if decided != "" && it.Plan != nil {
+			it.Plan.RequestID = decided
+		}
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventItem, Item: &it})
 	}
 }

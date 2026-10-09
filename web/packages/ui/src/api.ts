@@ -47,6 +47,8 @@ export interface Capabilities {
   aside?: boolean;
   /** Tasks may opt into the provider's assisted review of permission requests (`mode: 'assisted'`). */
   assisted_permissions?: boolean;
+  /** Why the running runtime withdrew assisted permissions after refusing the mode; set until it restarts or updates. */
+  assisted_unavailable?: string;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */
@@ -807,7 +809,7 @@ export interface ToolCall {
   /** A running shell call's newest output lines, oldest first, at most 10; absent once it ends. */
   tail?: OutputLine[];
   /** Client-only semantic outcome retained after page eviction. */
-  question_outcome?: 'pending' | 'answered' | 'declined' | 'none' | 'failed';
+  question_outcome?: 'pending' | 'answered' | 'declined' | 'cancelled' | 'none' | 'failed';
 }
 
 /** One line of a running shell call's output; `err` marks stderr. */
@@ -1226,6 +1228,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
   plan_version?: number;
+  /** The provider's scratch plan file, once known. */
+  plan_path?: string;
   schedules?: ScheduleSnapshot | null;
   /** Live MCP state only; descriptions are fetched for an expanded server. */
   mcp_status?: McpStatusSnapshot;
@@ -1413,7 +1417,7 @@ export type UpdateData =
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
   | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
-  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number }
+  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number; plan_path?: string }
   | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null }
   | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot };
 
@@ -1574,6 +1578,8 @@ export interface McpServerStatus {
   source?: string;
   /** A remote server, which may need a sign-in. */
   remote?: boolean;
+  /** A server that uses a sign-in, so it may be signed in again. */
+  sign_in?: boolean;
   needs_reconnect?: boolean;
 }
 

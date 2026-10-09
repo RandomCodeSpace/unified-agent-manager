@@ -146,3 +146,19 @@ func TestMCPNativeStatusIsBoundedAndReportsOverflow(t *testing.T) {
 		t.Fatal("unbounded MCP failure text")
 	}
 }
+
+// Only a server seen waiting for a sign-in is marked as using one, and it
+// stays marked once connected; a remote server without one is not.
+func TestMCPStatusMarksOnlyServersThatUseASignIn(t *testing.T) {
+	h := openWeb(t)
+	transport := rpc.MCPServerTransport("http")
+	h.fs.onEvent(ev("loaded", &rpc.SessionMCPServersLoadedData{Servers: []rpc.MCPServersLoadedServer{
+		{Name: "oauth", Status: rpc.MCPServerStatusNeedsAuth, Transport: &transport},
+		{Name: "plain", Status: rpc.MCPServerStatusConnected, Transport: &transport},
+	}}))
+	h.fs.onEvent(ev("signed-in", &rpc.SessionMCPServerStatusChangedData{ServerName: "oauth", Status: rpc.MCPServerStatusConnected}))
+	got := latestMCPStatus(t, h)
+	if len(got.Servers) != 2 || got.Servers[0].Name != "oauth" || !got.Servers[0].SignIn || got.Servers[0].Status != agentapi.MCPConnected || got.Servers[1].SignIn || !got.Servers[1].Remote {
+		t.Fatalf("status = %+v", got.Servers)
+	}
+}

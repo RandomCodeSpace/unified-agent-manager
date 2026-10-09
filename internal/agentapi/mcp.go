@@ -58,13 +58,15 @@ const (
 )
 
 // MCPStatus is one MCP server as a conversation sees it. Tools are listed
-// only while it is connected.
+// only while it is connected. SignIn marks a server that uses a sign-in: its
+// configuration names an OAuth client, or it waited for a sign-in.
 type MCPStatus struct {
 	Name   string    `json:"name"`
 	Status string    `json:"status"`
 	Error  string    `json:"error,omitempty"`
 	Source string    `json:"source,omitempty"`
 	Remote bool      `json:"remote,omitempty"`
+	SignIn bool      `json:"sign_in,omitempty"`
 	Tools  []MCPTool `json:"tools,omitempty"`
 }
 
@@ -102,12 +104,14 @@ type CustomizationsReloader interface {
 const MaxMCPStatusServers = 128
 
 // MCPServerStatus is lightweight state, never a server URL or tool description.
+// SignIn marks a server seen waiting for a sign-in; it stays set.
 type MCPServerStatus struct {
 	Name           string `json:"name"`
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
 	Source         string `json:"source,omitempty"`
 	Remote         bool   `json:"remote,omitempty"`
+	SignIn         bool   `json:"sign_in,omitempty"`
 	NeedsReconnect bool   `json:"needs_reconnect,omitempty"`
 }
 

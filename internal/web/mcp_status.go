@@ -69,7 +69,7 @@ func (m *Manager) TaskMCPStatus(id string) (agentapi.MCPStatusSnapshot, error) {
 		servers, err = c.MCPStatus(ctx)
 		snapshot = agentapi.MCPStatusSnapshot{Ready: true, Servers: []agentapi.MCPServerStatus{}}
 		for _, row := range servers {
-			snapshot.Servers = append(snapshot.Servers, agentapi.MCPServerStatus{Name: row.Name, Status: row.Status, Error: row.Error, Source: row.Source, Remote: row.Remote})
+			snapshot.Servers = append(snapshot.Servers, agentapi.MCPServerStatus{Name: row.Name, Status: row.Status, Error: row.Error, Source: row.Source, Remote: row.Remote, SignIn: row.SignIn})
 		}
 	}
 	if err != nil {

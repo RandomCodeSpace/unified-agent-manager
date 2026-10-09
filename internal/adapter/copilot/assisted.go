@@ -48,9 +48,15 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 	if err != nil {
 		var rpcErr *copilot.RPCError
 		if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
+			if approvalModel != "" {
+				return c.refuseAssisted("the Copilot CLI has no assisted permission mode")
+			}
 			return agentapi.ErrUnsupported
 		}
 		return fmt.Errorf("set permission mode: %s", errText(err))
+	}
+	if approvalModel != "" && res != nil && res.Mode != "" && res.Mode != req.Mode {
+		return c.refuseAssisted(fmt.Sprintf("the Copilot CLI kept permission mode %q instead of assisted", res.Mode))
 	}
 	if res == nil || !res.Success || res.Mode != req.Mode {
 		got := ""
@@ -60,6 +66,20 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 		return fmt.Errorf("the runtime did not apply permission mode %s (reports %q)", req.Mode, got)
 	}
 	return nil
+}
+
+// refuseAssisted withdraws assisted permissions while the CLI that refused
+// them runs, so Tasks are not offered a mode it does not apply. UAM starts
+// the CLI with its AUTO_APPROVAL feature flag; a refusal means this CLI or
+// its managed policy does not apply it.
+func (c *conversation) refuseAssisted(why string) error {
+	reason := why + "; Assisted needs the CLI's AUTO_APPROVAL feature flag, which this CLI or its policy did not apply"
+	c.p.mu.Lock()
+	if c.p.client == c.client {
+		c.p.assistedRefused = reason
+	}
+	c.p.mu.Unlock()
+	return fmt.Errorf("%w: %s", agentapi.ErrUnsupported, reason)
 }
 
 // AssistedPermissionsOn reads session.permissions.getMode back: true for

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { changedFiles, currentStep, itemTook, promoted, summarizeTurn, toolKind } from '../src/lib/transcript.ts';
+import { changedFiles, currentStep, itemTook, promoted, scratchPlan, summarizeTurn, toolKind } from '../src/lib/transcript.ts';
 import { DENSITY_KEY, parseDensity } from '../src/lib/density.ts';
 import { DECLINED_OUTPUT } from '../src/lib/transcript.ts';
 
@@ -160,4 +160,15 @@ test('an apply_patch call changes every file its patch names, framed loosely or 
   assert.deepEqual(changedFiles(turn), ['new.ts', 'a.ts', 'b.ts', 'old.ts', 'z.ts']);
   assert.equal(completedChanges(turn.map((e) => e.item)), 3);
   assert.equal(toolKind('apply_patch'), 'file');
+});
+
+test("the Task's scratch plan, by its exact path, is not a changed file of the turn", () => {
+  const isScratch = scratchPlan('/home/u/.copilot/session-state/s1/plan.md', '/home/u/.copilot/session-state/s1');
+  const turn = entries(edit('e1', '/w/a.go'), edit('e2', 'b.go'), call('e3', tool('create', JSON.stringify({ path: '/home/u/.copilot/session-state/s1/plan.md' }))), edit('e4', 'plan.md'));
+  assert.ok(summarizeTurn(turn, { live: false, scratch: isScratch }).parts.some((p) => p.text === '2 files changed'));
+  assert.deepEqual(changedFiles(turn, isScratch), ['/w/a.go', 'b.go']);
+  assert.ok(summarizeTurn(turn, { live: false }).parts.some((p) => p.text === '4 files changed'));
+  assert.equal(scratchPlan(undefined, '/w'), undefined);
+  assert.equal(scratchPlan('/w/plan.md', '/w')('./plan.md'), true);
+  assert.equal(scratchPlan('/w/plan.md', '/w')('docs/plan.md'), false);
 });

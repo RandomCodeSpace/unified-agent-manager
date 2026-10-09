@@ -245,12 +245,52 @@ func (c *conversation) answerPlanLocked(in *interaction, ans agentapi.Answer) er
 	}
 	clearPlanBody(in)
 	c.emitInteractionLocked(in)
+	c.answeredPlanLocked(answeredPlan{id: in.ID, approved: a.Action != "", action: string(a.Action), feedback: a.Feedback})
 	if c.turnRunning {
 		c.act.now.Plan = a.Action != "" && a.Action != agentapi.PlanExitOnly
 		c.emitActivityLocked()
 	}
 	in.planReply <- copilot.ExitPlanModeResult{Approved: a.Action != "", SelectedAction: string(a.Action), Feedback: a.Feedback}
 	return nil
+}
+
+const planCancelled = "The plan review was cancelled. Do not start implementation."
+
+// maxAnsweredPlans bounds the answers waiting for their native receipt.
+const maxAnsweredPlans = 8
+
+// answeredPlan is an answer given to the review id, as the native receipt
+// of the decision records it. A conversation's planAnswered holds those
+// whose receipt has not arrived, oldest first.
+type answeredPlan struct {
+	id, action, feedback string
+	approved             bool
+}
+
+func (c *conversation) answeredPlanLocked(a answeredPlan) {
+	if len(c.planAnswered) >= maxAnsweredPlans {
+		c.planAnswered = c.planAnswered[1:]
+	}
+	c.planAnswered = append(c.planAnswered, a)
+}
+
+// decidedPlanLocked returns the review whose answer the native receipt d
+// records: the oldest one waiting, when the decision matches it; "" for a
+// receipt UAM's callback did not answer.
+func (c *conversation) decidedPlanLocked(d *rpc.ExitPlanModeCompletedData) string {
+	if len(c.planAnswered) == 0 {
+		return ""
+	}
+	a := c.planAnswered[0]
+	action := ""
+	if d.SelectedAction != nil {
+		action = string(*d.SelectedAction)
+	}
+	if d.Approved == nil || *d.Approved != a.approved || action != a.action || orEmpty(d.Feedback) != a.feedback {
+		return ""
+	}
+	c.planAnswered = c.planAnswered[1:]
+	return a.id
 }
 
 func clearPlanBody(in *interaction) {
@@ -273,7 +313,8 @@ func (c *conversation) expirePlansLocked() {
 		in.State = agentapi.InteractionExpired
 		clearPlanBody(in)
 		c.emitInteractionLocked(in)
-		in.planReply <- copilot.ExitPlanModeResult{Feedback: "The plan review was cancelled. Do not start implementation."}
+		c.answeredPlanLocked(answeredPlan{id: in.ID, feedback: planCancelled})
+		in.planReply <- copilot.ExitPlanModeResult{Feedback: planCancelled}
 	}
 	c.plans.dropBodies()
 }

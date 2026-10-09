@@ -29,7 +29,7 @@ describe('MCP servers', () => {
       expect(form.getByText(/Finish in that tab, then return to this task/)).toBeTruthy();
       expect(form.queryByRole('textbox', { name: 'Address the browser ended on' })).toBeNull();
       expect(form.queryByText(/server machine instead/)).toBeNull();
-      const send = (seq: number, status: string) => act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name, status, remote: true }] } }) })));
+      const send = (seq: number, status: string) => act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name, status, remote: true, sign_in: true }] } }) })));
       send(1_000_001, 'pending');
       expect(dialog.getByRole('form', { name: `Sign in to ${name}` })).toBeTruthy();
       send(1_000_002, 'connected');
@@ -90,6 +90,28 @@ describe('MCP servers', () => {
     expect(dialog.queryByRole('form', { name: 'Sign in to tracker' })).toBeNull();
     expect(dialog.queryByRole('link', { name: /Open the sign-in page/ })).toBeNull();
     expect(dialog.getByRole('button', { name: 'Apply current settings' })).toHaveProperty('disabled', false);
+  });
+
+  test('"Sign in again" is offered only for a server that uses a sign-in, not for every connected remote one', async () => {
+    const { user } = renderApp('#task=t1');
+    const Source = window.EventSource;
+    let stream: EventSource | undefined;
+    window.EventSource = class extends Source {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        if (String(url).startsWith('/api/events?session=t1')) this.addEventListener('snapshot', (e) => { stream = e.target as EventSource; });
+      }
+    };
+    await screen.findByRole('region', { name: 'Conversation' });
+    await waitFor(() => expect(stream).toBeDefined());
+    const menu = await openMenu(user, 'Task actions');
+    await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
+    await dialog.findByRole('list', { name: "This task's MCP servers" });
+    act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq: 1_000_001, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name: 'plain-remote', status: 'connected', remote: true }, { name: 'oauth-remote', status: 'connected', remote: true, sign_in: true }] } }) })));
+    await dialog.findByText('plain-remote');
+    expect(dialog.getAllByRole('button', { name: 'Sign in again' })).toHaveLength(1);
+    expect(within(dialog.getByText('oauth-remote').closest('li')!).getByRole('button', { name: 'Sign in again' })).toBeTruthy();
   });
 
   test('native task status updates without polling, and tools load only for the expanded server', async () => {

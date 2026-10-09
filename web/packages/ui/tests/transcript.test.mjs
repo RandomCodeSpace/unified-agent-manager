@@ -557,3 +557,11 @@ test('a done subagent\'s line is its own result, never a generated summary an ol
   assert.equal(subagentSummary({ ...child, status: 'failed' }, undefined, undefined), 'The check failed.');
   assert.equal(subagentSummary({ ...child, status: 'cancelled' }, undefined, undefined), 'Existing report line.');
 });
+
+test('a cancelled elicitation counts and marks as cancelled, not declined', () => {
+  const form = (id, resolution) => ({ id, kind: 'question', title: 'Form from release-mcp', state: 'rejected', resolution, time: '2026-10-09T10:00:05Z', elicitation: { mode: 'form' }, questions: [{ text: 'Channel', custom: true }] });
+  assert.equal(questionOf(undefined, form('c', 'cancelled'), false).outcome, 'cancelled');
+  assert.equal(questionOf(undefined, form('d', 'declined'), false).outcome, 'declined');
+  assert.equal(approvalMark(form('c', 'cancelled')).word, 'cancelled');
+  assert.deepEqual(summarizeTurn([{ interaction: form('c', 'cancelled') }, { interaction: form('d', 'declined') }], { live: false }).parts.map((p) => p.text), ['1 question declined', '1 question cancelled']);
+});

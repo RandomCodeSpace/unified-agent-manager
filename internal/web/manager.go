@@ -401,6 +401,9 @@ type webSession struct {
 	// turnTodos are the todo snapshots of ended turns that flush has yet to
 	// append to the Task's turn-todos.jsonl (turn_todos.go).
 	turnTodos []TurnTodos
+	// planRecords are the plan review snapshots and aliases flush has yet
+	// to append to the Task's plan-reviews.jsonl (plan.go).
+	planRecords []planReviewRecord
 	// subagentPrompts are the outcomes of follow-ups to subagents, within
 	// maxSubmissions. They are not Task submissions: last never holds one.
 	subagentPrompts []Submission
@@ -997,6 +1000,9 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 // Providers lists every provider with its availability.
 func (m *Manager) Providers() []ProviderInfo {
 	updates := m.cliUpdatesAvailable()
+	for _, name := range m.order {
+		m.syncAssisted(name)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ProviderInfo, 0, len(m.order))
@@ -1092,6 +1098,7 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 	}
 	d := SessionDetail{
 		PlanVersion:      s.planVersion,
+		PlanPath:         s.planPath,
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
 		TurnTimings:      timings,
@@ -2055,6 +2062,7 @@ func (m *Manager) flush() (err error) {
 	patches := make([]recordPatch, 0, len(m.dirty))
 	var kept []keptTodos
 	var keptChanges []keptTurnChanges
+	var keptPlans []keptPlanReviews
 	for id := range m.dirty {
 		s := m.sessions[id]
 		if s == nil {
@@ -2066,6 +2074,9 @@ func (m *Manager) flush() (err error) {
 		}
 		if len(s.turnChanges) > 0 {
 			keptChanges = append(keptChanges, keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings})
+		}
+		if len(s.planRecords) > 0 {
+			keptPlans = append(keptPlans, keptPlanReviews{s: s, records: slices.Clone(s.planRecords)})
 		}
 		key := s.key()
 		var commandResult json.RawMessage
@@ -2094,6 +2105,9 @@ func (m *Manager) flush() (err error) {
 	}
 	for _, k := range keptChanges {
 		m.appendTurnChanges(k)
+	}
+	for _, k := range keptPlans {
+		m.appendPlanReviews(k)
 	}
 	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {
@@ -2257,6 +2271,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 				s.invalidateNativeDiff()
 			}
 			s.linkUploadsLocked(&it)
+			m.notePlanAliasLocked(s, it)
 			m.linkTurnTimingLocked(s, it)
 			m.upsertItemLocked(s, it, true)
 			if s.noteEdits(it) {
@@ -2276,15 +2291,19 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			m.upsertInteractionLocked(s, *ev.Interaction)
 		}
 	case agentapi.EventPlanPath:
+		path := s.planPath
 		m.notePlanPathLocked(s, ev.PlanPath)
-		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion {
-			s.planVersion = ev.PlanVersion
+		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion || s.planPath != path {
+			if ev.PlanVersion != 0 {
+				s.planVersion = ev.PlanVersion
+			}
 			m.broadcastLocked("plan_version", s.id, func(seq uint64) any {
 				return struct {
 					Seq         uint64 `json:"seq"`
 					SessionID   string `json:"session_id"`
 					PlanVersion uint64 `json:"plan_version"`
-				}{seq, s.id, s.planVersion}
+					PlanPath    string `json:"plan_path,omitempty"`
+				}{seq, s.id, s.planVersion, s.planPath}
 			})
 		}
 	case agentapi.EventSubagent:
@@ -2497,6 +2516,7 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 		}
 	}
 	if mode == store.ModeAssisted {
+		m.syncAssisted(prov.Name())
 		m.mu.Lock()
 		err = m.assistedSupportLocked(prov.Name())
 		m.mu.Unlock()
@@ -2565,6 +2585,15 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
+		if mode == store.ModeAssisted && errors.Is(err, agentapi.ErrUnsupported) {
+			m.syncAssisted(prov.Name())
+			m.mu.Lock()
+			refused := m.assistedSupportLocked(prov.Name())
+			m.mu.Unlock()
+			if refused != nil {
+				return SessionSummary{}, refused
+			}
+		}
 		status := http.StatusBadGateway
 		if errors.Is(err, agentapi.ErrAgentUnavailable) {
 			status = http.StatusConflict
@@ -2812,6 +2841,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 // is true for user actions (sending a prompt); a viewer only opens sessions
 // autoOpenableLocked allows.
 func (m *Manager) openLocked(s *webSession, explicit bool) error {
+	m.syncAssisted(s.provider)
 	m.mu.Lock()
 	if s.removed {
 		m.finishOpeningLocked(s)
@@ -2940,6 +2970,9 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 
 	if err != nil {
 		log.Warn("reopen web conversation failed", "session", s.id, "provider", s.provider, "error", err)
+		if errors.Is(err, agentapi.ErrUnsupported) {
+			m.syncAssisted(s.provider)
+		}
 		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) {
 			return newError(http.StatusConflict, "%s", openFailureDetail(err, req.ConversationID))
 		}
@@ -4376,6 +4409,9 @@ func approvalModel(mode store.Mode) string {
 // assistedSupportLocked refuses assisted mode unless the provider supports
 // it and offers assistedApprovalModel.
 func (m *Manager) assistedSupportLocked(provider string) error {
+	if why := m.infos[provider].Capabilities.AssistedUnavailable; why != "" {
+		return newError(http.StatusConflict, "Assisted is unavailable: %s", why)
+	}
 	if !m.infos[provider].Capabilities.AssistedPermissions {
 		return newError(http.StatusConflict, "this provider does not support assisted permissions")
 	}
@@ -4383,6 +4419,27 @@ func (m *Manager) assistedSupportLocked(provider string) error {
 		return newError(http.StatusConflict, "assisted permissions need the %s reviewer model, which this account does not offer", assistedApprovalModel)
 	}
 	return nil
+}
+
+// syncAssisted copies provider's current assisted-permission support into
+// its info: a runtime that refused assisted withdraws it until it changes.
+// The provider is asked without mu held.
+func (m *Manager) syncAssisted(provider string) {
+	m.mu.Lock()
+	prov := m.providers[provider]
+	m.mu.Unlock()
+	if prov == nil {
+		return
+	}
+	caps := prov.Capabilities()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, ok := m.infos[provider]
+	if !ok {
+		return
+	}
+	info.Capabilities.AssistedPermissions, info.Capabilities.AssistedUnavailable = caps.AssistedPermissions, caps.AssistedUnavailable
+	m.infos[provider] = info
 }
 
 // autoAllowLocked answers a pending permission request with the provider's
@@ -4492,6 +4549,9 @@ func (m *Manager) setMode(id, mode string, opHeld bool) (SessionSummary, error) 
 // back and adopted; if that fails too, the mode is unknown and nothing is
 // allowed automatically until a later change sets it.
 func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary, error) {
+	if md == store.ModeAssisted {
+		m.syncAssisted(s.provider)
+	}
 	m.mu.Lock()
 	err := s.readOnlyLocked()
 	switch {
@@ -4513,6 +4573,9 @@ func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary,
 		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 		uncertain, err = setAssistedPermissions(ctx, s.id, conv, approvalModel(md))
 		cancel()
+		if err != nil && md == store.ModeAssisted {
+			m.syncAssisted(s.provider)
+		}
 		if err != nil {
 			return m.assistedModeFailed(s, conv, md, err, uncertain)
 		}

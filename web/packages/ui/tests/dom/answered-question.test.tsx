@@ -54,6 +54,19 @@ describe('a settled question', () => {
     expect(card().getByText('Declined')).toBeTruthy();
   });
 
+  test('a cancelled elicitation reads "Cancelled", a declined one "Declined", and a confirmed link "Done"', () => {
+    const form: Interaction = { id: 'e', kind: 'question', title: 'Form from release-mcp', state: 'rejected', resolution: 'cancelled', time: '', elicitation: { mode: 'form', source: 'release-mcp' }, questions: [{ text: 'Channel', custom: true, field: { name: 'channel', type: 'string' } }] };
+    const view = draw(undefined, form);
+    expect(card().getByText('Cancelled')).toBeTruthy();
+    view.unmount();
+    const declined = draw(undefined, { ...form, resolution: 'declined' });
+    expect(card().getByText('Declined')).toBeTruthy();
+    declined.unmount();
+    draw(undefined, { ...form, state: 'answered', resolution: 'accepted', elicitation: { mode: 'url', source: 'release-mcp', url: 'https://example.invalid/approve' }, questions: [{ text: 'Approve the release', custom: false }] });
+    expect(card().getByText('Done')).toBeTruthy();
+    expect(card().queryByText('You wrote')).toBeNull();
+  });
+
   test('a call left open by a stopped turn reads "Not answered"', () => {
     draw(ask('Which port?', ['8000'], { status: 'running' }), undefined, false);
     expect(card().getByText('Not answered').className).toContain('text-muted');

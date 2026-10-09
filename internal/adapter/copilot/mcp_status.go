@@ -66,7 +66,8 @@ func (c *conversation) observeMCPStatusLocked(ev copilot.SessionEvent, agentID s
 		}
 		snapshot = agentapi.MCPStatusSnapshot{Supported: true, Ready: true, Servers: []agentapi.MCPServerStatus{}}
 		for _, s := range d.Servers {
-			row := agentapi.MCPServerStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: deref(s.Error), Remote: s.Status == rpc.MCPServerStatusNeedsAuth}
+			auth := s.Status == rpc.MCPServerStatusNeedsAuth
+			row := agentapi.MCPServerStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: deref(s.Error), Remote: auth, SignIn: auth}
 			if s.Source != nil {
 				row.Source = string(*s.Source)
 			}
@@ -85,6 +86,7 @@ func (c *conversation) observeMCPStatusLocked(ev copilot.SessionEvent, agentID s
 		}
 		row.Status, row.Error, row.NeedsReconnect = mcpStatus(d.Status), deref(d.Error), false
 		row.Remote = row.Remote || d.Status == rpc.MCPServerStatusNeedsAuth
+		row.SignIn = row.SignIn || d.Status == rpc.MCPServerStatusNeedsAuth
 		if d.ConfigSource != nil {
 			row.Source = *d.ConfigSource
 		}
@@ -135,11 +137,12 @@ func (c *conversation) MCPStatusSnapshot(ctx context.Context) (agentapi.MCPStatu
 	}
 	snapshot := agentapi.MCPStatusSnapshot{Supported: true, Ready: true, Servers: []agentapi.MCPServerStatus{}}
 	for _, s := range servers {
-		row := agentapi.MCPServerStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: deref(s.Error), Remote: s.URL != nil || s.Status == rpc.MCPServerStatusNeedsAuth}
+		row := agentapi.MCPServerStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: deref(s.Error), Remote: s.URL != nil || s.Status == rpc.MCPServerStatusNeedsAuth, SignIn: s.Status == rpc.MCPServerStatusNeedsAuth}
 		// List has no reconnect flag; only a native state update clears it.
 		if i := slices.IndexFunc(c.mcpStatus.Servers, func(before agentapi.MCPServerStatus) bool { return before.Name == s.Name }); i >= 0 {
 			row.NeedsReconnect = c.mcpStatus.Servers[i].NeedsReconnect
 			row.Remote = row.Remote || c.mcpStatus.Servers[i].Remote
+			row.SignIn = row.SignIn || c.mcpStatus.Servers[i].SignIn
 		}
 		if s.Source != nil {
 			row.Source = string(*s.Source)
