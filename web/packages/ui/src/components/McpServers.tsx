@@ -196,7 +196,7 @@ function ServerDetail({ s }: Readonly<{ s: McpServer }>) {
 /**
  * Settings → MCP servers: the provider's user-wide MCP configuration (shared with its own
  * command line on this machine), edited through the provider's API. Env and header values
- * are write-only. Changes reach new Tasks; an open Task picks them up when it reconnects.
+ * are write-only. Changes configure new Tasks; an open Task can apply current settings.
  * Adding or editing a server that runs a command needs Terminal on (the service checks too).
  * The built-in GitHub server's switch is UAM's own setting instead, offered when the instance has it.
  */
@@ -259,7 +259,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
     <div className="flex flex-col gap-3">
       <Note className="max-w-3xl">
         Tools the agent can call, from a command this machine runs or a remote address. This is GitHub Copilot's own MCP configuration, shared with the copilot command here. New tasks start
-        with it; an open task keeps the servers it started with until you reconnect it (task menu → MCP servers).
+        with it; choose Apply current settings in an open task's menu → MCP servers to refresh it for the next turn.
       </Note>
       {!draft && (
         <SectionAction>
@@ -316,7 +316,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
       <AlertDialog
         {...removal.props}
         title={pending ? `Remove MCP server ${pending}?` : 'Remove?'}
-        description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Open tasks keep it until they reconnect."
+        description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Apply current settings in an open task to refresh its configuration for the next turn."
         confirmLabel="Remove server"
         busy={!!busy && busy === pending}
         onConfirm={() => {

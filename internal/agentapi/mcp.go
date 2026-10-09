@@ -88,3 +88,12 @@ type MCPController interface {
 	// again discards a kept sign-in first.
 	MCPSignIn(ctx context.Context, name string, again bool) (string, error)
 }
+
+// CustomizationsReloader optionally refreshes an open conversation's discovered
+// configuration without closing it. Prompt and tool changes apply on the next
+// turn. ErrUnsupported means the capability is absent and nothing changed;
+// other errors may follow a partially applied reload and must not be retried
+// by closing and reopening the conversation.
+type CustomizationsReloader interface {
+	ReloadCustomizations(ctx context.Context) error
+}

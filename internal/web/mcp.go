@@ -405,9 +405,9 @@ func (m *Manager) TaskMCP(id string) ([]agentapi.MCPStatus, error) {
 	return out, nil
 }
 
-// ReconnectTaskMCP closes a quiet Task's conversation so the next read
-// reopens it with the servers configured now: a conversation keeps the
-// configuration it opened with.
+// ReconnectTaskMCP refreshes a quiet Task's configuration in its open
+// conversation. A provider without reload support retains the close/reopen
+// fallback; a reload that failed may have partially applied changes.
 func (m *Manager) ReconnectTaskMCP(id string) error {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -419,7 +419,38 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 	if err == nil {
 		err = s.settleableLocked()
 	}
-	var conv agentapi.Conversation
+	m.mu.Unlock()
+	if err == nil {
+		err = m.checkHolder(s)
+	}
+	m.mu.Lock()
+	if err == nil {
+		err = s.readOnlyLocked()
+	}
+	if err == nil {
+		err = s.settleableLocked()
+	}
+	conv, gen := s.conv, s.gen
+	m.mu.Unlock()
+	if err != nil {
+		s.op.Unlock()
+		return err
+	}
+	if reload, ok := conv.(agentapi.CustomizationsReloader); ok {
+		ctx, cancel := context.WithTimeout(m.ctx, mcpTimeout)
+		err = reload.ReloadCustomizations(ctx)
+		cancel()
+		if !errors.Is(err, agentapi.ErrUnsupported) {
+			s.op.Unlock()
+			return mcpFailure(err)
+		}
+	}
+	m.mu.Lock()
+	err = s.settleableLocked()
+	if s.gen != gen {
+		err = newError(http.StatusConflict, "the task's conversation changed while reloading configuration; try again")
+	}
+	conv = nil
 	if err == nil && s.conv != nil {
 		before := m.summaryLocked(s)
 		conv = m.disconnectLocked(s)
