@@ -826,9 +826,39 @@ func (m *Manager) backgroundTasksLocked(s *webSession, snapshot agentapi.Backgro
 	})
 }
 
+// schedulesLocked replaces s's native schedule snapshot with a bounded,
+// sanitized copy of snapshot, or releases it (nil), and publishes it.
+func (m *Manager) schedulesLocked(s *webSession, snapshot *agentapi.ScheduleSnapshot) {
+	if snapshot != nil {
+		own := *snapshot
+		own.Reason = clampText(displaytext.Sanitize(own.Reason), maxLabelText)
+		if len(own.Entries) > agentapi.MaxSchedules {
+			own.Known, own.Truncated = false, true
+		}
+		own.Entries = slices.Clone(own.Entries[:min(len(own.Entries), agentapi.MaxSchedules)])
+		if own.Entries == nil {
+			own.Entries = []agentapi.ScheduleEntry{}
+		}
+		for i := range own.Entries {
+			entry := &own.Entries[i]
+			entry.ID = clampText(displaytext.Sanitize(entry.ID), maxLabelText)
+			entry.Cron = clampText(displaytext.Sanitize(entry.Cron), maxLabelText)
+			entry.Timezone = clampText(displaytext.Sanitize(entry.Timezone), maxLabelText)
+		}
+		snapshot = &own
+	}
+	s.schedules = snapshot
+	m.broadcastLocked("schedules", s.id, func(seq uint64) any {
+		return schedulesEvent{Seq: seq, SessionID: s.id, Schedules: snapshot}
+	})
+}
+
 func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
 	m.forgetTurnTimingLocked(s)
 	m.forgetTodosLocked(s)
+	if s.schedules != nil {
+		m.schedulesLocked(s, nil)
+	}
 	if s.execution != nil {
 		state := *s.execution
 		state.Known = false

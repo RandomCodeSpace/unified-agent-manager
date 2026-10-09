@@ -13,7 +13,7 @@ import (
 	"github.com/github/copilot-sdk/go/rpc"
 )
 
-const maxSchedules = 32
+const maxSchedules = agentapi.MaxSchedules
 
 type scheduleSession interface {
 	ListSchedules(context.Context) ([]rpc.ScheduleEntry, error)
@@ -44,10 +44,9 @@ func (c *conversation) checkSchedulesLocked() {
 	if c.closed {
 		return
 	}
+	// The last snapshot stays shown until the read lands; the revision keeps
+	// a read started before this event from publishing.
 	c.schedules.revision++
-	if c.schedules.snapshot != nil {
-		c.scheduleSnapshotLocked(agentapi.ScheduleSnapshot{Supported: c.schedules.snapshot.Supported, Entries: []agentapi.ScheduleEntry{}, Reason: "refreshing"})
-	}
 	if c.sess == nil || c.schedules.reading {
 		c.schedules.again = true
 		return

@@ -255,6 +255,20 @@ test('background shell updates stay separate from foreground and reconnect inval
   assert.deepEqual(state.detail.background_tasks.tasks, []);
 });
 
+test('native schedule frames replace the open Task\'s schedules in order, and release or a lost connection clears them', () => {
+  const schedules = { supported: true, known: true, entries: [{ id: '7', recurring: true, interval_ms: 300000, next_run_at: '2026-10-09T12:00:00Z' }] };
+  let state = loading();
+  state = update(state, { name: 'schedules', seq: 12, session_id: 'task', schedules });
+  assert.deepEqual(state.detail.schedules, schedules);
+  assert.equal(update(state, { name: 'schedules', seq: 13, session_id: 'other', schedules: null }), state);
+  assert.equal(update(state, { name: 'schedules', seq: 11, session_id: 'task', schedules: null }), state);
+  assert.equal(update(state, { name: 'schedules', seq: 13, session_id: 'task', schedules: null }).detail.schedules, null);
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.equal(state.detail.schedules, null);
+  state = reducer(state, { type: 'snapshot', data: { seq: 14, projects: [], sessions: [], session: { ...state.detail, schedules } } });
+  assert.deepEqual(state.detail.schedules, schedules);
+});
+
 test('turn activity frames replace the open Task\'s activity in order, and a lost connection makes its list unknown', () => {
   const working = { intent: 'Building the index page', retry: { count: 1, reason: 'rate_limited', status: 429, at: '2026-10-08T12:00:00Z' }, todos: { known: true } };
   let state = loading();

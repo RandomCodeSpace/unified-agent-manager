@@ -134,7 +134,7 @@ export function reducer(state: State, action: Action): State {
     case 'connection': {
       if (state.connection === action.status) return state;
       const detail = action.status !== 'connected' && state.detail
-        ? { ...state.detail, ...(state.detail.turn_timings ? { turn_timings: state.detail.turn_timings.map((timing) => timing.state === 'working' ? { ...timing, state: 'unknown' as const } : timing) } : {}), ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.turn_activity ? { turn_activity: { ...state.detail.turn_activity, todos: { ...state.detail.turn_activity.todos, known: false } } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}) }
+        ? { ...state.detail, ...(state.detail.turn_timings ? { turn_timings: state.detail.turn_timings.map((timing) => timing.state === 'working' ? { ...timing, state: 'unknown' as const } : timing) } : {}), ...(state.detail.background_tasks ? { background_tasks: { ...state.detail.background_tasks, known: false } } : {}), ...(state.detail.turn_activity ? { turn_activity: { ...state.detail.turn_activity, todos: { ...state.detail.turn_activity.todos, known: false } } } : {}), ...(state.detail.execution ? { execution: { ...state.detail.execution, known: false } } : {}), ...(state.detail.schedules ? { schedules: null } : {}) }
         : state.detail;
       return { ...state, connection: action.status, detail };
     }
@@ -361,6 +361,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
         case 'turn_activity':
           return { ...state, detail: { ...detail, turn_activity: d.turn_activity } };
+        case 'schedules':
+          return { ...state, detail: { ...detail, schedules: d.schedules } };
       }
     }
   }

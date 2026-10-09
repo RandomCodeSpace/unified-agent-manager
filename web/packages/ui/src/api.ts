@@ -786,6 +786,18 @@ export interface BackgroundTasks {
   tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
 }
 
+/**
+ * The open conversation's native schedules, display only: no prompts, and nothing UAM runs. `known`
+ * false with rows is a partial list (`truncated`); without rows the list is unknown, never empty.
+ */
+export interface ScheduleSnapshot {
+  supported: boolean;
+  known: boolean;
+  truncated?: boolean;
+  reason?: string;
+  entries: { id: string; recurring: boolean; self_paced?: boolean; interval_ms?: number; cron?: string; timezone?: string; next_run_at?: string }[];
+}
+
 /** Subagents recorded before a cursor, read from Copilot's record on request, oldest first. */
 export interface SubagentPage extends Representation {
   seq: number;
@@ -944,6 +956,7 @@ export interface SessionDetail extends SessionSummary, Representation {
   subagents_before?: string;
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
+  schedules?: ScheduleSnapshot | null;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1127,7 +1140,8 @@ export type UpdateData =
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
-  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity };
+  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
+  | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1148,6 +1162,7 @@ export const UPDATE_EVENTS = [
   'background_tasks',
   'turn_timing',
   'turn_activity',
+  'schedules',
 ] as const;
 
 export class ApiError extends Error {

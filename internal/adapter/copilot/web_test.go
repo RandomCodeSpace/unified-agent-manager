@@ -77,6 +77,9 @@ type fakeClient struct {
 	grow       []copilot.SessionEvent
 	// todos are the todo rows of the sessions resumed afterwards.
 	todos []rpc.PlanSQLTodosRow
+	// wrap, when set, returns the session a create or resume hands out, to
+	// add optional runtime methods to the fake.
+	wrap func(*fakeSession) sdkSession
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -178,6 +181,9 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
+	if f.wrap != nil {
+		return f.wrap(s), nil
+	}
 	return s, nil
 }
 
@@ -190,6 +196,9 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
+	if f.wrap != nil {
+		return f.wrap(s), nil
+	}
 	return s, nil
 }
 

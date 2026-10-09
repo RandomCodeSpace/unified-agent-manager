@@ -2,6 +2,9 @@ package agentapi
 
 import "time"
 
+// MaxSchedules bounds a schedule snapshot's rows.
+const MaxSchedules = 32
+
 // ScheduleSnapshot describes the open conversation's active native schedules.
 // Unknown is never an authoritative empty list. Truncated retains a partial
 // catalog; entries contain display metadata, never the scheduled prompt.

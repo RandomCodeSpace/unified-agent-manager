@@ -35,6 +35,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	s.last = &Submission{CommandResult: &agentapi.CommandResult{Options: []agentapi.CommandOption{{Name: "old"}}}}
 	s.turnActivity.Retry = &agentapi.Retry{Reason: "old"}
 	s.turnActivity.Todos.Todos = []agentapi.Todo{{ID: "old"}}
+	s.schedules = &agentapi.ScheduleSnapshot{Supported: true, Known: true, Entries: []agentapi.ScheduleEntry{{ID: "1", Cron: "old"}}}
 	m.mu.Unlock()
 	return m, sum.ID, func() {
 		m.mu.Lock()
@@ -49,6 +50,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.subagents[0].Runs[0].Trigger, s.subagents[0].Retry.Reason = "changed", "changed"
 		s.queue[0].Files[0], s.queue[0].Attachments[0].ID = "changed", "changed"
 		s.last.CommandResult.Options[0].Name, s.turnActivity.Retry.Reason, s.turnActivity.Todos.Todos[0].ID = "changed", "changed", "changed"
+		s.schedules.Entries[0].Cron = "changed"
 	}
 }
 

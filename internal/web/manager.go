@@ -353,6 +353,9 @@ type webSession struct {
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 	backgroundTasks  *agentapi.BackgroundTasks
 	execution        *agentapi.ExecutionState
+	// schedules is the open conversation's native schedule display
+	// metadata; replaced whole, never persisted.
+	schedules *agentapi.ScheduleSnapshot
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -1070,6 +1073,11 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot := *s.backgroundTasks
 		snapshot.Tasks = slices.Clone(snapshot.Tasks)
 		d.BackgroundTasks = &snapshot
+	}
+	if s.schedules != nil {
+		snapshot := *s.schedules
+		snapshot.Entries = slices.Clone(snapshot.Entries)
+		d.Schedules = &snapshot
 	}
 	activity := s.turnActivity
 	d.TurnActivity = &activity
@@ -2222,6 +2230,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventBackgroundTasks:
 		if ev.BackgroundTasks != nil {
 			m.backgroundTasksLocked(s, *ev.BackgroundTasks)
+		}
+	case agentapi.EventSchedules:
+		if ev.Schedules != nil {
+			m.schedulesLocked(s, ev.Schedules)
 		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {

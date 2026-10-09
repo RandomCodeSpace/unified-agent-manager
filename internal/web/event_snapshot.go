@@ -105,6 +105,10 @@ func snapshotDetail(detail SessionDetail) SessionDetail {
 		}
 	}
 	detail.HistoryBefore = snapshotValue(detail.HistoryBefore)
+	detail.Schedules = snapshotValue(detail.Schedules)
+	if schedules := detail.Schedules; schedules != nil {
+		schedules.Entries = slices.Clone(schedules.Entries)
+	}
 	detail.TurnActivity = snapshotValue(detail.TurnActivity)
 	if activity := detail.TurnActivity; activity != nil {
 		activity.Retry = snapshotValue(activity.Retry)
