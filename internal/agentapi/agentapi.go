@@ -74,6 +74,8 @@ type Capabilities struct {
 	// Usage is the second exception: the provider implements QuotaReporter
 	// and reports each conversation's AI units through EventUsage.
 	Usage bool `json:"usage"`
+	// Aside is true when the provider's conversations implement AsideAsker.
+	Aside bool `json:"aside,omitempty"`
 	// Titles is true when the provider implements Titler and its
 	// conversations implement SetTitle, so a chosen model can title a Task.
 	Titles bool `json:"titles"`

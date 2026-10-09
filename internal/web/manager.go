@@ -286,6 +286,9 @@ type webSession struct {
 	titleWait *titlePlan
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
+	// asking is set while an aside question waits for its answer (aside.go);
+	// not persisted.
+	asking bool
 	// compactAt is the compaction threshold, in percent, the conversation
 	// was last opened with; not persisted.
 	compactAt int

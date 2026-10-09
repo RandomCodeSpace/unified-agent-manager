@@ -36,6 +36,8 @@ export interface Capabilities {
   execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
   usage?: boolean;
+  /** An open conversation answers a transient aside question; nothing is saved to the transcript. */
+  aside?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */
@@ -154,6 +156,12 @@ export interface TokenCounts {
   cache_read: number;
   cache_write: number;
   total: number;
+}
+
+/** One aside answer; transient, never part of the transcript. */
+export interface AsideAnswer {
+  text: string;
+  truncated?: boolean;
 }
 
 export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
@@ -1716,6 +1724,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     updateMcpServer: (name: string, body: McpServerInput) => call<McpServers>('PUT', `/api/mcp/servers/${enc(name)}`, body),
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
+    askAside: (id: string, question: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question }, false, signal),
     taskMcp: (id: string) => call<{ servers: McpStatus[] }>('GET', `/api/sessions/${enc(id)}/mcp`),
     taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}`),
     reconnectTaskMcp: (id: string) => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/reconnect`),

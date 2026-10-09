@@ -52,6 +52,9 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/context?attribution=true", true},
 		{"POST", "/api/sessions/task/context", false},
 		{"GET", "/api/sessions/task/context/extra", false},
+		{"POST", "/api/sessions/task/aside", true},
+		{"GET", "/api/sessions/task/aside", false},
+		{"POST", "/api/sessions/task/aside/extra", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},
@@ -77,6 +80,10 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 				t.Fatalf("route %q allowed=%v, want %v", pattern, got, tc.allowed)
 			}
 		})
+	}
+	// An aside runs a model on the instance's account.
+	if !connectedAccountGated("POST /api/sessions/{id}/aside") {
+		t.Fatal("aside is not account-gated")
 	}
 	// A new owner route remains private even when it exists in the router.
 	ts.srv.mux.HandleFunc("GET /api/secrets", func(http.ResponseWriter, *http.Request) {})
