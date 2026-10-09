@@ -73,6 +73,16 @@ test('one reply menu carries the turn changes and Branch from here', async () =>
   expect(branch).toHaveBeenCalledWith('owner', triggers[0]);
 });
 
+test('a turn that changed no file shows no changes in its foot or its menu', async () => {
+  const user = userEvent.setup();
+  render(<ApiContext.Provider value={{ ...api, turnChanges: vi.fn() }}><SessionContext.Provider value="task"><DetailVisibility open>
+    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[{ ...timing, changes: { status: 'available', files: 0, additions: 0, deletions: 0 } }]} onOpenAllChanges={vi.fn()} />
+  </DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  expect(screen.queryByRole('button', { name: /0 files/ })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Turn actions' }));
+  expect(within(await screen.findByRole('menu')).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['All changes']);
+});
+
 test('unavailable native facts never display guessed zero or fetch historical rows', async () => {
   const user = userEvent.setup();
   const f = fixture();

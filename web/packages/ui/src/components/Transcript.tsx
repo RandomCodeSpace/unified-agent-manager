@@ -743,11 +743,13 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   const visible = useDetailVisibility();
   const [changesReader, setChangesReader] = useState<{ generation: string; phone: boolean; open: boolean; anchor: HTMLElement | null } | null>(null);
   if (changesReader && (!visible || replyActions?.active === false || changesReader.generation !== (replyActions?.generation ?? ''))) setChangesReader(null);
+  // A turn that changed nothing says nothing: no "0 files" in its foot or its menu.
+  const changes = timing?.changes && !(timing.changes.status === 'available' && !timing.changes.files && !timing.changes.omitted) ? timing.changes : undefined;
   const showChanges = () => setChangesReader({ generation: replyActions?.generation ?? '', phone: window.matchMedia('(max-width: 639px)').matches, open: true, anchor: anchor.current?.querySelector<HTMLButtonElement>('[data-turn-changes]') ?? anchor.current });
   const menuHandlers = useRef<CopyableMenuEvents | null>(null);
   const run = () => { if (read) void read().then(copy, () => {}); else copy(text); };
   const turnItems: ActionItem[] = [
-    ...(timing?.changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
+    ...(changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
     ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
     ...(edit ? [{ key: 'edit', label: 'Edit and resend…', icon: <Pencil />, takesFocus: true, onSelect: () => edit(anchor.current) }] : []),
     ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: () => branch(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
@@ -778,7 +780,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || timing?.changes) && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || changes) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
@@ -790,14 +792,14 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
             </time>
           )}
           {timing && <TurnTokens timing={timing} />}
-          {timing?.changes && <>
+          {changes && <>
             <span aria-hidden="true"> · </span>
             <button data-turn-changes="" type="button" aria-haspopup="dialog" aria-expanded={!!changesReader?.open} className="rounded-sm px-1 whitespace-nowrap hover:text-ink" onClick={showChanges}>
-              {timing.changes.status === 'available' ? <>{timing.changes.files ?? 0} {(timing.changes.files ?? 0) === 1 ? 'file' : 'files'} <span className="text-success">+{timing.changes.additions ?? 0}</span> <span className="text-error">−{timing.changes.deletions ?? 0}</span></> : 'Changes unavailable'}
+              {changes.status === 'available' ? <>{changes.files ?? 0} {(changes.files ?? 0) === 1 ? 'file' : 'files'} <span className="text-success">+{changes.additions ?? 0}</span> <span className="text-error">−{changes.deletions ?? 0}</span></> : 'Changes unavailable'}
             </button>
           </>}
           {timing && <TurnTodo timing={timing} />}
-          {(branch || rewind || edit || (timing && (timing.changes || replyActions?.allChanges))) && <Menu.Root>
+          {(branch || rewind || edit || (timing && (changes || replyActions?.allChanges))) && <Menu.Root>
             <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint" />}><Ellipsis /></Menu.Trigger>
             <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
           </Menu.Root>}
