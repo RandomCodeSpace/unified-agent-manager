@@ -31,7 +31,10 @@ test('a known list shows its count and opens a read-only list of cadence, timezo
   expect(within(dialog).getByText('Once')).toBeTruthy();
   expect(within(dialog).getByText('Self-paced')).toBeTruthy();
   expect(within(dialog).getByText('Next run not set')).toBeTruthy();
-  expect(within(dialog).getByText(`Next run ${runTime(next)} · Asia/Singapore`)).toBeTruthy();
+  // The next run is in the zone the line names, not the browser's.
+  const singapore = new Date(next).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Singapore' });
+  expect(singapore).not.toBe(runTime(next));
+  expect(within(dialog).getByText(`Next run ${singapore} · Asia/Singapore`)).toBeTruthy();
   // Display only: nothing to create, cancel or re-arm, and no reads of its own.
   expect(within(dialog).queryAllByRole('button')).toHaveLength(0);
   expect(fetch).not.toHaveBeenCalled();

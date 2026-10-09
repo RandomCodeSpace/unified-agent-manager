@@ -59,8 +59,10 @@ func (c *conversation) checkSchedulesLocked() {
 	go c.readSchedules(runtime)
 }
 
+// refreshActiveSchedulesLocked rereads a nonempty list, whose next runs
+// move without an event, and a supported list a failed read left unknown.
 func (c *conversation) refreshActiveSchedulesLocked() {
-	if s := c.schedules.snapshot; s != nil && len(s.Entries) > 0 {
+	if s := c.schedules.snapshot; s != nil && (len(s.Entries) > 0 || s.Supported && !s.Known) {
 		c.checkSchedulesLocked()
 	}
 }

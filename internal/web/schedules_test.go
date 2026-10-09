@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,5 +91,27 @@ func TestNativeSchedulesUnknownIsNotEmptyKnown(t *testing.T) {
 	got := detail(t, m, sum.ID).Schedules
 	if got == nil || got.Supported || got.Known || got.Entries == nil || len(got.Entries) != 0 || got.Reason != "unsupported" {
 		t.Fatalf("unsupported schedules = %+v", got)
+	}
+}
+
+// A reopen that fails after its conversation listed schedules keeps none.
+func TestNativeSchedulesReleasedOnFailedOpen(t *testing.T) {
+	prov := newScripted("fake")
+	m := startManager(t, openTestStore(t), prov)
+	sum, _ := createSession(t, m, prov.Provider)
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	prov.script(func(p *scriptedProvider) {
+		p.onOpen = func(req agentapi.OpenRequest) error {
+			req.Events.Emit(agentapi.Event{Kind: agentapi.EventSchedules, Schedules: &agentapi.ScheduleSnapshot{Supported: true, Known: true, Entries: []agentapi.ScheduleEntry{{ID: "1", Recurring: true}}}})
+			return errors.New("open failed")
+		}
+	})
+	if _, err := m.Commands(context.Background(), sum.ID); err == nil {
+		t.Fatal("the open did not fail")
+	}
+	if d := detail(t, m, sum.ID); d.Open || d.Schedules != nil {
+		t.Fatalf("failed open kept schedules: open %v %+v", d.Open, d.Schedules)
 	}
 }

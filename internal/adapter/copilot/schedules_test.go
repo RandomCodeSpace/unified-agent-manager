@@ -184,6 +184,30 @@ func TestWebSchedulesTurnBoundariesRefreshNonEmptyList(t *testing.T) {
 	}
 }
 
+// A failed read is unknown only until the next main turn boundary, where the
+// list is read again.
+func TestWebSchedulesUnknownListRetriesAtTurnBoundary(t *testing.T) {
+	next := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	sf, sink, _ := openScheduled(t, false, scheduleEntry(7, next))
+	waitFor(t, "the first list", func() bool { return len(scheduleSnapshots(sink)) == 1 })
+	sf.mu.Lock()
+	sf.err = context.DeadlineExceeded
+	sf.mu.Unlock()
+	sf.onEvent(ev("i1", &rpc.SessionIdleData{}))
+	waitFor(t, "the failed read", func() bool { return len(scheduleSnapshots(sink)) == 2 })
+	if got := scheduleSnapshots(sink)[1]; got.Known || !got.Supported {
+		t.Fatalf("failed read = %+v", got)
+	}
+	sf.mu.Lock()
+	sf.err = nil
+	sf.mu.Unlock()
+	sf.onEvent(ev("t1", &rpc.AssistantTurnStartData{TurnID: "1"}))
+	waitFor(t, "the retried read", func() bool { return len(scheduleSnapshots(sink)) == 3 })
+	if got := scheduleSnapshots(sink)[2]; !got.Known || len(got.Entries) != 1 || got.Entries[0].ID != "7" {
+		t.Fatalf("retried read = %+v", got)
+	}
+}
+
 func TestWebSchedulesCloseCancelsReadAndReleases(t *testing.T) {
 	fired := make(chan error, 1)
 	sf, sink, conv := openScheduled(t, false)

@@ -16,6 +16,18 @@ function cadence(entry: Entry): string {
   return entry.recurring ? 'Recurring' : 'Once';
 }
 
+/** The next run in the schedule's own timezone, which it names; in local time without a known one. */
+function nextRun(entry: Entry, at: string): string {
+  if (entry.timezone) {
+    try {
+      return `${new Date(at).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: entry.timezone })} · ${entry.timezone}`;
+    } catch {
+      // A zone this browser does not know: local time, not labelled with it.
+    }
+  }
+  return runTime(at);
+}
+
 /**
  * The open Task's native schedules in the status strip: "Scheduled in this Task · N" ("N+" when the
  * list is partial), and on a click a read-only list of each one's cadence, timezone and next run.
@@ -45,8 +57,7 @@ export function Schedules({ snapshot, open }: Readonly<{ snapshot: ScheduleSnaps
             <li key={entry.id} className="min-w-0">
               <span className="block truncate text-body" title={cadence(entry)}>{cadence(entry)}</span>
               <span className="block truncate">
-                {entry.next_run_at ? `Next run ${runTime(entry.next_run_at)}` : 'Next run not set'}
-                {entry.timezone && ` · ${entry.timezone}`}
+                {entry.next_run_at ? `Next run ${nextRun(entry, entry.next_run_at)}` : `Next run not set${entry.timezone ? ` · ${entry.timezone}` : ''}`}
               </span>
             </li>
           ))}

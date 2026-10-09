@@ -2805,6 +2805,10 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		m.autoAllowPendingLocked(s)
 	case err != nil && s.gen == gen:
 		s.setBase(StateFailed, openFailureDetail(err, s.convID))
+		// The failed conversation's schedules are not this Task's.
+		if s.schedules != nil {
+			m.schedulesLocked(s, nil)
+		}
 	}
 	m.finishOpeningLocked(s)
 	if err != nil && s.history == "" {
