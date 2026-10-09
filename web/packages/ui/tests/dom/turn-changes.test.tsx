@@ -58,6 +58,21 @@ test('the reply menu exposes the readonly historical reader and separate current
   expect(f.read).not.toHaveBeenCalled();
 });
 
+test('one reply menu carries the turn changes and Branch from here', async () => {
+  const user = userEvent.setup();
+  const branch = vi.fn();
+  render(<ApiContext.Provider value={{ ...api, turnChanges: vi.fn() }}><SessionContext.Provider value="task"><DetailVisibility open>
+    <Transcript sessionId="task" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} onOpenAllChanges={vi.fn()} onBranch={branch} />
+  </DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
+  const triggers = screen.getAllByRole('button', { name: 'Turn actions' });
+  expect(triggers).toHaveLength(1);
+  await user.click(triggers[0]);
+  const menu = await screen.findByRole('menu');
+  expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(["This turn's changes", 'All changes', 'Branch from here']);
+  await user.click(within(menu).getByRole('menuitem', { name: 'Branch from here' }));
+  expect(branch).toHaveBeenCalledWith('owner', triggers[0]);
+});
+
 test('unavailable native facts never display guessed zero or fetch historical rows', async () => {
   const user = userEvent.setup();
   const f = fixture();
