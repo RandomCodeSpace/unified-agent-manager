@@ -196,6 +196,9 @@ func TestNativeChangesTotalInvalidatedByLaterActivity(t *testing.T) {
 		{"failed partial tool", func(c *agenttest.Conversation) {
 			c.EmitItem(agentapi.Item{ID: "partial-edit", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "apply_patch", Status: agentapi.ToolFailed}})
 		}},
+		{"scratch plan identity", func(c *agenttest.Conversation) {
+			c.Emit(agentapi.Event{Kind: agentapi.EventPlanPath, PlanPath: "/state/s-1/plan.md"})
+		}},
 	} {
 		t.Run(event.name, func(t *testing.T) {
 			prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
@@ -230,6 +233,26 @@ func TestNativeChangesTotalInvalidatedByLaterActivity(t *testing.T) {
 				t.Fatalf("later on-demand native total = %+v", got)
 			}
 		})
+	}
+}
+
+func TestNativeChangesTotalKeptForUnchangedPlanIdentity(t *testing.T) {
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, t.TempDir())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	conv.Emit(agentapi.Event{Kind: agentapi.EventPlanPath, PlanPath: "/state/s-1/plan.md"})
+	conv.SetDiff([]agentapi.FileDiff{{Path: "native.txt", Patch: "--- a/native.txt\n+++ b/native.txt\n@@ -0,0 +1 @@\n+old\n"}}, nil)
+	if _, err := m.Changes(t.Context(), sum.ID, ScopeSession); err != nil {
+		t.Fatal(err)
+	}
+	conv.Emit(agentapi.Event{Kind: agentapi.EventPlanPath, PlanPath: "/state/s-1/./plan.md"})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventPlanPath, PlanVersion: 2})
+	if got := cachedDiff(m, sum.ID); got == nil || got.Additions != 1 {
+		t.Fatalf("repeated scratch identity dropped the native total: %+v", got)
 	}
 }
 

@@ -71,7 +71,12 @@ func (s *webSession) noteEdits(it agentapi.Item) bool {
 	if it.EndedAt.After(at) {
 		at = it.EndedAt
 	}
+	projectEdit := false
 	for _, p := range paths {
+		if s.isPlanPath(p) {
+			continue
+		}
+		projectEdit = true
 		if last, ok := s.edits[p]; !ok || at.After(last) {
 			if s.edits == nil {
 				s.edits = map[string]time.Time{}
@@ -79,7 +84,7 @@ func (s *webSession) noteEdits(it agentapi.Item) bool {
 			s.edits[p] = at
 		}
 	}
-	return len(paths) > 0
+	return projectEdit
 }
 
 // noteHistoryLocked records a provider record's edits; whole says the

@@ -28,6 +28,7 @@ export interface Capabilities {
   cancel: boolean;
   permissions: boolean;
   questions: boolean;
+  plan?: boolean;
   session_diff: boolean;
   history: boolean;
   /** Recorded owner-turn prefixes can be copied natively, without resending prompts. */
@@ -815,6 +816,7 @@ export interface TaskCompletion {
 }
 
 export interface Item {
+  plan?: PlanReview;
   compact?: { has_reasoning: boolean; has_text: boolean };
   id: string;
   kind: ItemKind;
@@ -904,7 +906,7 @@ export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omi
 export interface TurnTodos { timing_id: string; ended_at: string; intent?: string; todos: (Todo & { agent?: string })[]; counts: TodoCounts }
 
 /** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, and the todo list; never persisted. */
-export interface TurnActivity { intent?: string; retry?: Retry; todos: TodoView }
+export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {
@@ -928,8 +930,26 @@ export interface SubagentDetail extends Representation {
   items: Item[];
 }
 
-export type InteractionKind = 'permission' | 'question';
+export type InteractionKind = 'permission' | 'question' | 'plan_review';
 export type InteractionState = 'pending' | 'answered' | 'rejected' | 'expired';
+
+export type PlanAction = 'autopilot' | 'autopilot_fleet' | 'interactive' | 'exit_only';
+
+/** A pending or on-demand native review; transcript metadata omits both bodies. */
+export interface PlanReview {
+  request_id: string;
+  summary?: string;
+  revision?: number;
+  actions?: PlanAction[];
+  recommended?: PlanAction;
+  content?: string;
+  previous?: string;
+  truncated?: boolean;
+  previous_truncated?: boolean;
+  previous_unavailable?: boolean;
+}
+
+export interface PlanDraft { exists: boolean; content?: string; truncated?: boolean }
 
 export interface Option {
   id: string;
@@ -952,6 +972,7 @@ export interface Interaction {
   detail?: string;
   options?: Option[];
   questions?: Question[];
+  plan?: PlanReview;
   state: InteractionState;
   resolution?: string;
   time: string;
@@ -972,6 +993,7 @@ export interface Answer {
   decision?: string;
   answers?: string[][];
   reject?: boolean;
+  plan?: { action?: PlanAction; feedback?: string };
 }
 
 export type PromptMode = 'send' | 'steer' | 'queue';
@@ -1137,6 +1159,7 @@ export interface SessionDetail extends SessionSummary, Representation {
   subagents_before?: string;
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
+  plan_version?: number;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1320,7 +1343,8 @@ export type UpdateData =
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
-  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity };
+  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
+  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1341,6 +1365,7 @@ export const UPDATE_EVENTS = [
   'background_tasks',
   'turn_timing',
   'turn_activity',
+  'plan_version',
 ] as const;
 
 export class ApiError extends Error {
@@ -1833,6 +1858,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
     cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
     close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
+    planReview: (id: string, requestId: string, signal?: AbortSignal) => call<PlanReview>('GET', `/api/sessions/${enc(id)}/plan-reviews/${enc(requestId)}`, undefined, false, signal),
+    planDraft: (id: string, signal?: AbortSignal) => call<PlanDraft>('GET', `/api/sessions/${enc(id)}/plan`, undefined, false, signal),
     respond: (id: string, iid: string, answer: Answer) =>
       call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */

@@ -330,6 +330,7 @@ type SessionSummary struct {
 // turn: what the main agent says it is doing, a model call being retried,
 // and its todo list. It is never persisted.
 type TurnActivity struct {
+	Plan   bool            `json:"plan,omitempty"`
 	Intent string          `json:"intent,omitempty"`
 	Retry  *agentapi.Retry `json:"retry,omitempty"`
 	Todos  TodoView        `json:"todos"`
@@ -388,6 +389,7 @@ type DiffStat struct {
 type TurnTiming = store.TurnTiming
 
 type SessionDetail struct {
+	PlanVersion uint64       `json:"plan_version,omitempty"`
 	TurnTimings []TurnTiming `json:"turn_timings"`
 	SessionSummary
 	// Seq orders this snapshot against events on the same service.

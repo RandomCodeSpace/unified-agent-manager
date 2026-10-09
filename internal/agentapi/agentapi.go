@@ -62,6 +62,8 @@ var (
 // Capabilities advertises what an adapter really supports. The UI hides or
 // disables controls for unsupported operations instead of pretending.
 type Capabilities struct {
+	// Plan supports native plan mode and explicit review in the composer.
+	Plan        bool `json:"plan,omitempty"`
 	Cancel      bool `json:"cancel"`
 	Permissions bool `json:"permissions"`
 	Questions   bool `json:"questions"`
@@ -903,6 +905,9 @@ const (
 	EventTurn EventKind = "turn"
 	// EventInteraction upserts a permission request or question by ID.
 	EventInteraction EventKind = "interaction"
+	// EventPlanPath reports the exact provider-owned scratch plan identity,
+	// for project-change exclusion. It is not a local-file read permission.
+	EventPlanPath EventKind = "plan_path"
 	// EventExit reports that the conversation or its runtime became unusable
 	// (process exit, event-stream failure). The conversation is then closed.
 	EventExit EventKind = "exit"
@@ -941,6 +946,8 @@ type Event struct {
 	Delta           *Delta
 	Turn            *Turn
 	Interaction     *Interaction
+	PlanPath        string
+	PlanVersion     uint64 // lightweight invalidation from native plan_changed
 	Subagent        *Subagent
 	BackgroundTasks *BackgroundTasks
 	Context         *Context
@@ -969,6 +976,8 @@ type ModelSelection struct {
 // Activity is the main agent's live state in the running turn. The adapter
 // starts it afresh with each turn; the provider never records it.
 type Activity struct {
+	// Plan is true only after this turn's explicit native implementation approval.
+	Plan bool `json:"plan,omitempty"`
 	// Intent is what the main agent says it is doing, "" when it says
 	// nothing.
 	Intent string `json:"intent,omitempty"`
@@ -1038,6 +1047,8 @@ type Item struct {
 	// Completion is a provider's bounded completion decision, preserved as
 	// a notice. It is separate from the foreground turn's lifecycle.
 	Completion *TaskCompletion `json:"completion,omitempty"`
+	// Plan is compact native review metadata; its body is read on demand.
+	Plan *PlanReview `json:"plan,omitempty"`
 	// Time is when the item began: a tool call's start, a thought's model
 	// call start, a message's first text.
 	Time time.Time `json:"time"`
@@ -1198,6 +1209,7 @@ type InteractionKind string
 const (
 	InteractionPermission InteractionKind = "permission"
 	InteractionQuestion   InteractionKind = "question"
+	InteractionPlanReview InteractionKind = "plan_review"
 )
 
 // InteractionState is the lifecycle of one interaction.
@@ -1218,7 +1230,8 @@ type Interaction struct {
 	Kind  InteractionKind `json:"kind"`
 	Title string          `json:"title"`
 	// Detail is display text: command, paths, patterns, or tool arguments.
-	Detail string `json:"detail,omitempty"`
+	Detail string      `json:"detail,omitempty"`
+	Plan   *PlanReview `json:"plan,omitempty"`
 	// Options lists permission decisions the provider accepts. Answer.Decision
 	// must be one of these IDs.
 	Options []Option `json:"options,omitempty"`
@@ -1267,9 +1280,10 @@ type Question struct {
 // answers set Answers (one slice per Question, holding chosen choices and/or a
 // custom text). Reject declines a question without answering it.
 type Answer struct {
-	Decision string     `json:"decision,omitempty"`
-	Answers  [][]string `json:"answers,omitempty"`
-	Reject   bool       `json:"reject,omitempty"`
+	Plan     *PlanAnswer `json:"plan,omitempty"`
+	Decision string      `json:"decision,omitempty"`
+	Answers  [][]string  `json:"answers,omitempty"`
+	Reject   bool        `json:"reject,omitempty"`
 	// Auto marks an answer UAM gave on its own (yolo), not one a person chose.
 	// It is internal: a client can never set it.
 	Auto bool `json:"-"`

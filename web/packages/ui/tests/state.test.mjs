@@ -255,6 +255,16 @@ test('background shell updates stay separate from foreground and reconnect inval
   assert.deepEqual(state.detail.background_tasks.tasks, []);
 });
 
+test('native plan invalidations replace only the open Task version in sequence', () => {
+  let state = loading();
+  state = update(state, { name: 'plan_version', seq: 12, session_id: 'task', plan_version: 1 });
+  assert.equal(state.detail.plan_version, 1);
+  assert.equal(update(state, { name: 'plan_version', seq: 13, session_id: 'other', plan_version: 2 }), state);
+  assert.equal(update(state, { name: 'plan_version', seq: 11, session_id: 'task', plan_version: 0 }), state);
+  state = update(state, { name: 'plan_version', seq: 14, session_id: 'task', plan_version: 2 });
+  assert.equal(state.detail.plan_version, 2);
+});
+
 test('turn activity frames replace the open Task\'s activity in order, and a lost connection makes its list unknown', () => {
   const working = { intent: 'Building the index page', retry: { count: 1, reason: 'rate_limited', status: 429, at: '2026-10-08T12:00:00Z' }, todos: { known: true } };
   let state = loading();

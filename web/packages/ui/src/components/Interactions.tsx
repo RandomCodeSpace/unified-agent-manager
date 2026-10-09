@@ -1,13 +1,14 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
 import { useId, useState, type SubmitEvent , type ReactNode } from 'react';
-import { describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
+import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { approvalMark } from '../lib/transcript';
 import { Markdown, Note } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
+import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
 
 /**
  * A decided request that no tool row claims: one quiet row of the tool rows' kind, in its
@@ -187,6 +188,21 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
       <div className="fade-rule" aria-hidden="true" />
     </div>
   );
+}
+
+export function ComposerPlan({ plan, sessionId, planVersion, chosen, disabled, onChoose, onAnswer }: Readonly<{ plan: PlanReview; sessionId?: string; planVersion?: number; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void; onAnswer: () => void }>) {
+  const labelId = useId();
+  return <div className="flex flex-col gap-1.5 px-3.5 pt-3">
+    <div className="flex items-center gap-2"><Chip tone="attention">Plan ready</Chip><ReadPlan key={plan.request_id} plan={plan} sessionId={sessionId} planVersion={planVersion} /></div>
+    <div className="max-h-[min(240px,30dvh)] overflow-y-auto overflow-x-hidden">
+      <p id={labelId} className="text-ui text-ink">{plan.summary || 'Choose how to continue, or send feedback to revise the plan.'}</p>
+      {plan.truncated && <Note tone="warn">The plan is shortened. Send feedback to request a smaller plan.</Note>}
+      <fieldset aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled || !!plan.truncated}>
+        {plan.actions?.map((action) => <ChoiceRow key={action} name={`plan-${plan.request_id}`} choice={PLAN_ACTION_LABEL[action]} multiple={false} on={chosen.includes(action)} again hint={AGAIN_HINT} onToggle={() => chosen.includes(action) ? onAnswer() : onChoose([action])} />)}
+      </fieldset>
+    </div>
+    <div className="fade-rule" aria-hidden="true" />
+  </div>;
 }
 
 function QuestionForm({

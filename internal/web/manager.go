@@ -340,6 +340,9 @@ type webSession struct {
 	ixIdx        map[string]*interaction
 	// ask is the summary's Ask, kept while unchanged (pendingAsk).
 	ask *Ask
+	// planPath is the exact native scratch file, used only for edit attribution.
+	planPath    string
+	planVersion uint64
 	// eventAt is the last provider event, to the minute.
 	eventAt time.Time
 	// unseenEnd is set when the Task failed or was interrupted while no page
@@ -1068,6 +1071,7 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		timings = []TurnTiming{}
 	}
 	d := SessionDetail{
+		PlanVersion:      s.planVersion,
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
 		TurnTimings:      timings,
@@ -2240,6 +2244,18 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventInteraction:
 		if ev.Interaction != nil && ev.Interaction.ID != "" {
 			m.upsertInteractionLocked(s, *ev.Interaction)
+		}
+	case agentapi.EventPlanPath:
+		m.notePlanPathLocked(s, ev.PlanPath)
+		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion {
+			s.planVersion = ev.PlanVersion
+			m.broadcastLocked("plan_version", s.id, func(seq uint64) any {
+				return struct {
+					Seq         uint64 `json:"seq"`
+					SessionID   string `json:"session_id"`
+					PlanVersion uint64 `json:"plan_version"`
+				}{seq, s.id, s.planVersion}
+			})
 		}
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
@@ -4240,6 +4256,7 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	case err == nil:
 		if ix.State == agentapi.InteractionPending {
 			ix.State, ix.Resolution = resolution(ix.Interaction, answer)
+			ix.Plan = clampPlanReview(ix.Plan, false)
 			if ix.yolo {
 				ix.Resolution = yoloResolution
 			}

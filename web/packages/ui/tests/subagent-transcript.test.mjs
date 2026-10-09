@@ -51,6 +51,7 @@ const modules = {
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
   './LiveOutput': { LiveOutput: () => null },
   './Todos': { TurnTodo: () => null },
+  './Plan': { PlanNotice: () => null },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },
