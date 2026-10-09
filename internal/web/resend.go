@@ -1,9 +1,11 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 // ResendRequest edits a past owner prompt: a confirmed rewind to before it,
@@ -45,6 +47,10 @@ func (m *Manager) Resend(id string, req ResendRequest) (ResendResult, error) {
 	if req.Prompt.Mode != "" && req.Prompt.Mode != ModeSend {
 		return ResendResult{}, newError(http.StatusBadRequest, "an edited prompt is sent as a new turn")
 	}
+	// The rewind cannot be undone: refuse an edit the send would refuse first.
+	if err := m.checkResendPrompt(id, req.Prompt); err != nil {
+		return ResendResult{}, err
+	}
 	receipt, err := m.Rewind(id, req.Rewind)
 	if err != nil {
 		return ResendResult{}, err
@@ -69,6 +75,49 @@ func (m *Manager) Resend(id string, req ResendRequest) (ResendResult, error) {
 	}
 	out.Submission = &sub
 	return out, nil
+}
+
+// checkResendPrompt applies Submit's own prompt, sign-in, selection,
+// attachment and file checks without sending anything.
+func (m *Manager) checkResendPrompt(id string, p PromptRequest) error {
+	if strings.TrimSpace(p.Text) == "" && len(p.Files) == 0 && len(p.Attachments) == 0 {
+		return newError(http.StatusBadRequest, "prompt text, a file or an attachment is required")
+	}
+	if len(p.Text) > maxPromptBytes {
+		return newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	if err := m.refuseSignedOut(s); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	workdir, model := s.workdir, s.model
+	if p.Settings != nil {
+		selection := *p.Settings
+		selection.ContextSize = cmp.Or(selection.ContextSize, "default")
+		current := PromptSettings{Model: s.model, Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default")}
+		if selection != current {
+			if err := m.validateSelectionLocked(s.provider, selection.Model, selection.Effort, selection.ContextSize); err != nil {
+				m.mu.Unlock()
+				return err
+			}
+		}
+		if selection.Model == "" && s.model != "" {
+			m.mu.Unlock()
+			return newError(http.StatusBadRequest, "model must be an offered model ID")
+		}
+		model = selection.Model
+	}
+	_, err = m.checkUploadsForModelLocked(s, p.Attachments, model)
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	_, err = checkFiles(workdir, p.Files)
+	return err
 }
 
 // awaitRewindReread waits, bounded, until the record read after an applied

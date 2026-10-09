@@ -978,7 +978,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   into the composer with its stored attachments, under a flat strip that says
   what sending would rewind; the status line hides meanwhile. Any draft you had
   is set aside and comes back when you stop editing or the edit is sent.
-  Nothing changes until you send. Sending rewinds to before the prompt, waits
+  Nothing changes until you send. An edit the send would refuse (empty, too
+  large, a missing attachment or file, signed out) is refused before anything
+  is rewound. Sending rewinds to before the prompt, waits
   until the conversation is read again, then sends the edit once as an
   ordinary message. If the rewind is uncertain, partial or changes nothing, or
   the message is refused, the edit stays in the composer with the reason and

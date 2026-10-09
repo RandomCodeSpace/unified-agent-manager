@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,11 +96,15 @@ func TestResendSendsNothingUnlessHistoryWasTruncated(t *testing.T) {
 
 func TestResendKeepsARejectedSendWithoutRewindingAgain(t *testing.T) {
 	m, p, _, sum, rc := rewindManager(t)
-	rc.rewind = func(string, string) (agentapi.RewindResult, error) { return rewindResult("success"), nil }
+	// The prompt is valid; the provider refuses to reopen for the send after the rewind landed.
+	rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+		p.SetOpenError(errors.New("runtime unavailable"))
+		return rewindResult("success"), nil
+	}
 	req := resendRequest(t, m, sum.ID, agentapi.RewindConversation)
-	req.Prompt.Attachments = []string{"missing-upload"}
 	got, err := m.Resend(sum.ID, req)
-	if err != nil || got.Submission != nil || got.SendError == "" || got.Rewind.Result == nil || got.Rewind.Result.Outcome != "success" {
+	refused := got.Submission == nil && got.SendError != "" || got.Submission != nil && got.Submission.Status != "accepted"
+	if err != nil || !refused || got.Rewind.Result == nil || got.Rewind.Result.Outcome != "success" {
 		t.Fatalf("rejected send = %+v, %v", got, err)
 	}
 	for _, c := range p.Conversations() {
@@ -106,11 +112,52 @@ func TestResendKeepsARejectedSendWithoutRewindingAgain(t *testing.T) {
 			t.Fatal("rejected prompt reached the provider")
 		}
 	}
-	// Retrying the same request with the attachment fixed sends once and never rewinds again.
-	req.Prompt.Attachments = nil
+	// Sending the edit again keeps the rewind request (as the composer does) with a
+	// new prompt request: it sends once and never rewinds again.
+	p.SetOpenError(nil)
+	req.Prompt.RequestID = mustUUID(t)
 	got, err = m.Resend(sum.ID, req)
 	if err != nil || got.Submission == nil || rc.rewinds() != 1 || len(p.Last().Prompts()) != 1 {
 		t.Fatalf("retry = %+v, %v, rewinds %d", got, err, rc.rewinds())
+	}
+}
+
+func TestResendValidatesThePromptBeforeTheRewind(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*Manager, string, *ResendRequest)
+		status int
+	}{
+		{"empty prompt", func(_ *Manager, _ string, r *ResendRequest) { r.Prompt.Text = "  " }, http.StatusBadRequest},
+		{"oversized prompt", func(_ *Manager, _ string, r *ResendRequest) { r.Prompt.Text = strings.Repeat("x", maxPromptBytes+1) }, http.StatusRequestEntityTooLarge},
+		{"missing attachment", func(_ *Manager, _ string, r *ResendRequest) { r.Prompt.Attachments = []string{"missing-upload"} }, http.StatusBadRequest},
+		{"file outside the project", func(_ *Manager, _ string, r *ResendRequest) { r.Prompt.Files = []string{"../outside.txt"} }, http.StatusBadRequest},
+		{"signed out", func(m *Manager, _ string, _ *ResendRequest) {
+			m.providers["fake"].(*taskForkProvider).SetCheckError(fmt.Errorf("not signed in: %w", agentapi.ErrSignedOut))
+			m.mu.Lock()
+			info := m.infos["fake"]
+			info.Available, info.SignedOut = false, true
+			m.infos["fake"] = info
+			m.mu.Unlock()
+		}, http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, p, st, sum, rc := rewindManager(t)
+			rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+				t.Error("an invalid edit reached the native rewind")
+				return rewindResult("success"), nil
+			}
+			req := resendRequest(t, m, sum.ID, agentapi.RewindConversation)
+			tc.change(m, sum.ID, &req)
+			_, err := m.Resend(sum.ID, req)
+			status := statusOf(err)
+			if err == nil || status < 400 || status >= 500 || tc.status != 0 && status != tc.status {
+				t.Fatalf("resend = %v (%d)", err, status)
+			}
+			if rc.rewinds() != 0 || storedRewind(t, st, sum.ID) != nil || detail(t, m, sum.ID).Rewind != (RewindStatus{}) || len(p.Last().Prompts()) != 0 {
+				t.Fatal("a refused edit changed the task")
+			}
+		})
 	}
 }
 
