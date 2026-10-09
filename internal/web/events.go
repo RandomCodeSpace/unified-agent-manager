@@ -196,7 +196,7 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 }
 
 // Subscribe registers a subscriber and returns it with its snapshot frame.
-// Registration and snapshot happen under one lock, so the subscriber sees
+// Registration and snapshot capture happen under one lock, so the subscriber sees
 // every later event exactly once and nothing between the two. Subscribing to
 // a session views it, as Detail does.
 func (m *Manager) Subscribe(sessionID string) (*Subscriber, []byte, error) {
@@ -213,6 +213,21 @@ func (m *Manager) subscribeHistory(sessionID string, toolDeltas, recentHistory b
 
 func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, compact bool) (*Subscriber, []byte, error) {
 	m.refreshBranches(m.ctx, false)
+	sub, payload, err := m.captureSubscription(sessionID, toolDeltas, recentHistory, compact)
+	if err != nil {
+		return nil, nil, err
+	}
+	frame, err := encodeFrame("snapshot", payload)
+	if err != nil {
+		m.Unsubscribe(sub)
+		return nil, nil, err
+	}
+	return sub, frame, nil
+}
+
+// Capture and register together so every later event is queued after the
+// snapshot's sequence. The payload owns its mutable fields before encoding.
+func (m *Manager) captureSubscription(sessionID string, toolDeltas, recentHistory, compact bool) (*Subscriber, any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -239,12 +254,16 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 		}
 		detail = &d
 	}
-	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: m.settings, Usage: m.accountUsageLocked(), Sessions: m.summariesLocked(), Session: detail}
+	snapshot := snapshotEvent{Seq: m.seq, Projects: m.projectsLocked(), Settings: snapshotSettings(m.settings), Usage: m.accountUsageLocked(), Sessions: m.summariesLocked()}
+	for i := range snapshot.Sessions {
+		snapshot.Sessions[i] = snapshotSummary(snapshot.Sessions[i])
+	}
 	var payload any = snapshot
 	if compact {
 		var d *compactSessionDetail
 		if detail != nil {
 			projected := m.compactDetailLocked(m.sessions[sessionID], *detail)
+			projected = snapshotCompactDetail(projected)
 			d = &projected
 		}
 		payload = struct {
@@ -254,14 +273,14 @@ func (m *Manager) subscribeView(sessionID string, toolDeltas, recentHistory, com
 			DetailStream   bool                  `json:"detail_stream"`
 			Session        *compactSessionDetail `json:"session"`
 		}{snapshot, compactRepresentation, m.epoch, true, d}
-	}
-	frame, err := encodeFrame("snapshot", payload)
-	if err != nil {
-		return nil, nil, err
+	} else if detail != nil {
+		d := snapshotDetail(*detail)
+		snapshot.Session = &d
+		payload = snapshot
 	}
 	sub := &Subscriber{session: sessionID, compact: compact, toolDeltas: toolDeltas, recentHistory: recentHistory, ch: make(chan []byte, subscriberQueue), gone: make(chan struct{})}
 	m.subs[sub] = struct{}{}
-	return sub, frame, nil
+	return sub, payload, nil
 }
 
 // Unsubscribe removes a subscriber (its viewer left). It has no effect on
