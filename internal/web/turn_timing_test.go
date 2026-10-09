@@ -408,9 +408,7 @@ func TestModelCallUsageIsSavedWithTheTurnEnd(t *testing.T) {
 		got := savedTiming(t, st, key)
 		return got.EndedAt.After(got.StartedAt) && got.InputTokens == 200 && got.OutputTokens == 20 && got.GenerationMS == 2000
 	})
-	if got := savedTokens(t, st); got != 200 {
-		t.Fatalf("ledger input=%d", got)
-	}
+	waitUntil(t, "the ledger saved", func() bool { return savedTokens(t, st) == 200 })
 }
 
 // A long turn still saves its counts: lazyFlushDelay after the first unsaved one.
