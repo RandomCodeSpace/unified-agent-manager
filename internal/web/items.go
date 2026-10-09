@@ -656,10 +656,9 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 	if !validToolCallID(ix.ToolCallID) {
 		ix.ToolCallID = ""
 	}
-	ix.Options = slices.Clone(ix.Options)
-	ix.Questions = slices.Clone(ix.Questions)
-	for i := range ix.Questions {
-		ix.Questions[i].Choices = slices.Clone(ix.Questions[i].Choices)
+	cloneInteraction(&ix)
+	if ix.Elicitation != nil {
+		ix.Elicitation.Source = clampText(ix.Elicitation.Source, maxLabelText)
 	}
 	if ix.State == "" {
 		ix.State = agentapi.InteractionPending
@@ -668,6 +667,17 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 		ix.Time = now
 	}
 	return ix
+}
+
+// cloneInteraction gives ix its own copy of every list and nested value.
+func cloneInteraction(ix *agentapi.Interaction) {
+	ix.Options = slices.Clone(ix.Options)
+	ix.Questions = slices.Clone(ix.Questions)
+	for i := range ix.Questions {
+		ix.Questions[i].Choices = slices.Clone(ix.Questions[i].Choices)
+		ix.Questions[i].Field = ix.Questions[i].Field.Clone()
+	}
+	ix.Elicitation = ix.Elicitation.Clone()
 }
 
 // validToolCallID reports whether a provider's tool call ID may reach a
@@ -1014,7 +1024,7 @@ func (s *webSession) trimSubagents() {
 func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 	switch ix.Kind {
 	case agentapi.InteractionPermission:
-		if a.Reject || len(a.Answers) > 0 || a.Plan != nil {
+		if a.Reject || a.Cancel || len(a.Answers) > 0 || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a permission request takes a decision only")
 		}
 		for _, opt := range ix.Options {
@@ -1027,6 +1037,15 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 		if a.Decision != "" || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a question takes answers, not a decision")
 		}
+		if a.Cancel {
+			if ix.Elicitation == nil {
+				return newError(http.StatusBadRequest, "only a form or a link can be cancelled")
+			}
+			if a.Reject || len(a.Answers) > 0 {
+				return newError(http.StatusBadRequest, "a cancel takes no answers")
+			}
+			return nil
+		}
 		if a.Reject {
 			if len(a.Answers) > 0 {
 				return newError(http.StatusBadRequest, "a rejected question takes no answers")
@@ -1037,13 +1056,19 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 			return newError(http.StatusBadRequest, "answers must have one entry per question (%d)", len(ix.Questions))
 		}
 		for i, q := range ix.Questions {
+			if q.Field != nil {
+				if err := validateFieldAnswer(i, q, a.Answers[i]); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := validateQuestionAnswer(i, q, a.Answers[i]); err != nil {
 				return err
 			}
 		}
 		return nil
 	case agentapi.InteractionPlanReview:
-		if a.Plan == nil || ix.Plan == nil || a.Decision != "" || len(a.Answers) > 0 || a.Reject || a.Auto {
+		if a.Plan == nil || ix.Plan == nil || a.Decision != "" || len(a.Answers) > 0 || a.Reject || a.Cancel || a.Auto {
 			return newError(http.StatusBadRequest, "a plan review takes an explicit plan answer only")
 		}
 		plan := a.Plan
@@ -1080,6 +1105,20 @@ func validateQuestionAnswer(i int, q agentapi.Question, values []string) error {
 	return nil
 }
 
+// validateFieldAnswer checks a form field's answer against the field's type
+// and bounds; an optional field may be left empty.
+func validateFieldAnswer(i int, q agentapi.Question, values []string) error {
+	for _, v := range values {
+		if len(v) > maxAnswerBytes {
+			return newError(http.StatusBadRequest, "question %d answer is too long", i+1)
+		}
+	}
+	if _, _, err := q.FieldValue(values); err != nil {
+		return newError(http.StatusBadRequest, "question %d %v", i+1, err)
+	}
+	return nil
+}
+
 func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.InteractionState, string) {
 	if ix.Kind == agentapi.InteractionPlanReview && a.Plan != nil {
 		if a.Plan.Action != "" {
@@ -1097,8 +1136,14 @@ func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.Interactio
 			}
 		}
 	}
+	if a.Cancel {
+		return agentapi.InteractionRejected, "cancelled"
+	}
 	if a.Reject {
 		return agentapi.InteractionRejected, "declined"
+	}
+	if ix.Elicitation != nil && ix.Elicitation.Mode == agentapi.ElicitationURL {
+		return agentapi.InteractionAnswered, "accepted"
 	}
 	return agentapi.InteractionAnswered, "answered"
 }

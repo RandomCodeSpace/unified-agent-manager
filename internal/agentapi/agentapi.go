@@ -1295,6 +1295,10 @@ type Interaction struct {
 	// Assisted is the provider's assisted review of a permission request;
 	// zero when the request was not reviewed.
 	Assisted AssistedReview `json:"assisted,omitzero"`
+	// Elicitation is set on a question that stands for a provider's
+	// structured request: a form or a link. It is user data, never a
+	// permission, so yolo mode never answers it.
+	Elicitation *Elicitation `json:"elicitation,omitempty"`
 }
 
 // Option is one permission decision.
@@ -1318,6 +1322,9 @@ type Question struct {
 	Multiple bool `json:"multiple,omitempty"`
 	// Custom allows a free-form answer.
 	Custom bool `json:"custom"`
+	// Field is the typed form field this question asks for, on an
+	// elicitation form only.
+	Field *Field `json:"field,omitempty"`
 }
 
 // Answer responds to an interaction. Permission answers set Decision; question
@@ -1328,6 +1335,8 @@ type Answer struct {
 	Decision string      `json:"decision,omitempty"`
 	Answers  [][]string  `json:"answers,omitempty"`
 	Reject   bool        `json:"reject,omitempty"`
+	// Cancel dismisses an elicitation without declining it.
+	Cancel bool `json:"cancel,omitempty"`
 	// Auto marks an answer UAM gave on its own (yolo), not one a person chose.
 	// It is internal: a client can never set it.
 	Auto bool `json:"-"`

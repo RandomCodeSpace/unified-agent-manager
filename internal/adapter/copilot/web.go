@@ -920,6 +920,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnPermissionRequest:      deferPermission,
 			OnUserInputRequest:       c.askUser,
 			OnAutoModeSwitchRequest:  c.confirmAuto,
+			AskUserVariant:           copilot.AskUserVariantLegacy, // forms and links come from elicitations only
+			OnElicitationRequest:     c.elicit,
 			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
 			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
@@ -948,6 +950,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			ContinuePendingWork:     copilot.Bool(false),
 			OnPermissionRequest:     deferPermission,
 			OnUserInputRequest:      c.askUser,
+			AskUserVariant:          copilot.AskUserVariantLegacy,
+			OnElicitationRequest:    c.elicit,
 			OnAutoModeSwitchRequest: c.confirmAuto,
 			OnExitPlanModeRequest:   c.reviewPlan,
 			OnEvent:                 c.onEvent,
@@ -1734,6 +1738,7 @@ type conversation struct {
 	tokenSeen map[string]bool
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
+	elicits          elicitLinks // elicitation.requested events with elicitation callbacks
 	stoppedSubagents map[string]bool
 	prompting        string // the agent PromptSubagent is sending a follow-up to
 	tr               *transcript
@@ -1837,11 +1842,15 @@ type interaction struct {
 	planReply chan copilot.ExitPlanModeResult   // native review: one explicit owner response
 	answering bool                              // a permission answer is in flight
 	auto      bool                              // Auto fallback needs a person's explicit Yes
+	// Elicitations only: the CLI's request ID once its event is linked, and
+	// the key that links it.
+	requestID, elicitKey string
 }
 
 type userReply struct {
-	resp copilot.UserInputResponse
-	err  error
+	resp   copilot.UserInputResponse
+	elicit copilot.ElicitationResult
+	err    error
 }
 
 // questionLinks pairs each user_input.requested event with the ask_user
@@ -2629,6 +2638,12 @@ func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error 
 	if in.auto && ans.Auto {
 		return errors.New("copilot: Auto fallback needs an explicit user answer")
 	}
+	if in.Elicitation != nil {
+		return c.answerElicitationLocked(in, ans)
+	}
+	if ans.Cancel {
+		return errors.New("copilot: only a form or a link can be cancelled")
+	}
 	q := in.Questions[0]
 	var r userReply
 	if ans.Reject {
@@ -2721,6 +2736,7 @@ func (c *conversation) expireSubagentLocked(agentID string) {
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
 			c.settledLocked(in, time.Now())
+			c.elicits.settled(in)
 			in.reply <- userReply{err: errNoUser}
 		}
 	}
@@ -2741,6 +2757,7 @@ func (c *conversation) expireLocked() []string {
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
 			c.settledLocked(in, time.Now())
+			c.elicits.settled(in)
 			in.reply <- userReply{err: errNoUser}
 		} else {
 			perms = append(perms, id)
@@ -3173,6 +3190,12 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.UserInputRequestedData:
 		c.linkQuestionLocked(d, agentID, time.Now())
+		return
+	case *rpc.ElicitationRequestedData:
+		c.elicitRequestedLocked(d, agentID, time.Now())
+		return
+	case *rpc.ElicitationCompletedData:
+		c.elicitCompletedLocked(d)
 		return
 	case *rpc.AssistantTurnStartData:
 		if agentID == "" {

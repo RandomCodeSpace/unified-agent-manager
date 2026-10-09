@@ -51,7 +51,10 @@ func (s *webSession) pendingAsk() *Ask {
 
 func askOf(ix agentapi.Interaction) Ask {
 	a := Ask{Kind: ix.Kind, Title: ix.Title}
-	if ix.Kind != agentapi.InteractionPermission && len(ix.Questions) > 0 {
+	if ix.Elicitation != nil {
+		// A form's or a link's message says what it is for; its fields do not.
+		a.Title = firstNonEmpty(firstLine(ix.Detail), ix.Title)
+	} else if ix.Kind != agentapi.InteractionPermission && len(ix.Questions) > 0 {
 		q := ix.Questions[0]
 		a.Title = firstNonEmpty(firstLine(q.Text), strings.TrimSpace(q.Header), ix.Title)
 	}

@@ -34,7 +34,9 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	m.upsertItemLocked(s, agentapi.Item{ID: "plan", Kind: agentapi.ItemNotice,
 		Plan: &agentapi.PlanReview{RequestID: "old", Summary: "old", Actions: []agentapi.PlanAction{agentapi.PlanInteractive}}}, false)
 	s.interactions = []*interaction{{Interaction: agentapi.Interaction{ID: "question", Kind: agentapi.InteractionQuestion, State: agentapi.InteractionPending,
-		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"}}}}},
+		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"},
+			Field: &agentapi.Field{Name: "old", Values: []string{"old"}, Minimum: &price, MaxLength: &limit}}},
+		Elicitation: &agentapi.Elicitation{Mode: agentapi.ElicitationURL, URL: "https://old.example"}}},
 		{Interaction: agentapi.Interaction{ID: "review", Kind: agentapi.InteractionPlanReview, State: agentapi.InteractionPending,
 			Plan: &agentapi.PlanReview{RequestID: "old", Content: "old", Previous: "old", Actions: []agentapi.PlanAction{agentapi.PlanInteractive}}}}}
 	s.subagents = []*agentapi.Subagent{{ID: "child", Status: agentapi.SubagentRunning, Runs: []agentapi.SubagentRun{{Trigger: "old"}}, Retry: &agentapi.Retry{Reason: "old"}}}
@@ -59,6 +61,9 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.interactions[0].Options[0].ID, s.interactions[0].Questions[0].Text, s.interactions[0].Questions[0].Choices[0] = "changed", "changed", "changed"
 		s.items[2].Plan.Summary, s.items[2].Plan.Actions[0] = "changed", agentapi.PlanExitOnly
 		s.interactions[1].Plan.Content, s.interactions[1].Plan.Previous, s.interactions[1].Plan.Actions[0] = "changed", "changed", agentapi.PlanExitOnly
+		field := s.interactions[0].Questions[0].Field
+		field.Name, field.Values[0], *field.Minimum, *field.MaxLength = "changed", "changed", 9, 9
+		s.interactions[0].Elicitation.URL = "https://changed.example"
 		s.subagents[0].Runs[0].Trigger, s.subagents[0].Retry.Reason = "changed", "changed"
 		s.queue[0].Files[0], s.queue[0].Attachments[0].ID = "changed", "changed"
 		s.last.CommandResult.Options[0].Name, s.turnActivity.Retry.Reason, s.turnActivity.Todos.Todos[0].ID = "changed", "changed", "changed"

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
+import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
@@ -848,14 +848,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
   }
 
-  /** Declines the question from the action row; the card's rules (a 409 or 410 is a note, not a failure). */
-  async function decline() {
+  /** Declines the question (or cancels a form) from the action row; the card's rules (a 409 or 410 is a note, not a failure). */
+  async function decline(how: 'decline' | 'cancel' = 'decline') {
     if (!answering || answering.kind !== 'question' || busy) return;
-    setBusy('decline');
+    setBusy(how);
     setError(null);
     setNotice(null);
     try {
-      answering.onAnswered(await api.respond(session.id, answering.interaction.id, { reject: true }));
+      answering.onAnswered(await api.respond(session.id, answering.interaction.id, how === 'cancel' ? { cancel: true } : { reject: true }));
     } catch (e) {
       if (isStatus(e, 409)) setNotice('This request was already answered elsewhere.');
       else if (isStatus(e, 410)) setNotice('This request expired before it was answered.');
@@ -1352,7 +1352,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
         // Choosing an option replaces a typed answer, as typing replaces the option.
         <ComposerQuestion
-          interactionId={answering.interaction.id}
+          interaction={answering.interaction}
           question={answering.question}
           chosen={staged}
           disabled={!!busy || locked}
@@ -1691,6 +1691,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>
               <Square className="!size-3" fill="currentColor" />
+            </Button>
+          </Tip>
+        </Appear>
+        <Appear show={answering?.kind === 'question' && !!answering.interaction.elicitation}>
+          <Tip label="Dismiss this form without declining it">
+            <Button size="icon-md" variant="secondary" aria-label="Cancel" className="ml-1 rounded-full" loading={busy === 'cancel'} disabled={!!busy || locked} onClick={() => void decline('cancel')}>
+              <Undo2 aria-hidden="true" strokeWidth={2.25} />
             </Button>
           </Tip>
         </Appear>
