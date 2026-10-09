@@ -148,3 +148,42 @@ func TestNativeEditMixedBinaryAndTextAvailability(t *testing.T) {
 		t.Fatalf("uncommitted arbitrary header=%v", err)
 	}
 }
+
+// Shape of a real Copilot CLI create completion's DetailedContent (path
+// replaced): "create file mode", a zero index and an a/-prefixed /dev/null.
+const recordedCreatePatch = "\ndiff --git a/work/file.txt b/work/file.txt\ncreate file mode 100644\nindex 0000000..0000000\n--- a/dev/null\n+++ b/work/file.txt\n@@ -1,0 +1,3 @@\n+ALPHA\n+BRAVO\n+CHARLIE\n"
+
+func createComplete() *rpc.ToolExecutionCompleteData {
+	d := editComplete(recordedCreatePatch, true)
+	d.FileEdits[0].Kind = rpc.ToolExecutionCompleteFileEditKind("create")
+	d.Result.Content = "Created file /work/file.txt with 20 characters"
+	return d
+}
+
+func TestNativeCreatePatchIsExactAndImmutableAfterLaterEdit(t *testing.T) {
+	_, edits, _ := nativeFileEdits("create-event", createComplete())
+	if len(edits) != 1 || edits[0].Kind != "create" || edits[0].DiffStatus != "available" || edits[0].Additions != 3 || edits[0].Deletions != 0 {
+		t.Fatalf("create edits=%+v", edits)
+	}
+	fc := &fakeClient{journal: []copilot.SessionEvent{ev("create-event", createComplete())}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	req := agentapi.ItemDiffRequest{ReadRequest: agentapi.ReadRequest{ConversationID: "recorded"}, ItemID: "tool", EventID: "create-event", Path: "/work/file.txt"}
+	first, err := p.ReadItemDiff(context.Background(), req)
+	// Exact create: the recorded patch with its empty source numbered from 0.
+	want := strings.Replace(strings.TrimLeft(recordedCreatePatch, "\n"), "@@ -1,0 ", "@@ -0,0 ", 1)
+	if err != nil || first.Status != "available" || first.Patch != want {
+		t.Fatalf("create=%+v err=%v", first, err)
+	}
+	fc.mu.Lock()
+	fc.journal = append(fc.journal, ev("edit-event", editComplete(strings.ReplaceAll(recordedEditPatch, "before", "ALPHA"), true)))
+	fc.mu.Unlock()
+	again, err := p.ReadItemDiff(context.Background(), req)
+	if err != nil || again != first {
+		t.Fatalf("create patch changed after a later edit: %+v err=%v", again, err)
+	}
+	req.EventID = "edit-event"
+	if edit, err := p.ReadItemDiff(context.Background(), req); err != nil || edit.Status != "available" || !strings.Contains(edit.Patch, "-ALPHA\n+first") {
+		t.Fatalf("edit=%+v err=%v", edit, err)
+	}
+}
