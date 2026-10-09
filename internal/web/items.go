@@ -76,6 +76,25 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	}
 	if it.Tool != nil {
 		tool := *it.Tool
+		if !validDetailID(tool.EditEventID, false) || len(tool.EditEventID) > 256 {
+			tool.EditEventID, tool.FileEdits, tool.FileEditsTruncated = "", nil, false
+		} else {
+			kept, bytes := make([]agentapi.FileEdit, 0, min(len(tool.FileEdits), agentapi.MaxFileEdits)), 0
+			for _, edit := range tool.FileEdits {
+				if len(kept) >= agentapi.MaxFileEdits || bytes+len(edit.Path) > agentapi.MaxFileEditPathsBytes ||
+					!filepath.IsAbs(edit.Path) || !validDetailID(edit.Path, false) || len(edit.Path) > agentapi.MaxFileEditPathBytes ||
+					!validDetailID(edit.Kind, false) || len(edit.Kind) > 32 || !validDetailID(edit.DiffStatus, false) || len(edit.DiffStatus) > 32 || edit.Additions < 0 || edit.Deletions < 0 {
+					tool.FileEditsTruncated = true
+					continue
+				}
+				if edit.DiffStatus != "available" {
+					edit.Additions, edit.Deletions = 0, 0
+				}
+				kept = append(kept, edit)
+				bytes += len(edit.Path)
+			}
+			tool.FileEdits = kept
+		}
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
 				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
@@ -122,7 +141,10 @@ func itemSize(it agentapi.Item) int {
 		}
 	}
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID)
+		for _, edit := range it.Tool.FileEdits {
+			n += len(edit.Path) + len(edit.Kind) + len(edit.DiffStatus) + 16
+		}
 		if d := it.Tool.Declaration; d != nil {
 			n += len(d.ArtifactID) + len(d.Path) + len(d.Title) + len(d.TypeHint)
 		}

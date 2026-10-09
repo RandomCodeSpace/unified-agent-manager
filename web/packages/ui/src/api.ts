@@ -746,10 +746,32 @@ export interface FileDeclaration {
   type_hint?: string;
 }
 
+export interface NativeFileEdit {
+  path: string;
+  kind: string;
+  additions?: number;
+  deletions?: number;
+  /** Counts are known only for available native textual patches. */
+  diff_status: string;
+}
+export interface ItemDiffData {
+  session_id: string;
+  epoch: string;
+  agent_id: string;
+  item_id: string;
+  event_id: string;
+  path: string;
+  status: string;
+  patch?: string;
+}
+
 export interface ToolCall {
   name: string;
   title?: string;
   status: ToolStatus;
+  edit_event_id?: string;
+  file_edits?: NativeFileEdit[];
+  file_edits_truncated?: boolean;
   input?: string;
   output?: string;
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
@@ -1769,6 +1791,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       foregroundRead(() => call<SubagentDetail>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}`, undefined, false, signal), signal),
     olderSubagents: (id: string, before: string, signal?: AbortSignal) => foregroundRead(() => call<SubagentPage>('GET', `/api/sessions/${enc(id)}/subagents?before=${enc(before)}`, undefined, false, signal), signal),
     subagentHistory: (id: string, agentId: string, before: string, signal?: AbortSignal, direction: 'older' | 'newer' = 'older') => foregroundRead(() => call<HistoryPage>('GET', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/history?${direction === 'older' ? 'before' : 'after'}=${enc(before)}&view=compact-v1`, undefined, false, signal), signal),
+    itemDiff: (id: string, itemId: string, agentId: string, eventId: string, path: string, signal?: AbortSignal) => foregroundRead(() => call<ItemDiffData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}/diff?agent_id=${enc(agentId)}&event_id=${enc(eventId)}&path=${enc(path)}`, undefined, false, signal), signal),
     itemBody: (id: string, itemId: string, agentId: string, signal?: AbortSignal) => foregroundRead(() => call<BodyData>('GET', `/api/sessions/${enc(id)}/items/${enc(itemId)}?agent_id=${enc(agentId)}`, undefined, false, signal), signal),
     detailEventsUrl: (id: string, agentId: string, bodies: BodyReference[], agentBefore?: string, epoch?: string, agentUntil?: string) => url(`/api/events/detail?${detailEventsQuery(id, agentId, bodies, agentBefore, epoch, agentUntil)}`),
     eventsUrl: (id: string | null) => url(id ? `/api/events?session=${enc(id)}&tool_output=delta&history=recent&view=compact-v1&page=${PAGE_ID}` : `/api/events?page=${PAGE_ID}`),

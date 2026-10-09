@@ -4,6 +4,7 @@ import { type BodyReference, type DetailFrame, type Item, type SessionDetail } f
 import { bodyKey, detailReducer, emptyDetails, type BodyState, type DetailAction, type DetailState } from '../lib/detail-state';
 import { describeError } from '../api';
 import { itemCursor } from '../lib/historyWindow';
+import { EditDiffCache } from '../lib/edit-diff-cache';
 
 /** Mounted children of a collapsing group retain their preference, but no interest. */
 const Visible = createContext(true);
@@ -36,6 +37,10 @@ interface DetailContextValue {
   read: (item: Item) => Promise<Item>;
   sessionId: string;
   disclosures: Map<string, boolean>;
+  editDiffs: EditDiffCache;
+  editScope: string;
+  active: boolean;
+  epoch: string;
 }
 const Details = createContext<DetailContextValue | null>(null);
 const EMPTY_BODY: BodyState = { status: 'unloaded', seq: -1, floor: -1 };
@@ -48,6 +53,7 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
   const compact = session.representation === 'compact-v1' && session.detail_stream === true && !!session.epoch;
   const [store] = useState(() => new DetailStore(session.epoch ?? ''));
   const [disclosures] = useState(() => new Map<string, boolean>());
+  const [editDiffs] = useState(() => new EditDiffCache());
   const interests = useRef(new Map<symbol, Interest>());
   const blocked = useRef(new Set<string>());
   const agentId = useRef('');
@@ -99,12 +105,13 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
   useLayoutEffect(() => {
     lifetime.current++;
     disclosures.clear();
+    editDiffs.clear();
     for (const read of reads.current.values()) read.controller.abort();
     reads.current.clear();
     blocked.current.clear();
     store.clear(session.epoch ?? '');
     changed();
-  }, [session.id, session.epoch, generation, store, changed, disclosures]);
+  }, [session.id, session.epoch, generation, store, changed, disclosures, editDiffs, api]);
   useEffect(() => {
     mounted.current = true;
     changed();
@@ -115,8 +122,10 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
       tick.current = 0;
       for (const read of pendingReads.values()) read.controller.abort();
       pendingReads.clear();
+      editDiffs.clear();
     };
-  }, [changed]);
+  }, [changed, editDiffs]);
+  useLayoutEffect(() => { if (!active) editDiffs.clear(); }, [active, editDiffs]);
   useLayoutEffect(() => { store.action({ type: 'invalidate', versions }); }, [store, versions]);
 
   useEffect(() => {
@@ -204,8 +213,36 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
     // The store is read when called: a dependency on its bodies would renew the context at every
     // frame, and each renewal unregisters every body, whose release drops it from the store.
   }, [store, api, session.id, session.epoch]);
-  const context = useMemo(() => ({ compact, store, register, openAgent, retry, read, sessionId: session.id, disclosures }), [compact, store, register, openAgent, retry, read, session.id, disclosures]);
+  const editScope = JSON.stringify([api.cacheKey(session.id), api.owner?.generation, session.epoch, generation]);
+  const context = useMemo(() => ({ compact, store, register, openAgent, retry, read, sessionId: session.id, disclosures, editDiffs, editScope, active, epoch: session.epoch ?? '' }), [compact, store, register, openAgent, retry, read, session.id, disclosures, editDiffs, editScope, active, session.epoch]);
   return <Details.Provider value={context}>{children}</Details.Provider>;
+}
+
+/** Native patches live outside transcript bodies and the persisted history cache. */
+export function useEditDiff(item: Item, eventId: string, path: string, open: boolean) {
+  const context = useContext(Details);
+  const visible = useContext(Visible);
+  const api = useApi();
+  const cache = context?.editDiffs;
+  const sessionId = context?.sessionId ?? '';
+  const epoch = context?.epoch ?? '';
+  const itemId = item.id;
+  const agentId = item.agent_id ?? '';
+  const key = JSON.stringify([context?.editScope, agentId, itemId, eventId, path]);
+  const get = useCallback(() => cache?.get(key), [cache, key]);
+  const state = useSyncExternalStore(cache?.subscribe ?? NO_SUBSCRIBE, get, get);
+  const enabled = !!context?.active && visible && open;
+  const read = useCallback(async (signal: AbortSignal) => {
+    const data = await api.itemDiff(sessionId, itemId, agentId, eventId, path, signal);
+    if (data.session_id !== sessionId || data.epoch !== epoch || data.item_id !== itemId || data.agent_id !== agentId || data.event_id !== eventId || data.path !== path) throw new Error('The recorded edit changed.');
+    return data;
+  }, [api, sessionId, epoch, itemId, agentId, eventId, path]);
+  useEffect(() => {
+    if (!enabled || !cache) return;
+    cache.load(key, read);
+    return () => cache.cancel(key);
+  }, [enabled, cache, key, read]);
+  return { state: enabled ? state : undefined, visible: enabled, retry: () => { if (enabled) cache!.load(key, read, true); } };
 }
 
 /** Reads an item's whole body once (the item itself when it is whole); absent outside a Task. */

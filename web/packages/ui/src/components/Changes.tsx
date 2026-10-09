@@ -7,7 +7,7 @@ import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
 import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
-import { InstanceName, Note, Skeleton } from './common';
+import { Highlighted, InstanceName, Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -545,6 +545,31 @@ function FileView({ path, file, error, viewed, onViewed, comments = [], onCommen
   );
 }
 
+/** The same diff renderer as Changes, mounted only for an open native edit. */
+export function InlinePatch({ path, text }: Readonly<{ path: string; text: string }>) {
+  const patch = useMemo(() => {
+    try { return parsePatch(text)[0] ?? null; } catch { return null; }
+  }, [text]);
+  const [all, setAll] = useState(false);
+  if (!patch || !patch.hunks.length) return <p className="text-caption text-muted">This recorded diff has no supported textual hunks.</p>;
+  const total = patch.hunks.reduce((n, h) => n + h.lines.length + 1, 0);
+  let remaining = all ? Infinity : 400;
+  const rows: ReactNode[] = [];
+  for (const [index, h] of patch.hunks.entries()) {
+    if (remaining <= 0) break;
+    const shown = Math.max(0, Math.min(h.lines.length, remaining - 1));
+    remaining -= shown + 1;
+    rows.push(...renderHunk(h, index, undefined, shown, true));
+  }
+  const digits = Math.max(2, ...patch.hunks.map(h => String(Math.max(h.oldStart + h.oldLines, h.newStart + h.newLines)).length));
+  return <div style={{ contentVisibility: 'auto' }}>
+    <table className="diff" translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
+      <caption>{path}</caption><tbody>{rows}</tbody>
+    </table>
+    {!all && total > 400 && <Button size="sm" variant="subtle" onClick={() => setAll(true)}>Show all {total} lines</Button>}
+  </div>;
+}
+
 interface LineNotes {
   comments: ReviewComment[];
   draft: Anchor | null;
@@ -554,7 +579,7 @@ interface LineNotes {
   remove?: (id: string) => void;
 }
 
-function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: LineNotes) {
+function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: LineNotes, limit = Infinity, highlight = false) {
   let oldNo = h.oldStart;
   let newNo = h.newStart;
   const rows = [
@@ -562,7 +587,8 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
       <td colSpan={3}><span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span></td>
     </tr>,
   ];
-  h.lines.forEach((line, li) => {
+  const shown = limit === Infinity ? h.lines : h.lines.slice(0, limit);
+  shown.forEach((line, li) => {
     const sign = line[0] ?? ' ';
     const text = line.slice(1);
     let cls = 'ctx';
@@ -595,8 +621,8 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
           ) : right}
         </td>
         <td className="code-cell">
-          <span className="sign">{sign}</span>
-          {text}
+          <span className="sign">{highlight ? '' : sign}</span>
+          {highlight ? <Highlighted language="diff" code={line} /> : text}
         </td>
       </tr>,
     );

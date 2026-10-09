@@ -1444,7 +1444,10 @@ func itemBytes(it agentapi.Item) int {
 		}
 	}
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID)
+		for _, edit := range it.Tool.FileEdits {
+			n += len(edit.Path) + len(edit.Kind) + len(edit.DiffStatus) + 16
+		}
 	}
 	for _, img := range it.Images {
 		n += len(img.Data)
@@ -3704,9 +3707,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		t.ended[d.ToolCallID] = struct{}{}
 		delete(t.shells, d.ToolCallID)
 		tc.Status, tc.Tail = agentapi.ToolCompleted, nil
+		tc.EditEventID, tc.FileEdits, tc.FileEditsTruncated = nativeFileEdits(ev.ID, d)
 		cut := false
 		if d.Result != nil {
-			tc.Output, cut = t.clip(d.Result.Content, maxToolText)
+			tc.Output, cut = t.clip(nativeConciseResult(d, tc.FileEdits), maxToolText)
 			it.Images = t.images(d.Result)
 			if d.Success && tc.Name == declarationToolName {
 				tc.Declaration = parseDeclarationResult(d.Result.Content)
@@ -4056,6 +4060,7 @@ func subagentName(display, name string) string {
 
 func cloneTool(tc *agentapi.ToolCall) *agentapi.ToolCall {
 	v := *tc
+	v.FileEdits = slices.Clone(tc.FileEdits)
 	return &v
 }
 
