@@ -1,0 +1,1 @@
+import{ct as e,hi as t,lt as n,yi as r}from"./echarts-BDnKbZn-.js";function i(i,a,o){a=r(a)&&{coordDimensions:a}||t({encodeDefine:i.getEncode()},a);var s=i.getSource(),c=e(s,a).dimensions,l=new n(c,i);return l.initData(s,o),l}export{i as t};
