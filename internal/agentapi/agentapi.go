@@ -51,6 +51,9 @@ var (
 	// ErrBusy reports that the provider rejected a prompt because a turn is
 	// still running.
 	ErrBusy = errors.New("a turn is already running")
+	// ErrForkUncertain means a native fork may exist, but its exact returned
+	// identity was not confirmed. A caller must not repeat the native RPC.
+	ErrForkUncertain = errors.New("conversation branch outcome is unknown")
 )
 
 // Capabilities advertises what an adapter really supports. The UI hides or
@@ -67,6 +70,8 @@ type Capabilities struct {
 	// report the provider's current availability for legacy conversations.
 	SessionDiffNeedsTracking bool `json:"-"`
 	History                  bool `json:"history"`
+	// Fork copies a recorded owner-turn prefix without resending messages.
+	Fork bool `json:"fork,omitempty"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
 	// Usage is the second exception: the provider implements QuotaReporter
@@ -119,6 +124,35 @@ type Provider interface {
 	// Shutdown closes every conversation and stops runtimes this provider
 	// started. It never stops a runtime it did not start.
 	Shutdown(ctx context.Context) error
+}
+
+// Forker is an optional provider-level capability. Boundary reads use only
+// the persisted record; they never open the source conversation. Fork must
+// revalidate the exact boundary before calling the provider and never retry
+// an RPC whose result is uncertain. Any error after a possible native side
+// effect must wrap ErrForkUncertain; other errors guarantee no fork exists.
+type Forker interface {
+	ReadForkBoundary(context.Context, ForkBoundaryRequest) (ForkBoundary, error)
+	Fork(context.Context, ForkRequest) (string, error)
+}
+
+type ForkBoundaryRequest struct {
+	ConversationID string
+	UserItemID     string
+}
+
+// ForkBoundary includes the selected owner turn. ToEventID is the next
+// owner-start event, which the native fork excludes. Empty means the proven
+// current end; TailEventID detects an append before that fork starts.
+type ForkBoundary struct {
+	UserEventID string `json:"user_event_id"`
+	ToEventID   string `json:"to_event_id,omitempty"`
+	TailEventID string `json:"tail_event_id"`
+}
+
+type ForkRequest struct {
+	ForkBoundaryRequest
+	Boundary ForkBoundary
 }
 
 // QuotaReporter is implemented by a provider whose Capabilities.Usage is

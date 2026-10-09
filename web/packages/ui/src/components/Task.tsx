@@ -28,6 +28,7 @@ import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } fr
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
+import { ForkPicker } from './Fork';
 import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -275,6 +276,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [mcpOpen, setMcpOpen] = useState(false);
   /** A command's output in its side panel; like the other right panels, it replaces them. */
   const [output, setOutput] = useState<CommandOutput | null>(null);
+  const [fork, setFork] = useState<{ userItemId: string; anchor: HTMLElement | null } | null>(null);
+  const chooseFork = useCallback((userItemId: string, anchor: HTMLElement | null) => setFork({ userItemId, anchor }), []);
   const alive = useRef(false);
   useEffect(() => {
     alive.current = true;
@@ -811,6 +814,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another task, ${spawnedBy}.` : 'Started by another task.'}</Note>}
             {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
             {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another task'}, to compare.</Note>}
+            {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source task</button>. Both tasks use the same project and current files.</Note>}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
@@ -838,8 +842,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               readersActive={active && connected}
               readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
               changedLine={!noGit}
+              onBranch={session.capabilities.fork && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseFork : undefined}
             />
             </HistoryAnchor>
+            {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {cards.map((i) => (
               <Collapse key={i.id} open={session.interactions.some((x) => x.id === i.id && carded(x))} className="-mt-6" inner="pt-6" onClosed={() => setLingering((l) => l.filter((x) => x.id !== i.id))}>

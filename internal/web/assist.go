@@ -41,6 +41,7 @@ const (
 func (s *Server) assistRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/suggestions", s.handleSuggestions)
 	mux.HandleFunc("POST /api/sessions/{id}/rerun", s.handleRerun)
+	mux.HandleFunc("POST /api/sessions/{id}/fork", s.handleFork)
 	mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExport)
 }
 

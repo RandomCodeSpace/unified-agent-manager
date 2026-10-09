@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
-import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
+import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
 import { Fragment, Suspense, lazy, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, Subagent, ToolStatus, TurnTiming } from '../api';
@@ -69,7 +69,11 @@ interface Props {
   footVerb?: boolean;
   /** The conversation is being compacted: the foot says so in place of the current step. */
   compacting?: boolean;
+  /** Branch the exact owner message at the final reply's stable foot. */
+  onBranch?: BranchReply;
 }
+
+type BranchReply = (userItemId: string, anchor: HTMLElement | null) => void;
 
 const NO_SUBAGENTS: Subagent[] = [];
 const NO_TONES: ReadonlyMap<string, IdentityTone> = new Map();
@@ -94,7 +98,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line (Compact) or rows in its activity (Detailed), and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
+export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -135,7 +139,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, readersActive, readerGeneration]);
+  const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, readersActive, readerGeneration]);
   const ctx: RenderContext = { replyActions, sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
@@ -703,7 +707,7 @@ function TurnStatus({ working = false, timing, empty = false }: Readonly<{ worki
   );
 }
 
-interface ReplyActions { allChanges?: () => void; active: boolean; generation: string }
+interface ReplyActions { allChanges?: () => void; branch?: BranchReply; active: boolean; generation: string }
 
 type CopyableMenuEvents = Pick<ComponentProps<'div'>, 'onContextMenu' | 'onTouchStart' | 'onTouchMove' | 'onTouchEnd' | 'onTouchCancel'>;
 
@@ -717,7 +721,7 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
   const [menuReady, setMenuReady] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
@@ -730,6 +734,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   const turnItems: ActionItem[] = [
     ...(timing?.changes ? [{ key: 'turn-changes', label: "This turn's changes", icon: <FileDiff />, onSelect: showChanges, takesFocus: true }] : []),
     ...(timing && replyActions?.allChanges ? [{ key: 'all-changes', label: 'All changes', icon: <FileDiff />, onSelect: replyActions.allChanges }] : []),
+    ...(branch ? [{ key: 'branch', label: 'Branch from here', icon: <GitBranch />, takesFocus: true, onSelect: () => branch(anchor.current?.querySelector<HTMLElement>('[data-fork-anchor]') ?? anchor.current) }] : []),
   ];
   const items: ActionItem[] = [{ key: 'copy', label, icon: <Copy />, onSelect: run }, ...turnItems, ...extra];
 
@@ -775,8 +780,8 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
             </button>
           </>}
           {timing && <TurnTodo timing={timing} />}
-          {timing && (timing.changes || replyActions?.allChanges) && <Menu.Root>
-            <Menu.Trigger render={<Button variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint" />}><Ellipsis /></Menu.Trigger>
+          {(branch || (timing && (timing.changes || replyActions?.allChanges))) && <Menu.Root>
+            <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint" />}><Ellipsis /></Menu.Trigger>
             <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
           </Menu.Root>}
         </div>
@@ -815,7 +820,7 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
 }
 
 /** What the last reply of a turn shows in its foot: when the turn ended and, when known, its timing. */
-interface ReplyEnd { at: string; timing?: TurnTiming }
+interface ReplyEnd { at: string; timing?: TurnTiming; userItemId: string }
 
 /** Each reply's last foot: an unchanged one keeps its identity, so its memoised `Turn` holds while other rows stream. */
 const replyEndOf = new WeakMap<Item, ReplyEnd>();
@@ -838,9 +843,10 @@ export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean
     const ended = timing ? timing.state !== 'working' : !(working && userItemId === turn);
     if (!ended) continue;
     const at = timing?.ended_at ?? reply.time;
+    const branchUser = userItemId.length <= 256 ? userItemId : '';
     let end = replyEndOf.get(reply);
-    if (end?.at !== at || end.timing !== timing) {
-      end = { at, timing };
+    if (end?.at !== at || end.timing !== timing || end.userItemId !== branchUser) {
+      end = { at, timing, userItemId: branchUser };
       replyEndOf.set(reply, end);
     }
     out.set(reply.id, end);
@@ -889,8 +895,9 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
 }
 
 function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions }: MessageParts) {
+  const onBranch = replyActions?.branch;
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} foot={!!end} className={className}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} foot={!!end} className={className}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}

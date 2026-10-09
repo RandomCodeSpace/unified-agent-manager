@@ -79,6 +79,9 @@ type Config struct {
 	// WebAccountLinks holds the one account each provider is linked to,
 	// keyed by provider name. Only the service sets it; no settings PATCH.
 	WebAccountLinks map[string]AccountLink `json:"web_account_links,omitempty"`
+	// WebForks reserves native fork requests before their RPC. Only unresolved
+	// requests stay here; registered Tasks carry their own exact receipt.
+	WebForks map[string]WebFork `json:"web_forks,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -119,6 +122,7 @@ type configAlias struct {
 	WebSettings     WebSettings              `json:"web_settings,omitzero"`
 	WebRoutines     map[string]WebRoutine    `json:"web_routines,omitempty"`
 	WebAccountLinks map[string]AccountLink   `json:"web_account_links,omitempty"`
+	WebForks        map[string]WebFork       `json:"web_forks,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -134,6 +138,7 @@ var knownConfigFields = map[string]struct{}{
 	"web_settings":                {},
 	"web_routines":                {},
 	"web_account_links":           {},
+	"web_forks":                   {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -170,6 +175,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		WebSettings:     c.WebSettings,
 		WebRoutines:     c.WebRoutines,
 		WebAccountLinks: c.WebAccountLinks,
+		WebForks:        c.WebForks,
 	}, c.unknown, knownConfigFields)
 }
 
@@ -188,6 +194,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.WebSettings = alias.WebSettings
 	c.WebRoutines = alias.WebRoutines
 	c.WebAccountLinks = alias.WebAccountLinks
+	c.WebForks = alias.WebForks
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -475,6 +482,8 @@ type WebState struct {
 	// RerunOf is the ID of the Task whose last message this one runs again
 	// (Run again, Try with another model); empty otherwise.
 	RerunOf string `json:"rerun_of,omitempty"`
+	// Fork records a native prefix branch separately from a last-message rerun.
+	Fork *ForkLineage `json:"fork,omitempty"`
 	// Outcome is the one-line summary of the last completed turn.
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
@@ -524,6 +533,7 @@ var knownWebStateFields = map[string]struct{}{
 	"spawned_by":          {},
 	"routine_id":          {},
 	"rerun_of":            {},
+	"fork":                {},
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},

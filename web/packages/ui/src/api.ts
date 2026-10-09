@@ -30,6 +30,8 @@ export interface Capabilities {
   questions: boolean;
   session_diff: boolean;
   history: boolean;
+  /** Recorded owner-turn prefixes can be copied natively, without resending prompts. */
+  fork?: boolean;
   context_size?: boolean;
   execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
@@ -623,6 +625,9 @@ export interface SessionSummary {
   diff?: DiffStat;
   /** The Task whose last message this one runs again (Run again, Try with another model); absent otherwise. */
   rerun_of?: string;
+  /** Native recorded-history lineage, separate from a last-message rerun. */
+  fork_of?: string;
+  fork_user_item_id?: string;
   /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */
   outcome?: string;
   /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
@@ -1625,6 +1630,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     suggestions: (id: string, signal?: AbortSignal) => call<Suggestions>('POST', `/api/sessions/${enc(id)}/suggestions`, undefined, false, signal),
     /** A new Task in the same Project with the same settings (or `model`) whose first message is this Task's last one. */
     rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
+    fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/fork`, body),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
     prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>

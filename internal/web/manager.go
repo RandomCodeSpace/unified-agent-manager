@@ -365,6 +365,7 @@ type webSession struct {
 	submissions        []Submission
 	last               *Submission
 	createReq          string
+	fork               *store.ForkLineage
 	// stopCode is why the last turn was cancelled (SessionSummary.StopReason),
 	// until the next turn starts.
 	stopCode string
@@ -820,6 +821,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.spawnedBy = web.SpawnedBy
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
+		s.fork = web.Fork
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		// An unknown stage loads as active, as an unknown turn state is ignored.
@@ -1038,6 +1040,10 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	if capabilities.SessionDiffNeedsTracking && !s.nativeChanges {
 		capabilities.SessionDiff = false
 	}
+	forkOf, forkUser := "", ""
+	if s.fork != nil {
+		forkOf, forkUser = s.fork.SourceTaskID, s.fork.UserItemID
+	}
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
 		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
@@ -1048,6 +1054,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
+		ForkOf: forkOf, ForkUserItemID: forkUser,
 	}
 }
 
@@ -2028,7 +2035,7 @@ func (m *Manager) flush() (err error) {
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
 		})
