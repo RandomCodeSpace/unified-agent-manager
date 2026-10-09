@@ -3156,14 +3156,12 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.SessionTaskCompleteData:
 		if agentID == "" {
-			if d.Success == nil && d.Outcome == nil {
-				c.taskCompleted = true // Preserve the legacy lifecycle signal.
-			}
+			// The lifecycle signal follows the receipt itself, matched to a
+			// turn or not: only an explicit request to continue keeps an
+			// autopilot run going. Matching gates the completion facts only.
+			c.taskCompleted = completionDecision(d) != agentapi.CompletionRejected
 			if newCompletionEvent && c.completionReady && c.turnRunning && completionCtx.generation != 0 && completionCtx.generation == c.tr.completions.generation {
 				c.completion = c.tr.completion(ev, d)
-				if c.completion != nil && (d.Success != nil || d.Outcome != nil) {
-					c.taskCompleted = c.completion.Decision == agentapi.CompletionAccepted
-				}
 			}
 		}
 	case *rpc.ToolExecutionStartData:

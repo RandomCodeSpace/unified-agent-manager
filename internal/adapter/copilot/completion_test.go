@@ -262,24 +262,50 @@ func TestCompletionForegroundGeneration(t *testing.T) {
 func TestCompletionRejectedOrConflictingReceiptKeepsAutopilotRunning(t *testing.T) {
 	for _, d := range []*rpc.SessionTaskCompleteData{
 		completeData(copilot.Bool(false), "continue", "More work"),
-		completeData(copilot.Bool(false), "blocked", "Needs intervention"),
-		completeData(copilot.Bool(false), "completed", "Conflict"),
-		completeData(copilot.Bool(true), "continue", "Conflict"),
+		completeData(copilot.Bool(false), "", "Not done"),
 	} {
-		h, runtime := runtimeHarness(t)
-		runtime.state.Mode = "autopilot"
-		h.conv.(*conversation).refreshExecution(context.Background())
-		h.fs.onEvent(ev("user", userMessage("root", rpc.UserMessageDeliveryIdle, "root")))
-		h.fs.onEvent(completionEvent("start", "user", &rpc.AssistantTurnStartData{TurnID: "0"}))
-		h.fs.onEvent(completionEvent("receipt", "start", d))
-		mode := rpc.SessionModeAutopilot
-		h.fs.onEvent(completionEvent("idle", "receipt", &rpc.SessionIdleData{Mode: &mode}))
-		for _, e := range h.sink.all() {
-			if e.Turn != nil && e.Turn.State != agentapi.TurnWorking {
-				t.Fatalf("nonaccepted receipt ended autopilot: %+v", e.Turn)
+		if ended := autopilotEndsAfterReceipt(t, "start", d); ended {
+			t.Fatalf("rejected receipt %+v ended autopilot", d)
+		}
+	}
+}
+
+// Any other main-agent receipt ends the autopilot run, whether or not it
+// can be matched to the foreground turn: the real CLI's receipt may not
+// resolve to the turn's user message.
+func TestCompletionNonRejectedReceiptEndsAutopilotEvenUnmatched(t *testing.T) {
+	for _, parent := range []string{"start", "unseen"} {
+		for _, d := range []*rpc.SessionTaskCompleteData{
+			completeData(copilot.Bool(true), "completed", "Done"),
+			completeData(copilot.Bool(true), "", "Done"),
+			completeData(copilot.Bool(false), "blocked", "Needs intervention"),
+			completeData(copilot.Bool(false), "completed", "Conflict"),
+			completeData(copilot.Bool(true), "continue", "Conflict"),
+			{Summary: copilot.String("legacy")},
+		} {
+			if ended := autopilotEndsAfterReceipt(t, parent, d); !ended {
+				t.Fatalf("receipt %+v (parent %s) left autopilot running", d, parent)
 			}
 		}
 	}
+}
+
+func autopilotEndsAfterReceipt(t *testing.T, parent string, d *rpc.SessionTaskCompleteData) bool {
+	t.Helper()
+	h, runtime := runtimeHarness(t)
+	runtime.state.Mode = "autopilot"
+	h.conv.(*conversation).refreshExecution(context.Background())
+	h.fs.onEvent(ev("user", userMessage("root", rpc.UserMessageDeliveryIdle, "root")))
+	h.fs.onEvent(completionEvent("start", "user", &rpc.AssistantTurnStartData{TurnID: "0"}))
+	h.fs.onEvent(completionEvent("receipt", parent, d))
+	mode := rpc.SessionModeAutopilot
+	h.fs.onEvent(completionEvent("idle", "receipt", &rpc.SessionIdleData{Mode: &mode}))
+	for _, e := range h.sink.all() {
+		if e.Turn != nil && e.Turn.State != agentapi.TurnWorking {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCompletionCreateAndResumeLiveReceiptsReplayWithoutDuplicates(t *testing.T) {
