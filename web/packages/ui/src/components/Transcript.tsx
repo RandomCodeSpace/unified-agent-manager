@@ -854,7 +854,8 @@ interface ReplyEnd { at: string; timing?: TurnTiming; userItemId: string }
 /** A reply's stamps, kept while the reply and the calls they read are unchanged, so a memoised turn holds. */
 const stampsOf = new WeakMap<Item, { key: string; stamps: Stamp[] }>();
 function stampsFor(reply: Item, items: Item[]): Stamp[] {
-  const key = items.map((i) => (i.kind === 'tool' ? `${i.id}:${i.tool?.status}:${i.tool?.exit_code ?? ''}:${i.tool?.file_edits?.length ?? 0}` : '')).join('|');
+  // A call's input and output land after its row (the detail stream sends bodies later): they are part of what was read.
+  const key = items.map((i) => (i.kind === 'tool' ? `${i.id}:${i.tool?.status}:${i.tool?.exit_code ?? ''}:${i.tool?.file_edits?.length ?? 0}:${i.tool?.input?.length ?? 0}:${i.tool?.output?.length ?? 0}:${i.tool?.display_arg ?? ''}` : '')).join('|');
   const held = stampsOf.get(reply);
   if (held?.key === key) return held.stamps;
   const stamps = receipts(reply.text ?? '', items);
