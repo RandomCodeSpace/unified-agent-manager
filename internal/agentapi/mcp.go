@@ -127,3 +127,18 @@ type MCPStatusReader interface {
 	MCPStatusSnapshot(ctx context.Context) (MCPStatusSnapshot, error)
 	MCPTools(ctx context.Context, name string) ([]MCPTool, error)
 }
+
+// MCPCallbackSignIn is an SDK-owned authorization waiting at a fixed HTTPS
+// callback. An empty URL means kept credentials already connected the server.
+type MCPCallbackSignIn struct {
+	AuthorizationID string
+	URL             string
+}
+
+// MCPCallbackController optionally supports a host-delivered OAuth callback.
+// The provider owns discovery, PKCE, exchange, token storage and reconnect.
+// ErrUnsupported is effect-free; other login errors must not start a fallback.
+type MCPCallbackController interface {
+	MCPSignInCallback(ctx context.Context, name string, again bool, redirectURI string) (MCPCallbackSignIn, error)
+	CompleteMCPSignIn(ctx context.Context, authorizationID, callbackURL string) error
+}

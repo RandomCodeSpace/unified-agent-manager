@@ -113,6 +113,8 @@ type Server struct {
 	grants        *tempGrants
 	// terminalOrigins are the public origins as WebSocket origin patterns.
 	terminalOrigins []string
+	// mcpCallbackOrigins are configured HTTPS origins indexed by exact Host.
+	mcpCallbackOrigins map[string]string
 	// frameSecurity and frameETag are framePolicy's for the embedded frame document.
 	frameSecurity, frameETag string
 
@@ -138,6 +140,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 			return nil, err
 		}
 		s.terminalOrigins = append(s.terminalOrigins, originPattern(normalized))
+		u, _ := url.Parse(normalized)
+		if u.Scheme == "https" {
+			if s.mcpCallbackOrigins == nil {
+				s.mcpCallbackOrigins = map[string]string{}
+			}
+			s.mcpCallbackOrigins[u.Host] = normalized
+		}
 	}
 	if s.assets == nil {
 		sub, err := fs.Sub(embedded, "dist")
@@ -299,6 +308,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	api := isAPI(r.URL.Path)
 	if api {
 		h.Set(headerCacheControl, "no-store")
+	}
+	// The SDK-issued pending state authorizes this fixed callback. Never pass
+	// its query or headers through request logging.
+	if r.URL.Path == mcpCallbackPath {
+		s.handleMCPCallback(w, r)
+		return
 	}
 	// Any Host can reach sign-in and static assets. Cookies and file keys
 	// are Host-bound, so another Host cannot reuse their authentication.

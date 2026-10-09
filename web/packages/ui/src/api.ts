@@ -1300,10 +1300,12 @@ export interface McpTaskStatus {
   mcp_status?: McpStatusSnapshot;
 }
 
-/** A started MCP sign-in: the page to open (none when a kept sign-in sufficed) and whether the address the browser ends on can be pasted back. */
+/** A started MCP sign-in: the browser page (none when kept credentials sufficed) and how its callback completes. */
 export interface McpSignIn {
   url?: string;
   relay?: boolean;
+  /** The browser completes directly at the configured HTTPS service origin. */
+  callback?: boolean;
 }
 
 

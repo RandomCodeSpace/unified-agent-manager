@@ -93,9 +93,11 @@ type MCPServerInput struct {
 // MCPSignIn is the answer to starting a sign-in. URL is empty when a kept
 // sign-in sufficed. Relay is true when the browser may paste the address it
 // ends on, for the service to pass to the provider's loopback listener.
+// Callback means the browser completes directly at the configured HTTPS origin.
 type MCPSignIn struct {
-	URL   string `json:"url,omitempty"`
-	Relay bool   `json:"relay,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Relay    bool   `json:"relay,omitempty"`
+	Callback bool   `json:"callback,omitempty"`
 }
 
 func (m *Manager) mcpConfigurer() (agentapi.MCPConfigurer, bool) {
@@ -501,8 +503,8 @@ func (m *Manager) TaskMCPAction(id, name, action string) error {
 	return nil
 }
 
-// mcpSignIns are the sign-ins waiting for the browser's pasted callback
-// address, by Task and server.
+// mcpSignIns are the sign-ins waiting for a public SDK callback or the
+// browser's pasted loopback address, by Task and server.
 type mcpSignIns struct {
 	mu      sync.Mutex
 	pending map[string]*signIn
@@ -514,6 +516,11 @@ type signIn struct {
 	callback *url.URL
 	state    string
 	expires  time.Time
+	// Public callbacks bind SDK state to one exact Task conversation.
+	id, name string
+	convID   string
+	gen      uint64
+	public   bool
 }
 
 func signInKey(id, name string) string { return id + "\x00" + name }
@@ -590,7 +597,7 @@ func (m *Manager) FinishMCPSignIn(id, name, pasted string) error {
 	m.signIns.mu.Lock()
 	m.signIns.sweepLocked(time.Now())
 	p := m.signIns.pending[key]
-	if p == nil {
+	if p == nil || p.public {
 		m.signIns.mu.Unlock()
 		return newError(http.StatusConflict, "no sign-in is waiting for this server; start it again")
 	}
@@ -778,7 +785,7 @@ func (s *Server) handleMCPSignIn(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	out, err := s.m.StartMCPSignIn(r.PathValue("id"), r.PathValue("name"), in.Again)
+	out, err := s.m.startMCPSignIn(r.PathValue("id"), r.PathValue("name"), in.Again, s.mcpCallbackURI(r.Host))
 	if err != nil {
 		writeFailure(w, err)
 		return

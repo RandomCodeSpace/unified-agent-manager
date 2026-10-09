@@ -43,7 +43,9 @@ function SignInPanel({ s, onPaste, onFinish, onCancel }: Readonly<{ s: SigningIn
           </a>{' '}
           and approve access.
         </li>
-        {s.relay ? (
+        {s.callback ? (
+          <li>Finish in that tab, then return to this task. Its server status updates when sign-in completes; use Refresh if needed.</li>
+        ) : s.relay ? (
           <li>
             The browser then goes to an address on 127.0.0.1 or localhost. From another computer that page does not load; that is expected. Copy the whole address from the address bar and paste it here. (On the server's own desktop it finishes by itself.)
           </li>
@@ -149,7 +151,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
  * A Task's MCP servers (task menu → MCP servers): each server's state as this Task's
  * conversation sees it, its tools, a switch that turns it off or on for this Task only,
  * Restart for one that failed, and the sign-in of a remote server that needs one, finished
- * from a remote browser by pasting the address it ended on. Applying settings
+ * from a remote browser at the configured HTTPS origin or by pasting its callback. Applying settings
  * reloads the conversation's configuration for its next turn.
  */
 function snapshotOf(result: McpTaskStatus): McpStatusSnapshot {
@@ -167,6 +169,10 @@ export function McpTaskDialog({ sessionId, snapshot, onClose }: Readonly<{ sessi
   const status = snapshot ?? initialStatus;
   const servers = status?.servers ?? null;
   const activeSignIn = signIn && !servers?.some((s) => s.name === signIn.name && s.status === 'connected' && (signIn.sent || signIn.from !== 'connected')) ? signIn : null;
+  // A direct reauthorization starts while still connected; observe its new
+  // connection attempt before treating the next connected state as completion.
+  const attempting = signIn?.callback && signIn.from === 'connected' && servers?.find((s) => s.name === signIn.name && s.status !== 'connected');
+  if (signIn && attempting) setSignIn({ ...signIn, from: attempting.status });
   // Release the completed URL permanently; a later pending state must not revive it.
   if (signIn && !activeSignIn) setSignIn(null);
 
