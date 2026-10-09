@@ -117,3 +117,35 @@ func TestNativeTurnBoundaryDoesNotFollowSteerAutopilotOrSubagent(t *testing.T) {
 		t.Fatalf("owner replaced: %s/%s", c.turnChangeUser, c.turnChangeEvent)
 	}
 }
+
+// A planning turn's recorded facts (live run, paths renamed): the turn wrote
+// two workspace files, one named plan.md, and the session's scratch plan.
+// Only the exact scratch identity is left out, as native Changes does.
+func TestNativeTurnChangesLeaveOutExactScratchPlan(t *testing.T) {
+	rt := startFakeRuntime(t)
+	sess := openFakeSDKSession(t, rt)
+	rt.set("session.history.listRewindPoints", `{"fileChangeTrackingEnabled":true,"points":[{"eventId":"native-owner"}]}`)
+	rt.set("session.history.previewRewind", `{"available":true,"fileCount":3,"files":[`+
+		`{"path":"/work/e2e.txt","changeType":"added","linesAdded":1},`+
+		`{"path":"/work/e2e/docs/plan.md","changeType":"added","linesAdded":1},`+
+		`{"path":"/home/u/.copilot/session-state/s1/plan.md","changeType":"added","linesAdded":20}]}`)
+	for _, tc := range []struct {
+		plan             string
+		files, additions int64
+	}{
+		{"/home/u/.copilot/session-state/s1/plan.md", 2, 2},
+		{"", 3, 22},
+		{"/home/u/.copilot/session-state/other/plan.md", 3, 22},
+	} {
+		c := &conversation{sess: sess, turnChangeUser: "visible", turnChangeEvent: "native-owner", planPath: tc.plan}
+		got, err := c.TurnChanges(context.Background(), "visible")
+		if err != nil || got.Status != "available" || got.Files != tc.files || got.Additions != tc.additions || int64(len(got.Entries)) != tc.files {
+			t.Fatalf("plan %q facts=%+v,%v", tc.plan, got, err)
+		}
+		for _, e := range got.Entries {
+			if tc.plan != "" && e.Path == tc.plan {
+				t.Fatalf("scratch plan kept: %+v", got.Entries)
+			}
+		}
+	}
+}

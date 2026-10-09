@@ -65,7 +65,10 @@ func (p *webProvider) readBoundary(ctx context.Context, client sdkClient, req ag
 		var boundary agentapi.ForkBoundary
 		var matches, turns int
 		var suffix []string
-		settled, taskComplete, invalid := false, false, false
+		// The CLI journal records no session.idle. The latest turn has ended
+		// at the root step end whose message requested no tools, or at an
+		// accepted task completion; a later step start reopens it.
+		settled, taskComplete, final, invalid := false, false, false, false
 		err := p.readForward(ctx, &forkJournalClient{sdkClient: client}, req.ConversationID, func(ev copilot.SessionEvent) {
 			if ev.ID == "" || len(ev.ID) > 256 {
 				invalid = true
@@ -106,8 +109,23 @@ func (p *webProvider) readBoundary(ctx context.Context, client sdkClient, req ag
 					}
 					suffix = append(suffix, strings.Clone(id))
 				}
+			case *rpc.AssistantTurnStartData:
+				if boundary.UserEventID != "" && boundary.ToEventID == "" {
+					settled, final = false, false
+				}
+			case *rpc.AssistantMessageData:
+				final = len(d.ToolRequests) == 0
+			case *rpc.AssistantTurnEndData:
+				if boundary.UserEventID != "" && boundary.ToEventID == "" && final {
+					settled = true
+				}
 			case *rpc.SessionTaskCompleteData:
 				taskComplete = true
+				// Only an explicit request to continue keeps the run going.
+				final = completionDecision(d) != agentapi.CompletionRejected
+				if boundary.UserEventID != "" && boundary.ToEventID == "" && final {
+					settled = true
+				}
 			case *rpc.SessionIdleData:
 				if boundary.UserEventID != "" && boundary.ToEventID == "" && (d.Mode == nil || *d.Mode != rpc.SessionModeAutopilot || taskComplete || d.Aborted != nil && *d.Aborted) {
 					settled = true
