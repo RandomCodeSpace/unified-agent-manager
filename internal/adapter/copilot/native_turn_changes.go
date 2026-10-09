@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -29,7 +30,7 @@ func (c *conversation) TurnChanges(ctx context.Context, user string) (agentapi.N
 	unknown := agentapi.NativeTurnChanges{Status: "unknown"}
 	c.mu.Lock()
 	sess, supported := c.sess.(turnChangesSession)
-	event := c.turnChangeEvent
+	event, planPath := c.turnChangeEvent, c.planPath
 	valid := !c.closed && !c.turnRunning && user != "" && c.turnChangeUser == user && event != ""
 	c.mu.Unlock()
 	if !valid {
@@ -87,7 +88,25 @@ func (c *conversation) TurnChanges(ctx context.Context, user string) (agentapi.N
 		}
 		return unknown, nil
 	}
-	return nativeTurnPreview(event, preview), nil
+	return nativeTurnPreview(event, withoutPlanPreview(preview, planPath)), nil
+}
+
+// withoutPlanPreview leaves the one change whose path is exactly the native
+// scratch plan out of a turn's preview, as withoutScratchPlan does for the
+// session diff. A repeated plan path is left for nativeTurnPreview to refuse.
+func withoutPlanPreview(p *rpc.HistoryPreviewRewindResult, planPath string) *rpc.HistoryPreviewRewindResult {
+	if planPath == "" {
+		return p
+	}
+	plan := func(f rpc.HistoryRewindFilePreview) bool { return filepath.Clean(f.Path) == planPath }
+	i := slices.IndexFunc(p.Files, plan)
+	if i < 0 || slices.ContainsFunc(p.Files[i+1:], plan) {
+		return p
+	}
+	out := *p
+	out.Files = slices.Delete(slices.Clone(p.Files), i, i+1)
+	out.FileCount--
+	return &out
 }
 
 func unavailableTurnChanges(reason rpc.HistoryRewindUnavailableReason) agentapi.NativeTurnChanges {
