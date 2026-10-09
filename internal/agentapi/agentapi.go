@@ -57,6 +57,10 @@ var (
 	// ErrRewindUncertain means a native rewind may have changed files or
 	// history, but its result was lost. A caller must not repeat the RPC.
 	ErrRewindUncertain = errors.New("conversation rewind outcome is unknown")
+	// ErrAgentUnavailable reports that a Task's custom agent could not be
+	// selected, usually because its definition no longer exists. The
+	// conversation is never used with another agent instead.
+	ErrAgentUnavailable = errors.New("custom agent is not available")
 )
 
 // Capabilities advertises what an adapter really supports. The UI hides or
@@ -120,6 +124,10 @@ type Capabilities struct {
 	// AssistedPermissionSetter, and its permission requests carry the
 	// review in Interaction.Assisted.
 	AssistedPermissions bool `json:"assisted_permissions,omitempty"`
+	// CustomAgents is true when the provider implements
+	// ConfigurationDiscoverer, applies OpenRequest.Agent and its
+	// conversations implement AgentSelector.
+	CustomAgents bool `json:"custom_agents,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -551,11 +559,18 @@ type OpenRequest struct {
 	// Title is the user-visible session name.
 	Title string
 	// Model is the model ID for a new conversation; "" means the provider
-	// default. It is ignored on reopen, so reopening never changes the model.
+	// default. Reopening does not switch to it (the caller applies the
+	// selection with SetModel), but an adapter keeps Model, Effort and
+	// ContextSize when selecting Agent applies the agent's own model.
 	Model string
-	// Effort and ContextSize apply only when creating a conversation.
+	// Effort and ContextSize apply when creating a conversation.
 	Effort      string
 	ContextSize string
+	// Agent is the ID of the custom agent selected on create and on every
+	// reopen, before anything is sent; "" keeps the provider's default
+	// agent. An agent that cannot be selected fails the open with
+	// ErrAgentUnavailable.
+	Agent string
 	// Events receives every event for this conversation until Close returns.
 	Events EventSink
 	// ValidateFile checks a declaration candidate without granting access or

@@ -565,6 +565,8 @@ type Conversation struct {
 	cancels       int
 	closes        int
 	responds      []Response
+	agents        []string
+	agentErr      error
 	closed        bool
 }
 
@@ -618,6 +620,30 @@ func (c *Conversation) SetModel(_ context.Context, model, effort, contextSize st
 	c.modelSets = append(c.modelSets, model)
 	c.settings = append(c.settings, agentapi.OpenRequest{Model: model, Effort: effort, ContextSize: contextSize})
 	return c.setModelErr
+}
+
+// SetSelectAgentError makes SelectAgent fail with err (nil restores success).
+func (c *Conversation) SetSelectAgentError(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.agentErr = err
+}
+
+func (c *Conversation) SelectAgent(_ context.Context, id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return agentapi.ErrClosed
+	}
+	c.agents = append(c.agents, id)
+	return c.agentErr
+}
+
+// AgentSelections returns every agent passed to SelectAgent, oldest first.
+func (c *Conversation) AgentSelections() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.agents...)
 }
 
 // ModelSets returns every model passed to SetModel, oldest first.

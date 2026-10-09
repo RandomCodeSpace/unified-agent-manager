@@ -66,6 +66,9 @@ type toolGate struct {
 	// the change, and ToolCatalog's InitializeAndValidate, even called as
 	// the event arrives, waits for that listing (measured on CLI 1.0.93).
 	changes uint64
+	// rebuild builds the tool set again for a stale catalog; nil uses
+	// rebuildTools. A conversation's also keeps its model (agent.go).
+	rebuild func(context.Context) error
 }
 
 func newToolGate() *toolGate {
@@ -294,22 +297,55 @@ func (a sdkSessionAdapter) SetTools(ctx context.Context, tools []rpc.ProtocolExt
 	return err
 }
 
-// RebuildTools returns the session to the default agent, which it already
-// uses, because that builds the tool set again. After the session's first
-// turn, the catalog shows added tools at once but keeps removed ones until
-// the tool set is built again: at a turn's start, an agent change or a model
-// switch (measured on CLI 1.0.93). It refuses while a custom agent is
-// selected, which returning to the default agent would end.
-func (a sdkSessionAdapter) RebuildTools(ctx context.Context) error {
+func (a sdkSessionAdapter) CurrentAgent(ctx context.Context) (*rpc.AgentInfo, error) {
 	current, err := a.s.RPC.Agent.GetCurrent(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, errors.New("current agent is unknown")
+	}
+	return current.Agent, nil
+}
+
+func (a sdkSessionAdapter) SelectAgent(ctx context.Context, id string) (*rpc.AgentInfo, error) {
+	res, err := a.s.RPC.Agent.Select(ctx, &rpc.AgentSelectRequest{Name: id})
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, errors.New("agent selection returned no result")
+	}
+	return &res.Agent, nil
+}
+
+func (a sdkSessionAdapter) DeselectAgent(ctx context.Context) error {
+	_, err := a.s.RPC.Agent.Deselect(ctx)
+	return err
+}
+
+// rebuildTools has the CLI build the session's tool set again by changing
+// to the agent it already uses. After the session's first turn, the catalog
+// shows added tools at once but keeps removed ones until the tool set is
+// built again: at a turn's start, an agent change or a model switch
+// (measured on CLI 1.0.93). The default agent is deselected again; a
+// selected custom agent is selected again, so it stays selected.
+func rebuildTools(ctx context.Context, session sdkSession) error {
+	current, err := session.CurrentAgent(ctx)
 	if err != nil {
 		return err
 	}
-	if current == nil || current.Agent != nil {
-		return errors.New("a custom agent is selected")
+	if current == nil {
+		return session.DeselectAgent(ctx)
 	}
-	_, err = a.s.RPC.Agent.Deselect(ctx)
-	return err
+	selected, err := session.SelectAgent(ctx, current.ID)
+	if err != nil {
+		return err
+	}
+	if selected == nil || selected.ID != current.ID {
+		return errors.New("the custom agent changed while the tool set was built again")
+	}
+	return nil
 }
 
 // catalog proves originals are the session's uam tools: with the external
@@ -352,7 +388,11 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	// again shows it. It only lists more than the session has, never less,
 	// so a catalog without the names proves them unshadowed either way.
 	if err == nil && slices.ContainsFunc(before, func(tool rpc.CurrentToolMetadata) bool { return own[tool.Name] }) {
-		if err := session.RebuildTools(ctx); err != nil {
+		rebuild := func(ctx context.Context) error { return rebuildTools(ctx, session) }
+		if d.rebuild != nil {
+			rebuild = d.rebuild
+		}
+		if err := rebuild(ctx); err != nil {
 			return fmt.Errorf("rebuild the tool catalog: %w", err)
 		}
 		before, err = session.ToolCatalog(ctx)

@@ -82,6 +82,10 @@ type fakeClient struct {
 	wrap func(*fakeSession) sdkSession
 	// permMode answers SetPermissionMode on the sessions opened afterwards.
 	permMode func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
+	// agents are the custom agents of the sessions opened afterwards, and
+	// switchErr their model switches' error.
+	agents    []rpc.AgentInfo
+	switchErr error
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -180,7 +184,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -195,7 +199,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode, agents: f.agents, modelErr: f.switchErr}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -281,14 +285,25 @@ type fakeSession struct {
 	setTools          [][]rpc.ProtocolExternalToolDefinition
 	toolCalls         []string
 	// staleTools models CLI 1.0.93: from a turn's start, the catalog keeps
-	// the tools the turn started with until RebuildTools; held marks that.
+	// the tools the turn started with until an agent change builds the tool
+	// set again; held marks that.
 	staleTools, held bool
 	rebuildErr       error
 	permMode         func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	permModes        []*rpc.PermissionsSetModeRequest
 	sentAtPermMode   int // sends before the first permission mode change
 	// getMode answers GetPermissionMode; nil reports the last applied mode.
-	getMode func() (*rpc.PermissionsGetModeResult, error)
+	getMode     func() (*rpc.PermissionsGetModeResult, error)
+	deselectErr error
+	// agent is the selected custom agent, nil for the default one; agents
+	// are the ones SelectAgent finds.
+	agent     *rpc.AgentInfo
+	agents    []rpc.AgentInfo
+	selectErr error
+	// current is the model selection CurrentModel reports: switches set it,
+	// and so does selecting an agent with an authored model or effort.
+	current         rpc.CurrentModel
+	currentModelErr error
 }
 
 type fakeToolCatalog struct {
@@ -326,17 +341,51 @@ func (s *fakeSession) clearedLocked() bool {
 	return n > 0 && len(s.setTools[n-1]) == 0
 }
 
-func (s *fakeSession) RebuildTools(ctx context.Context) error {
+func (s *fakeSession) CurrentAgent(ctx context.Context) (*rpc.AgentInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.toolCalls = append(s.toolCalls, "rebuild")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.agent, nil
+}
+
+func (s *fakeSession) SelectAgent(ctx context.Context, id string) (*rpc.AgentInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "select "+id)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.selectErr != nil {
+		return nil, s.selectErr
+	}
+	for _, agent := range s.agents {
+		if agent.ID == id {
+			s.agent, s.held = &agent, false
+			if agent.Model != nil {
+				s.current.ModelID = agent.Model
+			}
+			if agent.ReasoningEffort != nil {
+				s.current.ReasoningEffort = agent.ReasoningEffort
+			}
+			return &agent, nil
+		}
+	}
+	return nil, fmt.Errorf("Custom agent '%s' not found", id)
+}
+
+func (s *fakeSession) DeselectAgent(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "deselect")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if s.rebuildErr != nil {
-		return s.rebuildErr
+	if s.deselectErr != nil {
+		return s.deselectErr
 	}
-	s.held = false
+	s.agent, s.held = nil, false
 	return nil
 }
 
@@ -485,6 +534,11 @@ func (s *fakeSession) SwitchModel(_ context.Context, req *rpc.ModelSwitchToReque
 		return nil, s.modelErr
 	}
 	s.models = append(s.models, req.ModelID)
+	s.toolCalls = append(s.toolCalls, "model "+req.ModelID)
+	s.current.ModelID, s.current.ContextTier = &req.ModelID, req.ContextTier
+	if req.ReasoningEffort != nil {
+		s.current.ReasoningEffort = req.ReasoningEffort
+	}
 	if s.modelResult != nil {
 		return s.modelResult, nil
 	}
@@ -499,7 +553,23 @@ func (s *fakeSession) SetEffort(_ context.Context, effort string) error {
 		return fmt.Errorf("unexpected reset effort %q", effort)
 	}
 	s.effortResets++
+	if s.effortErr == nil {
+		s.current.ReasoningEffort = nil
+	}
 	return s.effortErr
+}
+
+func (s *fakeSession) CurrentModel(ctx context.Context) (*rpc.CurrentModel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.currentModelErr != nil {
+		return nil, s.currentModelErr
+	}
+	current := s.current
+	return &current, nil
 }
 
 func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) {

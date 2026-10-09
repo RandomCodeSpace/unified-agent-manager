@@ -18,6 +18,12 @@ import { seed, type MockState, type MockTask } from './data';
 import { seedUtility, utilityLog } from './utility';
 import { tokenPriceFixture, tokenUsageFixture } from './token-usage';
 
+/** The Project agents every mock Project offers a Task. */
+const MOCK_AGENTS = [
+  { id: 'reviewer', name: 'reviewer', display_name: 'Reviewer', description: 'Reviews a change before it is committed', source: 'project' },
+  { id: 'docs-writer', name: 'docs-writer', display_name: 'Docs writer', source: 'user' },
+];
+
 type Json = Record<string, unknown>;
 
 /** The service's history page size, and how many of its newest items a compact Task's main transcript keeps in memory; subagents keep none (read on open). */
@@ -840,6 +846,13 @@ export function install(): { received: Received[] } {
       return json(201, summary(t));
     }
 
+    // The custom agents a Task can run as: native discovery's user-invocable ones.
+    if ((r = m(/^\/api\/projects\/([^/]+)\/agents$/)) && method === 'GET') {
+      if (!st.projects.some((x) => x.id === decodeURIComponent(r![1]))) return fail(404, 'project not found');
+      return json(200, { agents: MOCK_AGENTS });
+    }
+    const unknownAgent = (agent: unknown) => typeof agent === 'string' && agent !== '' && !MOCK_AGENTS.some((a) => a.id === agent);
+
     if (path === '/api/sessions' && method === 'GET') return json(200, st.tasks.map(summary));
     if (path === '/api/sessions' && method === 'POST') {
       const signedOut = body.provider === 'copilot' && account.refusal();
@@ -854,6 +867,7 @@ export function install(): { received: Received[] } {
       if (assisted && !st.meta.providers.find((x) => x.name === body.provider)?.capabilities.assisted_permissions) return fail(409, 'this provider does not support assisted permissions');
       const sel = checkSelection(assisted ? { ...body, mode: 'safe' } : body);
       if (typeof sel === 'string') return fail(400, sel);
+      if (unknownAgent(body.agent)) return fail(400, `custom agent "${String(body.agent)}" is not offered for this project`);
       const { provider, model, effort, context_size } = sel;
       const mode = assisted ? 'assisted' : sel.mode;
       const prompt = String(body.prompt ?? '').trim();
@@ -869,6 +883,7 @@ export function install(): { received: Received[] } {
         last_model: '',
         effort,
         context_size,
+        ...(body.agent ? { agent: String(body.agent) } : {}),
         mode,
         subagents_running: 0,
         state: prompt ? 'working' : 'idle',
@@ -896,8 +911,8 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       if (method === 'GET') return json(200, detail(t));
       if (method === 'PATCH') {
-        const keys = ['name', 'model', 'effort', 'context_size', 'mode'].filter((k) => body[k] !== undefined);
-        if (keys.length === 0) return fail(400, 'name, model, effort, context_size or mode required');
+        const keys = ['name', 'model', 'effort', 'context_size', 'mode', 'agent'].filter((k) => body[k] !== undefined);
+        if (keys.length === 0) return fail(400, 'name, model, effort, context_size, mode or agent required');
         if (t.stage === 'archived' && keys.some((k) => k !== 'name')) return fail(409, 'an archived task is read-only');
         if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled task takes no changes; reopen it first');
         if (typeof body.name === 'string') t.name = body.name.trim();
@@ -905,6 +920,11 @@ export function install(): { received: Received[] } {
           if (body.mode === 'assisted' && !t.capabilities.assisted_permissions) return fail(409, 'this provider does not support assisted permissions');
           if (body.mode !== 'safe' && body.mode !== 'yolo' && body.mode !== 'assisted') return fail(400, 'mode must be safe, yolo or assisted');
           t.mode = body.mode;
+        }
+        if (body.agent !== undefined) {
+          if (unknownAgent(body.agent)) return fail(400, `custom agent "${String(body.agent)}" is not offered for this project`);
+          if (busy(t)) return fail(409, 'the custom agent can change only between turns');
+          t.agent = String(body.agent) || undefined;
         }
         const selection = keys.some((k) => k === 'model' || k === 'effort' || k === 'context_size');
         if (selection) {

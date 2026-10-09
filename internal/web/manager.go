@@ -273,6 +273,7 @@ type webSession struct {
 	model       string
 	effort      string
 	contextSize string
+	agent       string // custom agent ID; "" is the provider's default
 	context     *agentapi.Context
 	usage       *agentapi.Usage
 	name        string
@@ -510,6 +511,7 @@ type persistKey struct {
 	settledAt, archivedAt                                                                                            time.Time
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
+	agent                                                                                                            string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -575,7 +577,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, stopReason: s.stopCode}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -847,6 +849,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.rewind = loadedRewind(web.Rewind)
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
+		s.agent = web.Agent
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -1069,7 +1072,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	}
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
@@ -2073,7 +2076,7 @@ func (m *Manager) flush() (err error) {
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
-				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
+				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
@@ -2432,6 +2435,7 @@ type CreateRequest struct {
 	Model       string `json:"model"`
 	Effort      string `json:"effort"`
 	ContextSize string `json:"context_size"`
+	Agent       string `json:"agent"` // custom agent ID; "" is the provider's default
 	Name        string `json:"name"`
 	Prompt      string `json:"prompt"`
 	RequestID   string `json:"request_id"`
@@ -2506,6 +2510,9 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 	if strings.TrimSpace(req.Prompt) != "" && len(req.Prompt) > maxPromptBytes {
 		return nil, "", "", newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
 	}
+	if err := m.checkAgent(prov.Name(), workdir, req.Agent); err != nil {
+		return nil, "", "", err
+	}
 	return prov, workdir, mode, nil
 }
 
@@ -2540,7 +2547,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
 	s.projectID, s.model, s.mode = req.ProjectID, req.Model, mode
-	s.effort, s.contextSize = req.Effort, req.ContextSize
+	s.effort, s.contextSize, s.agent = req.Effort, req.ContextSize, req.Agent
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
 	s.routineID = req.routineID
@@ -2551,14 +2558,18 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.editsKnown = true
 	s.gen = 1
 	m.mu.Lock()
-	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir), AssistedApprovalModel: approvalModel(mode)}, s)
+	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir), AssistedApprovalModel: approvalModel(mode)}, s)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
-		return SessionSummary{}, newError(http.StatusBadGateway, "could not start a %s conversation: %s", prov.DisplayName(), shortError(err))
+		status := http.StatusBadGateway
+		if errors.Is(err, agentapi.ErrAgentUnavailable) {
+			status = http.StatusConflict
+		}
+		return SessionSummary{}, newError(status, "could not start a %s conversation: %s", prov.DisplayName(), shortError(err))
 	}
 	convID := conv.ID()
 	// The ID is persisted and later passed back as an argv/URL value; refuse
@@ -2570,7 +2581,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
 	}
 	var check func(*store.Config) error
 	if req.spawnedBy != "" {
@@ -2630,7 +2641,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: rec.Web.Title, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: rec.Web.Title, mode: s.mode}
 	m.sessions[s.id] = s
 	if s.historyRead {
 		m.enforceHistoryBudgetLocked(s)
@@ -2839,9 +2850,10 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir), AssistedApprovalModel: approvalModel(s.mode)}, s)
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Agent: s.agent, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir), AssistedApprovalModel: approvalModel(s.mode)}, s)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
+	req.Model, req.Effort, req.ContextSize = model, effort, contextSize
 	s.context, s.compacting = nil, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
@@ -2928,7 +2940,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 
 	if err != nil {
 		log.Warn("reopen web conversation failed", "session", s.id, "provider", s.provider, "error", err)
-		if errors.Is(err, agentapi.ErrConversationNotFound) {
+		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) {
 			return newError(http.StatusConflict, "%s", openFailureDetail(err, req.ConversationID))
 		}
 		return newError(http.StatusBadGateway, "%s", openFailureDetail(err, req.ConversationID))
@@ -2943,6 +2955,9 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 func openFailureDetail(err error, convID string) string {
 	if errors.Is(err, agentapi.ErrConversationNotFound) {
 		return fmt.Sprintf("provider conversation %s no longer exists; uam did not create a replacement", convID)
+	}
+	if errors.Is(err, agentapi.ErrAgentUnavailable) {
+		return shortError(err) + "; choose another agent or the default agent for this Task"
 	}
 	return "could not open the provider conversation: " + shortError(err)
 }

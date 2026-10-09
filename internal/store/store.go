@@ -459,6 +459,9 @@ type WebState struct {
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
 	ContextSize string `json:"context_size,omitempty"`
+	// Agent is the ID of the selected custom agent; empty means the
+	// provider's default agent.
+	Agent string `json:"agent,omitempty"`
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`

@@ -460,7 +460,7 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
-	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode), RequestID: req.RequestID, rerunOf: s.id}
+	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Mode: string(s.mode), RequestID: req.RequestID, rerunOf: s.id}
 	if req.Model != "" && req.Model != s.model {
 		create.Model, create.Effort, create.ContextSize = req.Model, "", "default"
 	}

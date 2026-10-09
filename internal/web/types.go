@@ -254,6 +254,7 @@ type SessionSummary struct {
 	Model       string            `json:"model"`
 	Effort      string            `json:"effort"`
 	ContextSize string            `json:"context_size"`
+	Agent       string            `json:"agent,omitempty"` // custom agent ID; "" is the provider's default
 	Context     *agentapi.Context `json:"context,omitempty"`
 	// Usage is the AI units the Task's conversation used, main agent and
 	// subagents together, once the provider reports them; it is not

@@ -716,8 +716,10 @@ func TestSetModelBetweenTurns(t *testing.T) {
 	if _, err := m.Submit(sum.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
 		t.Fatal(err)
 	}
+	// The reopen carries the stored selection for an agent change to keep;
+	// SetModel still applies it.
 	reopened := prov.Last()
-	if reopened == conv || reopened.Request().Model != "" {
+	if reopened == conv || reopened.Request().Model != "a" {
 		t.Fatalf("reopen request = %+v", reopened.Request())
 	}
 	if sets := reopened.ModelSets(); len(sets) != 1 || sets[0] != "a" || len(reopened.Sends()) != 1 {

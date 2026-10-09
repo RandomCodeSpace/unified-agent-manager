@@ -410,10 +410,16 @@ func (c *conversation) ReloadCustomizations(ctx context.Context) error {
 	if errors.As(err, &rpcErr) && rpcErr.Code == -32601 {
 		return agentapi.ErrUnsupported
 	}
+	// The reload read the agent definitions again, even if it failed: the
+	// Task's custom agent is selected again or the reload fails.
+	agentErr := c.reselectAgent(ctx)
 	// Reload can refresh non-MCP tool sources too, even before a failure.
 	// The next send reuses the existing catalog proof before tools can run.
 	if c.tools != nil {
 		c.tools.invalidate()
+	}
+	if agentErr != nil {
+		return fmt.Errorf("reload task configuration (some changes may already have applied): %w", agentErr)
 	}
 	if err != nil {
 		return fmt.Errorf("reload task configuration (some changes may already have applied): %s", rpcText(err))

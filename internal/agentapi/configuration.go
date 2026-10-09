@@ -42,3 +42,12 @@ type ConfigurationDiscoverer interface {
 type SkillGlobalSetter interface {
 	SetSkillGloballyDisabled(ctx context.Context, name string, disabled bool) error
 }
+
+// AgentSelector is implemented by a conversation of a provider whose
+// Capabilities.CustomAgents is true.
+type AgentSelector interface {
+	// SelectAgent selects the custom agent id for the next turns, or the
+	// default agent when id is "". The caller never selects during a turn.
+	// ErrAgentUnavailable means id cannot be selected.
+	SelectAgent(ctx context.Context, id string) error
+}

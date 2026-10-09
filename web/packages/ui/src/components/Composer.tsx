@@ -26,6 +26,7 @@ import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
 import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
+import { AgentPicker } from './TaskAgent';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -239,7 +240,7 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).inclu
 
 /** A new Task's first message with the settings chosen for it; attachments are the files themselves, uploaded once the Task exists. */
 export interface FirstMessage {
-  settings: TaskSettings;
+  settings: TaskSettings & { agent?: string };
   text: string;
   files: string[];
   uploads: { file: File; kind: Kind }[];
@@ -803,7 +804,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setBusy('send');
     setError(null);
     try {
-      await newTask.send({ settings: { provider: session.provider, model: session.model, effort, context_size: contextSize, mode }, text: t, files, uploads: heldUploads });
+      await newTask.send({ settings: { provider: session.provider, model: session.model, effort, context_size: contextSize, mode, agent: session.agent }, text: t, files, uploads: heldUploads });
       // The Task exists and holds the message now (or its composer does); this draft is done.
       latestDraft.current = { text: '', files: [], attachments: [] };
       writeDraft(storageKey, latestDraft.current);
@@ -987,6 +988,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     return action('settings', async () => onSessionUpdate(await api.settings(session.id, body)));
   };
+
+  /** The custom agent changes between turns only; a new Task keeps it for its create. */
+  function chooseAgent(agent: string) {
+    if (newTask) return onSessionUpdate({ ...session, agent });
+    return action('settings', async () => onSessionUpdate(await api.settings(session.id, { agent })));
+  }
 
   async function changeExecution(next: 'interactive' | 'autopilot') {
     if (busy || executionReason || !autopilotCommand || (session.execution?.known && session.execution.mode === next)) return;
@@ -1607,6 +1614,14 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
         <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
         {session.capabilities.aside && !locked && !newTask && <AskAside session={session} />}
+        {session.capabilities.custom_agents && (
+          <AgentPicker
+            session={session}
+            reason={locked ? 'This task is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
+            menuClass={PHONE_PICKER}
+            onChange={(agent) => void chooseAgent(agent)}
+          />
+        )}
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {settingsLocked || fixedTuning ? (
           <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>
