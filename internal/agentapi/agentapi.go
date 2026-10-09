@@ -922,6 +922,9 @@ type ToolCall struct {
 	Status ToolStatus `json:"status"`
 	Input  string     `json:"input,omitempty"`
 	Output string     `json:"output,omitempty"`
+	// Progress is the latest human status of a running call, at most 512
+	// UTF-8 bytes. It is display metadata, not tool output; empty once ended.
+	Progress string `json:"progress,omitempty"`
 	// ExitCode is a shell command's exit code, when the provider reports
 	// one; nil otherwise.
 	ExitCode *int `json:"exit_code,omitempty"`

@@ -71,6 +71,10 @@ func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
 func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	if it.Tool != nil {
 		tool := *it.Tool
+		tool.Progress = boundedResultSummary(strings.TrimSpace(displaytext.Sanitize(tool.Progress)))
+		if tool.Status != agentapi.ToolRunning {
+			tool.Progress = ""
+		}
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
 				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
@@ -111,7 +115,7 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 func itemSize(it agentapi.Item) int {
 	n := len(it.ID) + len(it.Text)
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.Progress)
 		if d := it.Tool.Declaration; d != nil {
 			n += len(d.ArtifactID) + len(d.Path) + len(d.Title) + len(d.TypeHint)
 		}

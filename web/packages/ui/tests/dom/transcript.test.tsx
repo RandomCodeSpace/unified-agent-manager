@@ -297,6 +297,24 @@ describe('messages', () => {
 });
 
 describe('activity', () => {
+  test.each(['compact', 'detailed'] as const)('tool progress shows its latest plain status before its body loads (%s)', (density) => {
+    const call: Item = { id: 'call', kind: 'tool', time: '2026-10-09T00:00:01Z', compact: { has_reasoning: false, has_text: false }, tool: { name: 'mcp_fetch', status: 'running', has_input: true, has_output: false, progress: '**Reading** https://example.test' } };
+    const prompt: Item = { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Fetch the file' };
+    const draw = (item: Item, live = true) => <Transcript sessionId="s" items={[prompt, item]} interactions={[]} subagents={[]} live={live} working={live} provider="copilot" workdir="/w" density={density} liveCard />;
+    const view = render(draw(call));
+    const progress = () => view.getByRole('status', { name: 'Tool progress' });
+    expect(progress().textContent).toContain('**Reading** https://example.test');
+    expect(view.queryByRole('link')).toBeNull();
+    expect(view.queryByText('No details yet.')).toBeNull();
+    view.rerender(draw({ ...call, tool: { ...call.tool!, progress: 'Waiting for file' } }));
+    expect(progress().textContent).toContain('Waiting for file');
+    expect(view.queryByText('**Reading** https://example.test')).toBeNull();
+    view.rerender(draw({ ...call, tool: { ...call.tool!, status: 'completed', progress: 'Stale' } }));
+    expect(view.queryByRole('status', { name: 'Tool progress' })).toBeNull();
+    view.rerender(draw(call, false));
+    expect(view.queryByRole('status', { name: 'Tool progress' })).toBeNull();
+  });
+
   test('a compact turn folds its work into one line that opens the timeline', async () => {
     const { user } = await openTask('t3');
     const head = log().getAllByRole('button', { name: /activity of this turn/ })[0];

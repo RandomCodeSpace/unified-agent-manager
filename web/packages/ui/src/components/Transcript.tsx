@@ -647,6 +647,7 @@ const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt,
         </span>
         <span className="min-w-0 truncate tabular-nums">{label}</span>
       </button>
+      {!open && ctx.live && entries.map(({ item }) => item?.tool?.progress && <div key={item.id}>{toolProgress(item.tool, true)}</div>)}
       {opened && (
         <Collapse open={open} appear>
           <DetailVisibility open={open}><div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, subagentRows(entries, ctx))}</div></DetailVisibility>
@@ -923,6 +924,7 @@ const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approv
         <span>{summarizeTools(items, live)}</span>
         <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
+      {!open && live && items.map((item) => item.tool?.progress && <div key={item.id}>{toolProgress(item.tool, true)}</div>)}
       {opened && (
         <Collapse open={open} appear>
           <div className="relative mt-1 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
@@ -935,6 +937,11 @@ const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approv
 }, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
+
+function toolProgress(tool: Item['tool'], named = false) {
+  if (!tool?.progress || !isActive(tool.status)) return null;
+  return <p role="status" aria-label="Tool progress" className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
+}
 
 /** A call's state as a glyph: the spinner while it is open, a check, a cross, or a dash for a call that never reported. */
 export function ToolMark({ tone }: Readonly<{ tone: string }>) {
@@ -1065,6 +1072,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
               {decided.length > 0 && <ApprovalMark interactions={decided} />}
             </button>
           </div>
+          {live && toolProgress(t)}
           {opened && (
             <Collapse open={open} appear>
               <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>

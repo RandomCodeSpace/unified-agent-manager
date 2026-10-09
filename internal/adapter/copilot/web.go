@@ -1431,7 +1431,7 @@ func (f *windowFold) window() (agentapi.HistoryWindow, error) {
 func itemBytes(it agentapi.Item) int {
 	n := len(it.ID) + len(it.Text)
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.Progress)
 	}
 	for _, img := range it.Images {
 		n += len(img.Data)
@@ -3469,6 +3469,9 @@ func sandboxBypass(requested *bool, reason *string) string {
 // calls by id so start, live output and final results upsert one item.
 type transcript struct {
 	tools map[string]*agentapi.ToolCall
+	// toolAgents records starts so progress cannot invent a call or attach
+	// one agent's status to another agent's call.
+	toolAgents map[string]string
 	// ended holds the IDs of recently completed tool calls. A shell command
 	// a steer moved to the background completes its call at once, then keeps
 	// streaming output under the same ID; that must not reopen it.
@@ -3509,7 +3512,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -3605,6 +3608,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
 		t.tools[d.ToolCallID] = tc
+		t.toolAgents[d.ToolCallID] = it.AgentID
 		delete(t.ended, d.ToolCallID) // a new call reusing an ended ID
 		delete(t.shells, d.ToolCallID)
 		if cut {
@@ -3613,6 +3617,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			delete(t.clippedInput, d.ToolCallID)
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	case *rpc.ToolExecutionProgressData:
+		if !t.toolProgress(d, &it) {
+			return it, false
+		}
 	case *rpc.ToolShellOutputData:
 		if !t.shellOutput(d, &it) {
 			return it, false
@@ -3623,12 +3631,13 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		tc := t.tool(d.ToolCallID)
 		delete(t.tools, d.ToolCallID)
+		delete(t.toolAgents, d.ToolCallID)
 		if len(t.ended) >= maxEndedTools {
 			clear(t.ended)
 		}
 		t.ended[d.ToolCallID] = struct{}{}
 		delete(t.shells, d.ToolCallID)
-		tc.Status, tc.Tail = agentapi.ToolCompleted, nil
+		tc.Status, tc.Tail, tc.Progress = agentapi.ToolCompleted, nil, ""
 		cut := false
 		if d.Result != nil {
 			tc.Output, cut = t.clip(d.Result.Content, maxToolText)
@@ -3682,6 +3691,25 @@ func skillNotice(it agentapi.Item, id, name string) (agentapi.Item, bool) {
 	}
 	it.ID, it.Kind, it.Text = id, agentapi.ItemNotice, "Skill: "+fence+" "+name+" "+fence
 	return it, true
+}
+
+func (t *transcript) toolProgress(d *rpc.ToolExecutionProgressData, it *agentapi.Item) bool {
+	agent, started := t.toolAgents[d.ToolCallID]
+	tc := t.tools[d.ToolCallID]
+	if !started || agent != it.AgentID || tc == nil || tc.Status != agentapi.ToolRunning {
+		return false
+	}
+	text := clip(strings.TrimSpace(displaytext.Sanitize(d.ProgressMessage)), 512)
+	if text == "" || text == tc.Progress {
+		return false
+	}
+	tc.Progress = text
+	cut := t.clippedInput[d.ToolCallID]
+	if sh := t.shells[d.ToolCallID]; sh != nil {
+		cut = cut || sh.clipped
+	}
+	it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	return true
 }
 
 // images returns the images a tool result carried: its image content blocks
