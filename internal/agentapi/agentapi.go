@@ -69,6 +69,8 @@ type Capabilities struct {
 	History                  bool `json:"history"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
+	// ContextBreakdown is an optional on-demand ContextReader, never a stream.
+	ContextBreakdown bool `json:"context_breakdown,omitempty"`
 	// Usage is the second exception: the provider implements QuotaReporter
 	// and reports each conversation's AI units through EventUsage.
 	Usage bool `json:"usage"`
