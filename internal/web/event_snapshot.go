@@ -128,6 +128,7 @@ func snapshotCompactDetail(detail compactSessionDetail) compactSessionDetail {
 			tool.Declaration = snapshotValue(tool.Declaration)
 			tool.Tail = slices.Clone(tool.Tail)
 			tool.FilePaths = slices.Clone(tool.FilePaths)
+			tool.FileEdits = slices.Clone(tool.FileEdits)
 		}
 	}
 	detail.Subagents = slices.Clone(detail.Subagents)

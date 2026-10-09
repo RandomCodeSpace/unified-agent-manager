@@ -26,7 +26,8 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	s.context, s.usage = &agentapi.Context{Used: 1}, &agentapi.Usage{AIUnits: 1}
 	s.execution = &agentapi.ExecutionState{Known: true, Objective: &agentapi.AutopilotObjective{Objective: "old", CreditsUsed: &credits, CreditLimit: &credits}}
 	m.upsertItemLocked(s, agentapi.Item{ID: "tool", Kind: agentapi.ItemTool,
-		Tool:   &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolRunning, ExitCode: &exit, Tail: []agentapi.OutputLine{{Text: "old"}}, Declaration: &agentapi.FileDeclaration{ArtifactID: "old", Path: "old"}},
+		Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolRunning, ExitCode: &exit, Tail: []agentapi.OutputLine{{Text: "old"}}, Declaration: &agentapi.FileDeclaration{ArtifactID: "old", Path: "old"},
+			EditEventID: "event", FileEdits: []agentapi.FileEdit{{Path: "/old", Kind: "edit", Additions: 1, DiffStatus: "available"}}},
 		Images: []agentapi.Image{{ID: "old"}}, Attachments: []agentapi.Attachment{{ID: "old"}}}, false)
 	m.upsertItemLocked(s, agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice,
 		Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, Summary: "old", Blocker: &agentapi.CompletionBlocker{Kind: "old", Reason: "old"}}}, false)
@@ -45,7 +46,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		m.settings.HiddenModels["fake"][0], m.settings.SubagentModels["fake"][0] = "changed", "changed"
 		m.settings.TitleModel["fake"], m.settings.CustomModels[0].Name = "changed", "changed"
 		s.context.Used, s.usage.AIUnits, s.execution.Objective.Objective = 9, 9, "changed"
-		s.items[0].Tool.Tail[0].Text, s.items[0].Tool.Declaration.Path = "changed", "changed"
+		s.items[0].Tool.Tail[0].Text, s.items[0].Tool.Declaration.Path, s.items[0].Tool.FileEdits[0].Path = "changed", "changed", "/changed"
 		s.items[0].Images[0].ID, s.items[0].Attachments[0].ID = "changed", "changed"
 		s.items[1].Completion.Summary, s.items[1].Completion.Blocker.Kind = "changed", "changed"
 		s.interactions[0].Options[0].ID, s.interactions[0].Questions[0].Text, s.interactions[0].Questions[0].Choices[0] = "changed", "changed", "changed"
