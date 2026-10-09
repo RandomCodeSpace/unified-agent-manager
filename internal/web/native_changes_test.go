@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -112,19 +114,43 @@ func TestNativeChangesBusyDoesNotBecomePermanentUnsupported(t *testing.T) {
 	}
 }
 
-func TestNativeChangesClosedReadDoesNotResumeConversation(t *testing.T) {
-	ts := newTestServer(t, ServerConfig{})
-	sum, _ := createSession(t, ts.m, ts.prov)
-	if _, err := ts.m.Close(sum.ID); err != nil {
+// A closed native Task's "This task" falls back to the Git-attributed task
+// scope, labelled as such, without resuming the conversation or publishing
+// the Git count as the native total. An open one keeps its native scope.
+func TestNativeChangesClosedFallsBackToGitTaskScope(t *testing.T) {
+	prov := agenttest.NewProvider("native", agentapi.Capabilities{History: true, SessionDiff: true, SessionDiffNeedsTracking: true})
+	m := startManager(t, openTestStore(t), prov)
+	sum, err := m.Create(CreateRequest{Provider: "native", ProjectID: addProject(t, m, gitRepoFixture(t))})
+	if err != nil {
 		t.Fatal(err)
 	}
-	before := len(ts.prov.Opens())
-	changes, err := ts.m.Changes(context.Background(), sum.ID, ScopeSession)
-	if err != nil || changes.Supported || !strings.Contains(changes.Reason, "Open this Task") {
-		t.Fatalf("closed native availability = %+v, %v", changes, err)
+	conv := prov.Last()
+	conv.EmitItem(toolEdit("e1", "edit", "tracked.txt", agentapi.ToolCompleted, time.Now()))
+	conv.SetDiff([]agentapi.FileDiff{{Path: "native.txt", Patch: "--- a/native.txt\n+++ b/native.txt\n@@ -0,0 +1 @@\n+native\n"}}, nil)
+	open, paths := scopePaths(t, m, sum.ID, ScopeSession)
+	if !open.Supported || open.Scope != ScopeSession || open.Label != sessionLabel || !slices.Equal(paths, []string{"native.txt"}) {
+		t.Fatalf("open native scope = %+v", open)
 	}
-	if after := len(ts.prov.Opens()); after != before {
-		t.Fatalf("read resumed conversation: opens %d -> %d", before, after)
+
+	if _, err := m.Close(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	opens, total := len(prov.Opens()), cachedDiff(m, sum.ID)
+	closed, paths := scopePaths(t, m, sum.ID, ScopeSession)
+	if !closed.Supported || closed.Scope != ScopeTask || closed.Label != closedSessionLabel || !slices.Equal(paths, []string{"tracked.txt"}) {
+		t.Fatalf("closed native scope = %+v", closed)
+	}
+	if f, err := m.FileChange(t.Context(), sum.ID, ScopeSession, "tracked.txt"); err != nil || f.Additions != 2 {
+		t.Fatalf("closed fallback file = %+v, %v", f, err)
+	}
+	if _, err := m.FileChange(t.Context(), sum.ID, ScopeSession, "native.txt"); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("closed fallback served a file the Task did not edit: %v", err)
+	}
+	if after := len(prov.Opens()); after != opens {
+		t.Fatalf("read resumed conversation: opens %d -> %d", opens, after)
+	}
+	if got := cachedDiff(m, sum.ID); got != total && (got == nil || total == nil || *got != *total) {
+		t.Fatalf("Git fallback replaced native total: %+v -> %+v", total, got)
 	}
 }
 

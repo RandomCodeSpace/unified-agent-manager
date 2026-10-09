@@ -470,7 +470,8 @@ func TestChangesRefuseUnknownSessionAndScope(t *testing.T) {
 }
 
 // The session view explains when the provider cannot list changes, caps a
-// huge list and refuses a conversation that is not open.
+// huge list and falls back to the task scope for a conversation that is not
+// open.
 func TestSessionScopeUnsupportedCappedAndClosed(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	sum, conv := createSession(t, m, prov)
@@ -502,8 +503,8 @@ func TestSessionScopeUnsupportedCappedAndClosed(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := m.Changes(ctx, sum.ID, ScopeSession); err != nil || out.Supported || !strings.Contains(out.Reason, "Open this Task") {
-		t.Fatalf("closed conversation changes = %+v, %v, want an unsupported reason", out, err)
+	if out, err := m.Changes(ctx, sum.ID, ScopeSession); err != nil || out.Scope != ScopeTask || out.Label != closedSessionLabel {
+		t.Fatalf("closed conversation changes = %+v, %v, want the task scope fallback", out, err)
 	}
 }
 
