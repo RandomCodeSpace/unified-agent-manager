@@ -115,10 +115,10 @@ func (s *webSession) lastMain(kind agentapi.ItemKind, end int) int {
 }
 
 // lastMainItem returns the index of the main agent's last item other than a
-// thought, or -1. A turn can record an empty thought after its answer.
+// thought or completion receipt, or -1. Both can follow the final answer.
 func (s *webSession) lastMainItem() int {
 	for i := len(s.items) - 1; i >= 0; i-- {
-		if s.items[i].AgentID == "" && s.items[i].Kind != agentapi.ItemReasoning {
+		if s.items[i].AgentID == "" && s.items[i].Kind != agentapi.ItemReasoning && s.items[i].Completion == nil {
 			return i
 		}
 	}
@@ -363,9 +363,9 @@ func outcomeLine(verb string, ev turnOutcome) string {
 
 // outcomeTurnLocked updates s's outcome line for a turn transition: a turn
 // that starts clears it, and one that completes gets the line its evidence
-// shows at once, then, when a Utility model can run, one call for the verb
-// phrase that leads it. The caller holds mu.
-func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState) {
+// shows at once. A matching accepted native summary supplies the phrase;
+// otherwise a Utility call supplies it when a model can run. The caller holds mu.
+func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, completion *agentapi.TaskCompletion) {
 	if state == agentapi.TurnWorking && s.outcome == "" && s.outcomeRun == 0 {
 		return
 	}
@@ -378,6 +378,15 @@ func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState) {
 	ev := facts.outcome(s.workdir)
 	if ok {
 		s.outcome = outcomeLine("", ev)
+	}
+	if c := checkCompletion(completion); c != nil && c.Decision == agentapi.CompletionAccepted && c.UserItemID != "" && len(s.turnTimings) > 0 {
+		ended := s.turnTimings[len(s.turnTimings)-1]
+		if ended.State == string(agentapi.TurnCompleted) && ended.UserItemID == c.UserItemID && !ended.EndedAt.IsZero() {
+			if summary := cleanGeneratedTitle(c.Summary); summary != "" {
+				s.outcome = outcomeLine(summary, ev)
+				return
+			}
+		}
 	}
 	last := s.lastMainItem()
 	if !ok || last < 0 || s.items[last].Kind != agentapi.ItemAssistant || strings.TrimSpace(s.items[last].Text) == "" {

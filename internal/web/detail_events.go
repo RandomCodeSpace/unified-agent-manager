@@ -61,6 +61,14 @@ type initialDetailFrame struct {
 }
 
 func cloneBody(it agentapi.Item) agentapi.Item {
+	if it.Completion != nil {
+		c := *it.Completion
+		if c.Blocker != nil {
+			b := *c.Blocker
+			c.Blocker = &b
+		}
+		it.Completion = &c
+	}
 	if it.Tool != nil {
 		t := *it.Tool
 		it.Tool = &t
@@ -207,6 +215,13 @@ func compactItemBytes(it compactItem) int {
 	}
 	if it.Compact != nil {
 		size += field("compact", 64+field("has_reasoning", 4)+field("has_text", 4))
+	}
+	if c := it.Completion; c != nil {
+		completion := 64 + str("decision", string(c.Decision), false) + str("user_item_id", c.UserItemID, true) + str("summary", c.Summary, true) + str("reason", c.Reason, true)
+		if b := c.Blocker; b != nil {
+			completion += field("blocker", 64+str("kind", b.Kind, false)+str("reason", b.Reason, false)+field("resumable", 4))
+		}
+		size += field("completion", completion)
 	}
 	if t := it.Tool; t != nil {
 		tool := 64 + str("name", t.Name, false) + str("status", string(t.Status), false)

@@ -2283,7 +2283,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
 	}
-	m.outcomeTurnLocked(s, turn.State)
+	m.outcomeTurnLocked(s, turn.State, turn.Completion)
 	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
 		s.lastModel = model
 	}

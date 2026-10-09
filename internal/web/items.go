@@ -69,6 +69,11 @@ func clampItem(it agentapi.Item, now time.Time) agentapi.Item {
 // checkItem copies an item with its declaration, attachments and images
 // checked, and its texts whole.
 func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
+	if it.Kind == agentapi.ItemNotice {
+		it.Completion = checkCompletion(it.Completion)
+	} else {
+		it.Completion = nil
+	}
 	if it.Tool != nil {
 		tool := *it.Tool
 		if d := tool.Declaration; d != nil {
@@ -110,6 +115,12 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 
 func itemSize(it agentapi.Item) int {
 	n := len(it.ID) + len(it.Text)
+	if c := it.Completion; c != nil {
+		n += len(c.Decision) + len(c.UserItemID) + len(c.Summary) + len(c.Reason)
+		if c.Blocker != nil {
+			n += len(c.Blocker.Kind) + len(c.Blocker.Reason)
+		}
+	}
 	if it.Tool != nil {
 		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
 		if d := it.Tool.Declaration; d != nil {
@@ -120,6 +131,38 @@ func itemSize(it agentapi.Item) int {
 		}
 	}
 	return n
+}
+
+func checkCompletion(in *agentapi.TaskCompletion) *agentapi.TaskCompletion {
+	if in == nil {
+		return nil
+	}
+	c := *in
+	switch c.Decision {
+	case agentapi.CompletionAccepted, agentapi.CompletionRejected, agentapi.CompletionBlocked, agentapi.CompletionUnknown:
+	default:
+		c.Decision = agentapi.CompletionUnknown
+	}
+	if len(c.UserItemID) > 256 || !utf8.ValidString(c.UserItemID) || strings.ContainsFunc(c.UserItemID, unicode.IsControl) {
+		c.UserItemID = ""
+	}
+	text := func(s string, limit int) string {
+		s = strings.TrimSpace(displaytext.Sanitize(s))
+		if len(s) > limit {
+			for limit > 0 && !utf8.RuneStart(s[limit]) {
+				limit--
+			}
+			s = s[:limit]
+		}
+		return strings.Clone(s)
+	}
+	c.Summary, c.Reason = text(c.Summary, 512), text(c.Reason, 256)
+	if c.Blocker != nil {
+		b := *c.Blocker
+		b.Kind, b.Reason = text(b.Kind, 64), text(b.Reason, 64)
+		c.Blocker = &b
+	}
+	return &c
 }
 
 // itemKey indexes an item: item IDs are unique per agent only. The main

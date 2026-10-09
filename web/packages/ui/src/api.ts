@@ -689,6 +689,15 @@ export interface ToolImage {
   name?: string;
 }
 
+export interface TaskCompletion {
+  decision: 'accepted' | 'rejected' | 'blocked' | 'unknown';
+  /** Exact ordinary user-message ID; absent when correlation is unresolved. */
+  user_item_id?: string;
+  summary?: string;
+  reason?: string;
+  blocker?: { kind: string; reason: string; resumable: boolean };
+}
+
 export interface Item {
   compact?: { has_reasoning: boolean; has_text: boolean };
   id: string;
@@ -698,6 +707,7 @@ export interface Item {
   steer_status?: 'accepted' | 'not_delivered';
   text?: string;
   tool?: ToolCall;
+  completion?: TaskCompletion;
   /** When it began: a tool call's start, a thought's model call start. */
   time: string;
   /** When a tool call or thought finished, from the provider's record; absent while it runs or when unknown. */

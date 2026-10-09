@@ -37,6 +37,36 @@ describe('messages', () => {
     expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
   });
 
+  test.each(['compact', 'detailed'] as const)('native completion decisions remain visible in %s history', (density) => {
+    saveDensity(density);
+    const items: Item[] = [
+      { id: 'u', kind: 'user', text: 'Fix the parser', time: '2026-10-09T10:00:00Z' },
+      { id: 'a', kind: 'assistant', text: 'Fixed the parser.', time: '2026-10-09T10:00:01Z' },
+      ...(['accepted', 'rejected', 'blocked', 'unknown'] as const).map((decision, index): Item => ({
+        id: `receipt-${index}`, kind: 'notice', time: `2026-10-09T10:00:0${index + 2}Z`,
+        text: `${decision === 'unknown' ? 'Completion decision unknown' : `Completion ${decision}`} · Summary: \` Native summary ${index} \` · Reason: \` Exact native reason ${index} \` · Blocker kind: \` permission \` · Blocker reason: \` user_denied \` · Resumable: ${index % 2 ? 'yes' : 'no'}`,
+        completion: { decision, user_item_id: 'u', summary: `Native summary ${index}`, reason: `Exact native reason ${index}`, blocker: { kind: 'permission', reason: 'user_denied', resumable: index % 2 === 1 } },
+        compact: { has_text: false, has_reasoning: false },
+      })),
+    ];
+    const view = render(<Transcript sessionId="completion-task" items={items} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" />);
+    expect(view.getByText('Fixed the parser.')).toBeTruthy();
+    const rows = items.slice(2).map((item, index) => {
+      const row = view.getByText(`Native summary ${index}`).closest('p')!;
+      expect(within(row).getByText(`Native summary ${index}`).tagName).toBe('CODE');
+      expect(within(row).getByText(`Exact native reason ${index}`).tagName).toBe('CODE');
+      expect(within(row).getByText('permission').tagName).toBe('CODE');
+      expect(within(row).getByText('user_denied').tagName).toBe('CODE');
+      expect(row.textContent).toContain(`Resumable: ${item.completion!.blocker!.resumable ? 'yes' : 'no'}`);
+      return row;
+    });
+    expect(rows).toHaveLength(4);
+    for (let index = 1; index < rows.length; index++) {
+      expect(rows[index - 1].compareDocumentPosition(rows[index]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    expect(view.queryByText('Loading the full message…')).toBeNull();
+  });
+
   test('user and assistant messages render as Markdown with code, links and attachments', async () => {
     await openTask('t3');
     const view = log();

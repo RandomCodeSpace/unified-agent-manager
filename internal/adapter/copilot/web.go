@@ -1434,6 +1434,12 @@ func (f *windowFold) window() (agentapi.HistoryWindow, error) {
 // itemBytes approximates the memory an item's text and images hold.
 func itemBytes(it agentapi.Item) int {
 	n := len(it.ID) + len(it.Text)
+	if c := it.Completion; c != nil {
+		n += len(c.Decision) + len(c.UserItemID) + len(c.Summary) + len(c.Reason)
+		if c.Blocker != nil {
+			n += len(c.Blocker.Kind) + len(c.Blocker.Reason)
+		}
+	}
 	if it.Tool != nil {
 		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output)
 	}
@@ -1717,8 +1723,10 @@ type conversation struct {
 	// taskCompleted marks a main-agent session.task_complete in the current
 	// turn: the session.idle that follows ends an autopilot run even though
 	// it still reports the autopilot mode.
-	taskCompleted  bool
-	foregroundIdle bool
+	taskCompleted   bool
+	completion      *agentapi.TaskCompletion
+	completionReady bool
+	foregroundIdle  bool
 	// turnRunning is set from a foreground turn's start until its end. Send
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
@@ -2248,6 +2256,7 @@ func uploadFile(f *rpc.AttachmentFile) (agentapi.Attachment, bool) {
 func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) error {
 	c.mu.Lock()
 	closed, running, idles := c.closed, c.turnRunning, c.idles
+	generation := c.tr.completions.generation
 	c.mu.Unlock()
 	if closed {
 		return agentapi.ErrClosed
@@ -2269,13 +2278,17 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 			log.Warn("copilot uam tools stay refused until the next message", "conversation", c.id, "error", err)
 		}
 	}
+	c.mu.Lock()
+	c.completionReady = false
+	c.mu.Unlock()
 	if _, err := c.sess.Send(ctx, msg); err != nil {
 		return c.sendError(err)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// An idle seen while Send was in flight already ended this turn.
-	if c.idles == idles {
+	// An idle may already have ended it, or a native foreground start may
+	// already have begun it. Preserve a receipt that arrived after that start.
+	if c.idles == idles && c.tr.completions.generation == generation {
 		c.startTurnLocked()
 	}
 	return nil
@@ -2971,6 +2984,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.tools.observe(ev)
 	}
 	agentID := agentOf(ev)
+	completionCtx, newCompletionEvent := c.tr.completions.observe(ev)
 	if c.observeActivityLocked(ev, agentID) {
 		return
 	}
@@ -3063,7 +3077,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.AssistantTurnStartData:
 		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
+			if !newCompletionEvent {
+				return
+			}
 			c.startTurnLocked()
+			c.completionReady = completionCtx.userID != "" && completionCtx.userID == c.tr.completions.users[""]
 		} else if c.resumeSubagentLocked(agentID, ev.Timestamp) {
 			c.checkTasksLocked()
 		}
@@ -3084,6 +3102,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventCompaction})
 		}
 	case *rpc.UserMessageData:
+		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+			c.completionReady = false
+		}
 		if agentID == "" && d.MessageID != nil {
 			c.steers = slices.DeleteFunc(c.steers, func(st *steer) bool { return st.id == *d.MessageID })
 			if c.steering > 0 {
@@ -3135,7 +3156,15 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	case *rpc.SessionTaskCompleteData:
 		if agentID == "" {
-			c.taskCompleted = true
+			if d.Success == nil && d.Outcome == nil {
+				c.taskCompleted = true // Preserve the legacy lifecycle signal.
+			}
+			if newCompletionEvent && c.completionReady && c.turnRunning && completionCtx.generation != 0 && completionCtx.generation == c.tr.completions.generation {
+				c.completion = c.tr.completion(ev, d)
+				if c.completion != nil && (d.Success != nil || d.Outcome != nil) {
+					c.taskCompleted = c.completion.Decision == agentapi.CompletionAccepted
+				}
+			}
 		}
 	case *rpc.ToolExecutionStartData:
 		// Its item follows.
@@ -3230,6 +3259,8 @@ func (c *conversation) startTurnLocked() {
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
 	c.idleUnresolved, c.taskCompleted = false, false
+	c.completion = nil
+	c.completionReady = false
 	c.autopilotTurn = c.execution != nil && c.execution.Mode == "autopilot"
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnWorking}})
 }
@@ -3241,7 +3272,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	c.foregroundIdle, c.turnRunning = true, false
 	c.idleUnresolved = false
 	c.idles++
-	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel}
+	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel, Completion: c.completion}
 	switch {
 	case aborted != nil && *aborted:
 		turn.State, turn.Reason = agentapi.TurnCancelled, c.act.abortReason
@@ -3253,6 +3284,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	c.act = activity{}
 	c.undeliveredLocked(turn.State, at)
 	c.emitTurnEndLocked(turn)
+	c.completion = nil
 }
 
 // undeliveredLocked reports each steer the ending turn did not use as a
@@ -3472,7 +3504,8 @@ func sandboxBypass(requested *bool, reason *string) string {
 // transcript maps session events to transcript items. It keeps running tool
 // calls by id so start, live output and final results upsert one item.
 type transcript struct {
-	tools map[string]*agentapi.ToolCall
+	completions completionTrace
+	tools       map[string]*agentapi.ToolCall
 	// ended holds the IDs of recently completed tool calls. A shell command
 	// a steer moved to the background completes its call at once, then keeps
 	// streaming output under the same ID; that must not reopen it.
@@ -3523,6 +3556,7 @@ func newTranscript() *transcript {
 // live turn streams assistant.reasoning before the message, and that item
 // already holds the text.
 func (t *transcript) items(ev copilot.SessionEvent) []agentapi.Item {
+	t.completions.observe(ev)
 	var out []agentapi.Item
 	if _, ok := ev.Data.(*rpc.AssistantTurnStartData); ok {
 		t.stepStart[agentOf(ev)] = ev.Timestamp
@@ -3599,6 +3633,12 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 	case *rpc.SessionTruncationData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, fmt.Sprintf("Conversation truncated: %d messages and %d tokens removed.", d.MessagesRemovedDuringTruncation, d.TokensRemovedDuringTruncation)
+	case *rpc.SessionTaskCompleteData:
+		it.Completion = t.completion(ev, d)
+		if it.Completion == nil {
+			return it, false
+		}
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, completionNotice(it.Completion)
 	case *rpc.SessionErrorData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Error: "+displaytext.Sanitize(d.Message)
 	case *rpc.SkillInvokedData:
