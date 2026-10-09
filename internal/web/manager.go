@@ -289,8 +289,9 @@ type webSession struct {
 	// compactAt is the compaction threshold, in percent, the conversation
 	// was last opened with; not persisted.
 	compactAt int
-	// mode is safe or yolo: a yolo Task's permission requests are allowed
-	// once without asking.
+	// mode is safe, yolo or assisted: a yolo Task's permission requests are
+	// allowed once without asking; an assisted Task's are when the
+	// provider's assisted review by assistedApprovalModel approves them.
 	mode      store.Mode
 	workdir   string
 	convID    string
@@ -464,9 +465,10 @@ type interaction struct {
 	// answering is set while this service's answer is with the provider, so
 	// a concurrent second answer is refused instead of racing it.
 	answering bool
-	// yolo is set once yolo mode claimed the interaction; it no longer waits
-	// for the user.
-	yolo bool
+	// yolo is set once yolo mode, or an approving assisted review when
+	// assisted is also set, claimed the interaction; it no longer waits for
+	// the user.
+	yolo, assisted bool
 }
 
 // public is ix as a browser sees it: Auto says yolo mode is answering it.
@@ -793,8 +795,8 @@ func cleanTitle(title string) string {
 func sessionFromRecord(rec store.SessionRecord) *webSession {
 	s := newSession(rec.ID, rec.Agent, rec.Name, rec.Workdir, rec.ProviderSessionID, rec.CreatedAt)
 	s.updatedAt = rec.LastSeenAt
-	if rec.Mode == store.ModeYolo {
-		s.mode = store.ModeYolo
+	if rec.Mode == store.ModeYolo || rec.Mode == store.ModeAssisted {
+		s.mode = rec.Mode
 	}
 	if web := rec.Web; web != nil {
 		s.turnTimings = slices.Clone(web.TurnTimings)
@@ -2390,6 +2392,14 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 			return nil, "", "", err
 		}
 	}
+	if mode == store.ModeAssisted {
+		m.mu.Lock()
+		err = m.assistedSupportLocked(prov.Name())
+		m.mu.Unlock()
+		if err != nil {
+			return nil, "", "", err
+		}
+	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return nil, "", "", newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
 	}
@@ -2441,7 +2451,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.editsKnown = true
 	s.gen = 1
 	m.mu.Lock()
-	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, s)
+	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir), AssistedApprovalModel: approvalModel(mode)}, s)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
@@ -2729,13 +2739,16 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s)
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir), AssistedApprovalModel: approvalModel(s.mode)}, s)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
 	s.context, s.compacting = nil, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
 		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)
+	}
+	if selectionErr == nil && s.mode == store.ModeAssisted {
+		selectionErr = m.assistedSupportLocked(s.provider)
 	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
@@ -4125,7 +4138,8 @@ func (m *Manager) validateSelectionLocked(provider, model, effort, contextSize s
 
 // Answer forwards the user's answer to a pending interaction. The first
 // answer wins. The service answers on the user's behalf only for permission
-// requests of a yolo Task, and never for questions.
+// requests of a yolo Task or approved by an assisted review, and never for
+// questions.
 func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agentapi.Interaction, error) {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -4174,14 +4188,14 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	wasYolo := ix.yolo
 	if err != nil {
 		// Not answered: the request is the user's again.
-		ix.yolo = false
+		ix.yolo, ix.assisted = false, false
 	}
 	switch {
 	case err == nil:
 		if ix.State == agentapi.InteractionPending {
 			ix.State, ix.Resolution = resolution(ix.Interaction, answer)
 			if ix.yolo {
-				ix.Resolution = yoloResolution
+				ix.Resolution = autoResolution(ix)
 			}
 			m.publishInteractionLocked(s, ix)
 		}
@@ -4203,17 +4217,53 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	}
 }
 
-// yoloResolution is the recorded resolution of a permission request that
-// yolo mode allowed.
-const yoloResolution = "allowed (yolo)"
+// yoloResolution and assistedResolution are the recorded resolutions of a
+// permission request that yolo mode or an approving assisted review allowed.
+const (
+	yoloResolution     = "allowed (yolo)"
+	assistedResolution = "allowed (assisted review)"
+)
 
-// autoAllowLocked answers a pending permission request of a yolo Task with
-// the provider's single-use allow option, through the same claim as a
-// browser's answer. Questions, and requests without that option (the
-// provider's policy says a person must decide), stay with the user.
-// It reports whether it claimed ix.
+// assistedApprovalModel is the only reviewer assisted Tasks use. A
+// configuration without it is refused, never left to the runtime default.
+const assistedApprovalModel = "gpt-6-luna"
+
+func autoResolution(ix *interaction) string {
+	if ix.assisted {
+		return assistedResolution
+	}
+	return yoloResolution
+}
+
+// approvalModel is the OpenRequest.AssistedApprovalModel of a Task mode.
+func approvalModel(mode store.Mode) string {
+	if mode == store.ModeAssisted {
+		return assistedApprovalModel
+	}
+	return ""
+}
+
+// assistedSupportLocked refuses assisted mode unless the provider supports
+// it and offers assistedApprovalModel.
+func (m *Manager) assistedSupportLocked(provider string) error {
+	if !m.infos[provider].Capabilities.AssistedPermissions {
+		return newError(http.StatusConflict, "this provider does not support assisted permissions")
+	}
+	if m.modelLocked(provider, assistedApprovalModel).ID == "" {
+		return newError(http.StatusConflict, "assisted permissions need the %s reviewer model, which this account does not offer", assistedApprovalModel)
+	}
+	return nil
+}
+
+// autoAllowLocked answers a pending permission request with the provider's
+// single-use allow option, through the same claim as a browser's answer:
+// any request of a yolo Task, and a request of an assisted Task that
+// assistedApprovalModel reviewed and approved. Questions, and requests
+// without that option (the provider's policy says a person must decide),
+// stay with the user. It reports whether it claimed ix.
 func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
-	if s.mode != store.ModeYolo || m.closed || s.removed || s.conv == nil ||
+	assisted := s.mode == store.ModeAssisted && ix.Assisted.Recommendation == "approve" && ix.Assisted.Model == assistedApprovalModel
+	if s.mode != store.ModeYolo && !assisted || m.closed || s.removed || s.conv == nil ||
 		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
 		return false
 	}
@@ -4222,12 +4272,12 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 		return false
 	}
 	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID, Auto: true}
-	ix.answering, ix.yolo = true, true
+	ix.answering, ix.yolo, ix.assisted = true, true, assisted
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
-			log.Warn("web yolo approval failed", "session", s.id, "interaction", id, "error", err)
+			log.Warn("web automatic approval failed", "session", s.id, "interaction", id, "error", err)
 		}
 	}()
 	return true
@@ -4247,28 +4297,83 @@ func (m *Manager) autoAllowPendingLocked(s *webSession) {
 // parseMode validates a Task mode.
 func parseMode(mode string) (store.Mode, error) {
 	switch store.Mode(mode) {
-	case store.ModeSafe, store.ModeYolo:
+	case store.ModeSafe, store.ModeYolo, store.ModeAssisted:
 		return store.Mode(mode), nil
 	}
-	return "", newError(http.StatusBadRequest, "mode must be safe or yolo")
+	return "", newError(http.StatusBadRequest, "mode must be safe, yolo or assisted")
 }
 
 // SetMode sets the Task's permission mode at any time, even while a turn
 // runs. It applies to permission requests raised afterwards; switching to yolo
-// also answers the ones already pending.
+// also answers the ones already pending. Switching into or out of assisted
+// changes the open conversation's mode first (setAssistedMode).
 func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	md, err := parseMode(mode)
 	if err != nil {
 		return SessionSummary{}, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
+		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
+	if md == store.ModeAssisted || s.mode == store.ModeAssisted {
+		m.mu.Unlock()
+		return m.setAssistedMode(s, md)
+	}
+	defer m.mu.Unlock()
 	if err := s.readOnlyLocked(); err != nil {
 		return SessionSummary{}, err
+	}
+	before := m.summaryLocked(s)
+	s.mode = md
+	m.autoAllowPendingLocked(s)
+	m.changedLocked(s, before)
+	return m.summaryLocked(s), nil
+}
+
+// setAssistedMode is SetMode into or out of assisted. Holding s.op keeps
+// opens out, so the conversation it changes stays the open one. The mode is
+// recorded only after the runtime applied it; a closed conversation gets it
+// at its next open.
+func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary, error) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	err := s.readOnlyLocked()
+	switch {
+	case s.removed:
+		err = newError(http.StatusNotFound, msgSessionNotFound)
+	case err == nil && md == store.ModeAssisted && s.mode != store.ModeAssisted:
+		err = m.assistedSupportLocked(s.provider)
+	}
+	conv, toggle := s.conv, (md == store.ModeAssisted) != (s.mode == store.ModeAssisted)
+	m.mu.Unlock()
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if conv != nil && toggle {
+		setter, ok := conv.(agentapi.AssistedPermissionSetter)
+		if !ok {
+			return SessionSummary{}, newError(http.StatusConflict, "this provider does not support assisted permissions")
+		}
+		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+		err = setter.SetAssistedPermissions(ctx, approvalModel(md))
+		cancel()
+		switch {
+		case err == nil, errors.Is(err, agentapi.ErrClosed):
+		case errors.Is(err, agentapi.ErrUnsupported):
+			return SessionSummary{}, newError(http.StatusConflict, "this runtime does not support assisted permissions")
+		default:
+			log.Warn("web permission mode change failed", "session", s.id, "error", err)
+			return SessionSummary{}, newError(http.StatusBadGateway, "could not change the permission mode: %s", shortError(err))
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.removed {
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	before := m.summaryLocked(s)
 	s.mode = md

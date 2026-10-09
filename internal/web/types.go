@@ -272,8 +272,9 @@ type SessionSummary struct {
 	BackgroundTasksRunning int `json:"background_tasks_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
-	// Mode is safe or yolo. A yolo Task's permission requests are allowed
-	// once without asking; questions still wait for the user.
+	// Mode is safe, yolo or assisted. A yolo Task's permission requests are
+	// allowed once without asking, an assisted Task's when the provider's
+	// assisted review approves them; questions still wait for the user.
 	Mode      string                   `json:"mode"`
 	Execution *agentapi.ExecutionState `json:"execution"`
 	// Stage is omitted for an active Task, otherwise StageSettled or

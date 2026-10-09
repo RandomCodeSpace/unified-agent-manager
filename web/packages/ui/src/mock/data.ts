@@ -142,7 +142,7 @@ export function seed(): MockState {
         name: 'copilot',
         display_name: 'GitHub Copilot',
         available: true,
-        capabilities: { ...CAPS, titles: true, host_tools: true, github_mcp: true },
+        capabilities: { ...CAPS, titles: true, host_tools: true, github_mcp: true, assisted_permissions: true },
         cheapest_model: 'gpt-5-mini',
         models: [
           // `auto` reports no media and is not gated; kimi-k3 and the flash model take text only.
@@ -324,7 +324,7 @@ export function seed(): MockState {
       title: '',
       state: 'working',
       background_tasks_running: 1,
-      capabilities: { ...CAPS, execution_modes: true },
+      capabilities: { ...CAPS, execution_modes: true, assisted_permissions: true },
       execution: { known: true, mode: 'interactive' },
       turn_activity: { intent: 'Running the redraw tests', todos: { known: false, touched: false, todos: [], counts: {} } },
       background_tasks: {

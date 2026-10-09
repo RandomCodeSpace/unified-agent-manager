@@ -23,6 +23,13 @@ function optionVariant(option: Option, primary: Option | undefined): 'danger' | 
   return option === primary ? 'primary' : 'secondary';
 }
 
+/** Why an assisted Task still asks: the reviewer's outcome, in words. */
+const REVIEW_TEXT: Record<string, string> = { approve: 'approved it', requireApproval: 'asks for your decision', excluded: 'did not review it', error: 'could not review it' };
+function assistedNote(review: NonNullable<Interaction['assisted']>): string {
+  const outcome = REVIEW_TEXT[review.recommendation] ?? 'did not approve it';
+  return `Assisted review${review.model ? ` (${review.model})` : ''} ${outcome}${review.reason ? `: ${review.reason}` : '.'}`;
+}
+
 export function DecidedRow({ interaction, className }: Readonly<{ interaction: Interaction; className?: string }>) {
   const { word, full, tone } = approvalMark(interaction);
   const Icon = interaction.kind === 'question' ? MessageCircleQuestion : APPROVAL_ICONS[tone];
@@ -100,6 +107,7 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
       )}
       {permission ? (
         <>
+          {interaction.assisted && <Note className="mt-2">{assistedNote(interaction.assisted)}</Note>}
           {!permitted && <Note className="mt-2">This agent does not take decisions from here.</Note>}
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">

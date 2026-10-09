@@ -159,6 +159,7 @@ export const STATE_TEXT: Record<InteractionState, string> = {
 };
 
 export const YOLO_RESOLUTION = 'allowed (yolo)';
+export const ASSISTED_RESOLUTION = 'allowed (assisted review)';
 
 /** A question's mark by its state: answered is fine, declined is a denial, the rest is gone. */
 const QUESTION_TONE: Record<InteractionState, 'ok' | 'denied' | 'gone'> = { pending: 'gone', answered: 'ok', rejected: 'denied', expired: 'gone' };
@@ -169,6 +170,7 @@ export function approvalMark(ix: Interaction): { word: string; full: string; ton
   const full = `${ix.title} · ${STATE_TEXT[ix.state]}${resolution}`;
   if (ix.kind === 'question') return { word: STATE_TEXT[ix.state].toLowerCase(), full, tone: QUESTION_TONE[ix.state] };
   if (ix.resolution === YOLO_RESOLUTION) return { word: 'auto', full, tone: 'ok' };
+  if (ix.resolution === ASSISTED_RESOLUTION) return { word: 'reviewed', full, tone: 'ok' };
   switch (ix.state) {
     case 'answered':
       return { word: 'allowed', full, tone: 'ok' };

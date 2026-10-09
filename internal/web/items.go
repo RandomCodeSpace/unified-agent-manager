@@ -616,6 +616,9 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 	ix.Title = clampText(ix.Title, maxLabelText)
 	ix.Detail = clampText(ix.Detail, maxInteractionText)
 	ix.Resolution = clampText(ix.Resolution, maxLabelText)
+	ix.Assisted.Recommendation = clampText(ix.Assisted.Recommendation, maxLabelText)
+	ix.Assisted.Model = clampText(ix.Assisted.Model, maxLabelText)
+	ix.Assisted.Reason = clampText(ix.Assisted.Reason, maxInteractionText)
 	if !validToolCallID(ix.ToolCallID) {
 		ix.ToolCallID = ""
 	}
@@ -655,7 +658,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 			return
 		}
 		if cur.yolo && ix.State == agentapi.InteractionAnswered {
-			ix.Resolution = yoloResolution
+			ix.Resolution = autoResolution(cur)
 		}
 		cur.Interaction = ix
 	} else {

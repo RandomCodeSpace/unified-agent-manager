@@ -18,8 +18,10 @@ and conventions below instead.
   `git status` before you treat a change as yours.
 - **Steer**: a message the owner sends while you work. It reaches you before
   your next step. A **queued** message waits until the turn ends.
-- **Safe / Yolo**: the permission policy. In Safe each permission request
-  waits for the owner.
+- **Safe / Assisted / Yolo**: the permission policy. In Safe each permission
+  request waits for the owner. In Assisted a reviewer model checks each
+  request: the ones it approves run without waiting, the rest wait for the
+  owner.
 - **Changes**: the owner's diff view. It opens on **This task**: the files
   you or your subagents edited with an edit tool, compared with `HEAD`.
   Files written by shell commands, or changed by another Task, show only

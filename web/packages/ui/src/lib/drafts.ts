@@ -2,7 +2,7 @@
 // reloading keeps what was typed; a new Task's, which has no id until its first Send, per
 // Project (`uam.draft.new.<projectId>`). Pure rules; the Composer owns the storage calls.
 
-import type { Model, PromptSettings, TaskDefaults } from '../api';
+import type { Model, PromptSettings, TaskSettings } from '../api';
 import type { Kind } from './attachments';
 
 export const DRAFT_PREFIX = 'uam.draft.';
@@ -73,7 +73,7 @@ export function staleDraftKeys(keys: readonly string[], liveIds: Iterable<string
  * A new Task's settings after a picker change, by the service's rule for a Task's: an effort
  * or context size not given survives a model change only where the new model offers it.
  */
-export function changeSettings(s: TaskDefaults, body: Partial<Omit<TaskDefaults, 'provider'>>, next?: Pick<Model, 'efforts' | 'context_sizes'>): TaskDefaults {
+export function changeSettings(s: TaskSettings, body: Partial<Omit<TaskSettings, 'provider'>>, next?: Pick<Model, 'efforts' | 'context_sizes'>): TaskSettings {
   const out = { ...s, ...body };
   if (body.model !== undefined && body.model !== s.model) {
     if (body.effort === undefined && !next?.efforts?.includes(out.effort)) out.effort = '';
@@ -83,6 +83,6 @@ export function changeSettings(s: TaskDefaults, body: Partial<Omit<TaskDefaults,
 }
 
 /** The create request for a new Task's first Send: its settings, no prompt (the message follows once it exists). */
-export function createRequest(projectId: string, s: TaskDefaults, requestId: string) {
+export function createRequest(projectId: string, s: TaskSettings, requestId: string) {
   return { project_id: projectId, provider: s.provider, model: s.model || undefined, effort: s.effort, context_size: s.context_size, mode: s.mode, request_id: requestId };
 }
