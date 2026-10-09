@@ -51,6 +51,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"GET /api/sessions/{id}/history",
 		"GET /api/sessions/{id}/items/{item_id}",
 		"GET /api/sessions/{id}/mcp",
+		"GET /api/sessions/{id}/usage-metrics",
 		"GET /api/sessions/{id}/subagents",
 		"GET /api/sessions/{id}/subagents/{agent_id}",
 		"GET /api/sessions/{id}/subagents/{agent_id}/history",

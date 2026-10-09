@@ -47,6 +47,9 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"DELETE", "/api/configuration/skills/name", true},
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
+		{"GET", "/api/sessions/task/usage-metrics", true},
+		{"POST", "/api/sessions/task/usage-metrics", false},
+		{"GET", "/api/sessions/task/usage-metrics/extra", false},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
@@ -73,6 +76,9 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 				t.Fatalf("route %q allowed=%v, want %v", pattern, got, tc.allowed)
 			}
 		})
+	}
+	if connectedAccountGated("GET /api/sessions/{id}/usage-metrics") {
+		t.Fatal("native Task usage is incorrectly account-gated")
 	}
 	// A new owner route remains private even when it exists in the router.
 	ts.srv.mux.HandleFunc("GET /api/secrets", func(http.ResponseWriter, *http.Request) {})
