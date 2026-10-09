@@ -71,6 +71,7 @@ func cloneBody(it agentapi.Item) agentapi.Item {
 	}
 	if it.Tool != nil {
 		t := *it.Tool
+		t.FileEdits = slices.Clone(it.Tool.FileEdits)
 		it.Tool = &t
 	}
 	it.Images = slices.Clone(it.Images)
@@ -227,6 +228,24 @@ func compactItemBytes(it compactItem) int {
 		tool := 64 + str("name", t.Name, false) + str("status", string(t.Status), false)
 		tool += str("title", t.Title, true) + str("input", t.Input, true) + str("output", t.Output, true) + str("display_arg", t.DisplayArg, true) + str("path", t.Path, true)
 		tool += field("has_input", 4) + field("has_output", 4)
+		tool += str("edit_event_id", t.EditEventID, true)
+		if t.FileEditsTruncated {
+			tool += field("file_edits_truncated", 4)
+		}
+		if len(t.FileEdits) > 0 {
+			list := 32
+			for _, edit := range t.FileEdits {
+				value := 64 + str("path", edit.Path, false) + str("kind", edit.Kind, false) + str("diff_status", edit.DiffStatus, false)
+				if edit.Additions != 0 {
+					value += field("additions", 8)
+				}
+				if edit.Deletions != 0 {
+					value += field("deletions", 8)
+				}
+				list += 8 + value
+			}
+			tool += field("file_edits", list)
+		}
 		if len(t.Tail) > 0 {
 			list := 32
 			for _, line := range t.Tail {

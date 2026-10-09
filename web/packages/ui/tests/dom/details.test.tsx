@@ -19,7 +19,7 @@ class FakeEventSource {
 
 const session = { id: 's1', epoch: 'e1', representation: 'compact-v1', detail_stream: true, items: [], interactions: [], subagents: [], history_truncated: false, last_submission: null } as unknown as SessionDetail;
 const row: Item = { id: 'tool', kind: 'tool', time: '2026-10-08T12:00:00Z', compact: { has_text: false }, tool: { name: 'bash', status: 'running', has_input: true, has_output: true } };
-const fakeApi = { detailEventsUrl: () => '/api/events/detail', auth: async () => ({ authenticated: true }) } as unknown as ApiClient;
+const fakeApi = { cacheKey: (id: string) => id, detailEventsUrl: () => '/api/events/detail', auth: async () => ({ authenticated: true }) } as unknown as ApiClient;
 const versions = {};
 
 function Body() {

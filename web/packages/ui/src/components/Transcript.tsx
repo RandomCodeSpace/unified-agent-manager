@@ -1,8 +1,8 @@
-import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useWholeText, type WholeText } from './Details';
+import { BodyNotice, DetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, MessageCircleQuestion, Minus, Terminal, X } from 'lucide-react';
 import { Fragment, Suspense, lazy, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
-import type { Interaction, Item, Subagent, ToolStatus, TurnTiming } from '../api';
+import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -26,6 +26,8 @@ import { Tip } from './ui/tooltip';
 
 /** A chart card loads with the first chart shown, never with the app; meanwhile it stands as the card does while its rows load. */
 const ChartCard = lazy(() => import('./Chart').then((m) => ({ default: m.ChartCard })));
+const InlinePatch = lazy(() => import('./Changes').then((m) => ({ default: m.InlinePatch })));
+
 
 interface Props {
   /** The Task, for the attachment routes. */
@@ -1065,6 +1067,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
               {decided.length > 0 && <ApprovalMark interactions={decided} />}
             </button>
           </div>
+          {t?.edit_event_id && <NativeEdits item={item} />}
           {opened && (
             <Collapse open={open} appear>
               <div className="ml-6"><BodyNotice body={body} retry={retry} />{fullItem && <ToolDetails item={fullItem} />}{tail && live && isActive(status) && <LiveOutput lines={t?.tail} className="mb-1" />}</div>
@@ -1088,6 +1091,38 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
     </ContextMenu.Root>
   );
 });
+
+const EDIT_UNAVAILABLE: Record<string, string> = {
+  missing: 'This edit has no recorded native patch.',
+  binary: 'A textual diff is unavailable for this binary edit.',
+  too_large: 'This recorded diff exceeds the display limit.',
+  unsupported: 'The native detail is not a complete supported textual diff.',
+};
+function NativeEdits({ item }: Readonly<{ item: Item }>) {
+  return <div className="ml-6">
+    {item.tool!.file_edits?.map((edit, index) => <NativeEdit key={`${item.tool!.edit_event_id}:${index}:${edit.path}`} item={item} edit={edit} />)}
+    {item.tool!.file_edits_truncated && <p className="text-caption text-muted">Some committed file edits exceed the metadata limit.</p>}
+  </div>;
+}
+function NativeEdit({ item, edit }: Readonly<{ item: Item; edit: NativeFileEdit }>) {
+  const event = item.tool!.edit_event_id!;
+  const [open, setOpen] = useDisclosure(JSON.stringify(['edit', item.agent_id ?? '', item.id, event, edit.path]));
+  const known = edit.diff_status === 'available';
+  const { state, visible, retry } = useEditDiff(item, event, edit.path, open && known);
+  const label = `${edit.path} ${known ? `+${edit.additions ?? 0} −${edit.deletions ?? 0}` : 'counts unavailable'}`;
+  return <div className="mb-1">
+    <button type="button" aria-expanded={open} onClick={() => setOpen(value => !value)} className="flex min-h-6 w-full items-center gap-2 rounded-sm px-1 text-left font-mono text-code-sm text-muted hover:bg-tint-well pointer-coarse:min-h-11" title={edit.path}>
+      <ChevronRight className={cn('size-3 shrink-0', open && 'rotate-90')} />
+      <span className="min-w-0 flex-1 truncate">{edit.path}</span>
+      {known ? <span className="shrink-0"><span className="text-success">+{edit.additions ?? 0}</span> <span className="text-error">−{edit.deletions ?? 0}</span></span> : <span className="shrink-0 font-sans text-meta">counts unavailable</span>}
+      <span className="sr-only">{edit.kind} diff</span>
+    </button>
+    {open && !known && <p role="status" className="p-2 text-caption text-muted">{EDIT_UNAVAILABLE[edit.diff_status] ?? 'This edit has no supported recorded diff.'}</p>}
+    {visible && <div role="region" aria-label={`Diff for ${label}`} className="overflow-x-auto rounded-sm">
+      {state?.status === 'loaded' ? state.data.status === 'available' && state.data.patch ? <Suspense fallback={<p role="status" className="p-2 text-caption text-muted">Loading the diff viewer…</p>}><InlinePatch path={edit.path} text={state.data.patch} /></Suspense> : <p role="status" className="p-2 text-caption text-muted">{EDIT_UNAVAILABLE[state.data.status] ?? 'This edit has no supported recorded diff.'}</p> : state?.status === 'loading' ? <p role="status" className="p-2 text-caption text-muted">Loading the recorded diff…</p> : <p role={state?.status === 'error' ? 'alert' : 'status'} className="p-2 text-caption text-muted">{state?.status === 'error' ? state.error : 'The diff is no longer cached.'} <button type="button" onClick={retry} className="underline">Retry</button></p>}
+    </div>}
+  </div>;
+}
 
 /** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
 function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessionId?: string; className?: string }>) {
