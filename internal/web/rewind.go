@@ -6,9 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -159,15 +163,59 @@ func rewindReadError(err error) error {
 	}
 }
 
-func rewindToken(gen uint64, convID, user string, p agentapi.RewindPreview) string {
+func rewindToken(gen uint64, convID, user string, p agentapi.RewindPreview, disk []string) string {
 	data, _ := json.Marshal(struct {
 		Gen        uint64
 		Conv, User string
 		Preview    agentapi.RewindPreview
 		Discarded  []string
-	}{gen, convID, user, p, p.Discarded})
+		Disk       []string
+	}{gen, convID, user, p, p.Discarded, disk})
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// maxRewindDigestBytes bounds the content hashed per previewed file; a
+// larger one is bound by its size and modification time only.
+const maxRewindDigestBytes = 4 << 20
+
+// rewindDiskState is the current state of each previewed file. The native
+// preview reports only the recorded changes, so an outside edit after a
+// preview leaves it unchanged; the token binds this state too.
+func rewindDiskState(p agentapi.RewindPreview) []string {
+	if !p.FilesAvailable {
+		return nil
+	}
+	out := make([]string, 0, len(p.Files.Entries))
+	for _, f := range p.Files.Entries {
+		out = append(out, fileState(f.Path))
+	}
+	return out
+}
+
+func fileState(path string) string {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "absent"
+	}
+	if err != nil {
+		return "unreadable"
+	}
+	state := fmt.Sprintf("%s %d %d", info.Mode(), info.Size(), info.ModTime().UnixNano())
+	if !info.Mode().IsRegular() || info.Size() > maxRewindDigestBytes {
+		return state
+	}
+	// O_NONBLOCK keeps a FIFO swapped in after the check from blocking.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // #nosec G304 -- a path the provider previewed; only its digest is kept.
+	if err != nil {
+		return state + " unreadable"
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, maxRewindDigestBytes+1)); err != nil {
+		return state + " unreadable"
+	}
+	return state + " " + hex.EncodeToString(h.Sum(nil))
 }
 
 // readRewind previews under s.op and rechecks that the same conversation is
@@ -196,7 +244,7 @@ func (m *Manager) readRewind(s *webSession, user string) (agentapi.HistoryRewind
 	if changed {
 		return nil, agentapi.RewindPreview{}, "", errRewindStale
 	}
-	return rewinder, preview, rewindToken(gen, convID, user, preview), nil
+	return rewinder, preview, rewindToken(gen, convID, user, preview, rewindDiskState(preview)), nil
 }
 
 // PreviewRewind reads what rewinding to before the owner message user would
