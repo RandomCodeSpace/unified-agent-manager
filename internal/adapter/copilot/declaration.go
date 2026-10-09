@@ -66,6 +66,9 @@ type toolGate struct {
 	// the change, and ToolCatalog's InitializeAndValidate, even called as
 	// the event arrives, waits for that listing (measured on CLI 1.0.93).
 	changes uint64
+	// rebuild builds the tool set again for a stale catalog; nil uses
+	// rebuildTools. A conversation's also keeps its model (agent.go).
+	rebuild func(context.Context) error
 }
 
 func newToolGate() *toolGate {
@@ -385,7 +388,11 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	// again shows it. It only lists more than the session has, never less,
 	// so a catalog without the names proves them unshadowed either way.
 	if err == nil && slices.ContainsFunc(before, func(tool rpc.CurrentToolMetadata) bool { return own[tool.Name] }) {
-		if err := rebuildTools(ctx, session); err != nil {
+		rebuild := func(ctx context.Context) error { return rebuildTools(ctx, session) }
+		if d.rebuild != nil {
+			rebuild = d.rebuild
+		}
+		if err := rebuild(ctx); err != nil {
 			return fmt.Errorf("rebuild the tool catalog: %w", err)
 		}
 		before, err = session.ToolCatalog(ctx)

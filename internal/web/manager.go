@@ -2743,6 +2743,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Agent: s.agent, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
+	req.Model, req.Effort, req.ContextSize = model, effort, contextSize
 	s.context, s.compacting = nil, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {

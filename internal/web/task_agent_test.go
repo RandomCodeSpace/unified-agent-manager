@@ -143,6 +143,22 @@ func TestSetAgentOnlyBetweenTurns(t *testing.T) {
 		t.Fatalf("change during a turn = %v; selections %v", err, conv.AgentSelections())
 	}
 	conv.EmitTurn(agentapi.TurnCompleted, "")
+	// Only a quiet Task: not while a subagent, background work or a queued
+	// prompt could still use the tools an agent change rebuilds.
+	conv.EmitSubagent(agentapi.Subagent{ID: "sub-1", Name: "explore", Status: agentapi.SubagentRunning})
+	if _, err := m.SetAgent(sum.ID, "reviewer"); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "subagents") || len(conv.AgentSelections()) != 0 {
+		t.Fatalf("change while a subagent runs = %v; selections %v", err, conv.AgentSelections())
+	}
+	conv.EmitSubagent(agentapi.Subagent{ID: "sub-1", Name: "explore", Status: agentapi.SubagentCompleted})
+	m.mu.Lock()
+	m.sessions[sum.ID].queue = []QueuedPrompt{{RequestID: "queued", Text: "keep me"}}
+	m.mu.Unlock()
+	if _, err := m.SetAgent(sum.ID, "reviewer"); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "queued") {
+		t.Fatalf("change with a queued prompt = %v", err)
+	}
+	m.mu.Lock()
+	m.sessions[sum.ID].queue = nil
+	m.mu.Unlock()
 	for _, agent := range []string{"helper", "missing"} {
 		if _, err := m.SetAgent(sum.ID, agent); statusOf(err) != http.StatusBadRequest {
 			t.Fatalf("%s = %v", agent, err)

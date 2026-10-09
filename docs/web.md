@@ -410,12 +410,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Agent**: a Task runs as Copilot's default agent unless you pick one of
   the Project's user-invocable custom agents in the composer (new Tasks
   too). The choice belongs to that Task only; there is no global default.
-  It changes only between turns, and uam selects it again on every resume
-  and after a configuration reload before anything is sent. If the agent no
-  longer exists, the Task fails to open with that reason instead of running
-  as the default agent; pick another agent or Default. The Task's model
-  choice is kept. An agent whose tool list leaves out uam's tools runs
-  without them.
+  It changes only while the Task is quiet (no turn, subagent, background
+  task, pending request or queued prompt), and uam selects it again on every
+  resume and after a configuration reload before anything is sent. If the
+  agent no longer exists, the Task fails to open with that reason instead of
+  running as the default agent; pick another agent or Default. The Task's
+  model, effort and context size are kept even when the agent names its own:
+  uam switches back after every agent selection, and a Task whose selection
+  cannot be restored stops rather than run on the agent's model. An agent
+  whose tool list leaves out uam's tools runs without them.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is

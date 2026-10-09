@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -18,13 +19,20 @@ var reviewerAgent = rpc.AgentInfo{ID: "reviewer", Name: "reviewer", DisplayName:
 
 func openAgent(t *testing.T, fc *fakeClient, convID, agent string) (agentapi.Conversation, error) {
 	t.Helper()
+	return openAgentWith(t, fc, agentapi.OpenRequest{ConversationID: convID, Agent: agent})
+}
+
+func openAgentWith(t *testing.T, fc *fakeClient, req agentapi.OpenRequest) (agentapi.Conversation, error) {
+	t.Helper()
 	if fc.catalog == nil {
 		fc.catalog = catalogOf(declarationToolName, "notes_get", "notes_list")
 	}
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-	return p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", ConversationID: convID, Agent: agent, Workdir: t.TempDir(), Events: &recSink{},
-		Tools: notesTools(), CallTool: (&hostCalls{}).call, ValidateFile: func(_ context.Context, p string) (string, error) { return filepath.Join("/tmp", p), nil }})
+	req.SessionID, req.Workdir, req.Events = "session", t.TempDir(), &recSink{}
+	req.Tools, req.CallTool = notesTools(), (&hostCalls{}).call
+	req.ValidateFile = func(_ context.Context, p string) (string, error) { return filepath.Join("/tmp", p), nil }
+	return p.Open(context.Background(), req)
 }
 
 // Create and every resume select the Task's agent before the first tool
@@ -186,4 +194,161 @@ func TestCustomAgentsCapability(t *testing.T) {
 		t.Fatal("custom agents capability is off")
 	}
 	var _ agentapi.AgentSelector = (*conversation)(nil)
+}
+
+// pinnedAgent authors its own model and effort, which selecting it applies.
+var pinnedAgent = rpc.AgentInfo{ID: "pinned", Name: "pinned", Model: copilot.String("gpt-6-luna"), ReasoningEffort: copilot.String("high")}
+
+const taskModel, taskEffort = "ollama/deepseek-v4.1-flash", "low"
+
+func keptTaskModel(t *testing.T, fs *fakeSession, when string) {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if deref(fs.current.ModelID) != taskModel || deref(fs.current.ReasoningEffort) != taskEffort {
+		t.Fatalf("%s: model %q effort %q; RPCs %v", when, deref(fs.current.ModelID), deref(fs.current.ReasoningEffort), fs.toolCalls)
+	}
+}
+
+func openPinned(t *testing.T, convID string) (agentapi.Conversation, *fakeClient, *fakeSession) {
+	t.Helper()
+	fc := &fakeClient{agents: []rpc.AgentInfo{pinnedAgent, reviewerAgent}}
+	conv, err := openAgentWith(t, fc, agentapi.OpenRequest{ConversationID: convID, Agent: "pinned", Model: taskModel, Effort: taskEffort, ContextSize: "default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstProof(conv)
+	return conv, fc, fc.sessions[0]
+}
+
+// An agent's authored model and effort never replace the Task's: create and
+// resume restore the Task's selection right after selecting the agent and
+// before the first tool proof.
+func TestAgentModelDoesNotReplaceTheTaskModelOnOpen(t *testing.T) {
+	for name, convID := range map[string]string{"create": "", "resume": "conv"} {
+		t.Run(name, func(t *testing.T) {
+			_, _, fs := openPinned(t, convID)
+			if want := slices.Concat([]string{"select pinned", "model " + taskModel}, catalogProof); !slices.Equal(fs.toolCalls, want) {
+				t.Fatalf("RPCs %v, want %v", fs.toolCalls, want)
+			}
+			keptTaskModel(t, fs, name)
+		})
+	}
+	// Without a known Task selection, the runtime's model from before the
+	// selection is restored.
+	fc := &fakeClient{agents: []rpc.AgentInfo{pinnedAgent}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	fc.catalog = catalogOf(declarationToolName, "notes_get", "notes_list")
+	conv, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "session", ConversationID: "conv", Workdir: t.TempDir(), Events: &recSink{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs := fc.sessions[0]
+	fs.current = rpc.CurrentModel{ModelID: copilot.String(taskModel), ReasoningEffort: copilot.String(taskEffort)}
+	if err := conv.(agentapi.AgentSelector).SelectAgent(context.Background(), "pinned"); err != nil {
+		t.Fatal(err)
+	}
+	keptTaskModel(t, fs, "untracked")
+}
+
+// A change between turns, the stale-catalog rebuild and a reload select the
+// agent again; each restores the Task's model before anything is sent.
+func TestAgentModelDoesNotReplaceTheTaskModelLater(t *testing.T) {
+	ctx := context.Background()
+	t.Run("change", func(t *testing.T) {
+		fc := &fakeClient{agents: []rpc.AgentInfo{pinnedAgent}}
+		conv, err := openAgentWith(t, fc, agentapi.OpenRequest{Model: taskModel, Effort: taskEffort, ContextSize: "default"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstProof(conv)
+		fs := fc.sessions[0]
+		calls := len(fs.toolCalls)
+		if err := conv.(agentapi.AgentSelector).SelectAgent(ctx, "pinned"); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(fs.toolCalls[calls:], []string{"select pinned", "model " + taskModel}) {
+			t.Fatalf("RPCs %v", fs.toolCalls[calls:])
+		}
+		keptTaskModel(t, fs, "change")
+		// A later SetModel is the selection the next agent change keeps.
+		if err := conv.SetModel(ctx, "gpt-6-luna", "", "default"); err != nil {
+			t.Fatal(err)
+		}
+		if err := conv.(agentapi.AgentSelector).SelectAgent(ctx, ""); err != nil || deref(fs.current.ModelID) != "gpt-6-luna" {
+			t.Fatalf("default agent = %v, model %q", err, deref(fs.current.ModelID))
+		}
+	})
+	t.Run("rebuild", func(t *testing.T) {
+		conv, fc, fs := openPinned(t, "")
+		fs.staleTools = true
+		if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
+			t.Fatal(err)
+		}
+		toolsChanged(fs, "mid-turn")
+		fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+		calls := len(fs.toolCalls)
+		if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"clear", "catalog", "select pinned", "model " + taskModel, "catalog", "restore", "catalog"}
+		if !slices.Equal(fs.toolCalls[calls:], want) || !toolsAnswer(t, fc.create[0].Tools, "next") {
+			t.Fatalf("RPCs %v, want %v", fs.toolCalls[calls:], want)
+		}
+		keptTaskModel(t, fs, "rebuild")
+	})
+	t.Run("reload", func(t *testing.T) {
+		conv, _, fs := openPinned(t, "conv")
+		c := conv.(*conversation)
+		rs := &reloadSession{fakeSession: fs, result: &rpc.CustomizationsReloadResult{}}
+		c.sess = rs
+		calls := len(fs.toolCalls)
+		if err := c.ReloadCustomizations(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(fs.toolCalls[calls:], []string{"select pinned", "model " + taskModel}) {
+			t.Fatalf("RPCs %v", fs.toolCalls[calls:])
+		}
+		keptTaskModel(t, fs, "reload")
+	})
+}
+
+// A Task model that cannot be restored after an agent change fails closed:
+// the open fails, and an open conversation ends, so no turn runs on the
+// agent's model.
+func TestAgentChangeFailsClosedWhenTheTaskModelCannotBeRestored(t *testing.T) {
+	for name, convID := range map[string]string{"create": "", "resume": "conv"} {
+		t.Run(name, func(t *testing.T) {
+			fc := &fakeClient{agents: []rpc.AgentInfo{pinnedAgent}, switchErr: errors.New("switch broke")}
+			conv, err := openAgentWith(t, fc, agentapi.OpenRequest{ConversationID: convID, Agent: "pinned", Model: taskModel, Effort: taskEffort, ContextSize: "default"})
+			if conv != nil || !errors.Is(err, agentapi.ErrAgentUnavailable) || !errors.Is(err, errModelNotKept) {
+				t.Fatalf("open = %t, %v", conv != nil, err)
+			}
+			fs := fc.sessions[0]
+			if !fs.disconnected || len(fs.sent) != 0 || slices.Contains(fs.toolCalls, "clear") {
+				t.Fatalf("disconnected %t, sent %v, RPCs %v", fs.disconnected, fs.sent, fs.toolCalls)
+			}
+			if created := convID == ""; created != slices.Equal(fc.deleted, []string{"session"}) {
+				t.Fatalf("deleted %v", fc.deleted)
+			}
+		})
+	}
+	t.Run("change", func(t *testing.T) {
+		fc := &fakeClient{agents: []rpc.AgentInfo{pinnedAgent}}
+		conv, err := openAgentWith(t, fc, agentapi.OpenRequest{Model: taskModel, Effort: taskEffort, ContextSize: "default"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstProof(conv)
+		fs := fc.sessions[0]
+		fs.modelErr = errors.New("switch broke")
+		ctx := context.Background()
+		if err := conv.(agentapi.AgentSelector).SelectAgent(ctx, "pinned"); !errors.Is(err, agentapi.ErrAgentUnavailable) || !errors.Is(err, errModelNotKept) {
+			t.Fatalf("select = %v", err)
+		}
+		if err := conv.Send(ctx, agentapi.Prompt{Text: "on the agent's model"}); !errors.Is(err, agentapi.ErrClosed) || len(fs.sent) != 0 {
+			t.Fatalf("send after a failed restore = %v, sent %v", err, fs.sent)
+		}
+	})
 }

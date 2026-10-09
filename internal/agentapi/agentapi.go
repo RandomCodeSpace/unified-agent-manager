@@ -483,9 +483,11 @@ type OpenRequest struct {
 	// Title is the user-visible session name.
 	Title string
 	// Model is the model ID for a new conversation; "" means the provider
-	// default. It is ignored on reopen, so reopening never changes the model.
+	// default. Reopening does not switch to it (the caller applies the
+	// selection with SetModel), but an adapter keeps Model, Effort and
+	// ContextSize when selecting Agent applies the agent's own model.
 	Model string
-	// Effort and ContextSize apply only when creating a conversation.
+	// Effort and ContextSize apply when creating a conversation.
 	Effort      string
 	ContextSize string
 	// Agent is the ID of the custom agent selected on create and on every

@@ -109,6 +109,8 @@ type sdkSession interface {
 	// session through the experimental session.provider.add.
 	AddProviders(ctx context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error
 	SetEffort(ctx context.Context, effort string) error
+	// CurrentModel reads the session's model selection.
+	CurrentModel(ctx context.Context) (*rpc.CurrentModel, error)
 	// ToolCatalog and SetTools verify the declaration's visible name at open.
 	ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error)
 	SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error
@@ -260,6 +262,10 @@ func (a sdkSessionAdapter) SwitchModel(ctx context.Context, req *rpc.ModelSwitch
 func (a sdkSessionAdapter) AddProviders(ctx context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error {
 	_, err := a.s.RPC.Provider.Add(ctx, addProviders(providers, models))
 	return err
+}
+
+func (a sdkSessionAdapter) CurrentModel(ctx context.Context) (*rpc.CurrentModel, error) {
+	return a.s.RPC.Model.GetCurrent(ctx)
 }
 
 func (a sdkSessionAdapter) SetEffort(ctx context.Context, effort string) error {
@@ -888,8 +894,16 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c.tools, c.uamTools = gate, uamTools
+	if gate != nil {
+		gate.rebuild = c.rebuildTools
+	}
 	if req.ConversationID == "" {
 		c.selected = req.Model
+	}
+	// The Task's selection, kept across agent changes; on reopen the caller
+	// also applies it with SetModel.
+	if req.Model != "" {
+		c.selection = &modelSelection{model: req.Model, effort: req.Effort, contextSize: cmp.Or(req.ContextSize, "default")}
 	}
 	// A resumed session keeps its selected model but not its custom
 	// models, so every open supplies them.
@@ -982,21 +996,6 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		_ = sess.Disconnect()
 		return nil, fmt.Errorf("record copilot usage ownership: %w", err)
 	}
-	// The Task's custom agent is selected before anything is sent and
-	// before the first tool proof, which then proves the tools it has.
-	if req.Agent != "" {
-		if err := selectAgent(ctx, sess, req.Agent); err != nil {
-			c.mu.Lock()
-			c.closed = true
-			c.mu.Unlock()
-			if c.tools != nil {
-				c.tools.stop()
-			}
-			p.abandonOpen(ctx, client, sess, req.ConversationID == "")
-			return nil, err
-		}
-		c.agent = req.Agent
-	}
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
@@ -1010,6 +1009,15 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.mu.Unlock()
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
+	}
+	// The Task's custom agent is selected, with the Task's model kept,
+	// before anything is sent and before the first tool proof, which then
+	// proves the tools it has.
+	if req.Agent != "" {
+		if err := c.selectAgentKeepingModel(ctx, req.Agent); err != nil {
+			p.abandonOpen(ctx, client, c, req.ConversationID == "")
+			return nil, err
+		}
 	}
 	// SetGitHubMCP does not see a session it changes during the open.
 	if !slices.Equal(p.disabledMCPServers(), disabled) {
@@ -1761,7 +1769,7 @@ type conversation struct {
 	executionRevision uint64
 	control           sync.Mutex
 	// agent is the selected custom agent's ID, "" for the default agent;
-	// guarded by control.
+	// written under control and mu.
 	agent string
 	// githubSwitch is held while the built-in GitHub MCP server is turned
 	// on or off, so the last switch applies the latest setting.
@@ -1778,6 +1786,9 @@ type conversation struct {
 	// selected is the model this client last selected: at create or by
 	// SetModel; "" until then on a resumed session.
 	selected string
+	// selection is the Task's complete model selection, which agent changes
+	// keep (agent.go); nil while unknown. Guarded by mu.
+	selection *modelSelection
 	// tools gates the session's uam tools, uamTools; nil when it has none.
 	tools    *toolGate
 	uamTools []copilot.Tool
@@ -2075,6 +2086,18 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
+	// With a custom agent selected, a tool proof can select it again and
+	// restore the selection; it must restore this one.
+	if c.tools != nil && c.agentSelected() {
+		c.tools.proof.Lock()
+		defer c.tools.proof.Unlock()
+	}
+	return c.applyModel(ctx, model, effort, contextSize)
+}
+
+// applyModel switches to the complete selection and records it as the one
+// agent changes keep.
+func (c *conversation) applyModel(ctx context.Context, model, effort, contextSize string) error {
 	if err := c.p.customKeyErr(model); err != nil {
 		return err
 	}
@@ -2136,6 +2159,7 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	c.mu.Lock()
 	c.usage = agentapi.Context{}
 	c.selected = model
+	c.selection = &modelSelection{model: model, effort: effort, contextSize: contextSize}
 	if isCustom {
 		c.byom.models[model] = custom.Vision
 	}

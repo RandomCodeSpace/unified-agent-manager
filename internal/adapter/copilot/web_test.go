@@ -77,8 +77,10 @@ type fakeClient struct {
 	grow       []copilot.SessionEvent
 	// todos are the todo rows of the sessions resumed afterwards.
 	todos []rpc.PlanSQLTodosRow
-	// agents are the custom agents of the sessions opened afterwards.
-	agents []rpc.AgentInfo
+	// agents are the custom agents of the sessions opened afterwards, and
+	// switchErr their model switches' error.
+	agents    []rpc.AgentInfo
+	switchErr error
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -177,7 +179,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, agents: f.agents}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, agents: f.agents, modelErr: f.switchErr}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -189,7 +191,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, agents: f.agents}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, agents: f.agents, modelErr: f.switchErr}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -280,6 +282,10 @@ type fakeSession struct {
 	agent     *rpc.AgentInfo
 	agents    []rpc.AgentInfo
 	selectErr error
+	// current is the model selection CurrentModel reports: switches set it,
+	// and so does selecting an agent with an authored model or effort.
+	current         rpc.CurrentModel
+	currentModelErr error
 }
 
 type fakeToolCatalog struct {
@@ -339,6 +345,12 @@ func (s *fakeSession) SelectAgent(ctx context.Context, id string) (*rpc.AgentInf
 	for _, agent := range s.agents {
 		if agent.ID == id {
 			s.agent, s.held = &agent, false
+			if agent.Model != nil {
+				s.current.ModelID = agent.Model
+			}
+			if agent.ReasoningEffort != nil {
+				s.current.ReasoningEffort = agent.ReasoningEffort
+			}
 			return &agent, nil
 		}
 	}
@@ -504,6 +516,11 @@ func (s *fakeSession) SwitchModel(_ context.Context, req *rpc.ModelSwitchToReque
 		return nil, s.modelErr
 	}
 	s.models = append(s.models, req.ModelID)
+	s.toolCalls = append(s.toolCalls, "model "+req.ModelID)
+	s.current.ModelID, s.current.ContextTier = &req.ModelID, req.ContextTier
+	if req.ReasoningEffort != nil {
+		s.current.ReasoningEffort = req.ReasoningEffort
+	}
 	if s.modelResult != nil {
 		return s.modelResult, nil
 	}
@@ -518,7 +535,23 @@ func (s *fakeSession) SetEffort(_ context.Context, effort string) error {
 		return fmt.Errorf("unexpected reset effort %q", effort)
 	}
 	s.effortResets++
+	if s.effortErr == nil {
+		s.current.ReasoningEffort = nil
+	}
 	return s.effortErr
+}
+
+func (s *fakeSession) CurrentModel(ctx context.Context) (*rpc.CurrentModel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.currentModelErr != nil {
+		return nil, s.currentModelErr
+	}
+	current := s.current
+	return &current, nil
 }
 
 func (s *fakeSession) Events(context.Context) ([]copilot.SessionEvent, error) {

@@ -101,9 +101,11 @@ func (m *Manager) SetAgent(id, agent string) (SessionSummary, error) {
 		return SessionSummary{}, err
 	}
 	m.mu.Lock()
-	if busy(s.state()) {
+	// Only a quiet Task: an agent change builds the tool set again, which
+	// subagents, background tasks or queued prompts may still use.
+	if err := s.settleableLocked(); err != nil {
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusConflict, "the custom agent can change only between turns")
+		return SessionSummary{}, err
 	}
 	conv := s.conv
 	m.mu.Unlock()
