@@ -19,11 +19,18 @@ type completionContext struct {
 }
 
 // completionTrace follows native parent links, not timestamps or the CLI's
-// reusable turn IDs. Forgetting an old link disables the summary shortcut.
+// reusable turn IDs. A parent link names the chronologically preceding
+// durable event, and events arrive in order. The live stream lacks some
+// durable events the journal keeps (internal records such as
+// session.usage_record), so a durable event whose parent never arrived
+// follows the last durable event that did. Only a receipt must name a known
+// parent: one that does not keeps no anchor. Ephemeral events are not in
+// the journal's chain, so they are not kept and cannot evict its links.
 type completionTrace struct {
 	generation uint64
 	events     map[string]completionContext
 	users      map[string]string
+	last       completionContext
 }
 
 func completionID(id string) string {
@@ -37,9 +44,17 @@ func (t *completionTrace) observe(ev copilot.SessionEvent) (completionContext, b
 	if old, ok := t.events[ev.ID]; ok && ev.ID != "" {
 		return old, false
 	}
+	durable := ev.Ephemeral == nil || !*ev.Ephemeral
 	var ctx completionContext
 	if ev.ParentID != nil {
-		ctx = t.events[*ev.ParentID]
+		var known bool
+		ctx, known = t.events[*ev.ParentID]
+		if _, receipt := ev.Data.(*rpc.SessionTaskCompleteData); !known && durable && !receipt {
+			ctx = t.last
+		}
+	}
+	if !durable {
+		return ctx, true
 	}
 	agentID := agentOf(ev)
 	if d, ok := ev.Data.(*rpc.UserMessageData); ok && completionID(agentID) == agentID && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
@@ -71,6 +86,7 @@ func (t *completionTrace) observe(ev copilot.SessionEvent) (completionContext, b
 		}
 		t.events[id] = ctx
 	}
+	t.last = ctx
 	return ctx, true
 }
 

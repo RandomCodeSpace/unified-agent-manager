@@ -3,8 +3,10 @@ package copilot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -427,5 +429,108 @@ func TestCompletionNoticeFactsAreLiteralAndBounded(t *testing.T) {
 	d.Blocker.Kind, d.Blocker.Reason = rpc.TaskBlockerKind(strings.Repeat("`", 1000)), rpc.PermissionRecoveryReason(strings.Repeat("`", 1000))
 	if text := newTranscript().items(ev("max", d))[0].Text; len(text) > 3072 {
 		t.Fatalf("notice bytes=%d", len(text))
+	}
+}
+
+// The real CLI's chain, structurally as a live check recorded it from a
+// journal (types, ids, parents; synthetic content). parentId names the
+// chronologically preceding durable event. The live stream lacks some of
+// these links (session.usage_record is an internal durable record; the live
+// assistant.usage stands in for it) and carries ephemeral events the
+// journal does not, so a live receipt must still reach the same user item.
+func TestCompletionLiveStreamMatchesJournalReplay(t *testing.T) {
+	journalLines := []string{
+		`{"id":"user","parentId":"session-hook-end","type":"user.message","data":{"content":"Reply with the marker","messageId":"user-item","delivery":"idle"}}`,
+		`{"id":"notice","parentId":"user","type":"session.mode_notice_delivered","data":{"mode":"autopilot"}}`,
+		`{"id":"system","parentId":"notice","type":"system.message","data":{"content":"system prompt","role":"system"}}`,
+		`{"id":"prompt-hook","parentId":"system","type":"hook.start","data":{"hookInvocationId":"h1","hookType":"userPromptSubmitted"}}`,
+		`{"id":"prompt-hook-end","parentId":"prompt-hook","type":"hook.end","data":{"hookInvocationId":"h1","hookType":"userPromptSubmitted","success":true}}`,
+		`{"id":"start","parentId":"prompt-hook-end","type":"assistant.turn_start","data":{"turnId":"0"}}`,
+		`{"id":"usage-record","parentId":"start","type":"session.usage_record","data":{"usage":{}}}`,
+		`{"id":"answer","parentId":"usage-record","type":"assistant.message","data":{"messageId":"answer-item","content":"MARKER"}}`,
+		`{"id":"tool","parentId":"answer","type":"tool.execution_start","data":{"toolCallId":"call","toolName":"task_complete"}}`,
+		`{"id":"pre-hook","parentId":"tool","type":"hook.start","data":{"hookInvocationId":"h2","hookType":"preToolUse"}}`,
+		`{"id":"pre-hook-end","parentId":"pre-hook","type":"hook.end","data":{"hookInvocationId":"h2","hookType":"preToolUse","success":true}}`,
+		`{"id":"post-hook","parentId":"pre-hook-end","type":"hook.start","data":{"hookInvocationId":"h3","hookType":"postToolUse"}}`,
+		`{"id":"post-hook-end","parentId":"post-hook","type":"hook.end","data":{"hookInvocationId":"h3","hookType":"postToolUse","success":true}}`,
+		`{"id":"tool-done","parentId":"post-hook-end","type":"tool.execution_complete","data":{"toolCallId":"call","success":true}}`,
+		`{"id":"receipt","parentId":"tool-done","type":"session.task_complete","data":{"success":true,"summary":"Echoed the marker"}}`,
+	}
+	journal := make([]copilot.SessionEvent, len(journalLines))
+	for i, line := range journalLines {
+		// Exercise the SDK union decoder: the unknown usage record arrives raw.
+		if err := json.Unmarshal([]byte(line), &journal[i]); err != nil {
+			t.Fatalf("%s: %v", line, err)
+		}
+	}
+	fc := &fakeClient{journal: journal, pageSize: 4}
+	p := readerProvider(fc)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	cold, err := p.ReadHistory(context.Background(), agentapi.ReadRequest{ConversationID: "s", Workdir: "/work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want *agentapi.Item
+	for i := range cold.Items {
+		if cold.Items[i].ID == "receipt" {
+			want = &cold.Items[i]
+		}
+	}
+	if want == nil || want.Completion == nil || want.Completion.UserItemID != "user-item" {
+		t.Fatalf("cold receipt=%+v", want)
+	}
+	ephemeral := func(id, parent string, data rpc.SessionEventData) copilot.SessionEvent {
+		e := completionEvent(id, parent, data)
+		e.Ephemeral = copilot.Bool(true)
+		return e
+	}
+	for _, tc := range []struct {
+		name    string
+		missing []string
+		flood   int
+	}{
+		{"complete", nil, 0},
+		{"usage record", []string{"usage-record"}, 0},
+		{"mode notice", []string{"notice"}, 0},
+		{"system message", []string{"system"}, 0},
+		{"hooks", []string{"prompt-hook", "prompt-hook-end", "pre-hook", "pre-hook-end", "post-hook", "post-hook-end"}, 0},
+		{"every candidate", []string{"notice", "system", "prompt-hook", "prompt-hook-end", "usage-record", "pre-hook", "pre-hook-end", "post-hook", "post-hook-end"}, 0},
+		{"streamed deltas", nil, maxCompletionEvents + 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, runtime := runtimeHarness(t)
+			runtime.state.Mode = "autopilot"
+			h.conv.(*conversation).refreshExecution(context.Background())
+			for _, e := range journal {
+				if slices.Contains(tc.missing, e.ID) {
+					continue
+				}
+				if e.ID == "answer" {
+					for i := range tc.flood {
+						h.fs.onEvent(ephemeral(fmt.Sprintf("delta-%d", i), "start", &rpc.AssistantMessageDeltaData{MessageID: "answer-item", DeltaContent: "M"}))
+					}
+					h.fs.onEvent(ephemeral("usage", "start", &rpc.AssistantUsageData{Model: "model"}))
+				}
+				h.fs.onEvent(e)
+			}
+			mode := rpc.SessionModeAutopilot
+			h.fs.onEvent(ephemeral("idle", "receipt", &rpc.SessionIdleData{Mode: &mode}))
+			var got *agentapi.Item
+			var ended *agentapi.Turn
+			for _, e := range h.sink.all() {
+				if e.Item != nil && e.Item.ID == "receipt" {
+					got = e.Item
+				}
+				if e.Turn != nil && e.Turn.State != agentapi.TurnWorking {
+					ended = e.Turn
+				}
+			}
+			if got == nil || !reflect.DeepEqual(*got, *want) {
+				t.Fatalf("live receipt=%+v\ncold receipt=%+v", got, want)
+			}
+			if ended == nil || ended.State != agentapi.TurnCompleted || ended.Completion == nil || !reflect.DeepEqual(*ended.Completion, *want.Completion) {
+				t.Fatalf("turn=%+v", ended)
+			}
+		})
 	}
 }
