@@ -41,13 +41,22 @@ func (m *Manager) discoverConfiguration(out *Configuration, scope configurationS
 	ctx, cancel := context.WithTimeout(m.ctx, 15*time.Second)
 	defer cancel()
 	out.Discovery = map[string]ConfigurationDiscovery{}
-	for _, kind := range []string{"skills", "agents"} {
+	for _, kind := range []string{"skills", "agents", "hooks", "instructions"} {
 		var catalog agentapi.ConfigurationCatalog
 		var err error
-		if kind == "skills" {
+		files := &out.Skills
+		switch kind {
+		case "skills":
 			catalog, err = provider.DiscoverSkills(ctx, projectPaths, skillDirs)
-		} else {
+		case "agents":
 			catalog, err = provider.DiscoverAgents(ctx, projectPaths)
+			files = &out.Agents
+		case "hooks":
+			catalog, err = provider.DiscoverHooks(ctx, projectPaths)
+			files = &out.Hooks
+		case "instructions":
+			catalog, err = provider.DiscoverInstructions(ctx, projectPaths)
+			files = &out.InstructionFiles
 		}
 		status := ConfigurationDiscovery{Supported: !errors.Is(err, agentapi.ErrUnsupported), Ready: err == nil}
 		if err != nil {
@@ -63,10 +72,6 @@ func (m *Manager) discoverConfiguration(out *Configuration, scope configurationS
 			}
 			if len(catalog.Definitions) > maxConfigurationFiles {
 				status.Warnings = append(status.Warnings, "Native discovery exceeded the 128-definition limit.")
-			}
-			files := &out.Skills
-			if kind == "agents" {
-				files = &out.Agents
 			}
 			mergeConfigurationDefinitions(files, catalog.Definitions[:min(len(catalog.Definitions), maxConfigurationFiles)])
 			status.Ready = len(status.Warnings) == 0
@@ -94,7 +99,8 @@ func mergeConfigurationDefinitions(files *[]ConfigurationFile, definitions []age
 		matched := false
 		for i := range *files {
 			file := &(*files)[i]
-			if file.MetadataOnly || file.Disabled || path == "" || file.Path != path || file.Native != nil {
+			// Hook and instruction rows keep unresolved project paths.
+			if file.MetadataOnly || file.Disabled || path == "" || (file.Path != path && file.Path != definition.Path) || file.Native != nil {
 				continue
 			}
 			file.Native = &definition
@@ -112,5 +118,5 @@ func mergeConfigurationDefinitions(files *[]ConfigurationFile, definitions []age
 }
 
 func nativeConfigurationManagedSource(source string) bool {
-	return source == "plugin" || source == "builtin" || source == "remote" || source == "sdk"
+	return source == "plugin" || source == "builtin" || source == "remote" || source == "sdk" || source == "policy"
 }

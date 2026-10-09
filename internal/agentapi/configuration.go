@@ -23,11 +23,14 @@ type ConfigurationCatalog struct {
 	Warnings    []string
 }
 
-// ConfigurationDiscoverer optionally lists the provider's native skills and
-// agents without opening a conversation or changing configuration. Empty
+// ConfigurationDiscoverer optionally lists the provider's native skills, agents,
+// hooks and instructions without opening a conversation or changing
+// configuration. Hook and instruction rows never include actions or content. Empty
 // projectPaths selects global sources; skillDirectories must match Task setup.
 // ErrUnsupported applies per kind, only when that discovery method is absent.
 type ConfigurationDiscoverer interface {
 	DiscoverSkills(ctx context.Context, projectPaths, skillDirectories []string) (ConfigurationCatalog, error)
 	DiscoverAgents(ctx context.Context, projectPaths []string) (ConfigurationCatalog, error)
+	DiscoverHooks(ctx context.Context, projectPaths []string) (ConfigurationCatalog, error)
+	DiscoverInstructions(ctx context.Context, projectPaths []string) (ConfigurationCatalog, error)
 }

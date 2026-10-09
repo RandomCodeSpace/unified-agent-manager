@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -20,6 +21,8 @@ const maxConfigurationDefinitions = 128
 type configurationDiscoveryClient interface {
 	DiscoverSkills(context.Context, []string, []string) (*rpc.ServerSkillList, error)
 	DiscoverAgents(context.Context, []string) (*rpc.ServerAgentList, error)
+	DiscoverHooks(context.Context, []string) (*rpc.HooksDiscoverResult, error)
+	DiscoverInstructions(context.Context, []string) (*rpc.ServerInstructionSourceList, error)
 }
 
 func (a sdkClientAdapter) DiscoverSkills(ctx context.Context, projectPaths, skillDirectories []string) (*rpc.ServerSkillList, error) {
@@ -28,6 +31,14 @@ func (a sdkClientAdapter) DiscoverSkills(ctx context.Context, projectPaths, skil
 
 func (a sdkClientAdapter) DiscoverAgents(ctx context.Context, projectPaths []string) (*rpc.ServerAgentList, error) {
 	return a.c.RPC.Agents.Discover(ctx, &rpc.AgentsDiscoverRequest{ProjectPaths: projectPaths})
+}
+
+func (a sdkClientAdapter) DiscoverHooks(ctx context.Context, projectPaths []string) (*rpc.HooksDiscoverResult, error) {
+	return a.c.RPC.Hooks.Discover(ctx, &rpc.HooksDiscoverRequest{ProjectPaths: projectPaths})
+}
+
+func (a sdkClientAdapter) DiscoverInstructions(ctx context.Context, projectPaths []string) (*rpc.ServerInstructionSourceList, error) {
+	return a.c.RPC.Instructions.Discover(ctx, &rpc.InstructionsDiscoverRequest{ProjectPaths: projectPaths})
 }
 
 func (p *webProvider) configurationClient(ctx context.Context) (configurationDiscoveryClient, error) {
@@ -129,6 +140,85 @@ func (p *webProvider) DiscoverAgents(ctx context.Context, projectPaths []string)
 		out.Warnings = append(out.Warnings, "A native agent definition had invalid or oversized metadata.")
 	}
 	return out, nil
+}
+
+// DiscoverHooks lists hook actions by event, origin and source. DisableKey is a
+// content hash for the native disabled-hooks setting, so it is not exposed.
+func (p *webProvider) DiscoverHooks(ctx context.Context, projectPaths []string) (agentapi.ConfigurationCatalog, error) {
+	c, err := p.configurationClient(ctx)
+	if err != nil {
+		return agentapi.ConfigurationCatalog{}, err
+	}
+	res, err := c.DiscoverHooks(ctx, projectPaths)
+	if err = configurationDiscoveryError(err, "hooks"); err != nil {
+		return agentapi.ConfigurationCatalog{}, err
+	}
+	if res == nil {
+		return agentapi.ConfigurationCatalog{}, errors.New("native hooks discovery returned no result")
+	}
+	// Errors make discovery incomplete; native warnings leave it complete.
+	return configurationCatalog("hook", res.Hooks, res.Errors, func(hook rpc.DiscoveredHook) agentapi.ConfigurationDefinition {
+		enabled, source := hook.Enabled, deref(hook.Source)
+		entry := agentapi.ConfigurationDefinition{ID: hook.ID, Name: string(hook.HookType), Source: string(hook.Origin), Enabled: &enabled}
+		if filepath.IsAbs(source) {
+			entry.Path = source
+		} else {
+			entry.Description = source
+		}
+		return entry
+	}), nil
+}
+
+// DiscoverInstructions lists instruction sources without their content or the
+// description, which is the body after the frontmatter. Relative plugin paths
+// cannot be resolved here and stay pathless.
+func (p *webProvider) DiscoverInstructions(ctx context.Context, projectPaths []string) (agentapi.ConfigurationCatalog, error) {
+	c, err := p.configurationClient(ctx)
+	if err != nil {
+		return agentapi.ConfigurationCatalog{}, err
+	}
+	res, err := c.DiscoverInstructions(ctx, projectPaths)
+	if err = configurationDiscoveryError(err, "instructions"); err != nil {
+		return agentapi.ConfigurationCatalog{}, err
+	}
+	if res == nil {
+		return agentapi.ConfigurationCatalog{}, errors.New("native instructions discovery returned no result")
+	}
+	return configurationCatalog("instruction", res.Sources, nil, func(source rpc.InstructionSource) agentapi.ConfigurationDefinition {
+		entry := agentapi.ConfigurationDefinition{ID: source.ID, Name: source.Label, Source: string(source.Location)}
+		if filepath.IsAbs(source.SourcePath) {
+			entry.Path = source.SourcePath
+		} else if project := deref(source.ProjectPath); filepath.IsAbs(project) && source.SourcePath != "" {
+			entry.Path = filepath.Join(project, source.SourcePath)
+		}
+		return entry
+	}), nil
+}
+
+func configurationCatalog[T any](kind string, rows []T, diagnostics []string, convert func(T) agentapi.ConfigurationDefinition) agentapi.ConfigurationCatalog {
+	out := agentapi.ConfigurationCatalog{}
+	if len(rows) > maxConfigurationDefinitions {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("Native %ss discovery exceeded the 128-definition limit.", kind))
+	}
+	invalid := false
+	for _, row := range rows[:min(len(rows), maxConfigurationDefinitions)] {
+		entry := convert(row)
+		if !boundedConfigurationDefinition(&entry) {
+			invalid = true
+			continue
+		}
+		out.Definitions = append(out.Definitions, entry)
+	}
+	if invalid {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("A native %s definition had invalid or oversized metadata.", kind))
+	}
+	if len(diagnostics) > 16 {
+		out.Warnings = append(out.Warnings, fmt.Sprintf("Additional native %s diagnostics were omitted.", kind))
+	}
+	for _, diagnostic := range diagnostics[:min(len(diagnostics), 16)] {
+		out.Warnings = append(out.Warnings, clip(displaytext.Sanitize(diagnostic), 1024))
+	}
+	return out
 }
 
 func boundedConfigurationDefinition(entry *agentapi.ConfigurationDefinition) bool {
