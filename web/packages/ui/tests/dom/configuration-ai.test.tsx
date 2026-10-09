@@ -10,7 +10,7 @@ import { install } from '../../src/mock/install';
 async function creator(kind: ConfigurationKind = 'agents', change?: (context: AppContextValue) => void) {
   install();
   const fixture = seed();
-  const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: () => {}, narrow: false, hasNews: () => false, usage: null, refreshMeta: vi.fn() };
+  const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: () => {}, narrow: false, usage: null, refreshMeta: vi.fn() };
   change?.(context);
   const tree = () => <AppContext.Provider value={{ ...context }}><ConfigurationSettings kind={kind} projects={fixture.projects} terminal={!!context.settings.terminal} /></AppContext.Provider>;
   const view = render(tree());

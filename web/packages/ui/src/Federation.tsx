@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import App, { sessionsUpdate } from './App';
 import { ApiContext } from './ApiContext';
 import { api, createApiClient, describeError, errorCode, subscribeAuthLoss, UPDATE_EVENTS, type ApiClient, type AddConnectionInput, type ConnectedInstance, type ConnectedStatus, type Meta, type SnapshotData, type UpdateConnectionInput, type UpdateData } from './api';
-import { FederationContext, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
+import { FederationContext, type FederationView, type Machine, type MachineChoice, type MachineFilter, type MachineIntent, type CarriedShell, type ShellCarry } from './FederationContext';
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
 import { AlertDialog } from './components/ui/dialog';
@@ -17,6 +17,7 @@ interface SourceState { state: State; status: ConnectedStatus }
 interface Registry { instance_id: string; connections: ConnectedInstance[] }
 interface Source { id: string; label: string; connection: ConnectedInstance | null; client: ApiClient }
 const HOME = '';
+const EMPTY_CONNECTIONS: ConnectedInstance[] = [];
 const homeSource: Source = { id: HOME, label: 'This instance', connection: null, client: api };
 const FILTER_KEY = 'uam.machineFilter';
 
@@ -120,7 +121,7 @@ export default function Federation() {
   const [homeLoadedVersion, setHomeLoadedVersion] = useState<string>();
   const onHomeVersion = useCallback((version: string) => { setHomeLoadedVersion(previous => previous ?? version); setHomeVersion(version); }, []);
   const homeId = registry?.instance_id ?? '';
-  const connections = registry?.connections ?? [];
+  const connections = registry?.connections.length ? registry.connections : EMPTY_CONNECTIONS;
   /**
    * Reads the registry (or shows `known`, a record just saved) and makes its enabled connections the machines, each keeping its state while its record is unchanged.
    * The state updates stay in this function: the hooks lint takes a helper that sets state for a setState call made from the effect below.
@@ -294,35 +295,6 @@ export default function Federation() {
   }, [activeID, activeGeneration, activeInstanceID]);
   const selectedSource = sources.find(source => source.id === (active?.id ?? HOME) && source.connection?.generation === active?.generation && source.connection?.instance_id === active?.instance_id);
   const client = selectedSource?.client ?? api;
-  const statuses = Object.fromEntries(connections.map(connection => [connection.id, accountStatus(connection) ?? sourceStates[connection.id]?.status ?? { status: 'connecting' as const }]));
-  const add = async (input: AddConnectionInput) => { await api.addConnection(input); await refresh(); };
-  const update = async (id: string, input: UpdateConnectionInput) => {
-    const updated = await api.updateConnection(id, input);
-    // The saved record shows at once (a disabled machine's rows leave now); the registry re-read, which can wait on each machine's account check, confirms it.
-    const known = registryRef.current;
-    if (known && updated && known.connections.some(connection => connection.id === id)) await refresh({ ...known, connections: known.connections.map(connection => connection.id === id ? { ...connection, ...updated } : connection) });
-    await refresh();
-  };
-  const remove = async (id: string) => {
-    const connection = connections.find(entry => entry.id === id);
-    await api.removeConnection(id);
-    if (connection) {
-      const old = createApiClient(connection);
-      const prefix = old.storageKey('');
-      try {
-        for (const storage of [localStorage, sessionStorage]) for (const key of Object.keys(storage)) if (key.startsWith(prefix)) storage.removeItem(key);
-        for (const key of Object.keys(localStorage)) if (key.startsWith(`uam.review.${old.cacheKey('')}`)) localStorage.removeItem(key);
-      } catch { /* Storage unavailable. */ }
-      const cachePrefix = old.cacheKey('');
-      for (const key of Object.keys(readMarks() ?? {})) if (key.startsWith(cachePrefix)) forgetArchive(key);
-    }
-    await refresh();
-  };
-  // Settings' header names the instance on screen and switches it; switching keeps Settings open.
-  const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => { carry.write({ nextSection: carry.read().section }); navigate(connections.find(connection => connection.id === id) ?? null, '#settings'); }} items={[
-    { value: HOME, label: homeSource.label },
-    ...connections.map(connection => ({ value: connection.id, label: connection.label, disabled: !connection.enabled, description: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
-  ]} /> : null;
   const unreadFor = (source: Source, selectedId: string | null = null) => {
     let viewed: Record<string, string> = {};
     let since = new Date().toISOString();
@@ -345,10 +317,6 @@ export default function Federation() {
   }) : undefined,
   // unreadFor reads this browser's marks, which change only while their machine is on screen.
   [federated, sources, sourceStates, activeID, registry]);
-  const choices: MachineChoice[] | undefined = federated ? [
-    { id: HOME, label: homeSource.label },
-    ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
-  ] : undefined;
   const go = useCallback((id: string, path: string) => navigate(registryRef.current?.connections.find(connection => connection.id === id && connection.enabled) ?? null, path), [navigate]);
   const [filter, setFilter] = useState<MachineFilter | null>(readFilter);
   const onFilter = useCallback((value: MachineFilter | null) => {
@@ -360,18 +328,56 @@ export default function Federation() {
   const consumeIntent = useCallback(() => setIntent(null), []);
   // A connection on another Copilot account opens on its Settings, at the account.
   const openAccount = useCallback((id: string) => request({ machine: id, kind: 'account', projectId: '' }), [request]);
-  const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
   const pendingRoute = authenticated && !registryRead && hasIdentity(window.location.hash);
   const unavailable = routeError || (active && !selectedSource ? 'This connection is unavailable. Open an enabled instance to continue.' : null);
   // The view's stream feeds the machine list's copy of its machine while there are connections, and also before the registry
   // says whether there are any, so the copy has the stream's first snapshot. Neither this nor the catalog cache may appear
   // with the registry: the view would reopen its stream and read the catalogs again.
   const onEvent = connections.length || !registryRead ? onActiveEvent : undefined;
+  // With no connections the provider exposes no machine state. Home's copy can refresh without notifying every consumer.
+  const machineStates = federated ? sourceStates : undefined;
+  const view = useMemo<FederationView>(() => {
+    const statuses = Object.fromEntries(connections.map(connection => [connection.id, accountStatus(connection) ?? machineStates?.[connection.id]?.status ?? { status: 'connecting' as const }]));
+    const add = async (input: AddConnectionInput) => { await api.addConnection(input); await refresh(); };
+    const update = async (id: string, input: UpdateConnectionInput) => {
+      const updated = await api.updateConnection(id, input);
+      // The saved record shows at once; the registry re-read confirms it.
+      const known = registryRef.current;
+      if (known && updated && known.connections.some(connection => connection.id === id)) await refresh({ ...known, connections: known.connections.map(connection => connection.id === id ? { ...connection, ...updated } : connection) });
+      await refresh();
+    };
+    const remove = async (id: string) => {
+      const connection = connections.find(entry => entry.id === id);
+      await api.removeConnection(id);
+      if (connection) {
+        const old = createApiClient(connection);
+        const prefix = old.storageKey('');
+        try {
+          for (const storage of [localStorage, sessionStorage]) for (const key of Object.keys(storage)) if (key.startsWith(prefix)) storage.removeItem(key);
+          for (const key of Object.keys(localStorage)) if (key.startsWith(`uam.review.${old.cacheKey('')}`)) localStorage.removeItem(key);
+        } catch { /* Storage unavailable. */ }
+        const cachePrefix = old.cacheKey('');
+        for (const key of Object.keys(readMarks() ?? {})) if (key.startsWith(cachePrefix)) forgetArchive(key);
+      }
+      await refresh();
+    };
+    // Switching the instance on screen keeps Settings open.
+    const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => { carry.write({ nextSection: carry.read().section }); navigate(connections.find(connection => connection.id === id) ?? null, '#settings'); }} items={[
+      { value: HOME, label: homeSource.label },
+      ...connections.map(connection => ({ value: connection.id, label: connection.label, disabled: !connection.enabled, description: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
+    ]} /> : null;
+    const choices: MachineChoice[] | undefined = machines ? [
+      { id: HOME, label: homeSource.label },
+      ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
+    ] : undefined;
+    const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
+    return { initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
+      ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: machineStates?.[activeID]?.state, authenticated, carry }) };
+  }, [connections, machineStates, refresh, navigate, carry, homeId, openAccount, terminalOpen, active, registryError, route.path, onRoute, onAuth, onEvent, otherAttention, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, machines, go, filter, onFilter, intent, request, consumeIntent, activeID, authenticated]);
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :
-      <ApiContext.Provider value={client}><FederationContext.Provider value={{ initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
-        ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: sourceStates[activeID]?.state, authenticated, carry }) }}>
+      <ApiContext.Provider value={client}><FederationContext.Provider value={view}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
     <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent tasks keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
