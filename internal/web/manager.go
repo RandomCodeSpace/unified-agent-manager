@@ -308,6 +308,7 @@ type webSession struct {
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq           uint64
 	turnTimings       []TurnTiming
+	turnChanges       []TurnChanges
 	activeTiming      int
 	pendingTimingUser string
 	timingRevision    uint64
@@ -797,7 +798,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.mode = store.ModeYolo
 	}
 	if web := rec.Web; web != nil {
-		s.turnTimings = slices.Clone(web.TurnTimings)
+		s.turnTimings = store.CloneTurnTimings(web.TurnTimings)
 		if len(s.turnTimings) > maxTurnTimings {
 			s.turnTimings = s.turnTimings[len(s.turnTimings)-maxTurnTimings:]
 		}
@@ -1052,10 +1053,14 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 
 // detailLocked builds the retained web transcript and controls.
 func (m *Manager) detailLocked(s *webSession) SessionDetail {
+	timings := store.CloneTurnTimings(s.turnTimings)
+	if timings == nil {
+		timings = []TurnTiming{}
+	}
 	d := SessionDetail{
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
-		TurnTimings:      append([]TurnTiming{}, s.turnTimings...),
+		TurnTimings:      timings,
 		Items:            s.agentItems(""),
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
 		Subagents:        s.subagentList(),
@@ -1999,14 +2004,18 @@ func (m *Manager) flush() (err error) {
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
 	var kept []keptTodos
+	var keptChanges []keptTurnChanges
 	for id := range m.dirty {
 		s := m.sessions[id]
 		if s == nil {
 			continue
 		}
-		timings := slices.Clone(s.turnTimings)
+		timings := store.CloneTurnTimings(s.turnTimings)
 		if len(s.turnTodos) > 0 {
 			kept = append(kept, keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings})
+		}
+		if len(s.turnChanges) > 0 {
+			keptChanges = append(keptChanges, keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings})
 		}
 		key := s.key()
 		var commandResult json.RawMessage
@@ -2032,6 +2041,9 @@ func (m *Manager) flush() (err error) {
 	// Turn todo snapshots land before the counts that point at them.
 	for _, k := range kept {
 		m.appendTurnTodos(k)
+	}
+	for _, k := range keptChanges {
+		m.appendTurnChanges(k)
 	}
 	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {
@@ -2279,7 +2291,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	s.invalidateNativeDiff()
 	m.turnActivityTurnLocked(s, turn.State)
-	m.observeTurnTimingLocked(s, turn.State)
+	finalizedTiming := m.observeTurnTimingLocked(s, turn.State)
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
 	}
@@ -2311,6 +2323,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		s.stopReason, s.stopBy = "", ""
 		m.pauseQueueLocked(s)
 		m.kickSignedOutLocked(s, detail)
+	}
+	if finalizedTiming != nil {
+		m.kickTurnChangesLocked(s, *finalizedTiming)
 	}
 	if turn.State != agentapi.TurnWorking {
 		// The agent may have switched branches during the turn.

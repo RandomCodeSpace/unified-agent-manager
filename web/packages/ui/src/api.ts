@@ -895,6 +895,21 @@ export interface PreviousSession {
   in_use: boolean;
 }
 
+export interface TurnChangeCounts {
+  status: 'available' | 'unknown' | 'busy' | 'unsupported';
+  event_id?: string;
+  files?: number;
+  additions?: number;
+  deletions?: number;
+  omitted?: number;
+}
+export interface TurnChanges {
+  timing_id: string;
+  ended_at: string;
+  counts: TurnChangeCounts;
+  files: { path: string; kind: string; additions?: number; deletions?: number }[];
+}
+
 export interface TurnTiming {
   id: string;
   user_item_id?: string;
@@ -909,6 +924,8 @@ export interface TurnTiming {
   generation_ms?: number;
   /** The todo list as the turn left it, for a turn that changed it; its rows come from `turnTodos`. */
   todo?: TodoCounts;
+  /** Immutable native captured changes as this owner turn left them, never current Git. */
+  changes?: TurnChangeCounts;
 }
 
 export interface Representation {
@@ -1637,6 +1654,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     respond: (id: string, iid: string, answer: Answer) =>
       call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
+    turnChanges: (id: string, timingId: string, signal?: AbortSignal) => call<TurnChanges>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/changes`, undefined, false, signal),
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
       call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),

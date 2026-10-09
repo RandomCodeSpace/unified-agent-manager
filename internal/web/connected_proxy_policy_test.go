@@ -48,6 +48,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},
+		{"GET", "/api/sessions/task/turns/turn/changes", true},
+		{"POST", "/api/sessions/task/turns/turn/changes", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},
