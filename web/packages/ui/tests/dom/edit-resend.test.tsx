@@ -1,8 +1,8 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
-import { api, ApiError, type ResendResult, type RewindPreview } from '../../src/api';
+import { api, ApiError, type Interaction, type ResendResult, type RewindPreview, type SnapshotData } from '../../src/api';
 import * as data from '../../src/mock/data';
-import { composer, openTask } from './render';
+import { composer, openTask, renderApp } from './render';
 
 function fixture() {
   const state = data.seed();
@@ -133,5 +133,43 @@ describe('edit and resend', () => {
     await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
     await waitFor(() => expect(composer().value).toBe('My other draft'));
     expect(resend.mock.calls[1][1].rewind.request_id).not.toBe(resend.mock.calls[0][1].rewind.request_id);
+  });
+
+  test('a plan review arriving mid-edit replaces the edit strip; the two never show together', async () => {
+    fixture();
+    const opened = renderApp('#task=t3');
+    const Source = window.EventSource;
+    let stream: EventSource | undefined;
+    let snapshot: SnapshotData | undefined;
+    window.EventSource = class extends Source {
+      constructor(url: string | URL, options?: EventSourceInit) {
+        super(url, options);
+        if (String(url).startsWith('/api/events?')) this.addEventListener('snapshot', (event) => {
+          stream = event.target as EventSource;
+          snapshot = JSON.parse((event as MessageEvent).data) as SnapshotData;
+        });
+      }
+    };
+    try {
+      await waitFor(() => expect(snapshot?.session?.id).toBe('t3'));
+      await waitFor(() => expect(composer()?.disabled).toBe(false));
+      await opened.user.click(screen.getAllByRole('button', { name: 'Turn actions' })[1]);
+      await opened.user.click(await screen.findByRole('menuitem', { name: 'Edit and resend…' }));
+      await screen.findByRole('group', { name: 'Editing a past prompt' });
+      const original = snapshot!;
+      const plan: Interaction = { id: 'plan-review', kind: 'plan_review', title: 'Plan ready', state: 'pending', time: new Date().toISOString(), plan: { request_id: 'plan-review', summary: 'Keep data', revision: 1, content: '# Plan', actions: ['interactive'], recommended: 'interactive' } };
+      act(() => stream!.dispatchEvent(new MessageEvent('snapshot', { data: JSON.stringify({
+        ...original, seq: 1_000_000,
+        sessions: original.sessions.map((session) => session.id === 't3' ? { ...session, state: 'awaiting_answer', pending: 1 } : session),
+        session: { ...original.session!, state: 'awaiting_answer', pending: 1, capabilities: { ...original.session!.capabilities, plan: true }, interactions: [plan] },
+      }) })));
+      const form = within(composer().form!);
+      await form.findByText('Plan ready');
+      expect(screen.queryByRole('group', { name: 'Editing a past prompt' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Rewind and send' })).toBeNull();
+      expect(composer().value).toBe('');
+    } finally {
+      window.EventSource = Source;
+    }
   });
 });
