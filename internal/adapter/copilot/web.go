@@ -917,6 +917,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			OnPermissionRequest:      deferPermission,
 			OnUserInputRequest:       c.askUser,
+			OnAutoModeSwitchRequest:  c.confirmAuto,
 			OnExitPlanModeRequest:    refusePlanExit,
 			OnEvent:                  c.onEvent,
 			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
@@ -942,12 +943,13 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
-			ContinuePendingWork:   copilot.Bool(false),
-			OnPermissionRequest:   deferPermission,
-			OnUserInputRequest:    c.askUser,
-			OnExitPlanModeRequest: refusePlanExit,
-			OnEvent:               c.onEvent,
-			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
+			ContinuePendingWork:     copilot.Bool(false),
+			OnPermissionRequest:     deferPermission,
+			OnUserInputRequest:      c.askUser,
+			OnAutoModeSwitchRequest: c.confirmAuto,
+			OnExitPlanModeRequest:   refusePlanExit,
+			OnEvent:                 c.onEvent,
+			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
@@ -1789,6 +1791,7 @@ type interaction struct {
 	decisions map[string]rpc.PermissionDecision // permissions: option id -> decision
 	reply     chan userReply                    // questions: releases the blocked SDK handler
 	answering bool                              // a permission answer is in flight
+	auto      bool                              // Auto fallback needs a person's explicit Yes
 }
 
 type userReply struct {
@@ -2365,6 +2368,11 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
+	// Stop claims these decisions before any runtime RPC can block. A
+	// concurrent answer must not approve fallback while Abort is in flight.
+	c.mu.Lock()
+	c.expireAutoLocked()
+	c.mu.Unlock()
 	var modeErr error
 	if runtime, ok := c.sess.(executionSession); ok {
 		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
@@ -2547,6 +2555,9 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 // answerLocked releases a blocked ask_user handler. A rejected question
 // returns an error to the CLI instead of inventing an answer.
 func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error {
+	if in.auto && ans.Auto {
+		return errors.New("copilot: Auto fallback needs an explicit user answer")
+	}
 	q := in.Questions[0]
 	var r userReply
 	if ans.Reject {
@@ -2978,6 +2989,15 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	switch d := ev.Data.(type) {
+	case *rpc.SessionModelChangeData:
+		if agentID == "" {
+			c.autoModelSelectionLocked(d)
+		}
+		return
+	case *rpc.AutoModeSwitchRequestedData, *rpc.AutoModeSwitchCompletedData:
+		// The callback lacks RequestID: these notifications cannot identify
+		// which private question to settle and must never dismiss another.
+		return
 	case *rpc.AssistantMessageDeltaData:
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return

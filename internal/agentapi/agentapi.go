@@ -782,6 +782,9 @@ const (
 	// EventTodos replaces the conversation's todo list with Event.Todos; it
 	// is never persisted.
 	EventTodos EventKind = "todos"
+	// EventModelSelection reports provider-confirmed main-agent model settings,
+	// never the owner's consent to a requested change.
+	EventModelSelection EventKind = "model_selection"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -802,9 +805,18 @@ type Event struct {
 	// Title is the untrusted provider title for EventTitle.
 	Title string
 	// Compacting is the payload of EventCompaction.
-	Compacting bool
-	Activity   *Activity
-	Todos      *TodoList
+	Compacting     bool
+	Activity       *Activity
+	Todos          *TodoList
+	ModelSelection *ModelSelection
+}
+
+// ModelSelection contains confirmed settings. Nil optional fields mean the
+// provider did not report them; context usage and capacity are separate facts.
+type ModelSelection struct {
+	Model       string
+	Effort      *string
+	ContextSize *string
 }
 
 // Activity is the main agent's live state in the running turn. The adapter
