@@ -289,6 +289,9 @@ type webSession struct {
 	// compactAt is the compaction threshold, in percent, the conversation
 	// was last opened with; not persisted.
 	compactAt int
+	// leavingAssisted is set while the runtime leaves assisted mode: its
+	// approving reviews no longer allow requests; not persisted.
+	leavingAssisted bool
 	// mode is safe, yolo or assisted: a yolo Task's permission requests are
 	// allowed once without asking; an assisted Task's are when the
 	// provider's assisted review by assistedApprovalModel approves them.
@@ -1319,7 +1322,7 @@ func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
 	if selectionErr != nil {
 		return TaskDefaults{}, selectionErr
 	}
-	if _, err := parseMode(d.Mode); err != nil {
+	if _, err := parseDefaultMode(d.Mode); err != nil {
 		return TaskDefaults{}, err
 	}
 	return d, nil
@@ -4262,7 +4265,7 @@ func (m *Manager) assistedSupportLocked(provider string) error {
 // without that option (the provider's policy says a person must decide),
 // stay with the user. It reports whether it claimed ix.
 func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
-	assisted := s.mode == store.ModeAssisted && ix.Assisted.Recommendation == "approve" && ix.Assisted.Model == assistedApprovalModel
+	assisted := s.mode == store.ModeAssisted && !s.leavingAssisted && ix.Assisted.Recommendation == "approve" && ix.Assisted.Model == assistedApprovalModel
 	if s.mode != store.ModeYolo && !assisted || m.closed || s.removed || s.conv == nil ||
 		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
 		return false
@@ -4303,11 +4306,27 @@ func parseMode(mode string) (store.Mode, error) {
 	return "", newError(http.StatusBadRequest, "mode must be safe, yolo or assisted")
 }
 
+// parseDefaultMode validates the mode of Task defaults and routines:
+// assisted is a per-Task opt-in, and the store keeps only safe or yolo there.
+func parseDefaultMode(mode string) (store.Mode, error) {
+	switch store.Mode(mode) {
+	case store.ModeSafe, store.ModeYolo:
+		return store.Mode(mode), nil
+	}
+	return "", newError(http.StatusBadRequest, "mode must be safe or yolo")
+}
+
 // SetMode sets the Task's permission mode at any time, even while a turn
 // runs. It applies to permission requests raised afterwards; switching to yolo
 // also answers the ones already pending. Switching into or out of assisted
 // changes the open conversation's mode first (setAssistedMode).
 func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
+	return m.setMode(id, mode, false)
+}
+
+// setMode is SetMode; opHeld says the caller already holds s.op (a
+// permission command), which a change into or out of assisted needs.
+func (m *Manager) setMode(id, mode string, opHeld bool) (SessionSummary, error) {
 	md, err := parseMode(mode)
 	if err != nil {
 		return SessionSummary{}, err
@@ -4320,6 +4339,10 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	}
 	if md == store.ModeAssisted || s.mode == store.ModeAssisted {
 		m.mu.Unlock()
+		if !opHeld {
+			s.op.Lock()
+			defer s.op.Unlock()
+		}
 		return m.setAssistedMode(s, md)
 	}
 	defer m.mu.Unlock()
@@ -4333,13 +4356,12 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	return m.summaryLocked(s), nil
 }
 
-// setAssistedMode is SetMode into or out of assisted. Holding s.op keeps
-// opens out, so the conversation it changes stays the open one. The mode is
-// recorded only after the runtime applied it; a closed conversation gets it
-// at its next open.
+// setAssistedMode is SetMode into or out of assisted; the caller holds s.op,
+// which keeps opens out, so the conversation it changes stays the open one.
+// The mode is recorded only after the runtime applied it; a closed
+// conversation gets it at its next open. While the runtime leaves assisted,
+// its approving reviews no longer allow requests on their own.
 func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary, error) {
-	s.op.Lock()
-	defer s.op.Unlock()
 	m.mu.Lock()
 	err := s.readOnlyLocked()
 	switch {
@@ -4349,29 +4371,30 @@ func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary,
 		err = m.assistedSupportLocked(s.provider)
 	}
 	conv, toggle := s.conv, (md == store.ModeAssisted) != (s.mode == store.ModeAssisted)
+	if err == nil && conv != nil && toggle && s.mode == store.ModeAssisted {
+		s.leavingAssisted = true
+	}
 	m.mu.Unlock()
 	if err != nil {
 		return SessionSummary{}, err
 	}
 	if conv != nil && toggle {
-		setter, ok := conv.(agentapi.AssistedPermissionSetter)
-		if !ok {
-			return SessionSummary{}, newError(http.StatusConflict, "this provider does not support assisted permissions")
-		}
 		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
-		err = setter.SetAssistedPermissions(ctx, approvalModel(md))
+		err = setAssistedPermissions(ctx, s.id, conv, approvalModel(md))
 		cancel()
-		switch {
-		case err == nil, errors.Is(err, agentapi.ErrClosed):
-		case errors.Is(err, agentapi.ErrUnsupported):
-			return SessionSummary{}, newError(http.StatusConflict, "this runtime does not support assisted permissions")
-		default:
-			log.Warn("web permission mode change failed", "session", s.id, "error", err)
-			return SessionSummary{}, newError(http.StatusBadGateway, "could not change the permission mode: %s", shortError(err))
+		if err != nil {
+			m.mu.Lock()
+			if s.leavingAssisted {
+				s.leavingAssisted = false
+				m.autoAllowPendingLocked(s)
+			}
+			m.mu.Unlock()
+			return SessionSummary{}, err
 		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	s.leavingAssisted = false
 	if s.removed {
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
@@ -4380,6 +4403,25 @@ func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary,
 	m.autoAllowPendingLocked(s)
 	m.changedLocked(s, before)
 	return m.summaryLocked(s), nil
+}
+
+// setAssistedPermissions changes conv's runtime permission mode; a closed
+// conversation gets the recorded mode at its next open.
+func setAssistedPermissions(ctx context.Context, id string, conv agentapi.Conversation, approvalModel string) error {
+	setter, ok := conv.(agentapi.AssistedPermissionSetter)
+	if !ok {
+		return newError(http.StatusConflict, "this provider does not support assisted permissions")
+	}
+	err := setter.SetAssistedPermissions(ctx, approvalModel)
+	switch {
+	case err == nil, errors.Is(err, agentapi.ErrClosed):
+		return nil
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return newError(http.StatusConflict, "this runtime does not support assisted permissions")
+	default:
+		log.Warn("web permission mode change failed", "session", id, "error", err)
+		return newError(http.StatusBadGateway, "could not change the permission mode: %s", shortError(err))
+	}
 }
 
 func interactionOpen(ix *interaction) error {

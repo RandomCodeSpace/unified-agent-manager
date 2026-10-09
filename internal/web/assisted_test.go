@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,5 +241,129 @@ func TestAssistedModeSurvivesARestartAndRefusesAMissingReviewer(t *testing.T) {
 	}
 	if d := detail(t, m3, sum.ID); d.Mode != "assisted" || d.State != StateFailed {
 		t.Fatalf("after refused reopen = %q %q", d.Mode, d.State)
+	}
+}
+
+type assistedCommands struct {
+	*typedConversation
+	sets atomic.Int32
+}
+
+func (c *assistedCommands) SetAssistedPermissions(context.Context, string) error {
+	c.sets.Add(1)
+	return nil
+}
+
+// /allow-all runs with the Task's op lock held; leaving assisted from it must
+// not take that lock again.
+func TestPermissionCommandLeavesAssistedWithoutDeadlock(t *testing.T) {
+	prov := agenttest.NewProvider(agentapi.ProviderCopilot, assistedCaps)
+	prov.SetModels([]agentapi.Model{{ID: "gpt-6-luna", Name: "gpt-6-luna"}}, nil)
+	m := startManager(t, openTestStore(t), prov)
+	sum, conv := createSession(t, m, prov)
+	c := &assistedCommands{typedConversation: &typedConversation{Conversation: conv}}
+	m.mu.Lock()
+	m.sessions[sum.ID].conv = c
+	m.mu.Unlock()
+	prov.SetCommands([]agentapi.Command{{Name: "allow-all", Aliases: []string{"yolo"}, AllowDuringTurn: true}}, nil)
+	if _, err := m.SetMode(sum.ID, "assisted"); err != nil {
+		t.Fatal(err)
+	}
+	req := CommandRequest{RequestID: mustUUID(t), Name: "allow-all"}
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.Command(sum.ID, req)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("/allow-all on an assisted Task never returned")
+	}
+	if d := detail(t, m, sum.ID); d.Mode != "yolo" || c.sets.Load() != 2 {
+		t.Fatalf("mode = %q, runtime changes = %d", d.Mode, c.sets.Load())
+	}
+}
+
+type blockingModeConversation struct {
+	*agenttest.Conversation
+	entered, release chan struct{}
+	err              error
+}
+
+func (c *blockingModeConversation) SetAssistedPermissions(_ context.Context, approvalModel string) error {
+	if approvalModel != "" {
+		return nil
+	}
+	c.entered <- struct{}{}
+	<-c.release
+	return c.err
+}
+
+// While the runtime leaves assisted, an approving review no longer allows a
+// request: the user switched to Safe. A refused switch hands it back.
+func TestLeavingAssistedStopsReviewApprovalsFirst(t *testing.T) {
+	m, prov, _ := assistedManager(t)
+	sum, base := createTask(t, m, prov, "assisted")
+	c := &blockingModeConversation{Conversation: base, entered: make(chan struct{}), release: make(chan struct{})}
+	m.mu.Lock()
+	m.sessions[sum.ID].conv = c
+	m.mu.Unlock()
+	mustSubmit(t, m, sum.ID, "work", mustUUID(t), ModeSend, SubmissionAccepted)
+	base.EmitTurn(agentapi.TurnWorking, "")
+
+	leave := func(review string) error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := m.SetMode(sum.ID, "safe")
+			done <- err
+		}()
+		<-c.entered
+		base.EmitInteraction(reviewed(review, "approve", "gpt-6-luna"))
+		time.Sleep(30 * time.Millisecond)
+		if ix := interactionOf(t, m, sum.ID, review); ix.State != agentapi.InteractionPending || ix.Auto {
+			t.Fatalf("%s during the switch = %+v, want waiting for the user", review, ix)
+		}
+		c.release <- struct{}{}
+		return <-done
+	}
+	c.err = errors.New("runtime refused")
+	if err := leave("refused"); statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("refused switch = %v", err)
+	}
+	waitUntil(t, "approval handed back", func() bool {
+		return interactionOf(t, m, sum.ID, "refused").Resolution == assistedResolution
+	})
+	c.err = nil
+	if err := leave("switching"); err != nil {
+		t.Fatal(err)
+	}
+	if d := detail(t, m, sum.ID); d.Mode != "safe" || responded(base) != "refused=once" {
+		t.Fatalf("mode %q, responds %s", d.Mode, responded(base))
+	}
+}
+
+// Assisted is a per-Task opt-in: the store keeps only safe or yolo for Task
+// defaults and routines and drops anything else on load.
+func TestAssistedIsRefusedForTaskDefaultsAndRoutines(t *testing.T) {
+	m, _, st, project := newRoutineManager(t)
+	in := hourly("Reviewed")
+	in.Mode = ptr("assisted")
+	if _, err := m.CreateRoutine(project, in); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("assisted routine = %v, want 400", err)
+	}
+	r := mustRoutine(t, m, project, hourly("Plain"))
+	if _, err := m.UpdateRoutine(r.ID, RoutineInput{Mode: ptr("assisted")}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("routine to assisted = %v, want 400", err)
+	}
+	if _, err := m.UpdateSettings(SettingsPatch{TaskDefaults: &TaskDefaults{Provider: "fake", Model: "m1", Mode: "assisted"}}); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("assisted Task defaults = %v, want 400", err)
+	}
+	cfg, err := st.Load()
+	if err != nil || len(cfg.WebRoutines) != 1 || cfg.WebRoutines[r.ID].Mode != store.ModeYolo {
+		t.Fatalf("stored routines = %+v, %v", cfg.WebRoutines, err)
 	}
 }
