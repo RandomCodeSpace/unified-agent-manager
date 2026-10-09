@@ -339,8 +339,20 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
-  // A subagent's peek or transcript is open: the view does not follow new content under it.
-  const held = useRef(false);
+  // A subagent's peek or transcript is open: the view keeps that subagent's row where it is, whatever
+  // arrives above or below it, so the row stays under the pointer and beside its panel.
+  const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
+  const keepHeld = () => {
+    const h = held.current, el = scroller.current;
+    if (!h || !el) return;
+    const row = h.row();
+    const top = row?.getBoundingClientRect().top;
+    if (row !== h.el || top === undefined) {
+      held.current = { ...h, el: row, top: top ?? 0 };
+      return;
+    }
+    if (top !== h.top) el.scrollTop += top - h.top;
+  };
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
@@ -510,7 +522,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    if (held.current) return;
+    if (held.current) {
+      keepHeld();
+      return;
+    }
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
@@ -519,17 +534,25 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
-    const observer = new ResizeObserver(() => { if (atBottom.current && !held.current) el.scrollTop = el.scrollHeight; });
+    const observer = new ResizeObserver(() => {
+      if (held.current) keepHeld();
+      else if (atBottom.current) el.scrollTop = el.scrollHeight;
+    });
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
   // Once the peek or transcript closes, a view at the bottom catches up with what came meanwhile.
-  const hold = useCallback((holding: boolean) => {
-    held.current = holding;
+  const hold = useCallback((row: (() => Element | null) | null) => {
+    if (row) {
+      const el = row();
+      held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0 };
+      return;
+    }
+    held.current = null;
     const el = scroller.current;
-    if (!holding && el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
+    if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
   }, [session.history_after]);
 
   // A closing panel stays mounted until its exit has run.
@@ -757,6 +780,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
     lastScrollAt.current = performance.now();
+    // The reader may scroll while a row is held: it is held where they left it.
+    const h = held.current;
+    if (h) held.current = { ...h, top: h.el?.getBoundingClientRect().top ?? h.top };
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     setJump(!atBottom.current);

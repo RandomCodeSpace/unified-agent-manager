@@ -6,7 +6,7 @@ import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Detail
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Square, X } from 'lucide-react';
-import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -268,15 +268,27 @@ export const useLiveSubagentIds = () => useScope((d) => d.liveIds);
  * the header index): the session, the transcripts held, the one peek (DESIGN.md subagent peek),
  * the one open transcript, stop requests and their one confirmation, and `locate`.
  */
-export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onHold, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** Whether a peek or a transcript is open, so the conversation stops following new content under it. */ onHold?: (holding: boolean) => void; children: ReactNode }>) {
+export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onHold, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** While a peek or a transcript is open, its row (read when needed), which the conversation keeps in place; null once both are closed. */ onHold?: (row: (() => Element | null) | null) => void; children: ReactNode }>) {
   const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
   const phone = useMedia('(max-width: 639px)');
   const [pinned, setPinned] = useState<Pinned | null>(null);
   const [peeking, setPeeking] = useState(false);
+  // Moving from row to row closes the peek and opens it again at once: a close counts only once it lasts.
+  const peekTimer = useRef(0);
+  const peekChange = useCallback((open: boolean) => {
+    window.clearTimeout(peekTimer.current);
+    if (open) setPeeking(true);
+    else peekTimer.current = window.setTimeout(() => setPeeking(false), 200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
   const holding = peeking || !!pinned?.open;
-  useEffect(() => onHold?.(holding), [onHold, holding]);
+  const heldRow = pinned?.open ? pinned.anchor : null;
+  useEffect(() => {
+    if (!holding) onHold?.(null);
+    else onHold?.(() => (heldRow?.isConnected ? heldRow : document.querySelector('[data-subagent-toggle][data-popup-open]')));
+  }, [onHold, holding, heldRow]);
   // The items and the index change with every streamed token; what is read from them (the user
   // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
   const byParent = parentMap(session.subagents);
@@ -342,7 +354,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   return (
     <SubagentContext.Provider value={value}>
       {children}
-      {!phone && <SubagentPeek handle={value.peek} onOpenChange={setPeeking} />}
+      {!phone && <SubagentPeek handle={value.peek} onOpenChange={peekChange} />}
       {pinned && (phone
         ? <SubagentSheet pinned={pinned} onFull={() => setPinned((p) => (p ? { ...p, full: true } : p))} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />
         : <SubagentPanel pinned={pinned} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />)}
@@ -591,7 +603,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   // A row that leaves (the live set ends once nothing runs) takes its peek with it.
   const trigger = useRef<HTMLButtonElement>(null);
   const peek = scope?.peek;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = trigger.current;
     return () => {
       if (peek?.isOpen && el?.hasAttribute('data-popup-open')) peek.close();
@@ -792,7 +804,7 @@ function SubagentPeek({ handle, onOpenChange }: Readonly<{ handle: BasePopover.H
           <BasePopover.Portal>
             {/* Beside the row (below it only without room at either side), so the rows under it stay in reach of the pointer; its top
                 stays with the row as it grows, shifted only as far as the viewport needs, never flipped to the row's bottom. */}
-            <BasePopover.Positioner side="right" align="start" sideOffset={8} collisionPadding={8} collisionAvoidance={{ side: 'flip', align: 'shift' }} className="z-50 outline-hidden">
+            <BasePopover.Positioner side="right" align="start" sideOffset={8} collisionPadding={8} collisionAvoidance={{ side: 'flip', align: 'shift' }} className="z-50 outline-hidden data-anchor-hidden:invisible">
               <BasePopover.Popup data-popup="" data-subagent-peek="" aria-label="Subagent" initialFocus={false} className={cn(popupClass, 'w-96 max-w-(--available-width) overflow-hidden text-body')}>
                 <PeekBody
                   id={payload}
@@ -899,7 +911,7 @@ function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonl
           <h2 className="min-w-0 truncate text-display-sm text-ink">{name}</h2>
           <span className={cn('shrink-0 text-caption font-medium', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
         </div>
-        {s.description && <p className="mt-0.5 line-clamp-2 pl-7 text-ui text-body" title={s.description}>{s.description}</p>}
+        {s.description && s.description.trim().toLowerCase() !== name.toLowerCase() && <p className="mt-0.5 line-clamp-2 pl-7 text-ui text-body" title={s.description}>{s.description}</p>}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7 text-caption tabular-nums text-muted">
           {s.status === 'running' && <Took subagent={s} className="text-caption" />}
           {facts.map((fact) => <span key={fact} className="whitespace-nowrap">{fact}</span>)}
