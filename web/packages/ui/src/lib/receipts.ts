@@ -96,8 +96,9 @@ function recordOf(items: readonly Item[]): Record {
     // A folded row may hold no input yet; the service's own argument for the row stands in.
     const arg = (tool.input ? mainArgument(name, tool.input) : '') || tool.display_arg || '';
     for (const edit of tool.file_edits ?? []) record.changed.set(cleanPath(edit.path), item.id);
-    if (name === 'apply_patch') for (const p of tool.input ? patchPaths(tool.input) : arg.split(', ')) if (p) record.changed.set(cleanPath(p), item.id);
-    else if (['edit', 'write', 'create', 'str_replace_editor', 'str_replace_based_edit_tool'].includes(name)) {
+    if (name === 'apply_patch') {
+      for (const p of tool.input ? patchPaths(tool.input) : arg.split(', ')) if (p) record.changed.set(cleanPath(p), item.id);
+    } else if (['edit', 'write', 'create', 'str_replace_editor', 'str_replace_based_edit_tool'].includes(name)) {
       if (arg) record.changed.set(cleanPath(arg), item.id);
     } else if (kind === 'file') {
       if (arg && !record.viewed.has(cleanPath(arg))) record.viewed.set(cleanPath(arg), item.id);
