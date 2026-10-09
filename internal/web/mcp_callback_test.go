@@ -112,7 +112,7 @@ func TestMCPCallbackUsesTrustedOriginAndConsumesBeforeSDK(t *testing.T) {
 	if replay.Code == http.StatusOK || c.completes != 1 {
 		t.Fatalf("replay status=%d calls=%d", replay.Code, c.completes)
 	}
-	if c.Conversation.ID() != detail(t, ts.m, id).ConversationID {
+	if c.ID() != detail(t, ts.m, id).ConversationID {
 		t.Fatal("callback changed conversation")
 	}
 }
@@ -300,7 +300,7 @@ func TestMCPCallbackHolderAndLateCompletionDoNotClaimSuccess(t *testing.T) {
 				info.Capabilities.Import = true
 				ts.m.infos[s.provider] = info
 				ts.m.mu.Unlock()
-				ts.prov.SetInUse([]string{c.Conversation.ID()}, nil)
+				ts.prov.SetInUse([]string{c.ID()}, nil)
 			} else {
 				c.complete = func() {
 					ts.m.mu.Lock()

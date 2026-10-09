@@ -288,7 +288,6 @@ type fakeSession struct {
 	// the tools the turn started with until an agent change builds the tool
 	// set again; held marks that.
 	staleTools, held bool
-	rebuildErr       error
 	permMode         func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 	permModes        []*rpc.PermissionsSetModeRequest
 	sentAtPermMode   int // sends before the first permission mode change

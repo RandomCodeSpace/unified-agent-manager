@@ -128,6 +128,7 @@ func TestPlanReviewTakesOneOfferedActionOrFeedback(t *testing.T) {
 		{"mixed blank feedback", agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive, Feedback: " "}}, false},
 		{"mixed question", agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}, Answers: [][]string{{"yes"}}}, false},
 		{"mixed permission", agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}, Decision: "allow"}, false},
+		{"mixed form cancel", agentapi.Answer{Plan: &agentapi.PlanAnswer{Action: agentapi.PlanInteractive}, Cancel: true}, false},
 		{"empty", agentapi.Answer{Plan: &agentapi.PlanAnswer{}}, false},
 		{"blank feedback", agentapi.Answer{Plan: &agentapi.PlanAnswer{Feedback: "  "}}, false},
 	} {
