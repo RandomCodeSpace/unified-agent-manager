@@ -18,7 +18,9 @@ import (
 type configurationProvider struct {
 	*agenttest.Provider
 	skills, agents        agentapi.ConfigurationCatalog
+	hooks, instructions   agentapi.ConfigurationCatalog
 	skillsErr, agentsErr  error
+	hooksErr              error
 	projects, directories [][]string
 }
 
@@ -30,6 +32,14 @@ func (p *configurationProvider) DiscoverSkills(_ context.Context, projects, dire
 func (p *configurationProvider) DiscoverAgents(_ context.Context, projects []string) (agentapi.ConfigurationCatalog, error) {
 	p.projects = append(p.projects, slices.Clone(projects))
 	return p.agents, p.agentsErr
+}
+func (p *configurationProvider) DiscoverHooks(_ context.Context, projects []string) (agentapi.ConfigurationCatalog, error) {
+	p.projects = append(p.projects, slices.Clone(projects))
+	return p.hooks, p.hooksErr
+}
+func (p *configurationProvider) DiscoverInstructions(_ context.Context, projects []string) (agentapi.ConfigurationCatalog, error) {
+	p.projects = append(p.projects, slices.Clone(projects))
+	return p.instructions, nil
 }
 func attachConfigurationProvider(m *Manager, p *configurationProvider) {
 	m.ctx = context.Background()
@@ -99,7 +109,7 @@ func TestConfigurationDiscoveryPreservesFileIdentityAndRecovery(t *testing.T) {
 	if _, err = m.Configuration(""); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.projects[2]) != 0 || len(p.projects[3]) != 0 || !slices.Equal(p.directories[1], m.skillDirs) {
+	if len(p.projects[4]) != 0 || len(p.projects[5]) != 0 || !slices.Equal(p.directories[1], m.skillDirs) {
 		t.Fatalf("global discovery got project paths: %v", p.projects)
 	}
 }
@@ -141,5 +151,68 @@ func TestConfigurationDiscoveryPartialAndOverflow(t *testing.T) {
 	cfg, err := m.Configuration("project")
 	if err != nil || cfg.Discovery["skills"].Ready || len(cfg.Agents) != 128 || cfg.Discovery["agents"].Ready || !strings.Contains(strings.Join(cfg.Discovery["agents"].Warnings, " "), "limit") {
 		t.Fatalf("incomplete/overflow discovery claimed ready: %+v, %v", cfg, err)
+	}
+}
+
+func TestConfigurationDiscoveryHooksAndInstructionsStayMetadata(t *testing.T) {
+	m := configurationManager(t)
+	// Native and managed paths both keep a symlinked ancestor unresolved.
+	parent := filepath.Join(t.TempDir(), "parent-link")
+	if err := os.Symlink(filepath.Dir(m.projects["project"].Dir), parent); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, filepath.Base(m.projects["project"].Dir))
+	m.projects["project"].Dir = link
+	hook, err := m.SaveConfiguration("project", "hooks", "audit", configurationInput{Content: `{"version":1,"hooks":{"preToolUse":[{"type":"command","bash":"printf one"}],"postToolUse":[{"type":"command","bash":"printf two"}]}}`}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions, err := m.SaveConfiguration("project", "instructions", "copilot-instructions", configurationInput{Content: "Keep changes focused.\n"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := filepath.Join(t.TempDir(), "policy-hooks.json")
+	if err = os.WriteFile(policy, []byte(`{"private":"policy"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	p := &configurationProvider{Provider: agenttest.NewProvider("fake", agentapi.Capabilities{}),
+		hooks:        agentapi.ConfigurationCatalog{Definitions: []agentapi.ConfigurationDefinition{{ID: "pre", Name: "preToolUse", Source: "repository", Path: hook.Path, Enabled: &disabled}, {ID: "post", Name: "postToolUse", Source: "repository", Path: hook.Path}, {ID: "policy", Name: "preToolUse", Source: "policy", Path: policy}, {ID: "plugin", Name: "sessionStart", Source: "plugin", Description: "audit-plugin"}}},
+		instructions: agentapi.ConfigurationCatalog{Definitions: []agentapi.ConfigurationDefinition{{ID: "repo", Name: "Repository instructions", Source: "repository", Path: instructions.Path}, {ID: "rules", Name: "Plugin rules", Source: "plugin"}}}}
+	attachConfigurationProvider(m, p)
+	cfg, err := m.Configuration("project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Discovery["hooks"].Ready || !cfg.Discovery["instructions"].Ready || !slices.Equal(p.projects[2], []string{link}) || !slices.Equal(p.projects[3], []string{link}) {
+		t.Fatalf("discovery = %+v; projects=%v", cfg.Discovery, p.projects)
+	}
+	if len(cfg.Hooks) != 4 || cfg.Hooks[0].Native == nil || cfg.Hooks[0].Native.ID != "pre" || cfg.Hooks[0].Path != hook.Path || cfg.Hooks[0].Revision != hook.Revision || !cfg.Hooks[0].Editable || cfg.Hooks[0].MetadataOnly {
+		t.Fatalf("managed hook identity changed: %+v", cfg.Hooks)
+	}
+	for _, row := range cfg.Hooks[1:] {
+		if !row.MetadataOnly || row.Editable || row.Content != "" || row.Revision != "" {
+			t.Fatalf("native hook gained file access: %+v", row)
+		}
+	}
+	if len(cfg.InstructionFiles) != 3 || cfg.InstructionFiles[0].Native == nil || cfg.InstructionFiles[0].Native.ID != "repo" || cfg.InstructionFiles[0].Revision != instructions.Revision || !cfg.InstructionFiles[0].Editable {
+		t.Fatalf("managed instruction identity changed: %+v", cfg.InstructionFiles)
+	}
+	if rules := cfg.InstructionFiles[2]; !rules.MetadataOnly || rules.Editable || rules.Path != "" || rules.Content != "" {
+		t.Fatalf("pathless instruction gained file access: %+v", rules)
+	}
+	raw, _ := json.Marshal(cfg)
+	if strings.Contains(string(raw), "private") {
+		t.Fatal("external hook content disclosed")
+	}
+	if _, err = m.SaveConfiguration("project", "hooks", "policy-hooks", configurationInput{Path: policy, Content: "{}"}, false); err == nil {
+		t.Fatal("native hook path expanded mutation scope")
+	}
+	if _, err = m.SaveConfiguration("project", "hooks", hook.Name, configurationInput{Path: hook.Path, Revision: hook.Revision, Content: `{"version":1,"hooks":{}}`}, false); err != nil {
+		t.Fatal("native hook metadata broke exact-file save", err)
+	}
+	p.hooksErr = errors.New("private hook failure")
+	if cfg, err = m.Configuration("project"); err != nil || len(cfg.Hooks) != 1 || !cfg.Hooks[0].Editable || cfg.Discovery["hooks"].Ready || !cfg.Discovery["instructions"].Ready {
+		t.Fatalf("failed hook discovery erased managed files: %+v, %v", cfg, err)
 	}
 }

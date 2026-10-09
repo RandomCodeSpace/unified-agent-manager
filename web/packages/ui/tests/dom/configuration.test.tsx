@@ -847,4 +847,31 @@ describe('native discovery metadata', () => {
       expect(agents.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
     } finally { read.mockRestore(); }
   });
+
+  test('hook actions and instruction sources stay metadata beside managed files', async () => {
+    const original = api.configuration;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      result.discovery = { hooks: { supported: true, ready: false, warnings: ['Hook file could not be parsed'] }, instructions: { supported: true, ready: true } };
+      result.hooks[0].native = { id: 'pre', name: 'preToolUse', source: 'repository', enabled: false };
+      result.hooks.push({ name: 'sessionStart', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'plugin-hook', name: 'sessionStart', source: 'plugin', description: 'audit-plugin', enabled: true } });
+      result.instruction_files = [...(result.instruction_files ?? [result.instructions]), { name: 'Plugin rules', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'rules', name: 'Plugin rules', source: 'plugin' } }];
+      return result;
+    });
+    try {
+      const { user, card } = await open('Hooks');
+      expect(card.getByText('Copilot: preToolUse · Repository')).toBeTruthy();
+      expect(card.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
+      expect(card.getByText('Native hooks discovery is incomplete. Managed files remain available.')).toBeTruthy();
+      expect(card.getByText('Hook file could not be parsed')).toBeTruthy();
+      expect(within(card.getByText('audit-plugin').closest('li')!).queryByRole('button')).toBeNull();
+      expect(card.getByRole('button', { name: 'View hook file audit' })).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Instructions', exact: true }));
+      const instructions = within(await screen.findByRole('region', { name: 'Instructions', exact: true }));
+      const row = (await instructions.findByText('Copilot: Plugin rules · Plugin')).closest('li')!;
+      expect(within(row).queryByRole('button')).toBeNull();
+      expect(within(row).queryByText('No saved file at this path.')).toBeNull();
+      expect(instructions.getByRole('button', { name: 'View copilot-instructions.md' })).toBeTruthy();
+    } finally { read.mockRestore(); }
+  });
 });

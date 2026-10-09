@@ -111,7 +111,7 @@ function FileError({ message, path, tone = 'error', role }: Readonly<{ message: 
   </div>;
 }
 
-const NATIVE_SOURCES: Record<string, string> = { project: 'Project', inherited: 'Inherited', 'personal-copilot': 'Global · Copilot', 'personal-agents': 'Global · Agents', user: 'Global', plugin: 'Plugin', builtin: 'Built in', custom: 'Custom', sdk: 'SDK', remote: 'Remote' };
+const NATIVE_SOURCES: Record<string, string> = { project: 'Project', inherited: 'Inherited', 'personal-copilot': 'Global · Copilot', 'personal-agents': 'Global · Agents', user: 'Global', plugin: 'Plugin', builtin: 'Built in', custom: 'Custom', sdk: 'SDK', remote: 'Remote', repository: 'Repository', 'working-directory': 'Working directory', policy: 'Policy' };
 
 /** Runtime source when available, otherwise the existing file-directory group. */
 function skillSource(file: ConfigurationFile): string {
@@ -505,7 +505,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const unreadableSkills = kind === 'skills' ? discoveredFiles.filter((file) => file.error && !conflictDetails.some((detail) => detail.path === file.path)) : [];
   // Skills: the filter's matches, grouped by source in the order the service lists the sources (the scope's own first).
   const sources = [...new Set(files.map(skillSource))];
-  const discovery = kind === 'skills' || kind === 'agents' ? data?.discovery?.[kind] : undefined;
+  const discovery = data?.discovery?.[kind];
   const query = filter.trim().toLowerCase();
   const shown = kind === 'skills' ? files.filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query) || file.native?.name.toLowerCase().includes(query) || file.native?.description?.toLowerCase().includes(query)).sort((a, b) => sources.indexOf(skillSource(a)) - sources.indexOf(skillSource(b))) : files;
   return <div className="flex min-w-0 flex-col gap-4">
@@ -603,7 +603,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
               {file.path && <PathText path={file.path} className="text-muted" />}
               {!file.editable && <Note>{file.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown above.'}</Note>}
               {file.error && <FileError message={file.error} />}
-              {kind === 'instructions' && !file.revision && <Note>No saved file at this path.</Note>}
+              {kind === 'instructions' && !file.revision && !file.metadata_only && <Note>No saved file at this path.</Note>}
             </div>
             <div className="flex flex-wrap gap-1 sm:contents">
               {!file.metadata_only && <Button size="sm" className="sm:col-start-2" aria-label={`View ${kind === 'instructions' ? fileName(file) : `${label} ${file.name}`}`} onClick={() => viewFile(file, kind)}>View</Button>}

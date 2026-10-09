@@ -541,7 +541,7 @@ export interface ConfigurationFile {
 }
 export interface Configuration {
   scope: 'global' | 'project';
-  discovery?: Partial<Record<'agents' | 'skills', { supported: boolean; ready: boolean; warnings?: string[] }>>;
+  discovery?: Partial<Record<ConfigurationKind, { supported: boolean; ready: boolean; warnings?: string[] }>>;
   project_id?: string;
   terminal_allowed: boolean;
   agents: ConfigurationFile[];

@@ -400,10 +400,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   any AI attribution unless you ask for one. Copilot's own co-author trailer
   is turned off for Tasks.
   Settings → Skills and Agents also show Copilot's native discovery metadata:
-  runtime names, sources, descriptions and global skill enablement. Project
-  discovery includes the runtime's global sources. Existing file edits and
-  Disable/Enable still use the selected scope's exact file and revision; a
-  globally disabled skill is labelled separately. Plugin, built-in, remote and
+  runtime names, sources, descriptions and global skill enablement. Hooks show
+  each discovered action's event, origin and source, including actions disabled
+  by Copilot's disabled-hooks setting; Instructions show discovered sources by
+  label and location. Hook commands, instruction contents and descriptions are
+  not included. Project discovery includes the runtime's global sources.
+  Existing file edits and Disable/Enable still use the selected scope's exact
+  file and revision; a globally disabled skill or hook is labelled separately. Plugin, built-in, remote and
   other definitions outside the file editor show read-only metadata. Discovery
   failures or limits are reported while managed files and disabled-file recovery
   remain available. Older runtimes without discovery keep the existing file view.
