@@ -80,6 +80,8 @@ type fakeClient struct {
 	// wrap, when set, returns the session a create or resume hands out, to
 	// add optional runtime methods to the fake.
 	wrap func(*fakeSession) sdkSession
+	// permMode answers SetPermissionMode on the sessions opened afterwards.
+	permMode func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -178,7 +180,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, permMode: f.permMode}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -193,7 +195,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, permMode: f.permMode}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	if f.wrap != nil {
@@ -281,6 +283,11 @@ type fakeSession struct {
 	// the tools the turn started with until RebuildTools; held marks that.
 	staleTools, held bool
 	rebuildErr       error
+	permMode         func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error)
+	permModes        []*rpc.PermissionsSetModeRequest
+	sentAtPermMode   int // sends before the first permission mode change
+	// getMode answers GetPermissionMode; nil reports the last applied mode.
+	getMode func() (*rpc.PermissionsGetModeResult, error)
 }
 
 type fakeToolCatalog struct {

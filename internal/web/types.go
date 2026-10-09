@@ -272,10 +272,15 @@ type SessionSummary struct {
 	BackgroundTasksRunning int `json:"background_tasks_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
-	// Mode is safe or yolo. A yolo Task's permission requests are allowed
-	// once without asking; questions still wait for the user.
+	// Mode is safe, yolo or assisted. A yolo Task's permission requests are
+	// allowed once without asking, an assisted Task's when the provider's
+	// assisted review approves them; questions still wait for the user.
 	Mode      string                   `json:"mode"`
 	Execution *agentapi.ExecutionState `json:"execution"`
+	// ModeUnknown is set when a failed change left the runtime's permission
+	// mode unreadable: Mode is what UAM applies at the next change or open,
+	// not a fact, and nothing is allowed automatically.
+	ModeUnknown bool `json:"mode_unknown,omitempty"`
 	// Stage is omitted for an active Task, otherwise StageSettled or
 	// StageArchived; SettledAt and ArchivedAt say when.
 	Stage      string    `json:"stage,omitempty"`

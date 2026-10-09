@@ -429,7 +429,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, AssistedPermissions: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -999,6 +999,12 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.mu.Unlock()
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
+	}
+	// Before anything is sent, so no request is decided under another mode.
+	if req.AssistedApprovalModel != "" {
+		if err := c.SetAssistedPermissions(ctx, req.AssistedApprovalModel); err != nil {
+			return nil, errors.Join(fmt.Errorf("apply assisted permissions: %w", err), c.Close(ctx))
+		}
 	}
 	// SetGitHubMCP does not see a session it changes during the open.
 	if !slices.Equal(p.disabledMCPServers(), disabled) {
@@ -3438,7 +3444,7 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	title, detail := describePermission(d)
 	in := &interaction{
-		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest)},
+		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest), Assisted: assistedReview(d)},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
 	add := func(opt agentapi.Option, dec rpc.PermissionDecision) {

@@ -849,9 +849,13 @@ export function install(): { received: Received[] } {
       if (again) return json(201, summary(again));
       const p = st.projects.find((x) => x.id === body.project_id);
       if (!p) return fail(400, 'unknown project_id');
-      const sel = checkSelection(body);
+      // Assisted is a per-Task opt-in, never a Task default: checked here, not by checkSelection.
+      const assisted = body.mode === 'assisted';
+      if (assisted && !st.meta.providers.find((x) => x.name === body.provider)?.capabilities.assisted_permissions) return fail(409, 'this provider does not support assisted permissions');
+      const sel = checkSelection(assisted ? { ...body, mode: 'safe' } : body);
       if (typeof sel === 'string') return fail(400, sel);
-      const { provider, model, effort, context_size, mode } = sel;
+      const { provider, model, effort, context_size } = sel;
+      const mode = assisted ? 'assisted' : sel.mode;
       const prompt = String(body.prompt ?? '').trim();
       const t: MockTask = {
         id: nextId('t'),
@@ -898,7 +902,8 @@ export function install(): { received: Received[] } {
         if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled task takes no changes; reopen it first');
         if (typeof body.name === 'string') t.name = body.name.trim();
         if (body.mode !== undefined) {
-          if (body.mode !== 'safe' && body.mode !== 'yolo') return fail(400, 'mode must be safe or yolo');
+          if (body.mode === 'assisted' && !t.capabilities.assisted_permissions) return fail(409, 'this provider does not support assisted permissions');
+          if (body.mode !== 'safe' && body.mode !== 'yolo' && body.mode !== 'assisted') return fail(400, 'mode must be safe, yolo or assisted');
           t.mode = body.mode;
         }
         const selection = keys.some((k) => k === 'model' || k === 'effort' || k === 'context_size');
@@ -906,7 +911,7 @@ export function install(): { received: Received[] } {
           if (busy(t)) return fail(409, 'a turn is running; model, effort and context size change between turns');
           const model = body.model === undefined ? t.model : String(body.model);
           if (!model) return fail(400, 'model cannot be reset to the default');
-          const checked = checkSelection({ provider: t.provider, model, effort: body.effort ?? (body.model !== undefined ? '' : t.effort), context_size: body.context_size ?? (body.model !== undefined ? 'default' : t.context_size), mode: t.mode });
+          const checked = checkSelection({ provider: t.provider, model, effort: body.effort ?? (body.model !== undefined ? '' : t.effort), context_size: body.context_size ?? (body.model !== undefined ? 'default' : t.context_size) });
           if (typeof checked === 'string') return fail(400, checked);
           t.model = checked.model;
           t.effort = checked.effort;

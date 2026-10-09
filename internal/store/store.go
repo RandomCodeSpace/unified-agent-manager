@@ -43,6 +43,9 @@ type Mode string
 const (
 	ModeYolo Mode = "yolo"
 	ModeSafe Mode = "safe"
+	// ModeAssisted is a web Task's opt-in provider review of permission
+	// requests; Task defaults, profiles and routines never use it.
+	ModeAssisted Mode = "assisted"
 )
 
 type MousePolicy string
@@ -1520,7 +1523,7 @@ func coerceRecord(rec *SessionRecord) bool {
 		rec.Status = StatusActive
 		changed = true
 	}
-	if rec.Mode != ModeYolo && rec.Mode != ModeSafe {
+	if rec.Mode != ModeYolo && rec.Mode != ModeSafe && rec.Mode != ModeAssisted {
 		log.Warn("coercing unknown session mode to safe", "id", rec.ID, "mode", string(rec.Mode))
 		rec.Mode = ModeSafe
 		changed = true

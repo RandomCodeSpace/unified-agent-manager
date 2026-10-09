@@ -174,7 +174,7 @@ func (m *Manager) taskCommand(s *webSession, name, args string) (*agentapi.Comma
 		default:
 			return nil, errors.New("supported permission arguments: on, off, show")
 		}
-		_, err := m.SetMode(s.id, mode)
+		_, err := m.setMode(s.id, mode, true) // executeCommand holds s.op
 		completed.Text = "Permission mode: " + mode
 		return completed, err
 	case "model":

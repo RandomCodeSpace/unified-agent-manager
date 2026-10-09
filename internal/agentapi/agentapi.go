@@ -115,6 +115,11 @@ type Capabilities struct {
 	SubagentModels bool `json:"subagent_models,omitempty"`
 	// GitHubMCP is true when the provider implements GitHubMCPUser.
 	GitHubMCP bool `json:"github_mcp,omitempty"`
+	// AssistedPermissions is true when the provider honours
+	// OpenRequest.AssistedApprovalModel, its conversations implement
+	// AssistedPermissionSetter, and its permission requests carry the
+	// review in Interaction.Assisted.
+	AssistedPermissions bool `json:"assisted_permissions,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -568,6 +573,30 @@ type OpenRequest struct {
 	// which the conversation starts compacting; 0 keeps the provider default.
 	// It applies on create and on every reopen.
 	CompactionThreshold float64
+	// AssistedApprovalModel, when set, turns on the provider's assisted
+	// permission review with this model as the reviewer, on create and on
+	// every reopen. Open fails when the runtime does not apply it.
+	AssistedApprovalModel string
+}
+
+// AssistedPermissionSetter is implemented by a conversation whose provider
+// has Capabilities.AssistedPermissions. SetAssistedPermissions turns the
+// assisted review on with approvalModel as the reviewer, or off when
+// approvalModel is "". It fails unless the runtime reports the mode applied.
+type AssistedPermissionSetter interface {
+	SetAssistedPermissions(ctx context.Context, approvalModel string) error
+	// AssistedPermissionsOn reads the runtime's mode back, for when a change
+	// failed or timed out: true when assisted review is on, false when off.
+	AssistedPermissionsOn(ctx context.Context) (bool, error)
+}
+
+// AssistedReview is a provider's assisted review of one permission request.
+// Recommendation is "approve", "requireApproval", "excluded" or "error";
+// Model is the reviewer that produced it, "" when it reported none.
+type AssistedReview struct {
+	Recommendation string `json:"recommendation"`
+	Model          string `json:"model,omitempty"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 // MaxHostToolArguments bounds the JSON arguments of one host tool call;
@@ -1253,9 +1282,13 @@ type Interaction struct {
 	// is the call that needs it; for a question, the tool call that asked
 	// (Copilot's ask_user). It is empty when unknown.
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	// Auto is set by the web service, never by a provider: yolo mode is
-	// answering this pending request, so it does not wait for the user.
+	// Auto is set by the web service, never by a provider: yolo mode or an
+	// approving assisted review is answering this pending request, so it
+	// does not wait for the user.
 	Auto bool `json:"auto,omitempty"`
+	// Assisted is the provider's assisted review of a permission request;
+	// zero when the request was not reviewed.
+	Assisted AssistedReview `json:"assisted,omitzero"`
 }
 
 // Option is one permission decision.

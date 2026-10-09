@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -41,10 +41,19 @@ const RISKS = [
   { Icon: ShieldOff, tone: 'text-attention', text: 'Unsafe: allows permission requests without asking.' },
   { Icon: ShieldAlert, tone: 'text-error', text: 'Highly risky: allows every permission request and keeps working without you.' },
 ] as const;
+/** Assisted sits between Safe and Yolo: a reviewer model decides, so it is never shown as safest. */
+const ASSISTED_RISKS = [
+  { Icon: ShieldHalf, tone: 'text-warning', text: 'A reviewer model allows the permission requests it approves; the rest ask you. Waits for each message.' },
+  { Icon: ShieldHalf, tone: 'text-warning', text: 'Keeps working between turns by itself; a reviewer model allows the permission requests it approves.' },
+] as const;
+const PERMISSION_LABEL: Record<PermissionMode, string> = { safe: 'Safe', assisted: 'Assisted', yolo: 'Yolo' };
+/** A failed change left the mode unread: it is never shown as the old one. */
+const UNKNOWN_RISK = { Icon: ShieldAlert, tone: 'text-warning', text: 'The permission mode could not be confirmed. Nothing is allowed automatically until you choose a mode again.' } as const;
 
 export const MODE_TEXT = {
   safe: 'Asks before allowing permission requests.',
   yolo: 'Allows permission requests automatically. Questions and managed-policy requests still need you.',
+  assisted: 'gpt-6-luna reviews each permission request: the ones it approves are allowed, the rest ask you. Each review is a model call.',
 } as const;
 
 export function sizeLabel(id: string): string {
@@ -230,7 +239,7 @@ const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).inclu
 
 /** A new Task's first message with the settings chosen for it; attachments are the files themselves, uploaded once the Task exists. */
 export interface FirstMessage {
-  settings: TaskDefaults;
+  settings: TaskSettings;
   text: string;
   files: string[];
   uploads: { file: File; kind: Kind }[];
@@ -368,6 +377,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const settingsLocked = !!busy || locked;
   const autopilot = session.execution?.mode === 'autopilot' || session.execution?.objective?.status === 'active';
   const mode = session.mode ?? 'safe';
+  const modeUnknown = !newTask && !!session.mode_unknown;
 
   /* ---------- `/` and `@` pickers ---------- */
 
@@ -1124,10 +1134,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }
   const modeChoices: Choice[] = [
     { value: 'safe', label: 'Safe', description: MODE_TEXT.safe },
+    // Opt-in where the provider supports it; a Task already in it keeps showing it.
+    ...(session.capabilities.assisted_permissions || mode === 'assisted' ? [{ value: 'assisted', label: 'Assisted', description: MODE_TEXT.assisted }] : []),
     { value: 'yolo', label: 'Yolo', description: MODE_TEXT.yolo },
   ];
   // Yolo with autopilot is the riskiest pair: every way into it is confirmed first.
-  const chooseMode = (next: 'safe' | 'yolo') => {
+  const chooseMode = (next: PermissionMode) => {
     if (next === 'yolo' && mode !== 'yolo' && autopilot) riskConfirm.ask({ run: () => void settings({ mode: next }) });
     else void settings({ mode: next });
   };
@@ -1137,7 +1149,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   };
   // The permission group, shared by the toolbar's permissions and execution menu and the phone's More menu.
   const permissionItems = (
-    <Menu.RadioGroup value={mode} onValueChange={(v) => chooseMode(v as 'safe' | 'yolo')}>
+    <Menu.RadioGroup value={modeUnknown ? '' : mode} onValueChange={(v) => chooseMode(v as PermissionMode)}>
       <Menu.Label>Permissions</Menu.Label>
       {modeChoices.map((c) => <Menu.RadioItem key={c.value} value={c.value} description={c.description} disabled={!!busy}>{c.label}</Menu.RadioItem>)}
     </Menu.RadioGroup>
@@ -1145,7 +1157,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const executionSupported = !newTask && !!session.capabilities.execution_modes;
   const executionKnown = executionSupported && session.execution?.known === true && !!session.execution.mode;
   const executionMode = executionKnown ? session.execution!.mode! : '';
-  const permission = mode === 'yolo' ? 'Yolo' : 'Safe';
+  const permission = modeUnknown ? 'Permissions unknown' : PERMISSION_LABEL[mode];
   const execution = executionMode.charAt(0).toUpperCase() + executionMode.slice(1);
   const runLabel = [permission, execution].filter(Boolean).join(' · ');
   // The toolbar's folds shorten it to the permission, then to the glyph alone.
@@ -1155,7 +1167,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       {execution && <span className="in-data-[fold~=execution]:hidden"> · {execution}</span>}
     </span>
   );
-  const risk = RISKS[(mode === 'yolo' ? 2 : 0) + (autopilot ? 1 : 0)];
+  const risk = modeUnknown ? UNKNOWN_RISK : mode === 'assisted' ? ASSISTED_RISKS[autopilot ? 1 : 0] : RISKS[(mode === 'yolo' ? 2 : 0) + (autopilot ? 1 : 0)];
   const runIcon = <risk.Icon aria-hidden="true" className={risk.tone} />;
   const riskLine = (
     <p className={cn('flex max-w-72 items-start gap-2 px-2 py-1 text-caption', risk.tone)}>

@@ -45,6 +45,8 @@ export interface Capabilities {
   usage_metrics?: boolean;
   /** An open conversation answers a transient aside question; nothing is saved to the transcript. */
   aside?: boolean;
+  /** Tasks may opt into the provider's assisted review of permission requests (`mode: 'assisted'`). */
+  assisted_permissions?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */
@@ -707,7 +709,9 @@ export interface SessionSummary {
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
-  mode?: 'safe' | 'yolo';
+  mode?: PermissionMode;
+  /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
+  mode_unknown?: boolean;
   execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
@@ -999,9 +1003,16 @@ export interface Interaction {
   agent_id?: string;
   /** The `tool` item (same `agent_id`) this request is for; absent or unmatched means no link. */
   tool_call_id?: string;
-  /** Yolo mode is answering this pending request: it does not wait for the user. */
+  /** Yolo mode or an approving assisted review is answering this pending request: it does not wait for the user. */
   auto?: boolean;
+  /** The provider's assisted review of a permission request; absent when it was not reviewed. */
+  assisted?: { recommendation: string; model?: string; reason?: string };
 }
+
+/** A Task's permission policy. Assisted is opt-in per Task; Task defaults and routines stay Safe or Yolo. */
+export type PermissionMode = 'safe' | 'yolo' | 'assisted';
+/** A new Task's settings: the defaults, with any permission mode chosen for this Task. */
+export type TaskSettings = Omit<TaskDefaults, 'mode'> & { mode: PermissionMode };
 
 /** A summary's `ask`: a permission's title, or the first line of a question's first prompt. The Task's detail holds the request whole. */
 export interface Ask {
@@ -1823,14 +1834,14 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       model?: string;
       effort?: string;
       context_size?: string;
-      mode?: 'safe' | 'yolo';
+      mode?: PermissionMode;
       name?: string;
       prompt?: string;
       request_id: string;
     }) => call<SessionSummary>('POST', '/api/sessions', body),
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
-    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: 'safe' | 'yolo' }) =>
+    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: PermissionMode }) =>
       call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, body),
     stage: (id: string, action: 'settle' | 'reopen' | 'archive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
