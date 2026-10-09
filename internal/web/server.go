@@ -238,6 +238,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/prompt", s.handlePrompt)
 	mux.HandleFunc("POST /api/sessions/{id}/command", s.handleCommand)
 	mux.HandleFunc("GET /api/sessions/{id}/commands", s.handleCommands)
+	mux.HandleFunc("GET /api/sessions/{id}/context", s.handleContextBreakdown)
 	mux.HandleFunc("GET /api/sessions/{id}/files", s.handleFileList((*Manager).Files))
 	mux.HandleFunc("POST /api/sessions/{id}/files/resolve", s.handleResolveFiles)
 	mux.HandleFunc("GET /api/sessions/{id}/files/tree", s.handleTree)

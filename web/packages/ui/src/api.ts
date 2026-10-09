@@ -31,6 +31,8 @@ export interface Capabilities {
   session_diff: boolean;
   history: boolean;
   context_size?: boolean;
+  /** An already-open conversation can report native context categories and sources on demand. */
+  context_breakdown?: boolean;
   execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
   usage?: boolean;
@@ -101,6 +103,35 @@ export interface ContextUsage {
   limit: number;
   prompt?: number;
   cached?: number;
+}
+
+/** Native occupied counts and capacity; buffer overlaps the output and compaction reservations. */
+export interface ContextInfo {
+  model: string;
+  total_tokens: number;
+  limit: number;
+  prompt_token_limit: number;
+  compaction_threshold: number;
+  buffer_tokens: number;
+  system_tokens: number;
+  conversation_tokens: number;
+  tool_definition_tokens: number;
+  mcp_tools_tokens: number;
+}
+
+export interface ContextAttribution extends Pick<ContextInfo, 'model' | 'total_tokens' | 'limit' | 'prompt_token_limit' | 'compaction_threshold' | 'buffer_tokens'> {
+  model_source: string;
+  compactions: number;
+  categories: { system_prompt: number; custom_instructions: number; system_tools: number; mcp_tools: number; messages: number; free_space: number; buffer: number };
+  /** A parent's count includes its children; entries are not additive totals. */
+  entries: { id: string; kind: string; label: string; parent_id?: string; tokens: number }[];
+  truncated?: boolean;
+}
+
+/** Read only for the current reader, never attached to Task stream or history state. */
+export interface ContextBreakdown {
+  info?: ContextInfo;
+  attribution?: ContextAttribution;
 }
 
 /** One account quota of a provider with the `usage` capability. */
@@ -1651,6 +1682,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
+    contextBreakdown: (id: string, attribution = false, signal?: AbortSignal) => call<ContextBreakdown>('GET', `/api/sessions/${enc(id)}/context${attribution ? '?attribution=true' : ''}`, undefined, false, signal),
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
       call<TurnEvidence>('GET', `/api/sessions/${enc(id)}/evidence${look ? `?since=${enc(look.since)}&until=${enc(look.until)}` : ''}`, undefined, false, signal),
     changes: (id: string, scope: Scope, signal?: AbortSignal) => call<Changes>('GET', `/api/sessions/${enc(id)}/changes?scope=${scope}`, undefined, false, signal),

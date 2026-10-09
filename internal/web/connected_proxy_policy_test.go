@@ -48,6 +48,10 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},
+		{"GET", "/api/sessions/task/context", true},
+		{"GET", "/api/sessions/task/context?attribution=true", true},
+		{"POST", "/api/sessions/task/context", false},
+		{"GET", "/api/sessions/task/context/extra", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},
@@ -79,5 +83,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 	_, pattern := ts.srv.mux.Handler(httptest.NewRequest("GET", "/api/secrets", nil))
 	if connectedWorkloadPatternAllowed(pattern) {
 		t.Fatal("new owner API was implicitly granted to attached instances")
+	}
+	if connectedAccountGated("GET /api/sessions/{id}/context") {
+		t.Fatal("read-only context metadata was account-gated")
 	}
 }
