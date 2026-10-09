@@ -109,12 +109,18 @@ type sdkSession interface {
 	// session through the experimental session.provider.add.
 	AddProviders(ctx context.Context, providers []copilot.NamedProviderConfig, models []copilot.ProviderModelConfig) error
 	SetEffort(ctx context.Context, effort string) error
+	// CurrentModel reads the session's model selection.
+	CurrentModel(ctx context.Context) (*rpc.CurrentModel, error)
 	// ToolCatalog and SetTools verify the declaration's visible name at open.
 	ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error)
 	SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error
-	// RebuildTools has the CLI build the session's tool set again, so
-	// ToolCatalog drops the tools removed since the last build.
-	RebuildTools(ctx context.Context) error
+	// CurrentAgent returns the selected custom agent, nil for the default
+	// agent. SelectAgent selects one by ID and returns it; DeselectAgent
+	// returns to the default agent. Either change builds the session's tool
+	// set again (rebuildTools).
+	CurrentAgent(ctx context.Context) (*rpc.AgentInfo, error)
+	SelectAgent(ctx context.Context, id string) (*rpc.AgentInfo, error)
+	DeselectAgent(ctx context.Context) error
 	Abort(ctx context.Context) error
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	// ListTasks returns the tasks the CLI tracks, subagents included.
@@ -258,6 +264,10 @@ func (a sdkSessionAdapter) AddProviders(ctx context.Context, providers []copilot
 	return err
 }
 
+func (a sdkSessionAdapter) CurrentModel(ctx context.Context) (*rpc.CurrentModel, error) {
+	return a.s.RPC.Model.GetCurrent(ctx)
+}
+
 func (a sdkSessionAdapter) SetEffort(ctx context.Context, effort string) error {
 	_, err := a.s.RPC.Model.SetReasoningEffort(ctx, &rpc.ModelSetReasoningEffortRequest{ReasoningEffort: effort})
 	return err
@@ -328,13 +338,15 @@ type webProvider struct {
 	pingEvery time.Duration
 	kick      chan struct{}
 
-	mu              sync.Mutex
-	client          sdkClient
-	stop            chan struct{} // closed to end the current watchdog
-	convs           map[*conversation]struct{}
-	shut            bool
-	importSupported bool
-	importProbed    bool
+	mu                sync.Mutex
+	client            sdkClient
+	stop              chan struct{} // closed to end the current watchdog
+	convs             map[*conversation]struct{}
+	shut              bool
+	importSupported   bool
+	forkUnsupported   bool
+	rewindUnsupported bool
+	importProbed      bool
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -427,7 +439,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -875,7 +887,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c := &conversation{
-		p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		p: p, client: client, id: req.ConversationID, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
@@ -884,8 +896,16 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c.tools, c.uamTools = gate, uamTools
+	if gate != nil {
+		gate.rebuild = c.rebuildTools
+	}
 	if req.ConversationID == "" {
 		c.selected = req.Model
+	}
+	// The Task's selection, kept across agent changes; on reopen the caller
+	// also applies it with SetModel.
+	if req.Model != "" {
+		c.selection = &modelSelection{model: req.Model, effort: req.Effort, contextSize: cmp.Or(req.ContextSize, "default")}
 	}
 	// A resumed session keeps its selected model but not its custom
 	// models, so every open supplies them.
@@ -917,7 +937,10 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			OnPermissionRequest:      deferPermission,
 			OnUserInputRequest:       c.askUser,
-			OnExitPlanModeRequest:    refusePlanExit,
+			OnAutoModeSwitchRequest:  c.confirmAuto,
+			AskUserVariant:           copilot.AskUserVariantLegacy, // forms and links come from elicitations only
+			OnElicitationRequest:     c.elicit,
+			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
 			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
@@ -942,12 +965,15 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
-			ContinuePendingWork:   copilot.Bool(false),
-			OnPermissionRequest:   deferPermission,
-			OnUserInputRequest:    c.askUser,
-			OnExitPlanModeRequest: refusePlanExit,
-			OnEvent:               c.onEvent,
-			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
+			ContinuePendingWork:     copilot.Bool(false),
+			OnPermissionRequest:     deferPermission,
+			OnUserInputRequest:      c.askUser,
+			AskUserVariant:          copilot.AskUserVariantLegacy,
+			OnElicitationRequest:    c.elicit,
+			OnAutoModeSwitchRequest: c.confirmAuto,
+			OnExitPlanModeRequest:   c.reviewPlan,
+			OnEvent:                 c.onEvent,
+			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
@@ -957,6 +983,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	if err != nil {
 		c.mu.Lock()
+		c.expirePlansLocked()
 		c.closed = true
 		c.mu.Unlock()
 		if c.tools != nil {
@@ -970,6 +997,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
 		c.mu.Lock()
+		c.expirePlansLocked()
 		c.closed = true
 		c.mu.Unlock()
 		if c.tools != nil {
@@ -981,6 +1009,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
 	c.sess, c.id = sess, sess.ID()
+	c.checkSchedulesLocked()
 	if req.ConversationID != "" || c.relist {
 		c.relist = false
 		c.checkTasksLocked()
@@ -988,9 +1017,25 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if req.ConversationID != "" {
 		c.checkTodosLocked()
 	}
+	c.checkPlanLocked()
 	c.mu.Unlock()
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
+	}
+	// Before anything is sent, so no request is decided under another mode.
+	if req.AssistedApprovalModel != "" {
+		if err := c.SetAssistedPermissions(ctx, req.AssistedApprovalModel); err != nil {
+			return nil, errors.Join(fmt.Errorf("apply assisted permissions: %w", err), c.Close(ctx))
+		}
+	}
+	// The Task's custom agent is selected, with the Task's model kept,
+	// before anything is sent and before the first tool proof, which then
+	// proves the tools it has.
+	if req.Agent != "" {
+		if err := c.selectAgentKeepingModel(ctx, req.Agent); err != nil {
+			p.abandonOpen(ctx, client, c, req.ConversationID == "")
+			return nil, err
+		}
 	}
 	// SetGitHubMCP does not see a session it changes during the open.
 	if !slices.Equal(p.disabledMCPServers(), disabled) {
@@ -1006,6 +1051,13 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	c.control.Lock()
 	c.refreshExecution(ctx)
 	c.control.Unlock()
+	c.mu.Lock()
+	if _, ok := sess.(mcpSession); ok {
+		snapshot := copyMCPStatus(c.mcpStatus)
+		snapshot.Supported = true
+		c.publishMCPStatusLocked(snapshot)
+	}
+	c.mu.Unlock()
 	return c, nil
 }
 
@@ -1441,7 +1493,7 @@ func itemBytes(it agentapi.Item) int {
 		}
 	}
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID) + len(it.Tool.Progress)
 		for _, edit := range it.Tool.FileEdits {
 			n += len(edit.Path) + len(edit.Kind) + len(edit.DiffStatus) + 16
 		}
@@ -1713,6 +1765,7 @@ type conversation struct {
 	tokenSeen map[string]bool
 	// questions pairs user_input.requested events with ask_user callbacks.
 	questions        questionLinks
+	elicits          elicitLinks // elicitation.requested events with elicitation callbacks
 	stoppedSubagents map[string]bool
 	prompting        string // the agent PromptSubagent is sending a follow-up to
 	tr               *transcript
@@ -1734,16 +1787,31 @@ type conversation struct {
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
+	// The latest ordinary main-agent user item and its exact native boundary.
+	turnChangeUser, turnChangeEvent string
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
 	// was autopilot or unknown. The CLI withholds session.idle, and with it
 	// the autopilot continuation, while background work runs, so a read
 	// showing a non-autopilot mode or a running attached shell ends the turn
 	// instead.
-	idleUnresolved    bool
-	backgroundTasks   *agentapi.BackgroundTasks
-	execution         *agentapi.ExecutionState
-	executionRevision uint64
-	control           sync.Mutex
+	idleUnresolved         bool
+	backgroundTasks        *agentapi.BackgroundTasks
+	schedules              scheduleReads
+	execution              *agentapi.ExecutionState
+	executionRevision      uint64
+	plans                  planVersions
+	planStopped            bool   // Stop/end refuses late callbacks from the same foreground turn
+	planEpoch              uint64 // expiry/new foreground turn invalidates outside-lock plan reads
+	planPath               string
+	planVersion            uint64
+	lastPlanChange         string
+	planReading, planAgain bool
+	mcpStatus              agentapi.MCPStatusSnapshot
+	mcpRevision            uint64
+	control                sync.Mutex
+	// agent is the selected custom agent's ID, "" for the default agent;
+	// written under control and mu.
+	agent string
 	// githubSwitch is held while the built-in GitHub MCP server is turned
 	// on or off, so the last switch applies the latest setting.
 	githubSwitch     sync.Mutex
@@ -1759,6 +1827,9 @@ type conversation struct {
 	// selected is the model this client last selected: at create or by
 	// SetModel; "" until then on a resumed session.
 	selected string
+	// selection is the Task's complete model selection, which agent changes
+	// keep (agent.go); nil while unknown. Guarded by mu.
+	selection *modelSelection
 	// tools gates the session's uam tools, uamTools; nil when it has none.
 	tools    *toolGate
 	uamTools []copilot.Tool
@@ -1786,6 +1857,8 @@ type conversation struct {
 	// taskRPC orders task-list reads and follow-up sends, so a list read from
 	// before a send never overwrites the follow-up it started.
 	taskRPC sync.Mutex
+	// aside cancels the wait of the aside question in flight (aside.go).
+	aside context.CancelFunc
 }
 
 type steer struct {
@@ -1799,12 +1872,18 @@ type interaction struct {
 	agentapi.Interaction
 	decisions map[string]rpc.PermissionDecision // permissions: option id -> decision
 	reply     chan userReply                    // questions: releases the blocked SDK handler
+	planReply chan copilot.ExitPlanModeResult   // native review: one explicit owner response
 	answering bool                              // a permission answer is in flight
+	auto      bool                              // Auto fallback needs a person's explicit Yes
+	// Elicitations only: the CLI's request ID once its event is linked, and
+	// the key that links it.
+	requestID, elicitKey string
 }
 
 type userReply struct {
-	resp copilot.UserInputResponse
-	err  error
+	resp   copilot.UserInputResponse
+	elicit copilot.ElicitationResult
+	err    error
 }
 
 // questionLinks pairs each user_input.requested event with the ask_user
@@ -1992,7 +2071,10 @@ func (c *conversation) emitInteractionLocked(in *interaction) {
 }
 
 func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
-	if c.isClosed() {
+	c.mu.Lock()
+	closed, planEpoch := c.closed, c.planEpoch
+	c.mu.Unlock()
+	if closed {
 		return agentapi.History{}, agentapi.ErrClosed
 	}
 	evs, err := c.sess.Events(ctx)
@@ -2003,6 +2085,18 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 	// Reconcile cancelled agents before a resumed CLI can replay abandoned
 	// permission requests. History does not replace newer terminal live state.
 	c.mu.Lock()
+	if !c.closed && !c.planStopped && c.planEpoch == planEpoch && c.plans.revision == 0 {
+		seen := map[string]bool{}
+		for _, ev := range evs {
+			if id, _, content, ok := recordedPlan(ev); ok && agentOf(ev) == "" && !seen[id] {
+				seen[id] = true
+				c.plans.observe(content)
+			}
+		}
+		if !c.turnRunning {
+			c.plans.dropBodies()
+		}
+	}
 	for _, ev := range evs {
 		c.subs.apply(ev)
 	}
@@ -2056,6 +2150,18 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
+	// With a custom agent selected, a tool proof can select it again and
+	// restore the selection; it must restore this one.
+	if c.tools != nil && c.agentSelected() {
+		c.tools.proof.Lock()
+		defer c.tools.proof.Unlock()
+	}
+	return c.applyModel(ctx, model, effort, contextSize)
+}
+
+// applyModel switches to the complete selection and records it as the one
+// agent changes keep.
+func (c *conversation) applyModel(ctx context.Context, model, effort, contextSize string) error {
 	if err := c.p.customKeyErr(model); err != nil {
 		return err
 	}
@@ -2117,6 +2223,7 @@ func (c *conversation) SetModel(ctx context.Context, model, effort, contextSize 
 	c.mu.Lock()
 	c.usage = agentapi.Context{}
 	c.selected = model
+	c.selection = &modelSelection{model: model, effort: effort, contextSize: contextSize}
 	if isCustom {
 		c.byom.models[model] = custom.Vision
 	}
@@ -2280,6 +2387,11 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 		if err := c.tools.reprove(ctx, c.sess, c.uamTools...); err != nil {
 			log.Warn("copilot uam tools stay refused until the next message", "conversation", c.id, "error", err)
 		}
+		// A rebuild that could not keep the Task's model ended the
+		// conversation; nothing is sent on the agent's model.
+		if c.isClosed() {
+			return agentapi.ErrClosed
+		}
 	}
 	c.mu.Lock()
 	c.completionReady = false
@@ -2381,6 +2493,13 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
+	// Stop claims these decisions before any runtime RPC can block. A
+	// concurrent answer must not approve fallback while Abort is in flight.
+	c.mu.Lock()
+	c.expireAutoLocked()
+	c.planStopped = true
+	c.expirePlansLocked()
+	c.mu.Unlock()
 	var modeErr error
 	if runtime, ok := c.sess.(executionSession); ok {
 		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
@@ -2514,6 +2633,10 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 		c.mu.Unlock()
 		return agentapi.ErrInteractionGone
 	}
+	if in.planReply != nil {
+		defer c.mu.Unlock()
+		return c.answerPlanLocked(in, ans)
+	}
 	if in.reply != nil {
 		defer c.mu.Unlock()
 		return c.answerLocked(in, ans)
@@ -2563,6 +2686,15 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 // answerLocked releases a blocked ask_user handler. A rejected question
 // returns an error to the CLI instead of inventing an answer.
 func (c *conversation) answerLocked(in *interaction, ans agentapi.Answer) error {
+	if in.auto && ans.Auto {
+		return errors.New("copilot: Auto fallback needs an explicit user answer")
+	}
+	if in.Elicitation != nil {
+		return c.answerElicitationLocked(in, ans)
+	}
+	if ans.Cancel {
+		return errors.New("copilot: only a form or a link can be cancelled")
+	}
 	q := in.Questions[0]
 	var r userReply
 	if ans.Reject {
@@ -2598,10 +2730,16 @@ func (c *conversation) Close(ctx context.Context) error {
 		return nil
 	}
 	c.releaseTurnLocked()
+	c.expirePlansLocked()
+	c.plans = planVersions{}
 	perms := c.expireLocked()
 	c.endIdleLocked()
+	c.stopSchedulesLocked()
 	c.closed = true
 	clear(c.pending)
+	if c.aside != nil {
+		c.aside()
+	}
 	c.mu.Unlock()
 	c.p.forget(c)
 	if c.tools != nil {
@@ -2649,6 +2787,7 @@ func (c *conversation) expireSubagentLocked(agentID string) {
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
 			c.settledLocked(in, time.Now())
+			c.elicits.settled(in)
 			in.reply <- userReply{err: errNoUser}
 		}
 	}
@@ -2658,6 +2797,7 @@ func (c *conversation) expireSubagentLocked(agentID string) {
 // answered: blocked questions get an error, never an answer. It returns the
 // permission request ids the CLI may still be waiting on.
 func (c *conversation) expireLocked() []string {
+	c.expirePlansLocked()
 	var perms []string
 	for id, in := range c.pending {
 		if in.answering {
@@ -2668,6 +2808,7 @@ func (c *conversation) expireLocked() []string {
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
 			c.settledLocked(in, time.Now())
+			c.elicits.settled(in)
 			in.reply <- userReply{err: errNoUser}
 		} else {
 			perms = append(perms, id)
@@ -2691,6 +2832,7 @@ func (c *conversation) exitLocked(reason string) {
 	clear(c.pending)
 	c.endIdleLocked()
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+	c.stopSchedulesLocked()
 	c.closed = true
 }
 
@@ -2994,7 +3136,30 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	if c.observeTodosLocked(ev, agentID) {
 		return
 	}
+	if c.observeMCPStatusLocked(ev, agentID) {
+		return
+	}
 	switch d := ev.Data.(type) {
+	case *rpc.SessionModelChangeData:
+		if agentID == "" {
+			c.autoModelSelectionLocked(d)
+		}
+		return
+	case *rpc.AutoModeSwitchRequestedData, *rpc.AutoModeSwitchCompletedData:
+		// The callback lacks RequestID: these notifications cannot identify
+		// which private question to settle and must never dismiss another.
+		return
+	case *rpc.SessionPlanChangedData:
+		if agentID != "" || ev.ID != "" && ev.ID == c.lastPlanChange {
+			return
+		}
+		c.lastPlanChange = ev.ID
+		c.planVersion++
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventPlanPath, PlanVersion: c.planVersion})
+		c.checkPlanLocked()
+	case *rpc.SessionScheduleCreatedData, *rpc.SessionScheduleCancelledData, *rpc.SessionScheduleRearmedData:
+		c.checkSchedulesLocked()
+		return
 	case *rpc.AssistantMessageDeltaData:
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return
@@ -3077,7 +3242,16 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.UserInputRequestedData:
 		c.linkQuestionLocked(d, agentID, time.Now())
 		return
+	case *rpc.ElicitationRequestedData:
+		c.elicitRequestedLocked(d, agentID, time.Now())
+		return
+	case *rpc.ElicitationCompletedData:
+		c.elicitCompletedLocked(d)
+		return
 	case *rpc.AssistantTurnStartData:
+		if agentID == "" {
+			c.refreshActiveSchedulesLocked()
+		}
 		c.tr.stepStart[agentID] = ev.Timestamp
 		if agentID == "" {
 			if !newCompletionEvent {
@@ -3107,6 +3281,16 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.UserMessageData:
 		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
 			c.completionReady = false
+		}
+		if agentID == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+			c.turnChangeUser, c.turnChangeEvent = "", ""
+			user := ev.ID
+			if d.MessageID != nil && *d.MessageID != "" {
+				user = *d.MessageID
+			}
+			if len(user) <= 256 && len(ev.ID) <= 256 {
+				c.turnChangeUser, c.turnChangeEvent = user, ev.ID
+			}
 		}
 		if agentID == "" && d.MessageID != nil {
 			c.steers = slices.DeleteFunc(c.steers, func(st *steer) bool { return st.id == *d.MessageID })
@@ -3173,6 +3357,9 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 			c.emitLocked(agentapi.Event{Kind: agentapi.EventSubagent, Subagent: &sa})
 		}
 	case *rpc.SessionIdleData:
+		if agentID == "" {
+			c.refreshActiveSchedulesLocked()
+		}
 		// Copilot CLI 1.0.89 reports the autopilot mode on the idle that ends
 		// a run after task_complete too; only a task_complete tells them apart.
 		if agentID == "" && d.Mode != nil && *d.Mode == rpc.SessionModeAutopilot && (d.Aborted == nil || !*d.Aborted) && !c.taskCompleted {
@@ -3257,6 +3444,10 @@ func (c *conversation) emitUsageLocked() {
 
 func (c *conversation) startTurnLocked() {
 	c.releaseTurnLocked()
+	if !c.turnRunning {
+		c.planEpoch++
+		c.planStopped = false
+	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
 	c.idleUnresolved, c.taskCompleted = false, false
@@ -3271,6 +3462,8 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 		return
 	}
 	c.foregroundIdle, c.turnRunning = true, false
+	c.planStopped = true
+	c.expirePlansLocked()
 	c.idleUnresolved = false
 	c.idles++
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel, Completion: c.completion}
@@ -3337,7 +3530,7 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	}
 	title, detail := describePermission(d)
 	in := &interaction{
-		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest)},
+		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest), Assisted: assistedReview(d)},
 		decisions:   map[string]rpc.PermissionDecision{},
 	}
 	add := func(opt agentapi.Option, dec rpc.PermissionDecision) {
@@ -3506,7 +3699,12 @@ func sandboxBypass(requested *bool, reason *string) string {
 // calls by id so start, live output and final results upsert one item.
 type transcript struct {
 	completions completionTrace
+	// planReviews is bounded review metadata, never the full plan bodies.
+	planReviews map[string]agentapi.PlanReview
 	tools       map[string]*agentapi.ToolCall
+	// toolAgents records starts so progress cannot invent a call or attach
+	// one agent's status to another agent's call.
+	toolAgents map[string]string
 	// ended holds the IDs of recently completed tool calls. A shell command
 	// a steer moved to the background completes its call at once, then keeps
 	// streaming output under the same ID; that must not reopen it.
@@ -3547,7 +3745,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -3600,6 +3798,8 @@ func reasoningText(d *rpc.AssistantMessageData) string {
 func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	it := agentapi.Item{Time: ev.Timestamp, AgentID: agentOf(ev)}
 	switch d := ev.Data.(type) {
+	case *rpc.ExitPlanModeRequestedData, *rpc.ExitPlanModeCompletedData, *rpc.HumanResponseRecordedData:
+		return t.planItem(ev)
 	case *rpc.UserMessageData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
 		if d.MessageID != nil && *d.MessageID != "" {
@@ -3650,6 +3850,7 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
 		t.tools[d.ToolCallID] = tc
+		t.toolAgents[d.ToolCallID] = it.AgentID
 		delete(t.ended, d.ToolCallID) // a new call reusing an ended ID
 		delete(t.shells, d.ToolCallID)
 		if cut {
@@ -3658,6 +3859,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 			delete(t.clippedInput, d.ToolCallID)
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	case *rpc.ToolExecutionProgressData:
+		if !t.toolProgress(d, &it) {
+			return it, false
+		}
 	case *rpc.ToolShellOutputData:
 		if !t.shellOutput(d, &it) {
 			return it, false
@@ -3668,12 +3873,13 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		tc := t.tool(d.ToolCallID)
 		delete(t.tools, d.ToolCallID)
+		delete(t.toolAgents, d.ToolCallID)
 		if len(t.ended) >= maxEndedTools {
 			clear(t.ended)
 		}
 		t.ended[d.ToolCallID] = struct{}{}
 		delete(t.shells, d.ToolCallID)
-		tc.Status, tc.Tail = agentapi.ToolCompleted, nil
+		tc.Status, tc.Tail, tc.Progress = agentapi.ToolCompleted, nil, ""
 		tc.EditEventID, tc.FileEdits, tc.FileEditsTruncated = nativeFileEdits(ev.ID, d)
 		cut := false
 		if d.Result != nil {
@@ -3728,6 +3934,25 @@ func skillNotice(it agentapi.Item, id, name string) (agentapi.Item, bool) {
 	}
 	it.ID, it.Kind, it.Text = id, agentapi.ItemNotice, "Skill: "+fence+" "+name+" "+fence
 	return it, true
+}
+
+func (t *transcript) toolProgress(d *rpc.ToolExecutionProgressData, it *agentapi.Item) bool {
+	agent, started := t.toolAgents[d.ToolCallID]
+	tc := t.tools[d.ToolCallID]
+	if !started || agent != it.AgentID || tc == nil || tc.Status != agentapi.ToolRunning {
+		return false
+	}
+	text := clip(strings.TrimSpace(displaytext.Sanitize(d.ProgressMessage)), 512)
+	if text == "" || text == tc.Progress {
+		return false
+	}
+	tc.Progress = text
+	cut := t.clippedInput[d.ToolCallID]
+	if sh := t.shells[d.ToolCallID]; sh != nil {
+		cut = cut || sh.clipped
+	}
+	it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
+	return true
 }
 
 // images returns the images a tool result carried: its image content blocks

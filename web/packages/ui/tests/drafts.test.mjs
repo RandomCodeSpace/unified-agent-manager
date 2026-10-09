@@ -60,4 +60,7 @@ test('a new Task changes settings by the service rule and creates with them, wit
   assert.deepEqual(createRequest('p1', s, 'r1'), { project_id: 'p1', provider: 'copilot', model: 'gpt-6', effort: 'high', context_size: 'long_context', mode: 'safe', request_id: 'r1' });
   assert.equal(createRequest('p1', { ...s, model: '' }, 'r1').model, undefined);
   assert.ok(!('prompt' in createRequest('p1', s, 'r1')));
+  // The default agent sends no agent; a chosen one goes with the create.
+  assert.ok(!('agent' in createRequest('p1', { ...s, agent: '' }, 'r1')));
+  assert.equal(createRequest('p1', { ...s, agent: 'reviewer' }, 'r1').agent, 'reviewer');
 });

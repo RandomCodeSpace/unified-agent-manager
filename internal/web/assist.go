@@ -41,6 +41,13 @@ const (
 func (s *Server) assistRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/suggestions", s.handleSuggestions)
 	mux.HandleFunc("POST /api/sessions/{id}/rerun", s.handleRerun)
+	mux.HandleFunc("POST /api/sessions/{id}/fork", s.handleFork)
+	mux.HandleFunc("POST /api/sessions/{id}/fork/dismiss", s.handleDismissFork)
+	mux.HandleFunc("GET /api/sessions/{id}/rewind/preview", s.handleRewindPreview)
+	mux.HandleFunc("POST /api/sessions/{id}/rewind", s.handleRewind)
+	mux.HandleFunc("POST /api/sessions/{id}/rewind/reconcile", s.handleRewindReconcile)
+	mux.HandleFunc("POST /api/sessions/{id}/rewind/release", s.handleRewindRelease)
+	mux.HandleFunc("POST /api/sessions/{id}/resend", s.handleResend)
 	mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExport)
 }
 
@@ -453,7 +460,7 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
-	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Mode: string(s.mode), RequestID: req.RequestID, rerunOf: s.id}
+	create := CreateRequest{ProjectID: s.projectID, Provider: s.provider, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Mode: string(s.mode), RequestID: req.RequestID, rerunOf: s.id}
 	if req.Model != "" && req.Model != s.model {
 		create.Model, create.Effort, create.ContextSize = req.Model, "", "default"
 	}

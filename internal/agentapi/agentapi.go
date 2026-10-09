@@ -51,11 +51,23 @@ var (
 	// ErrBusy reports that the provider rejected a prompt because a turn is
 	// still running.
 	ErrBusy = errors.New("a turn is already running")
+	// ErrForkUncertain means a native fork may exist, but its exact returned
+	// identity was not confirmed. A caller must not repeat the native RPC.
+	ErrForkUncertain = errors.New("conversation branch outcome is unknown")
+	// ErrRewindUncertain means a native rewind may have changed files or
+	// history, but its result was lost. A caller must not repeat the RPC.
+	ErrRewindUncertain = errors.New("conversation rewind outcome is unknown")
+	// ErrAgentUnavailable reports that a Task's custom agent could not be
+	// selected, usually because its definition no longer exists. The
+	// conversation is never used with another agent instead.
+	ErrAgentUnavailable = errors.New("custom agent is not available")
 )
 
 // Capabilities advertises what an adapter really supports. The UI hides or
 // disables controls for unsupported operations instead of pretending.
 type Capabilities struct {
+	// Plan supports native plan mode and explicit review in the composer.
+	Plan        bool `json:"plan,omitempty"`
 	Cancel      bool `json:"cancel"`
 	Permissions bool `json:"permissions"`
 	Questions   bool `json:"questions"`
@@ -67,6 +79,10 @@ type Capabilities struct {
 	// report the provider's current availability for legacy conversations.
 	SessionDiffNeedsTracking bool `json:"-"`
 	History                  bool `json:"history"`
+	// Fork copies a recorded owner-turn prefix without resending messages.
+	Fork bool `json:"fork,omitempty"`
+	// Rewind discards an open conversation's recorded suffix natively.
+	Rewind bool `json:"rewind,omitempty"`
 	// ContextSize is the per-Task context-tier exception to provider parity.
 	ContextSize bool `json:"context_size"`
 	// ContextBreakdown is an optional on-demand ContextReader, never a stream.
@@ -74,6 +90,11 @@ type Capabilities struct {
 	// Usage is the second exception: the provider implements QuotaReporter
 	// and reports each conversation's AI units through EventUsage.
 	Usage bool `json:"usage"`
+	// UsageMetrics advertises an on-demand native conversation reader, separate
+	// from account quotas and the combined EventUsage total.
+	UsageMetrics bool `json:"usage_metrics,omitempty"`
+	// Aside is true when the provider's conversations implement AsideAsker.
+	Aside bool `json:"aside,omitempty"`
 	// Titles is true when the provider implements Titler and its
 	// conversations implement SetTitle, so a chosen model can title a Task.
 	Titles bool `json:"titles"`
@@ -98,6 +119,15 @@ type Capabilities struct {
 	SubagentModels bool `json:"subagent_models,omitempty"`
 	// GitHubMCP is true when the provider implements GitHubMCPUser.
 	GitHubMCP bool `json:"github_mcp,omitempty"`
+	// AssistedPermissions is true when the provider honours
+	// OpenRequest.AssistedApprovalModel, its conversations implement
+	// AssistedPermissionSetter, and its permission requests carry the
+	// review in Interaction.Assisted.
+	AssistedPermissions bool `json:"assisted_permissions,omitempty"`
+	// CustomAgents is true when the provider implements
+	// ConfigurationDiscoverer, applies OpenRequest.Agent and its
+	// conversations implement AgentSelector.
+	CustomAgents bool `json:"custom_agents,omitempty"`
 }
 
 // Provider creates and reopens conversations for one provider runtime.
@@ -121,6 +151,35 @@ type Provider interface {
 	// Shutdown closes every conversation and stops runtimes this provider
 	// started. It never stops a runtime it did not start.
 	Shutdown(ctx context.Context) error
+}
+
+// Forker is an optional provider-level capability. Boundary reads use only
+// the persisted record; they never open the source conversation. Fork must
+// revalidate the exact boundary before calling the provider and never retry
+// an RPC whose result is uncertain. Any error after a possible native side
+// effect must wrap ErrForkUncertain; other errors guarantee no fork exists.
+type Forker interface {
+	ReadForkBoundary(context.Context, ForkBoundaryRequest) (ForkBoundary, error)
+	Fork(context.Context, ForkRequest) (string, error)
+}
+
+type ForkBoundaryRequest struct {
+	ConversationID string
+	UserItemID     string
+}
+
+// ForkBoundary includes the selected owner turn. ToEventID is the next
+// owner-start event, which the native fork excludes. Empty means the proven
+// current end; TailEventID detects an append before that fork starts.
+type ForkBoundary struct {
+	UserEventID string `json:"user_event_id"`
+	ToEventID   string `json:"to_event_id,omitempty"`
+	TailEventID string `json:"tail_event_id"`
+}
+
+type ForkRequest struct {
+	ForkBoundaryRequest
+	Boundary ForkBoundary
 }
 
 // QuotaReporter is implemented by a provider whose Capabilities.Usage is
@@ -500,11 +559,18 @@ type OpenRequest struct {
 	// Title is the user-visible session name.
 	Title string
 	// Model is the model ID for a new conversation; "" means the provider
-	// default. It is ignored on reopen, so reopening never changes the model.
+	// default. Reopening does not switch to it (the caller applies the
+	// selection with SetModel), but an adapter keeps Model, Effort and
+	// ContextSize when selecting Agent applies the agent's own model.
 	Model string
-	// Effort and ContextSize apply only when creating a conversation.
+	// Effort and ContextSize apply when creating a conversation.
 	Effort      string
 	ContextSize string
+	// Agent is the ID of the custom agent selected on create and on every
+	// reopen, before anything is sent; "" keeps the provider's default
+	// agent. An agent that cannot be selected fails the open with
+	// ErrAgentUnavailable.
+	Agent string
 	// Events receives every event for this conversation until Close returns.
 	Events EventSink
 	// ValidateFile checks a declaration candidate without granting access or
@@ -522,6 +588,30 @@ type OpenRequest struct {
 	// which the conversation starts compacting; 0 keeps the provider default.
 	// It applies on create and on every reopen.
 	CompactionThreshold float64
+	// AssistedApprovalModel, when set, turns on the provider's assisted
+	// permission review with this model as the reviewer, on create and on
+	// every reopen. Open fails when the runtime does not apply it.
+	AssistedApprovalModel string
+}
+
+// AssistedPermissionSetter is implemented by a conversation whose provider
+// has Capabilities.AssistedPermissions. SetAssistedPermissions turns the
+// assisted review on with approvalModel as the reviewer, or off when
+// approvalModel is "". It fails unless the runtime reports the mode applied.
+type AssistedPermissionSetter interface {
+	SetAssistedPermissions(ctx context.Context, approvalModel string) error
+	// AssistedPermissionsOn reads the runtime's mode back, for when a change
+	// failed or timed out: true when assisted review is on, false when off.
+	AssistedPermissionsOn(ctx context.Context) (bool, error)
+}
+
+// AssistedReview is a provider's assisted review of one permission request.
+// Recommendation is "approve", "requireApproval", "excluded" or "error";
+// Model is the reviewer that produced it, "" when it reported none.
+type AssistedReview struct {
+	Recommendation string `json:"recommendation"`
+	Model          string `json:"model,omitempty"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 // MaxHostToolArguments bounds the JSON arguments of one host tool call;
@@ -637,6 +727,84 @@ type Conversation interface {
 	// Close disconnects from the conversation without deleting it. Pending
 	// interactions end without an answer being fabricated.
 	Close(ctx context.Context) error
+}
+
+// TurnChangeReader snapshots only the finalized foreground owner turn of an
+// existing open conversation. It reads native captures, never current Git or
+// files, and must refuse a boundary followed by another ordinary owner turn.
+type TurnChangeReader interface {
+	TurnChanges(context.Context, string) (NativeTurnChanges, error)
+}
+
+const (
+	MaxTurnChangeFiles           = 32
+	MaxTurnChangePathBytes       = 16 << 10
+	MaxTurnChangeCount     int64 = 1_000_000_000
+)
+
+// NativeTurnChanges is the immutable native captured suffix at its owner's
+// settle boundary. No patches or user message text belong in this metadata.
+type NativeTurnChanges struct {
+	Status    string           `json:"status"`
+	EventID   string           `json:"event_id,omitempty"`
+	Files     int64            `json:"files,omitempty"`
+	Additions int64            `json:"additions,omitempty"`
+	Deletions int64            `json:"deletions,omitempty"`
+	Omitted   int64            `json:"omitted,omitempty"`
+	Entries   []NativeTurnFile `json:"entries,omitempty"`
+}
+
+type NativeTurnFile struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Additions int64  `json:"additions,omitempty"`
+	Deletions int64  `json:"deletions,omitempty"`
+}
+
+// HistoryRewinder is optional on an open Conversation. PreviewRewind is
+// readonly. Rewind issues the native request once: it has no idempotency key,
+// so any error after a possible side effect wraps ErrRewindUncertain, and
+// other errors guarantee nothing was sent.
+type HistoryRewinder interface {
+	PreviewRewind(ctx context.Context, userItemID string) (RewindPreview, error)
+	Rewind(ctx context.Context, userEventID, mode string) (RewindResult, error)
+}
+
+const (
+	RewindConversation         = "conversation"
+	RewindConversationAndFiles = "conversation-and-files"
+	MaxRewindDiscarded         = 2000
+	MaxRewindResultFiles       = 256
+)
+
+// RewindPreview binds the exact native boundary that begins the discarded
+// suffix. Discarded holds the newest discarded root owner item IDs; Turns
+// counts all of them. Files are the native forward counts over the suffix.
+type RewindPreview struct {
+	UserEventID    string            `json:"user_event_id"`
+	TailEventID    string            `json:"tail_event_id"`
+	Turns          int               `json:"turns"`
+	Discarded      []string          `json:"-"`
+	FilesAvailable bool              `json:"files_available"`
+	FilesReason    string            `json:"files_reason,omitempty"`
+	Files          NativeTurnChanges `json:"files"`
+}
+
+// RewindResult keeps every native outcome and the presence of its optional
+// fields. Lists are bounded; Omitted counts say how many paths were dropped.
+type RewindResult struct {
+	Outcome         string       `json:"outcome"`
+	Error           *string      `json:"error,omitempty"`
+	EventsRemoved   *int64       `json:"events_removed,omitempty"`
+	RestoredFiles   []string     `json:"restored_files"`
+	SkippedFiles    []RewindSkip `json:"skipped_files"`
+	RestoredOmitted int          `json:"restored_omitted,omitempty"`
+	SkippedOmitted  int          `json:"skipped_omitted,omitempty"`
+}
+
+type RewindSkip struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // Prompt is one user message: the text as typed, plus project files and
@@ -783,6 +951,9 @@ const (
 	EventTurn EventKind = "turn"
 	// EventInteraction upserts a permission request or question by ID.
 	EventInteraction EventKind = "interaction"
+	// EventPlanPath reports the exact provider-owned scratch plan identity,
+	// for project-change exclusion. It is not a local-file read permission.
+	EventPlanPath EventKind = "plan_path"
 	// EventExit reports that the conversation or its runtime became unusable
 	// (process exit, event-stream failure). The conversation is then closed.
 	EventExit EventKind = "exit"
@@ -793,6 +964,8 @@ const (
 	EventSubagent EventKind = "subagent"
 	// EventBackgroundTasks replaces the live background shell task snapshot.
 	EventBackgroundTasks EventKind = "background_tasks"
+	// EventSchedules replaces open-conversation native schedule display metadata.
+	EventSchedules EventKind = "schedules"
 	// EventContext reports main-agent context usage; it is never persisted.
 	EventContext EventKind = "context"
 	// EventUsage reports the conversation's AI units so far in Event.Usage.
@@ -809,6 +982,11 @@ const (
 	// EventTodos replaces the conversation's todo list with Event.Todos; it
 	// is never persisted.
 	EventTodos EventKind = "todos"
+	// EventModelSelection reports provider-confirmed main-agent model settings,
+	// never the owner's consent to a requested change.
+	EventModelSelection EventKind = "model_selection"
+	// EventMCPStatus replaces lightweight state of the open conversation's servers.
+	EventMCPStatus EventKind = "mcp_status"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -818,8 +996,11 @@ type Event struct {
 	Delta           *Delta
 	Turn            *Turn
 	Interaction     *Interaction
+	PlanPath        string
+	PlanVersion     uint64 // lightweight invalidation from native plan_changed
 	Subagent        *Subagent
 	BackgroundTasks *BackgroundTasks
+	Schedules       *ScheduleSnapshot
 	Context         *Context
 	Usage           *Usage
 	Tokens          *TokenUsage
@@ -829,14 +1010,26 @@ type Event struct {
 	// Title is the untrusted provider title for EventTitle.
 	Title string
 	// Compacting is the payload of EventCompaction.
-	Compacting bool
-	Activity   *Activity
-	Todos      *TodoList
+	Compacting     bool
+	Activity       *Activity
+	Todos          *TodoList
+	ModelSelection *ModelSelection
+	MCPStatus      *MCPStatusSnapshot
+}
+
+// ModelSelection contains confirmed settings. Nil optional fields mean the
+// provider did not report them; context usage and capacity are separate facts.
+type ModelSelection struct {
+	Model       string
+	Effort      *string
+	ContextSize *string
 }
 
 // Activity is the main agent's live state in the running turn. The adapter
 // starts it afresh with each turn; the provider never records it.
 type Activity struct {
+	// Plan is true only after this turn's explicit native implementation approval.
+	Plan bool `json:"plan,omitempty"`
 	// Intent is what the main agent says it is doing, "" when it says
 	// nothing.
 	Intent string `json:"intent,omitempty"`
@@ -906,6 +1099,8 @@ type Item struct {
 	// Completion is a provider's bounded completion decision, preserved as
 	// a notice. It is separate from the foreground turn's lifecycle.
 	Completion *TaskCompletion `json:"completion,omitempty"`
+	// Plan is compact native review metadata; its body is read on demand.
+	Plan *PlanReview `json:"plan,omitempty"`
 	// Time is when the item began: a tool call's start, a thought's model
 	// call start, a message's first text.
 	Time time.Time `json:"time"`
@@ -988,6 +1183,9 @@ type ToolCall struct {
 	EditEventID        string     `json:"edit_event_id,omitempty"`
 	FileEdits          []FileEdit `json:"file_edits,omitempty"`
 	FileEditsTruncated bool       `json:"file_edits_truncated,omitempty"`
+	// Progress is the latest human status of a running call, at most 512
+	// UTF-8 bytes. It is display metadata, not tool output; empty once ended.
+	Progress string `json:"progress,omitempty"`
 	// ExitCode is a shell command's exit code, when the provider reports
 	// one; nil otherwise.
 	ExitCode *int `json:"exit_code,omitempty"`
@@ -1066,6 +1264,7 @@ type InteractionKind string
 const (
 	InteractionPermission InteractionKind = "permission"
 	InteractionQuestion   InteractionKind = "question"
+	InteractionPlanReview InteractionKind = "plan_review"
 )
 
 // InteractionState is the lifecycle of one interaction.
@@ -1086,7 +1285,8 @@ type Interaction struct {
 	Kind  InteractionKind `json:"kind"`
 	Title string          `json:"title"`
 	// Detail is display text: command, paths, patterns, or tool arguments.
-	Detail string `json:"detail,omitempty"`
+	Detail string      `json:"detail,omitempty"`
+	Plan   *PlanReview `json:"plan,omitempty"`
 	// Options lists permission decisions the provider accepts. Answer.Decision
 	// must be one of these IDs.
 	Options []Option `json:"options,omitempty"`
@@ -1103,9 +1303,17 @@ type Interaction struct {
 	// is the call that needs it; for a question, the tool call that asked
 	// (Copilot's ask_user). It is empty when unknown.
 	ToolCallID string `json:"tool_call_id,omitempty"`
-	// Auto is set by the web service, never by a provider: yolo mode is
-	// answering this pending request, so it does not wait for the user.
+	// Auto is set by the web service, never by a provider: yolo mode or an
+	// approving assisted review is answering this pending request, so it
+	// does not wait for the user.
 	Auto bool `json:"auto,omitempty"`
+	// Assisted is the provider's assisted review of a permission request;
+	// zero when the request was not reviewed.
+	Assisted AssistedReview `json:"assisted,omitzero"`
+	// Elicitation is set on a question that stands for a provider's
+	// structured request: a form or a link. It is user data, never a
+	// permission, so yolo mode never answers it.
+	Elicitation *Elicitation `json:"elicitation,omitempty"`
 }
 
 // Option is one permission decision.
@@ -1129,15 +1337,21 @@ type Question struct {
 	Multiple bool `json:"multiple,omitempty"`
 	// Custom allows a free-form answer.
 	Custom bool `json:"custom"`
+	// Field is the typed form field this question asks for, on an
+	// elicitation form only.
+	Field *Field `json:"field,omitempty"`
 }
 
 // Answer responds to an interaction. Permission answers set Decision; question
 // answers set Answers (one slice per Question, holding chosen choices and/or a
 // custom text). Reject declines a question without answering it.
 type Answer struct {
-	Decision string     `json:"decision,omitempty"`
-	Answers  [][]string `json:"answers,omitempty"`
-	Reject   bool       `json:"reject,omitempty"`
+	Plan     *PlanAnswer `json:"plan,omitempty"`
+	Decision string      `json:"decision,omitempty"`
+	Answers  [][]string  `json:"answers,omitempty"`
+	Reject   bool        `json:"reject,omitempty"`
+	// Cancel dismisses an elicitation without declining it.
+	Cancel bool `json:"cancel,omitempty"`
 	// Auto marks an answer UAM gave on its own (yolo), not one a person chose.
 	// It is internal: a client can never set it.
 	Auto bool `json:"-"`

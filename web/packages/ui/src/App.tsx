@@ -572,6 +572,8 @@ export default function App() {
         recentTasks.invalidate(data);
         if (data.name === 'session_removed' || data.name === 'project_removed') sweptMembership.current = null;
         if (data.name === 'session_removed') forgetArchive(api.cacheKey(data.session_id));
+        // A rewind may drop recorded events that cached archive pages still hold.
+        if (data.name === 'session' && data.session.rewind) forgetArchive(api.cacheKey(data.session.id));
         // Invalidations precede React's commit. A click in between must not
         // put the old confirmed reference straight back into the cache.
         const current = confirmedDetail.current;

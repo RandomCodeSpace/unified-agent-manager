@@ -273,6 +273,7 @@ type webSession struct {
 	model       string
 	effort      string
 	contextSize string
+	agent       string // custom agent ID; "" is the provider's default
 	context     *agentapi.Context
 	usage       *agentapi.Usage
 	name        string
@@ -286,11 +287,22 @@ type webSession struct {
 	titleWait *titlePlan
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
+	// asking is set while an aside question waits for its answer (aside.go);
+	// not persisted.
+	asking bool
 	// compactAt is the compaction threshold, in percent, the conversation
 	// was last opened with; not persisted.
 	compactAt int
-	// mode is safe or yolo: a yolo Task's permission requests are allowed
-	// once without asking.
+	// leavingAssisted is set while the runtime leaves assisted mode: its
+	// approving reviews no longer allow requests; not persisted.
+	leavingAssisted bool
+	// modeUnknown is set when a failed mode change left the runtime's mode
+	// unreadable: nothing is allowed automatically until a change or an open
+	// sets it again; not persisted.
+	modeUnknown bool
+	// mode is safe, yolo or assisted: a yolo Task's permission requests are
+	// allowed once without asking; an assisted Task's are when the
+	// provider's assisted review by assistedApprovalModel approves them.
 	mode      store.Mode
 	workdir   string
 	convID    string
@@ -308,6 +320,7 @@ type webSession struct {
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq           uint64
 	turnTimings       []TurnTiming
+	turnChanges       []TurnChanges
 	activeTiming      int
 	pendingTimingUser string
 	timingRevision    uint64
@@ -339,6 +352,9 @@ type webSession struct {
 	ixIdx        map[string]*interaction
 	// ask is the summary's Ask, kept while unchanged (pendingAsk).
 	ask *Ask
+	// planPath is the exact native scratch file, used only for edit attribution.
+	planPath    string
+	planVersion uint64
 	// eventAt is the last provider event, to the minute.
 	eventAt time.Time
 	// unseenEnd is set when the Task failed or was interrupted while no page
@@ -355,6 +371,11 @@ type webSession struct {
 	stoppedSubagents map[string]bool // accepted stops awaiting the provider event
 	backgroundTasks  *agentapi.BackgroundTasks
 	execution        *agentapi.ExecutionState
+	// schedules is the open conversation's native schedule display
+	// metadata; replaced whole, never persisted.
+	schedules   *agentapi.ScheduleSnapshot
+	mcpStatus   *agentapi.MCPStatusSnapshot
+	mcpRevision uint64
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -364,6 +385,9 @@ type webSession struct {
 	submissions        []Submission
 	last               *Submission
 	createReq          string
+	fork               *store.ForkLineage
+	// rewind is the latest native rewind receipt (rewind.go).
+	rewind *store.WebRewind
 	// stopCode is why the last turn was cancelled (SessionSummary.StopReason),
 	// until the next turn starts.
 	stopCode string
@@ -464,9 +488,10 @@ type interaction struct {
 	// answering is set while this service's answer is with the provider, so
 	// a concurrent second answer is refused instead of racing it.
 	answering bool
-	// yolo is set once yolo mode claimed the interaction; it no longer waits
-	// for the user.
-	yolo bool
+	// yolo is set once yolo mode, or an approving assisted review when
+	// assisted is also set, claimed the interaction; it no longer waits for
+	// the user.
+	yolo, assisted bool
 }
 
 // public is ix as a browser sees it: Auto says yolo mode is answering it.
@@ -486,6 +511,7 @@ type persistKey struct {
 	settledAt, archivedAt                                                                                            time.Time
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
+	agent                                                                                                            string
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -551,7 +577,7 @@ func (s *webSession) durableState() string {
 }
 
 func (s *webSession) key() persistKey {
-	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: s.title, mode: s.mode,
+	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
 		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, stopReason: s.stopCode}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
@@ -793,11 +819,11 @@ func cleanTitle(title string) string {
 func sessionFromRecord(rec store.SessionRecord) *webSession {
 	s := newSession(rec.ID, rec.Agent, rec.Name, rec.Workdir, rec.ProviderSessionID, rec.CreatedAt)
 	s.updatedAt = rec.LastSeenAt
-	if rec.Mode == store.ModeYolo {
-		s.mode = store.ModeYolo
+	if rec.Mode == store.ModeYolo || rec.Mode == store.ModeAssisted {
+		s.mode = rec.Mode
 	}
 	if web := rec.Web; web != nil {
-		s.turnTimings = slices.Clone(web.TurnTimings)
+		s.turnTimings = store.CloneTurnTimings(web.TurnTimings)
 		if len(s.turnTimings) > maxTurnTimings {
 			s.turnTimings = s.turnTimings[len(s.turnTimings)-maxTurnTimings:]
 		}
@@ -819,8 +845,11 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.spawnedBy = web.SpawnedBy
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
+		s.fork = web.Fork
+		s.rewind = loadedRewind(web.Rewind)
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
+		s.agent = web.Agent
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
@@ -1037,25 +1066,35 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 	if capabilities.SessionDiffNeedsTracking && !s.nativeChanges {
 		capabilities.SessionDiff = false
 	}
+	forkOf, forkUser := "", ""
+	if s.fork != nil {
+		forkOf, forkUser = s.fork.SourceTaskID, s.fork.UserItemID
+	}
 	return SessionSummary{
 		ID: s.id, ProjectID: s.projectID, Provider: s.provider, Model: s.model, Name: s.name, Title: s.title,
-		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Context: s.context, Usage: s.usage,
+		Effort: s.effort, ContextSize: cmp.Or(s.contextSize, "default"), Agent: s.agent, Context: s.context, Usage: s.usage,
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
+		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
+		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
 	}
 }
 
 // detailLocked builds the retained web transcript and controls.
 func (m *Manager) detailLocked(s *webSession) SessionDetail {
+	timings := store.CloneTurnTimings(s.turnTimings)
+	if timings == nil {
+		timings = []TurnTiming{}
+	}
 	d := SessionDetail{
+		PlanVersion:      s.planVersion,
 		SessionSummary:   m.summaryLocked(s),
 		Seq:              m.seq,
-		TurnTimings:      append([]TurnTiming{}, s.turnTimings...),
+		TurnTimings:      timings,
 		Items:            s.agentItems(""),
 		Interactions:     make([]agentapi.Interaction, 0, len(s.interactions)),
 		Subagents:        s.subagentList(),
@@ -1072,6 +1111,16 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot := *s.backgroundTasks
 		snapshot.Tasks = slices.Clone(snapshot.Tasks)
 		d.BackgroundTasks = &snapshot
+	}
+	if s.schedules != nil {
+		snapshot := *s.schedules
+		snapshot.Entries = slices.Clone(snapshot.Entries)
+		d.Schedules = &snapshot
+	}
+	if s.mcpStatus != nil {
+		snapshot := *s.mcpStatus
+		snapshot.Servers = slices.Clone(snapshot.Servers)
+		d.MCPStatus = &snapshot
 	}
 	activity := s.turnActivity
 	d.TurnActivity = &activity
@@ -1317,7 +1366,7 @@ func (m *Manager) taskDefaults(d TaskDefaults) (TaskDefaults, error) {
 	if selectionErr != nil {
 		return TaskDefaults{}, selectionErr
 	}
-	if _, err := parseMode(d.Mode); err != nil {
+	if _, err := parseDefaultMode(d.Mode); err != nil {
 		return TaskDefaults{}, err
 	}
 	return d, nil
@@ -1850,6 +1899,12 @@ func (m *Manager) deleteTask(id string) error {
 		if rec, ok := cfg.Sessions[key]; ok && rec.ID == s.id && rec.Surface == store.SurfaceWeb {
 			delete(cfg.Sessions, key)
 		}
+		// Its unresolved branch requests can no longer be reconciled.
+		for requestID, pending := range cfg.WebForks {
+			if pending.Provider == s.provider && pending.Lineage.SourceTaskID == s.id {
+				delete(cfg.WebForks, requestID)
+			}
+		}
 		return nil
 	}); err != nil {
 		return fmt.Errorf("delete web session: %w", err)
@@ -1999,14 +2054,18 @@ func (m *Manager) flush() (err error) {
 	m.mu.Lock()
 	patches := make([]recordPatch, 0, len(m.dirty))
 	var kept []keptTodos
+	var keptChanges []keptTurnChanges
 	for id := range m.dirty {
 		s := m.sessions[id]
 		if s == nil {
 			continue
 		}
-		timings := slices.Clone(s.turnTimings)
+		timings := store.CloneTurnTimings(s.turnTimings)
 		if len(s.turnTodos) > 0 {
 			kept = append(kept, keptTodos{s: s, records: slices.Clone(s.turnTodos), timings: timings})
+		}
+		if len(s.turnChanges) > 0 {
+			keptChanges = append(keptChanges, keptTurnChanges{s: s, records: cloneTurnChanges(s.turnChanges), timings: timings})
 		}
 		key := s.key()
 		var commandResult json.RawMessage
@@ -2017,9 +2076,9 @@ func (m *Manager) flush() (err error) {
 			id: s.id, provider: s.provider, name: s.name, convID: s.convID, mode: s.mode, updated: s.updatedAt,
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
-				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Title: key.title,
+				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
 		})
@@ -2032,6 +2091,9 @@ func (m *Manager) flush() (err error) {
 	// Turn todo snapshots land before the counts that point at them.
 	for _, k := range kept {
 		m.appendTurnTodos(k)
+	}
+	for _, k := range keptChanges {
+		m.appendTurnChanges(k)
 	}
 	err = m.store.Update(func(cfg *store.Config) error {
 		for _, p := range patches {
@@ -2213,6 +2275,18 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.Interaction != nil && ev.Interaction.ID != "" {
 			m.upsertInteractionLocked(s, *ev.Interaction)
 		}
+	case agentapi.EventPlanPath:
+		m.notePlanPathLocked(s, ev.PlanPath)
+		if ev.PlanVersion != 0 && ev.PlanVersion != s.planVersion {
+			s.planVersion = ev.PlanVersion
+			m.broadcastLocked("plan_version", s.id, func(seq uint64) any {
+				return struct {
+					Seq         uint64 `json:"seq"`
+					SessionID   string `json:"session_id"`
+					PlanVersion uint64 `json:"plan_version"`
+				}{seq, s.id, s.planVersion}
+			})
+		}
 	case agentapi.EventSubagent:
 		if ev.Subagent != nil && ev.Subagent.ID != "" {
 			m.upsertSubagentLocked(s, *ev.Subagent, true)
@@ -2226,6 +2300,14 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		if ev.BackgroundTasks != nil {
 			m.backgroundTasksLocked(s, *ev.BackgroundTasks)
 		}
+	case agentapi.EventSchedules:
+		if ev.Schedules != nil {
+			m.schedulesLocked(s, ev.Schedules)
+		}
+	case agentapi.EventMCPStatus:
+		if ev.MCPStatus != nil {
+			m.mcpStatusLocked(s, *ev.MCPStatus)
+		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {
 			usage := *ev.Context
@@ -2234,6 +2316,22 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			}
 			if s.context == nil || *s.context != usage {
 				s.context = &usage
+			}
+		}
+	case agentapi.EventModelSelection:
+		if selection := ev.ModelSelection; selection != nil && validModelSelectionID(selection.Model, maxNameRunes) {
+			s.model = strings.Clone(selection.Model)
+			if selection.Model == "auto" {
+				// Auto forbids authored per-model options. Normalize the
+				// selection for reopen; retain native context usage/capacity.
+				s.effort, s.contextSize = "", "default"
+			} else {
+				if selection.Effort != nil && (*selection.Effort == "" || validModelSelectionID(*selection.Effort, 64)) && m.validateSelectionLocked(s.provider, selection.Model, *selection.Effort, "default") == nil {
+					s.effort = strings.Clone(*selection.Effort)
+				}
+				if selection.ContextSize != nil && validModelSelectionID(*selection.ContextSize, 64) && m.validateSelectionLocked(s.provider, selection.Model, "", *selection.ContextSize) == nil {
+					s.contextSize = strings.Clone(*selection.ContextSize)
+				}
 			}
 		}
 	case agentapi.EventCompaction:
@@ -2276,10 +2374,14 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	m.changedLocked(s, before)
 }
 
+func validModelSelectionID(value string, limit int) bool {
+	return value != "" && len(value) <= limit && utf8.ValidString(value) && strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
+}
+
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	s.invalidateNativeDiff()
 	m.turnActivityTurnLocked(s, turn.State)
-	m.observeTurnTimingLocked(s, turn.State)
+	finalizedTiming := m.observeTurnTimingLocked(s, turn.State)
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
 	}
@@ -2312,6 +2414,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.pauseQueueLocked(s)
 		m.kickSignedOutLocked(s, detail)
 	}
+	if finalizedTiming != nil {
+		m.kickTurnChangesLocked(s, *finalizedTiming)
+	}
 	if turn.State != agentapi.TurnWorking {
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
@@ -2330,6 +2435,7 @@ type CreateRequest struct {
 	Model       string `json:"model"`
 	Effort      string `json:"effort"`
 	ContextSize string `json:"context_size"`
+	Agent       string `json:"agent"` // custom agent ID; "" is the provider's default
 	Name        string `json:"name"`
 	Prompt      string `json:"prompt"`
 	RequestID   string `json:"request_id"`
@@ -2390,11 +2496,22 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 			return nil, "", "", err
 		}
 	}
+	if mode == store.ModeAssisted {
+		m.mu.Lock()
+		err = m.assistedSupportLocked(prov.Name())
+		m.mu.Unlock()
+		if err != nil {
+			return nil, "", "", err
+		}
+	}
 	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
 		return nil, "", "", newError(http.StatusConflict, "the project directory %s no longer exists", workdir)
 	}
 	if strings.TrimSpace(req.Prompt) != "" && len(req.Prompt) > maxPromptBytes {
 		return nil, "", "", newError(http.StatusRequestEntityTooLarge, msgPromptTooLarge)
+	}
+	if err := m.checkAgent(prov.Name(), workdir, req.Agent); err != nil {
+		return nil, "", "", err
 	}
 	return prov, workdir, mode, nil
 }
@@ -2430,7 +2547,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
 	s.projectID, s.model, s.mode = req.ProjectID, req.Model, mode
-	s.effort, s.contextSize = req.Effort, req.ContextSize
+	s.effort, s.contextSize, s.agent = req.Effort, req.ContextSize, req.Agent
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
 	s.routineID = req.routineID
@@ -2441,14 +2558,18 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	s.editsKnown = true
 	s.gen = 1
 	m.mu.Lock()
-	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir)}, s)
+	open := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: id, Workdir: workdir, Title: name, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, Events: sink{m: m, s: s, gen: 1}, ValidateFile: m.declarationValidator(id, workdir), AssistedApprovalModel: approvalModel(mode)}, s)
 	m.mu.Unlock()
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	conv, err := prov.Open(ctx, open)
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
-		return SessionSummary{}, newError(http.StatusBadGateway, "could not start a %s conversation: %s", prov.DisplayName(), shortError(err))
+		status := http.StatusBadGateway
+		if errors.Is(err, agentapi.ErrAgentUnavailable) {
+			status = http.StatusConflict
+		}
+		return SessionSummary{}, newError(status, "could not start a %s conversation: %s", prov.DisplayName(), shortError(err))
 	}
 	convID := conv.ID()
 	// The ID is persisted and later passed back as an argv/URL value; refuse
@@ -2460,7 +2581,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
 	}
 	var check func(*store.Config) error
 	if req.spawnedBy != "" {
@@ -2520,7 +2641,7 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	}
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
-	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, title: rec.Web.Title, mode: s.mode}
+	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: rec.Web.Title, mode: s.mode}
 	m.sessions[s.id] = s
 	if s.historyRead {
 		m.enforceHistoryBudgetLocked(s)
@@ -2729,13 +2850,17 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.cancelHistoryLocked(s)
 	s.gen++
 	gen := s.gen
-	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir)}, s)
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: s.id, ConversationID: s.convID, Workdir: s.workdir, Title: s.name, Agent: s.agent, Events: sink{m: m, s: s, gen: gen}, ValidateFile: m.declarationValidator(s.id, s.workdir), AssistedApprovalModel: approvalModel(s.mode)}, s)
 	withHistory := m.infos[s.provider].Capabilities.History
 	model, effort, contextSize := s.model, s.effort, cmp.Or(s.contextSize, "default")
+	req.Model, req.Effort, req.ContextSize = model, effort, contextSize
 	s.context, s.compacting = nil, false
 	var selectionErr error
 	if effort != "" || contextSize != "default" {
 		selectionErr = m.validateSelectionLocked(s.provider, model, effort, contextSize)
+	}
+	if selectionErr == nil && s.mode == store.ModeAssisted {
+		selectionErr = m.assistedSupportLocked(s.provider)
 	}
 	m.changedLocked(s, before)
 	m.mu.Unlock()
@@ -2786,6 +2911,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	switch {
 	case err == nil && !stale:
 		s.conv = conv
+		s.modeUnknown = false // the open applied the recorded mode
 		s.activeAt = m.now()
 		if s.base == StateClosed || s.base == StateFailed {
 			s.setBase(StateIdle, "")
@@ -2793,9 +2919,16 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 		m.noteHistoryLocked(s, history, withHistory && histErr == nil)
 		m.applyHistoryLocked(s, history, false)
 		m.openedHistoryLocked(s, withHistory, histErr)
+		if withHistory && histErr == nil {
+			m.rereadRewindLocked(s)
+		}
 		m.autoAllowPendingLocked(s)
 	case err != nil && s.gen == gen:
 		s.setBase(StateFailed, openFailureDetail(err, s.convID))
+		// The failed conversation's schedules are not this Task's.
+		if s.schedules != nil {
+			m.schedulesLocked(s, nil)
+		}
 	}
 	m.finishOpeningLocked(s)
 	if err != nil && s.history == "" {
@@ -2807,7 +2940,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 
 	if err != nil {
 		log.Warn("reopen web conversation failed", "session", s.id, "provider", s.provider, "error", err)
-		if errors.Is(err, agentapi.ErrConversationNotFound) {
+		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) {
 			return newError(http.StatusConflict, "%s", openFailureDetail(err, req.ConversationID))
 		}
 		return newError(http.StatusBadGateway, "%s", openFailureDetail(err, req.ConversationID))
@@ -2822,6 +2955,9 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 func openFailureDetail(err error, convID string) string {
 	if errors.Is(err, agentapi.ErrConversationNotFound) {
 		return fmt.Sprintf("provider conversation %s no longer exists; uam did not create a replacement", convID)
+	}
+	if errors.Is(err, agentapi.ErrAgentUnavailable) {
+		return shortError(err) + "; choose another agent or the default agent for this Task"
 	}
 	return "could not open the provider conversation: " + shortError(err)
 }
@@ -3025,6 +3161,10 @@ func (m *Manager) submit(s *webSession, in turnInput, reqID, mode string) (Submi
 		return Submission{}, errShuttingDown
 	}
 	if err := s.readOnlyLocked(); err != nil {
+		m.mu.Unlock()
+		return Submission{}, err
+	}
+	if err := s.rewindHoldLocked(); err != nil {
 		m.mu.Unlock()
 		return Submission{}, err
 	}
@@ -3682,6 +3822,8 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 		err = errShuttingDown
 	case s.stage != StageActive:
 		err = s.readOnlyLocked()
+	case s.rewindHoldLocked() != nil:
+		err = s.rewindHoldLocked()
 	case s.conv == nil:
 		err = newError(http.StatusConflict, msgConversationNotOpen)
 	case busy(s.state()):
@@ -3842,9 +3984,9 @@ func (m *Manager) keepsOpenLocked(s *webSession) bool {
 
 // runsOrWaitsLocked reports whether s's open conversation still runs or
 // waits for anything: a turn, an answer, queued prompts, subagents,
-// background tasks or an active objective.
+// background tasks, an active objective or an aside question.
 func (s *webSession) runsOrWaitsLocked() bool {
-	if s.settleableLocked() != nil || s.runningSubagents() > 0 {
+	if s.asking || s.settleableLocked() != nil || s.runningSubagents() > 0 {
 		return true
 	}
 	if t := s.backgroundTasks; t != nil && (!t.Known || slices.ContainsFunc(t.Tasks, func(task agentapi.BackgroundTask) bool {
@@ -4125,7 +4267,8 @@ func (m *Manager) validateSelectionLocked(provider, model, effort, contextSize s
 
 // Answer forwards the user's answer to a pending interaction. The first
 // answer wins. The service answers on the user's behalf only for permission
-// requests of a yolo Task, and never for questions.
+// requests of a yolo Task or approved by an assisted review, and never for
+// questions.
 func (m *Manager) Answer(id, interactionID string, answer agentapi.Answer) (agentapi.Interaction, error) {
 	m.mu.Lock()
 	s := m.sessions[id]
@@ -4174,14 +4317,15 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	wasYolo := ix.yolo
 	if err != nil {
 		// Not answered: the request is the user's again.
-		ix.yolo = false
+		ix.yolo, ix.assisted = false, false
 	}
 	switch {
 	case err == nil:
 		if ix.State == agentapi.InteractionPending {
 			ix.State, ix.Resolution = resolution(ix.Interaction, answer)
+			ix.Plan = clampPlanReview(ix.Plan, false)
 			if ix.yolo {
-				ix.Resolution = yoloResolution
+				ix.Resolution = autoResolution(ix)
 			}
 			m.publishInteractionLocked(s, ix)
 		}
@@ -4203,17 +4347,53 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	}
 }
 
-// yoloResolution is the recorded resolution of a permission request that
-// yolo mode allowed.
-const yoloResolution = "allowed (yolo)"
+// yoloResolution and assistedResolution are the recorded resolutions of a
+// permission request that yolo mode or an approving assisted review allowed.
+const (
+	yoloResolution     = "allowed (yolo)"
+	assistedResolution = "allowed (assisted review)"
+)
 
-// autoAllowLocked answers a pending permission request of a yolo Task with
-// the provider's single-use allow option, through the same claim as a
-// browser's answer. Questions, and requests without that option (the
-// provider's policy says a person must decide), stay with the user.
-// It reports whether it claimed ix.
+// assistedApprovalModel is the only reviewer assisted Tasks use. A
+// configuration without it is refused, never left to the runtime default.
+const assistedApprovalModel = "gpt-6-luna"
+
+func autoResolution(ix *interaction) string {
+	if ix.assisted {
+		return assistedResolution
+	}
+	return yoloResolution
+}
+
+// approvalModel is the OpenRequest.AssistedApprovalModel of a Task mode.
+func approvalModel(mode store.Mode) string {
+	if mode == store.ModeAssisted {
+		return assistedApprovalModel
+	}
+	return ""
+}
+
+// assistedSupportLocked refuses assisted mode unless the provider supports
+// it and offers assistedApprovalModel.
+func (m *Manager) assistedSupportLocked(provider string) error {
+	if !m.infos[provider].Capabilities.AssistedPermissions {
+		return newError(http.StatusConflict, "this provider does not support assisted permissions")
+	}
+	if m.modelLocked(provider, assistedApprovalModel).ID == "" {
+		return newError(http.StatusConflict, "assisted permissions need the %s reviewer model, which this account does not offer", assistedApprovalModel)
+	}
+	return nil
+}
+
+// autoAllowLocked answers a pending permission request with the provider's
+// single-use allow option, through the same claim as a browser's answer:
+// any request of a yolo Task, and a request of an assisted Task that
+// assistedApprovalModel reviewed and approved. Questions, and requests
+// without that option (the provider's policy says a person must decide),
+// stay with the user. It reports whether it claimed ix.
 func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
-	if s.mode != store.ModeYolo || m.closed || s.removed || s.conv == nil ||
+	assisted := s.mode == store.ModeAssisted && !s.leavingAssisted && ix.Assisted.Recommendation == "approve" && ix.Assisted.Model == assistedApprovalModel
+	if s.mode != store.ModeYolo && !assisted || s.modeUnknown || m.closed || s.removed || s.conv == nil ||
 		ix.Kind != agentapi.InteractionPermission || ix.State != agentapi.InteractionPending || ix.answering {
 		return false
 	}
@@ -4222,12 +4402,12 @@ func (m *Manager) autoAllowLocked(s *webSession, ix *interaction) bool {
 		return false
 	}
 	conv, id, answer := s.conv, ix.ID, agentapi.Answer{Decision: ix.Options[i].ID, Auto: true}
-	ix.answering, ix.yolo = true, true
+	ix.answering, ix.yolo, ix.assisted = true, true, assisted
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
 		if _, err := m.respond(s, ix, conv, id, answer); err != nil {
-			log.Warn("web yolo approval failed", "session", s.id, "interaction", id, "error", err)
+			log.Warn("web automatic approval failed", "session", s.id, "interaction", id, "error", err)
 		}
 	}()
 	return true
@@ -4247,6 +4427,16 @@ func (m *Manager) autoAllowPendingLocked(s *webSession) {
 // parseMode validates a Task mode.
 func parseMode(mode string) (store.Mode, error) {
 	switch store.Mode(mode) {
+	case store.ModeSafe, store.ModeYolo, store.ModeAssisted:
+		return store.Mode(mode), nil
+	}
+	return "", newError(http.StatusBadRequest, "mode must be safe, yolo or assisted")
+}
+
+// parseDefaultMode validates the mode of Task defaults and routines:
+// assisted is a per-Task opt-in, and the store keeps only safe or yolo there.
+func parseDefaultMode(mode string) (store.Mode, error) {
+	switch store.Mode(mode) {
 	case store.ModeSafe, store.ModeYolo:
 		return store.Mode(mode), nil
 	}
@@ -4255,18 +4445,34 @@ func parseMode(mode string) (store.Mode, error) {
 
 // SetMode sets the Task's permission mode at any time, even while a turn
 // runs. It applies to permission requests raised afterwards; switching to yolo
-// also answers the ones already pending.
+// also answers the ones already pending. Switching into or out of assisted
+// changes the open conversation's mode first (setAssistedMode).
 func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
+	return m.setMode(id, mode, false)
+}
+
+// setMode is SetMode; opHeld says the caller already holds s.op (a
+// permission command), which a change into or out of assisted needs.
+func (m *Manager) setMode(id, mode string, opHeld bool) (SessionSummary, error) {
 	md, err := parseMode(mode)
 	if err != nil {
 		return SessionSummary{}, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	s := m.sessions[id]
 	if s == nil {
+		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
+	if md == store.ModeAssisted || s.mode == store.ModeAssisted || s.modeUnknown {
+		m.mu.Unlock()
+		if !opHeld {
+			s.op.Lock()
+			defer s.op.Unlock()
+		}
+		return m.setAssistedMode(s, md)
+	}
+	defer m.mu.Unlock()
 	if err := s.readOnlyLocked(); err != nil {
 		return SessionSummary{}, err
 	}
@@ -4275,6 +4481,121 @@ func (m *Manager) SetMode(id, mode string) (SessionSummary, error) {
 	m.autoAllowPendingLocked(s)
 	m.changedLocked(s, before)
 	return m.summaryLocked(s), nil
+}
+
+// setAssistedMode is SetMode into or out of assisted, or out of an unknown
+// mode; the caller holds s.op, which keeps opens out, so the conversation it
+// changes stays the open one. The mode is recorded only after the runtime
+// applied it; a closed conversation gets it at its next open. While the
+// runtime leaves assisted, its approving reviews no longer allow requests on
+// their own. When the change fails or times out, the runtime's mode is read
+// back and adopted; if that fails too, the mode is unknown and nothing is
+// allowed automatically until a later change sets it.
+func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary, error) {
+	m.mu.Lock()
+	err := s.readOnlyLocked()
+	switch {
+	case s.removed:
+		err = newError(http.StatusNotFound, msgSessionNotFound)
+	case err == nil && md == store.ModeAssisted && s.mode != store.ModeAssisted:
+		err = m.assistedSupportLocked(s.provider)
+	}
+	conv, toggle := s.conv, (md == store.ModeAssisted) != (s.mode == store.ModeAssisted) || s.modeUnknown
+	if err == nil && conv != nil && toggle && s.mode == store.ModeAssisted {
+		s.leavingAssisted = true
+	}
+	m.mu.Unlock()
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if conv != nil && toggle {
+		var uncertain bool
+		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+		uncertain, err = setAssistedPermissions(ctx, s.id, conv, approvalModel(md))
+		cancel()
+		if err != nil {
+			return m.assistedModeFailed(s, conv, md, err, uncertain)
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s.leavingAssisted = false
+	if s.removed {
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
+	}
+	before := m.summaryLocked(s)
+	s.mode, s.modeUnknown = md, false
+	m.autoAllowPendingLocked(s)
+	m.changedLocked(s, before)
+	return m.summaryLocked(s), nil
+}
+
+// modeReadTimeout bounds reading the runtime's permission mode back.
+const modeReadTimeout = 10 * time.Second
+
+// assistedModeFailed records the outcome of a refused or uncertain change of
+// conv's mode to md. A refusal changed nothing. After an uncertain one the
+// runtime's mode is read back: the mode it reports is adopted, and the change
+// succeeded if that is md; an unreadable mode is unknown.
+func (m *Manager) assistedModeFailed(s *webSession, conv agentapi.Conversation, md store.Mode, setErr error, uncertain bool) (SessionSummary, error) {
+	on, readErr := false, error(nil)
+	if uncertain {
+		ctx, cancel := context.WithTimeout(m.ctx, modeReadTimeout)
+		on, readErr = conv.(agentapi.AssistedPermissionSetter).AssistedPermissionsOn(ctx)
+		cancel()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s.leavingAssisted = false
+	if s.removed {
+		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
+	}
+	before := m.summaryLocked(s)
+	switch {
+	case !uncertain, errors.Is(readErr, agentapi.ErrClosed):
+		// Unchanged, or the next open applies the recorded mode.
+	case readErr != nil:
+		log.Warn("web permission mode read-back failed", "session", s.id, "error", readErr)
+		s.modeUnknown = true
+	default:
+		s.modeUnknown = false
+		switch {
+		case on:
+			s.mode = store.ModeAssisted
+		case md != store.ModeAssisted:
+			s.mode = md
+		case s.mode == store.ModeAssisted:
+			// Asked for assisted with the recorded mode unknown and found
+			// it off: Safe, never Yolo, is what the runtime then does.
+			s.mode = store.ModeSafe
+		}
+	}
+	m.autoAllowPendingLocked(s)
+	m.changedLocked(s, before)
+	if uncertain && readErr == nil && on == (md == store.ModeAssisted) {
+		return m.summaryLocked(s), nil
+	}
+	return SessionSummary{}, setErr
+}
+
+// setAssistedPermissions changes conv's runtime permission mode; a closed
+// conversation gets the recorded mode at its next open. Uncertain reports
+// that the runtime may have applied the change despite the error.
+func setAssistedPermissions(ctx context.Context, id string, conv agentapi.Conversation, approvalModel string) (uncertain bool, err error) {
+	setter, ok := conv.(agentapi.AssistedPermissionSetter)
+	if !ok {
+		return false, newError(http.StatusConflict, "this provider does not support assisted permissions")
+	}
+	err = setter.SetAssistedPermissions(ctx, approvalModel)
+	switch {
+	case err == nil, errors.Is(err, agentapi.ErrClosed):
+		return false, nil
+	case errors.Is(err, agentapi.ErrUnsupported):
+		return false, newError(http.StatusConflict, "this runtime does not support assisted permissions")
+	default:
+		log.Warn("web permission mode change failed", "session", id, "error", err)
+		return true, newError(http.StatusBadGateway, "could not change the permission mode: %s", shortError(err))
+	}
 }
 
 func interactionOpen(ix *interaction) error {

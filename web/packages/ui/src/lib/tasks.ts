@@ -95,6 +95,7 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     return { label: 'Input', text: `Wants your OK to ${what}`, tone: 'attention' };
   }
   if (ask?.kind === 'question') return { label: 'Input', text: `Asks: ${ask.title}`, tone: 'attention' };
+  if (ask?.kind === 'plan_review') return { label: 'Input', text: 'Plan ready', tone: 'attention' };
   if (s.state === 'awaiting_permission') return { label: 'Input', text: 'Wants your OK to continue', tone: 'attention' };
   if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Input', text: 'Has a question for you', tone: 'attention' };
   const state = shownState(s);

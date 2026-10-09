@@ -192,6 +192,20 @@ const listOf = (todos: Todo[], extra: Partial<TodoView> = {}): TodoView => ({
 });
 const withTodos = (todos: TodoView, intent = 'Working on the site', extra: Partial<SessionDetail> = {}) => task({ turn_activity: { intent, todos }, subagents: [{ id: 'sub-1', name: 'Index page writer', status: 'running' } as Subagent], ...extra });
 
+test('native plan progress labels only the approved current touched list, and opens a Plan reader', async () => {
+  const user = userEvent.setup();
+  const current = (todos: TodoView) => withTodos(todos, 'Implementing the plan', { turn_activity: { plan: true, intent: 'Implementing the plan', todos } });
+  const view = render(draw(current(listOf(rows(), { touched: false }))));
+  expect(screen.queryByText('Plan')).toBeNull();
+  expect(screen.getByText('from the last turn')).toBeTruthy();
+  view.rerender(draw(current(listOf(rows()))));
+  const button = screen.getByRole('button', { name: /Plan 1 of 4 done/ });
+  expect(button.textContent).toContain('Plan 1/4');
+  await user.click(button);
+  const reader = within(await screen.findByRole('dialog', { name: 'Plan' }));
+  expect(reader.getByRole('heading', { name: 'Plan' })).toBeTruthy();
+});
+
 /** A stage's count on screen: its glyph, its number and its word (which a phone drops), in its colour. */
 const stage = (word: string) => {
   const words = screen.getByText(word);

@@ -28,14 +28,25 @@ export interface Capabilities {
   cancel: boolean;
   permissions: boolean;
   questions: boolean;
+  plan?: boolean;
   session_diff: boolean;
   history: boolean;
+  /** Recorded owner-turn prefixes can be copied natively, without resending prompts. */
+  fork?: boolean;
+  /** An open conversation's recorded suffix can be rewound natively, with a preview first. */
+  rewind?: boolean;
   context_size?: boolean;
   /** An already-open conversation can report native context categories and sources on demand. */
   context_breakdown?: boolean;
   execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
   usage?: boolean;
+  /** Readonly native per-Task metrics, separate from account quotas and recorded AI units. */
+  usage_metrics?: boolean;
+  /** An open conversation answers a transient aside question; nothing is saved to the transcript. */
+  aside?: boolean;
+  /** Tasks may opt into the provider's assisted review of permission requests (`mode: 'assisted'`). */
+  assisted_permissions?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */
@@ -53,6 +64,8 @@ export interface Capabilities {
   subagent_models?: boolean;
   /** Its built-in GitHub MCP server is turned on and off for Tasks by `Settings.github_mcp`. */
   github_mcp?: boolean;
+  /** A Task can run as one of the Project's custom agents (`api.taskAgents`, `SessionSummary.agent`). */
+  custom_agents?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -156,7 +169,52 @@ export interface TokenCounts {
   total: number;
 }
 
+/** One aside answer; transient, never part of the transcript. */
+export interface AsideAnswer {
+  text: string;
+  truncated?: boolean;
+}
+
 export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
+/** Transient native snapshot: model and agent projections overlap and are never added. */
+export interface TaskUsageMetrics {
+  started_at: string;
+  current_model?: string;
+  user_requests: number;
+  premium_request_cost: number;
+  api_duration_ms: number;
+  ai_units?: number;
+  last_input: number;
+  last_output: number;
+  code_changes: { files: number; added: number; removed: number };
+  token_details: UsageTokenDetail[];
+  models: UsageMetricModel[];
+  agents: UsageMetricAgent[];
+  truncated?: boolean;
+}
+export interface UsageTokenDetail { type: string; tokens: number }
+export interface UsageMetricModel {
+  model: string;
+  requests: number;
+  premium_request_cost: number;
+  ai_units?: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  reasoning?: number;
+  cache_expires_at?: string;
+  token_details: UsageTokenDetail[];
+}
+export interface UsageMetricAgent {
+  id: string;
+  name?: string;
+  display_name?: string;
+  api_duration_ms: number;
+  ai_units: number;
+  models: UsageMetricModel[];
+}
+
 export interface TokenUsageReport {
   since: string;
   today: string;
@@ -572,7 +630,7 @@ export interface ConfigurationFile {
 }
 export interface Configuration {
   scope: 'global' | 'project';
-  discovery?: Partial<Record<'agents' | 'skills', { supported: boolean; ready: boolean; warnings?: string[] }>>;
+  discovery?: Partial<Record<ConfigurationKind, { supported: boolean; ready: boolean; warnings?: string[] }>>;
   project_id?: string;
   terminal_allowed: boolean;
   agents: ConfigurationFile[];
@@ -650,10 +708,14 @@ export interface SessionSummary {
   background_tasks_running?: number;
   effort?: string;
   context_size?: string;
+  /** The custom agent's ID, selected on every open before anything is sent; absent means the provider's default agent. */
+  agent?: string;
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
-  mode?: 'safe' | 'yolo';
+  mode?: PermissionMode;
+  /** A failed change left the runtime's permission mode unread: `mode` is not a fact, and nothing is allowed automatically. */
+  mode_unknown?: boolean;
   execution?: ExecutionState | null;
   stage?: 'active' | 'settled' | 'archived';
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
@@ -667,6 +729,11 @@ export interface SessionSummary {
   diff?: DiffStat;
   /** The Task whose last message this one runs again (Run again, Try with another model); absent otherwise. */
   rerun_of?: string;
+  /** Native recorded-history lineage, separate from a last-message rerun. */
+  fork_of?: string;
+  fork_user_item_id?: string;
+  /** A native rewind that holds the Task until it is reconciled; absent otherwise. */
+  rewind?: RewindStatus;
   /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */
   outcome?: string;
   /** Set while the conversation is being compacted (/compact or the provider's automatic compaction); absent otherwise. */
@@ -728,6 +795,8 @@ export interface ToolCall {
   file_edits_truncated?: boolean;
   input?: string;
   output?: string;
+  /** Latest human status of a running call, at most 512 UTF-8 bytes; absent once it ends. */
+  progress?: string;
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
   file_paths?: string[];
   declaration?: FileDeclaration;
@@ -765,6 +834,7 @@ export interface TaskCompletion {
 }
 
 export interface Item {
+  plan?: PlanReview;
   compact?: { has_reasoning: boolean; has_text: boolean };
   id: string;
   kind: ItemKind;
@@ -854,12 +924,24 @@ export interface TodoView { known: boolean; touched: boolean; todos: Todo[]; omi
 export interface TurnTodos { timing_id: string; ended_at: string; intent?: string; todos: (Todo & { agent?: string })[]; counts: TodoCounts }
 
 /** The running turn's live activity: what the main agent says it is doing (`assistant.intent`), a model call being retried, and the todo list; never persisted. */
-export interface TurnActivity { intent?: string; retry?: Retry; todos: TodoView }
+export interface TurnActivity { plan?: boolean; intent?: string; retry?: Retry; todos: TodoView }
 
 /** Live provider-owned shells. Unknown snapshots retain the last observation only. */
 export interface BackgroundTasks {
   known: boolean;
   tasks: { id: string; description?: string; command: string; status: string; started_at?: string; ended_at?: string }[];
+}
+
+/**
+ * The open conversation's native schedules, display only: no prompts, and nothing UAM runs. `known`
+ * false with rows is a partial list (`truncated`); without rows the list is unknown, never empty.
+ */
+export interface ScheduleSnapshot {
+  supported: boolean;
+  known: boolean;
+  truncated?: boolean;
+  reason?: string;
+  entries: { id: string; recurring: boolean; self_paced?: boolean; interval_ms?: number; cron?: string; timezone?: string; next_run_at?: string }[];
 }
 
 /** Subagents recorded before a cursor, read from Copilot's record on request, oldest first. */
@@ -878,8 +960,26 @@ export interface SubagentDetail extends Representation {
   items: Item[];
 }
 
-export type InteractionKind = 'permission' | 'question';
+export type InteractionKind = 'permission' | 'question' | 'plan_review';
 export type InteractionState = 'pending' | 'answered' | 'rejected' | 'expired';
+
+export type PlanAction = 'autopilot' | 'autopilot_fleet' | 'interactive' | 'exit_only';
+
+/** A pending or on-demand native review; transcript metadata omits both bodies. */
+export interface PlanReview {
+  request_id: string;
+  summary?: string;
+  revision?: number;
+  actions?: PlanAction[];
+  recommended?: PlanAction;
+  content?: string;
+  previous?: string;
+  truncated?: boolean;
+  previous_truncated?: boolean;
+  previous_unavailable?: boolean;
+}
+
+export interface PlanDraft { exists: boolean; content?: string; truncated?: boolean }
 
 export interface Option {
   id: string;
@@ -893,6 +993,32 @@ export interface Question {
   choices?: string[];
   multiple?: boolean;
   custom: boolean;
+  /** The typed form field this question asks for, on an elicitation form only. */
+  field?: FormField;
+}
+
+/** One form field; the service checks every bound again before the provider sees the answer. */
+export interface FormField {
+  name: string;
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+  /** An optional field may be left empty. */
+  required?: boolean;
+  format?: 'email' | 'uri' | 'date' | 'date-time';
+  minimum?: number;
+  maximum?: number;
+  min_length?: number;
+  max_length?: number;
+  min_items?: number;
+  max_items?: number;
+}
+
+/** A question that stands for a provider's form or link (an MCP elicitation). */
+export interface Elicitation {
+  mode: 'form' | 'url';
+  /** Who asked, such as an MCP server. */
+  source?: string;
+  /** URL mode: the https page the user opens themselves; UAM never opens or fetches it. */
+  url?: string;
 }
 
 export interface Interaction {
@@ -902,15 +1028,24 @@ export interface Interaction {
   detail?: string;
   options?: Option[];
   questions?: Question[];
+  plan?: PlanReview;
   state: InteractionState;
   resolution?: string;
   time: string;
   agent_id?: string;
   /** The `tool` item (same `agent_id`) this request is for; absent or unmatched means no link. */
   tool_call_id?: string;
-  /** Yolo mode is answering this pending request: it does not wait for the user. */
+  /** Yolo mode or an approving assisted review is answering this pending request: it does not wait for the user. */
   auto?: boolean;
+  /** The provider's assisted review of a permission request; absent when it was not reviewed. */
+  assisted?: { recommendation: string; model?: string; reason?: string };
+  elicitation?: Elicitation;
 }
+
+/** A Task's permission policy. Assisted is opt-in per Task; Task defaults and routines stay Safe or Yolo. */
+export type PermissionMode = 'safe' | 'yolo' | 'assisted';
+/** A new Task's settings: the defaults, with any permission mode chosen for this Task. */
+export type TaskSettings = Omit<TaskDefaults, 'mode'> & { mode: PermissionMode };
 
 /** A summary's `ask`: a permission's title, or the first line of a question's first prompt. The Task's detail holds the request whole. */
 export interface Ask {
@@ -922,6 +1057,9 @@ export interface Answer {
   decision?: string;
   answers?: string[][];
   reject?: boolean;
+  plan?: { action?: PlanAction; feedback?: string };
+  /** Dismisses an elicitation without declining it. */
+  cancel?: boolean;
 }
 
 export type PromptMode = 'send' | 'steer' | 'queue';
@@ -961,6 +1099,71 @@ export interface PreviousSession {
   in_use: boolean;
 }
 
+export type RewindMode = 'conversation' | 'conversation-and-files';
+/** What rewinding to before an owner message would discard and restore. `token` binds the confirmation. */
+export interface RewindPreview {
+  user_item_id: string;
+  token: string;
+  /** Owner prompts discarded, this one included. */
+  turns: number;
+  files_available: boolean;
+  files_reason?: string;
+  /** Native forward counts over the discarded turns; a rewind shows their inverse. */
+  files: TurnChangeCounts & { entries?: { path: string; kind: string; additions?: number; deletions?: number }[] };
+}
+/** Every native outcome is kept with the presence of its optional fields. */
+export interface RewindResult {
+  outcome: string;
+  error?: string;
+  events_removed?: number;
+  restored_files: string[];
+  skipped_files: { path: string; reason: string }[];
+  restored_omitted?: number;
+  skipped_omitted?: number;
+}
+export interface RewindReceipt {
+  request_id: string;
+  user_item_id: string;
+  mode: RewindMode;
+  /** pending and applied clear after the conversation is read again; uncertain only by an explicit reconcile. */
+  state: 'pending' | 'applied' | 'uncertain' | 'done';
+  result?: RewindResult;
+  reconcile_failed?: boolean;
+  /** The owner released the hold while the outcome stayed unknown. */
+  released?: boolean;
+}
+/** Edit and resend: the rewind's receipt, and the edited prompt's submission when it was sent. */
+export interface ResendResult {
+  rewind: RewindReceipt;
+  submission?: Submission;
+  /** Why the edited prompt was not sent after the rewind truncated history. */
+  send_error?: string;
+  send_code?: string;
+}
+export interface RewindStatus {
+  request_id: string;
+  state: 'pending' | 'applied' | 'uncertain';
+  mode: RewindMode;
+  outcome?: string;
+  /** The reread could not establish the outcome: the explicit release is offered. */
+  reconcile_failed?: boolean;
+}
+
+export interface TurnChangeCounts {
+  status: 'available' | 'unknown' | 'busy' | 'unsupported';
+  event_id?: string;
+  files?: number;
+  additions?: number;
+  deletions?: number;
+  omitted?: number;
+}
+export interface TurnChanges {
+  timing_id: string;
+  ended_at: string;
+  counts: TurnChangeCounts;
+  files: { path: string; kind: string; additions?: number; deletions?: number }[];
+}
+
 export interface TurnTiming {
   id: string;
   user_item_id?: string;
@@ -975,6 +1178,8 @@ export interface TurnTiming {
   generation_ms?: number;
   /** The todo list as the turn left it, for a turn that changed it; its rows come from `turnTodos`. */
   todo?: TodoCounts;
+  /** Immutable native captured changes as this owner turn left them, never current Git. */
+  changes?: TurnChangeCounts;
 }
 
 export interface Representation {
@@ -1020,6 +1225,10 @@ export interface SessionDetail extends SessionSummary, Representation {
   subagents_before?: string;
   background_tasks?: BackgroundTasks;
   turn_activity?: TurnActivity;
+  plan_version?: number;
+  schedules?: ScheduleSnapshot | null;
+  /** Live MCP state only; descriptions are fetched for an expanded server. */
+  mcp_status?: McpStatusSnapshot;
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1203,7 +1412,10 @@ export type UpdateData =
   | { name: 'subagent'; seq: number; session_id: string; subagent: Subagent }
   | { name: 'turn_timing'; seq: number; session_id: string; turn_timing: TurnTiming }
   | { name: 'background_tasks'; seq: number; session_id: string; background_tasks: BackgroundTasks }
-  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity };
+  | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
+  | { name: 'plan_version'; seq: number; session_id: string; plan_version: number }
+  | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null }
+  | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1224,6 +1436,9 @@ export const UPDATE_EVENTS = [
   'background_tasks',
   'turn_timing',
   'turn_activity',
+  'plan_version',
+  'schedules',
+  'mcp_status',
 ] as const;
 
 export class ApiError extends Error {
@@ -1352,20 +1567,41 @@ export interface McpTool {
 }
 
 /** One MCP server as a Task's conversation sees it. */
-export interface McpStatus {
+export interface McpServerStatus {
   name: string;
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled' | 'stopped' | 'not_configured' | (string & {});
   error?: string;
   source?: string;
   /** A remote server, which may need a sign-in. */
   remote?: boolean;
+  needs_reconnect?: boolean;
+}
+
+export interface McpStatus extends McpServerStatus {
   tools?: McpTool[];
 }
 
-/** A started MCP sign-in: the page to open (none when a kept sign-in sufficed) and whether the address the browser ends on can be pasted back. */
+export interface McpStatusSnapshot {
+  /** Typed status capability, independent of whether an event was observed. */
+  supported: boolean;
+  /** A full initial snapshot is available. */
+  ready: boolean;
+  servers: McpServerStatus[];
+  truncated?: boolean;
+}
+
+export interface McpTaskStatus {
+  servers: McpStatus[];
+  /** Absent from older services. */
+  mcp_status?: McpStatusSnapshot;
+}
+
+/** A started MCP sign-in: the browser page (none when kept credentials sufficed) and how its callback completes. */
 export interface McpSignIn {
   url?: string;
   relay?: boolean;
+  /** The browser completes directly at the configured HTTPS service origin. */
+  callback?: boolean;
 }
 
 
@@ -1631,6 +1867,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
     setConfigurationDisabled: (kind: ConfigurationKind, name: string, body: { disabled: boolean; revision: string; path: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
     deleteConfiguration: (kind: ConfigurationKind, name: string, revision: string, projectId = '', path?: string) => call<void>('DELETE', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { revision, ...(path ? { path } : {}) }),
+    /** Copilot's global disabled-skills setting for one name; applies to every skill with that name and changes no file. */
+    setSkillGloballyDisabled: (name: string, disabled: boolean, projectId = '') => call<void>('POST', `/api/configuration/skills/global-disabled${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { name, disabled }),
     listSkills: (source: string, projectId = '') => call<{ output: string }>('POST', `/api/configuration/skills/list${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source }),
     installSkills: (source: string, skills: string[], projectId = '') => call<{ output: string; installed: string[] }>('POST', `/api/configuration/skills/install${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { source, skills }),
     /** The service refuses an unknown key or value with 400 and changes nothing. */
@@ -1656,15 +1894,19 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       model?: string;
       effort?: string;
       context_size?: string;
-      mode?: 'safe' | 'yolo';
+      agent?: string;
+      mode?: PermissionMode;
       name?: string;
       prompt?: string;
       request_id: string;
     }) => call<SessionSummary>('POST', '/api/sessions', body),
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
-    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: 'safe' | 'yolo' }) =>
+    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: PermissionMode; agent?: string }) =>
       call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, body),
+    /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
+    taskAgents: (projectId: string, provider: string) =>
+      call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
     stage: (id: string, action: 'settle' | 'reopen' | 'archive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
@@ -1674,6 +1916,20 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     suggestions: (id: string, signal?: AbortSignal) => call<Suggestions>('POST', `/api/sessions/${enc(id)}/suggestions`, undefined, false, signal),
     /** A new Task in the same Project with the same settings (or `model`) whose first message is this Task's last one. */
     rerun: (id: string, body: { model?: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/rerun`, body),
+    fork: (id: string, body: { user_item_id: string; model: string; request_id: string }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/fork`, body),
+    /** Clears the unresolved branch request for this reply and model; a Copilot session may still exist for it. */
+    dismissFork: (id: string, body: { user_item_id: string; model: string }) => call<void>('POST', `/api/sessions/${enc(id)}/fork/dismiss`, body),
+    /** Readonly: what rewinding to before this owner message would remove and restore. */
+    rewindPreview: (id: string, userItemId: string, signal?: AbortSignal) => call<RewindPreview>('GET', `/api/sessions/${enc(id)}/rewind/preview?user_item_id=${enc(userItemId)}`, undefined, false, signal),
+    /** Executes a confirmed preview once; a repeated request ID returns its receipt. */
+    rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind`, body),
+    /** Rereads the conversation and releases a Task held by an applied or uncertain rewind; never rewinds again. */
+    /** Rewinds to before an owner prompt, then sends the edited prompt once; nothing is sent unless history was truncated. */
+    resend: (id: string, body: { rewind: { user_item_id: string; mode: RewindMode; token: string; request_id: string }; prompt: { text: string; request_id: string; files?: string[]; attachments?: string[]; settings?: PromptSettings } }) =>
+      call<ResendResult>('POST', `/api/sessions/${enc(id)}/resend`, body),
+    reconcileRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
+    /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
+    releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
     prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
@@ -1700,9 +1956,12 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     cancelBackgroundTask: (id: string, taskId: string) => call<{ accepted: true; background_tasks: BackgroundTasks }>('POST', `/api/sessions/${enc(id)}/background-tasks/${enc(taskId)}/cancel`),
     cancel: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/cancel`),
     close: (id: string) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/close`),
+    planReview: (id: string, requestId: string, signal?: AbortSignal) => call<PlanReview>('GET', `/api/sessions/${enc(id)}/plan-reviews/${enc(requestId)}`, undefined, false, signal),
+    planDraft: (id: string, signal?: AbortSignal) => call<PlanDraft>('GET', `/api/sessions/${enc(id)}/plan`, undefined, false, signal),
     respond: (id: string, iid: string, answer: Answer) =>
       call<Interaction>('POST', `/api/sessions/${enc(id)}/interactions/${enc(iid)}`, answer),
     /** The latest turn's evidence; with `since`, also what changed between `since` and `until`. */
+    turnChanges: (id: string, timingId: string, signal?: AbortSignal) => call<TurnChanges>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/changes`, undefined, false, signal),
     turnTodos: (id: string, timingId: string, signal?: AbortSignal) => call<TurnTodos>('GET', `/api/sessions/${enc(id)}/turns/${enc(timingId)}/todos`, undefined, false, signal),
     contextBreakdown: (id: string, attribution = false, signal?: AbortSignal) => call<ContextBreakdown>('GET', `/api/sessions/${enc(id)}/context${attribution ? '?attribution=true' : ''}`, undefined, false, signal),
     evidence: (id: string, look?: { since: string; until: string }, signal?: AbortSignal) =>
@@ -1739,9 +1998,12 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     updateMcpServer: (name: string, body: McpServerInput) => call<McpServers>('PUT', `/api/mcp/servers/${enc(name)}`, body),
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
-    taskMcp: (id: string) => call<{ servers: McpStatus[] }>('GET', `/api/sessions/${enc(id)}/mcp`),
-    taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}`),
-    reconnectTaskMcp: (id: string) => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/reconnect`),
+    taskUsageMetrics: (id: string, signal?: AbortSignal) => call<TaskUsageMetrics>('GET', `/api/sessions/${enc(id)}/usage-metrics`, undefined, false, signal),
+    askAside: (id: string, question: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question }, false, signal),
+    taskMcp: (id: string, summary = false) => call<McpTaskStatus>('GET', `/api/sessions/${enc(id)}/mcp${summary ? '?summary=1' : ''}`),
+    taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}?summary=1`),
+    reconnectTaskMcp: (id: string) => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/reconnect?summary=1`),
+    taskMcpTools: (id: string, name: string) => call<{ tools: McpTool[] }>('GET', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/tools`),
     startMcpSignIn: (id: string, name: string, again: boolean) => call<McpSignIn>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in`, { again }),
     finishMcpSignIn: (id: string, name: string, url: string) => call<void>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/sign-in/finish`, { url }),
     routines: (projectId: string) => call<{ routines: Routine[] }>('GET', `/api/projects/${enc(projectId)}/routines`),

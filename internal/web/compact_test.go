@@ -23,6 +23,28 @@ func compactFrame(t *testing.T, part initialDetailFrame) frame {
 	}
 	return parseFrame(t, raw)
 }
+
+func TestToolProgressIsBoundedCompactMetadata(t *testing.T) {
+	it := agentapi.Item{ID: "call", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "mcp_fetch", Status: agentapi.ToolRunning, Input: "private input", Output: "private output", Progress: "\x1b[31m " + strings.Repeat("界", 200)}}
+	checked := checkItem(it, time.Unix(100, 0))
+	row := projectItem(checked)
+	if row.Tool.Progress != strings.Repeat("界", 170) || row.Tool.Input != "" || row.Tool.Output != "" || !row.Tool.HasInput || !row.Tool.HasOutput || checked.Clipped || it.Tool.Progress == checked.Tool.Progress {
+		t.Fatalf("row = %+v, checked = %+v", row.Tool, checked.Tool)
+	}
+	without := checked
+	tool := *checked.Tool
+	tool.Progress = ""
+	without.Tool = &tool
+	if sameCompactRow(checked, without) || itemSize(checked)-itemSize(without) != len(checked.Tool.Progress) {
+		t.Fatal("progress was hidden from row updates or retained-byte accounting")
+	}
+	for _, status := range []agentapi.ToolStatus{agentapi.ToolCompleted, agentapi.ToolFailed} {
+		tool.Status, tool.Progress = status, "Late"
+		if got := checkItem(without, time.Unix(100, 0)); got.Tool.Progress != "" {
+			t.Fatalf("terminal progress = %+v", got.Tool)
+		}
+	}
+}
 func TestCompactProjectionPreservesDisplayAndSemanticContent(t *testing.T) {
 	path := strings.Repeat("nested/", 100) + "a.go"
 	input, _ := json.Marshal(map[string]string{"path": path, "content": "hidden source"})
@@ -828,7 +850,7 @@ func TestCompactWindowAccountingMatchesBrowser(t *testing.T) {
 		{ID: "tool", Kind: agentapi.ItemTool, Text: "hidden", Time: now, Tool: &agentapi.ToolCall{Name: "edit", Title: "Edit file", Status: agentapi.ToolCompleted, Input: `{"path":"文😀.go","content":"hidden"}`, Output: "hidden"}, Images: []agentapi.Image{{ID: "image", MIME: "image/png", Name: "文", Size: 123}, {ID: "zero"}}, ImagesNote: "note"},
 		{ID: "native-edit", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolFailed, EditEventID: "event😀", FileEditsTruncated: true, FileEdits: []agentapi.FileEdit{{Path: "/work/文😀.go", Kind: "edit", Additions: 2, Deletions: 1, DiffStatus: "available"}, {Path: "/work/other", Kind: "delete", DiffStatus: "missing"}}}},
 		{ID: "ask", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: "<\n界", Output: "😀", Status: agentapi.ToolCompleted}},
-		{ID: "shell", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"make"}`, Output: "hidden", Tail: []agentapi.OutputLine{{Text: "ok 界"}, {Text: "", Err: true}, {Text: "warn 😀", Err: true}}}},
+		{ID: "shell", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"make"}`, Output: "hidden", Progress: "Waiting 界😀", Tail: []agentapi.OutputLine{{Text: "ok 界"}, {Text: "", Err: true}, {Text: "warn 😀", Err: true}}}},
 		{ID: "thought", Kind: agentapi.ItemReasoning, Text: "hidden"},
 		{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Completion blocked", Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, UserItemID: "user😀", Summary: "Summary界", Reason: "reason", Blocker: &agentapi.CompletionBlocker{Kind: "permission", Reason: "denied", Resumable: true}}},
 		{ID: "accepted", Kind: agentapi.ItemNotice, Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionAccepted}},

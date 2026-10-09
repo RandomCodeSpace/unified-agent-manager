@@ -3,6 +3,9 @@ package copilot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -116,6 +119,80 @@ func TestNativeChangesMissingMethodIsUnsupportedButTransportFailureIsNot(t *test
 			_, err := c.Diff(context.Background())
 			if errors.Is(err, agentapi.ErrUnsupported) != tc.unsupported {
 				t.Fatalf("native error = %v", err)
+			}
+		})
+	}
+}
+
+func TestNativeChangesExcludeOnlyTheExactScratchPlan(t *testing.T) {
+	const plan = "/home/u/.copilot/session-state/s-1/plan.md"
+	diff := func(paths ...string) string {
+		var b strings.Builder
+		b.WriteString(`{"requestedMode":"session","mode":"session","isFallback":false,"changes":[`)
+		for i, p := range paths {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `{"path":%q,"changeType":"modified","diff":"--- a/x\n+++ b/x\n@@ -0,0 +1 @@\n+x\n"}`, p)
+		}
+		b.WriteString(`]}`)
+		return b.String()
+	}
+	workspace := func(cwd, gitRoot string) string {
+		ws := `"id":"w"`
+		if cwd != "" {
+			ws += fmt.Sprintf(`,"cwd":%q`, cwd)
+		}
+		if gitRoot != "" {
+			ws += fmt.Sprintf(`,"git_root":%q`, gitRoot)
+		}
+		return `{"path":"/home/u/.copilot/session-state/s-1","workspace":{` + ws + `}}`
+	}
+	ordinary := []string{"docs/plan.md", "plan.md", "/elsewhere/plan.md", "../other/plan.md"}
+	for _, tc := range []struct {
+		name, plan, workspace string
+		failLookup            bool
+		paths, want           []string
+		lookups               int
+	}{
+		{"absolute scratch needs no lookup", plan, "", false, []string{plan, "/work/docs/plan.md"}, []string{"/work/docs/plan.md"}, 0},
+		{"relative scratch under the working directory", plan, workspace("/work", "/work"), false,
+			append([]string{"../home/u/.copilot/session-state/s-1/plan.md"}, ordinary...), ordinary, 1},
+		{"no Git root keeps the working directory", plan, workspace("/work", ""), false,
+			append([]string{"../home/u/.copilot/session-state/s-1/plan.md"}, ordinary...), ordinary, 1},
+		{"unknown working directory preserves", plan, workspace("", "/work"), false,
+			[]string{"../home/u/.copilot/session-state/s-1/plan.md", "docs/plan.md"}, []string{"../home/u/.copilot/session-state/s-1/plan.md", "docs/plan.md"}, 1},
+		{"ambiguous root preserves", plan, workspace("/work/sub", "/work"), false,
+			[]string{"../../home/u/.copilot/session-state/s-1/plan.md", "docs/plan.md"}, []string{"../../home/u/.copilot/session-state/s-1/plan.md", "docs/plan.md"}, 1},
+		{"failed lookup preserves", plan, "", true,
+			[]string{"../home/u/.copilot/session-state/s-1/plan.md"}, []string{"../home/u/.copilot/session-state/s-1/plan.md"}, 1},
+		{"unknown plan keeps everything", "", "", false, []string{plan, "docs/plan.md"}, []string{plan, "docs/plan.md"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := startFakeRuntime(t)
+			s := openFakeSDKSession(t, rt)
+			rt.set("session.workspaces.diff", diff(tc.paths...))
+			if tc.failLookup {
+				rt.fail("session.workspaces.getWorkspace", "unavailable")
+			} else if tc.workspace != "" {
+				rt.set("session.workspaces.getWorkspace", tc.workspace)
+			}
+			files, err := (&conversation{sess: s, planPath: tc.plan}).Diff(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make([]string, 0, len(files))
+			for _, f := range files {
+				got = append(got, f.Path)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("native paths = %q, want %q", got, tc.want)
+			}
+			rt.mu.Lock()
+			lookups := len(rt.requests["session.workspaces.getWorkspace"])
+			rt.mu.Unlock()
+			if lookups != tc.lookups {
+				t.Fatalf("workspace lookups = %d, want %d", lookups, tc.lookups)
 			}
 		})
 	}

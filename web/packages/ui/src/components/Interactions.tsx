@@ -1,13 +1,15 @@
 import { useApi } from '../ApiContext';
 import { MessageCircleQuestion, Shield, ShieldCheck, ShieldQuestion, ShieldX, type LucideIcon } from 'lucide-react';
 import { useId, useState, type SubmitEvent , type ReactNode } from 'react';
-import { describeError, isStatus, type Answer, type Interaction, type Option, type Question, type SessionDetail } from '../api';
+import { describeError, isStatus, type Answer, type Interaction, type Option, type PlanReview, type Question, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
+import { fieldHint } from '../lib/answer';
 import { approvalMark } from '../lib/transcript';
 import { Markdown, Note } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
+import { PLAN_ACTION_LABEL, ReadPlan } from './Plan';
 
 /**
  * A decided request that no tool row claims: one quiet row of the tool rows' kind, in its
@@ -21,6 +23,13 @@ export const APPROVAL_ICONS: Record<'ok' | 'denied' | 'gone', LucideIcon> = { ok
 function optionVariant(option: Option, primary: Option | undefined): 'danger' | 'primary' | 'secondary' {
   if (option.reject) return 'danger';
   return option === primary ? 'primary' : 'secondary';
+}
+
+/** Why an assisted Task still asks: the reviewer's outcome, in words. */
+const REVIEW_TEXT: Record<string, string> = { approve: 'approved it', requireApproval: 'asks for your decision', excluded: 'did not review it', error: 'could not review it' };
+function assistedNote(review: NonNullable<Interaction['assisted']>): string {
+  const outcome = REVIEW_TEXT[review.recommendation] ?? 'did not approve it';
+  return `Assisted review${review.model ? ` (${review.model})` : ''} ${outcome}${review.reason ? `: ${review.reason}` : '.'}`;
 }
 
 export function DecidedRow({ interaction, className }: Readonly<{ interaction: Interaction; className?: string }>) {
@@ -51,7 +60,7 @@ export function DecidedRow({ interaction, className }: Readonly<{ interaction: I
  */
 export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ session: SessionDetail; interaction: Interaction; onUpdate: (i: Interaction) => void }>) {
   const api = useApi();
-  /** The action in flight: a permission option's id, `answer` or `decline`. */
+  /** The action in flight: a permission option's id, `answer`, `decline` or `cancel`. */
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const titleId = useId();
@@ -59,6 +68,9 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
   const permission = interaction.kind === 'permission';
   const permitted = permission ? session.capabilities.permissions : session.capabilities.questions;
   const Icon = permission ? ShieldQuestion : MessageCircleQuestion;
+  const elicitation = interaction.elicitation;
+  // A link is shown for the user to open; only an https one, as the service sends it.
+  const link = elicitation?.mode === 'url' && elicitation.url?.startsWith('https://') ? elicitation.url : undefined;
 
   async function respond(answer: Answer, action: string) {
     setBusy(action);
@@ -98,8 +110,17 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
           {interaction.detail}
         </pre>
       )}
+      {link && (
+        <div className="mt-2 text-ui">
+          <a href={link} target="_blank" rel="noopener noreferrer" className="break-all text-accent underline underline-offset-2">
+            {link}
+          </a>
+          <p className="mt-1 text-caption text-muted">UAM does not open this link. Open it yourself, then choose Done.</p>
+        </div>
+      )}
       {permission ? (
         <>
+          {interaction.assisted && <Note className="mt-2">{assistedNote(interaction.assisted)}</Note>}
           {!permitted && <Note className="mt-2">This agent does not take decisions from here.</Note>}
           {permitted && ordered.length > 0 && (
             <div className="mt-3 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
@@ -112,7 +133,16 @@ export function InteractionCard({ session, interaction, onUpdate }: Readonly<{ s
           )}
         </>
       ) : (
-        <QuestionForm interactionId={interaction.id} questions={interaction.questions ?? []} disabled={!permitted} sending={busy === 'answer' || busy === 'decline' ? busy : null} onSubmit={(answers) => respond({ answers }, 'answer')} onDecline={() => respond({ reject: true }, 'decline')} />
+        <QuestionForm
+          interactionId={interaction.id}
+          questions={interaction.questions ?? []}
+          disabled={!permitted}
+          sending={busy === 'answer' || busy === 'decline' || busy === 'cancel' ? busy : null}
+          submitLabel={elicitation?.mode === 'url' ? 'Done' : 'Answer'}
+          onSubmit={(answers) => respond({ answers }, 'answer')}
+          onDecline={() => respond({ reject: true }, 'decline')}
+          onCancel={elicitation ? () => respond({ cancel: true }, 'cancel') : undefined}
+        />
       )}
       {!permission && !permitted && <Note className="mt-2">This agent does not take answers from here.</Note>}
       {note && (
@@ -154,8 +184,10 @@ const AGAIN_HINT = (
  * in place. The text, the files, Decline and Answer are the composer's. A long question or
  * many options scroll inside a capped box, so the surface never outgrows the pane.
  */
-export function ComposerQuestion({ interactionId, question, chosen, disabled, onChoose, onAnswer }: Readonly<{ interactionId: string; question: Question; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void; /** Sends the staged answer: a second click on the chosen option of a single-choice question. */ onAnswer: () => void }>) {
+export function ComposerQuestion({ interaction, question, chosen, disabled, onChoose, onAnswer }: Readonly<{ interaction: Interaction; question: Question; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void; /** Sends the staged answer: a second click on the chosen option of a single-choice question. */ onAnswer: () => void }>) {
   const labelId = useId();
+  const interactionId = interaction.id;
+  const hint = fieldHint(question.field);
   // One choice: a click stages it, a click on the staged one answers with it. Several: clicks toggle; Answer sends.
   function toggle(choice: string) {
     if (question.multiple) onChoose(chosen.includes(choice) ? chosen.filter((c) => c !== choice) : [...chosen, choice]);
@@ -169,9 +201,17 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
           <MessageCircleQuestion aria-hidden="true" className="size-3.5" />
           Needs answer
         </Chip>
-        {question.multiple && <span className="text-caption text-muted">Choose any that apply</span>}
+        {question.multiple && !question.field && <span className="text-caption text-muted">Choose any that apply</span>}
+        {hint && <span className="text-caption text-muted">{hint}</span>}
       </div>
       <div className="max-h-[min(240px,30dvh)] overflow-y-auto overflow-x-hidden">
+        {interaction.elicitation && (
+          // A form's own words, as sent: plain text, never markdown links.
+          <div className="mb-1.5 text-ui">
+            <span className="block text-caption text-muted">{interaction.title}</span>
+            {interaction.detail && <p className="whitespace-pre-wrap [overflow-wrap:anywhere] text-ink">{interaction.detail}</p>}
+          </div>
+        )}
         <div id={labelId} className="text-ui text-ink">
           {question.header && <span className="mb-0.5 block text-caption text-muted">{question.header}</span>}
           <Markdown text={question.text} />
@@ -189,22 +229,42 @@ export function ComposerQuestion({ interactionId, question, chosen, disabled, on
   );
 }
 
+export function ComposerPlan({ plan, sessionId, planVersion, chosen, disabled, onChoose, onAnswer }: Readonly<{ plan: PlanReview; sessionId?: string; planVersion?: number; chosen: string[]; disabled: boolean; onChoose: (choices: string[]) => void; onAnswer: () => void }>) {
+  const labelId = useId();
+  return <div className="flex flex-col gap-1.5 px-3.5 pt-3">
+    <div className="flex items-center gap-2"><Chip tone="attention">Plan ready</Chip><ReadPlan key={plan.request_id} plan={plan} sessionId={sessionId} planVersion={planVersion} /></div>
+    <div className="max-h-[min(240px,30dvh)] overflow-y-auto overflow-x-hidden">
+      <p id={labelId} className="text-ui text-ink">{plan.summary || 'Choose how to continue, or send feedback to revise the plan.'}</p>
+      {plan.truncated && <Note tone="warn">The plan is shortened. Send feedback to request a smaller plan.</Note>}
+      <fieldset aria-labelledby={labelId} className="mt-1.5 flex min-w-0 flex-col gap-0.5" disabled={disabled || !!plan.truncated}>
+        {plan.actions?.map((action) => <ChoiceRow key={action} name={`plan-${plan.request_id}`} choice={PLAN_ACTION_LABEL[action]} multiple={false} on={chosen.includes(action)} again hint={AGAIN_HINT} onToggle={() => chosen.includes(action) ? onAnswer() : onChoose([action])} />)}
+      </fieldset>
+    </div>
+    <div className="fade-rule" aria-hidden="true" />
+  </div>;
+}
+
 function QuestionForm({
   interactionId,
   questions,
   disabled,
   sending,
+  submitLabel,
   onSubmit,
   onDecline,
+  onCancel,
 }: Readonly<{
   interactionId: string;
   questions: Question[];
   /** The provider takes no answers from UAM. */
   disabled: boolean;
-  /** An answer or a decline is on its way: the buttons stay, disabled, the chosen one spinning. */
-  sending: 'answer' | 'decline' | null;
+  /** An answer, a decline or a cancel is on its way: the buttons stay, disabled, the chosen one spinning. */
+  sending: 'answer' | 'decline' | 'cancel' | null;
+  submitLabel: string;
   onSubmit: (answers: string[][]) => void;
   onDecline: () => void;
+  /** An elicitation may also be dismissed without declining it. */
+  onCancel?: () => void;
 }>) {
   const [chosen, setChosen] = useState<string[][]>(() => questions.map(() => []));
   const [custom, setCustom] = useState<string[]>(() => questions.map(() => ''));
@@ -230,7 +290,8 @@ function QuestionForm({
     const c = (custom[i] ?? '').trim();
     return q.custom && c ? [c] : (chosen[i] ?? []).slice();
   });
-  const complete = answers.every((a) => a.length > 0);
+  // An optional form field may stay empty; the service checks every field again.
+  const complete = answers.every((a, i) => a.length > 0 || (!!questions[i].field && !questions[i].field.required));
 
   function submit(e: SubmitEvent) {
     e.preventDefault();
@@ -246,6 +307,7 @@ function QuestionForm({
           <legend className="mb-1.5 text-ui text-ink">
             {q.header && <span className="mr-1.5 text-caption text-muted">{q.header}</span>}
             {q.text}
+            {q.field && <span className="block text-caption text-muted">{fieldHint(q.field)}</span>}
           </legend>
           <div className="flex flex-col gap-0.5">
             {(q.choices ?? []).map((c) => (
@@ -265,8 +327,13 @@ function QuestionForm({
           <Button variant="danger" loading={sending === 'decline'} disabled={!!sending} onClick={onDecline}>
             Decline
           </Button>
+          {onCancel && (
+            <Button variant="secondary" loading={sending === 'cancel'} disabled={!!sending} onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
           <Button type="submit" variant="primary" loading={sending === 'answer'} disabled={!complete || !!sending}>
-            Answer
+            {submitLabel}
           </Button>
         </div>
       )}

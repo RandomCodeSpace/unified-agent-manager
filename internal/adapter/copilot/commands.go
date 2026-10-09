@@ -124,10 +124,8 @@ const allowAllCommand = "allow-all"
 
 func commandDisabled(name string) string {
 	switch name {
-	case allowAllCommand, "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "compact", "autopilot", "init", "review", "blame", "fleet", "research", "security-review":
+	case allowAllCommand, "permissions", "model", "rename", "context", "usage", "list-dirs", "env", "skills", "compact", "autopilot", "plan", "init", "review", "blame", "fleet", "research", "security-review":
 		return ""
-	case "plan":
-		return "Plan exit approval is not supported by the web client yet"
 	case "every", "after":
 		return "Scheduled commands are not supported by the web client"
 	case "cwd", "add-dir":
@@ -316,12 +314,8 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 	return result, nil
 }
 
-func refusePlanExit(copilot.ExitPlanModeRequest, copilot.ExitPlanModeInvocation) (copilot.ExitPlanModeResult, error) {
-	return copilot.ExitPlanModeResult{Approved: false, Feedback: "Plan exit approval is not supported by the web client. Use the terminal to review the plan."}, nil
-}
-
 func (c *conversation) ensureExecutionMode(ctx context.Context, mode rpc.SessionMode) error {
-	if mode != rpc.SessionModeInteractive && mode != rpc.SessionModeAutopilot {
+	if mode != rpc.SessionModeInteractive && mode != rpc.SessionModeAutopilot && mode != rpc.SessionModePlan {
 		return fmt.Errorf("%w: unsupported execution mode %s", agentapi.ErrSubmissionUncertain, mode)
 	}
 	runtime, ok := c.sess.(executionSession)

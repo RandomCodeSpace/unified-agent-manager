@@ -31,13 +31,22 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		Images: []agentapi.Image{{ID: "old"}}, Attachments: []agentapi.Attachment{{ID: "old"}}}, false)
 	m.upsertItemLocked(s, agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice,
 		Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, Summary: "old", Blocker: &agentapi.CompletionBlocker{Kind: "old", Reason: "old"}}}, false)
+	m.upsertItemLocked(s, agentapi.Item{ID: "plan", Kind: agentapi.ItemNotice,
+		Plan: &agentapi.PlanReview{RequestID: "old", Summary: "old", Actions: []agentapi.PlanAction{agentapi.PlanInteractive}}}, false)
 	s.interactions = []*interaction{{Interaction: agentapi.Interaction{ID: "question", Kind: agentapi.InteractionQuestion, State: agentapi.InteractionPending,
-		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"}}}}}}
+		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"},
+			Field: &agentapi.Field{Name: "old", Values: []string{"old"}, Minimum: &price, MaxLength: &limit}}},
+		Elicitation: &agentapi.Elicitation{Mode: agentapi.ElicitationURL, URL: "https://old.example"}}},
+		{Interaction: agentapi.Interaction{ID: "review", Kind: agentapi.InteractionPlanReview, State: agentapi.InteractionPending,
+			Plan: &agentapi.PlanReview{RequestID: "old", Content: "old", Previous: "old", Actions: []agentapi.PlanAction{agentapi.PlanInteractive}}}}}
 	s.subagents = []*agentapi.Subagent{{ID: "child", Status: agentapi.SubagentRunning, Runs: []agentapi.SubagentRun{{Trigger: "old"}}, Retry: &agentapi.Retry{Reason: "old"}}}
 	s.queue = []QueuedPrompt{{Files: []string{"old"}, Attachments: []agentapi.Attachment{{ID: "old"}}}}
 	s.last = &Submission{CommandResult: &agentapi.CommandResult{Options: []agentapi.CommandOption{{Name: "old"}}}}
 	s.turnActivity.Retry = &agentapi.Retry{Reason: "old"}
 	s.turnActivity.Todos.Todos = []agentapi.Todo{{ID: "old"}}
+	s.turnTimings = []store.TurnTiming{{ID: "turn", State: "completed", Changes: &store.TurnChangeCounts{Status: "available", EventID: "old", Files: 1, Additions: 1}}}
+	s.rewind = &store.WebRewind{RequestID: "old", State: rewindUncertain, Mode: "conversation", Discarded: []string{"old"}, Result: []byte(`{"outcome":"success"}`)}
+	s.schedules = &agentapi.ScheduleSnapshot{Supported: true, Known: true, Entries: []agentapi.ScheduleEntry{{ID: "1", Cron: "old"}}}
 	m.mu.Unlock()
 	return m, sum.ID, func() {
 		m.mu.Lock()
@@ -50,9 +59,17 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.items[0].Images[0].ID, s.items[0].Attachments[0].ID = "changed", "changed"
 		s.items[1].Completion.Summary, s.items[1].Completion.Blocker.Kind = "changed", "changed"
 		s.interactions[0].Options[0].ID, s.interactions[0].Questions[0].Text, s.interactions[0].Questions[0].Choices[0] = "changed", "changed", "changed"
+		s.items[2].Plan.Summary, s.items[2].Plan.Actions[0] = "changed", agentapi.PlanExitOnly
+		s.interactions[1].Plan.Content, s.interactions[1].Plan.Previous, s.interactions[1].Plan.Actions[0] = "changed", "changed", agentapi.PlanExitOnly
+		field := s.interactions[0].Questions[0].Field
+		field.Name, field.Values[0], *field.Minimum, *field.MaxLength = "changed", "changed", 9, 9
+		s.interactions[0].Elicitation.URL = "https://changed.example"
 		s.subagents[0].Runs[0].Trigger, s.subagents[0].Retry.Reason = "changed", "changed"
 		s.queue[0].Files[0], s.queue[0].Attachments[0].ID = "changed", "changed"
 		s.last.CommandResult.Options[0].Name, s.turnActivity.Retry.Reason, s.turnActivity.Todos.Todos[0].ID = "changed", "changed", "changed"
+		s.turnTimings[0].Changes.EventID, s.turnTimings[0].Changes.Files = "changed", 9
+		s.rewind.RequestID, s.rewind.State, s.rewind.Discarded[0], s.rewind.Result[2] = "changed", rewindApplied, "changed", 'X'
+		s.schedules.Entries[0].Cron = "changed"
 	}
 }
 

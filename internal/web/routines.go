@@ -568,7 +568,7 @@ func (m *Manager) applyRoutine(r *store.WebRoutine, in RoutineInput, create bool
 		r.Schedule = *in.Schedule
 	}
 	if in.Mode != nil {
-		mode, err := parseMode(*in.Mode)
+		mode, err := parseDefaultMode(*in.Mode)
 		if err != nil {
 			return err
 		}

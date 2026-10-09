@@ -74,6 +74,7 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	} else {
 		it.Completion = nil
 	}
+	it.Plan = clampPlanReview(it.Plan, false)
 	if it.Tool != nil {
 		tool := *it.Tool
 		if !validDetailID(tool.EditEventID, false) || len(tool.EditEventID) > 256 {
@@ -94,6 +95,10 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 				bytes += len(edit.Path)
 			}
 			tool.FileEdits = kept
+		}
+		tool.Progress = boundedResultSummary(strings.TrimSpace(displaytext.Sanitize(tool.Progress)))
+		if tool.Status != agentapi.ToolRunning {
+			tool.Progress = ""
 		}
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
@@ -140,8 +145,14 @@ func itemSize(it agentapi.Item) int {
 			n += len(c.Blocker.Kind) + len(c.Blocker.Reason)
 		}
 	}
+	if it.Plan != nil {
+		n += len(it.Plan.RequestID) + len(it.Plan.Summary) + len(it.Plan.Recommended)
+		for _, action := range it.Plan.Actions {
+			n += len(action)
+		}
+	}
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID) + len(it.Tool.Progress)
 		for _, edit := range it.Tool.FileEdits {
 			n += len(edit.Path) + len(edit.Kind) + len(edit.DiffStatus) + 16
 		}
@@ -635,16 +646,19 @@ func (s *webSession) trimItems() []trimmedItem {
 }
 
 func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interaction {
+	ix.Plan = clampPlanReview(ix.Plan, ix.State == agentapi.InteractionPending || ix.State == "")
 	ix.Title = clampText(ix.Title, maxLabelText)
 	ix.Detail = clampText(ix.Detail, maxInteractionText)
 	ix.Resolution = clampText(ix.Resolution, maxLabelText)
+	ix.Assisted.Recommendation = clampText(ix.Assisted.Recommendation, maxLabelText)
+	ix.Assisted.Model = clampText(ix.Assisted.Model, maxLabelText)
+	ix.Assisted.Reason = clampText(ix.Assisted.Reason, maxInteractionText)
 	if !validToolCallID(ix.ToolCallID) {
 		ix.ToolCallID = ""
 	}
-	ix.Options = slices.Clone(ix.Options)
-	ix.Questions = slices.Clone(ix.Questions)
-	for i := range ix.Questions {
-		ix.Questions[i].Choices = slices.Clone(ix.Questions[i].Choices)
+	cloneInteraction(&ix)
+	if ix.Elicitation != nil {
+		ix.Elicitation.Source = clampText(ix.Elicitation.Source, maxLabelText)
 	}
 	if ix.State == "" {
 		ix.State = agentapi.InteractionPending
@@ -653,6 +667,17 @@ func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interacti
 		ix.Time = now
 	}
 	return ix
+}
+
+// cloneInteraction gives ix its own copy of every list and nested value.
+func cloneInteraction(ix *agentapi.Interaction) {
+	ix.Options = slices.Clone(ix.Options)
+	ix.Questions = slices.Clone(ix.Questions)
+	for i := range ix.Questions {
+		ix.Questions[i].Choices = slices.Clone(ix.Questions[i].Choices)
+		ix.Questions[i].Field = ix.Questions[i].Field.Clone()
+	}
+	ix.Elicitation = ix.Elicitation.Clone()
 }
 
 // validToolCallID reports whether a provider's tool call ID may reach a
@@ -677,7 +702,7 @@ func (m *Manager) upsertInteractionLocked(s *webSession, in agentapi.Interaction
 			return
 		}
 		if cur.yolo && ix.State == agentapi.InteractionAnswered {
-			ix.Resolution = yoloResolution
+			ix.Resolution = autoResolution(cur)
 		}
 		cur.Interaction = ix
 	} else {
@@ -720,6 +745,7 @@ func (m *Manager) publishInteractionLocked(s *webSession, ix *interaction) {
 
 func (m *Manager) expireLocked(s *webSession, ix *interaction, reason string) {
 	ix.State = agentapi.InteractionExpired
+	ix.Plan = clampPlanReview(ix.Plan, false)
 	ix.Resolution = reason
 	ix.answering = false
 	m.publishInteractionLocked(s, ix)
@@ -915,9 +941,40 @@ func (m *Manager) backgroundTasksLocked(s *webSession, snapshot agentapi.Backgro
 	})
 }
 
+// schedulesLocked replaces s's native schedule snapshot with a bounded,
+// sanitized copy of snapshot, or releases it (nil), and publishes it.
+func (m *Manager) schedulesLocked(s *webSession, snapshot *agentapi.ScheduleSnapshot) {
+	if snapshot != nil {
+		own := *snapshot
+		own.Reason = clampText(displaytext.Sanitize(own.Reason), maxLabelText)
+		if len(own.Entries) > agentapi.MaxSchedules {
+			own.Known, own.Truncated = false, true
+		}
+		own.Entries = slices.Clone(own.Entries[:min(len(own.Entries), agentapi.MaxSchedules)])
+		if own.Entries == nil {
+			own.Entries = []agentapi.ScheduleEntry{}
+		}
+		for i := range own.Entries {
+			entry := &own.Entries[i]
+			entry.ID = clampText(displaytext.Sanitize(entry.ID), maxLabelText)
+			entry.Cron = clampText(displaytext.Sanitize(entry.Cron), maxLabelText)
+			entry.Timezone = clampText(displaytext.Sanitize(entry.Timezone), maxLabelText)
+		}
+		snapshot = &own
+	}
+	s.schedules = snapshot
+	m.broadcastLocked("schedules", s.id, func(seq uint64) any {
+		return schedulesEvent{Seq: seq, SessionID: s.id, Schedules: snapshot}
+	})
+}
+
 func (m *Manager) forgetBackgroundTaskStateLocked(s *webSession) {
+	m.forgetMCPStatusLocked(s)
 	m.forgetTurnTimingLocked(s)
 	m.forgetTodosLocked(s)
+	if s.schedules != nil {
+		m.schedulesLocked(s, nil)
+	}
 	if s.execution != nil {
 		state := *s.execution
 		state.Known = false
@@ -967,7 +1024,7 @@ func (s *webSession) trimSubagents() {
 func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 	switch ix.Kind {
 	case agentapi.InteractionPermission:
-		if a.Reject || len(a.Answers) > 0 {
+		if a.Reject || a.Cancel || len(a.Answers) > 0 || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a permission request takes a decision only")
 		}
 		for _, opt := range ix.Options {
@@ -977,8 +1034,17 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 		}
 		return newError(http.StatusBadRequest, "decision must be one of the offered options")
 	case agentapi.InteractionQuestion:
-		if a.Decision != "" {
+		if a.Decision != "" || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a question takes answers, not a decision")
+		}
+		if a.Cancel {
+			if ix.Elicitation == nil {
+				return newError(http.StatusBadRequest, "only a form or a link can be cancelled")
+			}
+			if a.Reject || len(a.Answers) > 0 {
+				return newError(http.StatusBadRequest, "a cancel takes no answers")
+			}
+			return nil
 		}
 		if a.Reject {
 			if len(a.Answers) > 0 {
@@ -990,9 +1056,27 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 			return newError(http.StatusBadRequest, "answers must have one entry per question (%d)", len(ix.Questions))
 		}
 		for i, q := range ix.Questions {
+			if q.Field != nil {
+				if err := validateFieldAnswer(i, q, a.Answers[i]); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := validateQuestionAnswer(i, q, a.Answers[i]); err != nil {
 				return err
 			}
+		}
+		return nil
+	case agentapi.InteractionPlanReview:
+		if a.Plan == nil || ix.Plan == nil || a.Decision != "" || len(a.Answers) > 0 || a.Reject || a.Cancel || a.Auto {
+			return newError(http.StatusBadRequest, "a plan review takes an explicit plan answer only")
+		}
+		plan := a.Plan
+		if plan.Action != "" && plan.Feedback != "" || plan.Action == "" && strings.TrimSpace(plan.Feedback) == "" || len(plan.Feedback) > agentapi.MaxPlanFeedbackBytes {
+			return newError(http.StatusBadRequest, "a plan review takes one action or bounded feedback")
+		}
+		if plan.Action != "" && (!slices.Contains(ix.Plan.Actions, plan.Action) || ix.Plan.Truncated) {
+			return newError(http.StatusBadRequest, "plan action must be offered and the reviewed snapshot complete")
 		}
 		return nil
 	default:
@@ -1021,7 +1105,27 @@ func validateQuestionAnswer(i int, q agentapi.Question, values []string) error {
 	return nil
 }
 
+// validateFieldAnswer checks a form field's answer against the field's type
+// and bounds; an optional field may be left empty.
+func validateFieldAnswer(i int, q agentapi.Question, values []string) error {
+	for _, v := range values {
+		if len(v) > maxAnswerBytes {
+			return newError(http.StatusBadRequest, "question %d answer is too long", i+1)
+		}
+	}
+	if _, _, err := q.FieldValue(values); err != nil {
+		return newError(http.StatusBadRequest, "question %d %v", i+1, err)
+	}
+	return nil
+}
+
 func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.InteractionState, string) {
+	if ix.Kind == agentapi.InteractionPlanReview && a.Plan != nil {
+		if a.Plan.Action != "" {
+			return agentapi.InteractionAnswered, string(a.Plan.Action)
+		}
+		return agentapi.InteractionAnswered, "feedback sent"
+	}
 	if ix.Kind == agentapi.InteractionPermission {
 		for _, opt := range ix.Options {
 			if opt.ID == a.Decision {
@@ -1032,8 +1136,14 @@ func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.Interactio
 			}
 		}
 	}
+	if a.Cancel {
+		return agentapi.InteractionRejected, "cancelled"
+	}
 	if a.Reject {
 		return agentapi.InteractionRejected, "declined"
+	}
+	if ix.Elicitation != nil && ix.Elicitation.Mode == agentapi.ElicitationURL {
+		return agentapi.InteractionAnswered, "accepted"
 	}
 	return agentapi.InteractionAnswered, "answered"
 }

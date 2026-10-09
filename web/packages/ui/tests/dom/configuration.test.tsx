@@ -847,4 +847,63 @@ describe('native discovery metadata', () => {
       expect(agents.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
     } finally { read.mockRestore(); }
   });
+
+  test('hook actions and instruction sources stay metadata beside managed files', async () => {
+    const original = api.configuration;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      result.discovery = { hooks: { supported: true, ready: false, warnings: ['Hook file could not be parsed'] }, instructions: { supported: true, ready: true } };
+      result.hooks[0].native = { id: 'pre', name: 'preToolUse', source: 'repository', enabled: false };
+      result.hooks.push({ name: 'sessionStart', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'plugin-hook', name: 'sessionStart', source: 'plugin', description: 'audit-plugin', enabled: true } });
+      result.instruction_files = [...(result.instruction_files ?? [result.instructions]), { name: 'Plugin rules', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'rules', name: 'Plugin rules', source: 'plugin' } }];
+      return result;
+    });
+    try {
+      const { user, card } = await open('Hooks');
+      expect(card.getByText('Copilot: preToolUse · Repository')).toBeTruthy();
+      expect(card.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
+      expect(card.getByText('Native hooks discovery is incomplete. Managed files remain available.')).toBeTruthy();
+      expect(card.getByText('Hook file could not be parsed')).toBeTruthy();
+      expect(within(card.getByText('audit-plugin').closest('li')!).queryByRole('button')).toBeNull();
+      expect(card.getByRole('button', { name: 'View hook file audit' })).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: 'Instructions', exact: true }));
+      const instructions = within(await screen.findByRole('region', { name: 'Instructions', exact: true }));
+      const row = (await instructions.findByText('Copilot: Plugin rules · Plugin')).closest('li')!;
+      expect(within(row).queryByRole('button')).toBeNull();
+      expect(within(row).queryByText('No saved file at this path.')).toBeNull();
+      expect(instructions.getByRole('button', { name: 'View copilot-instructions.md' })).toBeTruthy();
+    } finally { read.mockRestore(); }
+  });
+
+  test('Copilot global skill setting is a separate explicit control that leaves the file toggle alone', async () => {
+    const original = api.configuration;
+    let enabled = true;
+    const read = vi.spyOn(api, 'configuration').mockImplementation(async (projectId) => {
+      const result = await original(projectId);
+      result.discovery = { skills: { supported: true, ready: true } };
+      result.skills[0].native = { id: 'shared-name', name: 'shared-name', source: 'personal-copilot', enabled };
+      result.skills.push({ name: 'shared-name', path: '', content: '', revision: '', editable: false, metadata_only: true, native: { id: 'shared-name', name: 'shared-name', source: 'plugin', description: 'Plugin copy', enabled } });
+      return result;
+    });
+    const global = vi.spyOn(api, 'setSkillGloballyDisabled').mockImplementation(async (_name, disabled) => { enabled = !disabled; });
+    const toggle = vi.spyOn(api, 'setConfigurationDisabled');
+    try {
+      const { user, card } = await open('Skills');
+      expect(card.getAllByText('Copilot global setting: On')).toHaveLength(2);
+      const row = card.getByText('Plugin copy').closest('li')!;
+      expect(within(row).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Turn off shared-name globally in Copilot']);
+      await user.click(within(row).getByRole('button', { name: 'Turn off shared-name globally in Copilot' }));
+      const dialog = within(await screen.findByRole('alertdialog'));
+      expect(dialog.getByText(/Copilot global setting\./)).toBeTruthy();
+      expect(dialog.getByText(/every skill named shared-name/)).toBeTruthy();
+      expect(dialog.getAllByRole('listitem')).toHaveLength(2);
+      expect(global).not.toHaveBeenCalled();
+      await user.click(dialog.getByRole('button', { name: 'Turn off globally', exact: true }));
+      await waitFor(() => expect(global).toHaveBeenCalledWith('shared-name', true, ''));
+      expect(global).toHaveBeenCalledTimes(1);
+      expect(toggle).not.toHaveBeenCalled();
+      expect(await card.findAllByText('Copilot global setting: Off')).toHaveLength(2);
+      expect(card.getByRole('button', { name: 'Disable', exact: true })).toBeTruthy();
+    } finally { read.mockRestore(); global.mockRestore(); toggle.mockRestore(); }
+  });
 });

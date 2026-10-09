@@ -20,7 +20,7 @@ import { PHONE, TodoMeter, TodoReader, TodoStages } from './Todos';
 
 /** What the line says. */
 export type Line =
-  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine }
+  | { kind: 'working'; lead: string; compacting: boolean; retry?: Retry; todo?: TodoLine; plan?: boolean }
   | { kind: 'stopped'; short: string; long: string; notYours: boolean }
   | { kind: 'paused'; text: string };
 
@@ -43,7 +43,7 @@ export function statusLine(session: SessionDetail, working: boolean, compacting:
     const lead = activity?.intent || (key ? turnVerb(key) : '');
     const todo = todoLine(activity?.todos, turn?.started_at);
     // Copilot derives the intent from the row in progress: "Now:" goes when it would say the lead again.
-    return { kind: 'working', lead, compacting, retry: activity?.retry, todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
+    return { kind: 'working', lead, compacting, retry: activity?.retry, ...(activity?.plan && todo?.kind === 'list' ? { plan: true } : {}), todo: todo?.kind === 'list' && todo.now === lead ? { ...todo, now: undefined } : todo };
   }
   if (readOnly(session)) return null;
   if (session.state === 'cancelled' && session.stop_reason) {
@@ -105,7 +105,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
               <>
                 {shown.lead || 'Working'}
                 <ClockWords since={since} timing={timing} />
-                {shown.todo && todoSentence(shown.todo)}
+                {shown.todo && (shown.plan ? todoSentence(shown.todo).replace('. Todo ', '. Plan ') : todoSentence(shown.todo))}
                 {shown.retry && retrySentence(shown.retry)}
               </>
             ) : shown.kind === 'stopped' ? (
@@ -118,7 +118,7 @@ export function StatusLine({ line, session, since, hidden, onJump }: Readonly<{
         </button>
       )}
       {reader && view && (
-        <TodoReader id={readerId} open={reader.open} phone={reader.phone} anchor={button} view={view} subagents={session.subagents} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />
+        <TodoReader id={readerId} open={reader.open} phone={reader.phone} anchor={button} view={view} subagents={session.subagents} label={shown?.kind === 'working' && shown.plan ? 'Plan' : 'Todo'} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />
       )}
     </>
   );
@@ -138,7 +138,7 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
       {/* A turn without a linked message (yet, or ever: Copilot going on by itself) reads as its name does. */}
       <span className={cn('min-w-0 truncate text-body', line.compacting && 'text-badge-violet')}>{line.lead || 'Working'}…</span>
       <Clock since={since} timing={timing} />
-      {line.todo && <TodoSegment todo={line.todo} />}
+      {line.todo && <TodoSegment todo={line.todo} plan={line.plan} />}
       {retry && (
         <>
           <Sep />
@@ -156,13 +156,13 @@ function Working({ line, since, timing }: Readonly<{ line: Extract<Line, { kind:
  * then each open stage's count: "◉ 2 in progress · ⊘ 1 blocked · ○ 3 to do". A phone keeps one
  * line: the glyph, "2/7" and each stage's glyph and number in its colour; the words are in the name.
  */
-function TodoSegment({ todo }: Readonly<{ todo: TodoLine }>) {
+function TodoSegment({ todo, plan }: Readonly<{ todo: TodoLine; plan?: boolean }>) {
   return (
     <>
       <Sep />
       <ListChecks className="size-3.5 shrink-0 text-muted" />
       <span className="shrink-0 tabular-nums text-body">
-        <span className="max-sm:hidden">Todo </span>
+        <span className="max-sm:hidden">{plan ? 'Plan ' : 'Todo '}</span>
         {todo.done}/{todo.total}
       </span>
       {todo.meter && <TodoMeter statuses={todo.meter} className="max-sm:hidden" />}

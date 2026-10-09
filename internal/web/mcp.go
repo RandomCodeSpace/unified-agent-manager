@@ -93,9 +93,11 @@ type MCPServerInput struct {
 // MCPSignIn is the answer to starting a sign-in. URL is empty when a kept
 // sign-in sufficed. Relay is true when the browser may paste the address it
 // ends on, for the service to pass to the provider's loopback listener.
+// Callback means the browser completes directly at the configured HTTPS origin.
 type MCPSignIn struct {
-	URL   string `json:"url,omitempty"`
-	Relay bool   `json:"relay,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Relay    bool   `json:"relay,omitempty"`
+	Callback bool   `json:"callback,omitempty"`
 }
 
 func (m *Manager) mcpConfigurer() (agentapi.MCPConfigurer, bool) {
@@ -358,8 +360,13 @@ func (m *Manager) taskMCP(id string) (agentapi.MCPController, error) {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
+	return m.taskMCPLocked(s)
+}
+
+// taskMCPLocked retains the caller's operation lock across a metadata read.
+func (m *Manager) taskMCPLocked(s *webSession) (agentapi.MCPController, error) {
 	m.mu.Lock()
-	err = s.readOnlyLocked()
+	err := s.readOnlyLocked()
 	supported := m.infos[s.provider].Capabilities.MCP
 	m.mu.Unlock()
 	if err != nil {
@@ -436,11 +443,16 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 		s.op.Unlock()
 		return err
 	}
+	var agentErr error
 	if reload, ok := conv.(agentapi.CustomizationsReloader); ok {
 		ctx, cancel := context.WithTimeout(m.ctx, mcpTimeout)
 		err = reload.ReloadCustomizations(ctx)
 		cancel()
-		if !errors.Is(err, agentapi.ErrUnsupported) {
+		// A Task whose custom agent the reload lost is disconnected: its
+		// next open selects the agent again or fails.
+		if errors.Is(err, agentapi.ErrAgentUnavailable) {
+			agentErr = err
+		} else if !errors.Is(err, agentapi.ErrUnsupported) {
 			s.op.Unlock()
 			return mcpFailure(err)
 		}
@@ -466,6 +478,9 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 	}
 	if err := m.flush(); err != nil {
 		log.Warn("persist reconnected web session failed", "session", id, "error", err)
+	}
+	if agentErr != nil {
+		return newError(http.StatusConflict, "%s", shortError(agentErr))
 	}
 	return nil
 }
@@ -496,8 +511,8 @@ func (m *Manager) TaskMCPAction(id, name, action string) error {
 	return nil
 }
 
-// mcpSignIns are the sign-ins waiting for the browser's pasted callback
-// address, by Task and server.
+// mcpSignIns are the sign-ins waiting for a public SDK callback or the
+// browser's pasted loopback address, by Task and server.
 type mcpSignIns struct {
 	mu      sync.Mutex
 	pending map[string]*signIn
@@ -509,6 +524,11 @@ type signIn struct {
 	callback *url.URL
 	state    string
 	expires  time.Time
+	// Public callbacks bind SDK state to one exact Task conversation.
+	id, name string
+	convID   string
+	gen      uint64
+	public   bool
 }
 
 func signInKey(id, name string) string { return id + "\x00" + name }
@@ -585,7 +605,7 @@ func (m *Manager) FinishMCPSignIn(id, name, pasted string) error {
 	m.signIns.mu.Lock()
 	m.signIns.sweepLocked(time.Now())
 	p := m.signIns.pending[key]
-	if p == nil {
+	if p == nil || p.public {
 		m.signIns.mu.Unlock()
 		return newError(http.StatusConflict, "no sign-in is waiting for this server; start it again")
 	}
@@ -664,6 +684,7 @@ func (s *Server) mcpRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/mcp/servers/{name}", s.handleRemoveMCPServer)
 	mux.HandleFunc("GET /api/sessions/{id}/mcp", s.handleTaskMCP)
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/reconnect", s.handleReconnectTaskMCP)
+	mux.HandleFunc("GET /api/sessions/{id}/mcp/servers/{name}/tools", s.handleTaskMCPTools)
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/enable", s.handleTaskMCPAction("enable"))
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/disable", s.handleTaskMCPAction("disable"))
 	mux.HandleFunc("POST /api/sessions/{id}/mcp/servers/{name}/restart", s.handleTaskMCPAction("restart"))
@@ -721,12 +742,30 @@ func (s *Server) handleRemoveMCPServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTaskMCP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("summary") == "1" {
+		snapshot, err := s.m.TaskMCPStatus(r.PathValue("id"))
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"servers": snapshot.Servers, "mcp_status": snapshot})
+		return
+	}
 	servers, err := s.m.TaskMCP(r.PathValue("id"))
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"servers": servers})
+}
+
+func (s *Server) handleTaskMCPTools(w http.ResponseWriter, r *http.Request) {
+	tools, err := s.m.TaskMCPTools(r.PathValue("id"), r.PathValue("name"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tools": tools})
 }
 
 func (s *Server) handleTaskMCPAction(action string) http.HandlerFunc {
@@ -754,7 +793,7 @@ func (s *Server) handleMCPSignIn(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &in) {
 		return
 	}
-	out, err := s.m.StartMCPSignIn(r.PathValue("id"), r.PathValue("name"), in.Again)
+	out, err := s.m.startMCPSignIn(r.PathValue("id"), r.PathValue("name"), in.Again, s.mcpCallbackURI(r.Host))
 	if err != nil {
 		writeFailure(w, err)
 		return

@@ -84,10 +84,13 @@ func nativeEditPatch(files []*diff.FileDiff, status, path string, includePatch b
 		return result, 0, 0
 	}
 	var match *diff.FileDiff
+	created := false
 	for _, file := range files {
 		old, fresh := strings.TrimPrefix(file.OrigName, "a/"), strings.TrimPrefix(file.NewName, "b/")
 		identity := strings.TrimPrefix(path, "/")
-		sameFile := old == identity && fresh == identity || old == "/dev/null" && fresh == identity || fresh == "/dev/null" && old == identity
+		// Native create completions record their source as "--- a/dev/null".
+		create := (old == "/dev/null" || old == "dev/null") && fresh == identity
+		sameFile := old == identity && fresh == identity || create || fresh == "/dev/null" && old == identity
 		if !sameFile {
 			continue
 		}
@@ -95,7 +98,7 @@ func nativeEditPatch(files []*diff.FileDiff, status, path string, includePatch b
 			result.Status = "unsupported"
 			return result, 0, 0
 		}
-		match = file
+		match, created = file, create
 	}
 	if match == nil {
 		result.Status = "unsupported"
@@ -141,6 +144,11 @@ func nativeEditPatch(files []*diff.FileDiff, status, path string, includePatch b
 	}
 	if !includePatch {
 		return result, additions, deletions
+	}
+	// Native creates number their empty source "-1,0"; unified diff numbers an
+	// empty source from 0, else the patch inserts after a nonexistent line 1.
+	if h := match.Hunks[0]; created && len(match.Hunks) == 1 && h.OrigLines == 0 && h.OrigStartLine == 1 {
+		h.OrigStartLine = 0
 	}
 	patch, err := diff.PrintFileDiff(match)
 	if err != nil || len(patch) > agentapi.MaxEditPatchBytes {

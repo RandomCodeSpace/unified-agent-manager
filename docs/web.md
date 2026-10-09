@@ -400,13 +400,33 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   any AI attribution unless you ask for one. Copilot's own co-author trailer
   is turned off for Tasks.
   Settings → Skills and Agents also show Copilot's native discovery metadata:
-  runtime names, sources, descriptions and global skill enablement. Project
-  discovery includes the runtime's global sources. Existing file edits and
-  Disable/Enable still use the selected scope's exact file and revision; a
-  globally disabled skill is labelled separately. Plugin, built-in, remote and
+  runtime names, sources, descriptions and global skill enablement. Hooks show
+  each discovered action's event, origin and source, including actions disabled
+  by Copilot's disabled-hooks setting; Instructions show discovered sources by
+  label and location. Hook commands, instruction contents and descriptions are
+  not included. Project discovery includes the runtime's global sources.
+  Existing file edits and Disable/Enable still use the selected scope's exact
+  file and revision; a globally disabled skill or hook is labelled separately.
+  Each discovered skill also has a separately labelled Copilot global setting:
+  Turn off globally / Turn on globally asks for confirmation, then adds or
+  removes that one name in Copilot's disabled skills list. It applies to every
+  skill with that name in every project, needs Terminal on like the file
+  toggle, and never renames or edits a file. Plugin, built-in, remote and
   other definitions outside the file editor show read-only metadata. Discovery
   failures or limits are reported while managed files and disabled-file recovery
   remain available. Older runtimes without discovery keep the existing file view.
+- **Agent**: a Task runs as Copilot's default agent unless you pick one of
+  the Project's user-invocable custom agents in the composer (new Tasks
+  too). The choice belongs to that Task only; there is no global default.
+  It changes only while the Task is quiet (no turn, subagent, background
+  task, pending request or queued prompt), and uam selects it again on every
+  resume and after a configuration reload before anything is sent. If the
+  agent no longer exists, the Task fails to open with that reason instead of
+  running as the default agent; pick another agent or Default. The Task's
+  model, effort and context size are kept even when the agent names its own:
+  uam switches back after every agent selection, and a Task whose selection
+  cannot be restored stops rather than run on the agent's model. An agent
+  whose tool list leaves out uam's tools runs without them.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
@@ -786,6 +806,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   first." **Decline** (an ×)
   sits between Stop and **Answer** (an up arrow). What you had typed before the question
   arrived is kept and comes back once the question is settled.
+- **Native planning**: `/plan` in a Copilot Task uses Copilot's own plan mode.
+  When the plan is ready, **Plan ready** appears above the composer and the
+  Task moves to Needs you. **Read plan** opens that reviewed snapshot, with
+  revision numbers and **Show changes** after a revision. Pick an offered
+  implementation action or **Leave planning**; the runtime's recommendation
+  is staged, and Enter, **Approve plan**, or a second click sends it. Typing
+  feedback clears that choice and asks Copilot to revise the plan. Feedback
+  is a review response, not a new Task message. **Stop** remains available.
+  Plan decisions appear as two-line receipts; their reader uses the recorded
+  review even after the Task closes. A supported runtime may offer autopilot,
+  subagents, interactive implementation, or leaving without implementation.
+  Plan approval does not change Safe/Yolo permissions. During implementation,
+  the status line labels current, touched SQL Todo progress **Plan**; an old
+  or unavailable list is never treated as progress on the new plan. Only the
+  exact provider-reported scratch-plan file is excluded from Task changes;
+  project files named `plan.md` still count. Native session changes exclude
+  it only when its path matches exactly; a relative path whose workspace
+  root is unknown or ambiguous stays listed.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,
@@ -948,6 +986,52 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+- **Branch from here**: a finished reply's turn menu offers native recorded
+  history branching when the provider supports it. Its anchored model picker
+  copies the conversation through that reply into a new active Task, without
+  sending another message. Choose the same model, another offered model or
+  Default; a changed model starts with default effort and context size. The
+  source remains intact, and the new Task links back to it. Both Tasks use the
+  same Project and current files. This creates no Git branch or isolated
+  workspace. If the native result is uncertain, UAM keeps the request and
+  refuses to create another branch automatically. The picker's **Dismiss**
+  clears that one request so you can branch again; a Copilot session may still
+  exist for it. When the branch was created but could not be added as a Task
+  (for example, its Project was removed), the picker offers **Add the existing
+  branch**, which retries adding that saved session without branching again,
+  and **Dismiss**, which clears the request without deleting the Copilot
+  session. Deleting the source Task also clears its unresolved requests.
+- **Rewind to before this prompt**: when the provider supports it, a finished
+  reply's turn menu also offers a native rewind of the open conversation. It
+  works only while the Task is idle, with nothing queued, waiting or running in
+  the background, and never resumes a closed conversation. Its anchored
+  preview names how many prompts go and, for **Conversation and files**, which
+  captured files return as they were before (a deleted file reads
+  `+458 restored`); **Conversation only** leaves files as they are. Files
+  changed after Copilot's last write are never overwritten; the result lists
+  them as kept. If the conversation or its files change before you confirm, the
+  preview is read again. UAM records the request before Copilot runs it, sends
+  it once, shows Copilot's outcome and per-file results, then reads the
+  conversation again. Copilot restores files before it shortens the
+  conversation, so a partial result can leave restored files with the
+  conversation unchanged. If the result is lost, the Task says so and refuses
+  new messages, branches and rewinds until you choose **Reread conversation**;
+  UAM never repeats the rewind itself. If that reread cannot settle the
+  outcome, **Release task** clears the hold without touching the history: the
+  conversation may already be shortened and files partly restored, and UAM
+  records that the outcome stayed unknown. Recorded usage stays counted.
+- **Edit and resend**: the same menu puts that reply's prompt, read in full,
+  into the composer with its stored attachments, under a flat strip that says
+  what sending would rewind; the status line hides meanwhile. Any draft you had
+  is set aside and comes back when you stop editing or the edit is sent.
+  Nothing changes until you send. An edit the send would refuse (empty, too
+  large, a missing attachment or file, signed out) is refused before anything
+  is rewound. Sending rewinds to before the prompt, waits
+  until the conversation is read again, then sends the edit once as an
+  ordinary message. If the rewind is uncertain, partial or changes nothing, or
+  the message is refused, the edit stays in the composer with the reason and
+  nothing is sent or retried automatically. An attachment without a stored
+  copy cannot be sent again; the strip says so.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,
@@ -1546,19 +1630,27 @@ conversation if it was closed; nothing is sent to the agent.
 
 **Signing in to a remote server.** A server that uses OAuth shows Needs
 sign-in. **Sign in** asks Copilot for the provider's sign-in page and shows
-a link to open it in a new tab. After you approve, the provider sends the
-browser to an address on `127.0.0.1` or `localhost`, where Copilot waits on
-this host. On the host's own desktop that finishes the sign-in by itself.
-From any other computer that page does not load; copy the whole address
-from the address bar, paste it into the dialog and choose **Finish
-sign-in**: the service passes it to Copilot's waiting listener on this host.
-It accepts only an address with the exact port, path and `state` of the
-sign-in it started for that Task and server, for 10 minutes and once, and
-never follows a redirect. Copilot keeps the sign-in for later Tasks and the
-`copilot` command. A connected remote server offers **Sign in again**, which
-discards the kept sign-in first. If the provider's redirect is not a
-loopback address, finish in that tab or sign in on the host by running
-`copilot` there and using `/mcp`.
+a link to open it in a new tab. When the browser's host matches a configured
+HTTPS `--public-origin` and the provider supports public callbacks, finish
+in that tab and return to the Task. The provider SDK handles discovery,
+PKCE, code exchange, credential storage and connecting the server. UAM
+accepts its callback only for that Task's current conversation, for 10
+minutes and once; closing or reopening the conversation invalidates it.
+The dialog updates through live server status; use **Refresh** if needed.
+
+Without a matching HTTPS public origin or provider callback support,
+the existing loopback flow remains: the provider sends the browser to an
+address on `127.0.0.1` or `localhost`, where Copilot waits on this host. On
+the host's own desktop it finishes by itself. From another computer that
+page does not load; copy the whole address from the address bar, paste it
+into the dialog and choose **Finish sign-in**. UAM passes only the exact
+port, path and `state` of that Task/server's pending sign-in to the waiting
+listener, for 10 minutes and once, without following redirects. A supported
+public-callback failure is reported and does not start another login.
+Copilot keeps the sign-in for later Tasks and the `copilot` command. A
+connected remote server offers **Sign in again**, which discards the kept
+sign-in first. If the provider's legacy redirect is not a loopback address,
+finish in that tab or run `copilot` on the host and use `/mcp`.
 
 ## Install as an app
 

@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import type { ApiClient, Item, SessionDetail } from '../../src/api';
 import { ApiContext } from '../../src/ApiContext';
 import { DetailsProvider, useItemBody } from '../../src/components/Details';
+import { ToolRow } from '../../src/components/Transcript';
 
 /** A detail stream the test feeds frames into. */
 class FakeEventSource {
@@ -21,6 +22,26 @@ const session = { id: 's1', epoch: 'e1', representation: 'compact-v1', detail_st
 const row: Item = { id: 'tool', kind: 'tool', time: '2026-10-08T12:00:00Z', compact: { has_text: false }, tool: { name: 'bash', status: 'running', has_input: true, has_output: true } };
 const fakeApi = { cacheKey: (id: string) => id, detailEventsUrl: () => '/api/events/detail', auth: async () => ({ authenticated: true }) } as unknown as ApiClient;
 const versions = {};
+
+test('tool progress remains visible with an unloaded body and requests no body', async () => {
+  const saved = window.EventSource;
+  window.EventSource = FakeEventSource as unknown as typeof EventSource;
+  FakeEventSource.opened = [];
+  try {
+    render(
+      <ApiContext.Provider value={fakeApi}>
+        <DetailsProvider session={session} active generation={0} versions={versions} onAuthLost={() => {}}>
+          <ToolRow item={{ ...row, tool: { ...row.tool!, progress: 'Waiting for file' } }} live />
+        </DetailsProvider>
+      </ApiContext.Provider>,
+    );
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(screen.getByRole('status').textContent).toBe('Waiting for file');
+    expect(FakeEventSource.opened).toHaveLength(0);
+  } finally {
+    window.EventSource = saved;
+  }
+});
 
 function Body() {
   const { body } = useItemBody(row, true);

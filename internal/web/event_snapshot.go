@@ -60,8 +60,17 @@ func snapshotSummary(summary SessionSummary) SessionSummary {
 	return summary
 }
 
+func snapshotPlan(plan *agentapi.PlanReview) *agentapi.PlanReview {
+	plan = snapshotValue(plan)
+	if plan != nil {
+		plan.Actions = slices.Clone(plan.Actions)
+	}
+	return plan
+}
+
 func snapshotBody(item agentapi.Item) agentapi.Item {
 	item = cloneBody(item)
+	item.Plan = snapshotPlan(item.Plan)
 	if tool := item.Tool; tool != nil {
 		tool.ExitCode = snapshotValue(tool.ExitCode)
 		tool.Declaration = snapshotValue(tool.Declaration)
@@ -84,11 +93,8 @@ func snapshotDetail(detail SessionDetail) SessionDetail {
 	}
 	for i := range detail.Interactions {
 		interaction := &detail.Interactions[i]
-		interaction.Options = slices.Clone(interaction.Options)
-		interaction.Questions = slices.Clone(interaction.Questions)
-		for j := range interaction.Questions {
-			interaction.Questions[j].Choices = slices.Clone(interaction.Questions[j].Choices)
-		}
+		cloneInteraction(interaction)
+		interaction.Plan = snapshotPlan(interaction.Plan)
 	}
 	for i := range detail.Subagents {
 		detail.Subagents[i] = snapshotSubagent(detail.Subagents[i])
@@ -105,6 +111,10 @@ func snapshotDetail(detail SessionDetail) SessionDetail {
 		}
 	}
 	detail.HistoryBefore = snapshotValue(detail.HistoryBefore)
+	detail.Schedules = snapshotValue(detail.Schedules)
+	if schedules := detail.Schedules; schedules != nil {
+		schedules.Entries = slices.Clone(schedules.Entries)
+	}
 	detail.TurnActivity = snapshotValue(detail.TurnActivity)
 	if activity := detail.TurnActivity; activity != nil {
 		activity.Retry = snapshotValue(activity.Retry)

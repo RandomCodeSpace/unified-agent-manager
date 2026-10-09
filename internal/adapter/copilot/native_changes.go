@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -19,6 +20,62 @@ func (a sdkSessionAdapter) WorkspaceDiff(ctx context.Context) (*rpc.WorkspaceDif
 	return a.s.RPC.Workspaces.Diff(ctx, &rpc.WorkspacesDiffRequest{Mode: rpc.WorkspaceDiffModeSession})
 }
 
+type workspaceIdentitySession interface {
+	WorkspaceIdentity(context.Context) (*rpc.WorkspacesGetWorkspaceResult, error)
+}
+
+func (a sdkSessionAdapter) WorkspaceIdentity(ctx context.Context) (*rpc.WorkspacesGetWorkspaceResult, error) {
+	return a.s.RPC.Workspaces.GetWorkspace(ctx)
+}
+
+// nativeDiffRoot is the directory a session diff's relative paths resolve
+// against: the workspace's working directory. A missing or relative Cwd, or
+// a Git root that differs from it, leaves the root unknown. Path is the
+// session's own state directory (where the scratch plan lives), never a root.
+func nativeDiffRoot(ws *rpc.WorkspacesGetWorkspaceResult) string {
+	if ws == nil || ws.Workspace == nil || ws.Workspace.Cwd == nil || !filepath.IsAbs(*ws.Workspace.Cwd) {
+		return ""
+	}
+	cwd := filepath.Clean(*ws.Workspace.Cwd)
+	if root := ws.Workspace.GitRoot; root != nil && *root != "" && filepath.Clean(*root) != cwd {
+		return ""
+	}
+	return cwd
+}
+
+// withoutScratchPlan drops the change whose path is exactly the native plan
+// file. An absolute path compares directly; a relative one needs the one
+// workspace lookup, and an unknown root keeps every relative change.
+func withoutScratchPlan(ctx context.Context, sess any, planPath string, changes []rpc.WorkspaceDiffFileChange) []rpc.WorkspaceDiffFileChange {
+	if planPath == "" {
+		return changes
+	}
+	root, looked := "", false
+	kept := changes[:0:0]
+	for _, change := range changes {
+		path := change.Path
+		if !filepath.IsAbs(path) {
+			if !looked {
+				looked = true
+				if lookup, ok := sess.(workspaceIdentitySession); ok {
+					if ws, err := lookup.WorkspaceIdentity(ctx); err == nil {
+						root = nativeDiffRoot(ws)
+					}
+				}
+			}
+			if root == "" {
+				kept = append(kept, change)
+				continue
+			}
+			path = filepath.Join(root, path)
+		}
+		if filepath.Clean(path) != planPath {
+			kept = append(kept, change)
+		}
+	}
+	return kept
+}
+
 func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, error) {
 	c.mu.Lock()
 	if c.closed {
@@ -26,6 +83,7 @@ func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, err
 		return nil, agentapi.ErrClosed
 	}
 	sess, ok := c.sess.(workspaceDiffSession)
+	planPath := c.planPath
 	c.mu.Unlock()
 	if !ok {
 		return nil, agentapi.ErrUnsupported
@@ -55,8 +113,9 @@ func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, err
 		}
 		return nil, fmt.Errorf("%w: Copilot could not return this conversation's native changes; use All changes", agentapi.ErrUnsupported)
 	}
-	files := make([]agentapi.FileDiff, 0, len(result.Changes))
-	for _, change := range result.Changes {
+	changes := withoutScratchPlan(ctx, sess, planPath, result.Changes)
+	files := make([]agentapi.FileDiff, 0, len(changes))
+	for _, change := range changes {
 		binary := strings.HasPrefix(change.Diff, "Binary files ") || strings.Contains(change.Diff, "\nBinary files ") || strings.Contains(change.Diff, "\nGIT binary patch\n")
 		truncated := change.IsTruncated != nil && *change.IsTruncated
 		recognized := strings.HasPrefix(change.Diff, "diff --git ") || strings.HasPrefix(change.Diff, "--- ")

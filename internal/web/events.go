@@ -143,6 +143,19 @@ type backgroundTasksEvent struct {
 	BackgroundTasks agentapi.BackgroundTasks `json:"background_tasks"`
 }
 
+// schedulesEvent replaces the Task's native schedules; null releases them.
+type schedulesEvent struct {
+	Seq       uint64                     `json:"seq"`
+	SessionID string                     `json:"session_id"`
+	Schedules *agentapi.ScheduleSnapshot `json:"schedules"`
+}
+
+type mcpStatusEvent struct {
+	Seq       uint64                     `json:"seq"`
+	SessionID string                     `json:"session_id"`
+	MCPStatus agentapi.MCPStatusSnapshot `json:"mcp_status"`
+}
+
 type turnActivityEvent struct {
 	Seq          uint64       `json:"seq"`
 	SessionID    string       `json:"session_id"`

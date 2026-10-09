@@ -97,3 +97,48 @@ type MCPController interface {
 type CustomizationsReloader interface {
 	ReloadCustomizations(ctx context.Context) error
 }
+
+// MaxMCPStatusServers bounds live MCP metadata independently of tool bodies.
+const MaxMCPStatusServers = 128
+
+// MCPServerStatus is lightweight state, never a server URL or tool description.
+type MCPServerStatus struct {
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	Error          string `json:"error,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Remote         bool   `json:"remote,omitempty"`
+	NeedsReconnect bool   `json:"needs_reconnect,omitempty"`
+}
+
+// MCPStatusSnapshot belongs to the current open conversation, not its history.
+// Supported is provider capability; Ready means a full initial list arrived.
+// Truncated reports server states that could not fit in the bounded snapshot.
+type MCPStatusSnapshot struct {
+	Supported bool              `json:"supported"`
+	Ready     bool              `json:"ready"`
+	Servers   []MCPServerStatus `json:"servers"`
+	Truncated bool              `json:"truncated,omitempty"`
+}
+
+// MCPStatusReader optionally supplies event-backed state and on-demand tools.
+// The original MCPController list remains available to older providers/clients.
+type MCPStatusReader interface {
+	MCPStatusSnapshot(ctx context.Context) (MCPStatusSnapshot, error)
+	MCPTools(ctx context.Context, name string) ([]MCPTool, error)
+}
+
+// MCPCallbackSignIn is an SDK-owned authorization waiting at a fixed HTTPS
+// callback. An empty URL means kept credentials already connected the server.
+type MCPCallbackSignIn struct {
+	AuthorizationID string
+	URL             string
+}
+
+// MCPCallbackController optionally supports a host-delivered OAuth callback.
+// The provider owns discovery, PKCE, exchange, token storage and reconnect.
+// ErrUnsupported is effect-free; other login errors must not start a fallback.
+type MCPCallbackController interface {
+	MCPSignInCallback(ctx context.Context, name string, again bool, redirectURI string) (MCPCallbackSignIn, error)
+	CompleteMCPSignIn(ctx context.Context, authorizationID, callbackURL string) error
+}

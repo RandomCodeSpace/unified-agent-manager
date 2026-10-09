@@ -19,6 +19,8 @@ export interface ChangesTurn {
   files: string[];
   latest: boolean;
   at: number;
+  /** Explicit full workspace reader from a reply menu. */
+  scope?: 'workspace';
 }
 
 const STATUS_TONE: Record<string, string> = { A: 'text-success', U: 'text-success', D: 'text-error', '!': 'text-error' };
@@ -88,7 +90,7 @@ export function ChangesSheet({
   const api = useApi();
   const canSession = session.capabilities.session_diff;
   // Only the latest turn has a scope of its own ("Last turn"); providers with their own diff have none.
-  const turnScope = (t: ChangesTurn | null): Scope => (t?.latest && !canSession ? 'turn' : defaultScope(session));
+  const turnScope = (t: ChangesTurn | null): Scope => (t?.scope ?? (t?.latest && !canSession ? 'turn' : defaultScope(session)));
   const [scope, setScope] = useState<Scope>(() => turnScope(turn));
   const [turnPaths, setTurnPaths] = useState(turn?.files ?? []);
   const [askedTurn, setAskedTurn] = useState(turn);

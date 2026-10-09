@@ -126,6 +126,26 @@ func TestFleetRegistryMarksMismatchAndProxyRefusesWork(t *testing.T) {
 		t.Fatalf("task create reached a mismatched connection: %s", data)
 	}
 	a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/prompt"), PromptRequest{Text: "go", RequestID: mustUUID(t), Mode: ModeSend}, http.StatusConflict)
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/fork"), ForkRequest{UserItemID: "u1", RequestID: mustUUID(t)}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("task branch reached a mismatched connection: %s", data)
+	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/fork/dismiss"), ForkRequest{UserItemID: "u1"}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("branch dismissal reached a mismatched connection: %s", data)
+	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/rewind"), RewindRequest{UserItemID: "u1", Mode: "conversation", Token: "t", RequestID: mustUUID(t)}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("task rewind reached a mismatched connection: %s", data)
+	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/rewind/release"), map[string]string{"request_id": mustUUID(t)}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("rewind release reached a mismatched connection: %s", data)
+	}
+	_, data = a.request(t, http.MethodPost, connectedTestPath(ab, "/api/sessions/"+f.taskID+"/resend"), ResendRequest{Rewind: RewindRequest{UserItemID: "u1", Mode: "conversation", Token: "t", RequestID: mustUUID(t)}, Prompt: PromptRequest{Text: "edited", RequestID: mustUUID(t)}}, http.StatusConflict)
+	if !bytes.Contains(data, []byte(`"code":"account_not_linked"`)) || f.counts() != before {
+		t.Fatalf("edited resend reached a mismatched connection: %s", data)
+	}
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/providers/copilot/account"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/settings"), nil, http.StatusOK)
 	a.request(t, http.MethodGet, connectedTestPath(ab, "/api/sessions"), nil, http.StatusOK)

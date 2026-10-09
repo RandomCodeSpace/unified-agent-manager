@@ -10,6 +10,18 @@ const delta = (seq, text) => ({ name: 'delta', seq, session_id: 'task', agent_id
 const update = (state, data) => reducer(state, { type: 'update', data });
 const loaded = (state, seq, items, subagent = running) => reducer(state, { type: 'agent_loaded', sessionId: 'task', agentId: 'helper', seq, items, subagent });
 
+test('MCP status follows the selected stream, rejects older frames, and releases state on close', () => {
+  const snapshot = { supported: true, ready: true, servers: [{ name: 'notes', status: 'connected' }] };
+  let state = { ...initialState, selectedId: 'task', snapshotSeq: 10, detailSeq: 10, detail: { id: 'task', open: true, items: [], mcp_status: { supported: true, ready: false, servers: [] } } };
+  const event = { name: 'mcp_status', seq: 11, session_id: 'task', mcp_status: snapshot };
+  assert.equal(update(state, { ...event, session_id: 'other' }), state);
+  state = update(state, event);
+  assert.deepEqual(state.detail.mcp_status, snapshot);
+  assert.equal(update(state, { ...event, seq: 10, mcp_status: { ...snapshot, servers: [] } }), state);
+  state = update(state, { name: 'session', seq: 12, session: { id: 'task', open: false, state: 'closed' } });
+  assert.deepEqual(state.detail.mcp_status, { supported: true, ready: false, servers: [] });
+});
+
 test('leaving a subagent releases its buffer and ignores late output and fetch replies', () => {
   let state = update(loading(), delta(11, 'buffered'));
   state = reducer(state, { type: 'agent_unloaded', sessionId: 'task', agentId: 'helper' });
@@ -253,6 +265,30 @@ test('background shell updates stay separate from foreground and reconnect inval
   assert.equal(update(state, { name: 'background_tasks', seq: 13, session_id: 'task', background_tasks: { known: false, tasks: [] } }), state);
   state = update(state, { name: 'background_tasks', seq: 15, session_id: 'task', background_tasks: { known: true, tasks: [] } });
   assert.deepEqual(state.detail.background_tasks.tasks, []);
+});
+
+test('native plan invalidations replace only the open Task version in sequence', () => {
+  let state = loading();
+  state = update(state, { name: 'plan_version', seq: 12, session_id: 'task', plan_version: 1 });
+  assert.equal(state.detail.plan_version, 1);
+  assert.equal(update(state, { name: 'plan_version', seq: 13, session_id: 'other', plan_version: 2 }), state);
+  assert.equal(update(state, { name: 'plan_version', seq: 11, session_id: 'task', plan_version: 0 }), state);
+  state = update(state, { name: 'plan_version', seq: 14, session_id: 'task', plan_version: 2 });
+  assert.equal(state.detail.plan_version, 2);
+});
+
+test('native schedule frames replace the open Task\'s schedules in order, and release or a lost connection clears them', () => {
+  const schedules = { supported: true, known: true, entries: [{ id: '7', recurring: true, interval_ms: 300000, next_run_at: '2026-10-09T12:00:00Z' }] };
+  let state = loading();
+  state = update(state, { name: 'schedules', seq: 12, session_id: 'task', schedules });
+  assert.deepEqual(state.detail.schedules, schedules);
+  assert.equal(update(state, { name: 'schedules', seq: 13, session_id: 'other', schedules: null }), state);
+  assert.equal(update(state, { name: 'schedules', seq: 11, session_id: 'task', schedules: null }), state);
+  assert.equal(update(state, { name: 'schedules', seq: 13, session_id: 'task', schedules: null }).detail.schedules, null);
+  state = reducer(state, { type: 'connection', status: 'reconnecting' });
+  assert.equal(state.detail.schedules, null);
+  state = reducer(state, { type: 'snapshot', data: { seq: 14, projects: [], sessions: [], session: { ...state.detail, schedules } } });
+  assert.deepEqual(state.detail.schedules, schedules);
 });
 
 test('turn activity frames replace the open Task\'s activity in order, and a lost connection makes its list unknown', () => {

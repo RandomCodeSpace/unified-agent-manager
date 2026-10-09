@@ -156,6 +156,7 @@ func (m *Manager) installHistoryLocked(s *webSession, h agentapi.History) {
 		s.truncated = true
 	}
 	s.history, s.historyReason, s.historyRead = HistoryLoaded, "", true
+	m.rereadRewindLocked(s)
 	m.publishHistoryLocked(s)
 	if m.sessions[s.id] == s {
 		m.enforceHistoryBudgetLocked(s)

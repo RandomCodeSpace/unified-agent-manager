@@ -164,6 +164,7 @@ checks, and JSON error responses. Responses are not cached.
 | `POST /api/configuration/{kind}/draft` | Generates an editable draft from `{brief}` for `agents`, `skills`, or `hooks`, without saving it. |
 | `POST /api/configuration/skills/list` | Lists a repository's skills using the JSON body's `{source}`. |
 | `POST /api/configuration/skills/install` | Installs explicit names from `{source, skills: [...]}`. |
+| `POST /api/configuration/skills/global-disabled` | Sets Copilot's global disabled-skills entry for one discovered name from `{name, disabled}`. Applies to every skill with that name in every project and changes no file. Requires Terminal on. |
 
 Omit `project_id` for global configuration or supply a registered project
 ID as a query parameter. Kinds are `agents`, `skills`, `hooks`, and

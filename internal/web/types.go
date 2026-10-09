@@ -254,6 +254,7 @@ type SessionSummary struct {
 	Model       string            `json:"model"`
 	Effort      string            `json:"effort"`
 	ContextSize string            `json:"context_size"`
+	Agent       string            `json:"agent,omitempty"` // custom agent ID; "" is the provider's default
 	Context     *agentapi.Context `json:"context,omitempty"`
 	// Usage is the AI units the Task's conversation used, main agent and
 	// subagents together, once the provider reports them; it is not
@@ -272,10 +273,15 @@ type SessionSummary struct {
 	BackgroundTasksRunning int `json:"background_tasks_running"`
 	// Queued counts prompts waiting in the Task's queue.
 	Queued int `json:"queued"`
-	// Mode is safe or yolo. A yolo Task's permission requests are allowed
-	// once without asking; questions still wait for the user.
+	// Mode is safe, yolo or assisted. A yolo Task's permission requests are
+	// allowed once without asking, an assisted Task's when the provider's
+	// assisted review approves them; questions still wait for the user.
 	Mode      string                   `json:"mode"`
 	Execution *agentapi.ExecutionState `json:"execution"`
+	// ModeUnknown is set when a failed change left the runtime's permission
+	// mode unreadable: Mode is what UAM applies at the next change or open,
+	// not a fact, and nothing is allowed automatically.
+	ModeUnknown bool `json:"mode_unknown,omitempty"`
 	// Stage is omitted for an active Task, otherwise StageSettled or
 	// StageArchived; SettledAt and ArchivedAt say when.
 	Stage      string    `json:"stage,omitempty"`
@@ -300,6 +306,11 @@ type SessionSummary struct {
 	// RerunOf is the ID of the Task whose last message this one runs again
 	// (Run again, Try with another model); omitted otherwise.
 	RerunOf string `json:"rerun_of,omitempty"`
+	// ForkOf is the source Task whose selected recorded prefix this Task copied.
+	ForkOf         string `json:"fork_of,omitempty"`
+	ForkUserItemID string `json:"fork_user_item_id,omitempty"`
+	// Rewind is a native rewind that still holds the Task until reconciled.
+	Rewind RewindStatus `json:"rewind,omitzero"`
 	// Outcome is a one-line summary of the last completed turn: a short
 	// phrase from the Utility model, when one ran, then what the turn's tool
 	// calls show (files changed, tests, failed commands). Omitted while a
@@ -325,6 +336,7 @@ type SessionSummary struct {
 // turn: what the main agent says it is doing, a model call being retried,
 // and its todo list. It is never persisted.
 type TurnActivity struct {
+	Plan   bool            `json:"plan,omitempty"`
 	Intent string          `json:"intent,omitempty"`
 	Retry  *agentapi.Retry `json:"retry,omitempty"`
 	Todos  TodoView        `json:"todos"`
@@ -383,6 +395,7 @@ type DiffStat struct {
 type TurnTiming = store.TurnTiming
 
 type SessionDetail struct {
+	PlanVersion uint64       `json:"plan_version,omitempty"`
 	TurnTimings []TurnTiming `json:"turn_timings"`
 	SessionSummary
 	// Seq orders this snapshot against events on the same service.
@@ -394,6 +407,9 @@ type SessionDetail struct {
 	LastSubmission   *Submission               `json:"last_submission"`
 	BackgroundTasks  *agentapi.BackgroundTasks `json:"background_tasks,omitempty"`
 	TurnActivity     *TurnActivity             `json:"turn_activity,omitempty"`
+	// Schedules is the open conversation's native schedules, display only.
+	Schedules *agentapi.ScheduleSnapshot  `json:"schedules,omitempty"`
+	MCPStatus *agentapi.MCPStatusSnapshot `json:"mcp_status,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or

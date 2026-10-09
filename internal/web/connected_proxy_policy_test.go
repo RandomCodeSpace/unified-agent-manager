@@ -16,9 +16,23 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/meta", true},
 		{"POST", "/api/sessions", true},
 		{"POST", "/api/sessions/task/prompt", true},
+		{"POST", "/api/sessions/task/fork", true},
+		{"GET", "/api/sessions/task/fork", false},
+		{"POST", "/api/sessions/task/fork/dismiss", true},
+		{"DELETE", "/api/sessions/task/fork/dismiss", false},
+		{"GET", "/api/sessions/task/rewind/preview", true},
+		{"POST", "/api/sessions/task/rewind", true},
+		{"POST", "/api/sessions/task/rewind/reconcile", true},
+		{"POST", "/api/sessions/task/rewind/release", true},
+		{"GET", "/api/sessions/task/rewind/release", false},
+		{"POST", "/api/sessions/task/resend", true},
+		{"GET", "/api/sessions/task/resend", false},
+		{"GET", "/api/sessions/task/rewind", false},
+		{"DELETE", "/api/sessions/task/rewind", false},
 		{"GET", "/api/events", true},
 		{"HEAD", "/api/sessions/task/files/view/out/index.html", true},
 		{"GET", "/api/projects/project/terminal", true},
+		{"GET", "/api/projects/project/agents", true},
 		{"POST", "/api/sessions/task/attachments", true},
 		{"GET", "/api/sessions/task/file-grants/grant/key", true},
 		{"POST", "/api/providers/copilot/account/sign-in", true},
@@ -45,15 +59,29 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"POST", "/api/configuration/skills/install", true},
 		{"PUT", "/api/configuration/skills/name", true},
 		{"DELETE", "/api/configuration/skills/name", true},
+		// Same policy as the skill file toggle above: Settings writes are allowed.
+		{"POST", "/api/configuration/skills/global-disabled", true},
 		{"GET", "/api/usage/prices", true},
 		{"GET", "/api/sessions/task/turns/turn/todos", true},
+		{"GET", "/api/sessions/task/usage-metrics", true},
+		{"POST", "/api/sessions/task/usage-metrics", false},
+		{"GET", "/api/sessions/task/usage-metrics/extra", false},
 		{"GET", "/api/sessions/task/items/tool/diff", true},
 		{"POST", "/api/sessions/task/items/tool/diff", false},
+		// The plan reader's reviewed snapshot and current draft are reads, as the transcript is.
+		{"GET", "/api/sessions/task/plan", true},
+		{"GET", "/api/sessions/task/plan-reviews/review", true},
+		{"POST", "/api/sessions/task/plan", false},
 		{"POST", "/api/sessions/task/turns/turn/todos", false},
 		{"GET", "/api/sessions/task/context", true},
 		{"GET", "/api/sessions/task/context?attribution=true", true},
 		{"POST", "/api/sessions/task/context", false},
 		{"GET", "/api/sessions/task/context/extra", false},
+		{"GET", "/api/sessions/task/turns/turn/changes", true},
+		{"POST", "/api/sessions/task/turns/turn/changes", false},
+		{"POST", "/api/sessions/task/aside", true},
+		{"GET", "/api/sessions/task/aside", false},
+		{"POST", "/api/sessions/task/aside/extra", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},
@@ -79,6 +107,13 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 				t.Fatalf("route %q allowed=%v, want %v", pattern, got, tc.allowed)
 			}
 		})
+	}
+	if connectedAccountGated("GET /api/sessions/{id}/usage-metrics") {
+		t.Fatal("native Task usage is incorrectly account-gated")
+	}
+	// An aside runs a model on the instance's account.
+	if !connectedAccountGated("POST /api/sessions/{id}/aside") {
+		t.Fatal("aside is not account-gated")
 	}
 	// A new owner route remains private even when it exists in the router.
 	ts.srv.mux.HandleFunc("GET /api/secrets", func(http.ResponseWriter, *http.Request) {})

@@ -25,7 +25,7 @@ const shell = ({ children, render }) => render ? React.cloneElement(render, {}, 
 const menu = { Root: shell, Trigger: shell, Content: shell, Actions: () => null };
 const element = tag => ({ children }) => React.createElement(tag, null, children);
 const modules = {
-  './Details': { DetailVisibility: shell, BodyNotice: () => null, useBodyCopy: () => ({}), useDisclosure: key => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); }, useItemBody: item => ({ item }) },
+  './Details': { DetailVisibility: shell, useDetailVisibility: () => true, BodyNotice: () => null, useBodyCopy: () => ({}), useDisclosure: key => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); }, useItemBody: item => ({ item }) },
   '../api': { modelName: (_meta, _provider, model) => model },
   '../lib/chart': chart,
   './Chart': { ChartCard: () => null },
@@ -51,6 +51,7 @@ const modules = {
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
   './LiveOutput': { LiveOutput: () => null },
   './Todos': { TurnTodo: () => null },
+  './Plan': { PlanNotice: () => null },
   './ui/button': { Button: element('button') },
   './ui/chip': { Chip: element('span') },
   './ui/collapse': { Collapse: ({ open, children }) => open ? children : null, usePresence: open => ({ mounted: open, onClosed: () => {} }) },

@@ -43,6 +43,9 @@ type Mode string
 const (
 	ModeYolo Mode = "yolo"
 	ModeSafe Mode = "safe"
+	// ModeAssisted is a web Task's opt-in provider review of permission
+	// requests; Task defaults, profiles and routines never use it.
+	ModeAssisted Mode = "assisted"
 )
 
 type MousePolicy string
@@ -79,6 +82,9 @@ type Config struct {
 	// WebAccountLinks holds the one account each provider is linked to,
 	// keyed by provider name. Only the service sets it; no settings PATCH.
 	WebAccountLinks map[string]AccountLink `json:"web_account_links,omitempty"`
+	// WebForks reserves native fork requests before their RPC. Only unresolved
+	// requests stay here; registered Tasks carry their own exact receipt.
+	WebForks map[string]WebFork `json:"web_forks,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -119,6 +125,7 @@ type configAlias struct {
 	WebSettings     WebSettings              `json:"web_settings,omitzero"`
 	WebRoutines     map[string]WebRoutine    `json:"web_routines,omitempty"`
 	WebAccountLinks map[string]AccountLink   `json:"web_account_links,omitempty"`
+	WebForks        map[string]WebFork       `json:"web_forks,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -134,6 +141,7 @@ var knownConfigFields = map[string]struct{}{
 	"web_settings":                {},
 	"web_routines":                {},
 	"web_account_links":           {},
+	"web_forks":                   {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -170,6 +178,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		WebSettings:     c.WebSettings,
 		WebRoutines:     c.WebRoutines,
 		WebAccountLinks: c.WebAccountLinks,
+		WebForks:        c.WebForks,
 	}, c.unknown, knownConfigFields)
 }
 
@@ -188,6 +197,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.WebSettings = alias.WebSettings
 	c.WebRoutines = alias.WebRoutines
 	c.WebAccountLinks = alias.WebAccountLinks
+	c.WebForks = alias.WebForks
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -370,6 +380,42 @@ type TurnTiming struct {
 	// Todo counts the todo list as the turn left it, for a turn that
 	// changed it; its rows are kept beside the Task's uploads.
 	Todo TodoCounts `json:"todo,omitzero"`
+	// Native captured changes as this finalized owner turn left them.
+	Changes *TurnChangeCounts `json:"changes,omitempty"`
+}
+
+// TurnChangeCounts retains no file rows or patches. Rows are read on demand
+// from the Task's bounded turn-changes snapshot file. Missing means the Task
+// did not request native capture; unavailable status never claims zero.
+type TurnChangeCounts struct {
+	Status    string `json:"status"`
+	EventID   string `json:"event_id,omitempty"`
+	Files     int64  `json:"files,omitempty"`
+	Additions int64  `json:"additions,omitempty"`
+	Deletions int64  `json:"deletions,omitempty"`
+	Omitted   int64  `json:"omitted,omitempty"`
+}
+
+// CloneTurnTimings gives each snapshot its own optional metadata.
+func CloneTurnTimings(timings []TurnTiming) []TurnTiming {
+	out := slices.Clone(timings)
+	for i := range out {
+		if out[i].Changes != nil {
+			facts := *out[i].Changes
+			switch facts.Status {
+			case "available":
+				if facts.EventID == "" || len(facts.EventID) > 256 || facts.Files < 0 || facts.Files > 1_000_000_000 || facts.Additions < 0 || facts.Additions > 1_000_000_000 || facts.Deletions < 0 || facts.Deletions > 1_000_000_000 || facts.Omitted < 0 || facts.Omitted > facts.Files {
+					facts = TurnChangeCounts{Status: "unknown"}
+				}
+			case "unknown", "busy", "unsupported":
+				facts = TurnChangeCounts{Status: facts.Status}
+			default:
+				facts = TurnChangeCounts{Status: "unknown"}
+			}
+			out[i].Changes = &facts
+		}
+	}
+	return out
 }
 
 // TodoCounts counts the rows of a conversation's todo list by status:
@@ -413,6 +459,9 @@ type WebState struct {
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
 	ContextSize string `json:"context_size,omitempty"`
+	// Agent is the ID of the selected custom agent; empty means the
+	// provider's default agent.
+	Agent string `json:"agent,omitempty"`
 	// Title is the provider-generated conversation title, sanitized and
 	// bounded.
 	Title string `json:"title,omitempty"`
@@ -439,6 +488,10 @@ type WebState struct {
 	// RerunOf is the ID of the Task whose last message this one runs again
 	// (Run again, Try with another model); empty otherwise.
 	RerunOf string `json:"rerun_of,omitempty"`
+	// Fork records a native prefix branch separately from a last-message rerun.
+	Fork *ForkLineage `json:"fork,omitempty"`
+	// Rewind is the latest native history rewind receipt.
+	Rewind *WebRewind `json:"rewind,omitempty"`
 	// Outcome is the one-line summary of the last completed turn.
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
@@ -488,6 +541,8 @@ var knownWebStateFields = map[string]struct{}{
 	"spawned_by":          {},
 	"routine_id":          {},
 	"rerun_of":            {},
+	"fork":                {},
+	"rewind":              {},
 	"outcome":             {},
 	"suggestions":         {},
 	"unseen_end":          {},
@@ -1471,7 +1526,7 @@ func coerceRecord(rec *SessionRecord) bool {
 		rec.Status = StatusActive
 		changed = true
 	}
-	if rec.Mode != ModeYolo && rec.Mode != ModeSafe {
+	if rec.Mode != ModeYolo && rec.Mode != ModeSafe && rec.Mode != ModeAssisted {
 		log.Warn("coercing unknown session mode to safe", "id", rec.ID, "mode", string(rec.Mode))
 		rec.Mode = ModeSafe
 		changed = true
