@@ -87,7 +87,8 @@ func nativeEditPatch(files []*diff.FileDiff, status, path string, includePatch b
 	for _, file := range files {
 		old, fresh := strings.TrimPrefix(file.OrigName, "a/"), strings.TrimPrefix(file.NewName, "b/")
 		identity := strings.TrimPrefix(path, "/")
-		if !(old == identity && fresh == identity || old == "/dev/null" && fresh == identity || fresh == "/dev/null" && old == identity) {
+		sameFile := old == identity && fresh == identity || old == "/dev/null" && fresh == identity || fresh == "/dev/null" && old == identity
+		if !sameFile {
 			continue
 		}
 		if match != nil {

@@ -3,12 +3,13 @@ package copilot
 import (
 	"context"
 	"errors"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
-	copilot "github.com/github/copilot-sdk/go"
-	"github.com/github/copilot-sdk/go/rpc"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	copilot "github.com/github/copilot-sdk/go"
+	"github.com/github/copilot-sdk/go/rpc"
 )
 
 const recordedEditPatch = "\ndiff --git a/work/file.txt b/work/file.txt\n--- a/work/file.txt\n+++ b/work/file.txt\n@@ -1 +1 @@\n-before\n+first\n"
