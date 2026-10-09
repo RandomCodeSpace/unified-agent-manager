@@ -1,6 +1,6 @@
 import { Check, CircleDashed, X } from 'lucide-react';
 import { cn } from '../lib/cn';
-import { allVerified, type Stamp } from '../lib/receipts';
+import { allUnseen, allVerified, type Stamp } from '../lib/receipts';
 import { useLocateItem } from './Subagents';
 
 // Receipts (DESIGN.md Receipts): under a turn's last reply, each path, command and test claim
@@ -23,6 +23,15 @@ export function Receipts({ stamps }: Readonly<{ stamps: readonly Stamp[] }>) {
       <p className="mt-2 flex items-center gap-1.5 text-meta text-muted" title={stamps.map((s) => `${s.claim}: ${s.note}`).join('\n')}>
         {MARK.verified}
         {stamps.length === 1 ? 'Its one claim matches the record' : `Its ${stamps.length} claims match the record`}
+      </p>
+    );
+  }
+  if (allUnseen(stamps)) {
+    const aside = stamps[0].note.split(' · ')[1];
+    return (
+      <p className="mt-2 flex items-center gap-1.5 text-meta text-muted" title={stamps.map((s) => `${s.claim}: ${s.note}`).join('\n')}>
+        {MARK.unseen}
+        {`${stamps.length} ${stamps.length === 1 ? 'claim' : 'claims'} not seen in the main agent’s work${aside ? ` · ${aside}` : ''}`}
       </p>
     );
   }

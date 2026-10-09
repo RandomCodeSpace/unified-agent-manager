@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { claimsOf, receipts, allVerified } from '../src/lib/receipts.ts';
+import { claimsOf, receipts, allVerified, allUnseen } from '../src/lib/receipts.ts';
 
 const at = (s) => `2026-10-09T10:00:${String(s).padStart(2, '0')}Z`;
 const call = (id, name, input, extra = {}, s = 1) => ({ id, kind: 'tool', time: at(s), tool: { name, status: 'completed', input: JSON.stringify(input), ...extra } });
@@ -16,6 +16,14 @@ test('claims: code spans that read as commands or paths, and the words that say 
     { kind: 'tests', claim: 'all tests pass' },
   ]);
   assert.deepEqual(claimsOf('Nothing here.'), []);
+  // A model id, a directory and a package path are not files; a bare Makefile is.
+  assert.deepEqual(claimsOf('On `ollama/deepseek-v4.1-flash`, in `.git/` and `internal/web`, via `Makefile`.'), [{ kind: 'path', claim: 'Makefile' }]);
+});
+
+test('claims the record cannot see either way collapse: all unseen, none with evidence', () => {
+  const delegated = receipts('Ran `ls` on `README.md`.', [call('t1', 'task', { agent_type: 'task' })]);
+  assert.equal(allUnseen(delegated), true);
+  assert.equal(allUnseen(receipts('Read `README.md`.', [call('v1', 'view', { path: 'README.md' })])), false);
 });
 
 test('a changed path, a run command and a green test run are verified, each with its evidence', () => {
