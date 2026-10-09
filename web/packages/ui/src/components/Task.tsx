@@ -339,6 +339,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
+  // A subagent's peek or transcript is open: the view does not follow new content under it.
+  const held = useRef(false);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
@@ -508,6 +510,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    if (held.current) return;
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
@@ -516,11 +519,18 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
-    const observer = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    const observer = new ResizeObserver(() => { if (atBottom.current && !held.current) el.scrollTop = el.scrollHeight; });
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // Once the peek or transcript closes, a view at the bottom catches up with what came meanwhile.
+  const hold = useCallback((holding: boolean) => {
+    held.current = holding;
+    const el = scroller.current;
+    if (!holding && el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
+  }, [session.history_after]);
 
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
@@ -802,7 +812,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
