@@ -341,18 +341,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const atBottom = useRef(true);
   // A subagent's peek or transcript is open: the view keeps that subagent's row where it is, whatever
   // arrives above or below it, so the row stays under the pointer and beside its panel.
-  // Whatever leaves below the row (the turn's status at its end) must not pull it down: until the
-  // hold ends the content keeps the tallest height it reached (`floor`).
-  const held = useRef<{ row: () => Element | null; el: Element | null; top: number; floor: number } | null>(null);
-  const log = useRef<HTMLDivElement>(null);
+  const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
   const keepHeld = () => {
     const h = held.current, el = scroller.current;
     if (!h || !el) return;
-    const content = log.current;
-    if (content) {
-      if (content.offsetHeight < h.floor) content.style.minHeight = `${h.floor}px`;
-      else h.floor = content.offsetHeight;
-    }
     const row = h.row();
     const top = row?.getBoundingClientRect().top;
     if (row !== h.el || top === undefined) {
@@ -538,6 +530,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
   }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
+  const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
@@ -554,11 +547,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const hold = useCallback((row: (() => Element | null) | null) => {
     if (row) {
       const el = row();
-      held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0, floor: log.current?.offsetHeight ?? 0 };
+      held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0 };
       return;
     }
     held.current = null;
-    if (log.current) log.current.style.minHeight = '';
     const el = scroller.current;
     if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
   }, [session.history_after]);
