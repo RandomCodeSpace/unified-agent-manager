@@ -494,12 +494,11 @@ func TestWebCommandRefusalsAndUncertainOutcomes(t *testing.T) {
 		t.Fatalf("refused commands invoked %v", h.fs.invoked)
 	}
 
-	plan, autopilot, sandbox := rpc.SessionModePlan, rpc.SessionModeAutopilot, rpc.SandboxSessionChange("enabled")
+	autopilot, sandbox := rpc.SessionModeAutopilot, rpc.SandboxSessionChange("enabled")
 	for name, result := range map[string]rpc.SlashCommandInvocationResult{
 		"empty prompt":   &rpc.SlashCommandAgentPromptResult{Prompt: " "},
 		"sandbox change": &rpc.SlashCommandTextResult{Text: "done", SandboxSessionChange: &sandbox},
 		"no result":      nil,
-		"plan mode":      &rpc.SlashCommandCompletedResult{Mode: &plan},
 	} {
 		h.fs.invoke = result
 		if _, err := exec.ExecuteCommand(ctx, "goal", agentapi.Prompt{}); !errors.Is(err, agentapi.ErrSubmissionUncertain) {
@@ -521,7 +520,7 @@ func TestWebCommandRefusalsAndUncertainOutcomes(t *testing.T) {
 		t.Fatalf("mode without runtime control = %v", err)
 	}
 
-	// Plan exit approval is refused, never granted.
+	// A runtime offering no supported plan action is refused, never granted.
 	if res, err := plain.fc.create[0].OnExitPlanModeRequest(copilot.ExitPlanModeRequest{}, copilot.ExitPlanModeInvocation{}); err != nil || res.Approved || res.Feedback == "" {
 		t.Fatalf("plan exit = %+v, %v", res, err)
 	}

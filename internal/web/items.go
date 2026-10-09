@@ -74,6 +74,7 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 	} else {
 		it.Completion = nil
 	}
+	it.Plan = clampPlanReview(it.Plan, false)
 	if it.Tool != nil {
 		tool := *it.Tool
 		if d := tool.Declaration; d != nil {
@@ -119,6 +120,12 @@ func itemSize(it agentapi.Item) int {
 		n += len(c.Decision) + len(c.UserItemID) + len(c.Summary) + len(c.Reason)
 		if c.Blocker != nil {
 			n += len(c.Blocker.Kind) + len(c.Blocker.Reason)
+		}
+	}
+	if it.Plan != nil {
+		n += len(it.Plan.RequestID) + len(it.Plan.Summary) + len(it.Plan.Recommended)
+		for _, action := range it.Plan.Actions {
+			n += len(action)
 		}
 	}
 	if it.Tool != nil {
@@ -613,6 +620,7 @@ func (s *webSession) trimItems() []trimmedItem {
 }
 
 func clampInteraction(ix agentapi.Interaction, now time.Time) agentapi.Interaction {
+	ix.Plan = clampPlanReview(ix.Plan, ix.State == agentapi.InteractionPending || ix.State == "")
 	ix.Title = clampText(ix.Title, maxLabelText)
 	ix.Detail = clampText(ix.Detail, maxInteractionText)
 	ix.Resolution = clampText(ix.Resolution, maxLabelText)
@@ -698,6 +706,7 @@ func (m *Manager) publishInteractionLocked(s *webSession, ix *interaction) {
 
 func (m *Manager) expireLocked(s *webSession, ix *interaction, reason string) {
 	ix.State = agentapi.InteractionExpired
+	ix.Plan = clampPlanReview(ix.Plan, false)
 	ix.Resolution = reason
 	ix.answering = false
 	m.publishInteractionLocked(s, ix)
@@ -945,7 +954,7 @@ func (s *webSession) trimSubagents() {
 func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 	switch ix.Kind {
 	case agentapi.InteractionPermission:
-		if a.Reject || len(a.Answers) > 0 {
+		if a.Reject || len(a.Answers) > 0 || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a permission request takes a decision only")
 		}
 		for _, opt := range ix.Options {
@@ -955,7 +964,7 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 		}
 		return newError(http.StatusBadRequest, "decision must be one of the offered options")
 	case agentapi.InteractionQuestion:
-		if a.Decision != "" {
+		if a.Decision != "" || a.Plan != nil {
 			return newError(http.StatusBadRequest, "a question takes answers, not a decision")
 		}
 		if a.Reject {
@@ -971,6 +980,18 @@ func validateAnswer(ix agentapi.Interaction, a agentapi.Answer) error {
 			if err := validateQuestionAnswer(i, q, a.Answers[i]); err != nil {
 				return err
 			}
+		}
+		return nil
+	case agentapi.InteractionPlanReview:
+		if a.Plan == nil || ix.Plan == nil || a.Decision != "" || len(a.Answers) > 0 || a.Reject || a.Auto {
+			return newError(http.StatusBadRequest, "a plan review takes an explicit plan answer only")
+		}
+		plan := a.Plan
+		if plan.Action != "" && plan.Feedback != "" || plan.Action == "" && strings.TrimSpace(plan.Feedback) == "" || len(plan.Feedback) > agentapi.MaxPlanFeedbackBytes {
+			return newError(http.StatusBadRequest, "a plan review takes one action or bounded feedback")
+		}
+		if plan.Action != "" && (!slices.Contains(ix.Plan.Actions, plan.Action) || ix.Plan.Truncated) {
+			return newError(http.StatusBadRequest, "plan action must be offered and the reviewed snapshot complete")
 		}
 		return nil
 	default:
@@ -1000,6 +1021,12 @@ func validateQuestionAnswer(i int, q agentapi.Question, values []string) error {
 }
 
 func resolution(ix agentapi.Interaction, a agentapi.Answer) (agentapi.InteractionState, string) {
+	if ix.Kind == agentapi.InteractionPlanReview && a.Plan != nil {
+		if a.Plan.Action != "" {
+			return agentapi.InteractionAnswered, string(a.Plan.Action)
+		}
+		return agentapi.InteractionAnswered, "feedback sent"
+	}
 	if ix.Kind == agentapi.InteractionPermission {
 		for _, opt := range ix.Options {
 			if opt.ID == a.Decision {

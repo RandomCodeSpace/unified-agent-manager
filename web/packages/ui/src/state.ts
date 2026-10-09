@@ -361,6 +361,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, background_tasks: d.background_tasks } };
         case 'turn_activity':
           return { ...state, detail: { ...detail, turn_activity: d.turn_activity } };
+        case 'plan_version':
+          return { ...state, detail: { ...detail, plan_version: d.plan_version } };
       }
     }
   }

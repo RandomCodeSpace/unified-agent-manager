@@ -110,7 +110,7 @@ function TodoRow({ todo, name }: Readonly<{ todo: Todo; name?: string }>) {
 interface ReaderParts { todos: readonly Todo[]; counts: TodoCounts; facts: string[]; sections: TodoSection[]; foot: string; name: (todo: Todo) => string | undefined }
 
 /** The list in the reader: the count and meter in the head, the facts, then the sections, each row with the subagent that wrote it. */
-function TodoBody({ parts, sheet, heading, close }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode }>) {
+function TodoBody({ parts, sheet, heading, close, label }: Readonly<{ parts: ReaderParts; sheet: boolean; heading: RefObject<HTMLHeadingElement | null>; close: ReactNode; label: string }>) {
   const { done = 0, total = 0 } = parts.counts;
   return (
     <div className="flex min-h-0 flex-col">
@@ -118,7 +118,7 @@ function TodoBody({ parts, sheet, heading, close }: Readonly<{ parts: ReaderPart
         <div className="flex min-h-7 min-w-0 items-center gap-2">
           <ListChecks aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">
-            Todo
+            {label}
           </h2>
           {total <= METER_ROWS && parts.todos.length === total && <TodoMeter statuses={parts.todos.map((t) => t.status)} />}
           <span className="shrink-0 text-caption tabular-nums text-muted">
@@ -170,13 +170,14 @@ const dim = cn(backdropClass, 'duration-160');
  * The live list beside `anchor`, the status line: In progress, Blocked, To do and Done;
  * `view.touched` unset says the running turn has not changed it yet.
  */
-export function TodoReader({ view, subagents, ...shell }: Readonly<{
+export function TodoReader({ view, subagents, label = 'Todo', ...shell }: Readonly<{
   id: string;
   open: boolean;
   phone: boolean;
   anchor: HTMLElement | null;
   view: TodoView;
   subagents: readonly Subagent[];
+  label?: 'Todo' | 'Plan';
   onClose: () => void;
   onClosed: () => void;
 }>) {
@@ -188,7 +189,7 @@ export function TodoReader({ view, subagents, ...shell }: Readonly<{
     view.omitted ? `${view.omitted} more not shown` : '',
   ].filter(Boolean);
   const parts: ReaderParts = { todos: view.todos, counts: view.counts, facts, sections: todoSections(view), foot: 'To change it, ask in the chat', name: (t) => names.get(t.agent_id!) };
-  return <Reader {...shell} side="top" label="Todo" parts={parts} />;
+  return <Reader {...shell} side="top" label={label} parts={parts} />;
 }
 
 /**
@@ -213,6 +214,7 @@ function Reader({ id, open, phone, anchor, side, label, parts, onClose, onClosed
     return (
       <BottomSheet id={id} open={open} onClose={onClose} onClosed={onClosed} label={label} className="duration-160" backdropClassName="duration-160" initialFocus={heading} finalFocus={back}>
         <TodoBody
+          label={label}
           parts={parts}
           sheet
           heading={heading}
@@ -241,6 +243,7 @@ function Reader({ id, open, phone, anchor, side, label, parts, onClose, onClosed
             className="flex max-h-[min(80vh,var(--available-height))] w-[440px] max-w-(--available-width) origin-(--transform-origin) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden transition-[opacity,scale] duration-160 ease-app data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
           >
             <TodoBody
+              label={label}
               parts={parts}
               sheet={false}
               heading={heading}

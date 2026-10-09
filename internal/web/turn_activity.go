@@ -80,7 +80,7 @@ func (m *Manager) turnActivityTurnLocked(s *webSession, state agentapi.TurnState
 // applyActivityLocked takes the adapter's activity of the running turn. It
 // is published, never persisted: an intent or a retry writes nothing.
 func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
-	next := TurnActivity{Intent: clipRunes(strings.TrimSpace(displaytext.Sanitize(a.Intent)), maxIntentRunes), Todos: s.turnActivity.Todos}
+	next := TurnActivity{Plan: a.Plan && s.activeTiming >= 0, Intent: clipRunes(strings.TrimSpace(displaytext.Sanitize(a.Intent)), maxIntentRunes), Todos: s.turnActivity.Todos}
 	if a.Retry != nil {
 		r := cleanRetry(*a.Retry)
 		next.Retry = &r
@@ -94,7 +94,7 @@ func (m *Manager) applyActivityLocked(s *webSession, a agentapi.Activity) {
 func (m *Manager) setTurnActivityLocked(s *webSession, a TurnActivity) {
 	cur := s.turnActivity
 	sameRetry := a.Retry == cur.Retry || a.Retry != nil && cur.Retry != nil && *a.Retry == *cur.Retry
-	if a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) {
+	if a.Plan == cur.Plan && a.Intent == cur.Intent && sameRetry && a.Todos.equal(cur.Todos) {
 		return
 	}
 	s.turnActivity = a

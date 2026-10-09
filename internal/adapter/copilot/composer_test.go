@@ -187,7 +187,7 @@ func TestWebCommandsListSupportedAndDisabledNativeCommands(t *testing.T) {
 		t.Fatalf("catalog dropped commands: %+v", got)
 	}
 	for _, cmd := range got {
-		disabled := cmd.Name == "plan" || cmd.Name == "add-dir" || cmd.Name == "extension"
+		disabled := cmd.Name == "add-dir" || cmd.Name == "extension"
 		if (cmd.DisabledReason != "") != disabled {
 			t.Fatalf("wrong support state: %+v", cmd)
 		}
@@ -197,7 +197,7 @@ func TestWebCommandsListSupportedAndDisabledNativeCommands(t *testing.T) {
 
 func TestWebRunCommandSendsPromptAndRejectsUnsupportedBeforeInvoke(t *testing.T) {
 	h := openWeb(t)
-	h.fs.commands = []rpc.SlashCommandInfo{{Name: "probe-skill", Kind: rpc.SlashCommandKindSkill}, {Name: "review", Kind: rpc.SlashCommandKindBuiltin}, {Name: "plan", Kind: rpc.SlashCommandKindBuiltin}}
+	h.fs.commands = []rpc.SlashCommandInfo{{Name: "probe-skill", Kind: rpc.SlashCommandKindSkill}, {Name: "review", Kind: rpc.SlashCommandKindBuiltin}, {Name: "add-dir", Kind: rpc.SlashCommandKindBuiltin}}
 	h.fs.invoke = &rpc.SlashCommandAgentPromptResult{Prompt: "<skill-context>probe</skill-context>\nARGUMENTS: alpha", DisplayPrompt: "/probe-skill alpha"}
 	if err := h.conv.RunCommand(context.Background(), "probe-skill", agentapi.Prompt{Text: "alpha", Files: composerFiles}); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestWebRunCommandSendsPromptAndRejectsUnsupportedBeforeInvoke(t *testing.T)
 		t.Fatalf("no-argument command: %v, %+v", err, h.fs.msgs[1])
 	}
 
-	for _, name := range []string{"plan", "unknown"} {
+	for _, name := range []string{"add-dir", "unknown"} {
 		if err := h.conv.RunCommand(context.Background(), name, agentapi.Prompt{}); err == nil {
 			t.Fatal("unsupported command accepted")
 		}

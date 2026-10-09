@@ -786,6 +786,22 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   first." **Decline** (an ×)
   sits between Stop and **Answer** (an up arrow). What you had typed before the question
   arrived is kept and comes back once the question is settled.
+- **Native planning**: `/plan` in a Copilot Task uses Copilot's own plan mode.
+  When the plan is ready, **Plan ready** appears above the composer and the
+  Task moves to Needs you. **Read plan** opens that reviewed snapshot, with
+  revision numbers and **Show changes** after a revision. Pick an offered
+  implementation action or **Leave planning**; the runtime's recommendation
+  is staged, and Enter, **Approve plan**, or a second click sends it. Typing
+  feedback clears that choice and asks Copilot to revise the plan. Feedback
+  is a review response, not a new Task message. **Stop** remains available.
+  Plan decisions appear as two-line receipts; their reader uses the recorded
+  review even after the Task closes. A supported runtime may offer autopilot,
+  subagents, interactive implementation, or leaving without implementation.
+  Plan approval does not change Safe/Yolo permissions. During implementation,
+  the status line labels current, touched SQL Todo progress **Plan**; an old
+  or unavailable list is never treated as progress on the new plan. Only the
+  exact provider-reported scratch-plan file is excluded from Task changes;
+  project files named `plan.md` still count.
 - **Yolo**: a Task in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,

@@ -729,13 +729,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // A pending question with one question is the composer's extension (DESIGN.md Composer, answer mode),
   // never a card: the composer shows it, holds the text and files, and answers or declines it.
   const question = session.capabilities.questions ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'question' && i.questions?.length === 1) : undefined;
-  const questionId = question?.id;
+  const plan = session.capabilities.plan ? session.interactions.find((i) => awaitsUser(i) && i.kind === 'plan_review' && i.plan) : undefined;
   const onAnswered = useCallback((i: Interaction) => onInteractionUpdate(session.id, i), [onInteractionUpdate, session.id]);
-  const answering = useMemo<Answering | null>(() => (question ? { interaction: question, question: question.questions![0], onAnswered } : null), [question, onAnswered]);
+  const answering = useMemo<Answering | null>(() => plan ? { kind: 'plan', interaction: plan, plan: plan.plan!, onAnswered } : question ? { kind: 'question', interaction: question, question: question.questions![0], onAnswered } : null, [question, plan, onAnswered]);
 
   // A decided card collapses in place (its last pending look, inert) instead of vanishing; it leaves once the collapse has run.
   // A request yolo mode is answering is never a card, nor is the question the composer answers.
-  const carded = (i: Interaction) => awaitsUser(i) && i.id !== questionId;
+  const carded = (i: Interaction) => awaitsUser(i) && i.kind !== 'plan_review' && i.id !== question?.id;
   const pendingIds = session.interactions.filter(carded).map((i) => i.id).join(',');
   const [seenPending, setSeenPending] = useState(pendingIds);
   const [lingering, setLingering] = useState<Interaction[]>([]);
@@ -813,6 +813,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             <HistoryAnchor scroller={scroller} firstItem={visibleItems[0]?.id ?? ''} lastItem={visibleItems.at(-1)?.id} itemIds={compactWindow ? visibleItems.map(item => item.id) : undefined} knownIds={session.history_index?.map(item => item.id)} resetKey={`${session.epoch}:${historyGeneration}:${windowReset}`} className="flex flex-col gap-6">
             <Transcript
               sessionId={session.id}
+              planVersion={session.plan_version}
+              planAvailable={session.open}
               items={visibleItems}
               identityItems={session.history_index}
               liveItems={liveItems}
@@ -853,7 +855,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={false} onJump={scrollToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={answering?.kind === 'plan'} onJump={scrollToBottom} />
             <Appear show={jump && !!line} className="shrink-0">
               <Tip label="Jump to bottom">
                 <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>

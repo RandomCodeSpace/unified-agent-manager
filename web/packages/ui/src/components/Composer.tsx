@@ -22,7 +22,7 @@ import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from
 import { Loading, Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
-import { ComposerQuestion } from './Interactions';
+import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -243,14 +243,12 @@ export interface NewTask {
 const NO_COMMANDS: Command[] = [];
 
 /**
- * A pending question with one question, answered from the composer (DESIGN.md Composer, answer
- * mode): the question it shows, and where the answered or declined interaction goes.
+ * A pending question or native plan review answered from the composer's isolated buffer.
  */
-export interface Answering {
+export type Answering = ({ kind: 'question'; question: Question } | { kind: 'plan'; plan: import('../api').PlanReview }) & {
   interaction: Interaction;
-  question: Question;
   onAnswered: (i: Interaction) => void;
-}
+};
 
 /** No option chosen: one array, so nothing derived from it changes between renders. */
 const NO_CHOICES: string[] = [];
@@ -285,6 +283,7 @@ export const Composer = memo(ComposerView, sameComposerProps);
 
 function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput }: Readonly<ComposerProps>) {
   const api = useApi();
+  const answerFirst = answering?.kind === 'plan' ? 'Review the plan first.' : ANSWER_FIRST;
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
   const catalogPending = !meta && !metaError;
@@ -516,7 +515,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setFiles((f) => pruneFiles(next, f));
     if (!triggerAt(next, nextCaret)) setDismissed(null);
     // Typing an answer replaces the staged option(s): the answer is one or the other.
-    if (answering?.question.custom && staged.length && next.trim()) setChosen({ id: answering.interaction.id, choices: NO_CHOICES });
+    if (answering && (answering.kind === 'plan' || answering.question.custom) && staged.length && next.trim()) setChosen({ id: answering.interaction.id, choices: NO_CHOICES });
   }
 
   function pick(item: PickerItem) {
@@ -569,7 +568,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (locked || !list.length) return;
     // An answer carries no files: a drop or paste while answering is refused with the Attach button's reason.
     if (answering) {
-      setNotice(ANSWER_FIRST);
+      setNotice(answerFirst);
       return;
     }
     const kinds: Kind[] = [...activeKinds];
@@ -625,7 +624,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   const uploadsFull = activeKinds.length >= LIMITS.count;
   const fullReason = uploadsFull ? `A message carries at most ${LIMITS.count} attachments.` : '';
-  const attachReason = answering ? ANSWER_FIRST : fullReason;
+  const attachReason = answering ? answerFirst : fullReason;
   const uploading = uploads.some((u) => u.status === 'uploading');
   const refused = uploads.some((u) => u.status === 'error');
   const attachmentIds = uploads.flatMap((u) => (u.status === 'done' && u.id ? [u.id] : []));
@@ -665,7 +664,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     askedId.current = answeringId;
   }, [answeringId, choicesKey]);
   if (answering && chosen.id !== answering.interaction.id) {
-    const first = initialChoice(answering.question);
+    const first = answering.kind === 'plan' ? (answering.plan.actions?.includes(answering.plan.recommended!) ? answering.plan.recommended : undefined) : initialChoice(answering.question);
     setChosen({ id: answering.interaction.id, choices: first ? [first] : NO_CHOICES });
   }
   const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
@@ -741,7 +740,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const settingsSteerReason = live && selectionChanged ? 'Model, effort and context changes apply to the next turn; Send now keeps the current turn’s settings.' : '';
   const steerBlocked = steerUnavailable || settingsSteerReason;
   // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
-  const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
+  const empty = answering ? (answering.kind === 'plan' ? !(text.trim() || (!answering.plan.truncated && answering.plan.actions?.some((a) => staged.includes(a)))) : !canAnswer(answering.question, staged, text)) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
   const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183); when a steer is impossible both queue.
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
@@ -785,14 +784,16 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** Answer mode's send: the staged options or the typed text, and nothing else. */
   async function sendAnswer() {
     if (!answering || cannotSubmit) return;
-    const answers = answerFromComposer(answering.question, text, staged);
-    if (!answers) return;
+    const answer = answering.kind === 'plan'
+      ? { plan: text.trim() ? { feedback: text.trim() } : { action: answering.plan.actions?.find((a) => staged.includes(a)) } }
+      : { answers: answerFromComposer(answering.question, text, staged) ?? undefined };
+    if (!answer.plan && !answer.answers) return;
     refocus.current = true;
     setBusy('answer');
     setError(null);
     setNotice(null);
     try {
-      const answered = await api.respond(session.id, answering.interaction.id, { answers });
+      const answered = await api.respond(session.id, answering.interaction.id, answer);
       clearBuffer();
       answering.onAnswered(answered);
     } catch (e) {
@@ -807,7 +808,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   /** Declines the question from the action row; the card's rules (a 409 or 410 is a note, not a failure). */
   async function decline() {
-    if (!answering || busy) return;
+    if (!answering || answering.kind !== 'question' || busy) return;
     setBusy('decline');
     setError(null);
     setNotice(null);
@@ -995,7 +996,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   /** The send button's name: what Enter does now. */
   function describeSend(): string {
-    if (answering) return busy === 'answer' ? 'Submitting…' : 'Answer';
+    if (answering) {
+      if (busy === 'answer') return 'Submitting…';
+      if (answering.kind === 'question') return 'Answer';
+      if (text.trim()) return 'Send plan feedback';
+      return staged.includes('exit_only') ? 'Leave planning' : 'Approve plan';
+    }
     if (busy === enter) return 'Submitting…';
     if (cmd) return `Run /${cmd.name}`;
     if (!live) return 'Send';
@@ -1106,7 +1112,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The textarea's placeholder: what Enter does while a turn runs, else the invitation. */
   function describePlaceholder(): string {
     if (locked) return '';
-    if (answering) return answerPlaceholder(answering.question, staged.length > 0);
+    if (answering) return answering.kind === 'plan' ? 'Type feedback to revise this plan…' : answerPlaceholder(answering.question, staged.length > 0);
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
     return enter === 'steer' ? 'Send now to guide this turn, or after it…' : 'Send after this turn, or now to guide it…';
   }
@@ -1244,7 +1250,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           popupRef={popup}
         />
       )}
-      {answering && (
+      {answering?.kind === 'question' && (
         // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
         // Choosing an option replaces a typed answer, as typing replaces the option.
         <ComposerQuestion
@@ -1258,6 +1264,12 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           }}
           onAnswer={() => void sendAnswer()}
         />
+      )}
+      {answering?.kind === 'plan' && (
+        <ComposerPlan plan={answering.plan} sessionId={session.id} planVersion={session.plan_version} chosen={staged} disabled={!!busy || locked} onChoose={(choices) => {
+          setChosen({ id: answering.interaction.id, choices });
+          if (choices.length && text) updateText('', 0);
+        }} onAnswer={() => void sendAnswer()} />
       )}
       {(locked || resendable || last?.status === 'uncertain' || last?.status === 'rejected' || error || notice || commandBlocked || (shapedCommand && commandsError) || (live && steerBlocked && !answering) || selectionChanged) && (
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
@@ -1583,7 +1595,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
             </Button>
           </Tip>
         </Appear>
-        <Appear show={!!answering}>
+        <Appear show={answering?.kind === 'question'}>
           <Tip label="Decline to answer this question">
             <Button size="icon-md" variant="danger" aria-label="Decline" className="ml-1 rounded-full" loading={busy === 'decline'} disabled={!!busy || locked} onClick={() => void decline()}>
               <X aria-hidden="true" strokeWidth={2.25} />

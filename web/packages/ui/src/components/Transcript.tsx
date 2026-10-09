@@ -18,6 +18,7 @@ import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { TurnTodo } from './Todos';
+import { PlanNotice } from './Plan';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -37,6 +38,8 @@ interface Props {
   liveItems?: Item[];
   historyItemSeq?: Record<string, number>;
   turnTimings?: TurnTiming[];
+  planVersion?: number;
+  planAvailable?: boolean;
   /** The Task's requests; the decided ones join the turns, the pending ones stay cards. */
   interactions: Interaction[];
   /** The Task's subagents; the main transcript draws them (a `SubagentScope` holds the rest), a subagent's own passes none. */
@@ -88,7 +91,7 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
  * are a chip on its turn line (Compact) or rows in its activity (Detailed), and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
+export function Transcript({ sessionId, planVersion, planAvailable, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, changedLine = true, footVerb = true, compacting = false, liveCard = false }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -129,7 +132,7 @@ export function Transcript({ sessionId, agentId, items, identityItems = items, l
       </div>
     ) : null;
   };
-  const ctx: RenderContext = { sessionId, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const ctx: RenderContext = { sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
   const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart in both densities, the images its result returned in Compact.
@@ -254,7 +257,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -514,6 +517,8 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
 }
 
 interface RenderContext {
+  planVersion?: number;
+  planAvailable?: boolean;
   sessionId?: string;
   live: boolean;
   /** The item still receiving deltas, if any. */
@@ -610,7 +615,7 @@ function renderRows(entries: Entry[], ctx: RenderContext, own: ReadonlyMap<strin
     // A reasoning item the provider closed without any text has nothing to show.
     if (item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
     flush();
-    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
+    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} className={ctx.arrival(item.id)} />);
   }
   flush();
   return out;
@@ -1274,12 +1279,13 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, streaming, endedAt, end, className }: { item: Item; sessionId?: string; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, className }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
+      if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
       if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} />;
       return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, className }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':

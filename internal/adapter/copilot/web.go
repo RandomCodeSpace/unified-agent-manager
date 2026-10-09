@@ -427,7 +427,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -875,7 +875,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c := &conversation{
-		p: p, client: client, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		p: p, client: client, id: req.ConversationID, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
@@ -917,7 +917,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			EnableFileChangeTracking: copilot.Bool(true),
 			OnPermissionRequest:      deferPermission,
 			OnUserInputRequest:       c.askUser,
-			OnExitPlanModeRequest:    refusePlanExit,
+			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
 			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
@@ -945,7 +945,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			ContinuePendingWork:   copilot.Bool(false),
 			OnPermissionRequest:   deferPermission,
 			OnUserInputRequest:    c.askUser,
-			OnExitPlanModeRequest: refusePlanExit,
+			OnExitPlanModeRequest: c.reviewPlan,
 			OnEvent:               c.onEvent,
 			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
@@ -957,6 +957,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	if err != nil {
 		c.mu.Lock()
+		c.expirePlansLocked()
 		c.closed = true
 		c.mu.Unlock()
 		if c.tools != nil {
@@ -970,6 +971,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	}
 	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
 		c.mu.Lock()
+		c.expirePlansLocked()
 		c.closed = true
 		c.mu.Unlock()
 		if c.tools != nil {
@@ -988,6 +990,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	if req.ConversationID != "" {
 		c.checkTodosLocked()
 	}
+	c.checkPlanLocked()
 	c.mu.Unlock()
 	if !p.track(c) {
 		return nil, errors.Join(agentapi.ErrClosed, c.Close(ctx))
@@ -1736,11 +1739,18 @@ type conversation struct {
 	// the autopilot continuation, while background work runs, so a read
 	// showing a non-autopilot mode or a running attached shell ends the turn
 	// instead.
-	idleUnresolved    bool
-	backgroundTasks   *agentapi.BackgroundTasks
-	execution         *agentapi.ExecutionState
-	executionRevision uint64
-	control           sync.Mutex
+	idleUnresolved         bool
+	backgroundTasks        *agentapi.BackgroundTasks
+	execution              *agentapi.ExecutionState
+	executionRevision      uint64
+	plans                  planVersions
+	planStopped            bool   // Stop/end refuses late callbacks from the same foreground turn
+	planEpoch              uint64 // expiry/new foreground turn invalidates outside-lock plan reads
+	planPath               string
+	planVersion            uint64
+	lastPlanChange         string
+	planReading, planAgain bool
+	control                sync.Mutex
 	// githubSwitch is held while the built-in GitHub MCP server is turned
 	// on or off, so the last switch applies the latest setting.
 	githubSwitch     sync.Mutex
@@ -1796,6 +1806,7 @@ type interaction struct {
 	agentapi.Interaction
 	decisions map[string]rpc.PermissionDecision // permissions: option id -> decision
 	reply     chan userReply                    // questions: releases the blocked SDK handler
+	planReply chan copilot.ExitPlanModeResult   // native review: one explicit owner response
 	answering bool                              // a permission answer is in flight
 }
 
@@ -1989,7 +2000,10 @@ func (c *conversation) emitInteractionLocked(in *interaction) {
 }
 
 func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
-	if c.isClosed() {
+	c.mu.Lock()
+	closed, planEpoch := c.closed, c.planEpoch
+	c.mu.Unlock()
+	if closed {
 		return agentapi.History{}, agentapi.ErrClosed
 	}
 	evs, err := c.sess.Events(ctx)
@@ -2000,6 +2014,18 @@ func (c *conversation) History(ctx context.Context) (agentapi.History, error) {
 	// Reconcile cancelled agents before a resumed CLI can replay abandoned
 	// permission requests. History does not replace newer terminal live state.
 	c.mu.Lock()
+	if !c.closed && !c.planStopped && c.planEpoch == planEpoch && c.plans.revision == 0 {
+		seen := map[string]bool{}
+		for _, ev := range evs {
+			if id, _, content, ok := recordedPlan(ev); ok && agentOf(ev) == "" && !seen[id] {
+				seen[id] = true
+				c.plans.observe(content)
+			}
+		}
+		if !c.turnRunning {
+			c.plans.dropBodies()
+		}
+	}
 	for _, ev := range evs {
 		c.subs.apply(ev)
 	}
@@ -2378,6 +2404,10 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	if c.isClosed() {
 		return agentapi.ErrClosed
 	}
+	c.mu.Lock()
+	c.planStopped = true
+	c.expirePlansLocked()
+	c.mu.Unlock()
 	var modeErr error
 	if runtime, ok := c.sess.(executionSession); ok {
 		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
@@ -2511,6 +2541,10 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 		c.mu.Unlock()
 		return agentapi.ErrInteractionGone
 	}
+	if in.planReply != nil {
+		defer c.mu.Unlock()
+		return c.answerPlanLocked(in, ans)
+	}
 	if in.reply != nil {
 		defer c.mu.Unlock()
 		return c.answerLocked(in, ans)
@@ -2595,6 +2629,8 @@ func (c *conversation) Close(ctx context.Context) error {
 		return nil
 	}
 	c.releaseTurnLocked()
+	c.expirePlansLocked()
+	c.plans = planVersions{}
 	perms := c.expireLocked()
 	c.endIdleLocked()
 	c.closed = true
@@ -2655,6 +2691,7 @@ func (c *conversation) expireSubagentLocked(agentID string) {
 // answered: blocked questions get an error, never an answer. It returns the
 // permission request ids the CLI may still be waiting on.
 func (c *conversation) expireLocked() []string {
+	c.expirePlansLocked()
 	var perms []string
 	for id, in := range c.pending {
 		if in.answering {
@@ -2992,6 +3029,14 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		return
 	}
 	switch d := ev.Data.(type) {
+	case *rpc.SessionPlanChangedData:
+		if agentID != "" || ev.ID != "" && ev.ID == c.lastPlanChange {
+			return
+		}
+		c.lastPlanChange = ev.ID
+		c.planVersion++
+		c.emitLocked(agentapi.Event{Kind: agentapi.EventPlanPath, PlanVersion: c.planVersion})
+		c.checkPlanLocked()
 	case *rpc.AssistantMessageDeltaData:
 		c.emitLocked(deltaEvent(agentID, d.MessageID, agentapi.ItemAssistant, d.DeltaContent))
 		return
@@ -3254,6 +3299,10 @@ func (c *conversation) emitUsageLocked() {
 
 func (c *conversation) startTurnLocked() {
 	c.releaseTurnLocked()
+	if !c.turnRunning {
+		c.planEpoch++
+		c.planStopped = false
+	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
 	c.idleUnresolved, c.taskCompleted = false, false
@@ -3268,6 +3317,8 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 		return
 	}
 	c.foregroundIdle, c.turnRunning = true, false
+	c.planStopped = true
+	c.expirePlansLocked()
 	c.idleUnresolved = false
 	c.idles++
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel, Completion: c.completion}
@@ -3503,6 +3554,8 @@ func sandboxBypass(requested *bool, reason *string) string {
 // calls by id so start, live output and final results upsert one item.
 type transcript struct {
 	completions completionTrace
+	// planReviews is bounded review metadata, never the full plan bodies.
+	planReviews map[string]agentapi.PlanReview
 	tools       map[string]*agentapi.ToolCall
 	// ended holds the IDs of recently completed tool calls. A shell command
 	// a steer moved to the background completes its call at once, then keeps
@@ -3597,6 +3650,8 @@ func reasoningText(d *rpc.AssistantMessageData) string {
 func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	it := agentapi.Item{Time: ev.Timestamp, AgentID: agentOf(ev)}
 	switch d := ev.Data.(type) {
+	case *rpc.ExitPlanModeRequestedData, *rpc.ExitPlanModeCompletedData, *rpc.HumanResponseRecordedData:
+		return t.planItem(ev)
 	case *rpc.UserMessageData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemUser, d.Content
 		if d.MessageID != nil && *d.MessageID != "" {
