@@ -24,7 +24,7 @@ import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
-import { UNCERTAIN_REWIND, rewindOutcome } from './Rewind';
+import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -715,7 +715,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }, [api, session.id, editTarget, editKey]);
   if (!editTarget && editNote) setEditNote(null);
   const shownPreview = editPreview.key === editKey ? editPreview : { key: editKey, preview: null, error: '' };
-  const editPending = useRef<{ key: string; rewind: string; prompt: string } | null>(null);
+  // rewound: the rewind landed and this prompt was surely not sent, so a changed edit keeps the rewind and gets a new prompt ID.
+  const editPending = useRef<{ key: string; rewindKey: string; rewind: string; prompt: string; rewound?: boolean } | null>(null);
 
   // A question arriving on a desktop is an invitation to answer: the composer takes focus when nothing
   // else holds it. Never on a touch screen, where the keyboard would rise over the conversation.
@@ -857,9 +858,10 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     const preview = shownPreview.preview;
     if (!editing || !preview || cannotSubmit) return;
     const t = text.trim();
-    const key = JSON.stringify([editing.userItemId, editMode, preview.token, t, files, attachmentIds, selection]);
-    if (editPending.current?.key !== key) editPending.current = { key, rewind: newRequestId(), prompt: newRequestId() };
-    const ids = editPending.current;
+    const rewindKey = JSON.stringify([editing.userItemId, editMode, preview.token]);
+    const key = JSON.stringify([rewindKey, t, files, attachmentIds, selection]);
+    let ids = editPending.current;
+    if (ids?.key !== key) ids = editPending.current = ids?.rewound && ids.rewindKey === rewindKey ? { ...ids, key, prompt: newRequestId(), rewound: false } : { key, rewindKey, rewind: newRequestId(), prompt: newRequestId() };
     refocus.current = true;
     setBusy('send');
     setError(null);
@@ -877,6 +879,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         editing.onDone();
         return;
       }
+      if (rewound(r.rewind) && (!r.submission || r.submission.status === 'rejected')) editPending.current = { ...ids, rewound: true };
       if (r.rewind.state === 'uncertain' || r.rewind.state === 'pending') setEditNote({ tone: 'warn', text: `${UNCERTAIN_REWIND} Your edited prompt was not sent.` });
       else if (r.submission) setEditNote({ tone: 'error', text: 'The conversation was rewound, but your edited prompt was not accepted. It is still here; nothing is resent automatically.' });
       else setEditNote({ tone: r.send_error ? 'error' : 'muted', text: `${rewindOutcome(r.rewind)} Your edited prompt was not sent${r.send_error ? `: ${r.send_error}` : '.'}` });

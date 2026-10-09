@@ -89,6 +89,36 @@ describe('edit and resend', () => {
     expect(resend).toHaveBeenCalledTimes(1);
   });
 
+  test('after a rewind whose send was refused, a fixed edit reuses that rewind and sends as a new prompt', async () => {
+    fixture();
+    const resend = vi.spyOn(api, 'resend').mockResolvedValueOnce({ ...sent, submission: undefined, send_error: 'attachment is missing' }).mockResolvedValueOnce(sent);
+    const { user, strip } = await startEdit();
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await strip.findByText(/not sent: attachment is missing/);
+    await user.type(composer(), ' fixed');
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await waitFor(() => expect(composer().value).toBe('My other draft'));
+    const [first, second] = resend.mock.calls.map(c => c[1]);
+    expect(second.rewind.request_id).toBe(first.rewind.request_id);
+    expect(second.prompt.request_id).not.toBe(first.prompt.request_id);
+    expect(second.prompt.text).toContain(' fixed');
+  });
+
+  test('a fixed edit after an uncertain send keeps neither request', async () => {
+    fixture();
+    const resend = vi.spyOn(api, 'resend')
+      .mockResolvedValueOnce({ ...sent, submission: { request_id: 'p', status: 'uncertain', time: new Date().toISOString() } as ResendResult['submission'] })
+      .mockResolvedValueOnce(sent);
+    const { user, strip } = await startEdit();
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await strip.findByText(/was rewound, but your edited prompt was not accepted/);
+    await user.type(composer(), ' fixed');
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await waitFor(() => expect(resend).toHaveBeenCalledTimes(2));
+    const [first, second] = resend.mock.calls.map(c => c[1]);
+    expect(second.rewind.request_id).not.toBe(first.rewind.request_id);
+  });
+
   test('a stale preview is read again and the edit waits for a new send', async () => {
     const { read } = fixture();
     const resend = vi.spyOn(api, 'resend').mockRejectedValueOnce(new ApiError(409, 'changed', { code: 'rewind_stale' })).mockResolvedValueOnce(sent);
