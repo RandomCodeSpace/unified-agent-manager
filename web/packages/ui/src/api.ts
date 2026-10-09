@@ -36,6 +36,8 @@ export interface Capabilities {
   execution_modes?: boolean;
   /** The provider reports account quota and per-Task AI units (#188); the second parity exception. */
   usage?: boolean;
+  /** Readonly native per-Task metrics, separate from account quotas and recorded AI units. */
+  usage_metrics?: boolean;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */
@@ -157,6 +159,45 @@ export interface TokenCounts {
 }
 
 export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
+/** Transient native snapshot: model and agent projections overlap and are never added. */
+export interface TaskUsageMetrics {
+  started_at: string;
+  current_model?: string;
+  user_requests: number;
+  premium_request_cost: number;
+  api_duration_ms: number;
+  ai_units?: number;
+  last_input: number;
+  last_output: number;
+  code_changes: { files: number; added: number; removed: number };
+  token_details: UsageTokenDetail[];
+  models: UsageMetricModel[];
+  agents: UsageMetricAgent[];
+  truncated?: boolean;
+}
+export interface UsageTokenDetail { type: string; tokens: number }
+export interface UsageMetricModel {
+  model: string;
+  requests: number;
+  premium_request_cost: number;
+  ai_units?: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  reasoning?: number;
+  cache_expires_at?: string;
+  token_details: UsageTokenDetail[];
+}
+export interface UsageMetricAgent {
+  id: string;
+  name?: string;
+  display_name?: string;
+  api_duration_ms: number;
+  ai_units: number;
+  models: UsageMetricModel[];
+}
+
 export interface TokenUsageReport {
   since: string;
   today: string;
@@ -1716,6 +1757,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     updateMcpServer: (name: string, body: McpServerInput) => call<McpServers>('PUT', `/api/mcp/servers/${enc(name)}`, body),
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
+    taskUsageMetrics: (id: string, signal?: AbortSignal) => call<TaskUsageMetrics>('GET', `/api/sessions/${enc(id)}/usage-metrics`, undefined, false, signal),
     taskMcp: (id: string) => call<{ servers: McpStatus[] }>('GET', `/api/sessions/${enc(id)}/mcp`),
     taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}`),
     reconnectTaskMcp: (id: string) => call<{ servers: McpStatus[] }>('POST', `/api/sessions/${enc(id)}/mcp/reconnect`),

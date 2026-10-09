@@ -427,7 +427,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {

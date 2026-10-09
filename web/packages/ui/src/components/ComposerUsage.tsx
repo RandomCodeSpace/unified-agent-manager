@@ -4,6 +4,7 @@ import { cn } from '../lib/cn';
 import { compactTokens, contextText, estimateTurnCost, formatCredits, ringFraction, ringTone } from '../lib/cost';
 import { useApp } from './common';
 import { ContextValue } from './Context';
+import { TaskUsage } from './TaskUsage';
 import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
@@ -55,6 +56,7 @@ export function ComposerUsage({ session, model }: Readonly<{ session: SessionDet
         {session.capabilities.usage && <p className="text-caption">This task: {session.usage ? `${formatCredits(session.usage.ai_units)} AI units` : 'not reported yet'}</p>}
         {cost !== null && context && <p className="text-caption">≈ {formatCredits(cost)} credits per turn at {compactTokens(context.used)} context tokens, input only. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
       </Usage>}
+      {session.capabilities.usage_metrics && <TaskUsage key={`${session.id}:${session.provider}:${session.conversation_id}:${session.model}:${session.effort}:${session.context_size}:${session.stage}:${session.open}`} session={session} />}
     </>
   );
 }

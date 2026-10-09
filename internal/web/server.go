@@ -261,6 +261,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
 	mux.HandleFunc("GET /api/sessions/{id}/changes", s.handleChanges)
 	mux.HandleFunc("GET /api/sessions/{id}/evidence", s.handleTurnEvidence)
+	mux.HandleFunc("GET /api/sessions/{id}/usage-metrics", s.handleTaskUsageMetrics)
 	mux.HandleFunc("GET /api/sessions/{id}/turns/{timing_id}/todos", s.handleTurnTodos)
 	mux.HandleFunc("GET /api/sessions/{id}/changes/file", s.handleFileChange)
 	mux.HandleFunc("GET /api/sessions/{id}/git", s.handleGitState)
