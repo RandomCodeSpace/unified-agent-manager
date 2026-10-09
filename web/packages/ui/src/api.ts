@@ -47,6 +47,8 @@ export interface Capabilities {
   aside?: boolean;
   /** Tasks may opt into the provider's assisted review of permission requests (`mode: 'assisted'`). */
   assisted_permissions?: boolean;
+  /** Why the running runtime withdrew assisted permissions after refusing the mode; set until it restarts or updates. */
+  assisted_unavailable?: string;
   /** A chosen model can title the provider's new Tasks (#183). */
   titles?: boolean;
   /** The provider can run Utility AI jobs with host tools. */

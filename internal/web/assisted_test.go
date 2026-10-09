@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -457,5 +459,91 @@ func TestUnreadableModeIsUnknownAndAllowsNothing(t *testing.T) {
 	})
 	if ix := interactionOf(t, m, sum.ID, "plain"); ix.State != agentapi.InteractionPending {
 		t.Fatalf("unreviewed request = %+v", ix)
+	}
+}
+
+// refusingProvider models a runtime that refuses assisted permissions: the
+// refusal withdraws the capability, with its reason, until the runtime
+// changes.
+type refusingProvider struct {
+	*agenttest.Provider
+	mu       sync.Mutex
+	refuse   bool
+	reason   string
+	refusals int
+}
+
+func (p *refusingProvider) Capabilities() agentapi.Capabilities {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	caps := p.Provider.Capabilities()
+	caps.AssistedPermissions, caps.AssistedUnavailable = p.reason == "", p.reason
+	return caps
+}
+
+func (p *refusingProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agentapi.Conversation, error) {
+	p.mu.Lock()
+	refused := req.AssistedApprovalModel != "" && p.refuse
+	if refused {
+		p.reason, p.refusals = `the runtime kept permission mode "manual"`, p.refusals+1
+	}
+	p.mu.Unlock()
+	if refused {
+		return nil, fmt.Errorf("apply assisted permissions: %w: kept manual", agentapi.ErrUnsupported)
+	}
+	return p.Provider.Open(ctx, req)
+}
+
+func (p *refusingProvider) restart(refuse bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refuse, p.reason = refuse, ""
+}
+
+func (p *refusingProvider) refused() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.refusals
+}
+
+func providerCaps(m *Manager, name string) agentapi.Capabilities {
+	for _, info := range m.Providers() {
+		if info.Name == name {
+			return info.Capabilities
+		}
+	}
+	return agentapi.Capabilities{}
+}
+
+// Once the runtime refuses assisted, Assisted is no longer offered or
+// tried, and a request for it is refused with the reason, until the
+// runtime changes.
+func TestRefusedAssistedModeIsWithdrawnUntilTheRuntimeChanges(t *testing.T) {
+	prov := &refusingProvider{Provider: assistedProvider("gpt-6-luna", "other"), refuse: true}
+	m := startManager(t, openTestStore(t), prov)
+	project := addProject(t, m, t.TempDir())
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Mode: "assisted"}); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), `"manual"`) {
+		t.Fatalf("refused create = %v", err)
+	}
+	if caps := providerCaps(m, "fake"); caps.AssistedPermissions || !strings.Contains(caps.AssistedUnavailable, `"manual"`) {
+		t.Fatalf("after the refusal: assisted %t, reason %q", caps.AssistedPermissions, caps.AssistedUnavailable)
+	}
+	if _, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Mode: "assisted"}); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), `"manual"`) || prov.refused() != 1 {
+		t.Fatalf("second create = %v; refusals %d", err, prov.refused())
+	}
+	safe, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.SetMode(safe.ID, "assisted"); statusOf(err) != http.StatusConflict || prov.refused() != 1 {
+		t.Fatalf("switch to assisted = %v", err)
+	}
+
+	prov.restart(false)
+	if caps := providerCaps(m, "fake"); !caps.AssistedPermissions || caps.AssistedUnavailable != "" {
+		t.Fatalf("after the runtime changed: assisted %t, reason %q", caps.AssistedPermissions, caps.AssistedUnavailable)
+	}
+	if sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Mode: "assisted"}); err != nil || sum.Mode != "assisted" {
+		t.Fatalf("create on the changed runtime = %+v, %v", sum, err)
 	}
 }

@@ -347,6 +347,9 @@ type webProvider struct {
 	forkUnsupported   bool
 	rewindUnsupported bool
 	importProbed      bool
+	// assistedRefused says why the running CLI refused assisted
+	// permissions; a new CLI is asked again.
+	assistedRefused string
 	// updating is closed when a CLI update releases the install; starts
 	// wait for it meanwhile. nil while no update holds it.
 	updating chan struct{}
@@ -439,7 +442,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, Plan: true, History: true, Fork: !p.forkUnsupported, Rewind: !p.rewindUnsupported, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Aside: true, UsageMetrics: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true, AssistedPermissions: p.assistedRefused == "", AssistedUnavailable: p.assistedRefused}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -1597,6 +1600,7 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 		p.importProbed = true
 	}
 	p.client, p.stop = c, make(chan struct{})
+	p.assistedRefused = ""
 	// This CLI's sign-in read is newer than any call of the one before.
 	p.quotaMu.Lock()
 	p.live = nil

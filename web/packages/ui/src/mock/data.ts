@@ -478,6 +478,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'failed',
       state_detail: 'Provider process exited (code 1)',
       spawned_by: 't3',
+      capabilities: { ...CAPS, assisted_unavailable: 'the Copilot CLI kept permission mode "manual" instead of assisted; Assisted returns once the CLI restarts or updates' },
       created_at: ago(140),
       updated_at: ago(130),
       items: [

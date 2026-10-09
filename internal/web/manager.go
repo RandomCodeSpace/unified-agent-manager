@@ -997,6 +997,9 @@ func (m *Manager) RefreshModels() <-chan struct{} {
 // Providers lists every provider with its availability.
 func (m *Manager) Providers() []ProviderInfo {
 	updates := m.cliUpdatesAvailable()
+	for _, name := range m.order {
+		m.syncAssisted(name)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]ProviderInfo, 0, len(m.order))
@@ -2497,6 +2500,7 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 		}
 	}
 	if mode == store.ModeAssisted {
+		m.syncAssisted(prov.Name())
 		m.mu.Lock()
 		err = m.assistedSupportLocked(prov.Name())
 		m.mu.Unlock()
@@ -2565,6 +2569,15 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	cancel()
 	if err != nil {
 		log.Warn("open web conversation failed", "provider", prov.Name(), "error", err)
+		if mode == store.ModeAssisted && errors.Is(err, agentapi.ErrUnsupported) {
+			m.syncAssisted(prov.Name())
+			m.mu.Lock()
+			refused := m.assistedSupportLocked(prov.Name())
+			m.mu.Unlock()
+			if refused != nil {
+				return SessionSummary{}, refused
+			}
+		}
 		status := http.StatusBadGateway
 		if errors.Is(err, agentapi.ErrAgentUnavailable) {
 			status = http.StatusConflict
@@ -2812,6 +2825,7 @@ func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) a
 // is true for user actions (sending a prompt); a viewer only opens sessions
 // autoOpenableLocked allows.
 func (m *Manager) openLocked(s *webSession, explicit bool) error {
+	m.syncAssisted(s.provider)
 	m.mu.Lock()
 	if s.removed {
 		m.finishOpeningLocked(s)
@@ -2940,6 +2954,9 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 
 	if err != nil {
 		log.Warn("reopen web conversation failed", "session", s.id, "provider", s.provider, "error", err)
+		if errors.Is(err, agentapi.ErrUnsupported) {
+			m.syncAssisted(s.provider)
+		}
 		if errors.Is(err, agentapi.ErrConversationNotFound) || errors.Is(err, agentapi.ErrAgentUnavailable) {
 			return newError(http.StatusConflict, "%s", openFailureDetail(err, req.ConversationID))
 		}
@@ -4376,6 +4393,9 @@ func approvalModel(mode store.Mode) string {
 // assistedSupportLocked refuses assisted mode unless the provider supports
 // it and offers assistedApprovalModel.
 func (m *Manager) assistedSupportLocked(provider string) error {
+	if why := m.infos[provider].Capabilities.AssistedUnavailable; why != "" {
+		return newError(http.StatusConflict, "Assisted is unavailable: %s", why)
+	}
 	if !m.infos[provider].Capabilities.AssistedPermissions {
 		return newError(http.StatusConflict, "this provider does not support assisted permissions")
 	}
@@ -4383,6 +4403,27 @@ func (m *Manager) assistedSupportLocked(provider string) error {
 		return newError(http.StatusConflict, "assisted permissions need the %s reviewer model, which this account does not offer", assistedApprovalModel)
 	}
 	return nil
+}
+
+// syncAssisted copies provider's current assisted-permission support into
+// its info: a runtime that refused assisted withdraws it until it changes.
+// The provider is asked without mu held.
+func (m *Manager) syncAssisted(provider string) {
+	m.mu.Lock()
+	prov := m.providers[provider]
+	m.mu.Unlock()
+	if prov == nil {
+		return
+	}
+	caps := prov.Capabilities()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, ok := m.infos[provider]
+	if !ok {
+		return
+	}
+	info.Capabilities.AssistedPermissions, info.Capabilities.AssistedUnavailable = caps.AssistedPermissions, caps.AssistedUnavailable
+	m.infos[provider] = info
 }
 
 // autoAllowLocked answers a pending permission request with the provider's
@@ -4492,6 +4533,9 @@ func (m *Manager) setMode(id, mode string, opHeld bool) (SessionSummary, error) 
 // back and adopted; if that fails too, the mode is unknown and nothing is
 // allowed automatically until a later change sets it.
 func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary, error) {
+	if md == store.ModeAssisted {
+		m.syncAssisted(s.provider)
+	}
 	m.mu.Lock()
 	err := s.readOnlyLocked()
 	switch {
@@ -4513,6 +4557,9 @@ func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary,
 		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 		uncertain, err = setAssistedPermissions(ctx, s.id, conv, approvalModel(md))
 		cancel()
+		if err != nil && md == store.ModeAssisted {
+			m.syncAssisted(s.provider)
+		}
 		if err != nil {
 			return m.assistedModeFailed(s, conv, md, err, uncertain)
 		}

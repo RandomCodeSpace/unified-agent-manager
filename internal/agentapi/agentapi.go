@@ -124,6 +124,9 @@ type Capabilities struct {
 	// AssistedPermissionSetter, and its permission requests carry the
 	// review in Interaction.Assisted.
 	AssistedPermissions bool `json:"assisted_permissions,omitempty"`
+	// AssistedUnavailable says why a provider that has assisted
+	// permissions withdrew them: the running runtime refused the mode.
+	AssistedUnavailable string `json:"assisted_unavailable,omitempty"`
 	// CustomAgents is true when the provider implements
 	// ConfigurationDiscoverer, applies OpenRequest.Agent and its
 	// conversations implement AgentSelector.
