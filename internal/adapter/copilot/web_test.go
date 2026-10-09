@@ -616,7 +616,7 @@ func TestWebOpenCreatesStreamingSessionWithoutApproveAll(t *testing.T) {
 	if _, ok := d.(*rpc.PermissionDecisionNoResult); !ok || err != nil {
 		t.Fatalf("SDK permission callback decided %T %v, want no result", d, err)
 	}
-	if caps := h.p.Capabilities(); !caps.Cancel || !caps.Permissions || !caps.Questions || !caps.History || caps.SessionDiff {
+	if caps := h.p.Capabilities(); !caps.Cancel || !caps.Permissions || !caps.Questions || !caps.History || !caps.SessionDiff {
 		t.Fatalf("capabilities = %+v", caps)
 	}
 	if _, err := h.conv.Diff(context.Background()); !errors.Is(err, agentapi.ErrUnsupported) {

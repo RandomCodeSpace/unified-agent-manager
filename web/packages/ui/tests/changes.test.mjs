@@ -11,7 +11,7 @@ const ts = require('typescript');
 async function components(api, environment = {}) {
   const path = new URL('../src/components/Changes.tsx', import.meta.url);
   const source = ts.createSourceFile('Changes.tsx', await readFile(path, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const code = source.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(source)).join('\n') + '\nexport { FileView };';
+  const code = source.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(source)).join('\n') + '\nexport { FileView, FileRow };';
   let current;
   const hooks = {
     useState(initial) {
@@ -403,4 +403,22 @@ test('viewed marks clear when the file changes, and comments go out as one queue
   assert.equal(JSON.parse(storage.data.get('uam.review.owned') ?? '{"comments":[]}').comments.length, 0, 'sent comments leave storage');
   assert.match(JSON.stringify(find(tree, node => node.type?.name === 'CommentBatch').props.note), /after this turn/);
   sheet.close();
+});
+
+
+test('native binary and truncated changes do not claim zero line changes or an empty text diff', async () => {
+  const { FileView, FileRow, mount } = await components({}, { useCopied: () => [false, () => {}] });
+  for (const flags of [{ binary: true }, { truncated: true }]) {
+    const file = { path: 'native.bin', status: 'modified', additions: 0, deletions: 0, counts_unknown: true, ...flags };
+    const row = mount(FileRow, { file, selected: false, viewed: 'unviewed', onOpen() {}, onViewed() {} });
+    const tree = await row.flush();
+    const count = find(tree, node => node.props?.title === 'Line counts unavailable');
+    assert.ok(count, 'unknown native counts must have an explicit label');
+    assert.equal(JSON.stringify(tree).includes('+0'), false);
+    const view = mount(FileView, { path: file.path, file, error: null });
+    const shown = JSON.stringify(await view.flush());
+    assert.match(shown, flags.binary ? /Binary file/ : /omitted|size limit/);
+    assert.equal(shown.includes('No textual changes'), false);
+    row.close(); view.close();
+  }
 });

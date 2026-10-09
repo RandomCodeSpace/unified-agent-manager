@@ -484,10 +484,14 @@ type Submission struct {
 
 // ChangedFile is one entry of a Changes listing.
 type ChangedFile struct {
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
+	CountsUnknown bool   `json:"counts_unknown,omitempty"`
+	Binary        bool   `json:"binary,omitempty"`
+	Truncated     bool   `json:"truncated,omitempty"`
+	OldPath       string `json:"old_path,omitempty"`
+	Path          string `json:"path"`
+	Status        string `json:"status"`
+	Additions     int    `json:"additions"`
+	Deletions     int    `json:"deletions"`
 	// Digest changes whenever the file's working-tree content may have
 	// changed; it is empty where the scope cannot tell.
 	Digest string `json:"digest,omitempty"`

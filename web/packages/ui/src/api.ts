@@ -972,6 +972,11 @@ export interface DiffStat {
 }
 
 export interface ChangeFile {
+  /** Native patches can omit textual counts (binary or truncated). */
+  counts_unknown?: boolean;
+  binary?: boolean;
+  truncated?: boolean;
+  old_path?: string;
   path: string;
   status: string;
   additions: number;
@@ -1072,6 +1077,10 @@ export interface CommitDraft {
 }
 
 export interface FileDiff {
+  counts_unknown?: boolean;
+  binary?: boolean;
+  truncated?: boolean;
+  old_path?: string;
   path: string;
   status?: string;
   additions: number;

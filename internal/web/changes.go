@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -57,7 +58,12 @@ func (m *Manager) Changes(ctx context.Context, id, scope string) (Changes, error
 			return out, err
 		}
 		for _, f := range files {
-			out.Files = append(out.Files, ChangedFile{Path: f.Path, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions})
+			file := ChangedFile{Path: f.Path, Status: f.Status, Additions: f.Additions, Deletions: f.Deletions,
+				OldPath: f.OldPath, CountsUnknown: f.CountsUnknown, Binary: f.Binary, Truncated: f.Truncated}
+			if f.Patch != "" && !f.CountsUnknown {
+				file.Digest = fmt.Sprintf("%x", sha256.Sum256([]byte(f.Patch)))
+			}
+			out.Files = append(out.Files, file)
 		}
 		return out, nil
 	default:
@@ -95,6 +101,9 @@ func (m *Manager) FileChange(ctx context.Context, id, scope, path string) (agent
 			if f.Path == path {
 				f.Before = clampText(f.Before, maxDiffBytes)
 				f.After = clampText(f.After, maxDiffBytes)
+				if len(f.Patch) > maxDiffBytes {
+					f.Truncated = true
+				}
 				f.Patch = clampText(f.Patch, maxDiffBytes)
 				return f, nil
 			}
@@ -122,26 +131,58 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 		return nil, out, err
 	}
 	m.mu.Lock()
-	conv := s.conv
+	conv, gen, revision := s.conv, s.gen, s.nativeDiffRevision
 	m.mu.Unlock()
 	if conv == nil {
-		return nil, out, newError(http.StatusConflict, msgConversationNotOpen)
+		out.Reason = "Open this Task's conversation to read its native changes; All changes shows the current files"
+		return nil, out, nil
 	}
 	diffCtx, cancel := context.WithTimeout(ctx, controlTimeout)
 	defer cancel()
 	files, err := conv.Diff(diffCtx)
 	if errors.Is(err, agentapi.ErrUnsupported) {
 		out.Reason = "the provider does not record file changes for this conversation"
+		if err != agentapi.ErrUnsupported {
+			out.Reason = shortError(err)
+		}
+		return nil, out, nil
+	}
+	if errors.Is(err, agentapi.ErrBusy) {
+		out.Reason = "native changes are available when this Task settles"
 		return nil, out, nil
 	}
 	if err != nil {
 		return nil, out, newError(http.StatusBadGateway, "could not read the provider's changes: %s", shortError(err))
 	}
 	out.Supported = true
-	if len(files) > maxChangedFiles {
+	limited := len(files) > maxChangedFiles
+	if limited {
 		files = files[:maxChangedFiles]
 		out.Reason = fmt.Sprintf("showing the first %d changed files", maxChangedFiles)
 	}
+	for i := range files {
+		if files[i].Patch != "" && !files[i].CountsUnknown {
+			files[i].Additions, files[i].Deletions = countPatch(files[i].Patch)
+		}
+	}
+	// Native Tasks must not publish the HEAD-based fallback as their total.
+	m.mu.Lock()
+	if s.nativeChanges && !s.removed && s.conv == conv && s.gen == gen && s.nativeDiffRevision == revision {
+		var total *DiffStat
+		if len(files) > 0 && !limited {
+			total = &DiffStat{Files: len(files)}
+			for _, file := range files {
+				if file.CountsUnknown {
+					total = nil
+					break
+				}
+				total.Additions += file.Additions
+				total.Deletions += file.Deletions
+			}
+		}
+		m.setDiffLocked(s, total)
+	}
+	m.mu.Unlock()
 	return files, out, nil
 }
 
@@ -393,12 +434,16 @@ func countLines(root *os.Root, path string, budget int) (int, int) {
 }
 
 func countPatch(patch string) (additions, deletions int) {
+	inHunk := false
 	for _, line := range strings.Split(patch, "\n") {
 		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
-		case strings.HasPrefix(line, "+"):
+		case strings.HasPrefix(line, "diff --git "):
+			inHunk = false
+		case strings.HasPrefix(line, "@@ "):
+			inHunk = true
+		case inHunk && strings.HasPrefix(line, "+"):
 			additions++
-		case strings.HasPrefix(line, "-"):
+		case inHunk && strings.HasPrefix(line, "-"):
 			deletions++
 		}
 	}

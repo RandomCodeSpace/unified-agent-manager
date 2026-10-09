@@ -427,7 +427,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -903,22 +903,23 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	var sess sdkSession
 	if req.ConversationID == "" {
 		sess, err = client.CreateSession(ctx, &copilot.SessionConfig{
-			SessionID:             req.SessionID,
-			WorkingDirectory:      req.Workdir,
-			Model:                 req.Model,
-			ReasoningEffort:       req.Effort,
-			ContextTier:           copilot.ContextTier(req.ContextSize),
-			Providers:             providers,
-			Models:                models,
-			Tools:                 uamTools,
-			SystemMessage:         &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
-			CoauthorEnabled:       copilot.Bool(false),
-			Streaming:             copilot.Bool(true),
-			OnPermissionRequest:   deferPermission,
-			OnUserInputRequest:    c.askUser,
-			OnExitPlanModeRequest: refusePlanExit,
-			OnEvent:               c.onEvent,
-			Hooks:                 &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
+			SessionID:                req.SessionID,
+			WorkingDirectory:         req.Workdir,
+			Model:                    req.Model,
+			ReasoningEffort:          req.Effort,
+			ContextTier:              copilot.ContextTier(req.ContextSize),
+			Providers:                providers,
+			Models:                   models,
+			Tools:                    uamTools,
+			SystemMessage:            &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
+			CoauthorEnabled:          copilot.Bool(false),
+			Streaming:                copilot.Bool(true),
+			EnableFileChangeTracking: copilot.Bool(true),
+			OnPermissionRequest:      deferPermission,
+			OnUserInputRequest:       c.askUser,
+			OnExitPlanModeRequest:    refusePlanExit,
+			OnEvent:                  c.onEvent,
+			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -936,6 +937,9 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			SystemMessage:    &copilot.SystemMessageConfig{Mode: "append", Content: taskSystem},
 			CoauthorEnabled:  copilot.Bool(false),
 			Streaming:        copilot.Bool(true),
+			// Native capture survives only when the resumed session has a valid
+			// baseline; this option cannot reconstruct earlier untracked edits.
+			EnableFileChangeTracking: copilot.Bool(true),
 			// Explicit false: nil keeps the runtime default, false treats tool
 			// calls and prompts pending at the last suspend as interrupted.
 			ContinuePendingWork:   copilot.Bool(false),
@@ -2479,8 +2483,8 @@ func (c *conversation) PromptSubagent(ctx context.Context, agentID, text string)
 	return uncertain
 }
 
-func (c *conversation) Diff(context.Context) ([]agentapi.FileDiff, error) {
-	return nil, agentapi.ErrUnsupported
+func (c *conversation) Diff(ctx context.Context) ([]agentapi.FileDiff, error) {
+	return c.nativeDiff(ctx)
 }
 
 func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answer) error {
