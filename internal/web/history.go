@@ -294,6 +294,7 @@ func (m *Manager) cancelHistoryLocked(s *webSession) {
 func (m *Manager) dropHistoryLocked(s *webSession) {
 	s.stopPreviews()
 	s.itemSeq = nil
+	s.textBuffers = nil
 	s.items, s.itemIdx, s.itemBytes, s.truncated = nil, map[string]int{}, 0, false
 	closed := s.conv == nil && (s.stage != StageActive || s.base == StateClosed)
 	if !closed {

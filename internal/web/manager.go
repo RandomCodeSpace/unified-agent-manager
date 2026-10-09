@@ -325,6 +325,8 @@ type webSession struct {
 	itemIdx   map[string]int
 	itemBytes int
 	truncated bool
+	// Delta text grows in place; Item.Text remains an immutable string for snapshots.
+	textBuffers map[string]*strings.Builder
 	// archiveGone is set once the record cannot page back from the oldest
 	// retained items. subagentsArchived marks a record read without its
 	// subagents' items, which pages read when a subagent is opened;
@@ -1875,6 +1877,7 @@ func (m *Manager) forgetLocked(s *webSession) agentapi.Conversation {
 	s.removed = true
 	m.cancelHistoryLocked(s)
 	s.stopPreviews()
+	s.textBuffers = nil
 	m.archive.forget(s.id)
 	delete(m.sessions, s.id)
 	for grants := range m.fileGrants {
