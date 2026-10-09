@@ -10,6 +10,7 @@ import * as chart from '../src/lib/chart.ts';
 import * as transcript from '../src/lib/transcript.ts';
 import * as history from '../src/lib/historyState.ts';
 import * as subagentsLib from '../src/lib/subagents.ts';
+import * as receiptsLib from '../src/lib/receipts.ts';
 
 // Render the real transcript component with local UI shells and no browser or data reads.
 const require = createRequire(import.meta.url);
@@ -35,6 +36,8 @@ const modules = {
   '../lib/cost': { compactTokens: (n) => String(n) },
   '../lib/historyState': history,
   '../lib/subagents': subagentsLib,
+  '../lib/receipts': receiptsLib,
+  './Receipts': { Receipts: ({ stamps }) => React.createElement('ul', { 'aria-label': 'Receipts' }, stamps.map((st) => React.createElement('li', { key: `${st.kind}:${st.claim}` }, `${st.verdict} ${st.claim}`))) },
   // The subagent UI itself needs its Task scope; here it only reports what the transcript hands it.
   './Subagents': {
     SubagentChip: ({ subagents, calls, tones, open }) => React.createElement('button', { 'aria-expanded': String(open), 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')} OF ${calls}`),

@@ -67,6 +67,26 @@ describe('messages', () => {
     expect(view.queryByText('Loading the full message…')).toBeNull();
   });
 
+  test("a turn's last reply gets receipts: one quiet line when its claims hold, a stamp per claim when one does not", () => {
+    const timing: TurnTiming = { id: 't', user_item_id: 'u', started_at: '2026-10-09T00:00:00Z', ended_at: '2026-10-09T00:00:09Z', state: 'completed' };
+    const base: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Fix it and test it' },
+      { id: 'e', kind: 'tool', time: '2026-10-09T00:00:01Z', tool: { name: 'edit', status: 'completed', input: JSON.stringify({ path: 'internal/web/charts.go' }) } },
+    ];
+    const green: Item = { id: 'b', kind: 'tool', time: '2026-10-09T00:00:02Z', tool: { name: 'bash', status: 'completed', input: JSON.stringify({ command: 'go test ./internal/web' }), exit_code: 0, output: 'ok' } };
+    const reply = (text: string): Item => ({ id: 'a', kind: 'assistant', time: '2026-10-09T00:00:08Z', text });
+    const view = render(<Transcript sessionId="s" items={[...base, green, reply('Changed `charts.go` and ran `go test ./internal/web`; all tests pass.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
+    expect(view.getByText('Its 3 claims match the record')).toBeTruthy();
+    expect(view.queryByRole('list', { name: 'Receipts' })).toBeNull();
+    view.rerender(<Transcript sessionId="s" items={[...base, reply('Changed `charts.go`; all tests pass.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
+    const stamps = within(view.getByRole('list', { name: 'Receipts' })).getAllByRole('listitem').map((li) => li.textContent);
+    expect(stamps).toEqual(['charts.gochanged', 'all tests passno test command ran this turn']);
+    // A reply that makes no claim gets nothing.
+    view.rerender(<Transcript sessionId="s" items={[...base, reply('Done.')]} interactions={[]} subagents={[]} live={false} working={false} provider="copilot" workdir="/w" turnTimings={[timing]} />);
+    expect(view.queryByRole('list', { name: 'Receipts' })).toBeNull();
+    expect(view.queryByText(/claims? match/)).toBeNull();
+  });
+
   test('user and assistant messages render as Markdown with code, links and attachments', async () => {
     await openTask('t3');
     const view = log();
