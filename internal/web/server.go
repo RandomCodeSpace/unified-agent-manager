@@ -1263,23 +1263,68 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) streamEvents(ctx context.Context, sub *Subscriber, write func([]byte) bool) {
 	ticker := time.NewTicker(s.heartbeat)
 	defer ticker.Stop()
+	var pending []byte
 	for {
+		// A continuously refilled queue must still honor cancellation and
+		// heartbeats, including when a byte-boundary frame is held for later.
 		select {
 		case <-ctx.Done():
 			return
 		case <-sub.Gone():
 			return
-		case frame := <-sub.Frames():
-			sub.Sent(frame)
-			if !write(frame) {
-				return
-			}
 		case <-ticker.C:
 			if !write([]byte(": keep-alive\n\n")) {
 				return
 			}
+		default:
+		}
+		frame := pending
+		if frame == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sub.Gone():
+				return
+			case frame = <-sub.Frames():
+			case <-ticker.C:
+				if !write([]byte(": keep-alive\n\n")) {
+					return
+				}
+				continue
+			}
+		}
+		frame, pending = drainStreamFrames(sub, frame)
+		if !write(frame) {
+			return
 		}
 	}
+}
+
+// Drain only frames already queued, without a timer or changes to their SSE
+// encoding. Oversized individual frames remain valid and are written alone.
+func drainStreamFrames(sub *Subscriber, first []byte) (batch, pending []byte) {
+	const maxFrames, maxBytes = 32, 64 << 10
+	batch = first
+	sub.Sent(first)
+	for count := 1; count < maxFrames && len(batch) < maxBytes; count++ {
+		select {
+		case next := <-sub.Frames():
+			if len(next) > maxBytes-len(batch) {
+				return batch, next // still counted as queued until the next write
+			}
+			if count == 1 {
+				// Encoded frames are shared by subscribers. Own the batch's
+				// backing array before appending, even if first has spare capacity.
+				capacity := max(len(first)+len(next), min(maxBytes, maxFrames*len(first)))
+				batch = append(make([]byte, 0, capacity), first...)
+			}
+			batch = append(batch, next...)
+			sub.Sent(next)
+		default:
+			return batch, nil
+		}
+	}
+	return batch, nil
 }
 
 // framePolicy returns the frame document's policy, which allows the document's
