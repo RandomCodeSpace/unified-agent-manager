@@ -298,6 +298,31 @@ type HistoryReader interface {
 	ReadHistory(ctx context.Context, req ReadRequest) (History, error)
 }
 
+// ItemDiffReader reads one immutable committed edit from the recorded native event.
+// It sends nothing, resumes no conversation, and never reads the current file.
+type ItemDiffReader interface {
+	ReadItemDiff(ctx context.Context, req ItemDiffRequest) (ItemDiff, error)
+}
+type ItemDiffRequest struct {
+	ReadRequest
+	AgentID, ItemID, EventID, Path string
+}
+
+// ItemDiff contains only the requested file's recorded patch. An unavailable
+// native detail reports Status without inventing content or line counts.
+type ItemDiff struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	Patch  string `json:"patch,omitempty"`
+}
+
+const MaxFileEdits = 32
+const MaxFileEditPathBytes = 4096
+const MaxFileEditPathsBytes = 16 << 10
+
+// The browser's separate 2 MiB cache charges UTF-16 text and entry overhead.
+const MaxEditPatchBytes = (1 << 20) - 256
+
 // ReadRequest names the conversation to read and its project directory.
 type ReadRequest struct {
 	ConversationID string
@@ -958,6 +983,11 @@ type ToolCall struct {
 	Status ToolStatus `json:"status"`
 	Input  string     `json:"input,omitempty"`
 	Output string     `json:"output,omitempty"`
+	// Native committed edits are bounded metadata. The exact completion event
+	// identifies their immutable patch, fetched separately through ItemDiffReader.
+	EditEventID        string     `json:"edit_event_id,omitempty"`
+	FileEdits          []FileEdit `json:"file_edits,omitempty"`
+	FileEditsTruncated bool       `json:"file_edits_truncated,omitempty"`
 	// ExitCode is a shell command's exit code, when the provider reports
 	// one; nil otherwise.
 	ExitCode *int `json:"exit_code,omitempty"`
@@ -967,6 +997,16 @@ type ToolCall struct {
 	// Tail is the newest output lines of a running shell call, oldest first,
 	// at most 10, each at most 512 bytes; nil once the call ends.
 	Tail []OutputLine `json:"tail,omitempty"`
+}
+
+// FileEdit is a native committed mutation, including edits from a failed call.
+// Additions and Deletions are known only when DiffStatus is "available".
+type FileEdit struct {
+	Path       string `json:"path"`
+	Kind       string `json:"kind"`
+	Additions  int    `json:"additions,omitempty"`
+	Deletions  int    `json:"deletions,omitempty"`
+	DiffStatus string `json:"diff_status"`
 }
 
 // OutputLine is one line of a running shell call's output.

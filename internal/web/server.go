@@ -272,6 +272,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/events/detail", s.handleDetailEvents)
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
+	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}/diff", s.handleItemDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
 	s.chartRoutes(mux)
 	s.routineRoutes(mux)
