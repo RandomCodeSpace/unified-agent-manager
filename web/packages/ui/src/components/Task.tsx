@@ -516,6 +516,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setOutput(null);
     onSheet(true);
   }, [onSheet, closePreview]);
+  const openAllChanges = useCallback(() => {
+    openChanges();
+    setChangesTurn({ files: [], latest: false, at: Date.now(), scope: 'workspace' });
+  }, [openChanges]);
   const openTurnChanges = useCallback((turn: { files: string[]; latest: boolean }) => {
     openChanges();
     setChangesTurn({ ...turn, at: Date.now() });
@@ -830,6 +834,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               compacting={compacting}
               density={density}
               onOpenChanges={openTurnChanges}
+              onOpenAllChanges={noGit ? undefined : openAllChanges}
+              readersActive={active && connected}
+              readerGeneration={`${session.epoch}:${snapshotSeq}:${historyGeneration}`}
               changedLine={!noGit}
             />
             </HistoryAnchor>

@@ -370,6 +370,42 @@ type TurnTiming struct {
 	// Todo counts the todo list as the turn left it, for a turn that
 	// changed it; its rows are kept beside the Task's uploads.
 	Todo TodoCounts `json:"todo,omitzero"`
+	// Native captured changes as this finalized owner turn left them.
+	Changes *TurnChangeCounts `json:"changes,omitempty"`
+}
+
+// TurnChangeCounts retains no file rows or patches. Rows are read on demand
+// from the Task's bounded turn-changes snapshot file. Missing means the Task
+// did not request native capture; unavailable status never claims zero.
+type TurnChangeCounts struct {
+	Status    string `json:"status"`
+	EventID   string `json:"event_id,omitempty"`
+	Files     int64  `json:"files,omitempty"`
+	Additions int64  `json:"additions,omitempty"`
+	Deletions int64  `json:"deletions,omitempty"`
+	Omitted   int64  `json:"omitted,omitempty"`
+}
+
+// CloneTurnTimings gives each snapshot its own optional metadata.
+func CloneTurnTimings(timings []TurnTiming) []TurnTiming {
+	out := slices.Clone(timings)
+	for i := range out {
+		if out[i].Changes != nil {
+			facts := *out[i].Changes
+			switch facts.Status {
+			case "available":
+				if facts.EventID == "" || len(facts.EventID) > 256 || facts.Files < 0 || facts.Files > 1_000_000_000 || facts.Additions < 0 || facts.Additions > 1_000_000_000 || facts.Deletions < 0 || facts.Deletions > 1_000_000_000 || facts.Omitted < 0 || facts.Omitted > facts.Files {
+					facts = TurnChangeCounts{Status: "unknown"}
+				}
+			case "unknown", "busy", "unsupported":
+				facts = TurnChangeCounts{Status: facts.Status}
+			default:
+				facts = TurnChangeCounts{Status: "unknown"}
+			}
+			out[i].Changes = &facts
+		}
+	}
+	return out
 }
 
 // TodoCounts counts the rows of a conversation's todo list by status:

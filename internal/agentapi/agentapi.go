@@ -617,6 +617,38 @@ type Conversation interface {
 	Close(ctx context.Context) error
 }
 
+// TurnChangeReader snapshots only the finalized foreground owner turn of an
+// existing open conversation. It reads native captures, never current Git or
+// files, and must refuse a boundary followed by another ordinary owner turn.
+type TurnChangeReader interface {
+	TurnChanges(context.Context, string) (NativeTurnChanges, error)
+}
+
+const (
+	MaxTurnChangeFiles           = 32
+	MaxTurnChangePathBytes       = 16 << 10
+	MaxTurnChangeCount     int64 = 1_000_000_000
+)
+
+// NativeTurnChanges is the immutable native captured suffix at its owner's
+// settle boundary. No patches or user message text belong in this metadata.
+type NativeTurnChanges struct {
+	Status    string           `json:"status"`
+	EventID   string           `json:"event_id,omitempty"`
+	Files     int64            `json:"files,omitempty"`
+	Additions int64            `json:"additions,omitempty"`
+	Deletions int64            `json:"deletions,omitempty"`
+	Omitted   int64            `json:"omitted,omitempty"`
+	Entries   []NativeTurnFile `json:"entries,omitempty"`
+}
+
+type NativeTurnFile struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Additions int64  `json:"additions,omitempty"`
+	Deletions int64  `json:"deletions,omitempty"`
+}
+
 // Prompt is one user message: the text as typed, plus project files and
 // uploads the web service has already checked.
 type Prompt struct {

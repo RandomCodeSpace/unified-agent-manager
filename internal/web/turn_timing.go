@@ -4,22 +4,23 @@ import (
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Keep no more timing records than the bounded transcript can show. Timings
 // belong to UAM: provider history must never invent or replace these records.
 const maxTurnTimings = maxItems
 
-func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnState) {
+func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnState) *TurnTiming {
 	if state == agentapi.TurnWorking {
 		// Tool/model iterations and autopilot continuations share one foreground
 		// turn until the adapter supplies a terminal boundary.
 		if s.activeTiming >= 0 {
-			return
+			return nil
 		}
 		id, err := newUUID()
 		if err != nil {
-			return
+			return nil
 		}
 		timing := TurnTiming{ID: id, UserItemID: s.pendingTimingUser, StartedAt: m.now(), State: StateWorking}
 		s.pendingTimingUser = ""
@@ -29,10 +30,10 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 		s.turnTimings = append(s.turnTimings, timing)
 		s.activeTiming = len(s.turnTimings) - 1
 		m.publishTurnTimingLocked(s, timing)
-		return
+		return nil
 	}
 	if s.activeTiming < 0 || (state != agentapi.TurnCompleted && state != agentapi.TurnCancelled && state != agentapi.TurnFailed) {
-		return
+		return nil
 	}
 	timing := s.turnTimings[s.activeTiming]
 	timing.EndedAt, timing.State = m.now(), string(state)
@@ -40,10 +41,14 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 	// The todo list as the turn left it: its counts are written with this
 	// timing, its rows by the same flush (turn_todos.go).
 	timing.Todo = m.snapshotTodosLocked(s, timing)
+	if s.nativeChanges {
+		timing.Changes = &store.TurnChangeCounts{Status: "unknown"}
+	}
 	s.turnTimings[s.activeTiming] = timing
 	s.activeTiming = -1
 	s.pendingTimingUser = ""
 	m.publishTurnTimingLocked(s, timing)
+	return &timing
 }
 
 // Pending manual requests pause the clock once, even when requests overlap.

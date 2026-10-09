@@ -1733,6 +1733,8 @@ type conversation struct {
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
+	// The latest ordinary main-agent user item and its exact native boundary.
+	turnChangeUser, turnChangeEvent string
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
 	// was autopilot or unknown. The CLI withholds session.idle, and with it
 	// the autopilot continuation, while background work runs, so a read
@@ -3124,6 +3126,16 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.UserMessageData:
 		if agentID == "" && newCompletionEvent && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
 			c.completionReady = false
+		}
+		if agentID == "" && (d.Delivery == nil || *d.Delivery != rpc.UserMessageDeliverySteering) && (d.IsAutopilotContinuation == nil || !*d.IsAutopilotContinuation) {
+			c.turnChangeUser, c.turnChangeEvent = "", ""
+			user := ev.ID
+			if d.MessageID != nil && *d.MessageID != "" {
+				user = *d.MessageID
+			}
+			if len(user) <= 256 && len(ev.ID) <= 256 {
+				c.turnChangeUser, c.turnChangeEvent = user, ev.ID
+			}
 		}
 		if agentID == "" && d.MessageID != nil {
 			c.steers = slices.DeleteFunc(c.steers, func(st *steer) bool { return st.id == *d.MessageID })

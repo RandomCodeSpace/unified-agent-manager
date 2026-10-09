@@ -57,6 +57,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/context?attribution=true", true},
 		{"POST", "/api/sessions/task/context", false},
 		{"GET", "/api/sessions/task/context/extra", false},
+		{"GET", "/api/sessions/task/turns/turn/changes", true},
+		{"POST", "/api/sessions/task/turns/turn/changes", false},
 		{"GET", "/api/utility", true},
 		{"GET", "/api/auth", false},
 		{"POST", "/api/login", false},

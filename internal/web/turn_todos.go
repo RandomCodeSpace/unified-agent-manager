@@ -158,6 +158,11 @@ func appendPrivate(root, dir, path string, data []byte) (int64, error) {
 // Task still holds a timing for, newest first until keptTurnTodosBytes,
 // in the turns' order.
 func compactTurnTodos(path string, timings []TurnTiming) error {
+	return compactTurnRecords(path, timings, keptTurnTodosBytes, ".turn-todos-*")
+}
+
+// Both turn snapshot files bind records by timing_id and keep only held turns.
+func compactTurnRecords(path string, timings []TurnTiming, limit int, pattern string) error {
 	data, err := os.ReadFile(path) // #nosec G304 -- UAM's own file.
 	if err != nil {
 		return err
@@ -178,14 +183,14 @@ func compactTurnTodos(path string, timings []TurnTiming) error {
 		if !ok {
 			continue
 		}
-		if size+len(line) > keptTurnTodosBytes {
+		if size+len(line) > limit {
 			break
 		}
 		size += len(line)
 		kept = append(kept, line)
 	}
 	slices.Reverse(kept)
-	return writeFileAtomic(path, ".turn-todos-*", bytes.Join(kept, nil))
+	return writeFileAtomic(path, pattern, bytes.Join(kept, nil))
 }
 
 // TurnTodos returns the todo list as the turn timingID of Task id left it.
