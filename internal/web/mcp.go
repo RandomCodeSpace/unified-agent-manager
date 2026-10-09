@@ -436,11 +436,16 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 		s.op.Unlock()
 		return err
 	}
+	var agentErr error
 	if reload, ok := conv.(agentapi.CustomizationsReloader); ok {
 		ctx, cancel := context.WithTimeout(m.ctx, mcpTimeout)
 		err = reload.ReloadCustomizations(ctx)
 		cancel()
-		if !errors.Is(err, agentapi.ErrUnsupported) {
+		// A Task whose custom agent the reload lost is disconnected: its
+		// next open selects the agent again or fails.
+		if errors.Is(err, agentapi.ErrAgentUnavailable) {
+			agentErr = err
+		} else if !errors.Is(err, agentapi.ErrUnsupported) {
 			s.op.Unlock()
 			return mcpFailure(err)
 		}
@@ -466,6 +471,9 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 	}
 	if err := m.flush(); err != nil {
 		log.Warn("persist reconnected web session failed", "session", id, "error", err)
+	}
+	if agentErr != nil {
+		return newError(http.StatusConflict, "%s", shortError(agentErr))
 	}
 	return nil
 }

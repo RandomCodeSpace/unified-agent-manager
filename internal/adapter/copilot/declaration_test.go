@@ -432,18 +432,17 @@ func TestStaleCatalogIsBuiltAgainForTheNextMessage(t *testing.T) {
 	if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
 		t.Fatal(err)
 	}
-	want := slices.Concat(catalogProof, []string{"clear", "catalog", "rebuild", "catalog", "restore", "catalog"})
+	want := slices.Concat(catalogProof, []string{"clear", "catalog", "deselect", "catalog", "restore", "catalog"})
 	if !slices.Equal(fs.toolCalls, want) || !toolsAnswer(t, tools, "next") {
 		t.Fatalf("first message after the change: tool RPCs %v", fs.toolCalls)
 	}
 }
 
-// A catalog that cannot be built again, as while a custom agent is
-// selected, cannot prove the clear: the tools stay registered and refused,
+// A catalog that cannot be built again cannot prove the clear: the tools stay registered and refused,
 // and a later message proves them once it can.
 func TestToolsStayRefusedWhileTheCatalogCannotBeBuiltAgain(t *testing.T) {
 	conv, fs, tools := openProved(t, &fakeClient{})
-	fs.staleTools, fs.rebuildErr = true, errors.New("a custom agent is selected")
+	fs.staleTools, fs.deselectErr = true, errors.New("agent change refused")
 	ctx := context.Background()
 	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
 		t.Fatal(err)
@@ -453,11 +452,11 @@ func TestToolsStayRefusedWhileTheCatalogCannotBeBuiltAgain(t *testing.T) {
 	if err := conv.Send(ctx, agentapi.Prompt{Text: "next"}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(fs.toolCalls[4:], "rebuild") || toolsAnswer(t, tools, "unbuilt") || !toolsRegistered(fs) {
+	if !slices.Contains(fs.toolCalls[4:], "deselect") || toolsAnswer(t, tools, "unbuilt") || !toolsRegistered(fs) {
 		t.Fatalf("unbuilt catalog: tool RPCs %v, sets %d", fs.toolCalls, len(fs.setTools))
 	}
 	fs.onEvent(ev("idle-2", &rpc.SessionIdleData{}))
-	fs.rebuildErr = nil
+	fs.deselectErr = nil
 	if err := conv.Send(ctx, agentapi.Prompt{Text: "after"}); err != nil || !toolsAnswer(t, tools, "built") {
 		t.Fatalf("retry = %v; tool RPCs %v", err, fs.toolCalls)
 	}
@@ -640,7 +639,7 @@ func TestDeclarationRegistrationCollisionAndReadiness(t *testing.T) {
 	firstProof(conv)
 	fs, tool := fc.sessions[0], fc.create[0].Tools[0]
 	if _, err := invokeFile(tool, "clash", map[string]any{"path": "report.txt"}); err == nil || fs.disconnected ||
-		!slices.Equal(fs.toolCalls, []string{"clear", "catalog", "rebuild", "catalog", "restore"}) {
+		!slices.Equal(fs.toolCalls, []string{"clear", "catalog", "deselect", "catalog", "restore"}) {
 		t.Fatalf("collision = %v; calls=%v", err, fs.toolCalls)
 	}
 	if err := conv.Send(context.Background(), agentapi.Prompt{Text: "after the clash"}); err != nil || len(fs.sent) != 1 || len(fs.toolCalls) != 10 {

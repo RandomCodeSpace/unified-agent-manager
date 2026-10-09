@@ -19,6 +19,7 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/events", true},
 		{"HEAD", "/api/sessions/task/files/view/out/index.html", true},
 		{"GET", "/api/projects/project/terminal", true},
+		{"GET", "/api/projects/project/agents", true},
 		{"POST", "/api/sessions/task/attachments", true},
 		{"GET", "/api/sessions/task/file-grants/grant/key", true},
 		{"POST", "/api/providers/copilot/account/sign-in", true},

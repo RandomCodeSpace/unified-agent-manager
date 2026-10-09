@@ -222,6 +222,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)
+	mux.HandleFunc("GET /api/projects/{id}/agents", s.handleTaskAgents)
 	mux.HandleFunc("GET /api/previous/counts", s.handlePreviousCounts)
 	mux.HandleFunc("POST /api/projects/{id}/previous/{conversation_id}/import", s.handleImport)
 	mux.HandleFunc("GET /api/sessions", s.handleList)
@@ -825,12 +826,13 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 		Effort      *string `json:"effort"`
 		ContextSize *string `json:"context_size"`
 		Mode        *string `json:"mode"`
+		Agent       *string `json:"agent"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Model == nil && body.Effort == nil && body.ContextSize == nil && body.Mode == nil {
-		writeError(w, http.StatusBadRequest, "name, model, effort, context_size or mode is required")
+	if body.Name == nil && body.Model == nil && body.Effort == nil && body.ContextSize == nil && body.Mode == nil && body.Agent == nil {
+		writeError(w, http.StatusBadRequest, "name, model, effort, context_size, mode or agent is required")
 		return
 	}
 	if body.Name != nil {
@@ -850,6 +852,12 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if body.Model != nil || body.Effort != nil || body.ContextSize != nil {
 		if summary, err = s.m.SetModel(id, body.Model, body.Effort, body.ContextSize); err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	if body.Agent != nil {
+		if summary, err = s.m.SetAgent(id, *body.Agent); err != nil {
 			writeFailure(w, err)
 			return
 		}
@@ -924,6 +932,17 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, sub)
+}
+
+// handleTaskAgents lists the custom agents a Task of the Project can select
+// with the provider named by the provider query parameter.
+func (s *Server) handleTaskAgents(w http.ResponseWriter, r *http.Request) {
+	agents, err := s.m.TaskAgents(r.PathValue("id"), r.URL.Query().Get("provider"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]agentapi.ConfigurationDefinition{"agents": agents})
 }
 
 func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {

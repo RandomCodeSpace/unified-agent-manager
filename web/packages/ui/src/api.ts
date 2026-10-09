@@ -53,6 +53,8 @@ export interface Capabilities {
   subagent_models?: boolean;
   /** Its built-in GitHub MCP server is turned on and off for Tasks by `Settings.github_mcp`. */
   github_mcp?: boolean;
+  /** A Task can run as one of the Project's custom agents (`api.taskAgents`, `SessionSummary.agent`). */
+  custom_agents?: boolean;
 }
 
 /** What a model accepts as uploads; absent on the model means it reports nothing and is not gated. */
@@ -650,6 +652,8 @@ export interface SessionSummary {
   background_tasks_running?: number;
   effort?: string;
   context_size?: string;
+  /** The custom agent's ID, selected on every open before anything is sent; absent means the provider's default agent. */
+  agent?: string;
   context?: ContextUsage;
   /** AI units the conversation used so far, once the provider reports them; never zero. */
   usage?: { ai_units: number };
@@ -1634,6 +1638,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       model?: string;
       effort?: string;
       context_size?: string;
+      agent?: string;
       mode?: 'safe' | 'yolo';
       name?: string;
       prompt?: string;
@@ -1641,8 +1646,11 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     }) => call<SessionSummary>('POST', '/api/sessions', body),
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
-    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: 'safe' | 'yolo' }) =>
+    settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: 'safe' | 'yolo'; agent?: string }) =>
       call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, body),
+    /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
+    taskAgents: (projectId: string, provider: string) =>
+      call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
     stage: (id: string, action: 'settle' | 'reopen' | 'archive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),

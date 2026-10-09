@@ -77,6 +77,8 @@ type fakeClient struct {
 	grow       []copilot.SessionEvent
 	// todos are the todo rows of the sessions resumed afterwards.
 	todos []rpc.PlanSQLTodosRow
+	// agents are the custom agents of the sessions opened afterwards.
+	agents []rpc.AgentInfo
 }
 
 func (f *fakeClient) ImportSupported(context.Context) bool {
@@ -175,7 +177,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, agents: f.agents}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -187,7 +189,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos, agents: f.agents}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -269,9 +271,15 @@ type fakeSession struct {
 	setTools          [][]rpc.ProtocolExternalToolDefinition
 	toolCalls         []string
 	// staleTools models CLI 1.0.93: from a turn's start, the catalog keeps
-	// the tools the turn started with until RebuildTools; held marks that.
+	// the tools the turn started with until an agent change builds the tool
+	// set again; held marks that.
 	staleTools, held bool
-	rebuildErr       error
+	deselectErr      error
+	// agent is the selected custom agent, nil for the default one; agents
+	// are the ones SelectAgent finds.
+	agent     *rpc.AgentInfo
+	agents    []rpc.AgentInfo
+	selectErr error
 }
 
 type fakeToolCatalog struct {
@@ -309,17 +317,45 @@ func (s *fakeSession) clearedLocked() bool {
 	return n > 0 && len(s.setTools[n-1]) == 0
 }
 
-func (s *fakeSession) RebuildTools(ctx context.Context) error {
+func (s *fakeSession) CurrentAgent(ctx context.Context) (*rpc.AgentInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.toolCalls = append(s.toolCalls, "rebuild")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.agent, nil
+}
+
+func (s *fakeSession) SelectAgent(ctx context.Context, id string) (*rpc.AgentInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "select "+id)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.selectErr != nil {
+		return nil, s.selectErr
+	}
+	for _, agent := range s.agents {
+		if agent.ID == id {
+			s.agent, s.held = &agent, false
+			return &agent, nil
+		}
+	}
+	return nil, fmt.Errorf("Custom agent '%s' not found", id)
+}
+
+func (s *fakeSession) DeselectAgent(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.toolCalls = append(s.toolCalls, "deselect")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if s.rebuildErr != nil {
-		return s.rebuildErr
+	if s.deselectErr != nil {
+		return s.deselectErr
 	}
-	s.held = false
+	s.agent, s.held = nil, false
 	return nil
 }
 

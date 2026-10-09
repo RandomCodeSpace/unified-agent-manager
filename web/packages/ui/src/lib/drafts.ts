@@ -82,7 +82,7 @@ export function changeSettings(s: TaskDefaults, body: Partial<Omit<TaskDefaults,
   return out;
 }
 
-/** The create request for a new Task's first Send: its settings, no prompt (the message follows once it exists). */
-export function createRequest(projectId: string, s: TaskDefaults, requestId: string) {
-  return { project_id: projectId, provider: s.provider, model: s.model || undefined, effort: s.effort, context_size: s.context_size, mode: s.mode, request_id: requestId };
+/** The create request for a new Task's first Send: its settings and custom agent, no prompt (the message follows once it exists). */
+export function createRequest(projectId: string, s: TaskDefaults & { agent?: string }, requestId: string) {
+  return { project_id: projectId, provider: s.provider, model: s.model || undefined, effort: s.effort, context_size: s.context_size, mode: s.mode, ...(s.agent ? { agent: s.agent } : {}), request_id: requestId };
 }

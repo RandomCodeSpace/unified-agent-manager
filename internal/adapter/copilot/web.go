@@ -112,9 +112,13 @@ type sdkSession interface {
 	// ToolCatalog and SetTools verify the declaration's visible name at open.
 	ToolCatalog(ctx context.Context) ([]rpc.CurrentToolMetadata, error)
 	SetTools(ctx context.Context, tools []rpc.ProtocolExternalToolDefinition) error
-	// RebuildTools has the CLI build the session's tool set again, so
-	// ToolCatalog drops the tools removed since the last build.
-	RebuildTools(ctx context.Context) error
+	// CurrentAgent returns the selected custom agent, nil for the default
+	// agent. SelectAgent selects one by ID and returns it; DeselectAgent
+	// returns to the default agent. Either change builds the session's tool
+	// set again (rebuildTools).
+	CurrentAgent(ctx context.Context) (*rpc.AgentInfo, error)
+	SelectAgent(ctx context.Context, id string) (*rpc.AgentInfo, error)
+	DeselectAgent(ctx context.Context) error
 	Abort(ctx context.Context) error
 	CancelSubagent(ctx context.Context, agentID string) (bool, error)
 	// ListTasks returns the tasks the CLI tracks, subagents included.
@@ -427,7 +431,7 @@ func (p *webProvider) DisplayName() string { return "GitHub Copilot" }
 func (p *webProvider) Capabilities() agentapi.Capabilities {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true}
+	return agentapi.Capabilities{Cancel: true, ExecutionModes: true, Permissions: true, Questions: true, History: true, SessionDiff: true, SessionDiffNeedsTracking: true, ContextSize: true, ContextBreakdown: true, Usage: true, Titles: true, Import: p.importSupported, HostTools: true, Account: true, DeviceSignIn: true, MCP: true, CLIUpdate: true, SubagentModels: true, GitHubMCP: true, CustomAgents: true}
 }
 
 func (p *webProvider) Check(ctx context.Context) error {
@@ -977,6 +981,21 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		}
 		_ = sess.Disconnect()
 		return nil, fmt.Errorf("record copilot usage ownership: %w", err)
+	}
+	// The Task's custom agent is selected before anything is sent and
+	// before the first tool proof, which then proves the tools it has.
+	if req.Agent != "" {
+		if err := selectAgent(ctx, sess, req.Agent); err != nil {
+			c.mu.Lock()
+			c.closed = true
+			c.mu.Unlock()
+			if c.tools != nil {
+				c.tools.stop()
+			}
+			p.abandonOpen(ctx, client, sess, req.ConversationID == "")
+			return nil, err
+		}
+		c.agent = req.Agent
 	}
 	// Under mu: a subagent event may already start a task-list read.
 	c.mu.Lock()
@@ -1741,6 +1760,9 @@ type conversation struct {
 	execution         *agentapi.ExecutionState
 	executionRevision uint64
 	control           sync.Mutex
+	// agent is the selected custom agent's ID, "" for the default agent;
+	// guarded by control.
+	agent string
 	// githubSwitch is held while the built-in GitHub MCP server is turned
 	// on or off, so the last switch applies the latest setting.
 	githubSwitch     sync.Mutex
