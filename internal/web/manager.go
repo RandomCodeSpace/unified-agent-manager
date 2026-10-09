@@ -3720,6 +3720,8 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 		err = errShuttingDown
 	case s.stage != StageActive:
 		err = s.readOnlyLocked()
+	case s.rewindHoldLocked() != nil:
+		err = s.rewindHoldLocked()
 	case s.conv == nil:
 		err = newError(http.StatusConflict, msgConversationNotOpen)
 	case busy(s.state()):

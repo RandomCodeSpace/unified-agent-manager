@@ -338,3 +338,58 @@ func TestRewindRefusalsChangeNothing(t *testing.T) {
 		t.Fatalf("invalid owner = %v", err)
 	}
 }
+
+func TestRewindHoldRefusesCommandsAndSubagentFollowUps(t *testing.T) {
+	m, _, _, sum, conv, wrapped := commandManager(t)
+	var calls int
+	wrapped.execute = func(context.Context, string, agentapi.Prompt) (*agentapi.CommandResult, error) {
+		calls++
+		return &agentapi.CommandResult{Kind: "text", Text: "ran"}, nil
+	}
+	conv.EmitSubagent(agentapi.Subagent{ID: "sub", Status: agentapi.SubagentIdle})
+	waitUntil(t, "idle subagent", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		sa := m.sessions[sum.ID].subIdx["sub"]
+		return sa != nil && sa.Status == agentapi.SubagentIdle
+	})
+	m.mu.Lock()
+	m.sessions[sum.ID].rewind = &store.WebRewind{RequestID: "11111111-1111-4111-8111-111111111111", UserItemID: "u", Mode: agentapi.RewindConversation, State: rewindUncertain}
+	m.mu.Unlock()
+	if _, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "review"}); !errors.Is(err, errRewindUnreconciled) || calls != 0 {
+		t.Fatalf("command while uncertain = %v, calls %d", err, calls)
+	}
+	if _, err := m.PromptSubagent(sum.ID, "sub", "go", mustUUID(t)); !errors.Is(err, errRewindUnreconciled) || len(conv.SubagentPrompts()) != 0 {
+		t.Fatalf("subagent follow-up while uncertain = %v", err)
+	}
+}
+
+func TestRewindRefusesAConversationHeldElsewhere(t *testing.T) {
+	caps := allCaps
+	caps.Fork, caps.Rewind, caps.Import = true, true, true
+	p := &taskForkProvider{Pager: agenttest.NewPager("fake", caps)}
+	st := openTestStore(t)
+	m := startManager(t, st, p)
+	sum, err := m.Create(CreateRequest{ProjectID: addProject(t, m, t.TempDir()), Provider: "fake"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.Last()
+	for _, turn := range []string{"first", "second", "third"} {
+		finishTurn(c, turn, "reply "+turn)
+	}
+	rc := &rewindConversation{Conversation: c, preview: secondTurnPreview, rewind: func(string, string) (agentapi.RewindResult, error) {
+		return agentapi.RewindResult{Outcome: "success", RestoredFiles: []string{}, SkippedFiles: []agentapi.RewindSkip{}}, nil
+	}}
+	m.mu.Lock()
+	m.sessions[sum.ID].conv, m.sessions[sum.ID].imported = rc, true
+	m.mu.Unlock()
+	req := RewindRequest{UserItemID: "u-second", Mode: agentapi.RewindConversation, Token: previewToken(t, m, sum.ID), RequestID: mustUUID(t)}
+	p.SetInUse([]string{sum.ConversationID}, nil)
+	if _, err := m.Rewind(sum.ID, req); !errors.Is(err, errHeldElsewhere) {
+		t.Fatalf("held rewind = %v", err)
+	}
+	if rc.rewinds() != 0 || storedRewind(t, st, sum.ID) != nil {
+		t.Fatal("a conversation held elsewhere was rewound")
+	}
+}

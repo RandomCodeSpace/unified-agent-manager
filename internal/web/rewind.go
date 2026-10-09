@@ -231,15 +231,18 @@ func (m *Manager) Rewind(id string, req RewindRequest) (RewindReceipt, error) {
 	}
 	s.op.Lock()
 	defer s.op.Unlock()
-	m.mu.Lock()
-	if r := s.rewind; r != nil && r.RequestID == req.RequestID {
-		defer m.mu.Unlock()
-		if r.UserItemID != req.UserItemID || r.Mode != req.Mode {
-			return RewindReceipt{}, newError(http.StatusConflict, "this rewind request ID was already used for a different selection")
-		}
-		return receiptOf(r), nil
+	if out, found, err := m.recordedRewind(s, req); found {
+		return out, err
 	}
-	m.mu.Unlock()
+	// Like a send, never under another process holding the conversation. The
+	// check releases s.op, so a request that finished meanwhile is replayed.
+	holderErr := m.checkHolder(s)
+	if out, found, err := m.recordedRewind(s, req); found {
+		return out, err
+	}
+	if holderErr != nil {
+		return RewindReceipt{}, holderErr
+	}
 	rewinder, preview, token, err := m.readRewind(s, req.UserItemID)
 	if err != nil {
 		return RewindReceipt{}, err
@@ -351,6 +354,20 @@ func (m *Manager) Rewind(id string, req RewindRequest) (RewindReceipt, error) {
 		log.Warn("persist rewind result failed", "session", id, "error", err)
 	}
 	return out, nil
+}
+
+// recordedRewind returns the receipt of a request ID already used on s.
+func (m *Manager) recordedRewind(s *webSession, req RewindRequest) (RewindReceipt, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r := s.rewind
+	if r == nil || r.RequestID != req.RequestID {
+		return RewindReceipt{}, false, nil
+	}
+	if r.UserItemID != req.UserItemID || r.Mode != req.Mode {
+		return RewindReceipt{}, true, newError(http.StatusConflict, "this rewind request ID was already used for a different selection")
+	}
+	return receiptOf(r), true, nil
 }
 
 // pruneRewoundLocked drops the turn timings, and their pending snapshot rows,
