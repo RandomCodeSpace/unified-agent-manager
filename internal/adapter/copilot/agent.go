@@ -120,10 +120,12 @@ func (c *conversation) endIfModelNotKept(ctx context.Context, err error) error {
 // abandonOpen closes a conversation an open could not finish. A session
 // this open created is deleted too: it has no turn and no Task records it.
 func (p *webProvider) abandonOpen(ctx context.Context, client sdkClient, c *conversation, created bool) {
+	// The open's deadline may be what failed it; the cleanup still runs.
+	ctx = context.WithoutCancel(ctx)
 	if err := c.Close(ctx); err != nil || !created {
 		return
 	}
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleDeleteTimeout)
+	dctx, cancel := context.WithTimeout(ctx, titleDeleteTimeout)
 	defer cancel()
 	_ = client.DeleteSession(dctx, c.id)
 }

@@ -2323,6 +2323,11 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 		if err := c.tools.reprove(ctx, c.sess, c.uamTools...); err != nil {
 			log.Warn("copilot uam tools stay refused until the next message", "conversation", c.id, "error", err)
 		}
+		// A rebuild that could not keep the Task's model ended the
+		// conversation; nothing is sent on the agent's model.
+		if c.isClosed() {
+			return agentapi.ErrClosed
+		}
 	}
 	c.mu.Lock()
 	c.completionReady = false

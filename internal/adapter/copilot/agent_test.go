@@ -352,3 +352,44 @@ func TestAgentChangeFailsClosedWhenTheTaskModelCannotBeRestored(t *testing.T) {
 		}
 	})
 }
+
+// A stale-catalog rebuild whose Task model restore fails ends the
+// conversation inside the proof; the message that started the proof is
+// not sent on the agent's model.
+func TestRebuildThatCannotKeepTheTaskModelSendsNothing(t *testing.T) {
+	ctx := context.Background()
+	conv, _, fs := openPinned(t, "")
+	fs.staleTools = true
+	if err := conv.Send(ctx, agentapi.Prompt{Text: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	toolsChanged(fs, "mid-turn")
+	fs.onEvent(ev("idle", &rpc.SessionIdleData{}))
+	fs.mu.Lock()
+	fs.modelErr = errors.New("switch broke")
+	fs.mu.Unlock()
+	err := conv.Send(ctx, agentapi.Prompt{Text: "next"})
+	fs.mu.Lock()
+	sent := slices.Clone(fs.sent)
+	fs.mu.Unlock()
+	if !errors.Is(err, agentapi.ErrClosed) || slices.Contains(sent, "next") {
+		t.Fatalf("send after a failed restore in the rebuild = %v, sent %v", err, sent)
+	}
+}
+
+// An open whose deadline ended during the agent selection still deletes
+// the session it created: the cleanup does not run on the expired context.
+func TestCreateFailedByItsDeadlineDeletesTheSession(t *testing.T) {
+	fc := &fakeClient{agents: []rpc.AgentInfo{reviewerAgent}, catalog: catalogOf(declarationToolName, "notes_get", "notes_list")}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	if _, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "warm", Workdir: t.TempDir(), Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	conv, err := p.Open(ctx, agentapi.OpenRequest{SessionID: "session", Agent: "reviewer", Workdir: t.TempDir(), Events: &recSink{}})
+	if conv != nil || !errors.Is(err, agentapi.ErrAgentUnavailable) || !slices.Equal(fc.deleted, []string{"session"}) {
+		t.Fatalf("open = %t, %v; deleted %v", conv != nil, err, fc.deleted)
+	}
+}
