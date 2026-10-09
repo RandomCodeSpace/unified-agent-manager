@@ -96,6 +96,10 @@ func checkItem(it agentapi.Item, now time.Time) agentapi.Item {
 			}
 			tool.FileEdits = kept
 		}
+		tool.Progress = boundedResultSummary(strings.TrimSpace(displaytext.Sanitize(tool.Progress)))
+		if tool.Status != agentapi.ToolRunning {
+			tool.Progress = ""
+		}
 		if d := tool.Declaration; d != nil {
 			if d.ArtifactID == "" || len(d.ArtifactID) > 64 || !utf8.ValidString(d.ArtifactID) || strings.ContainsFunc(d.ArtifactID, unicode.IsControl) ||
 				!filepath.IsAbs(d.Path) || len(d.Path) > maxGrantPathBytes || !utf8.ValidString(d.Path) || strings.ContainsFunc(d.Path, unicode.IsControl) ||
@@ -148,7 +152,7 @@ func itemSize(it agentapi.Item) int {
 		}
 	}
 	if it.Tool != nil {
-		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID)
+		n += len(it.Tool.Name) + len(it.Tool.Title) + len(it.Tool.Input) + len(it.Tool.Output) + len(it.Tool.EditEventID) + len(it.Tool.Progress)
 		for _, edit := range it.Tool.FileEdits {
 			n += len(edit.Path) + len(edit.Kind) + len(edit.DiffStatus) + 16
 		}

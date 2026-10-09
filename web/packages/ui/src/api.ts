@@ -791,6 +791,8 @@ export interface ToolCall {
   file_edits_truncated?: boolean;
   input?: string;
   output?: string;
+  /** Latest human status of a running call, at most 512 UTF-8 bytes; absent once it ends. */
+  progress?: string;
   /** Exact local tool metadata; eligibility only, never proof that a file exists. */
   file_paths?: string[];
   declaration?: FileDeclaration;

@@ -1168,6 +1168,9 @@ type ToolCall struct {
 	EditEventID        string     `json:"edit_event_id,omitempty"`
 	FileEdits          []FileEdit `json:"file_edits,omitempty"`
 	FileEditsTruncated bool       `json:"file_edits_truncated,omitempty"`
+	// Progress is the latest human status of a running call, at most 512
+	// UTF-8 bytes. It is display metadata, not tool output; empty once ended.
+	Progress string `json:"progress,omitempty"`
 	// ExitCode is a shell command's exit code, when the provider reports
 	// one; nil otherwise.
 	ExitCode *int `json:"exit_code,omitempty"`
