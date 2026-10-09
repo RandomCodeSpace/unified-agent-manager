@@ -69,9 +69,11 @@ func (c *conversation) SetAssistedPermissions(ctx context.Context, approvalModel
 }
 
 // refuseAssisted withdraws assisted permissions while the CLI that refused
-// them runs, so Tasks are not offered a mode it does not apply.
+// them runs, so Tasks are not offered a mode it does not apply. UAM starts
+// the CLI with its AUTO_APPROVAL feature flag; a refusal means this CLI or
+// its managed policy does not apply it.
 func (c *conversation) refuseAssisted(why string) error {
-	reason := why + "; Assisted returns once the CLI restarts or updates"
+	reason := why + "; Assisted needs the CLI's AUTO_APPROVAL feature flag, which this CLI or its policy did not apply"
 	c.p.mu.Lock()
 	if c.p.client == c.client {
 		c.p.assistedRefused = reason

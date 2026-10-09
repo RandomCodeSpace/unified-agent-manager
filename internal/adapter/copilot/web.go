@@ -398,11 +398,12 @@ func newSDKClient() (sdkClient, error) {
 
 // sdkClientAt points the SDK at the CLI at path, retaining the user's login
 // and configuration. Disable shell history in the runtime and its children
-// without changing the service environment or the manual web terminal.
-// export adds the local usage export; a client that runs no model leaves it
-// out, so it creates no export file.
+// and turn on the feature assisted permissions need, without changing the
+// service environment or the manual web terminal. export adds the local
+// usage export; a client that runs no model leaves it out, so it creates no
+// export file.
 func sdkClientAt(path string, export bool) sdkClient {
-	env := append(os.Environ(), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
 	var telemetry *copilot.TelemetryConfig
 	if export {
 		var err error
@@ -411,6 +412,31 @@ func sdkClientAt(path string, export bool) sdkClient {
 		}
 	}
 	return sdkClientAdapter{copilot.NewClient(&copilot.ClientOptions{Connection: copilot.StdioConnection{Path: path, Env: env}, Telemetry: telemetry})}
+}
+
+// cliFeatureFlags lists the CLI's enabled feature flags, comma-separated.
+const cliFeatureFlags = "COPILOT_CLI_ENABLED_FEATURE_FLAGS"
+
+// withAutoApproval returns a copy of env whose CLI feature flags include
+// AUTO_APPROVAL, the CLI's gate for the assisted permission mode, added to
+// the flags env sets, if any.
+func withAutoApproval(env []string) []string {
+	out := slices.Clone(env)
+	for i := len(out) - 1; i >= 0; i-- {
+		flags, ok := strings.CutPrefix(out[i], cliFeatureFlags+"=")
+		if !ok {
+			continue
+		}
+		switch {
+		case slices.ContainsFunc(strings.Split(flags, ","), func(f string) bool { return strings.TrimSpace(f) == "AUTO_APPROVAL" }):
+		case flags == "":
+			out[i] += "AUTO_APPROVAL"
+		default:
+			out[i] += ",AUTO_APPROVAL"
+		}
+		return out
+	}
+	return append(out, cliFeatureFlags+"=AUTO_APPROVAL")
 }
 
 func resolveCopilot() (string, error) {
