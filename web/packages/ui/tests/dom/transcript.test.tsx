@@ -15,6 +15,28 @@ afterEach(() => saveDensity('compact'));
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 
 describe('messages', () => {
+  test.each(['compact', 'detailed'] as const)('skill invocation notices stay visible and ordered in %s turns', (density) => {
+    saveDensity(density);
+    const items: Item[] = [
+      { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Review the change' },
+      { id: 's1', kind: 'notice', time: '2026-10-09T00:00:01Z', text: 'Skill: ` uam `' },
+      { id: 's2', kind: 'notice', time: '2026-10-09T00:00:02Z', text: 'Skill: ` uam `' },
+      { id: 's3', kind: 'notice', time: '2026-10-09T00:00:03Z', text: 'Skill: `` my_skill*[docs](https://example.test)<b>` ``' },
+      { id: 'a', kind: 'assistant', time: '2026-10-09T00:00:04Z', text: 'Reviewed.' },
+    ];
+    const view = render(<Transcript sessionId="s" items={items} interactions={[]} subagents={[]} live working={false} provider="copilot" workdir="/w" liveCard />);
+    const label = (text: string) => (_: string, el: Element | null) => el?.tagName === 'P' && el.textContent === text;
+    const repeated = view.getAllByText(label('Skill: uam'));
+    expect(repeated).toHaveLength(2);
+    expect(repeated[0].compareDocumentPosition(repeated[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const named = view.getByText(label('Skill: my_skill*[docs](https://example.test)<b>`'));
+    expect(named.closest('.text-caption')).toBeTruthy();
+    expect(repeated[1].compareDocumentPosition(named) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(named.compareDocumentPosition(view.getByText('Reviewed.')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(view.queryByRole('link')).toBeNull();
+    expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
+  });
+
   test('user and assistant messages render as Markdown with code, links and attachments', async () => {
     await openTask('t3');
     const view = log();
