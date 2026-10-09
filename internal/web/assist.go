@@ -47,6 +47,7 @@ func (s *Server) assistRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sessions/{id}/rewind", s.handleRewind)
 	mux.HandleFunc("POST /api/sessions/{id}/rewind/reconcile", s.handleRewindReconcile)
 	mux.HandleFunc("POST /api/sessions/{id}/rewind/release", s.handleRewindRelease)
+	mux.HandleFunc("POST /api/sessions/{id}/resend", s.handleResend)
 	mux.HandleFunc("GET /api/sessions/{id}/export", s.handleExport)
 }
 

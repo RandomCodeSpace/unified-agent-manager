@@ -291,7 +291,7 @@ export function useBodyCopy(item: Item, copy: (text: string) => void) {
   return { copyBody: run, copyError: error };
 }
 /** How the service marks the end of a text it shortened. */
-const CUT = '\n[truncated by uam]';
+export const CUT = '\n[truncated by uam]';
 /** At most this much of a clipped message renders, as Markdown, before its whole text is asked for: the service may hold megabytes of it, and parsing that would hold the page for seconds. */
 const HELD_PREVIEW = 64 << 10;
 

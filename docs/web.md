@@ -990,6 +990,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   outcome, **Release task** clears the hold without touching the history: the
   conversation may already be shortened and files partly restored, and UAM
   records that the outcome stayed unknown. Recorded usage stays counted.
+- **Edit and resend**: the same menu puts that reply's prompt, read in full,
+  into the composer with its stored attachments, under a flat strip that says
+  what sending would rewind; the status line hides meanwhile. Any draft you had
+  is set aside and comes back when you stop editing or the edit is sent.
+  Nothing changes until you send. An edit the send would refuse (empty, too
+  large, a missing attachment or file, signed out) is refused before anything
+  is rewound. Sending rewinds to before the prompt, waits
+  until the conversation is read again, then sends the edit once as an
+  ordinary message. If the rewind is uncertain, partial or changes nothing, or
+  the message is refused, the edit stays in the composer with the reason and
+  nothing is sent or retried automatically. An attachment without a stored
+  copy cannot be sent again; the strip says so.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,

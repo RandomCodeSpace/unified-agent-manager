@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, X } from 'lucide-react';
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskDefaults } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -23,6 +23,8 @@ import { Loading, Markdown, Note, Spinner, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerQuestion } from './Interactions';
+import { EditStrip, type Editing } from './EditResend';
+import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -267,11 +269,13 @@ interface ComposerProps {
   answering?: Answering | null;
   /** Shows a command's longer output in the Task's side panel; without it, the output stays under the composer. */
   onCommandOutput?: (output: CommandOutput) => void;
+  /** Set while a past owner prompt is edited here, to rewind to before it and send the edit. */
+  editing?: Editing | null;
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
 function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
-  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput) return false;
+  if (a.onRename !== b.onRename || a.onSessionUpdate !== b.onSessionUpdate || a.newTask !== b.newTask || a.answering !== b.answering || a.onCommandOutput !== b.onCommandOutput || a.editing !== b.editing) return false;
   if (a.session === b.session) return true;
   const keys = new Set([...Object.keys(a.session), ...Object.keys(b.session)] as (keyof SessionDetail)[]);
   keys.delete('items');
@@ -283,7 +287,7 @@ function sameComposerProps(a: ComposerProps, b: ComposerProps): boolean {
 
 export const Composer = memo(ComposerView, sameComposerProps);
 
-function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput }: Readonly<ComposerProps>) {
+function ComposerView({ session, onRename, onSessionUpdate, newTask, answering = null, onCommandOutput, editing: editProp = null }: Readonly<ComposerProps>) {
   const api = useApi();
   const { meta, metaError, settings: appSettings, dispatch, refreshMeta, openUsage } = useApp();
   // The catalogs are still on their way: the pickers' slot holds a skeleton, since their values would be a guess.
@@ -670,23 +674,50 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   }
   const staged = answeringId && chosen.id === answeringId ? chosen.choices : NO_CHOICES;
   const [parked, setParked] = useState<{ id: string; text: string; files: string[]; uploads: Pending[] } | null>(null);
-  if (answeringId && parked?.id !== answeringId) {
-    setParked(parked ? { ...parked, id: answeringId } : { id: answeringId, text, files, uploads });
-    setText('');
-    setCaret(0);
+  // Editing a past prompt parks the draft the same way; the edit's buffer starts as that prompt.
+  const editing = answering || newTask || !editProp || editProp.sessionId !== session.id ? null : editProp;
+  const bufferOwner = answeringId ?? (editing ? `edit:${editing.userItemId}` : null);
+  if (bufferOwner && parked?.id !== bufferOwner) {
+    setParked(parked ? { ...parked, id: bufferOwner } : { id: bufferOwner, text, files, uploads });
+    const t = answeringId ? '' : editing?.text ?? '';
+    setText(t);
+    setCaret(t.length);
     setFiles([]);
-    setUploads([]);
+    setUploads(answeringId || !editing ? [] : editing.attachments.flatMap((a) => (a.id ? [storedUpload(api, session.id, { id: a.id, name: a.name, size: a.size ?? 0, kind: kindOf(a.mime) })] : [])));
     setBrowsing(null);
     setDismissed(null);
-  } else if (!answeringId && parked) {
+  } else if (!bufferOwner && parked) {
     setParked(null);
-    if (parked.text || parked.files.length || parked.uploads.length || !(text.trim() || files.length || uploads.length)) {
+    // Leaving an edit always discards its buffer: the parked draft comes back as it was.
+    if (parked.id.startsWith('edit:') || parked.text || parked.files.length || parked.uploads.length || !(text.trim() || files.length || uploads.length)) {
       setText(parked.text);
       setCaret(parked.text.length);
       setFiles(parked.files);
       setUploads(parked.uploads);
     }
   }
+  // The edit strip's preview: read-only, again whenever it went stale.
+  const [editPreview, setEditPreview] = useState<{ key: string; preview: RewindPreview | null; error: string }>({ key: '', preview: null, error: '' });
+  const [editMode, setEditMode] = useState<RewindMode>('conversation-and-files');
+  const [editNote, setEditNote] = useState<{ tone: 'warn' | 'error' | 'muted'; text: string } | null>(null);
+  const [editReads, setEditReads] = useState(0);
+  const editTarget = editing?.userItemId ?? '';
+  const editKey = `${editTarget}:${editReads}`;
+  useEffect(() => {
+    if (!editTarget) return;
+    const controller = new AbortController();
+    api.rewindPreview(session.id, editTarget, controller.signal).then((preview) => {
+      if (controller.signal.aborted) return;
+      setEditPreview({ key: editKey, preview, error: '' });
+      if (!preview.files_available) setEditMode('conversation');
+    }, (e: unknown) => { if (!controller.signal.aborted) setEditPreview({ key: editKey, preview: null, error: Array.from(describeError(e).slice(0, 512)).join('') }); });
+    return () => controller.abort();
+  }, [api, session.id, editTarget, editKey]);
+  if (!editTarget && editNote) setEditNote(null);
+  const shownPreview = editPreview.key === editKey ? editPreview : { key: editKey, preview: null, error: '' };
+  // rewound: the rewind landed and this prompt was surely not sent, so a changed edit keeps the rewind and gets a new prompt ID.
+  const editPending = useRef<{ key: string; rewindKey: string; rewind: string; prompt: string; rewound?: boolean } | null>(null);
+
   // A question arriving on a desktop is an invitation to answer: the composer takes focus when nothing
   // else holds it. Never on a touch screen, where the keyboard would rise over the conversation.
   useEffect(() => {
@@ -716,7 +747,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const lastSent = failedTurn && !locked && !text.trim() && !files.length && !uploads.length ? lastPrompt(session.items) : null;
   // Offered only when there is something to put back: its text or an upload with a stored copy. A prompt of
   // only file references, or of uploads without an ID, offers nothing rather than an older prompt.
-  const resendable = lastSent?.text?.trim() || lastSent?.attachments?.some((a) => a.id) ? lastSent : null;
+  const resendable = !editing && (lastSent?.text?.trim() || lastSent?.attachments?.some((a) => a.id)) ? lastSent : null;
   function resend() {
     if (!resendable) return;
     const t = resendable.text ?? '';
@@ -726,7 +757,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     textarea.current?.focus();
   }
 
-  const cmd = commands && !answering ? parseCommand(text, commands) : null;
+  const cmd = commands && !answering && !editing ? parseCommand(text, commands) : null;
   const descriptor = commands?.find((c) => c.name === cmd?.name);
   const commandBlocked = commandReason(descriptor, live) || (descriptor?.input_required && !cmd?.args ? `/${descriptor.name} needs ${descriptor.input_hint || 'an argument'}.` : '');
   /** Why nothing can be sent now; empty when it can. */
@@ -742,7 +773,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const steerBlocked = steerUnavailable || settingsSteerReason;
   // A message needs text, a file reference or a finished upload; blank text alongside them goes as none.
   const empty = answering ? !canAnswer(answering.question, staged, text) : !text.trim() && !files.length && !uploads.some((u) => u.status === 'done');
-  const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked;
+  const cannotSubmit = !!busy || locked || session.state === 'starting' || empty || !!blocked || (!!editing && !shownPreview.preview);
   // Enter does the setting's action, Ctrl/Cmd+Enter the other (issue #183); when a steer is impossible both queue.
   const { enter, modified } = enterActions(live, appSettings.send_default, !!steerBlocked);
   // While a turn runs a message has one Send for Enter's action, named and drawn for it, and a menu beside it with the other.
@@ -822,8 +853,52 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
   }
 
+  /** Edit and resend: one confirmed rewind, then the edit as one ordinary send. The edit stays here unless it was sent. */
+  async function sendEdited() {
+    const preview = shownPreview.preview;
+    if (!editing || !preview || cannotSubmit) return;
+    const t = text.trim();
+    const rewindKey = JSON.stringify([editing.userItemId, editMode, preview.token]);
+    const key = JSON.stringify([rewindKey, t, files, attachmentIds, selection]);
+    let ids = editPending.current;
+    if (ids?.key !== key) ids = editPending.current = ids?.rewound && ids.rewindKey === rewindKey ? { ...ids, key, prompt: newRequestId(), rewound: false } : { key, rewindKey, rewind: newRequestId(), prompt: newRequestId() };
+    refocus.current = true;
+    setBusy('send');
+    setError(null);
+    setEditNote(null);
+    try {
+      const r = await api.resend(session.id, {
+        rewind: { user_item_id: editing.userItemId, mode: editMode, token: preview.token, request_id: ids.rewind },
+        prompt: { text: t, request_id: ids.prompt, ...extras, settings: selection },
+      });
+      if (r.submission) setOutcome(r.submission);
+      if (r.submission?.status === 'accepted' || r.submission?.status === 'queued') {
+        editPending.current = null;
+        clearBuffer();
+        setPromptSettings(null);
+        editing.onDone();
+        return;
+      }
+      if (rewound(r.rewind) && (!r.submission || r.submission.status === 'rejected')) editPending.current = { ...ids, rewound: true };
+      if (r.rewind.state === 'uncertain' || r.rewind.state === 'pending') setEditNote({ tone: 'warn', text: `${UNCERTAIN_REWIND} Your edited prompt was not sent.` });
+      else if (r.submission) setEditNote({ tone: 'error', text: 'The conversation was rewound, but your edited prompt was not accepted. It is still here; nothing is resent automatically.' });
+      else setEditNote({ tone: r.send_error ? 'error' : 'muted', text: `${rewindOutcome(r.rewind)} Your edited prompt was not sent${r.send_error ? `: ${r.send_error}` : '.'}` });
+    } catch (e) {
+      if (errorCode(e) === 'rewind_stale') {
+        editPending.current = null;
+        setEditReads((n) => n + 1);
+        setError('The conversation or its files changed. Check the strip, then send again.');
+        return;
+      }
+      setError(`${describeError(e)}. Nothing will be retried automatically. Sending this edit again uses the same requests (${ids.rewind.slice(0, 8)}).`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function send(promptMode: PromptMode, confirmed = false) {
     if (answering) return sendAnswer();
+    if (editing) return sendEdited();
     const t = text.trim();
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
     if (newTask) return sendFirst(t);
@@ -987,6 +1062,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         return;
       }
     }
+    if (e.key === 'Escape' && editing && !busy) {
+      e.preventDefault();
+      editing.onDone();
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send(e.ctrlKey || e.metaKey ? modified : enter);
@@ -996,6 +1076,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The send button's name: what Enter does now. */
   function describeSend(): string {
     if (answering) return busy === 'answer' ? 'Submitting…' : 'Answer';
+    if (editing) return busy === 'send' ? 'Submitting…' : 'Rewind and send';
     if (busy === enter) return 'Submitting…';
     if (cmd) return `Run /${cmd.name}`;
     if (!live) return 'Send';
@@ -1107,6 +1188,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   function describePlaceholder(): string {
     if (locked) return '';
     if (answering) return answerPlaceholder(answering.question, staged.length > 0);
+    if (editing) return 'Edit your prompt';
     if (!live) return 'Ask anything, @ files, $ skills, / commands';
     return enter === 'steer' ? 'Send now to guide this turn, or after it…' : 'Send after this turn, or now to guide it…';
   }
@@ -1243,6 +1325,9 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           onPick={pick}
           popupRef={popup}
         />
+      )}
+      {editing && (
+        <EditStrip editing={editing} preview={shownPreview.preview} error={shownPreview.error} mode={editMode} onMode={setEditMode} disabled={!!busy} note={editNote} />
       )}
       {answering && (
         // Answer mode (DESIGN.md Composer): the question is the composer's extension, above what answers it.
