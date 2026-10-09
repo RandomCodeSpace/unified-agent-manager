@@ -180,6 +180,7 @@ func confirmedSteerReceipt(previous, next agentapi.Item) bool {
 // stamped when it finished, not when it began.
 func (m *Manager) upsertItemLocked(s *webSession, it agentapi.Item, publish bool) {
 	var previous agentapi.Item
+	delete(s.textBuffers, itemKey(it.AgentID, it.ID))
 	// Keep only the newest declaration cards. The ordinary tool rows remain
 	// available and the provider journal remains the replay source.
 	if it.Tool != nil && it.Tool.Declaration != nil {
@@ -396,7 +397,8 @@ func (s *webSession) agentItems(agentID string) []agentapi.Item {
 
 // applyDeltaLocked appends streamed text, creating the item when absent.
 func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
-	i, ok := s.itemIdx[itemKey(d.AgentID, d.ItemID)]
+	key := itemKey(d.AgentID, d.ItemID)
+	i, ok := s.itemIdx[key]
 	if !ok {
 		m.upsertItemLocked(s, clampItem(agentapi.Item{ID: d.ItemID, Kind: d.Kind, Text: d.Text, AgentID: d.AgentID}, m.now()), true)
 		return
@@ -410,7 +412,23 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 	if len(add) > room {
 		add = clampText(add, room)
 	}
-	it.Text += add
+	buffer := s.textBuffers[key]
+	if buffer == nil {
+		buffer = &strings.Builder{}
+		buffer.Grow(len(it.Text) + len(add))
+		buffer.WriteString(it.Text)
+		if s.textBuffers == nil {
+			s.textBuffers = map[string]*strings.Builder{}
+		}
+		s.textBuffers[key] = buffer
+	}
+	buffer.WriteString(add)
+	it.Text = buffer.String()
+	if len(it.Text) >= maxItemText {
+		// No more deltas fit. Keep the bounded string without spare builder capacity.
+		it.Text = strings.Clone(it.Text)
+		delete(s.textBuffers, key)
+	}
 	s.items[i] = it
 	m.markItemMutationLocked(s, it)
 	s.itemBytes += len(add)
@@ -454,6 +472,7 @@ func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, pu
 			continue
 		}
 		seen[key] = true
+		delete(s.textBuffers, key)
 		if i, ok := s.itemIdx[key]; ok && confirmedSteerReceipt(s.items[i], it) && len(it.Attachments) == 0 {
 			it.Attachments = slices.Clone(s.items[i].Attachments)
 		}
@@ -509,6 +528,11 @@ func (s *webSession) rebuildIndex() {
 	for key := range s.itemSeq {
 		if _, ok := s.itemIdx[key]; !ok {
 			delete(s.itemSeq, key)
+		}
+	}
+	for key := range s.textBuffers {
+		if _, ok := s.itemIdx[key]; !ok {
+			delete(s.textBuffers, key)
 		}
 	}
 }
