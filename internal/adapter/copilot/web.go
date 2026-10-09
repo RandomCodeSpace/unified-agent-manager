@@ -1025,7 +1025,8 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 	// Before anything is sent, so no request is decided under another mode.
 	if req.AssistedApprovalModel != "" {
 		if err := c.SetAssistedPermissions(ctx, req.AssistedApprovalModel); err != nil {
-			return nil, errors.Join(fmt.Errorf("apply assisted permissions: %w", err), c.Close(ctx))
+			p.abandonOpen(ctx, client, c, req.ConversationID == "")
+			return nil, fmt.Errorf("apply assisted permissions: %w", err)
 		}
 	}
 	// The Task's custom agent is selected, with the Task's model kept,

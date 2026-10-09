@@ -3,6 +3,7 @@ package copilot
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,9 +43,14 @@ func (s *fakeSession) GetPermissionMode(context.Context) (*rpc.PermissionsGetMod
 
 func openAssisted(t *testing.T, fc *fakeClient, model string) (agentapi.Conversation, error) {
 	t.Helper()
+	return openAssistedConversation(t, fc, "", model)
+}
+
+func openAssistedConversation(t *testing.T, fc *fakeClient, convID, model string) (agentapi.Conversation, error) {
+	t.Helper()
 	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Hour)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
-	return p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: model})
+	return p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: convID, Workdir: "/work", Events: &recSink{}, AssistedApprovalModel: model})
 }
 
 func TestOpenAppliesAssistedPermissionsWithTheExplicitReviewer(t *testing.T) {
@@ -90,16 +96,23 @@ func TestOpenFailsWhenTheRuntimeDoesNotApplyAssistedPermissions(t *testing.T) {
 		},
 		"no result": func(*rpc.PermissionsSetModeRequest) (*rpc.PermissionsSetModeResult, error) { return nil, nil },
 	} {
-		t.Run(name, func(t *testing.T) {
-			fc := &fakeClient{permMode: hook}
-			conv, err := openAssisted(t, fc, "gpt-6-luna")
-			if err == nil || conv != nil || !strings.Contains(err.Error(), "assisted permissions") {
-				t.Fatalf("open = %v, %v", conv, err)
-			}
-			if fs := fc.sessions[0]; !fs.disconnected || len(fs.sent) != 0 {
-				t.Fatalf("refused session stayed open or was used: disconnected %v", fs.disconnected)
-			}
-		})
+		// A session the refused open created is deleted, not left behind;
+		// a resumed one is kept.
+		for open, convID := range map[string]string{"create": "", "resume": "conv"} {
+			t.Run(name+" "+open, func(t *testing.T) {
+				fc := &fakeClient{permMode: hook}
+				conv, err := openAssistedConversation(t, fc, convID, "gpt-6-luna")
+				if err == nil || conv != nil || !strings.Contains(err.Error(), "assisted permissions") {
+					t.Fatalf("open = %v, %v", conv, err)
+				}
+				if fs := fc.sessions[0]; !fs.disconnected || len(fs.sent) != 0 {
+					t.Fatalf("refused session stayed open or was used: disconnected %v", fs.disconnected)
+				}
+				if created := convID == ""; created != slices.Equal(fc.deleted, []string{"s-1"}) || (!created && len(fc.deleted) != 0) {
+					t.Fatalf("deleted %v", fc.deleted)
+				}
+			})
+		}
 	}
 }
 
