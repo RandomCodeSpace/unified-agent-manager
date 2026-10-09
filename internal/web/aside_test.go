@@ -277,3 +277,50 @@ func TestAskAsideRoute(t *testing.T) {
 		t.Fatalf("trailing body = %d", w.Code)
 	}
 }
+
+// An aside waiting for its answer holds a CLI restart back, as a turn does.
+func TestAskAsideKeepsItsConversationThroughACLIRestart(t *testing.T) {
+	m, p, _ := newTestManager(t)
+	sum, base := createSession(t, m, p)
+	c := attachAsideAsker(m, sum.ID, base)
+	entered, release := make(chan struct{}), make(chan struct{})
+	c.during = func(context.Context) {
+		close(entered)
+		<-release
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.AskAside(context.Background(), sum.ID, "what changed?")
+		done <- err
+	}()
+	<-entered
+	m.mu.Lock()
+	s := m.sessions[sum.ID]
+	m.mu.Unlock()
+	busy, suspended := m.cliBusyTasks(p.Name()), m.suspendForCLI(s)
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("aside = %v", err)
+	}
+	if busy != 1 || suspended {
+		t.Fatalf("busy %d, suspended %v: the restart closed a waiting aside", busy, suspended)
+	}
+}
+
+// An aside runs a model on the account, so it is refused like a send when
+// the runtime is signed in to an account other than the linked one.
+func TestAskAsideRefusesAnotherAccount(t *testing.T) {
+	prov := newAccountProvider(true)
+	m := startManager(t, openTestStore(t), prov)
+	sum, base := createSession(t, m, prov.Provider)
+	c := attachAsideAsker(m, sum.ID, base)
+	prov.switchAccount("mallory", agentapi.AccountEnv)
+	later := time.Now().Add(time.Minute)
+	m.now = func() time.Time { return later }
+	if _, err := m.AskAside(context.Background(), sum.ID, "what changed?"); errCode(err) != codeAccountNotLinked {
+		t.Fatalf("aside as another account = %v (code %q)", err, errCode(err))
+	}
+	if q := c.asked(); len(q) != 0 {
+		t.Fatalf("the provider was asked %q", q)
+	}
+}

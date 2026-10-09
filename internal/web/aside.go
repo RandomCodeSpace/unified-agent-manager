@@ -36,6 +36,10 @@ func (m *Manager) AskAside(ctx context.Context, id, question string) (*agentapi.
 	if err != nil {
 		return nil, err
 	}
+	// An aside is a model call on the account, as a send is.
+	if err := m.refuseSignedOut(s); err != nil {
+		return nil, err
+	}
 	s.op.Lock()
 	m.mu.Lock()
 	err = s.readOnlyLocked()

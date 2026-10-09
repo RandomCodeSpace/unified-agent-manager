@@ -10,7 +10,7 @@ import { BottomSheet, LiftedRow } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
-import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
+import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 
 type Asked = { question: string; answer?: AsideAnswer; error?: string };
@@ -52,7 +52,7 @@ function Aside({ session, field }: Readonly<{ session: SessionDetail; field: Ref
       <span className="flex justify-end"><Button size="sm" variant="primary" type="submit" disabled={!draft.trim() || pending}>Ask</Button></span>
     </form>
     {asked && <PanelSection label="Answer" meta={pending ? 'Waiting for the answer…' : asked.answer?.truncated ? 'Shortened' : undefined}>
-      <p className="break-words text-caption text-muted">{asked.question}</p>
+      <Clamp noun="question"><p className="break-words text-caption text-muted">{asked.question}</p></Clamp>
       {asked.error !== undefined ? <p role="status" className="text-caption text-error">{asked.error}</p>
         : asked.answer && <><Markdown text={asked.answer.text} className="text-ui" />{asked.answer.truncated && <p className="text-caption text-muted">The answer was longer; only its start is shown.</p>}</>}
     </PanelSection>}

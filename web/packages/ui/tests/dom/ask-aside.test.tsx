@@ -105,3 +105,17 @@ test('oversized errors are bounded and the phone reader uses the owning API', as
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Ask aside' })).toBeNull());
 });
+
+test('a long question collapses behind "Show the whole question"', async () => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(400);
+  vi.spyOn(api, 'askAside').mockResolvedValue({ text: 'short answer' });
+  try {
+    draw();
+    await ask('a long question');
+    expect(await screen.findByText('short answer')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show the whole question' }).getAttribute('aria-expanded')).toBe('false');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
