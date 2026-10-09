@@ -3597,6 +3597,10 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, fmt.Sprintf("Conversation truncated: %d messages and %d tokens removed.", d.MessagesRemovedDuringTruncation, d.TokensRemovedDuringTruncation)
 	case *rpc.SessionErrorData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Error: "+displaytext.Sanitize(d.Message)
+	case *rpc.SkillInvokedData:
+		return skillNotice(it, ev.ID, d.Name)
+	case *rpc.SkillInvokedRefData:
+		return skillNotice(it, ev.ID, d.Name)
 	case *rpc.ToolExecutionStartData:
 		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
@@ -3660,6 +3664,23 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	default:
 		return it, false
 	}
+	return it, true
+}
+
+func skillNotice(it agentapi.Item, id, name string) (agentapi.Item, bool) {
+	// The name is display metadata, even in a whole-history window. Never
+	// retain the skill body or resolve a recorded body's reference for it.
+	name = clip(strings.TrimSpace(displaytext.Sanitize(name)), 256)
+	if name == "" {
+		return it, false
+	}
+	// Notices render Markdown; a code span keeps the name literal, including
+	// URLs and backticks. Padding is trimmed by the code-span renderer.
+	fence := "`"
+	for strings.Contains(name, fence) {
+		fence += "`"
+	}
+	it.ID, it.Kind, it.Text = id, agentapi.ItemNotice, "Skill: "+fence+" "+name+" "+fence
 	return it, true
 }
 

@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
@@ -639,6 +640,84 @@ func TestWebDeltasAndFinalMessageShareOneItem(t *testing.T) {
 	}
 	if it := evs[2].Item; evs[2].Kind != agentapi.EventItem || it.ID != "m1" || it.Kind != agentapi.ItemAssistant || it.Text != "Hello" {
 		t.Fatalf("final = %+v", evs[2])
+	}
+}
+
+func TestWebSkillInvocationsOnCreateAndResume(t *testing.T) {
+	for _, resume := range []bool{false, true} {
+		t.Run(fmt.Sprintf("resume=%v", resume), func(t *testing.T) {
+			fc := &fakeClient{}
+			p := readerProvider(fc)
+			t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+			sink := &recSink{}
+			req := agentapi.OpenRequest{SessionID: "skills", Events: sink}
+			if resume {
+				req.ConversationID = "skills"
+			}
+			conv, err := p.Open(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal := skillJournal(t)
+			fs := fc.sessions[0]
+			fs.events = journal
+			for _, e := range journal {
+				fs.onEvent(e)
+			}
+			var got []agentapi.Item
+			for _, e := range sink.all() {
+				if e.Kind == agentapi.EventItem {
+					got = append(got, *e.Item)
+				}
+			}
+			want := []agentapi.Item{
+				{ID: "skill-1", Kind: agentapi.ItemNotice, Time: journal[0].Timestamp, Text: "Skill: ` uam `"},
+				{ID: "skill-1", Kind: agentapi.ItemNotice, Time: journal[1].Timestamp, Text: "Skill: ` uam `"},
+				{ID: "skill-2", Kind: agentapi.ItemNotice, Time: journal[2].Timestamp, Text: "Skill: ` uam `"},
+				{ID: "skill-1", Kind: agentapi.ItemNotice, AgentID: "child", Time: journal[3].Timestamp, Text: "Skill: ` review `"},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("live items = %+v, want %+v", got, want)
+			}
+			before := len(sink.all())
+			recorded, err := conv.History(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = []agentapi.Item{want[0], want[2], want[3]}
+			if !reflect.DeepEqual(recorded.Items, want) {
+				t.Fatalf("recorded items = %+v, want %+v", recorded.Items, want)
+			}
+			for _, e := range sink.all()[before:] {
+				if e.Kind == agentapi.EventItem {
+					t.Fatal("History emitted another copy of the skill notices")
+				}
+			}
+		})
+	}
+}
+
+func TestWebSkillNamesAreBoundedDisplayText(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"\x1b[31m uam\x1b[0m\nreview\x00\t", "Skill: ` uam review `"},
+		{"  \n\t\x00", ""},
+		{strings.Repeat("界", 100), "Skill: ` " + strings.Repeat("界", 85) + " `"},
+		{"my_skill*[docs](https://example.test)<b>`", "Skill: `` my_skill*[docs](https://example.test)<b>` ``"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := openWeb(t)
+			h.fs.onEvent(ev("skill", &rpc.SkillInvokedData{Name: tc.name, Path: "/private/SKILL.md", Content: strings.Repeat("private body", 1000)}))
+			items := h.sink.all()
+			if tc.text == "" {
+				if len(items) != 0 {
+					t.Fatalf("empty name emitted %+v", items)
+				}
+				return
+			}
+			if len(items) != 1 || items[0].Kind != agentapi.EventItem || items[0].Item.Text != tc.text || items[0].Item.Clipped || !utf8.ValidString(items[0].Item.Text) {
+				t.Fatalf("name item = %+v", items)
+			}
+		})
 	}
 }
 
