@@ -502,8 +502,8 @@ func TestSessionScopeUnsupportedCappedAndClosed(t *testing.T) {
 	if _, err := m.Close(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Changes(ctx, sum.ID, ScopeSession); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "not open") {
-		t.Fatalf("closed conversation changes = %v, want 409", err)
+	if out, err := m.Changes(ctx, sum.ID, ScopeSession); err != nil || out.Supported || !strings.Contains(out.Reason, "Open this Task") {
+		t.Fatalf("closed conversation changes = %+v, %v, want an unsupported reason", out, err)
 	}
 }
 

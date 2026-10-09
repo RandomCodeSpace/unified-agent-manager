@@ -67,7 +67,7 @@ func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, err
 		files = append(files, agentapi.FileDiff{
 			Path: change.Path, Status: string(change.ChangeType), OldPath: oldPath, Patch: change.Diff,
 			Binary: binary, Truncated: truncated,
-			CountsUnknown: binary || truncated || !recognized && !(change.Diff == "" && change.ChangeType == rpc.WorkspaceDiffFileChangeTypeRenamed),
+			CountsUnknown: binary || truncated || !recognized && (change.Diff != "" || change.ChangeType != rpc.WorkspaceDiffFileChangeTypeRenamed),
 		})
 	}
 	return files, nil
