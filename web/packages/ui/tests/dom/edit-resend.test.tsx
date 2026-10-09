@@ -1,0 +1,107 @@
+import { screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, test, vi } from 'vitest';
+import { api, ApiError, type ResendResult, type RewindPreview } from '../../src/api';
+import * as data from '../../src/mock/data';
+import { composer, openTask } from './render';
+
+function fixture() {
+  const state = data.seed();
+  const source = state.tasks.find(t => t.id === 't3')!;
+  source.capabilities.rewind = true;
+  vi.spyOn(data, 'seed').mockReturnValue(state);
+  const preview: RewindPreview = { user_item_id: 'i5', token: 'token-1', turns: 1, files_available: true, files: { status: 'available', files: 1, additions: 2, deletions: 0, entries: [{ path: `${source.workdir}/cmd/doctor.go`, kind: 'modified', additions: 2 }] } };
+  vi.spyOn(api, 'itemBody').mockImplementation(async (_id, itemId) => ({ seq: 1, epoch: 'e', session_id: 't3', item: source.items.find(i => i.id === itemId)! }));
+  const read = vi.spyOn(api, 'rewindPreview').mockResolvedValue(preview);
+  return { source, preview, read };
+}
+
+const sent: ResendResult = {
+  rewind: { request_id: 'r', user_item_id: 'i5', mode: 'conversation-and-files', state: 'applied', result: { outcome: 'success', events_removed: 4, restored_files: [], skipped_files: [] } },
+  submission: { request_id: 'p', status: 'accepted', time: new Date().toISOString() } as ResendResult['submission'],
+};
+
+/** Opens Edit and resend on the second turn (the prompt with attachments). */
+async function startEdit() {
+  const opened = await openTask('t3');
+  await opened.user.type(composer(), 'My other draft');
+  await opened.user.click(screen.getAllByRole('button', { name: 'Turn actions' })[1]);
+  await opened.user.click(await screen.findByRole('menuitem', { name: 'Edit and resend…' }));
+  const strip = within(await screen.findByRole('group', { name: 'Editing a past prompt' }));
+  await waitFor(() => expect(composer().value).toContain('Does it handle `TERM=dumb`?'));
+  await strip.findByText(/Removes this prompt and its reply · restores 1 file/);
+  return { ...opened, strip };
+}
+
+describe('edit and resend', () => {
+  test('opening parks the draft, prefills the whole prompt and stored attachments; stopping changes nothing', async () => {
+    fixture();
+    const resend = vi.spyOn(api, 'resend');
+    const rewind = vi.spyOn(api, 'rewind');
+    const { user, mock, strip } = await startEdit();
+    expect(within(composer().closest('form')!).getAllByText(/dumb-terminal\.png/).length).toBeGreaterThan(0);
+    expect(strip.getByText(/1 attachment of the original prompt has no stored copy/)).toBeTruthy();
+    await user.click(strip.getByRole('button', { name: 'Stop editing' }));
+    await waitFor(() => expect(composer().value).toBe('My other draft'));
+    expect(screen.queryByRole('group', { name: 'Editing a past prompt' })).toBeNull();
+    // Escape in the box stops editing too.
+    await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[1]);
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit and resend…' }));
+    await waitFor(() => expect(composer().value).toContain('Does it handle'));
+    composer().focus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(composer().value).toBe('My other draft'));
+    expect(resend).not.toHaveBeenCalled();
+    expect(rewind).not.toHaveBeenCalled();
+    expect(mock.received.filter(r => r.route === 'prompt')).toHaveLength(0);
+  });
+
+  test('send rewinds and sends the edit once, then the other draft comes back', async () => {
+    fixture();
+    const resend = vi.spyOn(api, 'resend').mockResolvedValue(sent);
+    const { user } = await startEdit();
+    await user.clear(composer());
+    await user.type(composer(), 'Edited: handle TERM=dumb too');
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await waitFor(() => expect(composer().value).toBe('My other draft'));
+    expect(resend).toHaveBeenCalledTimes(1);
+    const [id, body] = resend.mock.calls[0];
+    expect(id).toBe('t3');
+    expect(body.rewind).toMatchObject({ user_item_id: 'i5', mode: 'conversation-and-files', token: 'token-1' });
+    expect(body.prompt.text).toBe('Edited: handle TERM=dumb too');
+    expect(body.prompt.attachments).toEqual(['att-png-seed1', 'att-txt-seed1']);
+    expect(body.prompt.request_id).not.toBe(body.rewind.request_id);
+    expect(screen.queryByRole('group', { name: 'Editing a past prompt' })).toBeNull();
+  });
+
+  test.each([
+    ['uncertain', { ...sent, submission: undefined, rewind: { ...sent.rewind, state: 'uncertain', result: undefined } }, /result was lost.*not sent/],
+    ['partial', { ...sent, submission: undefined, rewind: { ...sent.rewind, result: { outcome: 'truncation-failed', restored_files: ['/w/a'], skipped_files: [] } } }, /conversation was not rewound\. Your edited prompt was not sent\./],
+    ['send rejected', { ...sent, submission: undefined, send_error: 'attachment is missing' }, /not sent: attachment is missing/],
+  ] as [string, ResendResult, RegExp][])('%s keeps the edited draft and never resends by itself', async (_name, result, message) => {
+    fixture();
+    const resend = vi.spyOn(api, 'resend').mockResolvedValue(result);
+    const { user, strip } = await startEdit();
+    await user.type(composer(), ' edited');
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await strip.findByText(message);
+    expect(composer().value).toContain(' edited');
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(resend).toHaveBeenCalledTimes(1);
+  });
+
+  test('a stale preview is read again and the edit waits for a new send', async () => {
+    const { read } = fixture();
+    const resend = vi.spyOn(api, 'resend').mockRejectedValueOnce(new ApiError(409, 'changed', { code: 'rewind_stale' })).mockResolvedValueOnce(sent);
+    const { user } = await startEdit();
+    const reads = read.mock.calls.length;
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await screen.findByText(/changed\. Check the strip, then send again/);
+    await waitFor(() => expect(read.mock.calls.length).toBeGreaterThan(reads));
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect(composer().value).toContain('Does it handle');
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Rewind and send' }) as HTMLButtonElement).getAttribute('aria-disabled')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Rewind and send' }));
+    await waitFor(() => expect(composer().value).toBe('My other draft'));
+    expect(resend.mock.calls[1][1].rewind.request_id).not.toBe(resend.mock.calls[0][1].rewind.request_id);
+  });
+});

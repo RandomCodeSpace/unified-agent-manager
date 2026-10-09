@@ -937,6 +937,14 @@ export interface RewindReceipt {
   /** The owner released the hold while the outcome stayed unknown. */
   released?: boolean;
 }
+/** Edit and resend: the rewind's receipt, and the edited prompt's submission when it was sent. */
+export interface ResendResult {
+  rewind: RewindReceipt;
+  submission?: Submission;
+  /** Why the edited prompt was not sent after the rewind truncated history. */
+  send_error?: string;
+  send_code?: string;
+}
 export interface RewindStatus {
   request_id: string;
   state: 'pending' | 'applied' | 'uncertain';
@@ -1684,6 +1692,9 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** Executes a confirmed preview once; a repeated request ID returns its receipt. */
     rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind`, body),
     /** Rereads the conversation and releases a Task held by an applied or uncertain rewind; never rewinds again. */
+    /** Rewinds to before an owner prompt, then sends the edited prompt once; nothing is sent unless history was truncated. */
+    resend: (id: string, body: { rewind: { user_item_id: string; mode: RewindMode; token: string; request_id: string }; prompt: { text: string; request_id: string; files?: string[]; attachments?: string[]; settings?: PromptSettings } }) =>
+      call<ResendResult>('POST', `/api/sessions/${enc(id)}/resend`, body),
     reconcileRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
     /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
     releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),

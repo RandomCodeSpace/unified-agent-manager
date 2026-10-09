@@ -30,6 +30,8 @@ import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
 import { ForkPicker } from './Fork';
 import { RewindHold, RewindPanel } from './Rewind';
+import type { Editing } from './EditResend';
+import { CUT } from './Details';
 import { StatusLine, statusLine } from './StatusLine';
 import { FileReferencesProvider } from './FileReferences';
 import { FilePreview, useFilePreview } from './FilePreview';
@@ -281,6 +283,21 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const chooseFork = useCallback((userItemId: string, anchor: HTMLElement | null) => setFork({ userItemId, anchor }), []);
   const [rewindAt, setRewindAt] = useState<{ userItemId: string; anchor: HTMLElement | null } | null>(null);
   const chooseRewind = useCallback((userItemId: string, anchor: HTMLElement | null) => setRewindAt({ userItemId, anchor }), []);
+  // Edit and resend: the whole original prompt is read on demand; entering or leaving edit mode changes only the composer.
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [editError, setEditError] = useState('');
+  const editRead = useRef(0);
+  const stopEditing = useCallback(() => setEditing(null), []);
+  const chooseEdit = useCallback((userItemId: string) => {
+    const read = ++editRead.current;
+    setEditError('');
+    api.itemBody(session.id, userItemId, '').then(({ item }) => {
+      if (read !== editRead.current) return;
+      const text = item.text ?? '';
+      if (item.kind !== 'user' || text.endsWith(CUT)) throw new Error('The full prompt could not be read.');
+      setEditing({ sessionId: session.id, userItemId, text, attachments: item.attachments ?? [], time: item.time, onDone: stopEditing });
+    }).catch((e: unknown) => { if (read === editRead.current) setEditError(`Could not edit that prompt: ${describeError(e)}`); });
+  }, [api, session.id, stopEditing]);
   const alive = useRef(false);
   useEffect(() => {
     alive.current = true;
@@ -847,10 +864,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               changedLine={!noGit}
               onBranch={session.capabilities.fork && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseFork : undefined}
               onRewind={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseRewind : undefined}
+              onEdit={session.capabilities.rewind && session.open && !readOnly(session) && !session.rewind && !answering && active && connected && !live && !session.pending && !session.queued && !session.subagents_running && !session.background_tasks_running ? chooseEdit : undefined}
             />
             </HistoryAnchor>
             {rewindAt && active && connected && <RewindPanel session={session} userItemId={rewindAt.userItemId} anchor={rewindAt.anchor} onClose={() => setRewindAt(null)} />}
             {session.rewind && <RewindHold session={session} />}
+            {editError && <Note tone="error" role="alert">{editError}</Note>}
             {fork && active && connected && <ForkPicker session={session} userItemId={fork.userItemId} anchor={fork.anchor} onClose={() => setFork(null)} onForked={result => { setFork(null); onSessionUpdate(result); actions.select(result.id); }} />}
             {session.history_after && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.direction === 'newer' && historyRequest.loading ? <><Spinner />Loading newer messages…</> : 'Scroll down for newer messages'}</output>}
             {cards.map((i) => (
@@ -872,7 +891,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
         <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
-            <StatusLine line={line} session={session} since={agentsSince} hidden={false} onJump={scrollToBottom} />
+            <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing} onJump={scrollToBottom} />
             <Appear show={jump && !!line} className="shrink-0">
               <Tip label="Jump to bottom">
                 <Button variant="secondary" size="icon" aria-label="Jump to bottom" className="shadow-float" onClick={jumpToBottom}>
@@ -897,7 +916,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               </Button>
             </div>
           )}
-          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} />
+          <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id ? editing : null} />
         </div>
       </div>
 
