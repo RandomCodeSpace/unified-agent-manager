@@ -829,6 +829,8 @@ func TestCompactWindowAccountingMatchesBrowser(t *testing.T) {
 		{ID: "ask", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: "<\n界", Output: "😀", Status: agentapi.ToolCompleted}},
 		{ID: "shell", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"make"}`, Output: "hidden", Tail: []agentapi.OutputLine{{Text: "ok 界"}, {Text: "", Err: true}, {Text: "warn 😀", Err: true}}}},
 		{ID: "thought", Kind: agentapi.ItemReasoning, Text: "hidden"},
+		{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Completion blocked", Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, UserItemID: "user😀", Summary: "Summary界", Reason: "reason", Blocker: &agentapi.CompletionBlocker{Kind: "permission", Reason: "denied", Resumable: true}}},
+		{ID: "accepted", Kind: agentapi.ItemNotice, Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionAccepted}},
 	} {
 		projected := projectItem(it)
 		raw, err := json.Marshal(projected)

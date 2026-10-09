@@ -843,12 +843,42 @@ const (
 	ItemNotice ItemKind = "notice"
 )
 
+// CompletionDecision is the provider's response to a completion request.
+type CompletionDecision string
+
+const (
+	CompletionAccepted CompletionDecision = "accepted"
+	CompletionRejected CompletionDecision = "rejected"
+	CompletionBlocked  CompletionDecision = "blocked"
+	CompletionUnknown  CompletionDecision = "unknown"
+)
+
+// TaskCompletion preserves label-safe native facts. UserItemID is the exact
+// ordinary user-message ID; empty means the receipt cannot be correlated.
+type TaskCompletion struct {
+	Decision   CompletionDecision `json:"decision"`
+	UserItemID string             `json:"user_item_id,omitempty"`
+	Summary    string             `json:"summary,omitempty"`
+	Reason     string             `json:"reason,omitempty"`
+	Blocker    *CompletionBlocker `json:"blocker,omitempty"`
+}
+
+// CompletionBlocker omits opaque permission-recovery data.
+type CompletionBlocker struct {
+	Kind      string `json:"kind"`
+	Reason    string `json:"reason"`
+	Resumable bool   `json:"resumable"`
+}
+
 // Item is one transcript entry. Text is untrusted provider output.
 type Item struct {
 	ID   string    `json:"id"`
 	Kind ItemKind  `json:"kind"`
 	Text string    `json:"text,omitempty"`
 	Tool *ToolCall `json:"tool,omitempty"`
+	// Completion is a provider's bounded completion decision, preserved as
+	// a notice. It is separate from the foreground turn's lifecycle.
+	Completion *TaskCompletion `json:"completion,omitempty"`
 	// Time is when the item began: a tool call's start, a thought's model
 	// call start, a message's first text.
 	Time time.Time `json:"time"`
@@ -975,7 +1005,10 @@ const (
 
 // Turn reports a turn transition with evidence from the provider.
 type Turn struct {
-	State TurnState `json:"state"`
+	// Completion is the main agent's receipt from this foreground event
+	// generation only. Consumers must also match its UserItemID.
+	Completion *TaskCompletion `json:"completion,omitempty"`
+	State      TurnState       `json:"state"`
 	// Error is the sanitized provider error for TurnFailed.
 	Error string `json:"error,omitempty"`
 	// Model is the model the provider reported for this turn, when known.

@@ -28,6 +28,8 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	m.upsertItemLocked(s, agentapi.Item{ID: "tool", Kind: agentapi.ItemTool,
 		Tool:   &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolRunning, ExitCode: &exit, Tail: []agentapi.OutputLine{{Text: "old"}}, Declaration: &agentapi.FileDeclaration{ArtifactID: "old", Path: "old"}},
 		Images: []agentapi.Image{{ID: "old"}}, Attachments: []agentapi.Attachment{{ID: "old"}}}, false)
+	m.upsertItemLocked(s, agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice,
+		Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, Summary: "old", Blocker: &agentapi.CompletionBlocker{Kind: "old", Reason: "old"}}}, false)
 	s.interactions = []*interaction{{Interaction: agentapi.Interaction{ID: "question", Kind: agentapi.InteractionQuestion, State: agentapi.InteractionPending,
 		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"}}}}}}
 	s.subagents = []*agentapi.Subagent{{ID: "child", Status: agentapi.SubagentRunning, Runs: []agentapi.SubagentRun{{Trigger: "old"}}, Retry: &agentapi.Retry{Reason: "old"}}}
@@ -45,6 +47,7 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.context.Used, s.usage.AIUnits, s.execution.Objective.Objective = 9, 9, "changed"
 		s.items[0].Tool.Tail[0].Text, s.items[0].Tool.Declaration.Path = "changed", "changed"
 		s.items[0].Images[0].ID, s.items[0].Attachments[0].ID = "changed", "changed"
+		s.items[1].Completion.Summary, s.items[1].Completion.Blocker.Kind = "changed", "changed"
 		s.interactions[0].Options[0].ID, s.interactions[0].Questions[0].Text, s.interactions[0].Questions[0].Choices[0] = "changed", "changed", "changed"
 		s.subagents[0].Runs[0].Trigger, s.subagents[0].Retry.Reason = "changed", "changed"
 		s.queue[0].Files[0], s.queue[0].Attachments[0].ID = "changed", "changed"
