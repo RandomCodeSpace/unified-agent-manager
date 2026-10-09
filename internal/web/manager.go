@@ -2236,6 +2236,22 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 				s.context = &usage
 			}
 		}
+	case agentapi.EventModelSelection:
+		if selection := ev.ModelSelection; selection != nil && validModelSelectionID(selection.Model, maxNameRunes) {
+			s.model = strings.Clone(selection.Model)
+			if selection.Model == "auto" {
+				// Auto forbids authored per-model options. Normalize the
+				// selection for reopen; retain native context usage/capacity.
+				s.effort, s.contextSize = "", "default"
+			} else {
+				if selection.Effort != nil && (*selection.Effort == "" || validModelSelectionID(*selection.Effort, 64)) && m.validateSelectionLocked(s.provider, selection.Model, *selection.Effort, "default") == nil {
+					s.effort = strings.Clone(*selection.Effort)
+				}
+				if selection.ContextSize != nil && validModelSelectionID(*selection.ContextSize, 64) && m.validateSelectionLocked(s.provider, selection.Model, "", *selection.ContextSize) == nil {
+					s.contextSize = strings.Clone(*selection.ContextSize)
+				}
+			}
+		}
 	case agentapi.EventCompaction:
 		s.compacting = ev.Compacting
 	case agentapi.EventActivity:
@@ -2274,6 +2290,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		log.Warn("web provider conversation exited", "session", s.id, "provider", s.provider)
 	}
 	m.changedLocked(s, before)
+}
+
+func validModelSelectionID(value string, limit int) bool {
+	return value != "" && len(value) <= limit && utf8.ValidString(value) && strings.IndexFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
