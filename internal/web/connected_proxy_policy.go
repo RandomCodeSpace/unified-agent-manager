@@ -113,6 +113,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/sessions/{id}/rerun",
 		"POST /api/sessions/{id}/rewind",
 		"POST /api/sessions/{id}/rewind/reconcile",
+		"POST /api/sessions/{id}/rewind/release",
 		"POST /api/sessions/{id}/settle",
 		"POST /api/sessions/{id}/subagents/{agent_id}/cancel",
 		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
@@ -148,6 +149,7 @@ func connectedAccountGated(pattern string) bool {
 		"POST /api/sessions/{id}/queue/resume",
 		"POST /api/sessions/{id}/rerun",
 		"POST /api/sessions/{id}/rewind",
+		"POST /api/sessions/{id}/rewind/release",
 		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
 		"POST /api/sessions/{id}/suggestions":
 		return true

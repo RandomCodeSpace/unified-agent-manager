@@ -25,6 +25,7 @@ const UNAVAILABLE: Record<string, string> = {
   'file-change-tracking-disabled': 'This conversation does not track file changes.',
   'unsupported-remote-session': 'File restore is not supported for this conversation.',
 };
+export const RELEASE_REWIND = 'The conversation could not be read back to settle this rewind. You can release the task without knowing what the rewind did: the conversation may already be shortened and files may be partly restored. Check them before you continue; uam does not rewind again.';
 export const UNCERTAIN_REWIND = 'The rewind result was lost. The conversation and files may or may not have changed, and uam will not try again. Check the files, then reread the conversation.';
 
 /** Every native outcome in words. */
@@ -161,18 +162,22 @@ export function RewindHold({ session }: Readonly<{ session: SessionSummary }>) {
   const [error, setError] = useState('');
   const hold = session.rewind;
   if (!hold) return null;
-  const reconcile = () => {
+  const run = (op: (id: string, requestId: string) => Promise<unknown>) => {
     setBusy(true);
     setError('');
-    api.reconcileRewind(session.id, hold.request_id).catch((e: unknown) => setError(describeError(e))).finally(() => setBusy(false));
+    op(session.id, hold.request_id).catch((e: unknown) => setError(describeError(e))).finally(() => setBusy(false));
   };
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Note tone={hold.state === 'uncertain' ? 'warn' : 'info'} role="status" className="min-w-0 flex-1">
         {hold.state === 'uncertain' ? UNCERTAIN_REWIND : 'Rereading the conversation after the rewind. Sending waits until it is read.'}
       </Note>
-      <Button size="sm" variant="secondary" onClick={reconcile} loading={busy}>Reread conversation</Button>
+      <Button size="sm" variant="secondary" onClick={() => run(api.reconcileRewind)} loading={busy}>Reread conversation</Button>
       {error && <Note tone="error" role="alert" className="basis-full">{error}</Note>}
+      {hold.reconcile_failed && <>
+        <Note tone="warn" className="basis-full">{RELEASE_REWIND}</Note>
+        <Button size="sm" variant="danger" onClick={() => run(api.releaseRewind)} loading={busy}>Release task</Button>
+      </>}
     </div>
   );
 }

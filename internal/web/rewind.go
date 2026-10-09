@@ -49,11 +49,14 @@ type RewindRequest struct {
 
 // RewindReceipt is the recorded state and native result of one request.
 type RewindReceipt struct {
-	RequestID  string                 `json:"request_id"`
-	UserItemID string                 `json:"user_item_id"`
-	Mode       string                 `json:"mode"`
-	State      string                 `json:"state"`
-	Result     *agentapi.RewindResult `json:"result,omitempty"`
+	RequestID       string                 `json:"request_id"`
+	UserItemID      string                 `json:"user_item_id"`
+	Mode            string                 `json:"mode"`
+	State           string                 `json:"state"`
+	Result          *agentapi.RewindResult `json:"result,omitempty"`
+	ReconcileFailed bool                   `json:"reconcile_failed,omitempty"`
+	// Released means the owner cleared the hold with the outcome unknown.
+	Released bool `json:"released,omitempty"`
 }
 
 // RewindStatus is the summary of a receipt that still holds the Task.
@@ -62,6 +65,8 @@ type RewindStatus struct {
 	State     string `json:"state"`
 	Mode      string `json:"mode"`
 	Outcome   string `json:"outcome,omitempty"`
+	// ReconcileFailed offers the explicit release.
+	ReconcileFailed bool `json:"reconcile_failed,omitempty"`
 }
 
 var errRewindUnreconciled = &Error{Status: http.StatusConflict, Code: "rewind_unreconciled", Message: "the last rewind must be reconciled first: reread the conversation and check the files"}
@@ -81,11 +86,11 @@ func (s *webSession) rewindSummary() RewindStatus {
 	}
 	var res agentapi.RewindResult
 	_ = json.Unmarshal(r.Result, &res)
-	return RewindStatus{RequestID: r.RequestID, State: r.State, Mode: r.Mode, Outcome: res.Outcome}
+	return RewindStatus{RequestID: r.RequestID, State: r.State, Mode: r.Mode, Outcome: res.Outcome, ReconcileFailed: r.ReconcileFailed}
 }
 
 func receiptOf(r *store.WebRewind) RewindReceipt {
-	out := RewindReceipt{RequestID: r.RequestID, UserItemID: r.UserItemID, Mode: r.Mode, State: r.State}
+	out := RewindReceipt{RequestID: r.RequestID, UserItemID: r.UserItemID, Mode: r.Mode, State: r.State, ReconcileFailed: r.ReconcileFailed, Released: r.Released}
 	if len(r.Result) > 0 {
 		var res agentapi.RewindResult
 		if json.Unmarshal(r.Result, &res) == nil {
@@ -435,6 +440,84 @@ func (m *Manager) rereadRewindLocked(s *webSession) {
 // rewind: it checks whether the boundary is still recorded, rereads the
 // record and only then releases the Task. It never repeats the rewind.
 func (m *Manager) ReconcileRewind(id, requestID string) (RewindReceipt, error) {
+	out, err := m.reconcileRewind(id, requestID)
+	if err != nil && !errors.Is(err, errNoRewindRequest) {
+		m.reconcileFailed(id, requestID)
+	}
+	return out, err
+}
+
+var errNoRewindRequest = newError(http.StatusNotFound, "no such rewind request on this task")
+
+// reconcileFailed records that the record could not establish the outcome,
+// which offers the owner's explicit release.
+func (m *Manager) reconcileFailed(id, requestID string) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s.rewind == nil || s.rewind.RequestID != requestID || s.rewind.State == rewindDone || s.rewind.ReconcileFailed {
+		return
+	}
+	before := m.summaryLocked(s)
+	rec := s.rewind.Clone()
+	rec.ReconcileFailed = true
+	s.rewind = rec
+	m.dirty[s.id] = struct{}{}
+	m.changedLocked(s, before)
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+// ReleaseRewind clears a hold whose reconcile failed, without any native
+// history request. The outcome stays unknown and is recorded so; nothing is
+// pruned. The record is read again afterwards.
+func (m *Manager) ReleaseRewind(id, requestID string) (RewindReceipt, error) {
+	s, err := m.lookup(id)
+	if err != nil {
+		return RewindReceipt{}, err
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	m.mu.Lock()
+	r := s.rewind
+	switch {
+	case s.removed:
+		m.mu.Unlock()
+		return RewindReceipt{}, newError(http.StatusNotFound, msgSessionNotFound)
+	case r == nil || r.RequestID != requestID:
+		m.mu.Unlock()
+		return RewindReceipt{}, errNoRewindRequest
+	case r.State == rewindDone:
+		defer m.mu.Unlock()
+		return receiptOf(r), nil
+	case !r.ReconcileFailed:
+		m.mu.Unlock()
+		return RewindReceipt{}, newError(http.StatusConflict, "reread the conversation first; release is offered only when that fails")
+	}
+	before := m.summaryLocked(s)
+	rec := r.Clone()
+	rec.State, rec.Released, rec.Discarded = rewindDone, true, nil
+	s.rewind = rec
+	conv := m.resetRewoundLocked(s)
+	m.dirty[s.id] = struct{}{}
+	m.changedLocked(s, before)
+	out := receiptOf(rec)
+	m.mu.Unlock()
+	if conv != nil {
+		m.closeConversation(conv)
+	}
+	if err := m.flush(); err != nil {
+		log.Warn("persist released rewind failed", "session", id, "error", err)
+	}
+	return out, nil
+}
+
+func (m *Manager) reconcileRewind(id, requestID string) (RewindReceipt, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return RewindReceipt{}, err
@@ -446,7 +529,7 @@ func (m *Manager) ReconcileRewind(id, requestID string) (RewindReceipt, error) {
 	prov, convID := m.providers[s.provider], s.convID
 	m.mu.Unlock()
 	if rec == nil || rec.RequestID != requestID {
-		return RewindReceipt{}, newError(http.StatusNotFound, "no such rewind request on this task")
+		return RewindReceipt{}, errNoRewindRequest
 	}
 	if rec.State == rewindDone {
 		return receiptOf(rec), nil
@@ -506,6 +589,21 @@ func (m *Manager) ReconcileRewind(id, requestID string) (RewindReceipt, error) {
 	m.dirty[s.id] = struct{}{}
 	m.changedLocked(s, before)
 	return receiptOf(out), nil
+}
+
+func (s *Server) handleRewindRelease(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RequestID string `json:"request_id"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	out, err := s.m.ReleaseRewind(r.PathValue("id"), req.RequestID)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleRewindPreview(w http.ResponseWriter, r *http.Request) {

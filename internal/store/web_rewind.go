@@ -18,7 +18,12 @@ type WebRewind struct {
 	State       string          `json:"state"`
 	Discarded   []string        `json:"discarded,omitempty"`
 	Result      json.RawMessage `json:"result,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
+	// ReconcileFailed marks a reconcile that could not reread the record;
+	// only then may the owner release the hold. Released records that the
+	// hold was cleared without knowing what the rewind did.
+	ReconcileFailed bool      `json:"reconcile_failed,omitempty"`
+	Released        bool      `json:"released,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // Clone gives each holder its own lists.

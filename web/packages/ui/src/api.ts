@@ -933,12 +933,17 @@ export interface RewindReceipt {
   /** pending and applied clear after the conversation is read again; uncertain only by an explicit reconcile. */
   state: 'pending' | 'applied' | 'uncertain' | 'done';
   result?: RewindResult;
+  reconcile_failed?: boolean;
+  /** The owner released the hold while the outcome stayed unknown. */
+  released?: boolean;
 }
 export interface RewindStatus {
   request_id: string;
   state: 'pending' | 'applied' | 'uncertain';
   mode: RewindMode;
   outcome?: string;
+  /** The reread could not establish the outcome: the explicit release is offered. */
+  reconcile_failed?: boolean;
 }
 
 export interface TurnChangeCounts {
@@ -1680,6 +1685,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     rewind: (id: string, body: { user_item_id: string; mode: RewindMode; token: string; request_id: string }) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind`, body),
     /** Rereads the conversation and releases a Task held by an applied or uncertain rewind; never rewinds again. */
     reconcileRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/reconcile`, { request_id: requestId }),
+    /** Only after a failed reconcile: clears the hold with the outcome unknown; no history request is made. */
+    releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
     prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>

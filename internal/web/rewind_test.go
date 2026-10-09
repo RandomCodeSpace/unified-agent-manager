@@ -393,3 +393,66 @@ func TestRewindRefusesAConversationHeldElsewhere(t *testing.T) {
 		t.Fatal("a conversation held elsewhere was rewound")
 	}
 }
+
+func TestRewindReleaseOnlyAfterAFailedReconcile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"ambiguous boundary", errors.New("the recorded branch boundary is ambiguous")},
+		{"missing conversation", agentapi.ErrConversationNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, p, st, sum, rc := rewindManager(t)
+			rc.rewind = func(string, string) (agentapi.RewindResult, error) {
+				return agentapi.RewindResult{}, fmt.Errorf("%w: lost", agentapi.ErrRewindUncertain)
+			}
+			req := RewindRequest{UserItemID: "u-second", Mode: agentapi.RewindConversationAndFiles, Token: previewToken(t, m, sum.ID), RequestID: mustUUID(t)}
+			if got, err := m.Rewind(sum.ID, req); err != nil || got.State != rewindUncertain {
+				t.Fatalf("rewind = %+v, %v", got, err)
+			}
+			if _, err := m.ReleaseRewind(sum.ID, req.RequestID); statusOf(err) != http.StatusConflict {
+				t.Fatalf("release before a failed reconcile = %v", err)
+			}
+			p.readHook = func(agentapi.ForkBoundaryRequest) error { return tc.err }
+			if _, err := m.ReconcileRewind(sum.ID, req.RequestID); err == nil {
+				t.Fatal("reconcile established an unreadable boundary")
+			}
+			if d := detail(t, m, sum.ID); d.Rewind.State != rewindUncertain || !d.Rewind.ReconcileFailed {
+				t.Fatalf("after failed reconcile = %+v", d.Rewind)
+			}
+			if err := m.flush(); err != nil {
+				t.Fatal(err)
+			}
+			if r := storedRewind(t, st, sum.ID); r == nil || !r.ReconcileFailed {
+				t.Fatalf("stored = %+v", r)
+			}
+			if _, err := m.Submit(sum.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend}); !errors.Is(err, errRewindUnreconciled) {
+				t.Fatalf("send while held = %v", err)
+			}
+			if _, err := m.ReleaseRewind(sum.ID, mustUUID(t)); statusOf(err) != http.StatusNotFound {
+				t.Fatalf("other request = %v", err)
+			}
+			got, err := m.ReleaseRewind(sum.ID, req.RequestID)
+			if err != nil || got.State != rewindDone || !got.Released || got.Result != nil {
+				t.Fatalf("release = %+v, %v", got, err)
+			}
+			if rc.rewinds() != 1 {
+				t.Fatal("release repeated the native rewind")
+			}
+			if users := timingUsers(m, sum.ID); len(users) != 3 {
+				t.Fatalf("release pruned timings without proof: %v", users)
+			}
+			waitUntil(t, "history refreshed after release", func() bool {
+				d, _ := m.Detail(sum.ID)
+				return d.History == HistoryLoaded && d.Rewind == (RewindStatus{})
+			})
+			if r := storedRewind(t, st, sum.ID); r == nil || !r.Released || r.State != rewindDone {
+				t.Fatalf("stored = %+v", r)
+			}
+			if _, err := m.Submit(sum.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+				t.Fatalf("send after release = %v", err)
+			}
+		})
+	}
+}

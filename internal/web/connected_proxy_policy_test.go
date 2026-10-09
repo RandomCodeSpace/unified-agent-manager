@@ -23,6 +23,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/sessions/task/rewind/preview", true},
 		{"POST", "/api/sessions/task/rewind", true},
 		{"POST", "/api/sessions/task/rewind/reconcile", true},
+		{"POST", "/api/sessions/task/rewind/release", true},
+		{"GET", "/api/sessions/task/rewind/release", false},
 		{"GET", "/api/sessions/task/rewind", false},
 		{"DELETE", "/api/sessions/task/rewind", false},
 		{"GET", "/api/events", true},

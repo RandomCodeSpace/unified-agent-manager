@@ -119,3 +119,23 @@ describe('native rewind', () => {
     expect(rewind).not.toHaveBeenCalled();
   });
 });
+
+describe('native rewind release', () => {
+  test('release is offered only after a failed reread and calls only the release route', async () => {
+    fixture(task => { task.rewind = { request_id: 'held-request', state: 'uncertain', mode: 'conversation', reconcile_failed: true }; });
+    const release = vi.spyOn(api, 'releaseRewind').mockResolvedValue({ request_id: 'held-request', user_item_id: 'i1', mode: 'conversation', state: 'done', released: true });
+    const rewind = vi.spyOn(api, 'rewind');
+    const { user } = await openTask('t3');
+    await screen.findByText(/may already be shortened and files may be partly restored/);
+    await user.click(screen.getByRole('button', { name: 'Release task' }));
+    await waitFor(() => expect(release).toHaveBeenCalledWith('t3', 'held-request'));
+    expect(rewind).not.toHaveBeenCalled();
+  });
+
+  test('no release before a reread failed', async () => {
+    fixture(task => { task.rewind = { request_id: 'held-request', state: 'uncertain', mode: 'conversation' }; });
+    await openTask('t3');
+    await screen.findByRole('button', { name: 'Reread conversation' });
+    expect(screen.queryByRole('button', { name: 'Release task' })).toBeNull();
+  });
+});

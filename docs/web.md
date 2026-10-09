@@ -970,7 +970,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   conversation, so a partial result can leave restored files with the
   conversation unchanged. If the result is lost, the Task says so and refuses
   new messages, branches and rewinds until you choose **Reread conversation**;
-  UAM never repeats the rewind itself. Recorded usage stays counted.
+  UAM never repeats the rewind itself. If that reread cannot settle the
+  outcome, **Release task** clears the hold without touching the history: the
+  conversation may already be shortened and files partly restored, and UAM
+  records that the outcome stayed unknown. Recorded usage stays counted.
 - **Run again and Try with another model**: the Task's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
   again**, which starts a new Task in the same Project with the same model,
