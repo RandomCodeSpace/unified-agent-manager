@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { answerFromComposer, answerPlaceholder, canAnswer, recommendedChoice } from '../src/lib/answer.ts';
+import { answerFromComposer, answerPlaceholder, canAnswer, fieldHint, initialChoice, recommendedChoice } from '../src/lib/answer.ts';
 
 const both = { custom: true };
 const optionsOnly = { custom: false };
@@ -46,4 +46,30 @@ test('the recommended option is the first whose label ends with "(Recommended)",
   assert.equal(recommendedChoice(['Recommended defaults', '(Recommended) first', 'npm']), undefined);
   assert.equal(recommendedChoice([]), undefined);
   assert.equal(recommendedChoice(undefined), undefined);
+});
+
+const optionalCount = { custom: true, field: { name: 'count', type: 'integer', minimum: 1, maximum: 5 } };
+const requiredName = { custom: true, field: { name: 'name', type: 'string', required: true, min_length: 2 } };
+
+test('an optional form field may be sent empty; a required one may not', () => {
+  assert.equal(canAnswer(optionalCount, [], ''), true);
+  assert.deepEqual(answerFromComposer(optionalCount, '  ', []), [[]]);
+  assert.deepEqual(answerFromComposer(optionalCount, '3', []), [['3']]);
+  assert.equal(canAnswer(requiredName, [], ''), false);
+  assert.equal(answerFromComposer(requiredName, '', []), null);
+});
+
+test('a form field starts with nothing staged, even a choice', () => {
+  assert.equal(initialChoice({ choices: ['Yes', 'No'], field: { name: 'ok', type: 'boolean' } }), undefined);
+  assert.equal(initialChoice({ choices: ['Yes', 'No'] }), 'Yes');
+});
+
+test('a form field says what it takes', () => {
+  assert.equal(answerPlaceholder(optionalCount, false), 'Type a number, or leave it empty…');
+  assert.equal(answerPlaceholder(requiredName, false), 'Type your answer…');
+  assert.equal(fieldHint(optionalCount.field), 'Optional · whole number · 1 to 5');
+  assert.equal(fieldHint(requiredName.field), 'Required · at least 2 characters');
+  assert.equal(fieldHint({ name: 'e', type: 'string', format: 'email', max_length: 80 }), 'Optional · email address · at most 80 characters');
+  assert.equal(fieldHint({ name: 't', type: 'array', required: true, max_items: 2 }), 'Required · at most 2 choices');
+  assert.equal(fieldHint(undefined), null);
 });

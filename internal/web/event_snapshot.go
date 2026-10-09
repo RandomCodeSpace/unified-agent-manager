@@ -83,12 +83,7 @@ func snapshotDetail(detail SessionDetail) SessionDetail {
 		detail.Items[i] = snapshotBody(detail.Items[i])
 	}
 	for i := range detail.Interactions {
-		interaction := &detail.Interactions[i]
-		interaction.Options = slices.Clone(interaction.Options)
-		interaction.Questions = slices.Clone(interaction.Questions)
-		for j := range interaction.Questions {
-			interaction.Questions[j].Choices = slices.Clone(interaction.Questions[j].Choices)
-		}
+		cloneInteraction(&detail.Interactions[i])
 	}
 	for i := range detail.Subagents {
 		detail.Subagents[i] = snapshotSubagent(detail.Subagents[i])

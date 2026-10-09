@@ -827,6 +827,32 @@ export interface Question {
   choices?: string[];
   multiple?: boolean;
   custom: boolean;
+  /** The typed form field this question asks for, on an elicitation form only. */
+  field?: FormField;
+}
+
+/** One form field; the service checks every bound again before the provider sees the answer. */
+export interface FormField {
+  name: string;
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'array';
+  /** An optional field may be left empty. */
+  required?: boolean;
+  format?: 'email' | 'uri' | 'date' | 'date-time';
+  minimum?: number;
+  maximum?: number;
+  min_length?: number;
+  max_length?: number;
+  min_items?: number;
+  max_items?: number;
+}
+
+/** A question that stands for a provider's form or link (an MCP elicitation). */
+export interface Elicitation {
+  mode: 'form' | 'url';
+  /** Who asked, such as an MCP server. */
+  source?: string;
+  /** URL mode: the https page the user opens themselves; UAM never opens or fetches it. */
+  url?: string;
 }
 
 export interface Interaction {
@@ -844,6 +870,7 @@ export interface Interaction {
   tool_call_id?: string;
   /** Yolo mode is answering this pending request: it does not wait for the user. */
   auto?: boolean;
+  elicitation?: Elicitation;
 }
 
 /** A summary's `ask`: a permission's title, or the first line of a question's first prompt. The Task's detail holds the request whole. */
@@ -856,6 +883,8 @@ export interface Answer {
   decision?: string;
   answers?: string[][];
   reject?: boolean;
+  /** Dismisses an elicitation without declining it. */
+  cancel?: boolean;
 }
 
 export type PromptMode = 'send' | 'steer' | 'queue';

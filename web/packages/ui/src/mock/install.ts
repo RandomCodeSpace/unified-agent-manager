@@ -1181,13 +1181,15 @@ export function install(): { received: Received[] } {
       if (!t || !i) return fail(404, 'interaction not found');
       received.push({ route: 'answer', session: t.id, body });
       if (i.state !== 'pending') return fail(409, 'already resolved');
-      const reject = body.reject === true || (typeof body.decision === 'string' && !!i.options?.find((o) => o.id === body.decision)?.reject);
+      const reject = body.reject === true || body.cancel === true || (typeof body.decision === 'string' && !!i.options?.find((o) => o.id === body.decision)?.reject);
       const resolution =
         typeof body.decision === 'string'
           ? (i.options?.find((o) => o.id === body.decision)?.label ?? body.decision)
-          : Array.isArray(body.answers)
-            ? (body.answers as string[][]).flat().join(', ')
-            : 'Declined';
+          : body.cancel === true
+            ? 'cancelled'
+            : Array.isArray(body.answers)
+              ? (body.answers as string[][]).flat().join(', ')
+              : 'Declined';
       const next = resolve(t, i, reject ? 'rejected' : 'answered', resolution);
       touch(t, { state: 'working', pending: 0 });
       void reply(t, reject ? 'Understood, I will not do that. Wrapping up with what I have.' : 'Thanks. Applied that and finished the change.');
@@ -1301,6 +1303,7 @@ function askOf(interactions: readonly Interaction[]): Ask | undefined {
   if (!i) return undefined;
   const line = (text = '') => text.trim().split('\n')[0] ?? '';
   if (i.kind === 'permission') return { kind: i.kind, title: i.title };
+  if (i.elicitation) return { kind: i.kind, title: line(i.detail) || i.title };
   const q = i.questions?.[0];
   return { kind: i.kind, title: line(q?.text) || q?.header || i.title };
 }

@@ -175,7 +175,7 @@ func (f *fakeClient) CreateSession(_ context.Context, cfg *copilot.SessionConfig
 	if id == "" {
 		id = fmt.Sprintf("created-%d", len(f.sessions)+1)
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, reply: f.reply, catalog: f.catalog, catalogErr: f.catalogErr, catalogHook: f.catalogHook, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors}
 	f.create = append(f.create, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -187,7 +187,7 @@ func (f *fakeClient) ResumeSession(_ context.Context, id string, cfg *copilot.Re
 	if f.resumeErr != nil {
 		return nil, f.resumeErr
 	}
-	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
+	s := &fakeSession{id: id, onEvent: cfg.OnEvent, askUser: cfg.OnUserInputRequest, elicit: cfg.OnElicitationRequest, perm: cfg.OnPermissionRequest, catalog: f.catalog, catalogErr: f.catalogErr, toolCatalogs: f.toolCatalogs, setToolErrors: f.setToolErrors, todoRows: f.todos}
 	f.resume = append(f.resume, cfg)
 	f.sessions = append(f.sessions, s)
 	return s, nil
@@ -211,6 +211,7 @@ type fakeSession struct {
 	id      string
 	onEvent copilot.SessionEventHandler
 	askUser copilot.UserInputHandler
+	elicit  copilot.ElicitationHandler
 	perm    copilot.PermissionHandlerFunc
 
 	mu        sync.Mutex

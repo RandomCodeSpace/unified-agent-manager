@@ -31,7 +31,9 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 	m.upsertItemLocked(s, agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice,
 		Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, Summary: "old", Blocker: &agentapi.CompletionBlocker{Kind: "old", Reason: "old"}}}, false)
 	s.interactions = []*interaction{{Interaction: agentapi.Interaction{ID: "question", Kind: agentapi.InteractionQuestion, State: agentapi.InteractionPending,
-		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"}}}}}}
+		Options: []agentapi.Option{{ID: "old"}}, Questions: []agentapi.Question{{Text: "old", Choices: []string{"old"},
+			Field: &agentapi.Field{Name: "old", Values: []string{"old"}, Minimum: &price, MaxLength: &limit}}},
+		Elicitation: &agentapi.Elicitation{Mode: agentapi.ElicitationURL, URL: "https://old.example"}}}}
 	s.subagents = []*agentapi.Subagent{{ID: "child", Status: agentapi.SubagentRunning, Runs: []agentapi.SubagentRun{{Trigger: "old"}}, Retry: &agentapi.Retry{Reason: "old"}}}
 	s.queue = []QueuedPrompt{{Files: []string{"old"}, Attachments: []agentapi.Attachment{{ID: "old"}}}}
 	s.last = &Submission{CommandResult: &agentapi.CommandResult{Options: []agentapi.CommandOption{{Name: "old"}}}}
@@ -49,6 +51,9 @@ func snapshotFixture(t *testing.T) (*Manager, string, func()) {
 		s.items[0].Images[0].ID, s.items[0].Attachments[0].ID = "changed", "changed"
 		s.items[1].Completion.Summary, s.items[1].Completion.Blocker.Kind = "changed", "changed"
 		s.interactions[0].Options[0].ID, s.interactions[0].Questions[0].Text, s.interactions[0].Questions[0].Choices[0] = "changed", "changed", "changed"
+		field := s.interactions[0].Questions[0].Field
+		field.Name, field.Values[0], *field.Minimum, *field.MaxLength = "changed", "changed", 9, 9
+		s.interactions[0].Elicitation.URL = "https://changed.example"
 		s.subagents[0].Runs[0].Trigger, s.subagents[0].Retry.Reason = "changed", "changed"
 		s.queue[0].Files[0], s.queue[0].Attachments[0].ID = "changed", "changed"
 		s.last.CommandResult.Options[0].Name, s.turnActivity.Retry.Reason, s.turnActivity.Todos.Todos[0].ID = "changed", "changed", "changed"
