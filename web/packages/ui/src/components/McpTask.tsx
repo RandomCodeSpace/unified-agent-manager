@@ -114,7 +114,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
             Sign in
           </Button>
         )}
-        {s.status === 'connected' && s.remote && (
+        {s.status === 'connected' && s.sign_in && (
           <Button size="sm" disabled={busy || signingIn} onClick={() => onSignIn(true)}>
             Sign in again
           </Button>
@@ -155,7 +155,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
  * reloads the conversation's configuration for its next turn.
  */
 function snapshotOf(result: McpTaskStatus): McpStatusSnapshot {
-  return result.mcp_status ?? { supported: false, ready: true, servers: result.servers.map(({ name, status, error, source, remote, needs_reconnect }) => ({ name, status, error, source, remote, needs_reconnect })) };
+  return result.mcp_status ?? { supported: false, ready: true, servers: result.servers.map(({ name, status, error, source, remote, sign_in, needs_reconnect }) => ({ name, status, error, source, remote, sign_in, needs_reconnect })) };
 }
 
 export function McpTaskDialog({ sessionId, snapshot, onClose }: Readonly<{ sessionId: string; snapshot?: McpStatusSnapshot; onClose: () => void }>) {

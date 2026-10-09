@@ -1578,6 +1578,8 @@ export interface McpServerStatus {
   source?: string;
   /** A remote server, which may need a sign-in. */
   remote?: boolean;
+  /** A server that uses a sign-in, so it may be signed in again. */
+  sign_in?: boolean;
   needs_reconnect?: boolean;
 }
 

@@ -451,17 +451,19 @@ func (c *conversation) MCPStatus(ctx context.Context) ([]agentapi.MCPStatus, err
 	if err != nil {
 		return nil, fmt.Errorf("list the task's MCP servers: %s", rpcText(err))
 	}
-	remote := map[string]bool{}
+	remote, oauth := map[string]bool{}, map[string]bool{}
 	if mc, ok := c.client.(mcpConfigClient); ok {
 		if configs, err := mc.MCPConfigList(ctx); err == nil {
 			for name, cfg := range configs {
-				_, remote[name] = cfg.(*rpc.MCPServerConfigHTTP)
+				http, ok := cfg.(*rpc.MCPServerConfigHTTP)
+				remote[name], oauth[name] = ok, ok && http.OauthClientID != nil
 			}
 		}
 	}
 	out := make([]agentapi.MCPStatus, 0, len(servers))
 	for _, s := range servers {
-		st := agentapi.MCPStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: errDetail(s.Error), Remote: remote[s.Name] || s.Status == rpc.MCPServerStatusNeedsAuth}
+		auth := s.Status == rpc.MCPServerStatusNeedsAuth
+		st := agentapi.MCPStatus{Name: s.Name, Status: mcpStatus(s.Status), Error: errDetail(s.Error), Remote: remote[s.Name] || auth, SignIn: oauth[s.Name] || auth}
 		if s.Source != nil {
 			st.Source = string(*s.Source)
 		}

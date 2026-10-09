@@ -15,6 +15,9 @@ function json(status: number, body?: unknown): Response {
 
 const fail = (status: number, error: string) => json(status, { error });
 
+// The remote servers that use a sign-in: tracker waits for one; docs-search is already signed in.
+const SIGN_IN = new Set(['docs-search', 'tracker']);
+
 interface Stored extends Omit<McpServer, 'env' | 'headers'> {
   env: Record<string, string>;
   headers: Record<string, string>;
@@ -54,14 +57,14 @@ export function mcpMock(terminal: () => boolean, githubMcp: () => boolean) {
       .map((s): McpStatus => {
         if (disabled.has(s.name) || (s.name === 'github-mcp-server' && !githubMcp() && !enabled.has(s.name))) return { name: s.name, status: 'disabled', source: s.source };
         if (s.name === 'echo') return { name: s.name, status: 'failed', error: 'failed to spawn MCP server process: No such file or directory (os error 2)' };
-        if (s.name === 'tracker' && !signedIn) return { name: s.name, status: 'needs-auth', remote: true };
+        if (s.name === 'tracker' && !signedIn) return { name: s.name, status: 'needs-auth', remote: true, sign_in: true };
         const tools =
           s.name === 'github-mcp-server'
             ? [{ name: 'search_code', description: 'Search code across repositories.' }, { name: 'get_file_contents', description: 'Get the contents of a file or directory.' }]
             : s.name === 'tracker'
               ? [{ name: 'list_issues', description: 'List open issues.' }]
               : [{ name: 'search', description: 'Search the documentation.' }, { name: 'fetch_page', description: 'Fetch one page as Markdown.' }];
-        return { name: s.name, status: 'connected', source: s.source === 'user' ? undefined : s.source, remote: s.type !== 'stdio' && s.source === 'user', tools };
+        return { name: s.name, status: 'connected', source: s.source === 'user' ? undefined : s.source, remote: s.type !== 'stdio' && s.source === 'user', sign_in: SIGN_IN.has(s.name), tools };
       });
   }
 
