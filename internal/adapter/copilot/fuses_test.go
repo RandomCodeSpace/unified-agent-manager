@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -123,5 +124,36 @@ func TestFusePermissionKindUsesVerifiedCatalog(t *testing.T) {
 	d.observe(ev("changed", &rpc.MCPToolsListChangedData{}))
 	if got := d.permissionKind("forge-read_issue"); got != "" {
 		t.Fatalf("stale metadata: %q", got)
+	}
+}
+
+// A close between the recorded resolvedByHook request and its completion
+// must neither expose it nor send a redundant permission response.
+func TestFuseHiddenPermissionLifecycle(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	h.fs.onEvent(ev("hidden", &rpc.PermissionRequestedData{RequestID: "hidden", ResolvedByHook: copilot.Bool(true), PermissionRequest: &rpc.PermissionRequestShell{FullCommandText: "ls /etc/ssl"}}))
+	if err := c.Respond(t.Context(), "hidden", agentapi.Answer{Decision: "reject"}); !errors.Is(err, agentapi.ErrInteractionGone) {
+		t.Fatalf("hidden respond=%v", err)
+	}
+	if err := c.Send(t.Context(), agentapi.Prompt{Text: "continue"}); err != nil {
+		t.Fatalf("hidden request blocked prompt: %v", err)
+	}
+	if err := c.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.pending) != 0 {
+		t.Fatal("hidden request retained after close")
+	}
+	h.fs.mu.Lock()
+	answers := len(h.fs.answers)
+	h.fs.mu.Unlock()
+	if answers != 0 {
+		t.Fatalf("close responded to %d already-resolved permissions", answers)
+	}
+	for _, event := range h.sink.all() {
+		if event.Kind == agentapi.EventInteraction {
+			t.Fatal("hidden request surfaced during prompt or close")
+		}
 	}
 }

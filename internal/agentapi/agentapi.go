@@ -553,7 +553,8 @@ type Usage struct {
 	AIUnits float64 `json:"ai_units"`
 }
 
-// ToolUse is a provider tool call before execution. Providers normalize raw
+// ToolUse identifies a provider tool call for pre-execution or failure hooks.
+// Providers normalize raw
 // patch strings to Args["patch"].
 type ToolUse struct {
 	// PermissionKind comes from verified provider metadata or a permission request.

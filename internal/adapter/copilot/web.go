@@ -2676,7 +2676,7 @@ func (c *conversation) Respond(ctx context.Context, id string, ans agentapi.Answ
 		return agentapi.ErrClosed
 	}
 	in := c.pending[id]
-	if in == nil || in.answering {
+	if in == nil || in.answering || in.permissionHookResolved {
 		c.mu.Unlock()
 		return agentapi.ErrInteractionGone
 	}
@@ -2851,6 +2851,9 @@ func (c *conversation) expireLocked() []string {
 			continue
 		}
 		delete(c.pending, id)
+		if in.permissionHookResolved {
+			continue
+		}
 		in.State = agentapi.InteractionExpired
 		c.emitInteractionLocked(in)
 		if in.reply != nil {
