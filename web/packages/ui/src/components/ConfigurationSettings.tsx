@@ -4,11 +4,14 @@ import { Fragment, useEffect, useRef, useState, type ComponentProps, type ReactN
 import { describeError, isStatus, routeMissing, type Configuration, type ConfigurationDraft, type ConfigurationFile, type ConfigurationKind, type Model, type Project } from '../api';
 import { cn } from '../lib/cn';
 import { Markdown, Note, Skeleton, useApp } from './common';
+import { CardGroup, ItemCard, ItemReader, useCardReader } from './ConfigCards';
 import { UTILITY_NONE, visibleModels } from '../lib/models';
 import { Field, SectionAction, useInlineForm } from './TaskDefaults';
 import { AlertDialog, Dialog, useConfirm } from './ui/dialog';
 import { Button } from './ui/button';
+import { Chip } from './ui/chip';
 import { Input } from './ui/input';
+import { PanelSection } from './ui/panel';
 import { Select } from './ui/select';
 import { Segmented } from './ui/segmented';
 import { HelpTip } from './ui/tooltip';
@@ -113,42 +116,79 @@ function FileError({ message, path, tone = 'error', role }: Readonly<{ message: 
 
 const NATIVE_SOURCES: Record<string, string> = { project: 'Project', inherited: 'Inherited', 'personal-copilot': 'Global · Copilot', 'personal-agents': 'Global · Agents', user: 'Global', plugin: 'Plugin', builtin: 'Built in', custom: 'Custom', sdk: 'SDK', remote: 'Remote', repository: 'Repository', 'working-directory': 'Working directory', policy: 'Policy' };
 
-/** Runtime source when available, otherwise the existing file-directory group. */
-function skillSource(file: ConfigurationFile): string {
+/** Runtime source when available, otherwise a skill's file-directory group, otherwise the scope (Project or Global). */
+function sourceOf(file: ConfigurationFile, kind: ConfigurationKind, scope: string): string {
   if (file.native) return NATIVE_SOURCES[file.native.source] ?? (file.native.source || 'Other');
   if (file.read_only_reason === 'Built-in skills are managed by UAM.') return 'Built in';
+  if (kind !== 'skills') return scope;
   return /[\\/](\.[^\\/]+)[\\/]skills[\\/]/.exec(file.path)?.[1] ?? 'Other';
+}
+
+// Separate only the Markdown frontmatter delimiters. Metadata remains literal and Source stays exact.
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const VIEWS = [{ value: 'preview', label: 'Preview' }, { value: 'source', label: 'Source' }];
+
+/** An instructions file need not exist yet (no revision): its views say so rather than "empty". */
+function missingFile(file: ConfigurationFile): boolean { return !file.revision && !file.error && !file.content; }
+function hasViews(file: ConfigurationFile, kind: ConfigurationKind): boolean { return kind !== 'hooks' && !missingFile(file); }
+
+/** The saved document, as a preview (frontmatter, then Markdown) or its exact source; hooks are always source. Shared by the file viewer and a card's reader, each of which shows the file's error itself. */
+function DocumentBody({ file, kind, view }: Readonly<{ file: ConfigurationFile; kind: ConfigurationKind; view: string }>) {
+  const frontmatter = FRONTMATTER.exec(file.content);
+  const body = frontmatter ? file.content.slice(frontmatter[0].length) : file.content;
+  let emptyText = 'This file is empty.';
+  if (file.error) emptyText = 'No document content is available.';
+  else if (missingFile(file)) emptyText = 'No saved file at this path.';
+  return <>
+    {!file.content && <Note>{emptyText}</Note>}
+    {view === 'source' || kind === 'hooks' ?
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
+      <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{file.content}</pre> : <>
+        {frontmatter && <div className="min-w-0">
+          <p className="mb-1 text-ui font-medium">Configuration</p>
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
+          <pre role="region" aria-label={`${file.name} configuration`} tabIndex={0} className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{frontmatter[1]}</pre>
+        </div>}
+        {body.trim() && <Markdown text={body} className="min-w-0 text-chat text-ink" />}
+      </>}
+  </>;
 }
 
 function ConfigurationViewer({ file, kind, draftOpen, onClose }: Readonly<{ file: ConfigurationFile; kind: ConfigurationKind; draftOpen: boolean; onClose: () => void }>) {
   const [open, setOpen] = useState(true);
   const [view, setView] = useState('preview');
-  // Separate only the Markdown frontmatter delimiters. Metadata remains literal and Source stays exact.
-  const frontmatter = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(file.content);
-  const body = frontmatter ? file.content.slice(frontmatter[0].length) : file.content;
-  // An instructions file need not exist yet (no revision): the dialog says so, as its row does, rather than "empty".
-  const missing = !file.revision && !file.error && !file.content;
-  let emptyText = 'This file is empty.';
-  if (file.error) emptyText = 'No document content is available.';
-  else if (missing) emptyText = 'No saved file at this path.';
   return <Dialog open={open} onOpenChange={setOpen} onClosed={onClose} title={<span className="break-all">{kind === 'instructions' ? fileName(file) : file.name}</span>} description={<span className="break-all">{file.path}</span>} className="min-w-0 max-w-sheet-wide">
     <div className="flex min-w-0 flex-col gap-3">
-      {!missing && <Note>Read only. This shows the saved file{draftOpen ? '; any unsaved editor changes stay in the editor' : ''}.</Note>}
-      {kind !== 'hooks' && !missing && <Segmented aria-label="Show document as" className="self-start" value={view} onValueChange={setView} items={[{ value: 'preview', label: 'Preview' }, { value: 'source', label: 'Source' }]} />}
+      {!missingFile(file) && <Note>Read only. This shows the saved file{draftOpen ? '; any unsaved editor changes stay in the editor' : ''}.</Note>}
+      {hasViews(file, kind) && <Segmented aria-label="Show document as" className="self-start" value={view} onValueChange={setView} items={VIEWS} />}
       {file.error && <Note tone="error" role="alert">{file.error}</Note>}
-      {!file.content && <Note>{emptyText}</Note>}
-      {view === 'source' || kind === 'hooks' ?
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
-        <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{file.content}</pre> : <>
-          {frontmatter && <div className="min-w-0">
-            <p className="mb-1 text-ui font-medium">Configuration</p>
-            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
-            <pre role="region" aria-label={`${file.name} configuration`} tabIndex={0} className="max-h-64 max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{frontmatter[1]}</pre>
-          </div>}
-          {body.trim() && <Markdown text={body} className="min-w-0 text-chat text-ink" />}
-        </>}
+      <DocumentBody file={file} kind={kind} view={view} />
     </div>
   </Dialog>;
+}
+
+/** A card's one or two lines: an agent's or skill's description, a hook file's events, an instructions file's first line; a metadata-only definition's description. */
+function summaryOf(file: ConfigurationFile, kind: ConfigurationKind): string {
+  if (file.metadata_only) return file.native?.description ?? '';
+  if (kind === 'hooks') {
+    try {
+      const hooks = (JSON.parse(file.content) as { hooks?: unknown }).hooks;
+      if (hooks && typeof hooks === 'object' && Object.keys(hooks).length) return Object.keys(hooks).join(' · ');
+    } catch { /* An unreadable hook file shows its description, if any, and its error in the reader. */ }
+    return file.native?.description ?? '';
+  }
+  if (kind === 'instructions') {
+    if (missingFile(file)) return 'No saved file at this path.';
+    return file.content.split('\n').map((line) => line.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean) ?? '';
+  }
+  if (file.native?.description) return file.native.description;
+  // The frontmatter's description line: a JSON-quoted value as UAM writes it, or a plain one; a block scalar shows nothing here.
+  const line = /^description:[ \t]*(.+)$/m.exec(FRONTMATTER.exec(file.content)?.[1] ?? '')?.[1].trim();
+  if (!line || /^[>|]/.test(line)) return '';
+  if (line.startsWith('"')) {
+    try { return String(JSON.parse(line)); } catch { return line.slice(1, -1); }
+  }
+  return line.startsWith("'") ? line.slice(1, -1).replaceAll("''", "'") : line;
 }
 
 function suggestedDraft(kind: ConfigurationKind, suggestion: ConfigurationDraft): Draft {
@@ -374,6 +414,8 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const [success, setSuccess] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [filter, setFilter] = useState('');
+  const cards = useCardReader<ConfigurationFile>();
+  const [view, setView] = useState('preview');
   const removal = useConfirm<{ file: ConfigurationFile; projectId: string }>();
   const activation = useConfirm<{ file: ConfigurationFile; projectId: string }>();
   const discard = useConfirm<boolean>();
@@ -485,7 +527,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     setBusy(true); setError(null); setSuccess(null);
     try {
       await api.deleteConfiguration(kind, file.name, file.revision, scope, file.path);
-      removal.close(); setSuccess(`${file.name} removed.`); refresh();
+      removal.close(); cards.close(); setSuccess(`${file.name} removed.`); refresh();
     } catch (e) { setError(describeError(e)); removal.close(); }
     finally { setBusy(false); }
   }
@@ -496,7 +538,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     setBusy(true); setError(null); setSuccess(null);
     try {
       await api.setConfigurationDisabled(kind, file.name, { path: file.path, revision: file.revision, disabled: !file.disabled }, scope);
-      activation.close(); setSuccess(`${file.name} ${file.disabled ? 'enabled' : 'disabled'}. New and reopened tasks use the updated configuration.`); refresh();
+      activation.close(); cards.close(); setSuccess(`${file.name} ${file.disabled ? 'enabled' : 'disabled'}. New and reopened tasks use the updated configuration.`); refresh();
     } catch (e) { setError(describeError(e)); activation.close(); }
     finally { setBusy(false); }
   }
@@ -506,7 +548,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     setBusy(true); setError(null); setSuccess(null);
     try {
       await api.setSkillGloballyDisabled(target.name, target.enabled, projectId);
-      globalSkill.close(); setSuccess(`${target.name} turned ${target.enabled ? 'off' : 'on'} in Copilot's global setting. New and reopened tasks use it.`); refresh();
+      globalSkill.close(); cards.close(); setSuccess(`${target.name} turned ${target.enabled ? 'off' : 'on'} in Copilot's global setting. New and reopened tasks use it.`); refresh();
     } catch (e) { setError(describeError(e)); globalSkill.close(); }
     finally { setBusy(false); }
   }
@@ -514,11 +556,26 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const files = kind === 'skills' ? discoveredFiles.filter((file) => !file.error) : discoveredFiles;
   const conflictDetails = data?.conflict_details?.filter((detail) => detail.kind === kind) ?? [];
   const unreadableSkills = kind === 'skills' ? discoveredFiles.filter((file) => file.error && !conflictDetails.some((detail) => detail.path === file.path)) : [];
-  // Skills: the filter's matches, grouped by source in the order the service lists the sources (the scope's own first).
-  const sources = [...new Set(files.map(skillSource))];
+  // Cards grouped by source in the order the service lists the sources (the scope's own first); Skills show the filter's matches.
+  const scopeLabel = projectId ? 'Project' : 'Global';
+  const sources = [...new Set(files.map((file) => sourceOf(file, kind, scopeLabel)))];
   const discovery = data?.discovery?.[kind];
   const query = filter.trim().toLowerCase();
-  const shown = kind === 'skills' ? files.filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query) || file.native?.name.toLowerCase().includes(query) || file.native?.description?.toLowerCase().includes(query)).sort((a, b) => sources.indexOf(skillSource(a)) - sources.indexOf(skillSource(b))) : files;
+  const shown = kind === 'skills' ? files.filter((file) => !query || file.name.toLowerCase().includes(query) || file.path.toLowerCase().includes(query) || file.native?.name.toLowerCase().includes(query) || file.native?.description?.toLowerCase().includes(query)) : files;
+  const groups = sources.map((source) => ({ source, files: shown.filter((file) => sourceOf(file, kind, scopeLabel) === source) })).filter((group) => group.files.length > 0);
+  // A skill name found in more than one source names its source on its card too.
+  const duplicated = (file: ConfigurationFile) => kind === 'skills' && files.some((other) => other !== file && other.name === file.name);
+  const nameOf = (file: ConfigurationFile) => kind === 'instructions' ? fileName(file) : file.name;
+  const actionsOff = locked || busy || installing || generating || !!draft;
+  const opened = cards.reader?.item;
+  const confirms = <>
+    <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running tasks keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
+    <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running tasks keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
+    <AlertDialog {...globalSkill.props} title={`Turn ${globalSkill.target?.enabled ? 'off' : 'on'} ${globalSkill.target?.name ?? 'skill'} in Copilot globally?`} description={`Copilot global setting. ${globalSkill.target?.enabled ? 'Adds this name to' : 'Removes this name from'} Copilot's disabled skills list for every project and task on this server. It applies to every skill named ${globalSkill.target?.name ?? ''}, including these listed here:`} confirmLabel={globalSkill.target?.enabled ? 'Turn off globally' : 'Turn on globally'} busy={busy} onConfirm={() => void setGlobalSkill()}>
+      <ul className="my-1 flex flex-col gap-1 text-caption">{files.filter((file) => file.native?.name === globalSkill.target?.name).map((file) => <li key={`${file.native?.source}:${file.path}`} className="break-all"><span className="font-medium">{NATIVE_SOURCES[file.native?.source ?? ''] ?? (file.native?.source || 'Other')}</span>{file.path && <span className="font-mono text-meta text-muted"> {file.path}</span>}</li>)}</ul>
+      <p className="text-caption text-muted">No file is renamed or changed; each file's Disable/Enable stays separate. Running tasks keep their current configuration.</p>
+    </AlertDialog>
+  </>;
   return <div className="flex min-w-0 flex-col gap-4">
     <Field id={`${kind}-scope`} label="Scope" hint={projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'}>
       <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={busy || installing || generating || !!draft} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={(id) => { setProjectId(id); setData(null); setGlobalData(null); setGlobalError(null); setLoadError(null); setError(null); setSuccess(null); setGenerationError(null); }} />
@@ -593,54 +650,69 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
         <Input type="search" size="md" aria-label="Filter skills" placeholder="Filter by name or path" className="w-64 max-w-full" value={filter} onChange={(event) => setFilter(event.target.value)} />
         <span aria-live="polite" className="text-caption text-muted tabular-nums">{shown.length === files.length ? `${files.length} ${files.length === 1 ? 'skill' : 'skills'}` : `${shown.length} of ${files.length} skills`}</span>
       </div>}
-      {/* One grid for every row: the name column, then View, Edit, Disable/Enable and Remove in fixed columns (subgrid), so actions line up across rows and groups; stacked under the name on a phone. */}
-      <ul aria-label={`${kind} in this scope`} className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_repeat(4,auto)] sm:gap-x-1">
-        {shown.map((file, index) => {
-          const source = kind === 'skills' ? skillSource(file) : '';
-          const heading = source && source !== (index > 0 ? skillSource(shown[index - 1]) : '') ? `${source} · ${shown.filter((other) => skillSource(other) === source).length}` : '';
-          return <li key={file.metadata_only ? `${file.native?.source}:${file.native?.id}:${file.path}` : file.path} className="flex min-w-0 flex-col gap-1.5 sm:col-span-full sm:grid sm:grid-cols-subgrid sm:items-start sm:gap-x-1">
-            {heading && <h3 className="pt-1 text-caption font-medium text-muted sm:col-span-full">{heading}</h3>}
-            <div className="min-w-0">
-              <p className="flex flex-wrap items-baseline gap-x-2 text-ui font-medium">
-                {kind === 'instructions' ? fileName(file) : file.name}
-                {kind === 'skills' && files.some((other) => other !== file && other.name === file.name) && <span className="text-meta font-normal text-muted">in {source}</span>}
-              </p>
-              {file.native && <>
-                <p className="text-caption text-muted">Copilot: {file.native.display_name || file.native.name}{file.native.display_name && file.native.display_name !== file.native.name ? ` (${file.native.name})` : ''} · {NATIVE_SOURCES[file.native.source] ?? (file.native.source || 'Other')}</p>
-                {file.native.description && <p className="break-words text-caption text-muted">{file.native.description}</p>}
-                {file.native.enabled === false && <Note>Disabled globally in Copilot. This is separate from the file toggle.</Note>}
-                {kind === 'skills' && file.native.enabled !== undefined && <p className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
-                  Copilot global setting: {file.native.enabled ? 'On' : 'Off'}
-                  <Button size="sm" aria-label={`Turn ${file.native.enabled ? 'off' : 'on'} ${file.native.name} globally in Copilot`} disabled={locked || busy || installing || generating || !!draft} onClick={() => file.native && globalSkill.ask({ name: file.native.name, enabled: file.native.enabled !== false })}>{file.native.enabled ? 'Turn off globally' : 'Turn on globally'}</Button>
-                </p>}
-              </>}
-              {file.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
-              {file.path && <PathText path={file.path} className="text-muted" />}
-              {!file.editable && <Note>{file.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown above.'}</Note>}
-              {file.error && <FileError message={file.error} />}
-              {kind === 'instructions' && !file.revision && !file.metadata_only && <Note>No saved file at this path.</Note>}
-            </div>
-            <div className="flex flex-wrap gap-1 sm:contents">
-              {!file.metadata_only && <Button size="sm" className="sm:col-start-2" aria-label={`View ${kind === 'instructions' ? fileName(file) : `${label} ${file.name}`}`} onClick={() => viewFile(file, kind)}>View</Button>}
-              {file.editable && !file.disabled && <Button size="sm" className="sm:col-start-3" disabled={locked || busy || installing || generating || !!draft} onClick={() => edit(file)}>{kind === 'instructions' ? `${file.revision ? 'Edit' : 'Add'} ${fileName(file)}` : 'Edit'}</Button>}
-              {file.editable && file.revision && kind !== 'instructions' && <>
-                <Button size="sm" className="sm:col-start-4" disabled={locked || busy || installing || generating || !!draft} onClick={() => activation.ask({ file, projectId })}>{file.disabled ? 'Enable' : 'Disable'}</Button>
-                <Button size="sm" variant="danger" className="sm:col-start-5" disabled={locked || busy || installing || generating || !!draft} onClick={() => removal.ask({ file, projectId })}>Remove</Button>
-              </>}
-            </div>
-          </li>;
-        })}
-      </ul>
+      <div role="group" aria-label={`${kind} in this scope`} className="flex min-w-0 flex-col gap-4">
+        {groups.map((group) => <CardGroup key={group.source} label={group.source} count={group.files.length}>
+          {group.files.map((file) => <ItemCard
+            key={file.metadata_only ? `${file.native?.source}:${file.native?.id}:${file.path}` : file.path}
+            name={nameOf(file)}
+            label={`View ${kind === 'instructions' ? fileName(file) : `${label} ${file.name}`}`}
+            detail={summaryOf(file, kind)}
+            chips={(!file.editable || file.disabled || file.error || file.native?.enabled === false || duplicated(file)) && <>
+              {duplicated(file) && <Chip fill="outline">in {group.source}</Chip>}
+              {file.error && <Chip tone="error" fill="outline">Error</Chip>}
+              {file.disabled && <Chip fill="outline">Disabled</Chip>}
+              {file.native?.enabled === false && <Chip fill="outline">Off in Copilot</Chip>}
+              {!file.editable && <Chip fill="outline">Read only</Chip>}
+            </>}
+            expanded={opened === file && !!cards.reader?.open}
+            controls={cards.id}
+            onOpen={(button) => { setView('preview'); if (!draft) setError(null); cards.show(file, button); }}
+          />)}
+        </CardGroup>)}
+      </div>
       {files.length === 0 && <Note>No {kind} in this scope. Add one to get started.</Note>}
       {files.length > 0 && shown.length === 0 && <Note>No skills match “{filter.trim()}”.</Note>}
     </>}
     {viewed && <ConfigurationViewer file={viewed.file} kind={viewed.kind} draftOpen={!!draft} onClose={() => setViewed(null)} />}
-    <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running tasks keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
-    <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running tasks keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
-    <AlertDialog {...globalSkill.props} title={`Turn ${globalSkill.target?.enabled ? 'off' : 'on'} ${globalSkill.target?.name ?? 'skill'} in Copilot globally?`} description={`Copilot global setting. ${globalSkill.target?.enabled ? 'Adds this name to' : 'Removes this name from'} Copilot's disabled skills list for every project and task on this server. It applies to every skill named ${globalSkill.target?.name ?? ''}, including these listed here:`} confirmLabel={globalSkill.target?.enabled ? 'Turn off globally' : 'Turn on globally'} busy={busy} onConfirm={() => void setGlobalSkill()}>
-      <ul className="my-1 flex flex-col gap-1 text-caption">{files.filter((file) => file.native?.name === globalSkill.target?.name).map((file) => <li key={`${file.native?.source}:${file.path}`} className="break-all"><span className="font-medium">{NATIVE_SOURCES[file.native?.source ?? ''] ?? (file.native?.source || 'Other')}</span>{file.path && <span className="font-mono text-meta text-muted"> {file.path}</span>}</li>)}</ul>
-      <p className="text-caption text-muted">No file is renamed or changed; each file's Disable/Enable stays separate. Running tasks keep their current configuration.</p>
-    </AlertDialog>
+    {cards.reader && opened ? <ItemReader
+      reader={cards.reader}
+      id={cards.id}
+      label={kind === 'instructions' ? fileName(opened) : `${label} ${opened.name}`}
+      title={nameOf(opened)}
+      facts={[sourceOf(opened, kind, scopeLabel), opened.disabled && 'Disabled', !opened.editable && 'Read only'].filter(Boolean).join(' · ')}
+      actions={opened.editable && <>
+        {!opened.disabled && <Button size="sm" variant="secondary" disabled={actionsOff} onClick={() => cards.close(() => edit(opened))}>{kind === 'instructions' ? `${opened.revision ? 'Edit' : 'Add'} ${fileName(opened)}` : 'Edit'}</Button>}
+        {opened.revision && kind !== 'instructions' && <>
+          <Button size="sm" disabled={actionsOff} onClick={() => activation.ask({ file: opened, projectId })}>{opened.disabled ? 'Enable' : 'Disable'}</Button>
+          <Button size="sm" variant="danger" disabled={actionsOff} onClick={() => removal.ask({ file: opened, projectId })}>Remove</Button>
+        </>}
+      </>}
+      onClose={() => cards.close()}
+      onClosed={cards.closed}
+    >
+      {opened.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
+      {!opened.editable && <Note>{opened.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown below.'}</Note>}
+      {opened.editable && locked && <Note>Turn on Terminal in General to manage {kind}.</Note>}
+      {opened.editable && !locked && draft && <Note>Finish or cancel the open form to change this file.</Note>}
+      {opened.error && <FileError message={opened.error} />}
+      {opened.native && <div className="flex min-w-0 flex-col gap-1">
+        <p className="text-caption text-muted [overflow-wrap:anywhere]">Copilot: {opened.native.display_name || opened.native.name}{opened.native.display_name && opened.native.display_name !== opened.native.name ? ` (${opened.native.name})` : ''} · {NATIVE_SOURCES[opened.native.source] ?? (opened.native.source || 'Other')}</p>
+        {opened.native.description && <p className="break-words text-caption text-muted">{opened.native.description}</p>}
+        {opened.native.enabled === false && <Note>Disabled globally in Copilot. This is separate from the file toggle.</Note>}
+        {kind === 'skills' && opened.native.enabled !== undefined && <p className="flex flex-wrap items-center gap-x-2 text-caption text-muted">
+          Copilot global setting: {opened.native.enabled ? 'On' : 'Off'}
+          <Button size="sm" aria-label={`Turn ${opened.native.enabled ? 'off' : 'on'} ${opened.native.name} globally in Copilot`} disabled={locked || busy || installing || generating || !!draft} onClick={() => opened.native && globalSkill.ask({ name: opened.native.name, enabled: opened.native.enabled !== false })}>{opened.native.enabled ? 'Turn off globally' : 'Turn on globally'}</Button>
+        </p>}
+      </div>}
+      {opened.path && <PanelSection label="Path"><PathText path={opened.path} className="text-body" /></PanelSection>}
+      {!opened.metadata_only && <PanelSection label="Document" action={hasViews(opened, kind) && <Segmented aria-label="Show document as" value={view} onValueChange={setView} items={VIEWS} />}>
+        {draft && !missingFile(opened) && <Note>This shows the saved file; any unsaved editor changes stay in the editor.</Note>}
+        <DocumentBody file={opened} kind={kind} view={view} />
+      </PanelSection>}
+      {/* A refused Disable, Enable or Remove keeps the reader open and says why here. */}
+      {!draft && error && <Note tone="error" role="alert">{error}</Note>}
+      {confirms}
+    </ItemReader> : confirms}
     <AlertDialog {...discard.props} title="Reload saved version?" description="Discards your unsaved draft and loads the file currently saved on the server. Copy any changes you want to keep before continuing." confirmLabel="Discard draft and reload" busy={busy} onConfirm={() => void reloadSaved()} />
   </div>;
 }

@@ -1064,7 +1064,7 @@ function useStillAnchor(el: Element | null): { getBoundingClientRect: () => DOMR
  * (nothing in it is live or focusable), so the panel reads as anchored to it. The conversation
  * holds still under the modal panel; a resize places it again.
  */
-export function LiftedRow({ row }: Readonly<{ row: Element }>) {
+export function LiftedRow({ row, className }: Readonly<{ row: Element; className?: string }>) {
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = host.current;
@@ -1091,7 +1091,7 @@ export function LiftedRow({ row }: Readonly<{ row: Element }>) {
       window.removeEventListener('resize', place);
     };
   }, [row]);
-  return <div ref={host} aria-hidden="true" inert className="pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:size-full" />;
+  return <div ref={host} aria-hidden="true" inert className={cn('pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:size-full', className)} />;
 }
 
 /**

@@ -1,15 +1,40 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api, ApiError, type ConfigurationFile } from '../../src/api';
-import { renderApp } from './render';
+import { renderApp, type User } from './render';
 
 async function open(kind: string) {
   const rendered = renderApp('#settings');
   await rendered.user.click(await screen.findByRole('button', { name: kind, exact: true }));
   const card = within(await screen.findByRole('region', { name: kind, exact: true }));
-  await card.findByRole('list', { name: /in this scope/ });
+  await card.findByRole('group', { name: /in this scope/ });
   return { ...rendered, card };
 }
+
+type Within = ReturnType<typeof within>;
+
+/** Opens an item card's reader by the card's name ("View agent reviewer") and returns the reader. */
+async function openCard(user: User, card: Within, name: string) {
+  await user.click(card.getByRole('button', { name }));
+  return within(await screen.findByRole('dialog', { name: name.replace(/^View /, '') }));
+}
+
+/** Presses an action in a card's reader that closes it (Edit, Add): the form opens once the reader has gone. */
+async function editCard(user: User, card: Within, name: string, action = 'Edit') {
+  const reader = await openCard(user, card, name);
+  await user.click(reader.getByRole('button', { name: action, exact: true }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
+/** Opens a card's reader and asks for one of its confirmed actions (Disable, Enable, Remove); returns the confirmation. */
+async function confirmCard(user: User, card: Within, name: string, action: string, title?: string) {
+  const reader = await openCard(user, card, name);
+  await user.click(reader.getByRole('button', { name: action, exact: true }));
+  return within(await screen.findByRole('alertdialog', title ? { name: title } : undefined));
+}
+
+/** Waits until no reader or confirmation is open. */
+const settled = () => waitFor(() => expect(screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog')).toBeNull());
 
 describe('native configuration', () => {
   test('native configuration guidance opens beside its reference link', async () => {
@@ -49,9 +74,12 @@ describe('native configuration', () => {
     const remove = vi.spyOn(api, 'deleteConfiguration');
     try {
       const { user, card } = await open(tab);
-      expect(card.getByText('Bundled configuration is read only.')).toBeTruthy();
-      expect(card.queryByRole('button', { name: 'Edit', exact: true })).toBeNull();
-      expect(card.queryByRole('button', { name: 'Remove', exact: true })).toBeNull();
+      expect(within(card.getByRole('button', { name: action }).closest('li')!).getByText('Read only')).toBeTruthy();
+      const first = await openCard(user, card, action);
+      expect(first.getByText('Bundled configuration is read only.')).toBeTruthy();
+      expect(first.queryByRole('button', { name: /^(Edit|Add|Disable|Remove)/ })).toBeNull();
+      await user.keyboard('{Escape}');
+      await settled();
       await user.click(screen.getByRole('button', { name: 'General', exact: true }));
       await user.click(screen.getByRole('switch', { name: 'Terminal' }));
       await waitFor(() => expect(screen.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
@@ -60,7 +88,7 @@ describe('native configuration', () => {
       await user.click(trigger);
       const dialog = within(await screen.findByRole('dialog'));
       expect(dialog.getByText(path)).toBeTruthy();
-      expect(dialog.getByText(/This shows the saved file/)).toBeTruthy();
+      expect(dialog.getByText('Bundled configuration is read only.')).toBeTruthy();
       expect(dialog.queryByRole('textbox')).toBeNull();
       if (kind !== 'hooks') {
         expect(dialog.getByRole('heading', { name: 'Review checklist' })).toBeTruthy();
@@ -78,12 +106,13 @@ describe('native configuration', () => {
 
   test('viewing a saved agent leaves an unfinished edit intact', async () => {
     const { user, card } = await open('Agents');
-    await user.click(card.getByRole('button', { name: 'Edit', exact: true }));
-    const editor = card.getByLabelText('Full native document') as HTMLTextAreaElement;
+    await editCard(user, card, 'View agent reviewer');
+    const editor = await card.findByLabelText('Full native document') as HTMLTextAreaElement;
     await user.type(editor, '\nMy unsaved rule.');
     const before = editor.value;
-    await user.click(card.getByRole('button', { name: 'View agent reviewer' }));
-    const dialog = within(await screen.findByRole('dialog'));
+    const dialog = await openCard(user, card, 'View agent reviewer');
+    expect(dialog.getByText(/unsaved editor changes stay in the editor/)).toBeTruthy();
+    expect((dialog.getByRole('button', { name: 'Edit', exact: true }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(dialog.getByRole('radio', { name: 'Source', exact: true }));
     expect(dialog.getByRole('region', { name: 'reviewer source' }).textContent).not.toContain('My unsaved rule.');
     await user.click(dialog.getByRole('button', { name: 'Close', exact: true }));
@@ -102,10 +131,10 @@ describe('native configuration', () => {
     });
     try {
       const { user, card } = await open('Agents');
-      await user.click(card.getByRole('button', { name: 'View agent reviewer' }));
-      const dialog = within(await screen.findByRole('dialog'));
+      if (failed) expect(within(card.getByRole('button', { name: 'View agent reviewer' }).closest('li')!).getByText('Error')).toBeTruthy();
+      const dialog = await openCard(user, card, 'View agent reviewer');
       expect(dialog.getByText(failed ? 'No document content is available.' : 'This file is empty.')).toBeTruthy();
-      if (failed) expect(dialog.getByRole('alert').textContent).toBe('Could not read this file.');
+      if (failed) expect(dialog.getByText('Could not read this file.')).toBeTruthy();
       await user.click(dialog.getByRole('radio', { name: 'Source', exact: true }));
       expect(dialog.getByRole('region', { name: 'reviewer source' }).textContent).toBe('');
     } finally { read.mockRestore(); }
@@ -130,7 +159,10 @@ describe('native configuration', () => {
     await user.click(screen.getByRole('button', { name: 'Skills', exact: true }));
     expect((await screen.findByRole('button', { name: 'Add skill', exact: true }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(screen.getByRole('button', { name: 'Instructions', exact: true }));
-    expect((await screen.findByRole('button', { name: 'Add copilot-instructions.md', exact: true }) as HTMLButtonElement).disabled).toBe(false);
+    const instructions = within(await screen.findByRole('region', { name: 'Instructions', exact: true }));
+    await instructions.findByRole('button', { name: 'View copilot-instructions.md' });
+    const reader = await openCard(user, instructions, 'View copilot-instructions.md');
+    expect((reader.getByRole('button', { name: 'Add copilot-instructions.md', exact: true }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   test('creates a guided agent and retains advanced fields when editing its native document', async () => {
@@ -150,9 +182,8 @@ describe('native configuration', () => {
     const created = (await api.configuration()).agents.find((entry) => entry.name === 'scout');
     expect(created?.content).toContain('tools: ["read","search"]');
     expect(created?.content).toContain('model: "gpt-5-mini"');
-    const reviewer = card.getByText('reviewer').closest('li')!;
-    await user.click(within(reviewer).getByRole('button', { name: 'Edit' }));
-    const editor = card.getByLabelText('Full native document') as HTMLTextAreaElement;
+    await editCard(user, card, 'View agent reviewer');
+    const editor = await card.findByLabelText('Full native document') as HTMLTextAreaElement;
     expect(editor.value).toContain('custom-field: keep-this');
     await user.type(editor, '\nCheck race conditions.');
     await user.click(card.getByRole('button', { name: 'Save agent' }));
@@ -255,16 +286,18 @@ describe('native configuration', () => {
 
   test('saves root AGENTS.md separately from project Copilot and global instructions', async () => {
     const { user, card } = await open('Instructions');
-    expect(card.queryByRole('button', { name: 'Add AGENTS.md' })).toBeNull();
+    expect(card.queryByRole('button', { name: 'View AGENTS.md' })).toBeNull();
     await user.click(card.getByRole('combobox', { name: 'Scope' }));
     await user.click(await screen.findByRole('option', { name: 'unified-agent-manager', exact: true }));
-    await user.click(await card.findByRole('button', { name: 'Add copilot-instructions.md' }));
-    await user.type(card.getByLabelText('copilot-instructions.md (Markdown)'), 'Keep changes focused.');
+    await card.findByRole('button', { name: 'View AGENTS.md' });
+    expect(card.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Project · 2']);
+    await editCard(user, card, 'View copilot-instructions.md', 'Add copilot-instructions.md');
+    await user.type(await card.findByLabelText('copilot-instructions.md (Markdown)'), 'Keep changes focused.');
     expect((card.getByRole('combobox', { name: 'Scope' }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(card.getByRole('button', { name: 'Save copilot-instructions.md' }));
     await card.findByText('copilot-instructions.md saved. New and reopened tasks use the updated file.');
-    await user.click(await card.findByRole('button', { name: 'Add AGENTS.md' }));
-    const form = within(card.getByRole('form', { name: 'Add AGENTS.md' }));
+    await editCard(user, card, 'View AGENTS.md', 'Add AGENTS.md');
+    const form = within(await card.findByRole('form', { name: 'Add AGENTS.md' }));
     expect(form.getByText('/projects/p1/AGENTS.md')).toBeTruthy();
     await user.type(form.getByLabelText('AGENTS.md (Markdown)'), 'Run the nearest focused tests.');
     await user.click(form.getByRole('button', { name: 'Save AGENTS.md' }));
@@ -273,15 +306,17 @@ describe('native configuration', () => {
     const project = await api.configuration('p1');
     expect(project.instructions.content).toBe('Keep changes focused.');
     expect(project.instruction_files?.find((file) => file.name === 'agents')?.content).toBe('Run the nearest focused tests.');
-    expect(await card.findByRole('button', { name: 'Edit AGENTS.md' })).toBeTruthy();
+    await waitFor(() => expect(within(card.getByRole('button', { name: 'View AGENTS.md' }).closest('li')!).queryByText('No saved file at this path.')).toBeNull());
+    expect((await openCard(user, card, 'View AGENTS.md')).getByRole('button', { name: 'Edit AGENTS.md' })).toBeTruthy();
   });
 
   test('a conflicting AGENTS.md reload keeps the selected file', async () => {
     const { user, card } = await open('Instructions');
     await user.click(card.getByRole('combobox', { name: 'Scope' }));
     await user.click(await screen.findByRole('option', { name: 'unified-agent-manager', exact: true }));
-    await user.click(await card.findByRole('button', { name: 'Add AGENTS.md' }));
-    const editor = card.getByLabelText('AGENTS.md (Markdown)') as HTMLTextAreaElement;
+    await card.findByRole('button', { name: 'View AGENTS.md' });
+    await editCard(user, card, 'View AGENTS.md', 'Add AGENTS.md');
+    const editor = await card.findByLabelText('AGENTS.md (Markdown)') as HTMLTextAreaElement;
     await user.type(editor, 'My AGENTS draft.');
     await api.saveConfiguration('instructions', 'agents', { content: 'External AGENTS change.', revision: '' }, 'p1');
     await user.click(card.getByRole('button', { name: 'Save AGENTS.md' }));
@@ -304,8 +339,8 @@ describe('native configuration', () => {
     });
     try {
       const { user, card } = await open('Instructions');
-      await user.click(card.getByRole('button', { name: 'Add copilot-instructions.md' }));
-      await user.type(card.getByLabelText('copilot-instructions.md (Markdown)'), 'Global rules.');
+      await editCard(user, card, 'View copilot-instructions.md', 'Add copilot-instructions.md');
+      await user.type(await card.findByLabelText('copilot-instructions.md (Markdown)'), 'Global rules.');
       await user.click(card.getByRole('button', { name: 'Save copilot-instructions.md' }));
       await card.findByText('copilot-instructions.md saved. New and reopened tasks use the updated file.');
       expect((await original()).instructions.content).toBe('Global rules.');
@@ -420,7 +455,7 @@ describe('native configuration', () => {
       expect((within(duplicateRows[0]).getByRole('button', { name: 'Remove', exact: true }) as HTMLButtonElement).disabled).toBe(false);
       expect((within(duplicateRows[1]).getByRole('button', { name: 'Disable', exact: true }) as HTMLButtonElement).disabled).toBe(true);
       expect((within(duplicateRows[1]).getByRole('button', { name: 'Remove', exact: true }) as HTMLButtonElement).disabled).toBe(true);
-      const files = within(card.getByRole('list', { name: 'skills in this scope' })).getAllByRole('listitem');
+      const files = within(card.getByRole('group', { name: 'skills in this scope' })).getAllByRole('listitem');
       expect(files).toHaveLength(2);
       await user.click(within(duplicateRows[1]).getByRole('button', { name: 'View', exact: true }));
       expect(within(await screen.findByRole('dialog')).getByRole('heading', { name: 'Different checklist' })).toBeTruthy();
@@ -439,23 +474,28 @@ describe('native configuration', () => {
     try {
       const { user, card } = await open(tab);
       const original = (await api.configuration())[kind][0];
-      await user.click(card.getByRole('button', { name: 'Disable', exact: true }));
-      let dialog = within(await screen.findByRole('alertdialog', { name: `Disable ${original.name}?` }));
+      const view = `View ${kind === 'hooks' ? 'hook file' : kind.slice(0, -1)} ${original.name}`;
+      let dialog = await confirmCard(user, card, view, 'Disable', `Disable ${original.name}?`);
       expect(dialog.getByText(original.path)).toBeTruthy();
       expect(dialog.getByText(/Scope: Global/)).toBeTruthy();
       expect(toggle).not.toHaveBeenCalled();
       await user.click(dialog.getByRole('button', { name: 'Cancel', exact: true }));
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      // Cancel leaves the reader open over its card.
+      const reader = within(await screen.findByRole('dialog', { name: view.replace(/^View /, '') }));
       expect((await api.configuration())[kind][0]).toEqual(original);
-      await user.click(card.getByRole('button', { name: 'Disable', exact: true }));
+      await user.click(reader.getByRole('button', { name: 'Disable', exact: true }));
       dialog = within(await screen.findByRole('alertdialog', { name: `Disable ${original.name}?` }));
       await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
-      await card.findByRole('button', { name: 'Enable', exact: true });
+      await settled();
+      await waitFor(() => expect(within(card.getByRole('button', { name: view }).closest('li')!).getByText('Disabled')).toBeTruthy());
       const disabled = (await api.configuration())[kind][0];
       expect(disabled).toEqual({ ...original, disabled: true, path: original.path + '.uam-disabled' });
       expect(toggle).toHaveBeenLastCalledWith(kind, original.name, { disabled: true, path: original.path, revision: original.revision }, '');
-      expect(card.queryByRole('button', { name: 'Edit', exact: true })).toBeNull();
-      await user.click(card.getByRole('button', { name: 'Enable', exact: true }));
+      const disabledReader = await openCard(user, card, view);
+      expect(disabledReader.getByText(/^Disabled — enable/)).toBeTruthy();
+      expect(disabledReader.queryByRole('button', { name: 'Edit', exact: true })).toBeNull();
+      await user.click(disabledReader.getByRole('button', { name: 'Enable', exact: true }));
       dialog = within(await screen.findByRole('alertdialog', { name: `Enable ${original.name}?` }));
       expect(dialog.getByText(disabled.path)).toBeTruthy();
       expect(toggle).toHaveBeenCalledTimes(1);
@@ -463,28 +503,34 @@ describe('native configuration', () => {
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
       expect(toggle).toHaveBeenCalledTimes(1);
       expect((await api.configuration())[kind][0]).toEqual(disabled);
-      await user.click(card.getByRole('button', { name: 'Enable', exact: true }));
-      dialog = within(await screen.findByRole('alertdialog', { name: `Enable ${original.name}?` }));
+      await user.keyboard('{Escape}');
+      await settled();
+      dialog = await confirmCard(user, card, view, 'Enable', `Enable ${original.name}?`);
       await user.click(dialog.getByRole('button', { name: 'Enable', exact: true }));
-      await card.findByRole('button', { name: 'Edit', exact: true });
+      await settled();
+      await waitFor(() => expect(within(card.getByRole('button', { name: view }).closest('li')!).queryByText('Disabled')).toBeNull());
+      expect((await openCard(user, card, view)).getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await settled();
       expect((await api.configuration())[kind][0]).toEqual({ ...original, disabled: false });
       expect(toggle).toHaveBeenLastCalledWith(kind, original.name, { disabled: false, path: disabled.path, revision: disabled.revision }, '');
-      await user.click(card.getByRole('button', { name: 'Disable', exact: true }));
-      dialog = within(await screen.findByRole('alertdialog', { name: `Disable ${original.name}?` }));
+      dialog = await confirmCard(user, card, view, 'Disable', `Disable ${original.name}?`);
       await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
-      await card.findByRole('button', { name: 'Enable', exact: true });
-      await user.click(card.getByRole('button', { name: 'Remove', exact: true }));
-      dialog = within(await screen.findByRole('alertdialog', { name: `Remove ${original.name}?` }));
+      await settled();
+      await waitFor(() => expect(within(card.getByRole('button', { name: view }).closest('li')!).getByText('Disabled')).toBeTruthy());
+      dialog = await confirmCard(user, card, view, 'Remove', `Remove ${original.name}?`);
       expect(dialog.getByText(disabled.path)).toBeTruthy();
       expect(remove).not.toHaveBeenCalled();
       await user.click(dialog.getByRole('button', { name: 'Cancel', exact: true }));
       await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
       expect(remove).not.toHaveBeenCalled();
       expect((await api.configuration())[kind][0]).toEqual(disabled);
-      await user.click(card.getByRole('button', { name: 'Remove', exact: true }));
-      dialog = within(await screen.findByRole('alertdialog', { name: `Remove ${original.name}?` }));
+      await user.keyboard('{Escape}');
+      await settled();
+      dialog = await confirmCard(user, card, view, 'Remove', `Remove ${original.name}?`);
       await user.click(dialog.getByRole('button', { name: 'Remove', exact: true }));
       await card.findByText(`No ${kind} in this scope. Add one to get started.`);
+      await settled();
       expect(remove).toHaveBeenLastCalledWith(kind, original.name, original.revision, '', disabled.path);
       expect((await api.configuration())[kind]).toHaveLength(0);
     } finally { toggle.mockRestore(); remove.mockRestore(); }
@@ -558,18 +604,20 @@ describe('native configuration', () => {
   test('enabling a disabled skill reports a destination collision without replacing either definition', async () => {
     const { user, card } = await open('Skills');
     const original = (await api.configuration()).skills[0];
-    await user.click(card.getByRole('button', { name: 'Disable', exact: true }));
-    let dialog = within(await screen.findByRole('alertdialog', { name: `Disable ${original.name}?` }));
+    let dialog = await confirmCard(user, card, 'View skill release-check', 'Disable', `Disable ${original.name}?`);
     await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
-    await card.findByRole('button', { name: 'Enable', exact: true });
+    await settled();
+    await waitFor(() => expect(within(card.getByRole('button', { name: 'View skill release-check' }).closest('li')!).getByText('Disabled')).toBeTruthy());
     const replacement = await api.saveConfiguration('skills', original.name, { content: original.content + '\nReplacement content.', revision: '' });
-    await user.click(card.getByRole('button', { name: 'Enable', exact: true }));
-    dialog = within(await screen.findByRole('alertdialog', { name: `Enable ${original.name}?` }));
+    dialog = await confirmCard(user, card, 'View skill release-check', 'Enable', `Enable ${original.name}?`);
     await user.click(dialog.getByRole('button', { name: 'Enable', exact: true }));
-    expect((await card.findByRole('alert')).textContent).toContain('The destination already exists');
+    // The refusal shows in the reader, which stays open over the card.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    const reader = within(await screen.findByRole('dialog', { name: 'skill release-check' }));
+    expect((await reader.findByRole('alert')).textContent).toContain('The destination already exists');
     const files = (await api.configuration()).skills;
     expect(files).toEqual([{ ...original, disabled: true, path: original.path + '.uam-disabled' }, replacement]);
-    expect(card.getByRole('button', { name: 'Enable', exact: true })).toBeTruthy();
+    expect(reader.getByRole('button', { name: 'Enable', exact: true })).toBeTruthy();
   });
 
   test.each([false, true])('unreadable skills appear only as Skills notices with structured details: %s', async (structured) => {
@@ -585,13 +633,13 @@ describe('native configuration', () => {
     });
     try {
       const { user, card } = await open('Skills');
-      expect(within(card.getByRole('list', { name: 'skills in this scope' })).getAllByRole('listitem')).toHaveLength(1);
+      expect(within(card.getByRole('group', { name: 'skills in this scope' })).getAllByRole('listitem')).toHaveLength(1);
       expect(card.queryByRole('button', { name: 'View skill missing' })).toBeNull();
       const notice = card.getAllByRole('status').find((entry) => entry.textContent?.includes(message))!;
       expect(within(notice).getByText(path)).toBeTruthy();
       await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
       const agents = within(await screen.findByRole('region', { name: 'Agents', exact: true }));
-      await agents.findByRole('list', { name: 'agents in this scope' });
+      await agents.findByRole('group', { name: 'agents in this scope' });
       expect(agents.queryByText(path)).toBeNull();
       expect(agents.queryByText(/skill link target|Some skills files|Duplicate definition check is incomplete/)).toBeNull();
     } finally { read.mockRestore(); }
@@ -609,7 +657,7 @@ describe('native configuration', () => {
     });
     try {
       const { user, card } = await open('Skills');
-      const list = within(card.getByRole('list', { name: 'skills in this scope' }));
+      const list = within(card.getByRole('group', { name: 'skills in this scope' }));
       expect(list.getAllByRole('heading').map((h) => h.textContent)).toEqual(['.copilot · 1', '.agents · 1', '.claude · 2']);
       expect(list.getAllByText(/^in \.(agents|claude)$/).map((s) => s.textContent)).toEqual(['in .agents', 'in .claude']);
       expect(card.getByText('4 skills')).toBeTruthy();
@@ -644,6 +692,31 @@ describe('native configuration', () => {
     await waitFor(() => expect(document.activeElement).toBe(card.getByRole('button', { name: 'Add agent' })));
   });
 
+  test('a card opens its reader from the keyboard, Escape returns to the card, and Edit hands focus to the form and back', async () => {
+    const { user, card } = await open('Agents');
+    expect(card.getByRole('heading', { name: 'Global · 1' })).toBeTruthy();
+    const trigger = card.getByRole('button', { name: 'View agent reviewer' });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(within(trigger.closest('li')!).getByText('Review changes')).toBeTruthy();
+    trigger.focus();
+    await user.keyboard('{Enter}');
+    let reader = within(await screen.findByRole('dialog', { name: 'agent reviewer' }));
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(reader.getByRole('heading', { level: 2 }).textContent).toBe('reviewer');
+    expect(reader.getByText('Esc')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await settled();
+    expect(document.activeElement).toBe(trigger);
+    await user.keyboard(' ');
+    reader = within(await screen.findByRole('dialog', { name: 'agent reviewer' }));
+    await user.click(reader.getByRole('button', { name: 'Edit', exact: true }));
+    const form = await card.findByRole('form', { name: 'Edit agent' });
+    await waitFor(() => expect(document.activeElement).toBe(within(form).getByLabelText('Full native document')));
+    await user.keyboard('{Escape}');
+    expect(card.queryByRole('form', { name: 'Edit agent' })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(card.getByRole('button', { name: 'View agent reviewer' })));
+  });
+
   test('same-name skills retain exact file identity when reloading, saving and removing', async () => {
     const original = api.configuration;
     let shared: ConfigurationFile | undefined;
@@ -661,9 +734,9 @@ describe('native configuration', () => {
     const remove = vi.spyOn(api, 'deleteConfiguration').mockImplementation(async () => { removed = true; });
     try {
       const { user, card } = await open('Skills');
-      const sharedRow = () => card.getByText(shared!.path).closest('li')!;
-      await user.click(within(sharedRow()).getByRole('button', { name: 'Edit', exact: true }));
-      const editor = card.getByLabelText('Full native document') as HTMLTextAreaElement;
+      const sharedCard = () => within(card.getByRole('group', { name: '.agents · 1' }));
+      await editCard(user, sharedCard(), 'View skill release-check');
+      const editor = await card.findByLabelText('Full native document') as HTMLTextAreaElement;
       expect(editor.value).toBe('Shared checklist.');
       await user.type(editor, '\nDraft change.');
       await user.click(card.getByRole('button', { name: 'Save skill' }));
@@ -676,8 +749,7 @@ describe('native configuration', () => {
       await user.click(card.getByRole('button', { name: 'Save skill' }));
       await card.findByText('release-check saved. New and reopened tasks use the updated file.');
       expect(save).toHaveBeenLastCalledWith('skills', 'release-check', { content: 'External shared change.\nReviewed.', revision: 'shared-2', path: shared!.path }, '');
-      await user.click(within(sharedRow()).getByRole('button', { name: 'Remove', exact: true }));
-      const dialog = within(await screen.findByRole('alertdialog'));
+      const dialog = await confirmCard(user, sharedCard(), 'View skill release-check', 'Remove');
       expect(dialog.getByText(shared!.path)).toBeTruthy();
       expect(dialog.getByText(/removing it affects those aliases/)).toBeTruthy();
       await user.click(dialog.getByRole('button', { name: 'Remove', exact: true }));
@@ -699,8 +771,8 @@ describe('native configuration', () => {
     const save = vi.spyOn(api, 'saveConfiguration').mockRejectedValue(new ApiError(409, 'The file changed since it was loaded.'));
     try {
       const { user, card } = await open('Skills');
-      await user.click(within(card.getByText(path).closest('li')!).getByRole('button', { name: 'Edit', exact: true }));
-      const editor = card.getByLabelText('Full native document') as HTMLTextAreaElement;
+      await editCard(user, within(card.getByRole('group', { name: '.agents · 1' })), 'View skill release-check');
+      const editor = await card.findByLabelText('Full native document') as HTMLTextAreaElement;
       await user.type(editor, '\nKeep my draft.');
       const draft = editor.value;
       await user.click(card.getByRole('button', { name: 'Save skill' }));
@@ -715,8 +787,8 @@ describe('native configuration', () => {
 
   test('a stale save preserves the draft and reload requires explicit discard confirmation', async () => {
     const { user, card } = await open('Agents');
-    await user.click(card.getByRole('button', { name: 'Edit' }));
-    const editor = card.getByLabelText('Full native document') as HTMLTextAreaElement;
+    await editCard(user, card, 'View agent reviewer');
+    const editor = await card.findByLabelText('Full native document') as HTMLTextAreaElement;
     await user.type(editor, '\nMy draft.');
     const saved = (await api.configuration()).agents[0];
     await api.saveConfiguration('agents', saved.name, { content: saved.content + '\nExternal edit.', revision: saved.revision });
@@ -740,8 +812,7 @@ describe('native configuration', () => {
   test('deletion confirms the target and sends its path and revision', async () => {
     const { user, card } = await open('Skills');
     const existing = (await api.configuration()).skills[0];
-    await user.click(card.getByRole('button', { name: 'Remove' }));
-    const dialog = within(await screen.findByRole('alertdialog', { name: 'Remove release-check?' }));
+    const dialog = await confirmCard(user, card, 'View skill release-check', 'Remove', 'Remove release-check?');
     expect(dialog.getByText(/keeping supporting files/)).toBeTruthy();
     expect(dialog.getByText(existing.path)).toBeTruthy();
     expect((await api.configuration()).skills).toHaveLength(1);
@@ -790,12 +861,16 @@ describe('native discovery metadata', () => {
     const toggle = vi.spyOn(api, 'setConfigurationDisabled');
     try {
       const { user, card } = await open('Skills');
-      expect(card.getByText('Copilot: authored-runtime-name · Global · Copilot')).toBeTruthy();
-      expect(card.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
-      expect(card.queryByText(/^Disabled — enable/)).toBeNull();
       await user.type(card.getByRole('searchbox', { name: 'Filter skills' }), 'authored-runtime-name');
-      const row = within(card.getByRole('list', { name: 'skills in this scope' })).getByRole('listitem');
-      await user.click(within(row).getByRole('button', { name: 'Disable', exact: true }));
+      const row = within(within(card.getByRole('group', { name: 'skills in this scope' })).getByRole('listitem'));
+      expect(row.getByText('A native skill description')).toBeTruthy();
+      expect(row.getByText('Off in Copilot')).toBeTruthy();
+      expect(card.getByRole('heading', { name: 'Global · Copilot · 1' })).toBeTruthy();
+      const reader = await openCard(user, card, 'View skill release-check');
+      expect(reader.getByText('Copilot: authored-runtime-name · Global · Copilot')).toBeTruthy();
+      expect(reader.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
+      expect(reader.queryByText(/^Disabled — enable/)).toBeNull();
+      await user.click(reader.getByRole('button', { name: 'Disable', exact: true }));
       const dialog = within(await screen.findByRole('alertdialog'));
       expect(dialog.getByText(identity!.path)).toBeTruthy();
       await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
@@ -816,15 +891,22 @@ describe('native discovery metadata', () => {
       return result;
     });
     try {
-      const { card } = await open('Agents');
+      const { user, card } = await open('Agents');
+      // Each is one card (its only control opens the reader), grouped by source.
       for (const description of ['First remote definition', 'Second remote definition', 'Plugin definition']) {
         const row = card.getByText(description).closest('li')!;
-        expect(within(row).queryByRole('button')).toBeNull();
+        expect(within(row).getAllByRole('button')).toHaveLength(1);
       }
-      expect(card.getByText('/managed/plugin/agent.md')).toBeTruthy();
-      expect(card.getAllByText('Copilot: remote · Remote')).toHaveLength(2);
-      expect(card.getByRole('button', { name: 'View agent reviewer' })).toBeTruthy();
-      expect(card.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      expect(card.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Global · 1', 'Remote · 2', 'Plugin · 1']);
+      expect(card.getAllByRole('button', { name: 'View agent remote' })).toHaveLength(2);
+      const plugin = await openCard(user, card, 'View agent plugin-agent');
+      expect(plugin.getByText('/managed/plugin/agent.md')).toBeTruthy();
+      expect(plugin.getByText('Copilot: plugin-agent · Plugin')).toBeTruthy();
+      expect(plugin.queryByRole('button', { name: /^(Edit|Disable|Enable|Remove)$/ })).toBeNull();
+      expect(plugin.queryByRole('radio', { name: 'Source' })).toBeNull();
+      await user.keyboard('{Escape}');
+      await settled();
+      expect((await openCard(user, card, 'View agent reviewer')).getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
     } finally { read.mockRestore(); }
   });
 
@@ -839,12 +921,13 @@ describe('native discovery metadata', () => {
       const { user, card } = await open('Skills');
       expect(card.getByText('Native skills discovery is incomplete. Managed files remain available.')).toBeTruthy();
       expect(card.getByText('Malformed native skill definition')).toBeTruthy();
-      expect(card.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      expect((await openCard(user, card, 'View skill release-check')).getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await settled();
       await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
       const agents = within(await screen.findByRole('region', { name: 'Agents', exact: true }));
       expect(await agents.findByText('Native agents discovery is unavailable in this Copilot version. Showing managed files.')).toBeTruthy();
-      expect(agents.getByRole('button', { name: 'View agent reviewer' })).toBeTruthy();
-      expect(agents.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+      expect((await openCard(user, agents, 'View agent reviewer')).getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
     } finally { read.mockRestore(); }
   });
 
@@ -860,17 +943,30 @@ describe('native discovery metadata', () => {
     });
     try {
       const { user, card } = await open('Hooks');
-      expect(card.getByText('Copilot: preToolUse · Repository')).toBeTruthy();
-      expect(card.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
       expect(card.getByText('Native hooks discovery is incomplete. Managed files remain available.')).toBeTruthy();
       expect(card.getByText('Hook file could not be parsed')).toBeTruthy();
-      expect(within(card.getByText('audit-plugin').closest('li')!).queryByRole('button')).toBeNull();
-      expect(card.getByRole('button', { name: 'View hook file audit' })).toBeTruthy();
+      expect(within(card.getByText('audit-plugin').closest('li')!).getAllByRole('button')).toHaveLength(1);
+      expect(within(card.getByRole('button', { name: 'View hook file audit' }).closest('li')!).getByText('postToolUse')).toBeTruthy();
+      const audit = await openCard(user, card, 'View hook file audit');
+      expect(audit.getByText('Copilot: preToolUse · Repository')).toBeTruthy();
+      expect(audit.getByText('Disabled globally in Copilot. This is separate from the file toggle.')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await settled();
+      const plugin = await openCard(user, card, 'View hook file sessionStart');
+      expect(plugin.queryByRole('button', { name: /^(Edit|Disable|Enable|Remove)$/ })).toBeNull();
+      await user.keyboard('{Escape}');
+      await settled();
       await user.click(screen.getByRole('button', { name: 'Instructions', exact: true }));
       const instructions = within(await screen.findByRole('region', { name: 'Instructions', exact: true }));
-      const row = (await instructions.findByText('Copilot: Plugin rules · Plugin')).closest('li')!;
-      expect(within(row).queryByRole('button')).toBeNull();
+      const row = (await instructions.findByRole('button', { name: 'View Plugin rules' })).closest('li')!;
+      expect(within(row).getAllByRole('button')).toHaveLength(1);
       expect(within(row).queryByText('No saved file at this path.')).toBeNull();
+      const rules = await openCard(user, instructions, 'View Plugin rules');
+      expect(rules.getByText('Copilot: Plugin rules · Plugin')).toBeTruthy();
+      expect(rules.queryByText('No saved file at this path.')).toBeNull();
+      expect(rules.queryByRole('button', { name: /^(Edit|Add)/ })).toBeNull();
+      await user.keyboard('{Escape}');
+      await settled();
       expect(instructions.getByRole('button', { name: 'View copilot-instructions.md' })).toBeTruthy();
     } finally { read.mockRestore(); }
   });
@@ -889,10 +985,14 @@ describe('native discovery metadata', () => {
     const toggle = vi.spyOn(api, 'setConfigurationDisabled');
     try {
       const { user, card } = await open('Skills');
-      expect(card.getAllByText('Copilot global setting: On')).toHaveLength(2);
-      const row = card.getByText('Plugin copy').closest('li')!;
-      expect(within(row).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Turn off shared-name globally in Copilot']);
-      await user.click(within(row).getByRole('button', { name: 'Turn off shared-name globally in Copilot' }));
+      expect((await openCard(user, card, 'View skill release-check')).getByText('Copilot global setting: On')).toBeTruthy();
+      await user.keyboard('{Escape}');
+      await settled();
+      const reader = await openCard(user, card, 'View skill shared-name');
+      expect(reader.getByText('Plugin copy')).toBeTruthy();
+      expect(reader.getByText('Copilot global setting: On')).toBeTruthy();
+      expect(reader.queryByRole('button', { name: /^(Edit|Disable|Enable|Remove)$/ })).toBeNull();
+      await user.click(reader.getByRole('button', { name: 'Turn off shared-name globally in Copilot' }));
       const dialog = within(await screen.findByRole('alertdialog'));
       expect(dialog.getByText(/Copilot global setting\./)).toBeTruthy();
       expect(dialog.getByText(/every skill named shared-name/)).toBeTruthy();
@@ -902,8 +1002,11 @@ describe('native discovery metadata', () => {
       await waitFor(() => expect(global).toHaveBeenCalledWith('shared-name', true, ''));
       expect(global).toHaveBeenCalledTimes(1);
       expect(toggle).not.toHaveBeenCalled();
-      expect(await card.findAllByText('Copilot global setting: Off')).toHaveLength(2);
-      expect(card.getByRole('button', { name: 'Disable', exact: true })).toBeTruthy();
+      await settled();
+      expect(await card.findAllByText('Off in Copilot')).toHaveLength(2);
+      const after = await openCard(user, card, 'View skill release-check');
+      expect(after.getByText('Copilot global setting: Off')).toBeTruthy();
+      expect(after.getByRole('button', { name: 'Disable', exact: true })).toBeTruthy();
     } finally { read.mockRestore(); global.mockRestore(); toggle.mockRestore(); }
   });
 });

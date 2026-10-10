@@ -414,6 +414,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   messages and pull or merge requests without a `Co-authored-by` trailer or
   any AI attribution unless you ask for one. Copilot's own co-author trailer
   is turned off for Tasks.
+  Settings → Agents, Skills, Hooks and Instructions show each file as a card,
+  grouped by source (Copilot's reported source, else the scope, or a skill's
+  folder) with a count per group, and each card names the file and its
+  description, hook events or first line. Pressing a card opens its reader:
+  Copilot's metadata, the path and the saved document (Preview or Source),
+  with Edit, Disable or Enable and Remove for an editable file. Edit opens the
+  section's form; Disable, Enable and Remove ask first; a read-only file
+  shows why instead.
   Settings → Skills and Agents also show Copilot's native discovery metadata:
   runtime names, sources, descriptions and global skill enablement. Hooks show
   each discovered action's event, origin and source, including actions disabled
@@ -1650,11 +1658,14 @@ configuration, the same one the `copilot` command on this host uses, so a
 server added in either place shows in both. uam edits that configuration
 only through the Copilot runtime's API; it never writes the file itself.
 
-**Settings → MCP servers** lists the configured servers: name, type, the
-command line or address, the names of its environment variables or headers
-(values show as `••••`), and a switch for whether new Tasks start it.
-Servers from a plugin or built into Copilot are listed read-only, except
-the built-in GitHub server, `github-mcp-server` (below). **Add
+**Settings → MCP servers** shows each configured server as a card, grouped
+by source (the servers configured here, then plugin and built-in ones), with
+its name, type, command line or address, and a switch for whether new Tasks
+start it. Pressing a card opens its reader: the command line or address and
+the names of its environment variables or headers (values show as `••••`),
+with **Edit** and **Remove** (confirmed first). Servers from a plugin or
+built into Copilot are read-only, except the built-in GitHub server's
+switch, `github-mcp-server` (below). **Add
 server** and **Edit** take a name, a type, and then either a command,
 arguments (one per line, passed as typed with no shell) and an optional
 absolute working folder, or an address. Environment variable and header
@@ -1663,7 +1674,7 @@ value as `•••• set`, leaving it empty keeps it and typing replaces it. P
 keys in a header, not in the address: the address is shown to anyone signed
 in, and one with a user name or password in it is refused.
 
-**The built-in GitHub server** has its own switch on its row, and it is
+**The built-in GitHub server** has its own switch on its card, and it is
 uam's setting rather than Copilot's: the `copilot` command on this host is
 not affected. It is off by default, also on an install that never saved it.
 While it is off, every Copilot Task created or reopened leaves the server

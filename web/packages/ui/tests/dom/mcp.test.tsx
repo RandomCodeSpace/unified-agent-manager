@@ -166,10 +166,18 @@ describe('MCP servers', () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
-    const list = within(await section.findByRole('list', { name: 'MCP servers' }));
+    const list = within(await section.findByRole('group', { name: 'MCP servers' }));
+    // Cards grouped by source with their counts: the servers configured here, then the built-in one.
+    expect(list.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Global · 3', 'Built in · 1']);
     expect(list.getByText('/opt/mcp/echo-server --stdio')).toBeTruthy();
-    expect(list.getByText('ECHO_TOKEN=')).toBeTruthy();
-    expect(list.getByText('Built in')).toBeTruthy();
+    await user.click(list.getByRole('button', { name: 'View MCP server echo' }));
+    const reader = within(await screen.findByRole('dialog', { name: 'MCP server echo' }));
+    expect(reader.getByText('Command · Global')).toBeTruthy();
+    expect(reader.getByText('ECHO_TOKEN=')).toBeTruthy();
+    expect(reader.getByRole('button', { name: 'Edit', exact: true })).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(list.getByRole('button', { name: 'View MCP server echo' }));
     // Terminal on: the form offers a command server.
     await user.click(section.getByRole('button', { name: 'Add server' }));
     expect(section.getByRole('radio', { name: 'Command' })).toBeTruthy();
@@ -191,7 +199,7 @@ describe('MCP servers', () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
-    const list = within(await section.findByRole('list', { name: 'MCP servers' }));
+    const list = within(await section.findByRole('group', { name: 'MCP servers' }));
     const github = list.getByRole('switch', { name: 'Use github-mcp-server in tasks' });
     const row = within(github.closest('li')!);
     expect(github.getAttribute('aria-checked')).toBe('false');
@@ -202,6 +210,11 @@ describe('MCP servers', () => {
     await user.click(github);
     await waitFor(() => expect(github.getAttribute('aria-checked')).toBe('true'));
     expect(row.queryByText('Off')).toBeNull();
+    // A read-only built-in server's reader has no Edit or Remove.
+    await user.click(row.getByRole('button', { name: 'View MCP server github-mcp-server' }));
+    const reader = within(await screen.findByRole('dialog', { name: 'MCP server github-mcp-server' }));
+    expect(reader.getByText(/Built in: only its switch is yours to change/)).toBeTruthy();
+    expect(reader.queryByRole('button', { name: /^(Edit|Remove)/ })).toBeNull();
   });
 
   test('a Task leaves the built-in GitHub server off until Settings turns it on, and can still turn it on for itself', async () => {
@@ -220,13 +233,42 @@ describe('MCP servers', () => {
     const { user } = renderApp('#settings');
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
-    await section.findByRole('list', { name: 'MCP servers' });
-    await user.click(section.getAllByRole('button', { name: 'Edit' })[0]);
-    const form = within(section.getByRole('form', { name: 'Edit MCP server docs-search' }));
+    await user.click(await section.findByRole('button', { name: 'View MCP server docs-search' }));
+    const reader = within(await screen.findByRole('dialog', { name: 'MCP server docs-search' }));
+    await user.click(reader.getByRole('button', { name: 'Edit', exact: true }));
+    const form = within(await section.findByRole('form', { name: 'Edit MCP server docs-search' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
     const value = form.getByLabelText('Headers 1 value') as HTMLInputElement;
     expect(value.value).toBe('');
     expect(value.placeholder).toBe('•••• set');
     expect(form.getByText(/Stored values are never shown/)).toBeTruthy();
+    // Edit from the reader saves; the card shows the new address.
+    const address = form.getByRole('textbox', { name: 'Address' });
+    await user.clear(address);
+    await user.type(address, 'https://mcp.example.com/docs/v2');
+    await user.click(form.getByRole('button', { name: 'Save server' }));
+    await waitFor(() => expect(section.queryByRole('form')).toBeNull());
+    expect(await section.findByText('https://mcp.example.com/docs/v2')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(section.getByRole('button', { name: 'View MCP server docs-search' })));
+  });
+
+  test('Remove in a server card\'s reader asks first, then removes the server', async () => {
+    const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
+    const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
+    await user.click(await section.findByRole('button', { name: 'View MCP server tracker' }));
+    const reader = within(await screen.findByRole('dialog', { name: 'MCP server tracker' }));
+    await user.click(reader.getByRole('button', { name: 'Remove tracker' }));
+    let confirm = within(await screen.findByRole('alertdialog', { name: 'Remove MCP server tracker?' }));
+    await user.click(confirm.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    // Cancel keeps the reader and the server.
+    await user.click(await within(await screen.findByRole('dialog', { name: 'MCP server tracker' })).findByRole('button', { name: 'Remove tracker' }));
+    confirm = within(await screen.findByRole('alertdialog', { name: 'Remove MCP server tracker?' }));
+    await user.click(confirm.getByRole('button', { name: 'Remove server' }));
+    await waitFor(() => expect(section.queryByRole('button', { name: 'View MCP server tracker' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog')).toBeNull());
+    expect(section.getByRole('heading', { name: 'Global · 2' })).toBeTruthy();
   });
 
   test('a Task shows each server state and signs in by pasting the address the browser ended on', async () => {
