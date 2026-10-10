@@ -62,8 +62,7 @@ export function SuggestionGhost({ text, onUse }: Readonly<{ text: string; onUse:
         Suggestion: {text}, press Right Arrow to use it
       </span>
       <Tip label="Use suggestion (Right Arrow)">
-        <Button size="sm" variant="subtle" aria-label="Use suggestion" className="pointer-events-auto -mt-0.5 shrink-0 text-muted" onClick={onUse}>
-          Use
+        <Button size="icon" variant="subtle" aria-label="Use suggestion" className="pointer-events-auto shrink-0 text-muted" onClick={onUse}>
           <ArrowRight />
         </Button>
       </Tip>
