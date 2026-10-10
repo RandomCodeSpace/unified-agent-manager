@@ -842,7 +842,8 @@ describe('native configuration', () => {
     await card.findByText(/Available skills:/);
     await user.type(card.getByLabelText('Skill names to install, one per line'), 'web-design-guidelines');
     await user.click(card.getByRole('button', { name: 'Install skills', exact: true }));
-    await card.findByText('web-design-guidelines', { exact: true });
+    // The installed skill's card, not the names field that still holds the typed name.
+    await card.findByRole('button', { name: 'View skill web-design-guidelines' });
     expect((await api.configuration()).skills.map((entry) => entry.name)).toContain('web-design-guidelines');
   });
 });
