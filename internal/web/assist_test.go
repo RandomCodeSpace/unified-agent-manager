@@ -141,6 +141,43 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	}
 }
 
+func TestSuggestionPromptQuotesTheWholeTurn(t *testing.T) {
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	prompts := make(chan string, 1)
+	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+		if req.Purpose == "suggest-replies" {
+			prompts <- req.Prompt
+		}
+		return "Commit this", nil
+	})
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conv := prov.Last()
+	finishTurn(conv, "earlier", "Done earlier.")
+	long := strings.Repeat("x", 3000) + "END"
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "fix the build " + long})
+	conv.EmitItem(agentapi.Item{ID: "r1", Kind: agentapi.ItemReasoning, Text: "secret thought"})
+	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Running the tests."})
+	conv.EmitItem(agentapi.Item{ID: "t1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./..."}`, Output: "FAIL pkg " + long, ExitCode: codeOf(1)}})
+	conv.EmitItem(agentapi.Item{ID: "s1", Kind: agentapi.ItemTool, AgentID: "agent-1", Tool: &agentapi.ToolCall{Name: "view", Status: agentapi.ToolCompleted, Output: "subagent output"}})
+	conv.EmitItem(agentapi.Item{ID: "u2", Kind: agentapi.ItemUser, Text: "also lint", Delivery: agentapi.DeliverySteer})
+	conv.EmitItem(agentapi.Item{ID: "a2", Kind: agentapi.ItemAssistant, Text: "Fixed and linted."})
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+
+	if _, err := m.SuggestReplies(context.Background(), sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	got := <-prompts
+	want := "<user_message>\nfix the build " + long + "\n</user_message>\n<agent_reply>\nRunning the tests.\n[tool bash] exit 1\ninput:\n{\"command\":\"go test ./...\"}\noutput:\nFAIL pkg " + long + "\n[user, while the agent worked]\nalso lint\nFixed and linted.\n</agent_reply>"
+	if got != want {
+		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
