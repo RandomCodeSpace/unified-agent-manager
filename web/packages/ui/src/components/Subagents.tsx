@@ -6,7 +6,7 @@ import { BodyNotice, useDetailAgent, useDisclosure, useItemBody } from './Detail
 import { Popover as BasePopover } from '@base-ui/react/popover';
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { ArrowUp, Bot, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, CornerDownRight, Minus, Square, X } from 'lucide-react';
-import { createContext, Fragment, memo, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useEffectEvent, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
@@ -202,6 +202,8 @@ interface ScopeData {
   stops: Record<string, StopState>;
   /** The subagent whose transcript is open, or "". */
   pinned: string;
+  /** A peek or a transcript is open: lists keep their order, so nothing moves under it. */
+  holding: boolean;
   /** Below 640px: a row opens a sheet instead of the peek and the panel. */
   phone: boolean;
   reveal: Reveal | null;
@@ -266,12 +268,27 @@ export const useLiveSubagentIds = () => useScope((d) => d.liveIds);
  * the header index): the session, the transcripts held, the one peek (DESIGN.md subagent peek),
  * the one open transcript, stop requests and their one confirmation, and `locate`.
  */
-export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; children: ReactNode }>) {
+export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal, onLocate, onJumpToReply, onHold, children }: Readonly<{ session: SessionDetail; agents: Record<string, AgentTranscript>; agentSteps: Record<string, Item>; snapshotSeq: number; reveal: Reveal | null; onLocate: (toolCallId: string, expand?: boolean) => void; onJumpToReply: (key: string) => void; /** While a peek or a transcript is open, its row (read when needed), which the conversation keeps in place; null once both are closed. */ onHold?: (row: (() => Element | null) | null) => void; children: ReactNode }>) {
   const [stops, stopNow] = useStops(session.id, session.subagents);
   // Stopping a subagent ends its work for good, so it is confirmed first (DESIGN.md Confirmations).
   const stopConfirm = useConfirm<Subagent>();
   const phone = useMedia('(max-width: 639px)');
   const [pinned, setPinned] = useState<Pinned | null>(null);
+  const [peeking, setPeeking] = useState(false);
+  // Moving from row to row closes the peek and opens it again at once: a close counts only once it lasts.
+  const peekTimer = useRef(0);
+  const peekChange = useCallback((open: boolean) => {
+    window.clearTimeout(peekTimer.current);
+    if (open) setPeeking(true);
+    else peekTimer.current = window.setTimeout(() => setPeeking(false), 200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(peekTimer.current), []);
+  const holding = peeking || !!pinned?.open;
+  const heldRow = pinned?.open ? pinned.anchor : null;
+  useEffect(() => {
+    if (!holding) onHold?.(null);
+    else onHold?.(() => (heldRow?.isConnected ? heldRow : document.querySelector('[data-subagent-toggle][data-popup-open]')));
+  }, [onHold, holding, heldRow]);
   // The items and the index change with every streamed token; what is read from them (the user
   // messages and the `task` calls) only with a message or a call, so those lists are kept until then.
   const byParent = parentMap(session.subagents);
@@ -293,8 +310,8 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   // A transcript whose subagent is gone closes.
   if (pinned?.open && !session.subagents.some((x) => x.id === pinned.id)) setPinned({ ...pinned, open: false });
   const data = useMemo<ScopeData>(
-    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned: pinned?.open ? pinned.id : '', phone, reveal }),
-    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned, phone, reveal],
+    () => ({ task, subagents: session.subagents, subagentsBefore: session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned: pinned?.open ? pinned.id : '', holding, phone, reveal }),
+    [task, session.subagents, session.subagents_before, agents, snapshotSeq, summaries, outline, messages, callTimes, replies, live, liveIds, stops, pinned, holding, phone, reveal],
   );
   const [store] = useState(() => new ScopeStore(data));
   useLayoutEffect(() => store.set(data), [store, data]);
@@ -337,7 +354,7 @@ export function SubagentScope({ session, agents, agentSteps, snapshotSeq, reveal
   return (
     <SubagentContext.Provider value={value}>
       {children}
-      {!phone && <SubagentPeek handle={value.peek} />}
+      {!phone && <SubagentPeek handle={value.peek} onOpenChange={peekChange} />}
       {pinned && (phone
         ? <SubagentSheet pinned={pinned} onFull={() => setPinned((p) => (p ? { ...p, full: true } : p))} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />
         : <SubagentPanel pinned={pinned} onClose={close} onClosed={closed} onChild={child} onBack={back} onUp={up} />)}
@@ -491,7 +508,8 @@ const ONE_COLUMN = 6;
  * failed families first, then running ones (lib/subagents `families`). `limit` families render
  * until "Show 50 more".
  */
-function Families({ list, tones, anchor, limit, onMore }: Readonly<{ list: Family[]; tones: ReadonlyMap<string, IdentityTone>; anchor: boolean; limit: number; onMore: () => void }>) {
+function Families({ list: ranked, tones, anchor, limit, onMore }: Readonly<{ list: Family[]; tones: ReadonlyMap<string, IdentityTone>; anchor: boolean; limit: number; onMore: () => void }>) {
+  const list = useHeldOrder(ranked, useScope((d) => d.holding) ?? false);
   return (
     <>
       {/* A short list is one column as wide as a row needs (42rem at most); a long one flows into columns, no more than its families. */}
@@ -511,6 +529,21 @@ function Families({ list, tones, anchor, limit, onMore }: Readonly<{ list: Famil
       )}
     </>
   );
+}
+
+/**
+ * `list` in the order it last had while `hold` is set (new families after it), so a row under an
+ * open peek or transcript does not move when another one finishes; in its own order otherwise.
+ */
+function useHeldOrder(list: Family[], hold: boolean): Family[] {
+  const [order, setOrder] = useState<readonly string[]>(() => list.map((f) => f.head.id));
+  let shown = list;
+  if (hold) {
+    const at = new Map(order.map((id, i) => [id, i]));
+    shown = [...list].sort((a, b) => (at.get(a.head.id) ?? Infinity) - (at.get(b.head.id) ?? Infinity));
+  }
+  if (shown.length !== order.length || shown.some((f, i) => f.head.id !== order[i])) setOrder(shown.map((f) => f.head.id));
+  return shown;
 }
 
 /**
@@ -561,21 +594,33 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
   const phone = useScope((d) => d.phone) ?? false;
   const open = useScope((d) => d.pinned === s.id) ?? false;
   const stopError = useScope((d) => d.stops[s.id]?.error) ?? null;
+  // While it runs, what it is doing now (its latest step), so a row says more than what it was asked.
+  const doing = useScope((d) => (s.status === 'running' ? rowSummary(d.summaries, s) : '')) ?? '';
   // Keyboard focus peeks too, after the same moment; the peek never takes the focus.
   const triggerId = useId();
   const focusTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(focusTimer.current), []);
+  // A row that leaves (the live set ends once nothing runs) takes its peek with it.
+  const trigger = useRef<HTMLButtonElement>(null);
+  const peek = scope?.peek;
+  useLayoutEffect(() => {
+    const el = trigger.current;
+    return () => {
+      if (peek?.isOpen && el?.hasAttribute('data-popup-open')) peek.close();
+    };
+  }, [peek]);
   if (!scope) return null;
   const name = s.name || 'Subagent';
   // What it was asked to do, in a few words (the `task` call's description): the name is often only the agent's kind.
-  const about = s.description && s.description.trim().toLowerCase() !== name.toLowerCase() ? s.description : '';
+  const asked = s.description && s.description.trim().toLowerCase() !== name.toLowerCase() ? s.description : '';
+  const about = doing || asked;
   const parentId = s.parent_tool_call_id;
   const failure = s.status === 'failed' ? s.error : '';
   const props = {
     type: 'button' as const,
     'data-subagent-toggle': '',
     'aria-haspopup': 'dialog' as const,
-    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}${about ? ` · ${about}` : ''}`,
+    'aria-label': `${name}, ${STATUS_WORD[s.status]}${failure ? `: ${failure}` : ''}${asked ? ` · ${asked}` : ''}`,
     className: cn('flex min-h-7 w-full items-center gap-2 rounded-sm py-0.5 pr-1.5 text-left text-caption text-body transition-colors duration-100 hover:bg-tint-well pointer-coarse:min-h-11', open && 'bg-tint-selected hover:bg-tint-selected'),
     style: { paddingLeft: `${8 + depth * 18}px` },
   };
@@ -588,7 +633,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
       {tone && <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', DOT[tone])} />}
       <span className={cn('min-w-0 truncate', about ? 'max-w-[45%] shrink-0 max-sm:max-w-none max-sm:flex-1' : 'flex-1')}>{name}</span>
       {about && (
-        <span className="min-w-0 flex-1 truncate text-muted max-sm:hidden" title={about}>
+        <span className="min-w-0 flex-1 truncate text-muted max-sm:hidden" title={doing && asked ? `${asked}\n${doing}` : about}>
           {about}
         </span>
       )}
@@ -605,6 +650,7 @@ export const SubagentRow = memo(function SubagentRow({ subagent: s, tone, depth 
       ) : (
         <BasePopover.Trigger
           {...props}
+          ref={trigger}
           id={triggerId}
           handle={scope.peek}
           payload={s.id}
@@ -660,7 +706,7 @@ function LatestSteps({ subagent: s }: Readonly<{ subagent: Subagent }>) {
   const items = (detail.agent?.items ?? []).filter((item) => item.kind === 'tool' || item.kind === 'reasoning' || (item.kind === 'assistant' && item.text?.trim())).slice(-4);
   const step = useScope((d) => d.summaries.agentSteps[s.id]);
   const lines = items.length ? items : step ? [step] : [];
-  if (!lines.length) return <p className="text-caption text-muted">Nothing recorded yet.</p>;
+  if (!lines.length) return s.preview ? <p className="truncate rounded-md bg-surface px-2.5 py-2 font-mono text-code-sm text-body shadow-well">{s.preview}</p> : <p className="text-caption text-muted">Nothing recorded yet.</p>;
   return (
     <div className="flex flex-col gap-0.5 rounded-md bg-surface px-2.5 py-2 font-mono text-code-sm text-body shadow-well">
       {lines.map((item) => {
@@ -749,15 +795,16 @@ function PeekBody({ id, onFull, phone = false }: Readonly<{ id: string; onFull: 
 }
 
 /** The one peek of the Task: opened by hovering any row (a detached trigger), it shows that row's subagent. */
-function SubagentPeek({ handle }: Readonly<{ handle: BasePopover.Handle<string> }>) {
+function SubagentPeek({ handle, onOpenChange }: Readonly<{ handle: BasePopover.Handle<string>; onOpenChange: (open: boolean) => void }>) {
   const scope = useContext(SubagentContext);
   return (
-    <BasePopover.Root handle={handle}>
+    <BasePopover.Root handle={handle} onOpenChange={(open) => onOpenChange(open)}>
       {({ payload }) =>
         payload ? (
           <BasePopover.Portal>
-            {/* Beside the row (below it only without room at either side), so the rows under it stay in reach of the pointer. */}
-            <BasePopover.Positioner side="right" align="start" sideOffset={8} collisionPadding={8} className="z-50 outline-hidden">
+            {/* Beside the row (below it only without room at either side), so the rows under it stay in reach of the pointer; its top
+                stays with the row as it grows, shifted only as far as the viewport needs, never flipped to the row's bottom. */}
+            <BasePopover.Positioner side="right" align="start" sideOffset={8} collisionPadding={8} collisionAvoidance={{ side: 'flip', align: 'shift' }} className="z-50 outline-hidden data-anchor-hidden:invisible">
               <BasePopover.Popup data-popup="" data-subagent-peek="" aria-label="Subagent" initialFocus={false} className={cn(popupClass, 'w-96 max-w-(--available-width) overflow-hidden text-body')}>
                 <PeekBody
                   id={payload}
@@ -864,7 +911,7 @@ function TranscriptBody({ pinned, phone, onChild, onBack, onUp, close }: Readonl
           <h2 className="min-w-0 truncate text-display-sm text-ink">{name}</h2>
           <span className={cn('shrink-0 text-caption font-medium', STATUS_TONE[s.status])}>{STATUS_LABEL[s.status]}</span>
         </div>
-        {s.description && <p className="mt-0.5 line-clamp-2 pl-7 text-ui text-body" title={s.description}>{s.description}</p>}
+        {s.description && s.description.trim().toLowerCase() !== name.toLowerCase() && <p className="mt-0.5 line-clamp-2 pl-7 text-ui text-body" title={s.description}>{s.description}</p>}
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7 text-caption tabular-nums text-muted">
           {s.status === 'running' && <Took subagent={s} className="text-caption" />}
           {facts.map((fact) => <span key={fact} className="whitespace-nowrap">{fact}</span>)}
@@ -950,7 +997,7 @@ function sameText(a: string, b: string): boolean {
  */
 function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack, onUp }: Readonly<{ pinned: Pinned; onClose: () => void; onClosed: () => void; onChild: (id: string) => void; onBack: () => void; onUp: (id: string) => void }>) {
   const row = pinned.anchor?.isConnected ? pinned.anchor : null;
-  const anchor = row ?? document.getElementById('subagents-link');
+  const anchor = useStillAnchor(row ?? document.getElementById('subagents-link'));
   const parentId = useScope((d) => d.subagents.find((x) => x.id === pinned.id)?.parent_agent_id);
   return (
     <BasePopover.Root open={pinned.open} modal onOpenChange={(o) => !o && onClose()} onOpenChangeComplete={(o) => !o && onClosed()}>
@@ -992,27 +1039,55 @@ function SubagentPanel({ pinned, onClose, onClosed, onChild, onBack, onUp }: Rea
 }
 
 /**
+ * `el` as the place it had when the panel opened (taken again after a resize): what streams in the
+ * conversation under the modal panel never moves or resizes it.
+ */
+function useStillAnchor(el: Element | null): { getBoundingClientRect: () => DOMRect } | null {
+  const [anchor, setAnchor] = useState<{ getBoundingClientRect: () => DOMRect } | null>(null);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const take = () => {
+      const rect = el.getBoundingClientRect();
+      setAnchor({ getBoundingClientRect: () => rect });
+    };
+    take();
+    window.addEventListener('resize', take);
+    return () => window.removeEventListener('resize', take);
+  }, [el]);
+  return el ? anchor : null;
+}
+
+/**
  * The row an open panel belongs to, drawn again above the dim at the row's place: a still copy
- * (nothing in it is live or focusable), so the panel reads as anchored to it. The page does not
- * scroll under the modal panel; a resize places it again.
+ * (nothing in it is live or focusable), so the panel reads as anchored to it. The conversation
+ * holds still under the modal panel; a resize places it again.
  */
 export function LiftedRow({ row }: Readonly<{ row: Element }>) {
   const host = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const el = host.current;
     if (!el) return;
-    const copy = row.cloneNode(true) as Element;
-    for (const node of [copy, ...copy.querySelectorAll('*')]) {
-      for (const attr of [...node.attributes]) if (attr.name === 'id' || attr.name.startsWith('data-') || attr.name.startsWith('aria-') || attr.name === 'tabindex') node.removeAttribute(attr.name);
-    }
-    el.replaceChildren(copy);
+    const copyRow = () => {
+      const copy = row.cloneNode(true) as Element;
+      for (const node of [copy, ...copy.querySelectorAll('*')]) {
+        for (const attr of [...node.attributes]) if (attr.name === 'id' || attr.name.startsWith('data-') || attr.name.startsWith('aria-') || attr.name === 'tabindex') node.removeAttribute(attr.name);
+      }
+      el.replaceChildren(copy);
+    };
+    copyRow();
+    // The row's time, tokens and line go on changing: the copy shows them, at the place it was opened.
+    const changes = new MutationObserver(copyRow);
+    changes.observe(row, { subtree: true, childList: true, characterData: true });
     const place = () => {
       const r = row.getBoundingClientRect();
       Object.assign(el.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
     };
     place();
     window.addEventListener('resize', place);
-    return () => window.removeEventListener('resize', place);
+    return () => {
+      changes.disconnect();
+      window.removeEventListener('resize', place);
+    };
   }, [row]);
   return <div ref={host} aria-hidden="true" inert className="pointer-events-none fixed z-40 overflow-hidden rounded-md bg-raised shadow-float animate-fade-in [&>*]:size-full" />;
 }

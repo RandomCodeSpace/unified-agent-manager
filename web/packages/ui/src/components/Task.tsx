@@ -339,6 +339,31 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
   const atBottom = useRef(true);
+  // A subagent's peek or transcript is open: the view keeps that subagent's row where it is, whatever
+  // arrives above or below it, so the row stays under the pointer and beside its panel.
+  const held = useRef<{ row: () => Element | null; el: Element | null; top: number } | null>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const keepHeld = useCallback(() => {
+    const h = held.current, el = scroller.current;
+    if (!h || !el) return;
+    const row = h.row();
+    const top = row?.getBoundingClientRect().top;
+    if (row !== h.el || top === undefined) {
+      held.current = { ...h, el: row, top: top ?? 0 };
+      return;
+    }
+    if (top === h.top) return;
+    // At a turn's end its last message lands above the row while its status leaves below it: the view,
+    // already at its foot, has no room to scroll by that much. The content grows by what is missing
+    // until the hold ends.
+    const want = el.scrollTop + top - h.top;
+    const short = want - (el.scrollHeight - el.clientHeight);
+    if (short > 0 && log.current) log.current.style.minHeight = `${log.current.offsetHeight + short}px`;
+    el.scrollTop = want;
+  }, []);
+  // A row moves without the content's size changing (one part shrinking above it as another grows below,
+  // a transition): while it is held, every change and every frame checks it.
+  const watching = useRef<{ changes: MutationObserver; frame: number } | null>(null);
   const lastScrollTop = useRef(0);
   const touching = useRef(false);
   const lastScrollAt = useRef(0);
@@ -508,19 +533,54 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    if (held.current) {
+      keepHeld();
+      return;
+    }
     if (atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
     else if (session.history_after || el.scrollHeight - el.scrollTop - el.clientHeight > BOTTOM_SLACK) setJump(true);
-  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions]);
+  }, [session.id, session.items, session.recent_items, session.history_after, session.interactions, keepHeld]);
   // Rows also grow after their own commits (a body arriving, a row expanding); a pinned view follows them.
-  const log = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scroller.current, content = log.current;
     if (!el || !content) return;
-    const observer = new ResizeObserver(() => { if (atBottom.current) el.scrollTop = el.scrollHeight; });
+    const observer = new ResizeObserver(() => {
+      if (held.current) keepHeld();
+      else if (atBottom.current) el.scrollTop = el.scrollHeight;
+    });
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [keepHeld]);
+
+  // Once the peek or transcript closes, a view at the bottom catches up with what came meanwhile.
+  const hold = useCallback((row: (() => Element | null) | null) => {
+    if (row) {
+      const el = row();
+      held.current = { row, el, top: el?.getBoundingClientRect().top ?? 0 };
+      if (!watching.current && log.current) {
+        const changes = new MutationObserver(keepHeld);
+        changes.observe(log.current, { subtree: true, childList: true, characterData: true, attributes: true });
+        const w = { changes, frame: 0 };
+        const tick = () => {
+          keepHeld();
+          w.frame = requestAnimationFrame(tick);
+        };
+        w.frame = requestAnimationFrame(tick);
+        watching.current = w;
+      }
+      return;
+    }
+    held.current = null;
+    if (watching.current) {
+      watching.current.changes.disconnect();
+      cancelAnimationFrame(watching.current.frame);
+      watching.current = null;
+    }
+    if (log.current) log.current.style.minHeight = '';
+    const el = scroller.current;
+    if (el && atBottom.current && !session.history_after) el.scrollTop = el.scrollHeight;
+  }, [session.history_after, keepHeld]);
 
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
@@ -747,6 +807,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     const upwards = el.scrollTop < lastScrollTop.current;
     lastScrollTop.current = el.scrollTop;
     lastScrollAt.current = performance.now();
+    // The reader may scroll while a row is held: it is held where they left it.
+    const h = held.current;
+    if (h) held.current = { ...h, top: h.el?.getBoundingClientRect().top ?? h.top };
     // Only the reader scrolling up unpins the view; content growing under a pinned view does not.
     atBottom.current = !session.history_after && (el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_SLACK || (atBottom.current && !upwards));
     setJump(!atBottom.current);
@@ -802,7 +865,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <FileReferencesProvider sessionId={session.id} workdir={session.workdir} generation={`${session.epoch}:${historyGeneration}`} active={active} items={session.items}>
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
-    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)}>
+    <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />

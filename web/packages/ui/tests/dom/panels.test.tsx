@@ -300,6 +300,29 @@ describe('subagents', () => {
     expect(rows.slice(1, 5).every((name) => /, running/.test(name))).toBe(true);
   });
 
+  test('while a transcript is open its rows keep their places as others finish; once it closes they rank again', async () => {
+    const { user } = await openTask('t8');
+    const rows = () => [...document.querySelectorAll('[aria-label="Subagents at work"] [data-subagent-toggle]')].map((b) => b.getAttribute('aria-label') ?? '');
+    const names = () => rows().map((label) => label.split(',')[0]);
+    const before = names();
+    await user.click(within(screen.getByRole('region', { name: 'Subagents at work' })).getAllByRole('button', { name: /, running/ }).at(-1)!);
+    await panel();
+    // The mock's first running subagent goes idle after a few seconds, which would rank it after the ones still running.
+    await waitFor(() => expect(rows().find((label) => label.startsWith('Survey templates'))).toMatch(/^Survey templates[^,]*, idle/), { timeout: 20_000 });
+    expect(names()).toEqual(before);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Subagent transcript' })).toBeNull());
+    await waitFor(() => expect(names().indexOf('Survey templates for missing alt text and labels')).toBeGreaterThan(names().indexOf('Verify store callers')));
+  }, 40_000);
+
+  test('a running subagent\'s row says what it is doing now, not only what it was asked', async () => {
+    await openTask('t22');
+    const live = within(screen.getByRole('region', { name: 'Subagents at work' }));
+    const row = live.getByRole('button', { name: /^Audit package web\/src\/lib, running · List the exported symbols of web\/src\/lib that nothing calls\./ });
+    expect(row.textContent).toContain('Reading transcript.ts · step 4');
+    expect(row.textContent).not.toContain('List the exported symbols');
+  });
+
   test('a long reply\'s list takes a filter by name or result; no subagent takes a follow-up', async () => {
     const { user } = await openTask('t22');
     await user.click(log().getByRole('button', { name: /^22 subagents · [\d.]+M tokens · 20 done · 2 failed/ }));
