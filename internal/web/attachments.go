@@ -404,8 +404,8 @@ func (s *webSession) queuedUpload(id string) bool {
 	})
 }
 
-// sweepLoop expires unused uploads, drops idle read-only transcripts and
-// closes idle conversations while the service runs.
+// sweepLoop expires unused uploads, settles quiet Tasks, drops idle
+// read-only transcripts and closes idle conversations while the service runs.
 func (m *Manager) sweepLoop() {
 	defer m.wg.Done()
 	t := time.NewTicker(sweepInterval)
@@ -418,6 +418,7 @@ func (m *Manager) sweepLoop() {
 			return
 		case <-t.C:
 			m.sweepUploads()
+			m.autoSettle()
 		case <-h.C:
 			m.evictHistories()
 			m.closeIdleConversations()

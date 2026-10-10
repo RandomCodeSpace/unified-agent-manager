@@ -646,7 +646,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
   Reads are limited to its Project unless the Task is in Yolo. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
-  Results carry compact summaries and outcomes, framed as data. They
+  Results carry compact summaries and outcomes, framed as data; a Task row
+  has `settled_by: "auto"` when the Task settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
   positive. `who_touched` uses edit-tool records, includes settled and
@@ -1343,6 +1344,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   context-size or mode changes. You can still rename a settled Task. Stop a
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive.
+
+  A Task with no activity for 7 days settles itself. The check runs every
+  hour and skips any Task that Settle would refuse, that has an unanswered
+  request, an unreconciled rewind or an unseen failure, or that a page has
+  open. This settle doesn't count as activity, so the Task keeps its last
+  activity time. Its record says `settled_by: "auto"`; Reopen clears that and
+  starts the 7 days again.
 
   A Task whose conversation is not open, such as a settled, archived or
   closed Task, or any Task after the service restarts, still shows its whole
