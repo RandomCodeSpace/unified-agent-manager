@@ -518,6 +518,18 @@ func (s *fakeSession) SendAndWait(ctx context.Context, msg copilot.MessageOption
 	return reply(ctx, msg)
 }
 
+func (s *fakeSession) Log(_ context.Context, text string) error {
+	s.mu.Lock()
+	event := ev(fmt.Sprintf("log-%d", len(s.events)), &rpc.SessionInfoData{InfoType: "notification", Message: text})
+	s.events = append(s.events, event)
+	onEvent := s.onEvent
+	s.mu.Unlock()
+	if onEvent != nil {
+		onEvent(event)
+	}
+	return nil
+}
+
 func (s *fakeSession) SetName(_ context.Context, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

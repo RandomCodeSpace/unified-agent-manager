@@ -39,7 +39,9 @@ func TestTrailsLiveProbe(t *testing.T) {
 			var mu sync.Mutex
 			seen := false
 			marker := "trail-context-indigo-742"
-			session, err := c.CreateSession(ctx, &copilot.SessionConfig{
+			var session *copilot.Session
+			note := "uam trail: live persistence probe " + marker
+			created, err := c.CreateSession(ctx, &copilot.SessionConfig{
 				Model: "gpt-6-luna", WorkingDirectory: dir,
 				EnableConfigDiscovery: copilot.Bool(false), EnableSkills: copilot.Bool(false), EnableSessionStore: copilot.Bool(false), EnableFileHooks: copilot.Bool(false),
 				AvailableTools: []string{tool}, OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
@@ -49,14 +51,24 @@ func TestTrailsLiveProbe(t *testing.T) {
 					}
 					mu.Lock()
 					seen = true
+					active := session
 					mu.Unlock()
 					t.Logf("tool=%s args_type=%T args=%#v", tool, in.ToolArgs, in.ToolArgs)
+					logCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+					err := active.Log(logCtx, note, &copilot.LogOptions{Ephemeral: copilot.Bool(false)})
+					stop()
+					if err != nil {
+						return nil, fmt.Errorf("nested durable Log: %w", err)
+					}
 					return &copilot.PreToolUseHookOutput{AdditionalContext: "After this edit, include this exact probe marker in your final reply: " + marker}, nil
 				}},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
+			mu.Lock()
+			session = created
+			mu.Unlock()
 			defer func() { _ = session.Disconnect(); _ = c.DeleteSession(context.Background(), session.SessionID) }()
 			reply, err := session.SendAndWait(ctx, copilot.MessageOptions{Prompt: fmt.Sprintf("Use %s to change probe.txt from before to after. Make exactly one tool call, then report completion and any hook probe marker you received.", tool)})
 			if err != nil {
@@ -85,6 +97,28 @@ func TestTrailsLiveProbe(t *testing.T) {
 				t.Fatalf("file=%q error=%v", data, err)
 			}
 			t.Log("AdditionalContext alone reached final reply; edit succeeded")
+			if err := session.Disconnect(); err != nil {
+				t.Fatal(err)
+			}
+			resumed, err := c.ResumeSession(ctx, session.SessionID, &copilot.ResumeSessionConfig{WorkingDirectory: dir, OnPermissionRequest: copilot.PermissionHandler.ApproveAll})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resumed.Disconnect() }()
+			events, err := resumed.GetEvents(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			persisted := false
+			for _, event := range events {
+				if info, ok := event.Data.(*rpc.SessionInfoData); ok && info.InfoType == "notification" && info.Message == note {
+					persisted = true
+				}
+			}
+			if !persisted {
+				t.Fatal("durable notification missing after disconnect/resume/GetEvents")
+			}
+			t.Log("Nested Log completed and notification survived disconnect/resume/GetEvents")
 		})
 	}
 }

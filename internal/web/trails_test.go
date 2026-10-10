@@ -77,3 +77,16 @@ func TestTrailPatchAndSiblingCap(t *testing.T) {
 		t.Fatalf("unrelated tool paths=%v", got)
 	}
 }
+
+func TestTrailFromRecordedNativePatch(t *testing.T) {
+	now := time.Now()
+	source := &webSession{id: "source", name: "Source", projectID: "p", workdir: "/repo", stage: StageActive, base: StateWorking}
+	source.noteEdits(agentapi.Item{ID: "patch", Kind: agentapi.ItemTool, Time: now.Add(-time.Second), Tool: &agentapi.ToolCall{Name: "apply_patch", Status: agentapi.ToolCompleted, Input: `"*** Begin Patch\n*** Add File: fixture/trail.txt\n+first-task-edit\n*** End Patch\n"`}})
+	caller := &webSession{id: "caller", projectID: "p", workdir: "/repo"}
+	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{source.id: source, caller.id: caller}}
+	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: caller.id}, caller)
+	got := req.Hooks.Pre(t.Context(), agentapi.ToolUse{Tool: "apply_patch", Workdir: "/repo", Args: map[string]any{"patch": "*** Begin Patch\n*** Update File: fixture/trail.txt\n@@\n first-task-edit\n+second-task-edit\n*** End Patch\n"}})
+	if !strings.Contains(got.Context, `Task "Source" edited fixture/trail.txt`) {
+		t.Fatalf("context=%q, recorded edits=%v", got.Context, source.edits)
+	}
+}

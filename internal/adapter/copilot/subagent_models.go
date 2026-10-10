@@ -7,10 +7,12 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 // taskTool is the CLI tool that starts a subagent; its model argument picks
@@ -45,6 +47,16 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		}
 		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory})
 		if verdict.Context != "" {
+			if strings.HasPrefix(verdict.Context, "uam trail:") {
+				// SDK hook context reaches the model but is not in hook.end.
+				// A durable SDK notification uses the existing notice mapper.
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := c.sess.Log(ctx, verdict.Context)
+				cancel()
+				if err != nil {
+					log.Warn("persist trail notice failed", "session", c.id, "error", err)
+				}
+			}
 			return &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}, nil
 		}
 	}

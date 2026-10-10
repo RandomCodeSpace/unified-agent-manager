@@ -380,6 +380,7 @@ export function seed(): MockState {
           time: ago(5),
           text: 'Confirmed: `focusEvents` is recorded in `modes.go` but `Redraw` never replays it. Adding `replayFocusEvents` after the private-mode replay so the order matches the attach client.',
         },
+        { id: 'trail-i6', kind: 'notice', time: ago(4), text: 'uam trail: Task "Fix terminal modes" edited internal/vterm/redraw.go 3 min ago and is still running. Re-read it first.' },
         tool('i6', 4, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', input: '{"path":"internal/vterm/redraw.go"}', output: EDIT_DIFF }),
         {
           id: 'i6b',

@@ -100,6 +100,8 @@ type sdkSession interface {
 	// SetName names the session through the experimental session.name.set,
 	// which also stops the CLI from naming it.
 	SetName(ctx context.Context, name string) error
+	// Log persists a notification in the provider timeline.
+	Log(ctx context.Context, text string) error
 	// ListCommands lists the session's built-in commands and skills.
 	ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error)
 	// InvokeCommand resolves a command; it starts no turn.
@@ -290,6 +292,10 @@ func (a sdkSessionAdapter) SendAndWait(ctx context.Context, msg copilot.MessageO
 		return d.Content, nil
 	}
 	return "", nil
+}
+
+func (a sdkSessionAdapter) Log(ctx context.Context, text string) error {
+	return a.s.Log(ctx, text, &copilot.LogOptions{Ephemeral: copilot.Bool(false)})
 }
 
 func (a sdkSessionAdapter) SetName(ctx context.Context, name string) error {
@@ -3864,13 +3870,6 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		t.streamedReasoning(it.AgentID)
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
 		it.Time, it.EndedAt = t.thoughtStart(it.AgentID, ev.Timestamp), ev.Timestamp
-	case *rpc.HookEndData:
-		output, _ := d.Output.(map[string]any)
-		text, _ := output["additionalContext"].(string)
-		if !d.Success || d.HookType != "preToolUse" || !strings.HasPrefix(text, "uam trail:") {
-			return it, false
-		}
-		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, text
 	case *rpc.SessionCompactionCompleteData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Compacted the conversation."
 		if d.TokensRemoved != nil && *d.TokensRemoved > 0 {

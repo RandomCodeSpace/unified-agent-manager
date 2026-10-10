@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -34,11 +35,20 @@ func TestPreToolUseTrailContext(t *testing.T) {
 			t.Fatalf("use=%+v", got)
 		}
 	}
+	if len(h.fs.events) != 2 {
+		t.Fatalf("recorded notices=%d", len(h.fs.events))
+	}
+	for _, event := range h.fs.events {
+		info, ok := event.Data.(*rpc.SessionInfoData)
+		if !ok || info.Message != "uam trail: sibling" {
+			t.Fatalf("recorded event=%+v", event)
+		}
+	}
 }
 
 func TestTrailNoticeReplaysFromJournal(t *testing.T) {
 	const note = `uam trail: Task "Fix login" edited auth.go 1 min ago and is still running. Re-read it first.`
-	event := ev("trail-hook", &rpc.HookEndData{HookType: "preToolUse", Success: true, Output: map[string]any{"additionalContext": note}})
+	event := ev("trail-notice", &rpc.SessionInfoData{InfoType: "notification", Message: note})
 	live, ok := newTranscript().item(event)
 	if !ok || live.Kind != agentapi.ItemNotice || live.Text != note {
 		t.Fatalf("live=%+v", live)
@@ -55,7 +65,7 @@ func TestTrailNoticeReplaysFromJournal(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("live HookEnd event did not emit notice")
+		t.Fatal("live notification did not emit notice")
 	}
 	fc := &fakeClient{journal: []copilot.SessionEvent{event}}
 	p := readerProvider(fc)
@@ -64,8 +74,23 @@ func TestTrailNoticeReplaysFromJournal(t *testing.T) {
 	if err != nil || len(history.Items) != 1 || !reflect.DeepEqual(history.Items[0], live) {
 		t.Fatalf("replay=%+v error=%v", history, err)
 	}
-	event.Data.(*rpc.HookEndData).Output = map[string]any{"additionalContext": "unrelated hook text"}
-	if _, ok := newTranscript().item(event); ok {
-		t.Fatal("unrelated hook became a trail")
+}
+
+type failedTrailLog struct{ sdkSession }
+
+func (failedTrailLog) Log(context.Context, string) error {
+	return errors.New("notification unavailable")
+}
+
+func TestTrailContextSurvivesLogFailure(t *testing.T) {
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	c.sess = failedTrailLog{c.sess}
+	c.hooks.Pre = func(context.Context, agentapi.ToolUse) agentapi.ToolVerdict {
+		return agentapi.ToolVerdict{Context: "uam trail: sibling"}
+	}
+	out, err := c.preToolUse(copilot.PreToolUseHookInput{ToolName: "edit"}, copilot.HookInvocation{})
+	if err != nil || out == nil || out.AdditionalContext != "uam trail: sibling" {
+		t.Fatalf("output=%+v error=%v", out, err)
 	}
 }
