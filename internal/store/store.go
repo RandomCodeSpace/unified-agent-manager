@@ -374,9 +374,14 @@ type TurnTiming struct {
 	// agent and its subagents), summed as the calls report: tokens in and out,
 	// and the calls' own duration, so a reader can tell generation speed from
 	// wall time spent in tools or waiting.
-	InputTokens  int64 `json:"input_tokens,omitempty"`
-	OutputTokens int64 `json:"output_tokens,omitempty"`
-	GenerationMS int64 `json:"generation_ms,omitempty"`
+	InputTokens     int64   `json:"input_tokens,omitempty"`
+	OutputTokens    int64   `json:"output_tokens,omitempty"`
+	GenerationMS    int64   `json:"generation_ms,omitempty"`
+	Model           string  `json:"model,omitempty"`
+	CacheReadTokens int64   `json:"cache_read_tokens,omitempty"`
+	Calls           int     `json:"calls,omitempty"`
+	NanoAIU         int64   `json:"nano_aiu,omitempty"`
+	PremiumCost     float64 `json:"premium_cost,omitempty"`
 	// Todo counts the todo list as the turn left it, for a turn that
 	// changed it; its rows are kept beside the Task's uploads.
 	Todo TodoCounts `json:"todo,omitzero"`

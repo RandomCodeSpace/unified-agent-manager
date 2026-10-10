@@ -14,15 +14,22 @@ import (
 )
 
 func modelTokens(ev copilot.SessionEvent, d *rpc.AssistantUsageData) *agentapi.TokenUsage {
-	if d.InputTokens == nil && d.OutputTokens == nil && d.CacheReadTokens == nil && d.CacheWriteTokens == nil {
+	if d.InputTokens == nil && d.OutputTokens == nil && d.CacheReadTokens == nil && d.CacheWriteTokens == nil && d.CopilotUsage == nil && d.Cost == nil {
 		return nil
 	}
-	return &agentapi.TokenUsage{
+	tokens := &agentapi.TokenUsage{
 		Model: d.Model, Time: ev.Timestamp,
 		Input: max(orZero(d.InputTokens), 0), Output: max(orZero(d.OutputTokens), 0),
 		CacheRead: max(orZero(d.CacheReadTokens), 0), CacheWrite: max(orZero(d.CacheWriteTokens), 0),
 		DurationMS: max(orZero(d.Duration), 0),
 	}
+	if d.CopilotUsage != nil {
+		tokens.NanoAIU = int64(max(d.CopilotUsage.TotalNanoAiu, 0))
+	}
+	if d.Cost != nil {
+		tokens.Cost = max(*d.Cost, 0)
+	}
+	return tokens
 }
 
 // SetUsageSessionRecorder installs the host's durable ownership recorder.

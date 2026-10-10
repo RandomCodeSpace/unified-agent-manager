@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync/atomic"
@@ -318,19 +319,62 @@ func TestTurnTimingYoloClaimsDoNotPauseButQuestionsDo(t *testing.T) {
 // Each model call's usage lands on the running turn, so a reader can see what the
 // turn generated and how fast; usage outside a turn counts for nothing there.
 func TestTurnTimingSumsModelCallUsage(t *testing.T) {
-	m, prov, _ := newTestManager(t)
+	m, prov, st := newTestManager(t)
 	_, advance := turnClock(m)
 	sum, conv := createSession(t, m, prov)
 	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 100, Output: 10, DurationMS: 500}})
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.EmitItem(agentapi.Item{ID: "user", Kind: agentapi.ItemUser, Text: "go"})
-	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 1200, Output: 300, DurationMS: 6000}})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 1200, Output: 300, CacheRead: 1000, DurationMS: 6000, NanoAIU: 25230000, Cost: 1}})
 	advance(2 * time.Second)
-	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "m", Input: 800, Output: 200, DurationMS: 4000}})
-	conv.EmitTurn(agentapi.TurnCompleted, "")
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "subagent", Input: 800, Output: 200, CacheRead: 600, DurationMS: 4000, NanoAIU: 4013500, Cost: 0.5}})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Model: "gpt-6-luna"}})
 	got := detail(t, m, sum.ID).TurnTimings
 	if len(got) != 1 || got[0].InputTokens != 2000 || got[0].OutputTokens != 500 || got[0].GenerationMS != 10000 {
 		t.Fatalf("turn usage=%+v", got)
+	}
+	if got[0].Model != "gpt-6-luna" || got[0].CacheReadTokens != 1600 || got[0].Calls != 2 || got[0].NanoAIU != 29243500 || got[0].PremiumCost != 1.5 {
+		t.Fatalf("turn waybill=%+v", got[0])
+	}
+	// Switching models keeps each completed turn's carrier and pricing.
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTokens, Tokens: &agentapi.TokenUsage{Model: "ollama/deepseek-v4.1-flash", Input: 200, Output: 20}})
+	conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Model: "ollama/deepseek-v4.1-flash"}})
+	unpriced := detail(t, m, sum.ID).TurnTimings[1]
+	if unpriced.Model != "ollama/deepseek-v4.1-flash" || unpriced.Calls != 1 || unpriced.NanoAIU != 0 || unpriced.PremiumCost != 0 {
+		t.Fatalf("unpriced turn=%+v", unpriced)
+	}
+	encoded, err := json.Marshal(unpriced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if fields["nano_aiu"] != nil || fields["premium_cost"] != nil {
+		t.Fatalf("unpriced turn carries postage: %s", encoded)
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := cfg.Sessions[store.Key(prov.Name(), sum.ID)].Web.TurnTimings
+	if len(saved) != 2 || saved[0] != got[0] || saved[1] != unpriced {
+		t.Fatalf("persisted waybills=%+v", saved)
+	}
+}
+
+func TestTurnTimingOldJSONHasNoWaybill(t *testing.T) {
+	var timing TurnTiming
+	if err := json.Unmarshal([]byte(`{"id":"old","state":"completed","input_tokens":100,"output_tokens":20}`), &timing); err != nil {
+		t.Fatal(err)
+	}
+	if timing.InputTokens != 100 || timing.OutputTokens != 20 || timing.Model != "" || timing.CacheReadTokens != 0 || timing.Calls != 0 || timing.NanoAIU != 0 || timing.PremiumCost != 0 {
+		t.Fatalf("old timing=%+v", timing)
 	}
 }
 

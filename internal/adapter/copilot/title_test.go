@@ -299,7 +299,7 @@ func TestUtilityReportsItsUsage(t *testing.T) {
 	if _, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-6-luna", Text: "x", OnUsage: onUsage}); err != nil {
 		t.Fatal(err)
 	}
-	if want := (agentapi.UtilityUsage{InputTokens: 240, OutputTokens: 16, Credits: 0.002, Tokens: []agentapi.TokenUsage{{Model: "gpt-6-luna", Input: 120, Output: 8}, {Model: "gpt-6-luna", Input: 120, Output: 8}}}); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+	if want := (agentapi.UtilityUsage{InputTokens: 240, OutputTokens: 16, Credits: 0.002, Tokens: []agentapi.TokenUsage{{Model: "gpt-6-luna", Input: 120, Output: 8, NanoAIU: 1e6}, {Model: "gpt-6-luna", Input: 120, Output: 8, NanoAIU: 1e6}}}); len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("usage = %+v, want %+v", got, want)
 	}
 	events = 0

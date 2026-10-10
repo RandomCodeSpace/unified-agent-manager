@@ -37,6 +37,7 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 	}
 	timing := s.turnTimings[s.activeTiming]
 	timing.EndedAt, timing.State = m.now(), string(state)
+	timing.Model = s.lastModel
 	finishTimingPause(&timing, timing.EndedAt)
 	// The todo list as the turn left it: its counts are written with this
 	// timing, its rows by the same flush (turn_todos.go).
@@ -77,13 +78,17 @@ func (m *Manager) updateTurnTimingPauseLocked(s *webSession) {
 // not a durable change of its own: the turn's end or another change writes
 // it, or a flush lazyFlushDelay later.
 func (m *Manager) countTurnTokensLocked(s *webSession, usage agentapi.TokenUsage) {
-	if s.activeTiming < 0 || (usage.Input == 0 && usage.Output == 0) {
+	if s.activeTiming < 0 {
 		return
 	}
 	timing := s.turnTimings[s.activeTiming]
 	timing.InputTokens += usage.Input
 	timing.OutputTokens += usage.Output
 	timing.GenerationMS += usage.DurationMS
+	timing.CacheReadTokens += usage.CacheRead
+	timing.Calls++
+	timing.NanoAIU += usage.NanoAIU
+	timing.PremiumCost += usage.Cost
 	s.turnTimings[s.activeTiming] = timing
 	m.dirty[s.id] = struct{}{}
 	m.flushLaterLocked()

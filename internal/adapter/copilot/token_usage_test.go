@@ -31,6 +31,22 @@ func TestWebTokenUsageIncludesSubagentsAndDeduplicates(t *testing.T) {
 	if got[1].Input != 13385 || got[1].Output != 50 || got[1].CacheRead != 13326 || got[1].CacheWrite != 49 {
 		t.Fatalf("subagent call: %+v", got[1])
 	}
+	if got[0].NanoAIU != 1684250000 || got[1].NanoAIU != 165385000 {
+		t.Fatalf("deduplicated call charges: %+v", got)
+	}
+}
+
+func TestModelTokensCarriesPostage(t *testing.T) {
+	call := ev("priced", &rpc.AssistantUsageData{Model: "gpt-6-luna", Cost: new(0.5), CopilotUsage: &rpc.AssistantUsageCopilotUsage{TotalNanoAiu: 25230000}})
+	got := modelTokens(call, call.Data.(*rpc.AssistantUsageData))
+	if got == nil || got.NanoAIU != 25230000 || got.Cost != 0.5 {
+		t.Fatalf("priced usage=%+v", got)
+	}
+	data := &rpc.AssistantUsageData{Model: "deepseek-v4.1-flash", InputTokens: new(int64(100)), OutputTokens: new(int64(20))}
+	got = modelTokens(ev("unpriced", data), data)
+	if got == nil || got.NanoAIU != 0 || got.Cost != 0 {
+		t.Fatalf("unpriced usage=%+v", got)
+	}
 }
 
 func TestUtilityTokenUsageKeepsCustomModelAndCache(t *testing.T) {

@@ -1180,6 +1180,11 @@ export interface TurnTiming {
   input_tokens?: number;
   output_tokens?: number;
   generation_ms?: number;
+  model?: string;
+  cache_read_tokens?: number;
+  calls?: number;
+  nano_aiu?: number;
+  premium_cost?: number;
   /** The todo list as the turn left it, for a turn that changed it; its rows come from `turnTodos`. */
   todo?: TodoCounts;
   /** Immutable native captured changes as this owner turn left them, never current Git. */
