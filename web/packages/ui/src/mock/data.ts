@@ -396,6 +396,7 @@ export function seed(): MockState {
 
 The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the upstream tracker has the [original report](https://example.com/issue/56.png).`,
         },
+        tool('fuse-i6', 2, { name: 'web_fetch', title: 'Fetch reference documentation', status: 'failed', input: '{"url":"https://example.com/docs/reference"}', output: 'uam fuse: example.com/docs refused 403 at 14:02 UTC; reopens 20:02 UTC' }),
         tool('i7', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1' }),
         tool('i8', 1, {
           name: 'bash', title: 'go test ./internal/attach/...', status: 'failed',

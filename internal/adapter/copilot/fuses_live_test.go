@@ -28,7 +28,7 @@ func TestFusesLiveProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := client.(sdkClientAdapter).c
-	for _, kind := range []string{"pre-deny", "safe-denial", "subagent-fetch", "fetch-429"} {
+	for _, kind := range []string{"pre-deny", "safe-denial", "subagent-fetch", "fetch-429", "rule-denial"} {
 		t.Run(kind, func(t *testing.T) {
 			var mu sync.Mutex
 			var pre, failures []string
@@ -53,6 +53,9 @@ func TestFusesLiveProbe(t *testing.T) {
 					},
 				},
 				OnEvent: func(e copilot.SessionEvent) {
+					if d, ok := e.Data.(*rpc.PermissionRequestedData); ok {
+						t.Logf("requested kind=%s resolved_by_hook=%v", d.PermissionRequest.Kind(), d.ResolvedByHook)
+					}
 					if d, ok := e.Data.(*rpc.PermissionCompletedData); ok && d.Result != nil {
 						mu.Lock()
 						permissionResults = append(permissionResults, string(d.Result.Kind()))
@@ -64,7 +67,7 @@ func TestFusesLiveProbe(t *testing.T) {
 			switch kind {
 			case "pre-deny":
 				config.AvailableTools = []string{"web_fetch"}
-			case "safe-denial":
+			case "safe-denial", "rule-denial":
 				config.AvailableTools = []string{"bash"}
 				config.OnPermissionRequest = func(copilot.PermissionRequest, copilot.PermissionInvocation) (rpc.PermissionDecision, error) {
 					return &rpc.PermissionDecisionUserNotAvailable{}, nil
@@ -83,6 +86,12 @@ func TestFusesLiveProbe(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = s.Disconnect(); _ = c.DeleteSession(context.Background(), s.SessionID) }()
+			if kind == "rule-denial" {
+				result, err := s.RPC.Permissions.Configure(ctx, &rpc.PermissionsConfigureParams{Rules: &rpc.PermissionRulesSet{Approved: []rpc.PermissionRule{}, Denied: []rpc.PermissionRule{{Kind: "shell", Argument: copilot.String("ls /etc/ssl")}}}})
+				if err != nil || !result.Success {
+					t.Fatalf("configure=%+v error=%v", result, err)
+				}
+			}
 			reply, err := s.SendAndWait(ctx, copilot.MessageOptions{Prompt: prompt})
 			if err != nil {
 				t.Fatal(err)

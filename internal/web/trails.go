@@ -1,7 +1,6 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -35,16 +34,11 @@ func trailPaths(use agentapi.ToolUse) []string {
 	return slices.Compact(paths)
 }
 
-// preToolUse is bound to the Task on create and resume, including its subagents.
-func (m *Manager) preToolUse(_ context.Context, s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
+// trailContextLocked reads sibling edits under the Manager lock.
+func (m *Manager) trailContextLocked(s *webSession, use agentapi.ToolUse) string {
 	paths := trailPaths(use)
 	if len(paths) == 0 {
-		return agentapi.ToolVerdict{}
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed || s.removed || m.sessions[s.id] != s {
-		return agentapi.ToolVerdict{}
+		return ""
 	}
 	if !s.trailTurn.Equal(s.turnStart) {
 		s.trailTurn = s.turnStart
@@ -79,5 +73,5 @@ func (m *Manager) preToolUse(_ context.Context, s *webSession, use agentapi.Tool
 			s.trailPaths[path] = true
 		}
 	}
-	return agentapi.ToolVerdict{Context: strings.Join(notes, "\n")}
+	return strings.Join(notes, "\n")
 }

@@ -977,7 +977,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnElicitationRequest:     c.elicit,
 			OnExitPlanModeRequest:    c.reviewPlan,
 			OnEvent:                  c.onEvent,
-			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
+			Hooks:                    &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUseFailure: c.failedToolUse, OnSubagentStart: subagentStart},
 			// Discovery loads what the terminal CLI loads for this directory:
 			// skills, project agents, custom instructions, MCP servers and
 			// hooks. The owner turned it on for web Tasks (#176).
@@ -1008,7 +1008,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			OnAutoModeSwitchRequest: c.confirmAuto,
 			OnExitPlanModeRequest:   c.reviewPlan,
 			OnEvent:                 c.onEvent,
-			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnSubagentStart: subagentStart},
+			Hooks:                   &copilot.SessionHooks{OnPreToolUse: c.preToolUse, OnPostToolUseFailure: c.failedToolUse, OnSubagentStart: subagentStart},
 			// Resumed Tasks discover the same configuration as new ones.
 			EnableConfigDiscovery: copilot.Bool(true),
 			SkillDirectories:      req.SkillDirectories,
@@ -1911,6 +1911,8 @@ type steer struct {
 }
 
 type interaction struct {
+	permissionUse          agentapi.ToolUse // original tool plus native permission kind
+	permissionHookResolved bool             // native hook requests never become owner interactions
 	agentapi.Interaction
 	decisions map[string]rpc.PermissionDecision // permissions: option id -> decision
 	reply     chan userReply                    // questions: releases the blocked SDK handler
@@ -2108,6 +2110,9 @@ func (c *conversation) emitLocked(e agentapi.Event) {
 }
 
 func (c *conversation) emitInteractionLocked(in *interaction) {
+	if in.permissionHookResolved {
+		return
+	}
 	v := in.Interaction
 	c.emitLocked(agentapi.Event{Kind: agentapi.EventInteraction, Interaction: &v})
 }
@@ -3162,8 +3167,14 @@ func (c *conversation) askUser(req copilot.UserInputRequest, _ copilot.UserInput
 // arrive on the same stream with the envelope agentId; they are tagged with
 // it so they never enter the main transcript or end the main turn.
 func (c *conversation) onEvent(ev copilot.SessionEvent) {
+	var after func()
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	defer func() {
+		c.mu.Unlock()
+		if after != nil {
+			after()
+		}
+	}()
 	if c.closed {
 		return
 	}
@@ -3428,7 +3439,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 		c.permissionRequestedLocked(d, ev.Timestamp, agentID)
 		return
 	case *rpc.PermissionCompletedData:
-		c.permissionCompletedLocked(d)
+		after = c.permissionCompletedLocked(d)
 		return
 	case *rpc.SessionShutdownData:
 		if d.TotalNanoAiu != nil && *d.TotalNanoAiu >= 0 {
@@ -3572,9 +3583,6 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	if sa := c.subs.byID[agentID]; agentID != "" && (c.stoppedSubagents[agentID] || sa != nil && sa.Status == agentapi.SubagentCancelled) {
 		return
 	}
-	if d.ResolvedByHook != nil && *d.ResolvedByHook {
-		return
-	}
 	if old := c.pending[d.RequestID]; old != nil && old.answering {
 		return
 	}
@@ -3582,6 +3590,18 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 	in := &interaction{
 		Interaction: agentapi.Interaction{ID: d.RequestID, Kind: agentapi.InteractionPermission, Title: title, Detail: clip(detail, maxToolText), State: agentapi.InteractionPending, Time: at, AgentID: agentID, ToolCallID: permissionToolCallID(d.PermissionRequest), Assisted: assistedReview(d)},
 		decisions:   map[string]rpc.PermissionDecision{},
+	}
+	if d.PermissionRequest != nil {
+		in.permissionUse.PermissionKind = string(d.PermissionRequest.Kind())
+	}
+	if tool := c.tr.tools[in.ToolCallID]; tool != nil {
+		in.permissionUse.Tool = tool.Name
+		_ = json.Unmarshal([]byte(tool.Input), &in.permissionUse.Args)
+	}
+	if d.ResolvedByHook != nil && *d.ResolvedByHook {
+		in.permissionHookResolved = true
+		c.pending[d.RequestID] = in
+		return
 	}
 	add := func(opt agentapi.Option, dec rpc.PermissionDecision) {
 		in.Options = append(in.Options, opt)
@@ -3602,10 +3622,10 @@ func (c *conversation) permissionRequestedLocked(d *rpc.PermissionRequestedData,
 
 // permissionCompletedLocked reports a permission the CLI resolved without
 // this client (a hook, policy, or the turn ending).
-func (c *conversation) permissionCompletedLocked(d *rpc.PermissionCompletedData) {
+func (c *conversation) permissionCompletedLocked(d *rpc.PermissionCompletedData) func() {
 	in := c.pending[d.RequestID]
 	if in == nil || in.reply != nil || in.answering {
-		return
+		return nil
 	}
 	delete(c.pending, d.RequestID)
 	in.State = agentapi.InteractionExpired
@@ -3620,6 +3640,16 @@ func (c *conversation) permissionCompletedLocked(d *rpc.PermissionCompletedData)
 		}
 	}
 	c.emitInteractionLocked(in)
+	// Count native automatic denials only. Owner answers, cancelled requests,
+	// and our own Pre-hook refusals never feed the fuse back into itself.
+	if c.hooks.Failed != nil && d.Result != nil && in.permissionUse.PermissionKind != "" && (d.DecisionSource == nil || *d.DecisionSource != rpc.PermissionDecisionSourceHumanResponse) {
+		switch d.Result.Kind() {
+		case rpc.PermissionResultKindDeniedByPermissionRequestHook, rpc.PermissionResultKindDeniedByRules, rpc.PermissionResultKindDeniedByContentExclusionPolicy, rpc.PermissionResultKindDeniedNoApprovalRuleAndCouldNotRequestFromUser:
+			use := in.permissionUse
+			return func() { c.hooks.Failed(context.Background(), use, string(d.Result.Kind())) }
+		}
+	}
+	return nil
 }
 
 // sessionApproval builds the "allow for this session" decision the same way
