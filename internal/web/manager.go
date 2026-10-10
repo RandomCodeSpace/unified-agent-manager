@@ -318,6 +318,9 @@ type webSession struct {
 	// stage is StageActive, StageSettled or StageArchived.
 	stage                 string
 	settledAt, archivedAt time.Time
+	// settledBy is settledByAuto when the quiet-Task sweep settled it, ""
+	// when the owner did or it is not settled.
+	settledBy string
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
 	turnSeq           uint64
@@ -519,6 +522,7 @@ type persistKey struct {
 	turn, detail, name, convID, reqID, reqStatus, commandLedger, projectID, model, effort, contextSize, title, stage string
 	mode                                                                                                             store.Mode
 	settledAt, archivedAt                                                                                            time.Time
+	settledBy                                                                                                        string
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
 	agent                                                                                                            string
@@ -588,7 +592,7 @@ func (s *webSession) durableState() string {
 
 func (s *webSession) key() persistKey {
 	k := persistKey{timingRevision: s.timingRevision, turn: s.durableState(), detail: s.detail, name: s.name, convID: s.convID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: s.title, mode: s.mode,
-		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, outcome: s.outcome, stopReason: s.stopCode}
+		stage: s.stage, settledAt: s.settledAt, archivedAt: s.archivedAt, settledBy: s.settledBy, outcome: s.outcome, stopReason: s.stopCode}
 	if s.last != nil {
 		k.reqID, k.reqStatus = s.last.RequestID, s.last.Status
 		k.commandResult = s.last.CommandResult
@@ -863,6 +867,9 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		// An unknown stage loads as active, as an unknown turn state is ignored.
 		if web.Stage == StageSettled || web.Stage == StageArchived {
 			s.stage, s.settledAt, s.archivedAt = web.Stage, web.SettledAt, web.ArchivedAt
+			if web.SettledBy == settledByAuto {
+				s.settledBy = web.SettledBy
+			}
 		}
 		if !web.UpdatedAt.IsZero() {
 			s.updatedAt = web.UpdatedAt
@@ -1089,7 +1096,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		LastModel: s.lastModel, SubagentsRunning: s.runningSubagents(), BackgroundTasksRunning: s.runningBackgroundTasks(), Workdir: s.workdir, ConversationID: s.convID,
 		Execution: s.execution, State: s.state(), StateDetail: s.detail, Open: s.conv != nil, Pending: permissions + questions,
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
-		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
+		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, SettledBy: s.settledBy, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
@@ -2101,7 +2108,7 @@ func (m *Manager) flush() (err error) {
 			web: store.WebState{
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
-				Stage: key.stage, SettledAt: key.settledAt, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
+				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
@@ -4100,31 +4107,11 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 		m.mu.Unlock()
 		return SessionSummary{}, newError(http.StatusConflict, "a task that is %s cannot be %s", stageName(s.stage), stageVerb(to))
 	}
-	before := m.summaryLocked(s)
-	var conv agentapi.Conversation
-	if s.stage == StageActive {
-		if err := s.settleableLocked(); err != nil {
-			m.mu.Unlock()
-			return SessionSummary{}, err
-		}
-		if s.conv != nil {
-			conv = m.disconnectLocked(s)
-		}
+	conv, err := m.restageLocked(s, to, "")
+	if err != nil {
+		m.mu.Unlock()
+		return SessionSummary{}, err
 	}
-	now := m.now()
-	switch to {
-	case StageSettled:
-		s.settledAt = now
-	case StageArchived:
-		s.archivedAt = now
-	case StageActive:
-		s.settledAt = time.Time{}
-	}
-	s.stage = to
-	if to != StageActive {
-		m.releaseClosedHistoryLocked(s)
-	}
-	m.changedLocked(s, before)
 	m.mu.Unlock()
 	if conv != nil {
 		m.closeConversation(conv)
@@ -4134,6 +4121,43 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 	}
 	log.Info("web task stage changed", "session", id, "stage", stageName(to))
 	return m.Summary(id)
+}
+
+// restageLocked moves s to stage to and returns the conversation to close
+// outside mu, or nil. by is who settles it: "" for the owner, settledByAuto
+// for the quiet-Task sweep, whose settle is not Task activity. The caller
+// holds s.op and mu and checked the stage s leaves.
+func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversation, error) {
+	before := m.summaryLocked(s)
+	var conv agentapi.Conversation
+	if s.stage == StageActive {
+		if err := s.settleableLocked(); err != nil {
+			return nil, err
+		}
+		if s.conv != nil {
+			conv = m.disconnectLocked(s)
+		}
+	}
+	now := m.now()
+	switch to {
+	case StageSettled:
+		s.settledAt, s.settledBy = now, by
+	case StageArchived:
+		s.archivedAt = now
+	case StageActive:
+		s.settledAt, s.settledBy = time.Time{}, ""
+	}
+	s.stage = to
+	if to != StageActive {
+		m.releaseClosedHistoryLocked(s)
+	}
+	if by != "" {
+		// updated_at stays the Task's last activity.
+		s.persisted = s.key()
+		m.persistLocked(s)
+	}
+	m.changedLocked(s, before)
+	return conv, nil
 }
 
 // settleableLocked reports why an active Task cannot be settled or archived

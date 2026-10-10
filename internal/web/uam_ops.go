@@ -63,24 +63,25 @@ type uamTouchedArgs struct {
 }
 
 type uamTaskRow struct {
-	ID      string    `json:"id"`
-	Name    string    `json:"name"`
-	Project string    `json:"project"`
-	Stage   string    `json:"stage"`
-	State   string    `json:"state"`
-	Mode    string    `json:"mode"`
-	Model   string    `json:"model"`
-	Updated time.Time `json:"updated"`
-	Outcome string    `json:"outcome,omitempty"`
-	Queued  int       `json:"queued"`
-	Pending int       `json:"pending"`
-	Diff    *DiffStat `json:"diff,omitempty"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Project   string    `json:"project"`
+	Stage     string    `json:"stage"`
+	SettledBy string    `json:"settled_by,omitempty"`
+	State     string    `json:"state"`
+	Mode      string    `json:"mode"`
+	Model     string    `json:"model"`
+	Updated   time.Time `json:"updated"`
+	Outcome   string    `json:"outcome,omitempty"`
+	Queued    int       `json:"queued"`
+	Pending   int       `json:"pending"`
+	Diff      *DiffStat `json:"diff,omitempty"`
 }
 
 func (m *Manager) uamTaskRowLocked(s *webSession) uamTaskRow {
 	v := m.summaryLocked(s)
 	return uamTaskRow{ID: v.ID, Name: firstNonEmpty(v.Name, v.Title, "New task"), Project: v.ProjectID,
-		Stage: stageName(v.Stage), State: v.State, Mode: v.Mode, Model: v.Model, Updated: v.UpdatedAt,
+		Stage: stageName(v.Stage), SettledBy: v.SettledBy, State: v.State, Mode: v.Mode, Model: v.Model, Updated: v.UpdatedAt,
 		Outcome: v.Outcome, Queued: v.Queued, Pending: v.Pending, Diff: v.Diff}
 }
 

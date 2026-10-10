@@ -699,3 +699,40 @@ func TestCustomModelDirectKeyValidation(t *testing.T) {
 		t.Fatal("inconsistent provider keys accepted")
 	}
 }
+
+// settled_by is a modeled field: it loads, and clearing it is saved rather
+// than restored from the record read.
+func TestWebStateKeepsSettledBy(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "copilot:0f0e0d0c"
+	setSettledBy := func(by string) {
+		t.Helper()
+		if err := s.Update(func(cfg *Config) error {
+			rec := cfg.Sessions[key]
+			if rec.Web == nil {
+				rec = SessionRecord{ID: "0f0e0d0c-1111-4222-8333-444455556666", Agent: "copilot", Mode: ModeSafe, Workdir: "/tmp/repo",
+					Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1", Web: &WebState{Turn: "idle", Stage: "settled"}}
+			}
+			web := *rec.Web
+			web.SettledBy = by
+			rec.Web.Update(web)
+			cfg.Sessions[key] = rec
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, by := range []string{"auto", ""} {
+		setSettledBy(by)
+		cfg, err := s.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if web := cfg.Sessions[key].Web; web == nil || web.SettledBy != by || len(web.unknown) != 0 {
+			t.Fatalf("settled_by %q loaded as %+v", by, web)
+		}
+	}
+}

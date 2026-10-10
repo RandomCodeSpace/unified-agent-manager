@@ -476,6 +476,9 @@ type WebState struct {
 	// SettledAt is when the Task was settled; zero unless it is settled, or
 	// was settled before it was archived.
 	SettledAt time.Time `json:"settled_at,omitzero"`
+	// SettledBy is "auto" when the Task settled itself after a quiet week;
+	// empty when the owner settled it.
+	SettledBy string `json:"settled_by,omitempty"`
 	// ArchivedAt is when the Task was archived.
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
 	// TerminalSession is the ID of the terminal session record tied to the
@@ -540,6 +543,7 @@ var knownWebStateFields = map[string]struct{}{
 	"title":               {},
 	"stage":               {},
 	"settled_at":          {},
+	"settled_by":          {},
 	"archived_at":         {},
 	"terminal_session":    {},
 	"imported":            {},

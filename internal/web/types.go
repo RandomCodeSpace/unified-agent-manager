@@ -290,6 +290,9 @@ type SessionSummary struct {
 	Stage      string    `json:"stage,omitempty"`
 	SettledAt  time.Time `json:"settled_at,omitzero"`
 	ArchivedAt time.Time `json:"archived_at,omitzero"`
+	// SettledBy is "auto" when the Task settled itself after a quiet week;
+	// omitted when the owner settled it.
+	SettledBy string `json:"settled_by,omitempty"`
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; omitted otherwise.
 	SpawnedBy string `json:"spawned_by,omitempty"`
