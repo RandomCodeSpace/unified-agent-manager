@@ -10,6 +10,7 @@ test('purposes and outcomes read as words', () => {
   assert.equal(purposeLabel('some-new-job'), 'some new job');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'daily_limit' }), 'Skipped: daily limit');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'off' }), 'Skipped: Background AI off');
+  assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'invalid_streak' }), 'Skipped: repeated unusable answers');
   assert.equal(outcomeLabel({ outcome: 'error', reason: 'boom' }), 'Failed');
   assert.equal(outcomeLabel({ outcome: 'ok' }), '');
 });
