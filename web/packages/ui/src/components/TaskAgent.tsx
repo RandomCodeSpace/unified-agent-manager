@@ -1,78 +1,59 @@
-import { Bot, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
+import { Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ConfigurationDefinition, type SessionSummary } from '../api';
-import { cn } from '../lib/cn';
-import { Button } from './ui/button';
-import { Menu } from './ui/menu';
-import { Tip } from './ui/tooltip';
 
 /**
- * The Task's custom agent: the provider's default agent unless the owner picks one of the
- * Project's agents for this Task. The list loads when the menu opens. The service selects the
- * agent between turns only, and a Task whose agent is gone fails to open rather than run as
- * another agent, so the owner picks again here.
+ * The Task's custom agent, as the Tools panel's Agent tab: the provider's default agent unless the
+ * owner picks one of the Project's agents for this Task. The list loads when the tab shows. The
+ * service selects the agent between turns only, and a Task whose agent is gone fails to open rather
+ * than run as another agent, so the owner picks again here.
  */
-export function AgentPicker({ session, reason, onChange, menuClass }: Readonly<{
+export function AgentChoices({ session, reason, onChange }: Readonly<{
   session: SessionSummary;
-  /** Why the agent cannot change now; the picker is disabled while set. */
+  /** Why the agent cannot change now; the choices are disabled while set. */
   reason?: string;
   onChange: (agent: string) => void;
-  menuClass?: string;
 }>) {
   const api = useApi();
   const [agents, setAgents] = useState<ConfigurationDefinition[] | null>(null);
   const [error, setError] = useState('');
-  const current = session.agent ?? '';
-  const known = agents?.find((a) => a.id === current);
-  const display = current ? known?.display_name || known?.name || current : 'Default agent';
-  const face = (
-    <>
-      <Bot aria-hidden="true" className="text-faint" />
-      {current && <span className="max-w-28 truncate max-sm:hidden in-data-[fold~=tuning]:hidden">{display}</span>}
-      <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-    </>
-  );
-  if (reason) {
-    return (
-      <Tip label={<>{`Agent: ${display}`}<span className="block text-on-primary/70">{reason}</span></>}>
-        <Button id="composer-agent" size="sm" variant="subtle" aria-disabled="true" aria-label={`Agent: ${display}. ${reason}`} className="text-muted">
-          {face}
-        </Button>
-      </Tip>
-    );
-  }
-  const load = (open: boolean) => {
-    if (!open) return;
-    setError('');
+  useEffect(() => {
+    let current = true;
     api.taskAgents(session.project_id, session.provider).then(
-      (r) => setAgents(r.agents),
-      (e: unknown) => setError(describeError(e)),
+      (r) => current && setAgents(r.agents),
+      (e: unknown) => current && setError(describeError(e)),
     );
-  };
-  const listed = agents ?? [];
+    return () => { current = false; };
+  }, [api, session.project_id, session.provider]);
+  const chosen = session.agent ?? '';
+  const known = agents?.find((a) => a.id === chosen);
   // A chosen agent that discovery no longer lists stays visible, so the owner sees why the Task cannot open.
-  const missing = current && agents && !known;
+  const missing = chosen && agents && !known;
+  const rows = [
+    { id: '', name: 'Default', description: "Copilot's own agent", disabled: false },
+    ...(missing ? [{ id: chosen, name: chosen, description: 'Not found in this project', disabled: true }] : []),
+    ...(agents ?? []).map((a) => ({ id: a.id, name: a.display_name || a.name, description: a.description, disabled: false })),
+  ];
   return (
-    <Menu.Root modal={false} onOpenChange={load}>
-      <Tip label={`Agent: ${display}`}>
-        <Menu.Trigger render={<Button id="composer-agent" size="sm" variant="subtle" aria-label={`Agent: ${display}`} className="text-body" />}>{face}</Menu.Trigger>
-      </Tip>
-      <Menu.Content side="top" align="start" sideOffset={6} className={cn('min-w-52 max-w-80', menuClass)}>
-        <Menu.RadioGroup value={current} onValueChange={(v) => v !== current && onChange(v as string)}>
-          <Menu.Label>Agent</Menu.Label>
-          <Menu.RadioItem value="" description="Copilot's own agent">Default</Menu.RadioItem>
-          {missing && <Menu.RadioItem value={current} disabled description="Not found in this project">{current}</Menu.RadioItem>}
-          {listed.map((a) => (
-            <Menu.RadioItem key={a.id} value={a.id} description={a.description || undefined}>
-              {a.display_name || a.name}
-            </Menu.RadioItem>
-          ))}
-        </Menu.RadioGroup>
-        {error && <p className="max-w-64 px-2 py-1 text-caption text-error">{error}</p>}
-        {!error && !agents && <p className="px-2 py-1 text-caption text-muted">Loading agents…</p>}
-        {!error && agents?.length === 0 && <p className="max-w-64 px-2 py-1 text-caption text-muted">This project has no custom agents.</p>}
-      </Menu.Content>
-    </Menu.Root>
+    <div className="flex flex-col gap-1.5">
+      <RadioGroup aria-label="Agent" value={chosen} disabled={!!reason} onValueChange={(v) => v !== chosen && onChange(v as string)} className="-mx-2 flex flex-col">
+        {rows.map((r) => (
+          <Radio.Root key={r.id} value={r.id} disabled={r.disabled} className="group/agent flex min-h-8 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover data-disabled:opacity-45 pointer-coarse:min-h-11">
+            <Check aria-hidden="true" strokeWidth={2.5} className="invisible mt-0.5 size-3.5 shrink-0 text-accent group-data-checked/agent:visible" />
+            <span className="flex min-w-0 flex-col">
+              <span className="text-ui text-ink">{r.name}</span>
+              {r.description && <span className="text-caption text-muted">{r.description}</span>}
+            </span>
+          </Radio.Root>
+        ))}
+      </RadioGroup>
+      {reason && <p className="text-caption text-muted">{reason}</p>}
+      {error && <p role="status" className="text-caption text-error">{error}</p>}
+      {!error && !agents && <p className="text-caption text-muted">Loading agents…</p>}
+      {!error && agents?.length === 0 && <p className="text-caption text-muted">This project has no custom agents.</p>}
+    </div>
   );
 }

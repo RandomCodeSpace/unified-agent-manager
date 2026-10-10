@@ -14,8 +14,9 @@ import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
-import { AskAside } from './AskAside';
-import { ComposerUsage } from './ComposerUsage';
+import { ASIDE_COMMAND, AsideCard, useAsides, withAside } from './AskAside';
+import { ComposerTools, type ToolsHandle } from './ComposerTools';
+import { PHONE } from './Todos';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
@@ -26,7 +27,6 @@ import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
 import { UNCERTAIN_REWIND, rewindOutcome, rewound } from './Rewind';
-import { AgentPicker } from './TaskAgent';
 import { Appear } from './ui/appear';
 import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
@@ -417,6 +417,15 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   let commands: Command[] | null = null;
   if (newTask) commands = NO_COMMANDS;
   else if (commandList?.key === commandKey) commands = commandList.commands;
+  // `/btw` asks aside (AskAside): first in the list wherever the old Ask aside button showed, and
+  // offered even when the Task's own list failed to load, since it does not depend on it.
+  const asideOK = !!session.capabilities.aside && !locked && !newTask;
+  if (asideOK && (commands || commandList?.key === commandKey)) commands = withAside(commands ?? NO_COMMANDS, !!session.open);
+  const asides = useAsides(session);
+  const [asideCard, setAsideCard] = useState<{ open: boolean; phone: boolean; task: string } | null>(null);
+  if (asideCard && asideCard.task !== session.id) setAsideCard(null);
+  const [formEl, setFormEl] = useState<HTMLFormElement | null>(null);
+  const tools = useRef<ToolsHandle>(null);
   const commandsError = commandList?.key === commandKey ? commandList.error : null;
   const [fileList, setFileList] = useState<{ q: string; files: FileEntry[]; reason: string } | null>(null);
   const fileSeq = useRef(0);
@@ -460,7 +469,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       setCommandAction(null);
       if (action === 'rename') { onRename(); return; }
       if (action === 'usage') { openUsage?.(); return; }
-      const target = document.getElementById({ model: 'composer-model', permissions: 'composer-mode', context: 'composer-context-usage' }[action]);
+      if (action === 'context') {
+        if (!tools.current?.open('context')) setError('The context control is unavailable now.');
+        return;
+      }
+      const target = document.getElementById({ model: 'composer-model', permissions: 'composer-mode' }[action]);
       if (!target || target.getAttribute('aria-disabled') === 'true' || target.hasAttribute('disabled')) {
         setError(`The ${action} control is unavailable now.`);
         return;
@@ -777,7 +790,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (uploading) return 'Wait for the upload to finish';
     if (refused) return 'Remove the attachment that was refused';
     if (pendingCommand) return 'Wait for the command list to load';
-    if (shapedCommand && commandsError) return 'Commands could not be loaded. Retry the command list.';
+    if (shapedCommand && commandsError && cmd?.name !== ASIDE_COMMAND) return 'Commands could not be loaded. Retry the command list.';
+    if (cmd?.name === ASIDE_COMMAND && asides.pending) return 'Wait for the aside answer first';
     return commandBlocked;
   }
   const blocked = describeBlocked();
@@ -910,11 +924,21 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
   }
 
+  /** `/btw <question>`: the aside goes to the open conversation, never to the Task; the composer clears and the card opens on it. */
+  function askAside(question: string) {
+    asides.ask(question);
+    setText('');
+    setCaret(0);
+    setDismissed(null);
+    setAsideCard({ open: true, phone: window.matchMedia(PHONE).matches, task: session.id });
+  }
+
   async function send(promptMode: PromptMode, confirmed = false) {
     if (answering) return sendAnswer();
     if (editing) return sendEdited();
     const t = text.trim();
     if (cannotSubmit || (!cmd && promptMode === 'send' && live)) return;
+    if (cmd?.name === ASIDE_COMMAND && asideOK) return askAside(cmd.args);
     if (newTask) return sendFirst(t);
     if (cmd && !confirmed && entersRiskiest(cmd.name, cmd.args, { yolo: mode === 'yolo', autopilot })) {
       riskConfirm.ask({ run: () => void send(promptMode, true) });
@@ -1103,6 +1127,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     if (editing) return busy === 'send' ? 'Submitting…' : 'Rewind and send';
     if (busy === enter) return 'Submitting…';
+    if (cmd?.name === ASIDE_COMMAND) return 'Ask aside';
     if (cmd) return `Run /${cmd.name}`;
     if (!live) return 'Send';
     return enter === 'steer' ? 'Steer' : 'Queue';
@@ -1237,7 +1262,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     return (
       <>
-        {cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
+        {cmd?.name === ASIDE_COMMAND ? 'Ask aside (Enter): not added to the Task' : cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
         <span className="block text-on-primary/70">Shift+Enter adds a line</span>
       </>
     );
@@ -1307,6 +1332,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
 
   return (
     <form
+      ref={setFormEl}
       // `data-draft` marks unsent work (text, picked files, uploads, a parked draft); an update waits while it is set.
       data-draft={text.trim() || files.length || uploads.length || parked?.text.trim() || parked?.files.length || parked?.uploads.length ? '' : undefined}
       className={cn(
@@ -1341,6 +1367,21 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       }}
     >
       {dragging > 0 && !answering && <DropOverlay note={gateNote || LIMITS_TEXT} />}
+      {asideCard && (
+        <AsideCard
+          entries={asides.entries}
+          open={asideCard.open}
+          phone={asideCard.phone}
+          anchor={formEl}
+          onClose={() => {
+            // Closing drops a question still waiting, as the old reader did; answered ones stay on the page.
+            asides.cancel();
+            setAsideCard((c) => c && { ...c, open: false });
+          }}
+          onClosed={() => setAsideCard(null)}
+          finalFocus={() => textarea.current}
+        />
+      )}
       {trigger && (
         <InlinePicker
           id={LIST_ID}
@@ -1615,16 +1656,13 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           onChange={(v) => void settings({ model: v })}
         />
         {hiddenModel && <span className="text-caption text-muted max-sm:hidden">Hidden in Settings</span>}
-        <ComposerUsage session={session} model={catalog.find((m) => m.id === session.model)} />
-        {session.capabilities.aside && !locked && !newTask && <AskAside session={session} />}
-        {session.capabilities.custom_agents && (
-          <AgentPicker
-            session={session}
-            reason={locked ? 'This task is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
-            menuClass={PHONE_PICKER}
-            onChange={(agent) => void chooseAgent(agent)}
-          />
-        )}
+        <ComposerTools
+          ref={tools}
+          session={session}
+          model={catalog.find((m) => m.id === session.model)}
+          agentReason={locked ? 'This task is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
+          onAgent={(agent) => void chooseAgent(agent)}
+        />
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {settingsLocked || fixedTuning ? (
           <Tip label={<>{`Effort and context size: ${tuningLabel}`}<span className="block text-on-primary/70">{tuningReason}</span></>}>

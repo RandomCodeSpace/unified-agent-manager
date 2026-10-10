@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
 import { api, type ContextAttribution, type ContextBreakdown, type ContextInfo, type SessionDetail } from '../../src/api';
 import { AppContext, type AppContextValue } from '../../src/components/common';
-import { ComposerUsage } from '../../src/components/ComposerUsage';
+import { ComposerTools } from '../../src/components/ComposerTools';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -17,7 +17,7 @@ const attribution: ContextAttribution = { model: 'resolved-model', model_source:
 ] };
 
 function draw(selected = session, client = api) {
-  const tree = (current: SessionDetail, owner = client) => <ApiContext.Provider value={owner}><AppContext.Provider value={app}><ComposerUsage session={current} /></AppContext.Provider></ApiContext.Provider>;
+  const tree = (current: SessionDetail, owner = client) => <ApiContext.Provider value={owner}><AppContext.Provider value={app}><ComposerTools session={current} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>;
   const view = render(tree(selected));
   return { ...view, select: (current: SessionDetail) => view.rerender(tree(current)), selectOwner: (owner: typeof api) => view.rerender(tree(selected, owner)) };
 }
@@ -26,8 +26,8 @@ test('context categories and sources read only when requested and never sum capa
   const read = vi.spyOn(api, 'contextBreakdown').mockImplementation(async (_id, sources) => sources ? { attribution } : { info });
   const view = draw({ ...session, context: { used: 50, limit: 200, prompt: 60, cached: 20 } });
   expect(read).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
-  expect(await screen.findByRole('dialog', { name: 'Context usage' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
+  expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
   expect(await screen.findByText('75 tokens occupied of 200 tokens advertised prompt capacity')).toBeTruthy();
   expect(screen.getByText('Latest prompt: 60 tokens')).toBeTruthy();
   expect(screen.getByText('Cached in latest call: 20 tokens')).toBeTruthy();
@@ -36,7 +36,7 @@ test('context categories and sources read only when requested and never sum capa
   expect(read.mock.calls[0].slice(0, 2)).toEqual(['task-1', false]);
   // Live summary/token churn does not poll or restart the open reader.
   view.select({ ...session, context: { used: 50, limit: 200, prompt: 61, cached: 20 } });
-  expect(screen.getByRole('dialog', { name: 'Context usage' })).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Tools' })).toBeTruthy();
   expect(read).toHaveBeenCalledTimes(1);
   await userEvent.click(screen.getByRole('button', { name: 'Show sources' }));
   expect(await screen.findByText('Included in Shared tools')).toBeTruthy();
@@ -50,8 +50,8 @@ test('context categories and sources read only when requested and never sum capa
   expect(read.mock.calls[1].slice(0, 2)).toEqual(['task-1', true]);
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   expect(screen.queryByText('Nested tool')).toBeNull();
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /25%/ })));
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools.*25%/ })));
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await screen.findByText('MCP tools are included in tool definitions.');
   expect(read).toHaveBeenCalledTimes(3);
 });
@@ -59,11 +59,11 @@ test('context categories and sources read only when requested and never sum capa
 test('closed and unsupported providers keep quick totals without resuming or requesting metadata', async () => {
   const read = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
   const view = draw({ ...session, open: false });
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect(await screen.findByText('Context breakdown is unavailable for a closed Task.')).toBeTruthy();
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, capabilities: {} as SessionDetail['capabilities'] });
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect(await screen.findByText(/Compacts at 80%/)).toBeTruthy();
   expect(screen.queryByText('Show sources')).toBeNull();
   expect(read).not.toHaveBeenCalled();
@@ -72,12 +72,12 @@ test('closed and unsupported providers keep quick totals without resuming or req
 test('missing native context is unavailable and an error remains an error', async () => {
   const read = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({});
   const view = draw({ ...session, context: undefined });
-  await userEvent.click(screen.getByRole('button', { name: 'Context usage not reported yet' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
   expect(await screen.findByText('Context breakdown has not been initialized by this conversation.')).toBeTruthy();
   expect(screen.queryByText(/0 tokens occupied/)).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   read.mockRejectedValue(new Error('Context service unavailable'));
-  await userEvent.click(screen.getByRole('button', { name: 'Context usage not reported yet' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
   expect(await screen.findByText('Context service unavailable')).toBeTruthy();
   view.unmount();
 });
@@ -86,15 +86,15 @@ test('selection changes and closing abort reads and ignore late results', async 
   let deliver!: (data: ContextBreakdown) => void;
   const read = vi.spyOn(api, 'contextBreakdown').mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; })).mockResolvedValue({ info });
   const view = draw();
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   const signal = read.mock.calls[0][2]!;
   view.select({ ...session, model: 'different' });
   expect(signal.aborted).toBe(true);
   await act(async () => deliver({ attribution }));
   expect(screen.queryByText('Shared tools')).toBeNull();
-  expect(screen.queryByRole('dialog', { name: 'Context usage' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await screen.findByText('MCP tools are included in tool definitions.');
   const secondSignal = read.mock.calls[1][2]!;
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
@@ -106,27 +106,27 @@ test('a phone opens the shared sheet and reads from its owning API client', asyn
   const localRead = vi.spyOn(api, 'contextBreakdown');
   const remoteRead = vi.fn(async () => ({ info }));
   draw(session, { ...api, contextBreakdown: remoteRead });
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
-  expect(await screen.findByRole('dialog', { name: 'Context usage' })).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
+  expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
   await screen.findByText('75 tokens occupied of 200 tokens advertised prompt capacity');
   expect(remoteRead).toHaveBeenCalledTimes(1);
   expect(localRead).not.toHaveBeenCalled();
   await userEvent.keyboard('{Escape}');
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Context usage' })).toBeNull());
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /25%/ })));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools.*25%/ })));
 });
 
 test('changing the owning API closes and disposes the old reader before another source read', async () => {
   const local = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
   const remote = vi.fn(async () => ({ info: { ...info, model: 'remote-model' } }));
   const view = draw();
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await screen.findByText('MCP tools are included in tool definitions.');
   const previousSignal = local.mock.calls[0][2]!;
   view.selectOwner({ ...api, contextBreakdown: remote });
   expect(previousSignal.aborted).toBe(true);
-  expect(screen.queryByRole('dialog', { name: 'Context usage' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: /25%/ }));
+  expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   await screen.findByText(/Counted for remote-model/);
   expect(remote).toHaveBeenCalledTimes(1);
   expect(local).toHaveBeenCalledTimes(1);

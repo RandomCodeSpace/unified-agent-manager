@@ -1,16 +1,8 @@
-import { Dialog as BaseDialog } from '@base-ui/react/dialog';
-import { Popover as BasePopover } from '@base-ui/react/popover';
-import { X } from 'lucide-react';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ContextAttribution, type ContextBreakdown, type SessionDetail } from '../api';
-import { cn } from '../lib/cn';
-import { BottomSheet, LiftedRow } from './Subagents';
-import { PHONE } from './Todos';
 import { Button } from './ui/button';
-import { backdropClass } from './ui/dialog';
-import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
-import { Tip } from './ui/tooltip';
+import { PanelSection } from './ui/panel';
 
 const number = new Intl.NumberFormat('en-US');
 const tokens = (n: number) => `${number.format(n)} tokens`;
@@ -102,38 +94,10 @@ function Breakdown({ session }: Readonly<{ session: SessionDetail }>) {
   </>;
 }
 
-export function ContextValue({ session, label, face, children, className }: Readonly<{ session: SessionDetail; label: string; face: ReactNode; children: ReactNode; className?: string }>) {
-  const api = useApi();
-  const [owner, setOwner] = useState(api);
-  const id = useId();
-  const heading = useRef<HTMLHeadingElement>(null);
-  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
-  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
-  if (owner !== api) {
-    setOwner(api);
-    setReader(null);
-  }
-  const close = () => setReader(null);
-  const body = (closeButton: ReactNode) => <div className="flex min-h-0 flex-col">
-    <PanelHead className="pr-2 pl-4"><div className="flex min-h-7 items-center gap-2"><h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 text-title text-ink outline-hidden">Context usage</h2>{closeButton}</div></PanelHead>
-    <div className="flex min-h-0 flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4">
-      <PanelSection label="Latest report"><div className="space-y-1 tabular-nums">{children}</div></PanelSection>
-      {reader?.open && <Breakdown session={session} />}
-    </div>
-    <PanelFoot><span className="text-caption text-muted">Read when opened; reopen for current counts.</span></PanelFoot>
-  </div>;
+/** The Tools panel's Context tab: the latest report, then the native breakdown where the provider reads one. Mounted only while shown. */
+export function ContextTab({ session, children }: Readonly<{ session: SessionDetail; children: ReactNode }>) {
   return <>
-    <Tip label={label}><Button ref={setAnchor} id="composer-context-usage" size="sm" variant="subtle" aria-label={label} aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} className={cn('px-1.5 text-caption tabular-nums pointer-coarse:min-w-11', className)} onClick={() => setReader({ open: true, phone: window.matchMedia(PHONE).matches })}>{face}</Button></Tip>
-    {reader && (reader.phone || !anchor ? <BottomSheet id={id} open={reader.open} onClose={close} onClosed={close} label="Context usage" initialFocus={heading} finalFocus={() => anchor}>
-      {body(<BaseDialog.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BaseDialog.Close>)}
-    </BottomSheet> : <BasePopover.Root open={reader.open} modal onOpenChange={(open) => !open && close()}>
-      <BasePopover.Portal><BasePopover.Backdrop className={backdropClass} />{anchor.isConnected && <LiftedRow row={anchor} />}
-        <BasePopover.Positioner anchor={anchor} side="top" align="end" sideOffset={10} collisionPadding={12} className="z-50 outline-hidden">
-          <BasePopover.Popup id={id} data-popup="" aria-label="Context usage" aria-modal="true" initialFocus={heading} finalFocus={() => anchor} className="flex max-h-[min(80vh,var(--available-height))] w-[440px] max-w-(--available-width) flex-col overflow-hidden rounded-lg bg-raised text-body shadow-modal outline-hidden">
-            {body(<BasePopover.Close render={<Button size="icon-sm" aria-label="Close" className="text-muted" />}><X /></BasePopover.Close>)}
-          </BasePopover.Popup>
-        </BasePopover.Positioner>
-      </BasePopover.Portal>
-    </BasePopover.Root>)}
+    <PanelSection label="Latest report"><div className="space-y-1 tabular-nums">{children}</div></PanelSection>
+    {session.capabilities.context_breakdown && <Breakdown session={session} />}
   </>;
 }

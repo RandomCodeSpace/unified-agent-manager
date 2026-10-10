@@ -441,6 +441,10 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       name: 'Doctor: add terminal line',
       title: '',
       state: 'completed',
+      // Every composer tool (Tools panel and `/btw`), with a context report and recorded usage to show.
+      capabilities: { ...CAPS, aside: true, usage: true, usage_metrics: true, context_breakdown: true, custom_agents: true },
+      context: { used: 84_300, limit: 200_000, prompt: 82_100, cached: 61_400 },
+      usage: { ai_units: 1.84 },
       outcome: 'Explained how a dumb terminal is reported',
       created_at: ago(60),
       updated_at: ago(42),
