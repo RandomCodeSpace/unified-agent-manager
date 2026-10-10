@@ -527,6 +527,8 @@ export function install(): { received: Received[] } {
     if (/\/previous\/[^/]+\/import$/.test(url.pathname)) await wait(500);
     // A clipped item's whole text is read from the record.
     if (/\/items\/[^/]+$/.test(url.pathname)) await wait(600);
+    // An aside takes a moment to answer.
+    if (/\/aside$/.test(url.pathname)) await wait(900);
     return route(method, url, body);
   };
 
@@ -1249,6 +1251,41 @@ export function install(): { received: Received[] } {
       const f = t && (st.changes[t.project_id] ?? []).find((x) => x.path === url.searchParams.get('path'));
       if (!f) return fail(404, 'file not found');
       return json(200, f);
+    }
+    // The Tools panel's native reads and `/btw`: context categories, usage metrics and an aside answer.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/context$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const used = t.context?.used ?? 84_300;
+      return json(200, { attribution: {
+        model: 'mai-code-1.1-flash', model_source: 'autoResolved', total_tokens: used, limit: 200_000, prompt_token_limit: 168_000, compaction_threshold: 134_400, buffer_tokens: 32_000, compactions: 0,
+        categories: { system_prompt: 6_200, custom_instructions: 3_100, system_tools: 14_800, mcp_tools: 9_600, messages: Math.max(0, used - 33_700), free_space: Math.max(0, 168_000 - used), buffer: 32_000 },
+        entries: [
+          { id: 'ci-agents', kind: 'Custom instructions', label: 'AGENTS.md', tokens: 2_400 },
+          { id: 'ci-skill', kind: 'Custom instructions', label: 'uam skill', tokens: 700 },
+          { id: 'mcp-gh', kind: 'MCP tools', label: 'github', tokens: 7_900 },
+          { id: 'mcp-uam', kind: 'MCP tools', label: 'uam', tokens: 1_700 },
+        ],
+      } });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/usage-metrics$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      const model = { model: 'mai-code-1.1-flash', requests: 9, premium_request_cost: 0, ai_units: 1.84, input: 412_300, output: 6_420, cache_read: 318_000, cache_write: 0, token_details: [] };
+      return json(200, {
+        started_at: t.created_at, current_model: 'mai-code-1.1-flash', user_requests: 2, premium_request_cost: 0, api_duration_ms: 58_200, ai_units: 1.84, last_input: 82_100, last_output: 410,
+        code_changes: { files: 2, added: 31, removed: 4 }, token_details: [], models: [model], agents: [{ id: 'main', api_duration_ms: 58_200, ai_units: 1.84, models: [model] }],
+      });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/aside$/)) && method === 'POST') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      if (!t.capabilities.aside) return fail(409, 'this provider does not support aside questions');
+      // A follow-up carries the earlier asides; the mock answers it differently so both show.
+      const followUp = String(body.question ?? '').startsWith('Earlier by-the-way questions');
+      return json(200, { text: followUp
+        ? 'Yes. `TestDoctorDumbTerminal` sets `TERM=dumb` and checks the row reads `terminal  dumb · ASCII glyphs`; the probe never starts, so the test runs in a few milliseconds.'
+        : 'Yes. With `TERM=dumb` the doctor never sends the CPR probe, so there is no 300 ms wait: `term.Describe()` returns `dumb · ASCII glyphs` straight from the environment.' });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/history$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

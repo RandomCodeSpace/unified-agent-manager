@@ -376,7 +376,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the defaults for new tasks and title-model choices. Existing Tasks and defaults keep
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
-- **Composer layout**: the toolbar groups Model, Effort/Context and Safe/Yolo.
+- **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
+  **Tools** (the context ring and "Tools") opens one panel with a tab for
+  each tool the Task has: Context (see **Context usage**), Usage (the AI
+  units recorded for the Task and, on request, Copilot's own usage metrics
+  for the conversation) and Agent (see **Agent**). The arrow keys move
+  between tabs and Esc closes it. A Task with none of them has no Tools
+  button.
   The branch and changed-file count are on the branch button in the Task
   header, which opens Changes. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
@@ -425,8 +431,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   failures or limits are reported while managed files and disabled-file recovery
   remain available. Older runtimes without discovery keep the existing file view.
 - **Agent**: a Task runs as Copilot's default agent unless you pick one of
-  the Project's user-invocable custom agents in the composer (new Tasks
-  too). The choice belongs to that Task only; there is no global default.
+  the Project's user-invocable custom agents on the Agent tab of the
+  composer's Tools panel (new Tasks too). The choice belongs to that Task only; there is no global default.
   It changes only while the Task is quiet (no turn, subagent, background
   task, pending request or queued prompt), and uam selects it again on every
   resume and after a configuration reload before anything is sent. If the
@@ -450,18 +456,31 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   to the shared provider feature rules (usage and credits and import also use capabilities) and
   requires the provider's capability. Copilot is still the only registered
   provider.
-- **Context usage**: the ring beside the composer model shows used tokens
-  as a share of the active prompt budget. Click it for token counts and the
-  reported cached share. A short mark on the ring, and a line in its
-  popover ("Compacts at 80% (218K tokens)"), show where Copilot starts
+- **Context usage**: the ring on the composer's Tools button shows used tokens
+  as a share of the active prompt budget. Open Tools (its Context tab, or
+  `/context`) for token counts, the reported cached share and, where Copilot
+  reports it, the breakdown by source. A short mark on the ring, and a line
+  on the Context tab ("Compacts at 80% (218K tokens)"), show where Copilot starts
   compacting the conversation: the threshold it opened with, reported as
   `compact_threshold` on the Task summary while it is open (a change in
   Settings reaches it when it reopens), else the setting. Before a report, the track is
-  empty and its popover says usage is unavailable. Effort and context size share one menu.
+  empty and the Context tab says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
   or changing its selection clears it until a fresh report. Compaction or
   truncation appears as a notice in the conversation; the next usage report
   updates the meter.
+- **Ask aside (`/btw`)**: type `/btw` and a question (it is the first entry
+  in the `/` list) to ask the open conversation something on the side. The
+  Task's current model answers from the conversation so far, without tools,
+  and nothing is added to the Task or its transcript. The answer opens in a
+  card over the composer that lists the asides you asked in this Task on
+  this page, oldest first; Esc hides it and the next `/btw` brings it back.
+  The list is kept in the page only: a reload clears it. Each new aside is a
+  follow-up: up to the five most recent answered asides go with it as
+  context, leaving out the oldest first so the whole question stays within
+  the service's 16 KiB limit. One aside waits at a time, and hiding the card
+  while it waits drops it. The conversation must be open; until it is, the
+  `/btw` entry says so. Asides count toward your account's usage.
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Task says
   so: the status line above the message box (and, during a turn, the line
