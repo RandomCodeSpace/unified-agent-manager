@@ -1,4 +1,4 @@
-// The in-browser fake's Copilot CLI version and update (Settings → Providers). By default the newest release is
+// The in-browser fake's Copilot CLI version and update (Settings → GitHub Copilot). By default the newest release is
 // installed; `?cli=outdated` runs 1.0.89 with 1.0.92 out, `?cli=manual` cannot update here, `?cli=incompatible` has
 // a newest release the SDK refused, `?cli=fail` ends an update failed, `?cli=hold` never finishes one and `?cli=busy`
 // ends one with a Task still working, so 1.0.89 keeps running until it restarts. A read 1 s after an update started

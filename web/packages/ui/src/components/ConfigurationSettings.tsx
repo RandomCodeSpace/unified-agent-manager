@@ -376,7 +376,7 @@ function SkillInstaller({ projectId, allowed, locked, onInstalled, onBusy }: Rea
     <Summary>Install with npx skills</Summary>
     <div className="mt-3 flex flex-col gap-3">
       <Note>Browse a repository, then install named skills into this scope. Existing skill names are kept. The server needs Node, npx and git.</Note>
-      {!allowed && <Note>Turn on Terminal in General to allow npx to run on the server.</Note>}
+      {!allowed && <Note>Turn on Terminal in UAM and access to allow npx to run on the server.</Note>}
       <Field id="skills-source" label="Repository" hint="GitHub owner/repo or an HTTPS repository URL."><Input id="skills-source" disabled={busy || locked || !allowed} value={source} placeholder="vercel-labs/agent-skills" onChange={(e) => setSource(e.target.value)} /></Field>
       <Button className="self-start" variant="secondary" disabled={busy || locked || !allowed || !source.trim()} onClick={() => void run(false)}>List skills</Button>
       <Field id="skills-names" label="Skill names to install, one per line"><TextArea id="skills-names" rows={3} disabled={busy || locked || !allowed} value={names} onChange={(e) => setNames(e.target.value)} /></Field>
@@ -389,10 +389,14 @@ function SkillInstaller({ projectId, allowed, locked, onInstalled, onBusy }: Rea
   </details>;
 }
 
-export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ kind: ConfigurationKind; projects: Project[]; terminal: boolean }>) {
+/**
+ * One kind's files in Settings. Agents, Skills, Hooks and Instructions share one scope (`scope`, changed through
+ * `onScope`); a kind with a form open or a write in flight holds it (`onHold`), and the others' Scope waits (`heldBy`).
+ */
+export function ConfigurationSettings({ kind, projects, terminal, scope, onScope, heldBy, onHold }: Readonly<{ kind: ConfigurationKind; projects: Project[]; terminal: boolean; scope: string; onScope: (projectId: string) => void; /** The kind holding the shared scope, when another one does. */ heldBy?: ConfigurationKind; onHold: (kind: ConfigurationKind, held: boolean) => void }>) {
   const api = useApi();
   const { meta, metaError, loaded, settings, refreshMeta } = useApp();
-  const [projectId, setProjectId] = useState('');
+  const [projectId, setProjectId] = useState(scope);
   const [reload, setReload] = useState(0);
   const [data, setData] = useState<Configuration | null>(null);
   const [globalData, setGlobalData] = useState<Configuration | null>(null);
@@ -422,6 +426,21 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const globalSkill = useConfirm<{ name: string; enabled: boolean }>();
   const label = LABELS[kind];
   const locked = kind !== 'instructions' && !terminal;
+  if (projectId !== scope) {
+    setProjectId(scope);
+    setData(null);
+    setGlobalData(null);
+    setGlobalError(null);
+    setLoadError(null);
+    setError(null);
+    setSuccess(null);
+    setGenerationError(null);
+  }
+  const holding = busy || installing || generating || !!draft;
+  useEffect(() => {
+    onHold(kind, holding);
+    return () => onHold(kind, false);
+  }, [kind, holding, onHold]);
   const copilot = meta?.providers.find((provider) => provider.name === 'copilot');
   const unavailableCustomModels = new Set(settings.custom_models?.filter((model) => model.key_present === false).map((model) => `${model.name}/${model.model_id}`));
   const models = loaded && !metaError && copilot?.available ? visibleModels(copilot.models, settings.hidden_models?.copilot).filter((model) => model.id !== 'auto' && !unavailableCustomModels.has(model.id)) : [];
@@ -440,11 +459,11 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   const utilityModel = utilityProvider && (settings.title_model?.[utilityProvider.name] || utilityProvider.cheapest_model);
   let generationUnavailable = '';
   if (!loaded || (!meta && !metaError)) generationUnavailable = 'Loading Utility AI settings…';
-  else if (locked) generationUnavailable = 'Turn on Terminal in General to create a draft with AI.';
+  else if (locked) generationUnavailable = 'Turn on Terminal in UAM and access to create a draft with AI.';
   else if (metaError) generationUnavailable = 'The model catalog could not be loaded. Retry before generating a draft.';
-  else if (settings.utility_daily_limit === 0 && !settings.utility_unlimited) generationUnavailable = 'Background AI is off. Set a daily limit in General to create a draft with AI.';
-  else if (!utilityProviders.length) generationUnavailable = 'No available provider supports Utility AI. Check Providers.';
-  else if (!utilityProvider || !utilityModel || unavailableCustomModels.has(utilityModel) || !utilityProvider.models.some((model) => model.id === utilityModel)) generationUnavailable = 'No available Utility model is selected. Choose one in Models.';
+  else if (settings.utility_daily_limit === 0 && !settings.utility_unlimited) generationUnavailable = 'Background AI is off. Set a daily limit in Background AI to create a draft with AI.';
+  else if (!utilityProviders.length) generationUnavailable = 'No available provider supports Utility AI. Check Accounts.';
+  else if (!utilityProvider || !utilityModel || unavailableCustomModels.has(utilityModel) || !utilityProvider.models.some((model) => model.id === utilityModel)) generationUnavailable = 'No available Utility model is selected. Choose one in Background AI.';
   const briefTooLong = new TextEncoder().encode(brief.trim()).length > 8192;
   useEffect(() => {
     let current = true;
@@ -577,12 +596,12 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     </AlertDialog>
   </>;
   return <div className="flex min-w-0 flex-col gap-4">
-    <Field id={`${kind}-scope`} label="Scope" hint={projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'}>
-      <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={busy || installing || generating || !!draft} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={(id) => { setProjectId(id); setData(null); setGlobalData(null); setGlobalError(null); setLoadError(null); setError(null); setSuccess(null); setGenerationError(null); }} />
+    <Field id={`${kind}-scope`} label="Scope" hint={`${heldBy ? `Save or cancel the open ${LABELS[heldBy]} form to change it. ` : ''}${projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'} Agents, skills, hooks and instructions share this scope.`}>
+      <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={holding || !!heldBy} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={onScope} />
     </Field>
     {kind === 'instructions' && !projectId && <Note>Copilot uses copilot-instructions.md for global instructions. AGENTS.md belongs to a project unless an extra instruction directory is explicitly configured with COPILOT_CUSTOM_INSTRUCTIONS_DIRS.</Note>}
     <div className="flex items-center gap-1 text-ui"><a className="text-accent underline" href={REFERENCES[kind]} target="_blank" rel="noreferrer">Native {kind} reference</a><HelpTip label={`${label} configuration`}>Advanced documents support the full native format, including fields not shown in the form. Available options depend on the installed Copilot CLI version. Copilot reads these files when a task opens or reopens. A running task keeps its current configuration.</HelpTip></div>
-    {locked && <Note>Turn on Terminal in General to manage {kind}. These files can configure commands that run as the service user.</Note>}
+    {locked && <Note>Turn on Terminal in UAM and access to manage {kind}. These files can configure commands that run as the service user.</Note>}
     {loadError ? <Note tone="error" role="alert">{loadError} <Button size="sm" onClick={refresh}>Retry</Button></Note> : !data ? <Skeleton label={`Loading ${kind}…`} rows={3} /> : <>
       {!draft && kind !== 'instructions' && <>
         <SectionAction><Button size="sm" variant="secondary" data-section-add="" disabled={locked || busy || installing || generating} onClick={() => edit()}>Add {label}</Button></SectionAction>
@@ -692,7 +711,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
     >
       {opened.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
       {!opened.editable && <Note>{opened.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown below.'}</Note>}
-      {opened.editable && locked && <Note>Turn on Terminal in General to manage {kind}.</Note>}
+      {opened.editable && locked && <Note>Turn on Terminal in UAM and access to manage {kind}.</Note>}
       {opened.editable && !locked && draft && <Note>Finish or cancel the open form to change this file.</Note>}
       {opened.error && <FileError message={opened.error} />}
       {opened.native && <div className="flex min-w-0 flex-col gap-1">

@@ -4,7 +4,7 @@ import { api } from '../../src/api';
 import { renderApp, sidebar } from './render';
 
 async function account() {
-  (await screen.findByRole('button', { name: 'Providers', exact: true })).click();
+  (await screen.findByRole('button', { name: 'GitHub Copilot', exact: true })).click();
   return within(await screen.findByRole('region', { name: 'GitHub Copilot' }));
 }
 

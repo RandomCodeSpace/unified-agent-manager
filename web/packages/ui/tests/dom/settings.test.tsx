@@ -8,13 +8,17 @@ import { seed } from '../../src/mock/data';
 import { install } from '../../src/mock/install';
 import { renderApp, type User } from './render';
 
-async function openSettings(tab = 'General', user?: User) {
+/** Opens Settings on a page of its rail and waits for one of the page's cards (the page's namesake by default). */
+async function openSettings(page = 'New tasks', card = page, user?: User) {
   const rendered = renderApp('#settings');
   await screen.findByRole('heading', { level: 1, name: 'Settings' });
-  await rendered.user.click(screen.getByRole('button', { name: tab, exact: true }));
-  await section(tab === 'General' ? 'Composer' : tab);
+  await rendered.user.click(page_(page));
+  await section(card);
   return { ...rendered, user: user ?? rendered.user };
 }
+
+/** A page's button in the Settings rail. */
+const page_ = (name: string) => within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name, exact: true });
 
 /** A settings card once its content (not the loading skeleton) is on screen. */
 async function section(name: string) {
@@ -27,24 +31,24 @@ async function section(name: string) {
 }
 
 describe('settings', () => {
-  test('Log out lives in General and returns to sign in', async () => {
+  test('Log out lives in UAM and access and returns to sign in', async () => {
     const auth = vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true });
     const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined);
     try {
-      const { user } = await openSettings();
+      const { user } = await openSettings('UAM and access', 'Shell access');
       expect(within(screen.getByRole('navigation', { name: 'Tasks' })).queryByRole('button', { name: 'Log out' })).toBeNull();
       expect((await section('Session')).getByRole('button', { name: 'Log out' })).toBeTruthy();
-      await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
+      await user.click(page_('Custom providers'));
       expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
-      await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+      await user.click(page_('UAM and access'));
       await user.click(screen.getByRole('button', { name: 'Log out' }));
       expect(await screen.findByRole('heading', { name: 'Sign in to UAM' })).toBeTruthy();
       expect(logout).toHaveBeenCalledTimes(1);
     } finally { auth.mockRestore(); logout.mockRestore(); }
   });
 
-  test('General omits Log out when the server does not require sign in', async () => {
-    await openSettings();
+  test('UAM and access omits Log out when the server does not require sign in', async () => {
+    await openSettings('UAM and access', 'Shell access');
     expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
     expect(screen.queryByRole('region', { name: 'Session', exact: true })).toBeNull();
   });
@@ -58,7 +62,7 @@ describe('settings', () => {
     change?.(context);
     render(<AppContext.Provider value={context}><SettingsView onClose={() => {}} /></AppContext.Provider>);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+    await user.click(page_('Models'));
     return { user, context, models: await section('Models') };
   }
 
@@ -149,34 +153,69 @@ describe('settings', () => {
     } finally { save.mockRestore(); }
   });
 
-  test('Models contains model choices and Providers contains accounts and endpoints', async () => {
+  test('each page shows only its own cards, with where they are saved', async () => {
     const { user } = await openSettings('Models');
-    expect(screen.getByRole('region', { name: 'Utility model' })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'Models', exact: true })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
-    expect(screen.queryByRole('region', { name: 'GitHub Copilot' })).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
-    expect((await section('Providers')).getByRole('button', { name: 'Add provider' })).toBeTruthy();
-    expect(screen.getByRole('region', { name: 'GitHub Copilot' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'Models', exact: true })).toBeNull();
+    expect(screen.getByText(/The models the menus offer.*Saved on the server, for every browser\./)).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Utility model' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    await user.click(page_('Background AI'));
+    expect(await section('Utility model')).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Background AI' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Models', exact: true })).toBeNull();
+    await user.click(page_('GitHub Copilot'));
+    expect(screen.getByRole('region', { name: 'GitHub Copilot' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
+    await user.click(page_('Custom providers'));
+    expect((await section('Custom providers')).getByRole('button', { name: 'Add provider' })).toBeTruthy();
+    await user.click(page_('Appearance & alerts'));
+    expect(screen.getByText(/Saved in this browser only/)).toBeTruthy();
+    expect(page_('Appearance & alerts').getAttribute('aria-current')).toBe('page');
+  });
+
+  test('Find a setting lists the pages that hold the words, with the way back to each', async () => {
+    const { user } = await openSettings();
+    const rail = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+    await user.type(rail.getByRole('searchbox', { name: 'Find a setting' }), 'api key');
+    expect(rail.queryByRole('button', { name: 'New tasks', exact: true })).toBeNull();
+    expect((await section('Custom providers')).getByRole('button', { name: 'Add provider' })).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'New tasks' })).toBeNull();
+    await user.clear(rail.getByRole('searchbox', { name: 'Find a setting' }));
+    await user.type(rail.getByRole('searchbox', { name: 'Find a setting' }), 'dark theme');
+    expect(await section('Appearance & alerts')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /This browser.*Appearance & alerts/ }));
+    expect((rail.getByRole('searchbox', { name: 'Find a setting' }) as HTMLInputElement).value).toBe('');
+    expect(page_('Appearance & alerts').getAttribute('aria-current')).toBe('page');
+    await user.type(rail.getByRole('searchbox', { name: 'Find a setting' }), 'nothing like this');
+    expect(screen.getAllByText('No setting matches “nothing like this”.').length).toBeGreaterThan(0);
+    await user.keyboard('{Escape}');
+    expect((rail.getByRole('searchbox', { name: 'Find a setting' }) as HTMLInputElement).value).toBe('');
+    expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
+  });
+
+  test('the rail marks the pages that need the user, said in words', async () => {
+    await openSettings();
+    // The mock's openrouter key is not set, and its Background AI used all 40 calls today.
+    await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Background AI', description: 'Background AI is paused for today' })).toBeTruthy());
+    expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Custom providers', description: 'API key missing: openrouter' })).toBeTruthy();
+    expect(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Composer', description: '' })).toBeTruthy();
   });
 
   test('sections keep an unfinished provider draft when navigating away and back', async () => {
-    const { user } = await openSettings('Providers');
-    const models = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const models = await section('Custom providers');
     await user.click(models.getByRole('button', { name: 'Add provider' }));
     await user.type(models.getByRole('textbox', { name: 'Provider name' }), 'draft-provider');
-    await user.click(screen.getByRole('button', { name: 'General', exact: true }));
-    expect(screen.queryByRole('region', { name: 'Providers', exact: true })).toBeNull();
-    expect(screen.getByRole('button', { name: 'General', exact: true }).getAttribute('aria-current')).toBe('page');
-    await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
+    await user.click(page_('Composer'));
+    expect(screen.queryByRole('region', { name: 'Custom providers', exact: true })).toBeNull();
+    expect(page_('Composer').getAttribute('aria-current')).toBe('page');
+    await user.click(page_('Custom providers'));
     expect((models.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement).value).toBe('draft-provider');
   });
 
   test('the inline provider form takes focus, cancels on Escape and returns focus to what opened it', async () => {
-    const { user } = await openSettings('Providers');
-    const providers = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const providers = await section('Custom providers');
     const add = providers.getByRole('button', { name: 'Add provider' });
     await user.click(add);
     const name = providers.getByRole('textbox', { name: 'Provider name' }) as HTMLInputElement;
@@ -201,7 +240,7 @@ describe('settings', () => {
   });
 
   test('the Enter default switches between steer and queue, saved on the service', async () => {
-    const { user } = await openSettings();
+    const { user } = await openSettings('Composer');
     const composer = await section('Composer');
     const steer = composer.getByRole('radio', { name: 'Send now' });
     expect(steer.getAttribute('aria-checked')).toBe('true');
@@ -247,8 +286,8 @@ describe('settings', () => {
   });
 
   test('custom providers load their model list and save the chosen ones', async () => {
-    const { user } = await openSettings('Providers');
-    const models = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const models = await section('Custom providers');
     expect(models.getByRole('region', { name: 'openrouter models' })).toBeTruthy();
     expect(models.getByText("UAM_BYOM_OPENROUTER is not set in the service's environment")).toBeTruthy();
     await user.click(models.getByRole('button', { name: 'Add provider' }));
@@ -299,8 +338,8 @@ describe('settings', () => {
   });
 
   test('custom providers accept a direct key, keep it private on edit, and can switch to an environment variable', async () => {
-    const { user } = await openSettings('Providers');
-    const models = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const models = await section('Custom providers');
     await user.click(models.getByRole('button', { name: 'Add provider' }));
     let form = within(models.getByRole('form', { name: 'Add a provider' }));
     await user.type(form.getByRole('textbox', { name: 'Provider name' }), 'direct');
@@ -335,8 +374,8 @@ describe('settings', () => {
   });
 
   test('removing a custom provider is confirmed first', async () => {
-    const { user } = await openSettings('Providers');
-    const models = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const models = await section('Custom providers');
     await user.click(models.getByRole('button', { name: 'Remove provider openrouter' }));
     let confirm = await screen.findByRole('alertdialog', { name: 'Remove provider openrouter?' });
     expect(within(confirm).getByText(/Its one model leaves the model menus\./)).toBeTruthy();
@@ -349,8 +388,8 @@ describe('settings', () => {
   });
 
   test.each(['deselect', 'rename'])('provider edits confirm removed model IDs before saving: %s', async (action) => {
-    const { user } = await openSettings('Providers');
-    const providers = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const providers = await section('Custom providers');
     await user.click(within(providers.getByRole('region', { name: 'openrouter models' })).getByRole('button', { name: 'Edit' }));
     const form = within(providers.getByRole('form', { name: 'Edit provider openrouter' }));
     const before = (await api.webSettings()).custom_models!;
@@ -379,8 +418,8 @@ describe('settings', () => {
   });
 
   test('editing a provider keeps its saved models selected', async () => {
-    const { user } = await openSettings('Providers');
-    const models = await section('Providers');
+    const { user } = await openSettings('Custom providers');
+    const models = await section('Custom providers');
     await user.click(within(models.getByRole('region', { name: 'openrouter models' })).getByRole('button', { name: 'Edit' }));
     const form = within(models.getByRole('form', { name: 'Edit provider openrouter' }));
     expect(form.getByText('1 selected')).toBeTruthy();
@@ -391,12 +430,12 @@ describe('settings', () => {
   });
 
   test('the terminal switch and this browser\'s theme, motion and activity settings', async () => {
-    const { user } = await openSettings();
+    const { user } = await openSettings('UAM and access', 'Shell access');
     const shell = await section('Shell access');
     await user.click(shell.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(shell.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
-    await user.click(screen.getByRole('button', { name: 'This browser', exact: true }));
-    const browser = await section('This browser');
+    await user.click(page_('Appearance & alerts'));
+    const browser = await section('Appearance & alerts');
     const theme = within(browser.getByRole('radiogroup', { name: 'Theme' }));
     expect(theme.getByRole('radio', { name: 'Match system' }).getAttribute('aria-checked')).toBe('true');
     await user.click(theme.getByRole('radio', { name: 'Dark' }));

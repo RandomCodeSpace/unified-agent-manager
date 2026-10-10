@@ -15,7 +15,7 @@ export function restartNotice(status: ServiceStatus | undefined): string | undef
 }
 
 /**
- * Settings → General → UAM: the version the service runs and, once another one is installed at its binary's path,
+ * Settings → UAM and access → UAM: the version the service runs and, once another one is installed at its binary's path,
  * Restart. The service waits until no Task works or waits, then stops as `uam web stop` does and starts the installed
  * binary in its place; the page reconnects and reloads onto the new version. While a restart waits or runs, the status
  * is read again every 2 s.

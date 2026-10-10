@@ -115,7 +115,7 @@ export default function Federation() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [sourceStates, setSourceStates] = useState<Record<string, SourceState>>({});
   const [metaCache] = useState(() => new Map<string, Meta>());
-  const carried = useRef<CarriedShell>({ query: '', scroll: 0, section: 'general', nextSection: null });
+  const carried = useRef<CarriedShell>({ query: '', scroll: 0, section: 'new-tasks', nextSection: null });
   const [carry] = useState<ShellCarry>(() => ({ read: () => carried.current, write: (patch) => { carried.current = { ...carried.current, ...patch }; } }));
   const [homeVersion, setHomeVersion] = useState<string>();
   const [homeLoadedVersion, setHomeLoadedVersion] = useState<string>();

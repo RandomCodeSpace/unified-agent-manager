@@ -35,6 +35,7 @@ describe('log out', () => {
     const { user } = renderApp('#settings');
     await screen.findByRole('heading', { level: 1, name: 'Settings' });
     await waitFor(() => expect(document.title).toMatch(/UAM - Settings$/));
+    await user.click(await screen.findByRole('button', { name: 'UAM and access', exact: true }));
     await user.click(await screen.findByRole('button', { name: 'Log out' }));
     expect(await screen.findByRole('heading', { name: 'Sign in to UAM' })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('UAM'));

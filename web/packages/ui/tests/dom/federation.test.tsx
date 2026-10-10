@@ -175,6 +175,7 @@ test('core-only peers render their task and name unavailable optional features i
   await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
   expect(await screen.findByText(/Unavailable on Core only:.*files.*terminal.*configuration/)).toBeTruthy();
   // A section the peer cannot serve explains why instead of offering a form that fails.
+  await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
   const shell = within(await screen.findByRole('region', { name: 'Shell access' }));
   expect(shell.getByText('Core only does not offer the terminal to connected instances. Update UAM on Core only to manage it here.')).toBeTruthy();
   expect(shell.queryByRole('switch', { name: 'Terminal' })).toBeNull();
@@ -204,6 +205,7 @@ test('Settings of a selected peer read and write only that peer and name it in t
   expect(screen.queryByRole('button', { name: 'Connected instances' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
   const settingsCall = (call: { path: string }) => /^\/api\/(settings|mcp|configuration|providers|usage|utility)/.test(call.path);
+  await user.click(await screen.findByRole('button', { name: 'Composer', exact: true }));
   const suggest = await screen.findByRole('switch', { name: 'Suggest replies' });
   await user.click(suggest);
   await waitFor(() => expect(calls.slice(switched).some(call => call.owner === 'b' && call.method === 'PATCH' && call.path === '/api/settings')).toBe(true));
@@ -214,13 +216,13 @@ test('Settings of a selected peer read and write only that peer and name it in t
   expect(await stored(2)).not.toBe(false);
   await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
   await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
-  await user.click(screen.getByRole('button', { name: 'Models', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Token costs', exact: true }));
   await waitFor(() => {
     const paths = calls.slice(switched).filter(call => call.owner === 'b').map(call => call.path);
     for (const prefix of ['/api/mcp', '/api/configuration', '/api/usage/prices', '/api/providers/copilot/account']) expect(paths.some(path => path.startsWith(prefix))).toBe(true);
   });
   expect(calls.slice(switched).filter(call => call.owner !== 'b' && settingsCall(call))).toEqual([]);
-  await user.click(screen.getByRole('button', { name: 'This browser', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'Appearance & alerts', exact: true }));
   expect(screen.getByText('Kept in this browser, not on Workstation B: these apply whichever instance is on screen.')).toBeTruthy();
 });
 

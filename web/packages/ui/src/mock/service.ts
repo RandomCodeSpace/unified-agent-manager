@@ -1,4 +1,4 @@
-// The in-browser fake's UAM version and restart (Settings → General → UAM). By default the running version is the one
+// The in-browser fake's UAM version and restart (Settings → UAM and access → UAM). By default the running version is the one
 // installed; `?uam=installed` has a newer one installed, `?uam=busy` has one too while a Task works (a restart waits),
 // and `?uam=error` cannot read the installed binary. A restart never comes back: the fake stays restarting.
 

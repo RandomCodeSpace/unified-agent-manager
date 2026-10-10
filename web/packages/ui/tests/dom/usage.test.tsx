@@ -198,7 +198,7 @@ describe('Usage popover', () => {
   test.each([false, true])('opens Token costs from the footer with Settings already open: %s', async (settingsOpen) => {
     const { user } = renderApp(settingsOpen ? '#settings' : '');
     const nav = await sidebar();
-    if (settingsOpen) await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+    if (settingsOpen) await user.click(screen.getByRole('button', { name: 'Composer', exact: true }));
     await user.click(nav.getByRole('button', { name: 'Usage', exact: true }));
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     const notice = await popover.findByText(/1 model unpriced/);

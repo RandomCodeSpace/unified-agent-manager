@@ -80,7 +80,7 @@ describe('native configuration', () => {
       expect(first.queryByRole('button', { name: /^(Edit|Add|Disable|Remove)/ })).toBeNull();
       await user.keyboard('{Escape}');
       await settled();
-      await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+      await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
       await user.click(screen.getByRole('switch', { name: 'Terminal' }));
       await waitFor(() => expect(screen.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
       await user.click(screen.getByRole('button', { name: tab, exact: true }));
@@ -154,6 +154,7 @@ describe('native configuration', () => {
 
   test('Terminal off disables skill creation while instructions remain editable', async () => {
     const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'UAM and access', exact: true }));
     await user.click(await screen.findByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
     await user.click(screen.getByRole('button', { name: 'Skills', exact: true }));
@@ -361,7 +362,7 @@ describe('native configuration', () => {
     await card.findByText('check saved. New and reopened tasks use the updated file.');
     const hook = (await api.configuration()).hooks.find((entry) => entry.name === 'check');
     expect(JSON.parse(hook!.content).hooks.preToolUse).toEqual([{ type: 'command', bash: 'echo ready' }]);
-    await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
     await user.click(screen.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false'));
     await user.click(screen.getByRole('button', { name: 'Hooks', exact: true }));
@@ -841,7 +842,8 @@ describe('native configuration', () => {
     await card.findByText(/Available skills:/);
     await user.type(card.getByLabelText('Skill names to install, one per line'), 'web-design-guidelines');
     await user.click(card.getByRole('button', { name: 'Install skills', exact: true }));
-    await card.findByText('web-design-guidelines', { exact: true });
+    // The installed skill's card, not the names field that still holds the typed name.
+    await card.findByRole('button', { name: 'View skill web-design-guidelines' });
     expect((await api.configuration()).skills.map((entry) => entry.name)).toContain('web-design-guidelines');
   });
 });

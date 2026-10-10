@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState, type ComponentProps } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { api, type ConfigurationKind } from '../../src/api';
 import { ConfigurationSettings } from '../../src/components/ConfigurationSettings';
@@ -7,12 +8,18 @@ import { AppContext, type AppContextValue } from '../../src/components/common';
 import { seed } from '../../src/mock/data';
 import { install } from '../../src/mock/install';
 
+/** One kind on its own, holding the scope Settings shares between the kinds. */
+function Scoped(props: Omit<ComponentProps<typeof ConfigurationSettings>, 'scope' | 'onScope' | 'onHold'>) {
+  const [scope, setScope] = useState('');
+  return <ConfigurationSettings {...props} scope={scope} onScope={setScope} onHold={() => {}} />;
+}
+
 async function creator(kind: ConfigurationKind = 'agents', change?: (context: AppContextValue) => void) {
   install();
   const fixture = seed();
   const context: AppContextValue = { meta: fixture.meta, metaError: null, loaded: true, settings: fixture.settings, dispatch: () => {}, narrow: false, usage: null, refreshMeta: vi.fn() };
   change?.(context);
-  const tree = () => <AppContext.Provider value={{ ...context }}><ConfigurationSettings kind={kind} projects={fixture.projects} terminal={!!context.settings.terminal} /></AppContext.Provider>;
+  const tree = () => <AppContext.Provider value={{ ...context }}><Scoped kind={kind} projects={fixture.projects} terminal={!!context.settings.terminal} /></AppContext.Provider>;
   const view = render(tree());
   await screen.findByRole('group', { name: `${kind} in this scope` });
   return { context, user: userEvent.setup(), update: () => view.rerender(tree()) };

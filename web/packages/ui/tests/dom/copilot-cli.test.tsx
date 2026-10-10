@@ -7,9 +7,9 @@ const NOTICE = 'Copilot CLI update available';
 // An update ends at the first poll after it finished: 2 s after it started, in the mock.
 const POLLED = { timeout: 8000 };
 
-/** The Copilot CLI group in Settings → Providers. */
+/** The Copilot CLI group in Settings → GitHub Copilot. */
 async function cli(user: User) {
-  await user.click(await screen.findByRole('button', { name: 'Providers', exact: true }));
+  await user.click(await screen.findByRole('button', { name: 'GitHub Copilot', exact: true }));
   const card = within(await screen.findByRole('region', { name: 'GitHub Copilot' }));
   return within(await card.findByRole('group', { name: 'Copilot CLI' }));
 }
@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe('Copilot CLI version and update', () => {
-  test('up to date: the version shows, and neither Settings nor its Providers tab carries a notice', async () => {
+  test('up to date: the version shows, and neither Settings nor its GitHub Copilot page carries a notice', async () => {
     const { user } = renderApp('#settings');
     const group = await cli(user);
     expect(await group.findByText('1.0.92')).toBeTruthy();
@@ -28,15 +28,15 @@ describe('Copilot CLI version and update', () => {
     expect(group.getByRole('button', { name: 'Check again' })).toBeTruthy();
     expect(group.queryByRole('button', { name: /^Update to/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Providers', description: NOTICE })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'GitHub Copilot', description: NOTICE })).toBeNull();
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
-  test('an update on offer puts a dot on Settings and on Providers, said in words, and names both versions', async () => {
+  test('an update on offer puts a dot on Settings and on GitHub Copilot, said in words, and names both versions', async () => {
     const { user } = renderApp('?cli=outdated#settings');
     const settings = await screen.findByRole('button', { name: 'Settings', description: NOTICE });
     expect(settings.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
-    const tab = screen.getByRole('button', { name: 'Providers', description: NOTICE });
+    const tab = screen.getByRole('button', { name: 'GitHub Copilot', description: NOTICE });
     expect(tab.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
     const group = await cli(user);
     expect(await group.findByText('1.0.89')).toBeTruthy();
@@ -57,7 +57,7 @@ describe('Copilot CLI version and update', () => {
     expect(group.queryByText(/^Still running/)).toBeNull();
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull());
     expect(screen.getByRole('button', { name: 'Settings' }).querySelector('.bg-warning')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Providers', description: NOTICE })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'GitHub Copilot', description: NOTICE })).toBeNull();
   });
 
   test('an update already running is picked up when Settings opens again', async () => {
