@@ -94,7 +94,7 @@ func uamDecode(raw json.RawMessage, v any) error {
 func (m *Manager) uamCall(ctx context.Context, taskID string, call agentapi.HostToolCall) agentapi.HostToolResult {
 	text, err := m.uamRead(ctx, taskID, call)
 	if err != nil {
-		return agentapi.HostToolResult{Text: err.Error(), Failed: true}
+		return agentapi.HostToolResult{Text: clampText(err.Error(), uamMaxBytes-len(truncatedMarker)), Failed: true}
 	}
 	return agentapi.HostToolResult{Text: text}
 }
@@ -123,7 +123,8 @@ func (m *Manager) uamRead(ctx context.Context, taskID string, call agentapi.Host
 		text, err = m.uamSnapshot(ctx, taskID, in)
 	}
 	if err != nil {
-		return "", fmt.Errorf("%s: %w; args: %s", in.Op, err, shape)
+		// Reserve room for the shape even when an error echoes a long argument.
+		return "", fmt.Errorf("%s: %s; args: %s", in.Op, clampText(err.Error(), uamMaxBytes/2), shape)
 	}
 	if err := context.Cause(ctx); err != nil {
 		return "", err

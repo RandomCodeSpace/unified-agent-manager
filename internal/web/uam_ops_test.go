@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -279,5 +280,25 @@ func TestUAMReadLifecycleAndRegistration(t *testing.T) {
 	defer m.mu.Unlock()
 	if len(m.calls) != 0 {
 		t.Fatal("read call leaked lifecycle registration")
+	}
+}
+
+func TestUAMReadLongInvalidArgumentsStayBounded(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	caller, conv := createSession(t, m, prov)
+	setSession(m, caller.ID, func(s *webSession) { s.mode = store.ModeYolo })
+	long := strings.Repeat("界", 7000)
+	for _, tc := range []struct{ args, shape string }{
+		{fmt.Sprintf(`{"op":"tasks",%q:true}`, long), ""},
+		{fmt.Sprintf(`{"op":"tasks","args":{%q:true}}`, long), uamShapes["tasks"]},
+		{fmt.Sprintf(`{"op":"tasks","args":{"project":%q}}`, long), uamShapes["tasks"]},
+	} {
+		result := uamReadCall(t, conv, tc.args)
+		if !result.Failed || len(result.Text) > uamMaxBytes || !utf8.ValidString(result.Text) || !strings.Contains(result.Text, truncatedMarker) {
+			t.Fatalf("invalid argument result: failed=%v, bytes=%d, valid UTF-8=%v", result.Failed, len(result.Text), utf8.ValidString(result.Text))
+		}
+		if tc.shape != "" && !strings.HasSuffix(result.Text, "; args: "+tc.shape) {
+			t.Fatal("bounded error lost its argument shape")
+		}
 	}
 }
