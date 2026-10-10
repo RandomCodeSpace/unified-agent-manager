@@ -458,6 +458,7 @@ func (m *Manager) resetRewoundLocked(s *webSession) agentapi.Conversation {
 	m.dropHistoryLocked(s)
 	s.interactions, s.ixIdx, s.ask = nil, map[string]*interaction{}, nil
 	s.outcome, s.suggestions = "", nil
+	m.clearDoneLocked(s)
 	s.outcomeRun++
 	s.turnActivity, s.todoBase, s.turnIntent = TurnActivity{}, TodoView{}, ""
 	s.edits, s.editsKnown, s.turnStart, s.activity, s.diff = nil, false, time.Time{}, nil, nil

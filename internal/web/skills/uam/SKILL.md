@@ -159,7 +159,10 @@ Use `uam` with `{op, args}` for Task and Project reads. Every Task has it.
   name, defaulting to yours; stage is active, settled or archived.
 - `task {id}` gives one Task's state and outcome; `changes {id}` lists its
   edit-tool files still changed against HEAD. A row with
-  `settled_by: "auto"` settled itself after 7 days with no activity.
+  `settled_by: "auto"` settled itself after 7 days with no activity, and one
+  with `settled_by: "reviewed"` after the owner saw it checked done.
+  `done: true` is a cheap model's hint that the last turn finished what was
+  asked; it is never a reason to settle or archive a Task.
 - `who_touched {path}` lists Tasks in your Project with edits to that path,
   relative to your directory or absolute. Shell writes are not attributed;
   `partial: true` means unread history may contain more edits.

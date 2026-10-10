@@ -700,15 +700,16 @@ func TestCustomModelDirectKeyValidation(t *testing.T) {
 	}
 }
 
-// settled_by is a modeled field: it loads, and clearing it is saved rather
-// than restored from the record read.
-func TestWebStateKeepsSettledBy(t *testing.T) {
+// settled_by, done and reviewed_item are modeled fields: they load, and
+// clearing them is saved rather than restored from the record read.
+func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const key = "copilot:0f0e0d0c"
-	setSettledBy := func(by string) {
+	at := time.Now().UTC().Truncate(time.Second)
+	set := func(by string, done *WebDone, reviewed string) {
 		t.Helper()
 		if err := s.Update(func(cfg *Config) error {
 			rec := cfg.Sessions[key]
@@ -717,7 +718,7 @@ func TestWebStateKeepsSettledBy(t *testing.T) {
 					Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1", Web: &WebState{Turn: "idle", Stage: "settled"}}
 			}
 			web := *rec.Web
-			web.SettledBy = by
+			web.SettledBy, web.Done, web.ReviewedItem = by, done, reviewed
 			rec.Web.Update(web)
 			cfg.Sessions[key] = rec
 			return nil
@@ -725,14 +726,23 @@ func TestWebStateKeepsSettledBy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, by := range []string{"auto", ""} {
-		setSettledBy(by)
+	for _, tc := range []struct {
+		by       string
+		done     *WebDone
+		reviewed string
+	}{
+		{"auto", &WebDone{ItemID: "a1", Verdict: "done", By: "model", Line: "All tests pass.", At: at}, "a1"},
+		{"", nil, ""},
+	} {
+		set(tc.by, tc.done, tc.reviewed)
 		cfg, err := s.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if web := cfg.Sessions[key].Web; web == nil || web.SettledBy != by || len(web.unknown) != 0 {
-			t.Fatalf("settled_by %q loaded as %+v", by, web)
+		web := cfg.Sessions[key].Web
+		if web == nil || web.SettledBy != tc.by || web.ReviewedItem != tc.reviewed || len(web.unknown) != 0 ||
+			(web.Done == nil) != (tc.done == nil) || tc.done != nil && (*web.Done != *tc.done) {
+			t.Fatalf("stored %+v loaded as %+v", tc, web)
 		}
 	}
 }

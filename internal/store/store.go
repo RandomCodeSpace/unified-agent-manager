@@ -476,7 +476,8 @@ type WebState struct {
 	// SettledAt is when the Task was settled; zero unless it is settled, or
 	// was settled before it was archived.
 	SettledAt time.Time `json:"settled_at,omitzero"`
-	// SettledBy is "auto" when the Task settled itself after a quiet week;
+	// SettledBy is "auto" when the Task settled itself after a quiet week,
+	// "reviewed" when it settled once the owner saw a reply checked done;
 	// empty when the owner settled it.
 	SettledBy string `json:"settled_by,omitempty"`
 	// ArchivedAt is when the Task was archived.
@@ -504,6 +505,11 @@ type WebState struct {
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
 	Suggestions *WebSuggestions `json:"suggestions,omitempty"`
+	// Done is the done check of the last completed turn.
+	Done *WebDone `json:"done,omitempty"`
+	// ReviewedItem is the last item of a finished main transcript a page
+	// showed when it left the Task.
+	ReviewedItem string `json:"reviewed_item,omitempty"`
 	// UnseenEnd marks a Task that failed or was interrupted while no page
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
@@ -554,6 +560,8 @@ var knownWebStateFields = map[string]struct{}{
 	"rewind":              {},
 	"outcome":             {},
 	"suggestions":         {},
+	"done":                {},
+	"reviewed_item":       {},
 	"unseen_end":          {},
 	"stop_reason":         {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007). Known,

@@ -11,6 +11,7 @@ const PURPOSES: Record<string, string> = {
   'configuration-draft': 'Configuration draft',
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
+  'done-check': 'Task done check',
 };
 
 /** "Task title" for `title`; an unknown purpose reads as words. */

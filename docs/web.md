@@ -647,7 +647,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Reads are limited to its Project unless the Task is in Yolo. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
   Results carry compact summaries and outcomes, framed as data; a Task row
-  has `settled_by: "auto"` when the Task settled itself. They
+  has `done: true` while the done check finds its last turn complete, and
+  `settled_by` `"auto"` or `"reviewed"` when the Task settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
   positive. `who_touched` uses edit-tool records, includes settled and
@@ -1038,6 +1039,29 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+- **Done check**: two minutes after a turn completes, if the Task is still
+  finished (no queue, nothing running, no question), the service checks
+  whether the final reply says the asked work is complete. Code decides
+  first: open todos, a failing last test run, or a reply ending in a question
+  are not done, with no model call. Otherwise one Utility model call reads
+  your message, one line per step the agent took, the turn's facts (files
+  changed, tests, failed commands, todos) and the final reply with numbered
+  lines. It answers done (citing the reply line that says so), not done, or
+  unsure. A cited line must be a real, non-blank line of the reply; two
+  unusable answers count as unsure. Each finished state is checked once,
+  failures included. Only done is shown: the Task summary carries `done_at`,
+  `done_item_id` and `done_line` (the cited line) while the Task stays active
+  and finished, and the `uam` task row has `done: true`. A new turn or a rewind
+  clears it, and the check is never Task activity. When today's Background AI
+  limit refuses it, nothing is kept and the check waits until midnight or a
+  change of the limit or Utility model.
+  A Task checked done settles once you have seen it: when a page that shows
+  the finished Task closes or moves to another Task, the service records the
+  reply it showed. Once that reply is checked done and no page shows the
+  Task, the next minute's sweep settles it with `settled_by: "reviewed"`
+  under the same rules as the 7-day settle (see Settle, archive, and
+  delete). A new turn after you looked starts over. A Task that is not done
+  stays where it is.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
   copies the conversation through that reply into a new active Task, without
@@ -1137,8 +1161,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  including Task titles, completed subagent result lines, suggested replies
-  and the opening phrase of outcome lines. Pick the cheapest
+  including Task titles, completed subagent result lines, suggested replies,
+  the opening phrase of outcome lines and the done check. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
@@ -1172,13 +1196,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Background AI**: every call UAM makes on the Utility model (Task
-  titles, also those made with a Task's own model, subagent result lines, suggested replies and outcome lines) counts
+  titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines and done checks) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log · N calls today** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Suggested replies", "Outcome line";
+  what it was for ("Task title", "Suggested replies", "Outcome line", "Task done check";
   older versions also logged "Subagent summary"), the Task (a click opens
   it) or Project, the model
   (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
@@ -1198,8 +1222,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Tasks
   keep their first message as the title, completed subagents keep their own
-  report, no replies are suggested (and the next look asks again), and
-  outcome lines keep the evidence alone. Settings then says Background AI is
+  report, no replies are suggested (and the next look asks again),
+  outcome lines keep the evidence alone, and the done check waits. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
   "unlimited", "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
@@ -1350,7 +1374,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   request, an unreconciled rewind or an unseen failure, or that a page has
   open. This settle doesn't count as activity, so the Task keeps its last
   activity time. Its record says `settled_by: "auto"`; Reopen clears that and
-  starts the 7 days again.
+  starts the 7 days again. A Task checked done that you have seen settles
+  sooner, with `settled_by: "reviewed"` (see Done check).
 
   A Task whose conversation is not open, such as a settled, archived or
   closed Task, or any Task after the service restarts, still shows its whole
