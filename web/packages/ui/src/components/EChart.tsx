@@ -5,6 +5,7 @@ import { Minus, Plus, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../lib/cn';
+import { useScheme } from '../lib/theme';
 import { Note } from './common';
 import { Button } from './ui/button';
 
@@ -59,6 +60,9 @@ export function EChart({ option, width, height, className, label, zoomControls =
 }>) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<EChartsType | null>(null);
+  // The registered theme the drawing has; a scheme change swaps it without redrawing the option.
+  const theme = useRef('');
+  const scheme = useScheme();
   // The drawing library's reason when it rejected the option; null while the drawing stands.
   const [failure, setFailure] = useState<string | null>(null);
   const error = failure !== null;
@@ -86,10 +90,14 @@ export function EChart({ option, width, height, className, label, zoomControls =
       setReady(false);
       setFailure(cause instanceof Error && cause.message ? cause.message.split('\n')[0] : 'the drawing library rejected its options');
     };
-    void Promise.all([import('../lib/echarts'), ...chartTypes(option)]).then(([{ init }]) => {
+    void Promise.all([import('../lib/echarts'), ...chartTypes(option)]).then(([{ init, schemeTheme }]) => {
       if (!active) return;
       try {
-        const drawing = chart.current ??= init(element, undefined, { renderer: 'svg', width: element.clientWidth || width, height: element.clientHeight || height });
+        if (!chart.current) {
+          theme.current = schemeTheme();
+          chart.current = init(element, theme.current, { renderer: 'svg', width: element.clientWidth || width, height: element.clientHeight || height });
+        }
+        const drawing = chart.current;
         const syncControls = () => setHasControls(((drawing.getOption()?.dataZoom ?? []) as ZoomRange[]).some(adjustable));
         const resize = () => {
           drawing.resize({ width: element.clientWidth || width, height: element.clientHeight || height });
@@ -112,6 +120,18 @@ export function EChart({ option, width, height, className, label, zoomControls =
       observer?.disconnect();
     };
   }, [option, width, height]);
+
+  useEffect(() => {
+    let active = true;
+    void import('../lib/echarts').then(({ schemeTheme }) => {
+      const drawing = chart.current;
+      const name = schemeTheme();
+      if (!active || !drawing || drawing.isDisposed() || theme.current === name) return;
+      theme.current = name;
+      drawing.setTheme(name);
+    });
+    return () => { active = false; };
+  }, [scheme]);
 
   useEffect(() => () => {
     try { chart.current?.dispose(); } catch { /* a drawing that failed may not dispose cleanly */ }

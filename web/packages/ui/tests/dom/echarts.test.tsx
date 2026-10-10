@@ -7,7 +7,8 @@ import type { EChartsOption } from 'echarts';
 import { StrictMode } from 'react';
 import { expect, test, vi } from 'vitest';
 import { EChart } from '../../src/components/EChart';
-import { chartOption } from '../../src/lib/chart';
+import { chartOption, chartTheme } from '../../src/lib/chart';
+import { applyTheme } from '../../src/lib/theme';
 
 test('the actual SVG renderer draws chart data, replaces refreshed rows, resizes and disposes', async () => {
   const chart = { title: 'Commits', kind: 'bar' as const, labels: ['Monday', 'Tuesday'], series: [{ name: 'commits', values: [2, 8] }, { name: 'files', values: [1, 3] }] };
@@ -32,6 +33,32 @@ test('the actual SVG renderer draws chart data, replaces refreshed rows, resizes
   unmount();
   expect(dispose).toHaveBeenCalledOnce();
   expect(drawing.isDisposed()).toBe(true);
+});
+
+test('the drawing starts in the scheme\'s theme and a scheme flip swaps it once without redrawing', async () => {
+  applyTheme('light');
+  const chart = { title: 'Languages', kind: 'echarts' as const, labels: [], series: [], options: { title: { text: 'Languages' }, series: [{ type: 'pie', data: [{ name: 'Go', value: 3 }, { name: 'TypeScript', value: 5 }] }] } as never };
+  const option = chartOption(chart, { width: 480, height: 240 });
+  const { rerender, unmount } = render(<StrictMode><EChart option={option} width={480} height={240} label="Languages chart" /></StrictMode>);
+  const host = screen.getByRole('img', { name: 'Languages chart' });
+  await waitFor(() => expect(host.querySelector('svg path')).toBeTruthy());
+  const drawing = getInstanceByDom(host)!;
+  expect((drawing.getOption().title as { textStyle: { color: string } }[])[0].textStyle.color).toBe((chartTheme().title as { textStyle: { color: string } }).textStyle.color);
+  expect(drawing.getOption().color).toEqual(chartTheme().color);
+  const setTheme = vi.spyOn(drawing, 'setTheme');
+  const setOption = vi.spyOn(drawing, 'setOption');
+  try {
+    act(() => applyTheme('dark'));
+    await waitFor(() => expect(setTheme).toHaveBeenCalledWith('uam-dark'));
+    rerender(<StrictMode><EChart option={option} width={480} height={240} label="Languages chart" /></StrictMode>);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setTheme).toHaveBeenCalledOnce();
+    expect(setOption).not.toHaveBeenCalled();
+    expect(getInstanceByDom(host)).toBe(drawing);
+  } finally {
+    act(() => applyTheme('light'));
+    unmount();
+  }
 });
 
 test('plain wheel scrolling never activates chart zoom; Ctrl+wheel remains available', async () => {
