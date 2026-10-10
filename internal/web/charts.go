@@ -64,10 +64,10 @@ var chartTool = agentapi.HostTool{
 		"so the rows never pass through you, and you get back only a short summary (row count, ranges). Pass the rows as `data` only when you have a few at hand. " +
 		fmt.Sprintf("Line and bar charts take at most %d rows and %d series; x values must be unique, y values numbers. ", maxChartRows, maxChartSeries) +
 		"If uam refuses the command because the task is in Safe mode, run it with your shell tool and pass its rows as `data`. " +
-		"For other standard 2D Apache ECharts charts use kind echarts with options, or a command printing one JSON option object with format json. " +
+		"Use line, bar, scatter, heatmap, pie/donut, boxplot, treemap or sankey charts. For charts beyond line/bar, use kind echarts with options, or a command printing one JSON option object with format json. " +
 		"For tabular ECharts data, prefer one dataset.source with named dimensions and an explicit sourceHeader so the same data can be inspected as a sortable, filterable table. " +
 		"Do not pass x, y or data with echarts. Options are bounded JSON only: no JavaScript, external images, maps, custom series, toolbox or force layouts. " +
-		"Graphs use fixed coordinates or circular layout; animations are disabled. The owner can pin the chart to the project and refresh it later, which re-runs the command without you.",
+		"Use Mermaid for graphs and trees. Animations are disabled. The owner can pin the chart to the project and refresh it later, which re-runs the command without you.",
 	Parameters: toolSchema([]string{"title", "kind"}, map[string]any{
 		"title":   stringProp(fmt.Sprintf("What the chart shows, up to %d characters, e.g. \"Commits per day, September\".", maxChartTitle)),
 		"kind":    enumProp("line for a trend, bar to compare categories, echarts for other standard 2D chart families.", "line", "bar", "echarts"),
@@ -80,7 +80,7 @@ var chartTool = agentapi.HostTool{
 			"For line/bar it prints CSV with a header row, or JSON rows. For echarts it prints one JSON option object. It must not depend on files you made, since a refresh runs it again later.", chartTimeout, maxChartOutput>>10)),
 		"format":  enumProp("The command's output: csv or json. Required with command.", "csv", "json"),
 		"data":    listProp("Rows instead of a command: objects holding the x and y fields.", map[string]any{"type": "object"}),
-		"options": map[string]any{"type": "object", "description": "For kind echarts only: an Apache ECharts option object with 1 to 32 series. Supported types: " + strings.Join(chartOptionSeries, ", ") + ". Prefer a command printing this object when computing the data. At most 1 MiB, 32 levels and 20000 JSON values. Use explicit axes/coordinates; lines needs cartesian2d or polar. No maps, custom series, external assets or JavaScript."},
+		"options": map[string]any{"type": "object", "description": "For kind echarts only: an Apache ECharts option object with 1 to 32 series. Use line, bar, scatter, heatmap, pie (including donut), boxplot, treemap or sankey. Use Mermaid for graphs and trees. Prefer a command printing this object when computing the data. At most 1 MiB, 32 levels and 20000 JSON values. Use explicit axes/coordinates. No maps, custom series, external assets or JavaScript."},
 	}),
 }
 

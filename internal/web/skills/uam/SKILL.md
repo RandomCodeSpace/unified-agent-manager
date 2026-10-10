@@ -114,9 +114,9 @@ refresh it later without you.
   unique; aggregate first), `y` one to 4 numeric fields, one series each;
   `x_label` and `y_label` are optional. At most 500 rows: aggregate, or keep
   the last ones.
-- **`echarts`** draws other standard 2D charts (pie, scatter, heatmap,
-  sankey, treemap, radar, funnel, gauge, candlestick and more, up to 32
-  series) from an Apache ECharts option object: pass it as `options`, or a
+- **`echarts`** draws line, bar, scatter, heatmap, pie/donut, boxplot,
+  treemap and sankey charts, up to 32 series. Use Mermaid for graphs and
+  trees. Pass an Apache ECharts option object as `options`, or a
   `command` that prints it with `format: "json"`, and no `x`, `y` or `data`.
   Options are JSON only: no JavaScript, maps, custom series, external images
   or toolbox. Formatters are string templates (`"{b}: {c}"`); a
