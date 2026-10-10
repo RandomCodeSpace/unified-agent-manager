@@ -312,7 +312,7 @@ const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
 const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
 const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
 
-/** A shelf or Done row's tip: the full title, its Project with the directory, why it is done, and when the Task was created, judged done, settled and archived. */
+/** A shelf or Done row's tip: the full title, its Project with the directory, why it is done, and when the Task was created, judged done and settled. */
 function shelfTip(s: SessionSummary, project: Project, done = false) {
   const at = (label: string, iso?: string) => iso && <span className="block">{label} <time dateTime={iso}>{dateTime(iso)}</time></span>;
   return (
@@ -325,7 +325,6 @@ function shelfTip(s: SessionSummary, project: Project, done = false) {
         {at('Created', s.created_at)}
         {done && at('Done', s.done_at)}
         {at('Settled', s.settled_at)}
-        {at('Archived', s.archived_at)}
         {s.stage === 'settled' && s.settled_by && <span className="block">{SETTLED_BY[s.settled_by]}</span>}
       </span>
     </>
@@ -395,7 +394,7 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
 }
 
 /**
- * `compact`: a Settled or Archived shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
+ * `compact`: a Settled shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
  * `done`: a compact row in the Done section, faded less than the shelves' (it is recent news, not storage).
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
@@ -516,7 +515,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   );
 });
 
-/* ---------- Done section and shelves (Settled / Archived) ---------- */
+/* ---------- Done section and the Settled shelf (archived Tasks are in Settings → Archived) ---------- */
 
 /** The Done section shows this many rows until "Show all". */
 const DONE_CAP = 8;
@@ -536,8 +535,8 @@ function shelfKeys(label: string, rows: ListRow[], open: boolean, selectedKey: s
   return [`shelf:${label}`, ...shown.filter((r) => open || r.key === selectedKey).map((r) => r.key), ...(open && more && rows.length > DONE_CAP ? [`more:${label}`] : [])];
 }
 
-/** The sticky edge of a section header with 0, 1 or 2 headers pinned under it, one header (h-7, h-11 on touch) apart. */
-const PINNED_UNDER = ['-bottom-3', 'bottom-4 pointer-coarse:bottom-8', 'bottom-11 pointer-coarse:bottom-19'];
+/** The sticky edge of a section header with 0 or 1 headers pinned under it, one header (h-7, h-11 on touch) apart. */
+const PINNED_UNDER = ['-bottom-3', 'bottom-4 pointer-coarse:bottom-8'];
 
 function Shelf({ label, icon, rows, selectedKey, open, onToggle, tabStop, render, under = 0, first = false, more }: Readonly<{ label: string; /** A glyph before the label (Done's check). */ icon?: ReactNode; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; /** How many section headers are pinned under this one: it sticks that many headers higher. */ under?: number; /** The first section: it takes the room left under a short list, so the sections sit at the foot. */ first?: boolean; /** Done: at most DONE_CAP rows until "Show all". */ more?: { all: boolean; onAll: () => void }; render: (row: ListRow, compact: boolean) => ReactNode }>) {
   const head = useRef<HTMLButtonElement>(null);
@@ -656,21 +655,20 @@ export const Sidebar = memo(function Sidebar({
   }, [machines, projects, sessions, actions.filter, query, chosen, filterMachine]);
   const grouped = groupTasks(rows.map((r) => r.task));
   const rowOf = new Map(rows.map((r) => [r.task, r]));
-  const [active, done, settled, archived] = [grouped.active, grouped.done, grouped.settled, grouped.archived].map((tasks) => tasks.map((t) => rowOf.get(t)!));
+  const [active, done, settled] = [grouped.active, grouped.done, grouped.settled].map((tasks) => tasks.map((t) => rowOf.get(t)!));
   // Newest first, whatever their state: a row never moves because its Task changed.
   const unsettled = active;
   const here = machines?.find((m) => m.active);
   const selectedKey = selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId;
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
-  const archivedOpen = !!shelves[`${shelfScope}:archived`];
   // Done is open until closed.
   const doneOpen = shelves[`${shelfScope}:done`] ?? true;
   const [doneAll, setDoneAll] = useState(false);
   // The row holding the list's one tab stop: the last focused while it is on screen, else the open Task's, else the first.
   const [focused, setFocused] = useState<string | null>(null);
   const searching = !!query.trim();
-  const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Done', done, doneOpen, selectedKey, { all: doneAll }), ...shelfKeys('Settled', settled, settledOpen, selectedKey), ...shelfKeys('Archived', archived, archivedOpen, selectedKey)];
+  const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Done', done, doneOpen, selectedKey, { all: doneAll }), ...shelfKeys('Settled', settled, settledOpen, selectedKey)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
   // The rows' order on screen. A Task list update moves the rows (the "sessions" view transition) only when it changes
   // that order; one that changes Tasks in place (state, time, title) repaints them without a transition.
@@ -747,9 +745,8 @@ export const Sidebar = memo(function Sidebar({
         </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
         {/* Done and the shelves are the column's own children (their headers pin to the scroller's foot); the first takes the room left under a short list. */}
-        <Shelf label="Done" icon={<CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />} rows={done} selectedKey={selectedKey} open={doneOpen} onToggle={() => toggleShelf(`${shelfScope}:done`, true)} tabStop={tabStop} render={(r) => renderRow(r, true, true)} under={(settled.length > 0 ? 1 : 0) + (archived.length > 0 ? 1 : 0)} more={{ all: doneAll, onAll: () => setDoneAll((v) => !v) }} first />
-        <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} render={renderRow} under={archived.length > 0 ? 1 : 0} first={done.length === 0} />
-        <Shelf label="Archived" rows={archived} selectedKey={selectedKey} open={archivedOpen} onToggle={() => toggleShelf(`${shelfScope}:archived`)} tabStop={tabStop} render={renderRow} first={done.length === 0 && settled.length === 0} />
+        <Shelf label="Done" icon={<CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />} rows={done} selectedKey={selectedKey} open={doneOpen} onToggle={() => toggleShelf(`${shelfScope}:done`, true)} tabStop={tabStop} render={(r) => renderRow(r, true, true)} under={settled.length > 0 ? 1 : 0} more={{ all: doneAll, onAll: () => setDoneAll((v) => !v) }} first />
+        <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => toggleShelf(`${shelfScope}:settled`)} tabStop={tabStop} render={renderRow} first={done.length === 0} />
       </div>
     );
   }

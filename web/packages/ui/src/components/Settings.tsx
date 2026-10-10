@@ -3,6 +3,7 @@ import { useFederation } from '../FederationContext';
 import { LogOut, X } from 'lucide-react';
 import { useContext, useEffect, useId, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { DEFAULT_COMPACT_THRESHOLD, describeError, resolveTaskDefaults, type CustomModel, type Model, type ProviderInfo, type SendDefault, type Settings } from '../api';
+import { ArchivedTasks } from './ArchivedTasks';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
@@ -42,6 +43,7 @@ const SETTINGS_SECTIONS = [
   { id: 'hooks', label: 'Hooks' },
   { id: 'instructions', label: 'Instructions' },
   { id: 'mcp', label: 'MCP servers' },
+  { id: 'archived', label: 'Archived' },
   { id: 'browser', label: 'This browser' },
 ] as const;
 type SettingsSection = typeof SETTINGS_SECTIONS[number]['id'];
@@ -758,6 +760,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           {loaded && (meta?.providers ?? []).some((p) => p.capabilities.mcp) && <Section hidden={section !== 'mcp'} id="mcp" title="MCP servers">
             <McpServersSettings terminal={!!settings.terminal} githubMcp={(meta?.providers ?? []).some((p) => p.capabilities.github_mcp) ? { on: !!settings.github_mcp, saving, onChange: (github_mcp) => void save({ github_mcp }) } : undefined} />
           </Section>}
+          {section === 'archived' && (loaded ? <Section id="archived" title="Archived" help="Archived tasks are read-only for good. Open one to read its conversation; its menu runs it again, exports it or deletes it. Search in the sidebar finds them too.">
+            <ArchivedTasks />
+          </Section> : <PendingSection id="archived" title="Archived" label="Loading tasks…" />)}
           <Section hidden={section !== 'browser'} id="browser" title="This browser">
             {api.owner && <Note>Kept in this browser, not on {api.owner.label}: these apply whichever instance is on screen.</Note>}
             <NotifyRow />
