@@ -1047,7 +1047,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     }),
   );
 
-  // Tasks the service judged done (`done_at`): more than the sidebar's Done section shows before "Show all".
+  // Tasks the service judged done (`done_at`).
   const judged = (id: string, project_id: string, name: string, min: number, line: string) =>
     task({
       id, project_id, workdir: p(project_id), model: 'gpt-6-luna', name, title: '', state: 'completed', created_at: ago(min + 40), updated_at: ago(min + 2),
