@@ -17,6 +17,8 @@ import { HelpTip } from './ui/tooltip';
 /** How often the open section reads today's count and the newest calls again. */
 const REFRESH_MS = 15000;
 const MAX_LIMIT = 1000;
+/** How long a purpose's line waits after typing stops before it saves. */
+const SAVE_DELAY_MS = 600;
 
 function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
   const { sessions, projects, openTask } = useContext(TaskList);
@@ -51,13 +53,65 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
   );
 }
 
+type PurposeToday = UtilityLog['today']['purposes'][number];
+
+/** Why a paused purpose stopped; the service sends only `paused`, so the reason is read from its numbers. */
+function pauseReason(line: PurposeToday, totalPaused: boolean): string {
+  if (line.limit === 0) return 'Off: its line is 0.';
+  if (line.calls >= line.limit) return 'At its line; it resumes at midnight on the server.';
+  if (totalPaused) return 'Paused with the daily limit.';
+  return 'Stopped after repeated unusable answers; it resumes at midnight on the server.';
+}
+
+/**
+ * One Utility purpose's day: "120 today /" and its own daily line as a number (0 turns it off), saved a moment
+ * after typing stops. A paused purpose says so and why.
+ */
+function PurposeLine({ line, limit, totalPaused, saving, onSave }: Readonly<{ line: PurposeToday; limit: number; totalPaused: boolean; saving: boolean; onSave: (purpose: string, limit: number) => Promise<void> }>) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? String(limit);
+  const parsed = Number(value);
+  const valid = value.trim() !== '' && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_LIMIT;
+  useEffect(() => {
+    if (draft === null || !valid || parsed === limit) return;
+    const timer = window.setTimeout(() => void onSave(line.purpose, parsed).then(() => setDraft(null)), SAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, valid, parsed, limit, line.purpose, onSave]);
+  const label = purposeLabel(line.purpose);
+  const id = `utility-purpose-${line.purpose}`;
+  return (
+    <Row id={id} label={label} htmlFor={`${id}-input`} help={`Its own calls a day, inside the daily limit. At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns it off.`}>
+      <span className={cn('w-16 text-right text-ui tabular-nums', line.paused ? 'text-warning' : 'text-body')}>{line.calls.toLocaleString('en-US')} today</span>
+      <span aria-hidden="true" className="text-muted">
+        /
+      </span>
+      <Input
+        id={`${id}-input`}
+        className="w-20"
+        type="number"
+        inputMode="numeric"
+        min={0}
+        max={MAX_LIMIT}
+        step={1}
+        aria-describedby={`${id}-help`}
+        aria-invalid={!valid || undefined}
+        disabled={saving}
+        value={value}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      {line.paused && <Chip tone="warning">Paused today</Chip>}
+      {line.paused && <span className="basis-full text-caption text-muted">{pauseReason(line, totalPaused)}</span>}
+    </Row>
+  );
+}
+
 /**
  * Settings → Background AI: UAM's own calls on the Utility model (titles, suggested replies), today's
  * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. The log
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
  */
-export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ limitSetting?: number; saving: boolean; onSaveLimit: (limit: number) => Promise<void> }>) {
+export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit, onSavePurposeLimit }: Readonly<{ limitSetting?: number; purposeLimits?: Record<string, number>; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSavePurposeLimit: (purpose: string, limit: number) => Promise<void> }>) {
   const api = useApi();
   const [log, setLog] = useState<UtilityLog | null>(null);
   const [calls, setCalls] = useState<UtilityCall[]>([]);
@@ -109,6 +163,16 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
       setOlder(false);
     }
   }
+
+  // A saved line reads the day again. The ref keeps each line's pending save from restarting when Settings renders.
+  const savePurposeLimit = useRef(onSavePurposeLimit);
+  useEffect(() => {
+    savePurposeLimit.current = onSavePurposeLimit;
+  });
+  const savePurpose = useCallback(async (purpose: string, n: number) => {
+    await savePurposeLimit.current(purpose, n);
+    setReads((r) => r + 1);
+  }, []);
 
   const limit = log?.today.limit ?? limitSetting;
   const value = draft ?? (limit === undefined ? '' : String(limit));
@@ -187,6 +251,13 @@ export function BackgroundAI({ limitSetting, saving, onSaveLimit }: Readonly<{ l
           </Button>
         </Row>
       </form>
+      {today.purposes.length > 0 && (
+        <section aria-label="Daily line per purpose" className="flex flex-col gap-2">
+          {today.purposes.map((line) => (
+            <PurposeLine key={line.purpose} line={line} limit={purposeLimits?.[line.purpose] ?? line.limit} totalPaused={today.paused} saving={saving} onSave={savePurpose} />
+          ))}
+        </section>
+      )}
       <div className="flex flex-col gap-1">
         {error && (
           <Note tone="error" role="alert">
