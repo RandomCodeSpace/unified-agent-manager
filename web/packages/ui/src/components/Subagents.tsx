@@ -1080,6 +1080,9 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
     // The row's time, tokens and line go on changing: the copy shows them, at the place it was opened.
     const changes = new MutationObserver(copyRow);
     changes.observe(row, { subtree: true, childList: true, characterData: true });
+    // The copy sits in a portal, away from the row's parents: it takes the type they give the row (a turn foot's small stamp text), so it fits the row's box.
+    const from = getComputedStyle(row.parentElement ?? row);
+    Object.assign(el.style, { fontFamily: from.fontFamily, fontSize: from.fontSize, fontWeight: from.fontWeight, lineHeight: from.lineHeight, letterSpacing: from.letterSpacing, fontVariantNumeric: from.fontVariantNumeric, color: from.color });
     const place = () => {
       const r = row.getBoundingClientRect();
       Object.assign(el.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
