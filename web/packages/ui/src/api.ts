@@ -171,10 +171,26 @@ export interface TokenCounts {
   total: number;
 }
 
-/** One aside answer; transient, never part of the transcript. */
+/** One aside answer; never part of the transcript. `aside` is its record once kept with the Task. */
 export interface AsideAnswer {
   text: string;
   truncated?: boolean;
+  aside?: Aside;
+}
+
+/** An answered aside kept with its Task (`GET /api/sessions/{id}/asides`, the `aside` event); never sent to the agent. */
+export interface Aside {
+  id: string;
+  /** What the owner asked, without the earlier asides a follow-up carries. */
+  question: string;
+  answer: string;
+  truncated?: boolean;
+  asked_at: string;
+  answered_at: string;
+  /** The agent was working on a turn when it was asked. */
+  working?: boolean;
+  /** The turn it belongs to: the latest message the owner sent (not a steer) when it was asked; absent before any. */
+  turn?: string;
 }
 
 export type TokenPeriodKey = 'today' | '7d' | '30d' | 'lifetime';
@@ -2029,7 +2045,9 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     enableMcpServer: (name: string, enabled: boolean) => call<McpServers>('PATCH', `/api/mcp/servers/${enc(name)}`, { enabled }),
     removeMcpServer: (name: string) => call<McpServers>('DELETE', `/api/mcp/servers/${enc(name)}`),
     taskUsageMetrics: (id: string, signal?: AbortSignal) => call<TaskUsageMetrics>('GET', `/api/sessions/${enc(id)}/usage-metrics`, undefined, false, signal),
-    askAside: (id: string, question: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question }, false, signal),
+    /** `question` goes to the model; `typed`, what the owner asked, is what the Task keeps. */
+    askAside: (id: string, question: string, typed: string, signal?: AbortSignal) => call<AsideAnswer>('POST', `/api/sessions/${enc(id)}/aside`, { question, typed }, false, signal),
+    asides: (id: string) => call<{ asides: Aside[] }>('GET', `/api/sessions/${enc(id)}/asides`).then((r) => r.asides),
     taskMcp: (id: string, summary = false) => call<McpTaskStatus>('GET', `/api/sessions/${enc(id)}/mcp${summary ? '?summary=1' : ''}`),
     taskMcpAction: (id: string, name: string, action: 'enable' | 'disable' | 'restart') => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/servers/${enc(name)}/${action}?summary=1`),
     reconnectTaskMcp: (id: string) => call<McpTaskStatus>('POST', `/api/sessions/${enc(id)}/mcp/reconnect?summary=1`),

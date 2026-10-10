@@ -14,7 +14,7 @@ import { foldToFit } from '../lib/toolbarFold';
 import { BackgroundTasks } from './BackgroundTasks';
 import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
-import { ASIDE_COMMAND, AsideCard, useAsides, withAside } from './AskAside';
+import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
 import { PHONE } from './Todos';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
@@ -421,7 +421,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // offered even when the Task's own list failed to load, since it does not depend on it.
   const asideOK = !!session.capabilities.aside && !locked && !newTask;
   if (asideOK && (commands || commandList?.key === commandKey)) commands = withAside(commands ?? NO_COMMANDS, !!session.open);
-  const asides = useAsides(session);
+  const asides = useAsides(session, live);
   const [asideCard, setAsideCard] = useState<{ open: boolean; phone: boolean; task: string } | null>(null);
   if (asideCard && asideCard.task !== session.id) setAsideCard(null);
   const [formEl, setFormEl] = useState<HTMLFormElement | null>(null);
@@ -791,7 +791,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (refused) return 'Remove the attachment that was refused';
     if (pendingCommand) return 'Wait for the command list to load';
     if (shapedCommand && commandsError && cmd?.name !== ASIDE_COMMAND) return 'Commands could not be loaded. Retry the command list.';
-    if (cmd?.name === ASIDE_COMMAND && asides.pending) return 'Wait for the aside answer first';
+    if (cmd?.name === ASIDE_COMMAND && cmd.args && asides.pending) return 'Wait for the aside answer first';
     return commandBlocked;
   }
   const blocked = describeBlocked();
@@ -924,7 +924,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
   }
 
-  /** `/btw <question>`: the aside goes to the open conversation, never to the Task; the composer clears and the card opens on it. */
+  /** `/btw <question>`: the aside goes to the open conversation, never to the agent; the composer clears and the Task's asides open on it. A bare `/btw` only opens them. */
   function askAside(question: string) {
     asides.ask(question);
     setText('');
@@ -1127,7 +1127,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     if (editing) return busy === 'send' ? 'Submitting…' : 'Rewind and send';
     if (busy === enter) return 'Submitting…';
-    if (cmd?.name === ASIDE_COMMAND) return 'Ask aside';
+    if (cmd?.name === ASIDE_COMMAND) return cmd.args ? 'Ask aside' : 'Show asides';
     if (cmd) return `Run /${cmd.name}`;
     if (!live) return 'Send';
     return enter === 'steer' ? 'Steer' : 'Queue';
@@ -1262,7 +1262,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     return (
       <>
-        {cmd?.name === ASIDE_COMMAND ? 'Ask aside (Enter): not added to the Task' : cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
+        {cmd?.name === ASIDE_COMMAND ? (cmd.args ? 'Ask aside (Enter): never sent to the agent' : 'Show this Task’s asides (Enter)') : cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
         <span className="block text-on-primary/70">Shift+Enter adds a line</span>
       </>
     );
@@ -1368,16 +1368,11 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     >
       {dragging > 0 && !answering && <DropOverlay note={gateNote || LIMITS_TEXT} />}
       {asideCard && (
-        <AsideCard
-          entries={asides.entries}
-          open={asideCard.open}
-          phone={asideCard.phone}
-          anchor={formEl}
-          onClose={() => {
-            // Closing drops a question still waiting, as the old reader did; answered ones stay on the page.
-            asides.cancel();
-            setAsideCard((c) => c && { ...c, open: false });
-          }}
+        <TaskAsideReader
+          asides={asides}
+          at={{ open: asideCard.open, phone: asideCard.phone, anchor: formEl }}
+          // A question still waiting goes on: its turn's chip shows it, and its answer is kept.
+          onClose={() => setAsideCard((c) => c && { ...c, open: false })}
           onClosed={() => setAsideCard(null)}
           finalFocus={() => textarea.current}
         />

@@ -3,7 +3,7 @@
 // for `/api/*` and window.EventSource, and plays scripted continuations so the
 // workspace feels alive. Not part of the production bundle.
 
-import { BADGE_COLORS, LIVE, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
+import { BADGE_COLORS, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
 import { chartMock } from './charts';
@@ -15,6 +15,7 @@ import { configurationMock } from './configuration';
 import { mcpMock } from './mcp';
 import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
+import { seedAsides } from './asides';
 import { seedUtility, utilityLog } from './utility';
 import { tokenPriceFixture, tokenUsageFixture } from './token-usage';
 
@@ -135,6 +136,8 @@ export interface Received {
 export function install(): { received: Received[] } {
   const st: MockState = seed();
   const received: Received[] = [];
+  // Each Task's kept asides, oldest first; a new one is kept and sent as the service does.
+  const asides = seedAsides();
   // `?mock&slow=1500` holds every reply and the first snapshot that long, to look at the loading states.
   const slow = Math.max(0, Number(new URLSearchParams(window.location.search).get('slow')) || 0);
   // `?mock&manychanges` adds 40 uncommitted files from no Task, to check Changes and Commit with a long list.
@@ -1284,10 +1287,22 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       if (!t.capabilities.aside) return fail(409, 'this provider does not support aside questions');
       // A follow-up carries the earlier asides; the mock answers it differently so both show.
-      const followUp = String(body.question ?? '').startsWith('Earlier by-the-way questions');
-      return json(200, { text: followUp
+      const question = String(body.question ?? '').trim();
+      const followUp = question.startsWith('Earlier by-the-way questions');
+      const text = followUp
         ? 'Yes. `TestDoctorDumbTerminal` sets `TERM=dumb` and checks the row reads `terminal  dumb · ASCII glyphs`; the probe never starts, so the test runs in a few milliseconds.'
-        : 'Yes. With `TERM=dumb` the doctor never sends the CPR probe, so there is no 300 ms wait: `term.Describe()` returns `dumb · ASCII glyphs` straight from the environment.' });
+        : 'Yes. With `TERM=dumb` the doctor never sends the CPR probe, so there is no 300 ms wait: `term.Describe()` returns `dumb · ASCII glyphs` straight from the environment.';
+      const turn = [...t.items].reverse().find((i) => i.kind === 'user' && !i.delivery && !i.agent_id)?.id;
+      const now = new Date().toISOString();
+      const aside: Aside = { id: `aside-${Date.now()}`, question: String(body.typed ?? '').trim() || question, answer: text, asked_at: now, answered_at: now, ...(LIVE.includes(t.state) && { working: true }), ...(turn && { turn }) };
+      (asides[t.id] ??= []).push(aside);
+      broadcast('aside', { session_id: t.id, aside }, t.id);
+      return json(200, { text, aside });
+    }
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/asides$/)) && method === 'GET') {
+      const t = find(decodeURIComponent(r[1]));
+      if (!t) return fail(404, 'session not found');
+      return json(200, { asides: asides[t.id] ?? [] });
     }
     if ((r = m(/^\/api\/sessions\/([^/]+)\/history$/)) && method === 'GET') {
       const t = find(decodeURIComponent(r[1]));

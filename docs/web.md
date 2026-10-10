@@ -479,16 +479,38 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   updates the meter.
 - **Ask aside (`/btw`)**: type `/btw` and a question (it is the first entry
   in the `/` list) to ask the open conversation something on the side. The
-  Task's current model answers from the conversation so far, without tools,
-  and nothing is added to the Task or its transcript. The answer opens in a
-  card over the composer that lists the asides you asked in this Task on
-  this page, oldest first; Esc hides it and the next `/btw` brings it back.
-  The list is kept in the page only: a reload clears it. Each new aside is a
-  follow-up: up to the five most recent answered asides go with it as
-  context, leaving out the oldest first so the whole question stays within
-  the service's 16 KiB limit. One aside waits at a time, and hiding the card
-  while it waits drops it. The conversation must be open; until it is, the
-  `/btw` entry says so. Asides count toward your account's usage.
+  Task's current model answers from the conversation so far, without tools.
+  The agent never sees it: nothing goes into the transcript, no turn starts,
+  and the Task's activity time and unread mark stay as they were. The answer
+  opens in a reader over the composer that lists every aside of the Task,
+  oldest first; a bare `/btw` opens the same reader without asking. Each
+  answered aside is kept with the Task (beside its uploads, so deleting the
+  Task deletes them) and none is dropped: they survive a reload, a restart
+  and show in every browser. Each belongs to a turn: the latest message you
+  sent (not a steer) when you asked it, whether the agent was still working
+  on it or had finished. That turn's reply foot shows a `btw 2` chip (on a
+  turn still running, or one that ended without a reply, the chip is in
+  your message's foot); pressing it lists that turn's asides, each with its
+  time and "while the agent worked" or "after the turn ended". An aside
+  whose turn is not in the loaded transcript (an older page, or one a rewind
+  removed) is always in the bare `/btw` reader. Each new aside is a
+  follow-up: up to the five most recent kept asides go with it as context,
+  leaving out the oldest first so the whole question stays within the
+  service's 16 KiB limit. One aside waits at a time; its turn's chip shows
+  a ring while it does, and closing the reader does not stop it. A failed
+  aside, or one whose page left the Task before the answer, is not kept.
+  The conversation must be open to ask; until it is, the `/btw` entry says
+  so. Asides count toward your account's usage.
+
+  `POST /api/sessions/{id}/aside` takes `question` (sent to the model) and
+  `typed` (what you asked, kept and shown; `question` when empty), both at
+  most 16 KiB. It returns `text` and `truncated`, and `aside`, the kept
+  record: `id`, `question`, `answer` (at most 64 KiB), `truncated`,
+  `asked_at`, `answered_at`, `working` and `turn` (the message's item ID;
+  absent before any). `GET /api/sessions/{id}/asides` returns
+  `{"asides": [...]}`, every kept aside oldest first, also for a settled or
+  archived Task. The Task's event stream sends each newly kept one as an
+  `aside` event (`session_id`, `aside`).
 - **Compacting**: while Copilot compacts the conversation, whether you ran
   `/compact` or it compacts on its own as the context fills, the Task says
   so: the status line above the message box (and, during a turn, the line

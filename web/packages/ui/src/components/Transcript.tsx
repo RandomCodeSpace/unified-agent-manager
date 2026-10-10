@@ -1,6 +1,6 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
 import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, Terminal, X } from 'lucide-react';
-import { Fragment, Suspense, lazy, memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { Fragment, Suspense, lazy, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
@@ -14,6 +14,7 @@ import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, typ
 import { turnVerb } from '../lib/verbs';
 import { receipts, type Stamp } from '../lib/receipts';
 import { Receipts } from './Receipts';
+import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
@@ -168,6 +169,8 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
   const own = (item: Item) => callProduct(item) === 'chart';
 
   const foreground = new Set(foregroundItems(items).map((item) => item.id));
+  // A turn's asides chip sits in its reply's foot once it ended with one, else in its message's foot.
+  const replied = new Set(ctx.replyEnd ? [...ctx.replyEnd.values()].map((end) => end.turn) : []);
   const out: ReactNode[] = [];
   let group: Entry[] = [];
   let showedWorking = false;
@@ -246,7 +249,7 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
       userItemId = entry.item.id;
       ownMessage = true;
     }
-    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} />);
+    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !entry.item.delivery && !replied.has(entry.item.id) ? entry.item.id : undefined} />);
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
@@ -748,8 +751,10 @@ function CopyableMenuTarget({ handlersRef, ...props }: ComponentProps<'div'> & {
 }
 
 /** A hover copy button plus a right-click menu around any block of provider or user text. */
-function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [] }: Readonly<{ text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
+function Copyable({ text, read, label, className, side = 'right', at, timing, replyActions, branch, rewind, edit, foot = true, children, extra = [], asideTurn }: Readonly<{ /** The turn whose asides chip this foot carries (AskAside). */ asideTurn?: string; text: string; /** Reads the text to copy when `text` is only part of it. */ read?: () => Promise<string>; label: string; className?: string; /** Where the button sits: over the block's top-right corner, or outside it to the left (the user bubble, so it never covers the text). */ side?: 'right' | 'left'; /** When the message began: its clock time in the foot under the block, the full date in its tooltip. */ at?: string; /** The turn this message ends: its tokens out and generation speed follow the time, then its todo list, which keeps the foot in view. */ timing?: TurnTiming; replyActions?: ReplyActions; branch?: (anchor: HTMLElement | null) => void; rewind?: (anchor: HTMLElement | null) => void; edit?: (anchor: HTMLElement | null) => void; /** Whether the block has a foot at all; without one, copying is in the right-click menu alone. */ foot?: boolean; children: ReactNode; extra?: ActionItem[] }>) {
   const [copied, copy] = useCopied();
+  const task = useContext(SessionContext) ?? '';
+  const asides = useTurnHasAsides(task, foot ? asideTurn : undefined);
   const [menuReady, setMenuReady] = useState(false);
   const anchor = useRef<HTMLDivElement>(null);
   const visible = useDetailVisibility();
@@ -792,7 +797,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
       {children}
       {/* The foot: the copy glyph and the time under the block, at its start (the agent) or its end (the user). It keeps its row and fades in while the block is hovered or focused; a coarse pointer has no hover, so there it stays. */}
       {foot && (
-        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || changes) && 'opacity-100')}>
+        <div className={cn('absolute top-full z-[1] flex h-6 items-center gap-1 text-stamp tabular-nums text-faint opacity-0 transition-opacity duration-100 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100', side === 'left' ? 'right-0 -mr-1 flex-row-reverse' : 'left-0 -ml-1', (copied || timing?.todo?.total || changes || asides) && 'opacity-100')}>
           <Tip label={copied ? 'Copied' : label}>
             <Button size="icon-sm" variant="ghost" aria-label={copied ? 'Copied' : label} className={cn('text-faint transition-colors duration-100 hover:text-ink focus-visible:text-ink', copied && 'text-success')} onClick={run}>
               {copied ? <Check /> : <Copy />}
@@ -811,6 +816,7 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
             </button>
           </>}
           {timing && <TurnTodo timing={timing} />}
+          {asides && <AsideChip task={task} turn={asideTurn!} />}
           {(branch || rewind || edit || (timing && (changes || replyActions?.allChanges))) && <Menu.Root>
             <Menu.Trigger render={<Button data-fork-anchor="" variant="ghost" size="icon-sm" aria-label="Turn actions" className="text-faint" />}><Ellipsis /></Menu.Trigger>
             <Menu.Content><Menu.Actions items={turnItems} /></Menu.Content>
@@ -856,7 +862,7 @@ function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
 }
 
 /** What the last reply of a turn shows in its foot: when the turn ended and, when known, its timing. */
-interface ReplyEnd { at: string; timing?: TurnTiming; userItemId: string }
+interface ReplyEnd { at: string; timing?: TurnTiming; userItemId: string; /** The turn's key: its user message's ID, whatever its length. */ turn: string }
 
 /** A reply's stamps, kept while the reply and the calls they read are unchanged, so a memoised turn holds. */
 const stampsOf = new WeakMap<Item, { key: string; stamps: Stamp[] }>();
@@ -893,8 +899,8 @@ export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean
     const at = timing?.ended_at ?? reply.time;
     const branchUser = userItemId.length <= 256 ? userItemId : '';
     let end = replyEndOf.get(reply);
-    if (end?.at !== at || end.timing !== timing || end.userItemId !== branchUser) {
-      end = { at, timing, userItemId: branchUser };
+    if (end?.at !== at || end.timing !== timing || end.userItemId !== branchUser || end.turn !== userItemId) {
+      end = { at, timing, userItemId: branchUser, turn: userItemId };
       replyEndOf.set(reply, end);
     }
     out.set(reply.id, end);
@@ -903,14 +909,14 @@ export function replyEnds(items: Item[], timings: TurnTiming[], working: boolean
 }
 
 /** The user's turn: a bubble with the text as typed, then its uploads. The item carries no list of its `@path` references, so those stay plain text. */
-const UserBubble = memo(function UserBubble({ item, sessionId, className }: { item: Item; sessionId?: string; className?: string }) {
-  return item.clipped ? <ClippedMessage item={item} sessionId={sessionId} className={className} /> : userBubble({ item, text: item.text ?? '', sessionId, className });
+const UserBubble = memo(function UserBubble({ item, sessionId, className, asideTurn }: { item: Item; sessionId?: string; className?: string; /** Set while the message's turn has no reply foot: its asides chip goes in this one. */ asideTurn?: string }) {
+  return item.clipped ? <ClippedMessage item={item} sessionId={sessionId} className={className} asideTurn={asideTurn} /> : userBubble({ item, text: item.text ?? '', sessionId, className, asideTurn });
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[] }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string }
 
-function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
+function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
   const attachments = item.attachments ?? [];
   const chips = attachments.length > 0 && !!sessionId;
   const accepted = item.steer_status === 'accepted';
@@ -932,7 +938,7 @@ function userBubble({ item, text, sessionId, className, whole }: MessageParts) {
     <div data-history-anchor={item.id} className={cn('flex justify-end', className)}>
       {/* A message without text has nothing to copy: its chips alone. */}
       {text ? (
-        <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" at={item.time} className={width}>
+        <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" side="left" at={item.time} className={width} asideTurn={asideTurn}>
           {bubble}
         </Copyable>
       ) : (
@@ -947,7 +953,7 @@ function assistantMessage({ item, text, streaming = false, className, whole, end
   const onRewind = replyActions?.rewind;
   const onEdit = replyActions?.edit;
   return (
-    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} rewind={end?.userItemId && onRewind ? anchor => onRewind(end.userItemId, anchor) : undefined} edit={end?.userItemId && onEdit ? anchor => onEdit(end.userItemId, anchor) : undefined} foot={!!end} className={className}>
+    <Copyable text={text} read={whole?.status === 'whole' ? undefined : whole?.read} label="Copy message" at={end?.at} timing={end?.timing} replyActions={replyActions} branch={end?.userItemId && onBranch ? anchor => onBranch(end.userItemId, anchor) : undefined} rewind={end?.userItemId && onRewind ? anchor => onRewind(end.userItemId, anchor) : undefined} edit={end?.userItemId && onEdit ? anchor => onEdit(end.userItemId, anchor) : undefined} foot={!!end} className={className} asideTurn={end?.turn}>
       <div data-history-anchor={item.id} className="text-chat text-body">
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
@@ -970,9 +976,9 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className, end, replyActions }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions }>) {
+function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string }>) {
   const whole = useWholeText(item);
-  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions };
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn };
   if (item.kind === 'user') return userBubble(parts);
   if (item.kind === 'notice') return noticeRow(parts);
   return assistantMessage(parts);
