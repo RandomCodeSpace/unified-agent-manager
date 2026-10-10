@@ -52,11 +52,17 @@ test('a test claim with no test command, or a failing one, is contradicted', () 
   assert.deepEqual(failed.map((s) => [s.verdict, s.note, s.itemId]), [['contradicted', 'last test run exit 1', 'b1']]);
   const reported = receipts('tests passed', [bash('b1', 'npx vitest run', 0, { output: 'Tests  2 failed | 10 passed' })]);
   assert.equal(reported[0].verdict, 'contradicted');
+  const piped = receipts('tests pass', [bash('b1', 'go test ./... 2>&1 | tail -3', 0)]);
+  assert.deepEqual(piped.map((s) => [s.verdict, s.note]), [['unseen', 'piped test run, output not loaded']]);
+  assert.equal(receipts('tests pass', [bash('b1', 'go test ./... 2>&1 | tail -3', 0, { output: 'ok  \tpkg\t0.2s' })])[0].verdict, 'verified');
+  assert.equal(receipts('tests pass', [bash('b1', 'go test ./... || true', 0)])[0].verdict, 'verified');
   assert.equal(reported[0].note, 'last test run reported failures');
 });
 
-test('a command the record lacks is contradicted, and only unseen when subagents did the work', () => {
-  assert.deepEqual(receipts('Ran `ls`.', [bash('b1', 'sleep 20')]).map((s) => [s.verdict, s.note]), [['contradicted', 'not run this turn']]);
+test('a command the record lacks is unseen, never contradicted: the reply may only suggest it', () => {
+  assert.deepEqual(receipts('Ran `ls`.', [bash('b1', 'sleep 20')]).map((s) => [s.verdict, s.note]), [['unseen', 'not run this turn']]);
+  assert.deepEqual(receipts('To install, run `make install` yourself.', [bash('b1', 'go build ./...')]).map((s) => [s.verdict, s.note]), [['unseen', 'not run this turn']]);
+  assert.deepEqual(receipts('Ran `make install`.', [bash('b1', 'make install', 2)]).map((s) => [s.verdict, s.note]), [['contradicted', 'exit 2']]);
   const delegated = receipts('Ran `ls` and `uname -a`; tests pass.', [call('t1', 'task', { agent_type: 'task', description: 'runner' }), bash('b1', 'sleep 20')]);
   assert.deepEqual(delegated.map((s) => [s.verdict, s.note]), [
     ['unseen', 'not run by the main agent · 1 subagent ran'],
