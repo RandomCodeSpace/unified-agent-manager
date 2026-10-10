@@ -14,7 +14,7 @@ async function creator(kind: ConfigurationKind = 'agents', change?: (context: Ap
   change?.(context);
   const tree = () => <AppContext.Provider value={{ ...context }}><ConfigurationSettings kind={kind} projects={fixture.projects} terminal={!!context.settings.terminal} /></AppContext.Provider>;
   const view = render(tree());
-  await screen.findByRole('list', { name: `${kind} in this scope` });
+  await screen.findByRole('group', { name: `${kind} in this scope` });
   return { context, user: userEvent.setup(), update: () => view.rerender(tree()) };
 }
 
@@ -71,7 +71,7 @@ describe('AI configuration creator', () => {
     window.fetch = vi.fn((input, init) => String(input).includes('/skills/draft') ? new Promise<Response>((resolve) => { finish = resolve; }) : original(input, init));
     await user.click(screen.getByRole('button', { name: 'Generate draft' }));
     expect(screen.getByRole('status').textContent).toContain('Nothing has been saved');
-    for (const name of ['Generate draft', 'Add skill', 'Edit', 'Remove', 'List skills', 'Install skills']) expect((screen.getByRole('button', { name, exact: true }) as HTMLButtonElement).disabled).toBe(true);
+    for (const name of ['Generate draft', 'Add skill', 'List skills', 'Install skills']) expect((screen.getByRole('button', { name, exact: true }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('combobox', { name: 'Scope' }) as HTMLButtonElement).disabled).toBe(true);
     expect(brief.disabled).toBe(true);
     await act(async () => finish(Response.json({ error: 'Provider timed out. Try again.' }, { status: 502 })));

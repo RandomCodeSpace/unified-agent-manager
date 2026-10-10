@@ -3,11 +3,13 @@ import { Plus, X } from 'lucide-react';
 import { useEffect, useState, type SubmitEvent } from 'react';
 import { describeError, type McpSecret, type McpServer, type McpServerInput, type McpServers, type McpType } from '../api';
 import { Note, Skeleton } from './common';
+import { CardGroup, ItemCard, ItemReader, useCardReader } from './ConfigCards';
 import { Field, SectionAction, useInlineForm } from './TaskDefaults';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Input } from './ui/input';
+import { PanelSection } from './ui/panel';
 import { Segmented } from './ui/segmented';
 import { Switch } from './ui/switch';
 import { Tip } from './ui/tooltip';
@@ -35,6 +37,8 @@ interface Draft {
 
 export const TYPE_LABEL: Record<string, string> = { stdio: 'Command', http: 'HTTP', sse: 'SSE' };
 const SOURCE_LABEL: Record<string, string> = { plugin: 'From a plugin', builtin: 'Built in', managed: 'Managed' };
+/** The card groups: the servers configured here first, then each read-only source. */
+const GROUP_LABEL: Record<string, string> = { user: 'Global', ...SOURCE_LABEL };
 export const STDIO_OFF = 'A server that runs a command runs it on this machine for anyone signed in, so adding or editing one needs Settings → Shell access → Terminal on.';
 /** Copilot's built-in GitHub MCP server: UAM's own setting (`Settings.github_mcp`) turns it on or off for tasks. */
 const GITHUB_MCP = 'github-mcp-server';
@@ -172,9 +176,12 @@ function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCanc
   );
 }
 
+/** A server's command line or address. */
+const lineOf = (s: McpServer) => (s.type === 'stdio' ? [s.command, ...(s.args ?? [])].join(' ') : s.url);
+
 /** What a configured server is: the command line or the address, then its env variable or header names with dots for the values. */
 function ServerDetail({ s }: Readonly<{ s: McpServer }>) {
-  const line = s.type === 'stdio' ? [s.command, ...(s.args ?? [])].join(' ') : s.url;
+  const line = lineOf(s);
   const secrets = s.type === 'stdio' ? s.env : s.headers;
   return (
     <div className="flex min-w-0 flex-col gap-0.5 text-meta text-muted">
@@ -208,6 +215,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const removal = useConfirm<string>();
+  const cards = useCardReader<McpServer>();
 
   const [reads, setReads] = useState(0);
   useEffect(() => {
@@ -249,12 +257,34 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
   if (!data) return <Skeleton label="Loading MCP servers…" rows={2} />;
   if (!data.available) return <Note>No provider here manages MCP servers.</Note>;
   const pending = removal.target;
+  const opened = cards.reader?.item;
+  const openedGithub = opened?.source === 'builtin' && opened.name === GITHUB_MCP ? githubMcp : undefined;
+  const openedLocked = opened?.type === 'stdio' && !terminal;
   // Copilot CLI 1.0.93 leaves its built-in GitHub server out of discovery, though every task has it, so the
   // setting's row shows either way.
   const servers: McpServer[] =
     githubMcp && !data.servers.some((s) => s.source === 'builtin' && s.name === GITHUB_MCP)
       ? [...data.servers, { name: GITHUB_MCP, type: '', env: [], headers: [], enabled: githubMcp.on, source: 'builtin' }]
       : data.servers;
+  // The confirmation nests in the open reader, so it closes alone and the reader stays.
+  const confirm = (
+    <AlertDialog
+      {...removal.props}
+      title={pending ? `Remove MCP server ${pending}?` : 'Remove?'}
+      description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Apply current settings in an open task to refresh its configuration for the next turn."
+      confirmLabel="Remove server"
+      busy={!!busy && busy === pending}
+      onConfirm={() => {
+        if (!pending) return;
+        void run(pending, () => api.removeMcpServer(pending)).then((done) => {
+          removal.close();
+          if (done) cards.close();
+        });
+      }}
+    />
+  );
+  // One group per source, the servers configured here first, then the read-only sources in the order listed.
+  const groups = [...new Set(['user', ...servers.map((s) => s.source)])].map((source) => [source, servers.filter((s) => s.source === source)] as const).filter(([, list]) => list.length > 0);
   return (
     <div className="flex flex-col gap-3">
       <Note className="max-w-3xl">
@@ -270,60 +300,80 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
       )}
       {servers.length === 0 && !draft && <Note>No MCP servers yet.</Note>}
       {servers.length > 0 && (
-        <ul aria-label="MCP servers" className="flex flex-col">
-          {servers.map((s) => {
-            const own = s.source === 'user';
-            const lockedStdio = s.type === 'stdio' && !terminal;
-            const github = s.source === 'builtin' && s.name === GITHUB_MCP ? githubMcp : undefined;
-            const enabled = github ? github.on : s.enabled;
-            return (
-              <li key={s.name} className="flex min-h-12 items-start gap-3 py-2">
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2">
-                    <span className="min-w-0 break-all text-ui font-medium text-ink">{s.name}</span>
-                    {(s.type || !github) && <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>}
-                    {!own && <Chip>{SOURCE_LABEL[s.source] ?? s.source}</Chip>}
-                    {!enabled && <span className="text-meta text-muted">Off</span>}
-                  </div>
-                  <ServerDetail s={s} />
-                  {github && <p id="github-mcp-help" className="text-meta text-muted">{GITHUB_MCP_HELP}</p>}
-                </div>
-                {own && (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Tip label={lockedStdio ? STDIO_OFF : `Edit ${s.name}`}>
-                      <Button size="sm" aria-disabled={lockedStdio || undefined} disabled={!!busy || !!draft} onClick={() => { if (!lockedStdio) { setError(null); setDraft(draftOf(s)); } }}>
-                        Edit
-                      </Button>
-                    </Tip>
-                    <Button size="sm" variant="danger" disabled={!!busy} aria-label={`Remove ${s.name}`} onClick={() => removal.ask(s.name)}>
-                      Remove
-                    </Button>
-                    <Switch aria-label={`Use ${s.name} in new tasks`} checked={s.enabled} disabled={!!busy} onCheckedChange={(on) => void run(s.name, () => api.enableMcpServer(s.name, on))} />
-                  </div>
-                )}
-                {github && (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Switch aria-label={`Use ${s.name} in tasks`} aria-describedby="github-mcp-help" checked={github.on} disabled={github.saving} onCheckedChange={github.onChange} />
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div role="group" aria-label="MCP servers" className="flex min-w-0 flex-col gap-4">
+          {groups.map(([source, list]) => (
+            <CardGroup key={source} label={GROUP_LABEL[source] ?? source} count={list.length}>
+              {list.map((s) => {
+                const github = s.source === 'builtin' && s.name === GITHUB_MCP ? githubMcp : undefined;
+                const enabled = github ? github.on : s.enabled;
+                return (
+                  <ItemCard
+                    key={s.name}
+                    name={s.name}
+                    label={`View MCP server ${s.name}`}
+                    detail={github ? GITHUB_MCP_HELP : lineOf(s) && <span className="font-mono text-code-sm">{lineOf(s)}</span>}
+                    detailId={github ? 'github-mcp-help' : undefined}
+                    chips={<>
+                      {(s.type || !github) && <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>}
+                      {!enabled && <Chip fill="outline">Off</Chip>}
+                    </>}
+                    aside={
+                      s.source === 'user' ? (
+                        <Switch aria-label={`Use ${s.name} in new tasks`} checked={s.enabled} disabled={!!busy} onCheckedChange={(on) => void run(s.name, () => api.enableMcpServer(s.name, on))} />
+                      ) : (
+                        github && <Switch aria-label={`Use ${s.name} in tasks`} aria-describedby="github-mcp-help" checked={github.on} disabled={github.saving} onCheckedChange={github.onChange} />
+                      )
+                    }
+                    expanded={cards.reader?.item === s && cards.reader.open}
+                    controls={cards.id}
+                    onOpen={(button) => { if (!draft) setError(null); cards.show(s, button); }}
+                  />
+                );
+              })}
+            </CardGroup>
+          ))}
+        </div>
       )}
       {error && !draft && <Note tone="error" role="alert">{error}</Note>}
       {draft && <ServerForm draft={draft} stdioAllowed={terminal} busy={busy === 'form'} error={error} onChange={setDraft} onSave={(e) => void save(e, draft)} onCancel={() => { setDraft(null); setError(null); }} />}
-      <AlertDialog
-        {...removal.props}
-        title={pending ? `Remove MCP server ${pending}?` : 'Remove?'}
-        description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Apply current settings in an open task to refresh its configuration for the next turn."
-        confirmLabel="Remove server"
-        busy={!!busy && busy === pending}
-        onConfirm={() => {
-          if (!pending) return;
-          void run(pending, () => api.removeMcpServer(pending)).then(() => removal.close());
-        }}
-      />
+      {cards.reader && opened ? (
+        <ItemReader
+          reader={cards.reader}
+          id={cards.id}
+          label={`MCP server ${opened.name}`}
+          title={opened.name}
+          facts={[opened.type || !openedGithub ? (TYPE_LABEL[opened.type] ?? 'Other') : '', GROUP_LABEL[opened.source] ?? opened.source, (openedGithub ? openedGithub.on : opened.enabled) ? '' : 'Off'].filter(Boolean).join(' · ')}
+          actions={
+            opened.source === 'user' && (
+              <>
+                <Tip label={openedLocked ? STDIO_OFF : `Edit ${opened.name}`}>
+                  <Button size="sm" variant="secondary" aria-disabled={openedLocked || undefined} disabled={!!busy || !!draft} onClick={() => { if (!openedLocked) cards.close(() => { setError(null); setDraft(draftOf(opened)); }); }}>
+                    Edit
+                  </Button>
+                </Tip>
+                <Button size="sm" variant="danger" disabled={!!busy} aria-label={`Remove ${opened.name}`} onClick={() => removal.ask(opened.name)}>
+                  Remove
+                </Button>
+              </>
+            )
+          }
+          onClose={() => cards.close()}
+          onClosed={cards.closed}
+        >
+          {opened.source !== 'user' && <Note>{SOURCE_LABEL[opened.source] ?? opened.source}: {openedGithub ? 'only its switch is yours to change.' : 'read only here.'}</Note>}
+          {opened.source === 'user' && draft && <Note>Finish or cancel the open form to change this server.</Note>}
+          {openedGithub && <p className="text-caption text-muted">{GITHUB_MCP_HELP}</p>}
+          {(lineOf(opened) || opened.cwd || opened.env.length > 0 || opened.headers.length > 0) && (
+            <PanelSection label={opened.type === 'stdio' ? 'Command' : 'Address'}>
+              <ServerDetail s={opened} />
+            </PanelSection>
+          )}
+          {error && <Note tone="error" role="alert">{error}</Note>}
+          {confirm}
+        </ItemReader>
+      ) : (
+        confirm
+      )}
     </div>
   );
 }
