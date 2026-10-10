@@ -686,7 +686,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
-		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit,
+		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityPurposeLimits: cfg.WebSettings.UtilityPurposeLimits,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
@@ -1473,7 +1473,9 @@ func (m *Manager) removeProject(id string) error {
 func (m *Manager) Settings() Settings {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.settings
+	out := m.settings
+	out.UtilityPurposeLimits = maps.Clone(out.UtilityPurposeLimits)
+	return out
 }
 
 // SettingsPatch is a settings change; a nil field changes nothing.
@@ -1496,15 +1498,16 @@ func (m *Manager) Settings() Settings {
 // store.MaxCompactionThreshold; the default itself is stored as nil.
 // GitHubMCP reaches open Tasks too (agentapi.GitHubMCPUser).
 type SettingsPatch struct {
-	TokenPrices    *map[string]map[string]store.WebTokenPrice
-	SendDefault    *string
-	Terminal       *bool
-	HiddenModels   map[string][]string
-	SubagentModels map[string][]string
-	TitleModel     map[string]string
-	CustomModels   *[]store.WebCustomModel
-	TaskDefaults   *TaskDefaults
-	UtilityLimit   **int
+	TokenPrices          *map[string]map[string]store.WebTokenPrice
+	SendDefault          *string
+	Terminal             *bool
+	HiddenModels         map[string][]string
+	SubagentModels       map[string][]string
+	TitleModel           map[string]string
+	CustomModels         *[]store.WebCustomModel
+	TaskDefaults         *TaskDefaults
+	UtilityLimit         **int
+	UtilityPurposeLimits *map[string]int
 	// SuggestReplies turns suggested replies on or off.
 	SuggestReplies      *bool
 	CompactionThreshold **int
@@ -1573,6 +1576,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			return Settings{}, newError(http.StatusBadRequest, msgUnknownProvider, clipRunes(displaytext.Sanitize(provider), maxDetailRunes))
 		}
 	}
+	if p.UtilityPurposeLimits != nil {
+		for purpose, limit := range *p.UtilityPurposeLimits {
+			if _, ok := store.DefaultUtilityPurposeLimit(purpose); !ok || limit < 0 || limit > store.MaxUtilityDailyLimit {
+				return Settings{}, newError(http.StatusBadRequest, "utility_purpose_limits requires known purposes and whole numbers from 0 to 1000")
+			}
+		}
+	}
 	if l := p.UtilityLimit; l != nil && *l != nil && (**l < 0 || **l > store.MaxUtilityDailyLimit) {
 		return Settings{}, newError(http.StatusBadRequest, "utility_daily_limit must be 0 to %d", store.MaxUtilityDailyLimit)
 	}
@@ -1609,6 +1619,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	m.mu.Lock()
 	current := m.settings
+	current.UtilityPurposeLimits = maps.Clone(current.UtilityPurposeLimits)
 	for provider, ids := range hidden {
 		info := m.infos[provider]
 		if listed := info.Models; len(listed) > 0 && !slices.ContainsFunc(listed, func(mo agentapi.Model) bool { _, found := slices.BinarySearch(ids, mo.ID); return !found }) {
@@ -1679,6 +1690,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.SuggestReplies != nil {
 		next.SuggestReplies = suggestSetting(*p.SuggestReplies)
 	}
+	if p.UtilityPurposeLimits != nil {
+		next.UtilityPurposeLimits = maps.Clone(*p.UtilityPurposeLimits)
+	}
 	if p.UtilityLimit != nil {
 		next.UtilityDailyLimit = *p.UtilityLimit
 	}
@@ -1692,7 +1706,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && maps.Equal(next.UtilityPurposeLimits, current.UtilityPurposeLimits) && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -1704,6 +1718,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
+		cfg.WebSettings.UtilityPurposeLimits = next.UtilityPurposeLimits
 		cfg.WebSettings.SuggestReplies = next.SuggestReplies
 		cfg.WebSettings.CompactionThreshold = next.CompactionThreshold
 		cfg.WebSettings.HiddenModels = withProviders(cfg.WebSettings.HiddenModels, hidden)
@@ -1729,6 +1744,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
+	m.settings.UtilityPurposeLimits = maps.Clone(next.UtilityPurposeLimits)
 	if !next.Terminal {
 		m.closeTerminalsLocked(errTerminalOff)
 	}

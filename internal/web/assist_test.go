@@ -70,7 +70,7 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 		if !strings.Contains(req.Prompt, "make the test pass") || !strings.Contains(req.Prompt, "Fixed it.") || req.Model != "a" {
 			return "", fmt.Errorf("unexpected request %+v", req)
 		}
-		return "<think>hm</think>\n1. Run the full suite\n- Commit this\n\"run the full suite\"\nShow me the diff\nOne more", nil
+		return "<think>hm</think>\nRun the full suite", nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	waitUntil(t, "the suggestion call", func() bool { return utilityCalls(prov, "suggest-replies") == 1 })
 	close(release)
 	wg.Wait()
-	// A model that writes several lines anyway still yields one suggestion, its first, cleaned.
+	// A validated single-line answer is shared by concurrent callers.
 	want := []string{"Run the full suite"}
 	for _, got := range results {
 		if got.ItemID != "a-make the test pass" || !slices.Equal(got.Replies, want) {
@@ -171,7 +171,7 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "2 files changed; tests pass; 2 commands failed" {
 		t.Fatalf("outcome before the verb = %q", got)
 	}
-	verb <- "Fixed the flaky test."
+	verb <- `{"verb":"Fixed","object":"the flaky test"}`
 	waitUntil(t, "the verb phrase", func() bool {
 		return summaryOf(t, m, sum.ID).Outcome == "Fixed the flaky test; 2 files changed; tests pass; 2 commands failed"
 	})
@@ -183,15 +183,15 @@ func TestOutcomeLineClaimsOnlyWhatTheEvidenceShows(t *testing.T) {
 	}
 	conv.EmitTurn(agentapi.TurnWorking, "")
 	conv.EmitItem(agentapi.Item{ID: "u-why", Kind: agentapi.ItemUser, Text: "why"})
-	conv.EmitItem(agentapi.Item{ID: "a-why", Kind: agentapi.ItemAssistant, Text: "Because."})
+	conv.EmitItem(agentapi.Item{ID: "a-why", Kind: agentapi.ItemAssistant, Text: "The cause is a stale cache."})
 	// Copilot can record an empty thought after the answer.
 	conv.EmitItem(agentapi.Item{ID: "r-why", Kind: agentapi.ItemReasoning})
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 	if got := summaryOf(t, m, sum.ID).Outcome; got != "" {
 		t.Fatalf("outcome before the verb = %q", got)
 	}
-	verb <- "Explained the cause"
-	waitUntil(t, "the second verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Explained the cause" })
+	verb <- `{"verb":"Explained","object":"cause"}`
+	waitUntil(t, "the second verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Explained cause" })
 	if n := utilityCalls(prov, "outcome"); n != 2 {
 		t.Fatalf("outcome calls = %d", n)
 	}

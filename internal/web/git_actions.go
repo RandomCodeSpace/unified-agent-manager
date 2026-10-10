@@ -41,7 +41,7 @@ const (
 	// maxDraftDiffBytes, new files diffed until that budget or
 	// maxDraftNewFiles, and the repository's last draftLogCount subjects.
 	commitDraftTimeout = 75 * time.Second
-	maxDraftDiffBytes  = 48 << 10
+	maxDraftDiffBytes  = 6 << 10
 	maxDraftNewFiles   = 20
 	draftLogCount      = 20
 
@@ -795,7 +795,11 @@ func commitDraftPrompt(subjects []string, conventional bool, diff string) string
 		b.WriteString("The recent subjects use Conventional Commits.\n")
 	}
 	b.WriteString(diff)
-	return b.String()
+	text := b.String()
+	if len(text) > 6<<10 {
+		text = strings.ToValidUTF8(text[:6<<10], "")
+	}
+	return text
 }
 
 // subjects are the last draftLogCount commit subjects, newest first.

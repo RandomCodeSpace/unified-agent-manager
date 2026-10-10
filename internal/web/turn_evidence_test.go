@@ -402,7 +402,7 @@ func TestOutcomePhraseDoesNotMarkTheTaskUnread(t *testing.T) {
 	finishTurn(prov.Last(), "fix", "Fixed it.")
 	before := summaryOf(t, m, sum.ID).UpdatedAt
 	time.Sleep(5 * time.Millisecond)
-	verb <- "Fixed it"
+	verb <- `{"verb":"Fixed","object":"it"}`
 	waitUntil(t, "the verb phrase", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Fixed it" })
 	if after := summaryOf(t, m, sum.ID).UpdatedAt; !after.Equal(before) {
 		t.Fatalf("updated_at moved from %v to %v", before, after)
