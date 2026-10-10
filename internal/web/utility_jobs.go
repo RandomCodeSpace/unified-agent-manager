@@ -12,21 +12,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
-	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
-
-var utilityPurposes = []string{purposeOutcome, purposeSuggestReplies, purposeTitle, purposeCommitMessage, purposeConfigurationDraft}
-
-func utilityPurposeLimit(purpose string, limits map[string]int) int {
-	if n, ok := limits[purpose]; ok {
-		return n
-	}
-	limit, ok := store.DefaultUtilityPurposeLimit(purpose)
-	if !ok {
-		return store.MaxUtilityDailyLimit
-	}
-	return limit
-}
 
 // parseAnswer accepts a prose preamble or a fenced object, but never a second
 // answer. The JSON decoder handles balanced objects and escaped string braces.

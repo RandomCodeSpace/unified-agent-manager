@@ -3,8 +3,6 @@
 
 import type { UtilityCall, UtilityDay, UtilityLog } from '../api';
 
-export const utilityPurposeDefaults: Record<string, number> = { outcome: 200, 'suggest-replies': 80, title: 40, 'commit-message': 30, 'configuration-draft': 20 };
-
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** The browser's local date, standing in for the server's. */
@@ -59,7 +57,7 @@ export function seedUtility(limit: number): UtilityCall[] {
 }
 
 /** GET /api/utility over `calls` (oldest first) with `limit` in force, `page` calls a page. */
-export function utilityLog(calls: UtilityCall[], limit: number, before: number, page = 50, limits: Record<string, number> = {}): UtilityLog {
+export function utilityLog(calls: UtilityCall[], limit: number, before: number, page = 50, unlimited = false): UtilityLog {
   const now = new Date();
   const today = localDay(now);
   const reset = new Date(now);
@@ -85,12 +83,7 @@ export function utilityLog(calls: UtilityCall[], limit: number, before: number, 
   const newest = [...calls].reverse().filter((c) => !before || c.id < before);
   const shown = newest.slice(0, page);
   return {
-    today: { day: today, calls: used, limit, paused: used >= limit, resets_at: reset.toISOString(), purposes: Object.entries(utilityPurposeDefaults).map(([purpose, fallback]) => {
-      const count = calls.filter((c) => c.day === today && c.purpose === purpose && c.outcome !== 'skipped').length;
-      const line = limits[purpose] ?? fallback;
-      const paused = calls.filter((c) => c.day === today && c.purpose === purpose && c.valid !== undefined).slice(-10).filter((c) => !c.valid).length >= 4;
-      return { purpose, calls: count, limit: line, paused: used >= limit || count >= line || paused };
-    }) },
+    today: { day: today, calls: used, limit, ...(unlimited && { unlimited }), paused: !unlimited && used >= limit, resets_at: reset.toISOString() },
     days: [...days.values()].sort((a, b) => b.day.localeCompare(a.day)),
     calls: shown,
     ...(newest.length > page ? { next: shown[shown.length - 1].id } : {}),

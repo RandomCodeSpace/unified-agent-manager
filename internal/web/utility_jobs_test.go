@@ -92,18 +92,18 @@ func TestUtilityInvalidStreakPausesUntilMidnight(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 4; i++ {
-		if reason := l.reserve(now, purposeOutcome, 200, 400); reason != "" {
+		if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
 		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false)})
 	}
-	if reason := l.reserve(now, purposeOutcome, 200, 400); reason != skippedInvalid {
+	if reason := l.reserve(now, purposeOutcome, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
 	}
-	if reason := l.reserve(now, purposeTitle, 40, 400); reason != "" {
+	if reason := l.reserve(now, purposeTitle, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
-	if reason := l.reserve(midnightAfter(now), purposeOutcome, 200, 400); reason != "" {
+	if reason := l.reserve(midnightAfter(now), purposeOutcome, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
 }
@@ -112,12 +112,12 @@ func TestUtilityInvalidWindowDropsOldAnswers(t *testing.T) {
 	now := time.Now()
 	l := utilityLog{}
 	for i := 0; i < 13; i++ {
-		if reason := l.reserve(now, purposeOutcome, 200, 400); reason != "" {
+		if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
 		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(i >= 3 && i < 12)})
 	}
-	if reason := l.reserve(now, purposeOutcome, 200, 400); reason != "" {
+	if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
 		t.Fatal(reason)
 	}
 }

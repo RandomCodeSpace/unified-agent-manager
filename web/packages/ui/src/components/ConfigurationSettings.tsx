@@ -400,7 +400,7 @@ export function ConfigurationSettings({ kind, projects, terminal }: Readonly<{ k
   if (!loaded || (!meta && !metaError)) generationUnavailable = 'Loading Utility AI settings…';
   else if (locked) generationUnavailable = 'Turn on Terminal in General to create a draft with AI.';
   else if (metaError) generationUnavailable = 'The model catalog could not be loaded. Retry before generating a draft.';
-  else if (settings.utility_daily_limit === 0) generationUnavailable = 'Background AI is off. Set a daily limit in General to create a draft with AI.';
+  else if (settings.utility_daily_limit === 0 && !settings.utility_unlimited) generationUnavailable = 'Background AI is off. Set a daily limit in General to create a draft with AI.';
   else if (!utilityProviders.length) generationUnavailable = 'No available provider supports Utility AI. Check Providers.';
   else if (!utilityProvider || !utilityModel || unavailableCustomModels.has(utilityModel) || !utilityProvider.models.some((model) => model.id === utilityModel)) generationUnavailable = 'No available Utility model is selected. Choose one in Models.';
   const briefTooLong = new TextEncoder().encode(brief.trim()).length > 8192;

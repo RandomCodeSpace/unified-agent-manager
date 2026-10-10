@@ -4,14 +4,12 @@ import { renderApp } from './render';
 
 async function backgroundAI() {
   const rendered = renderApp('#settings');
-  // The page sizes asked of GET /api/utility, in order, and the bodies of PATCH /api/settings.
+  // The page sizes asked of GET /api/utility, in order.
   const reads: string[] = [];
-  const patches: unknown[] = [];
   const mocked = window.fetch;
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), location.href);
     if (url.pathname === '/api/utility') reads.push(url.searchParams.get('limit') ?? '');
-    if (url.pathname === '/api/settings' && init?.method === 'PATCH') patches.push(JSON.parse(String(init.body)));
     return mocked(input, init);
   };
   const card = await waitFor(() => {
@@ -19,13 +17,7 @@ async function backgroundAI() {
     within(found).getByRole('meter', { name: 'Background AI calls today' });
     return found;
   });
-  return { ...rendered, reads, patches, card: within(card) };
-}
-
-/** One purpose's row: its daily-line input and what sits beside it. */
-function purposeRow(card: Awaited<ReturnType<typeof backgroundAI>>['card'], label: string) {
-  const input = card.getByRole('spinbutton', { name: label }) as HTMLInputElement;
-  return { input, row: within(input.parentElement!) };
+  return { ...rendered, reads, card: within(card) };
 }
 
 /** Opens the log and waits for its first page. */
@@ -89,58 +81,30 @@ describe('Background AI', () => {
     const { card, user } = await backgroundAI();
     const input = card.getByRole('spinbutton', { name: 'Daily limit (calls)' });
     await user.clear(input);
-    await user.type(input, '1001');
+    await user.type(input, '-1');
     expect((card.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    // No ceiling: a limit past the old 1,000 saves.
     await user.clear(input);
-    await user.type(input, '60');
+    await user.type(input, '5000');
     await user.click(card.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(card.getByText('40 of 60')).toBeTruthy());
+    await waitFor(() => expect(card.getByText('40 of 5,000')).toBeTruthy());
     expect(card.queryByRole('status')).toBeNull();
   });
 
-  test('each purpose has its own line under the daily limit', async () => {
-    const { card } = await backgroundAI();
-    const lines = within(card.getByRole('region', { name: 'Daily line per purpose' }));
-    expect(lines.getAllByRole('spinbutton').map((i) => [i.id, (i as HTMLInputElement).value])).toEqual([
-      ['utility-purpose-outcome-input', '200'],
-      ['utility-purpose-suggest-replies-input', '80'],
-      ['utility-purpose-title-input', '40'],
-      ['utility-purpose-commit-message-input', '30'],
-      ['utility-purpose-configuration-draft-input', '20'],
-    ]);
-    expect(purposeRow(card, 'Task title').row.getByText('16 today')).toBeTruthy();
-    expect(purposeRow(card, 'Commit message').row.getByText('0 today')).toBeTruthy();
-    // The day's total is reached, so every purpose is paused with it.
-    expect(purposeRow(card, 'Outcome line').row.getByText('Paused today')).toBeTruthy();
-    expect(purposeRow(card, 'Outcome line').row.getByText('Paused with the daily limit.')).toBeTruthy();
-  });
-
-  test('editing one line saves only that line once typing stops', async () => {
-    const { card, user, patches } = await backgroundAI();
-    const { input } = purposeRow(card, 'Outcome line');
-    await user.clear(input);
-    await user.type(input, '150');
-    expect(patches).toHaveLength(0);
-    // The service replaces the whole map, so the others go back as they are stored.
-    await waitFor(() => expect(patches).toEqual([{ utility_purpose_limits: { outcome: 150, 'suggest-replies': 80, title: 40, 'commit-message': 30, 'configuration-draft': 20 } }]), { timeout: 2000 });
-    await waitFor(() => expect(purposeRow(card, 'Outcome line').input.value).toBe('150'));
-  });
-
-  test('a paused line says why', async () => {
+  test('no daily limit lifts the pause and keeps the limit for later', async () => {
     const { card, user } = await backgroundAI();
-    const total = card.getByRole('spinbutton', { name: 'Daily limit (calls)' });
-    await user.clear(total);
-    await user.type(total, '60');
-    await user.click(card.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(card.getByText('40 of 60')).toBeTruthy());
-    await waitFor(() => expect(purposeRow(card, 'Outcome line').row.queryByText('Paused today')).toBeNull());
-    const replies = purposeRow(card, 'Suggested replies').row;
-    expect(replies.getByText('Paused today')).toBeTruthy();
-    expect(replies.getByText('Stopped after repeated unusable answers; it resumes at midnight on the server.')).toBeTruthy();
+    const lift = card.getByRole('switch', { name: 'No daily limit' });
+    await user.click(lift);
+    await waitFor(() => expect(card.getByText('calls today · no daily limit')).toBeTruthy());
+    expect(card.getByText('40')).toBeTruthy();
+    expect(card.queryByRole('meter')).toBeNull();
+    expect(card.queryByRole('status')).toBeNull();
+    const input = card.getByRole('spinbutton', { name: 'Daily limit (calls)' }) as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.value).toBe('40');
 
-    const { input } = purposeRow(card, 'Commit message');
-    await user.clear(input);
-    await user.type(input, '0');
-    await waitFor(() => expect(purposeRow(card, 'Commit message').row.getByText('Off: its line is 0.')).toBeTruthy(), { timeout: 2000 });
+    await user.click(card.getByRole('switch', { name: 'No daily limit' }));
+    await waitFor(() => expect(card.getByText('40 of 40')).toBeTruthy());
+    expect(card.getByRole('status').textContent).toMatch(/^Background AI is paused until tomorrow/);
   });
 });

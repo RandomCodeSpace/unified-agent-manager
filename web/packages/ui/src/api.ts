@@ -496,8 +496,8 @@ export interface Settings {
   suggest_replies?: boolean;
   /** Utility model calls a day, 0 for none; omitted for the service default (GET /api/utility reports the limit in force). */
   utility_daily_limit?: number;
-  /** Per-purpose daily limits, 0 to 1000. Omitted purposes use service defaults. */
-  utility_purpose_limits?: Record<string, number>;
+  /** `true` lifts the daily limit; `utility_daily_limit` is kept for when it is turned off. Absent while off. */
+  utility_unlimited?: boolean;
   /** The share of the context, in percent (50 to 90), at which a Task's conversation starts compacting; omitted for the default, 80. PATCH null puts it back. */
   compact_threshold?: number | null;
   /** Whether Tasks, open ones included, start the provider's built-in GitHub MCP server; absent while off, the default. */
@@ -557,7 +557,8 @@ export interface UtilityDay {
 
 /** GET /api/utility: today against the daily limit, every day kept with its totals, and a page of calls, newest first. */
 export interface UtilityLog {
-  today: { day: string; calls: number; limit: number; paused: boolean; resets_at: string; purposes: Array<{ purpose: string; calls: number; limit: number; paused: boolean }> };
+  /** `unlimited` is set while the limit is lifted; the day never pauses for it then. */
+  today: { day: string; calls: number; limit: number; unlimited?: boolean; paused: boolean; resets_at: string };
   days: UtilityDay[];
   calls: UtilityCall[];
   /** Pass as `before` for the next page; absent on the last. */

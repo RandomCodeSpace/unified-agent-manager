@@ -143,7 +143,6 @@ export function install(): { received: Received[] } {
   }
   // Background AI: today's limit (40 here) is reached, so Settings shows the paused notice.
   st.settings.utility_daily_limit = 40;
-  st.settings.utility_purpose_limits = { outcome: 200, 'suggest-replies': 80, title: 40, 'commit-message': 30, 'configuration-draft': 20 };
   const utility = seedUtility(40);
   const createdBy = new Map<string, string>();
   const sources = new Set<FakeEventSource>();
@@ -221,7 +220,7 @@ export function install(): { received: Received[] } {
       const items = t ? [...t.items, ...Object.values(t.agentItems).flat()] : [];
       return items.flatMap((i) => (i.tool && ['edit', 'create'].includes(i.tool.name) ? [(i.tool.title ?? '').replace(/^(Edit|Create) /, '')] : []));
     },
-    utilityLimit: () => st.settings.utility_daily_limit,
+    utilityLimit: () => (st.settings.utility_unlimited ? undefined : st.settings.utility_daily_limit),
     projectChanged: (p) => {
       st.projects = st.projects.map((x) => (x.id === p.id ? p : x));
       broadcast('project', { project: p });
@@ -708,28 +707,28 @@ export function install(): { received: Received[] } {
     if (path === '/api/settings' && method === 'GET') return json(200, st.settings);
     if (path === '/api/usage/tokens' && method === 'GET') return json(200, tokenUsageFixture(st.settings));
     if (path === '/api/usage/prices' && method === 'GET') return json(200, tokenPriceFixture(st.settings));
-    if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 400, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200, st.settings.utility_purpose_limits));
+    if (path === '/api/utility' && method === 'GET') return json(200, utilityLog(utility, st.settings.utility_daily_limit ?? 400, Number(url.searchParams.get('before')) || 0, Number(url.searchParams.get('limit')) || 200, st.settings.utility_unlimited));
     if (path === '/api/settings/custom-models/discover' && method === 'POST') {
       // The mock serves a fixed list, as an OpenAI-compatible /models would; keys are never set.
       if (!body.api_key && !st.settings.custom_models?.some((c) => c.name === body.name && c.base_url === body.base_url && !c.api_key_env && c.key_present) && !/^UAM_BYOM_[A-Za-z0-9_]+$/.test(String(body.api_key_env ?? ''))) return fail(400, 'API key variable must be named UAM_BYOM_<NAME>');
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_purpose_limits' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
       if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
         broadcast('settings', { settings: st.settings });
       }
-      if (body.utility_purpose_limits !== undefined) {
-        const limits = body.utility_purpose_limits;
-        const keys = ['outcome', 'suggest-replies', 'title', 'commit-message', 'configuration-draft'];
-        if (!limits || typeof limits !== 'object' || Array.isArray(limits) || Object.entries(limits).some(([key, value]) => !keys.includes(key) || typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1000)) return fail(400, 'utility_purpose_limits requires known purposes and whole numbers from 0 to 1000');
-        st.settings = { ...st.settings, utility_purpose_limits: limits as Record<string, number> };
+      if (body.utility_unlimited !== undefined) {
+        if (typeof body.utility_unlimited !== 'boolean') return fail(400, 'utility_unlimited must be true or false');
+        const { utility_unlimited: _, ...rest } = st.settings;
+        st.settings = body.utility_unlimited ? { ...rest, utility_unlimited: true } : rest;
+        broadcast('settings', { settings: st.settings });
       }
       if (body.utility_daily_limit !== undefined) {
         const limit = body.utility_daily_limit;
-        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0 || limit > 1000) return fail(400, 'utility_daily_limit must be 0 to 1000');
+        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0) return fail(400, 'utility_daily_limit must be 0 or more');
         st.settings = { ...st.settings, utility_daily_limit: limit };
         broadcast('settings', { settings: st.settings });
       }
