@@ -521,11 +521,15 @@ describe('activity', () => {
     const run = (id: string, tests?: { passed: number; failed: number }): Item => ({ id, kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status: 'completed', exit_code: tests?.failed ? 1 : 0, input: JSON.stringify({ command: 'go test ./...' }), ...(tests && { tests }) } });
     const failing = render(<ToolRow item={run('b1', { passed: 12, failed: 2 })} live={false} />);
     expect(failing.getByText('12 passed · 2 failed')).toBeTruthy();
+    expect(failing.getByText('2 failed').className).toContain('sm:hidden');
     expect(failing.queryByText(/\d+\/\d+/)).toBeNull();
     failing.unmount();
     const passing = render(<ToolRow item={run('b2', { passed: 15, failed: 0 })} live={false} />);
     expect(passing.getByText('15 passed')).toBeTruthy();
     passing.unmount();
+    const none = render(<ToolRow item={run('b4', { passed: 0, failed: 3 })} live={false} />);
+    expect(none.getByText('3 failed')).toBeTruthy();
+    none.unmount();
     expect(render(<ToolRow item={run('b3')} live={false} />).queryByText(/passed/)).toBeNull();
   });
 
