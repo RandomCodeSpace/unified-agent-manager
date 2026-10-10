@@ -45,7 +45,7 @@ export function Receipts({ stamps }: Readonly<{ stamps: readonly Stamp[] }>) {
             <span className="shrink-0 text-muted">{s.note}</span>
           </>
         );
-        const className = cn('flex h-6 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-meta tabular-nums transition-colors duration-100', s.verdict === 'contradicted' ? 'bg-error-wash text-error' : s.verdict === 'unseen' ? 'bg-tint-well text-body' : 'bg-tint-well text-body');
+        const className = cn('flex h-6 max-w-full items-center gap-1.5 rounded-sm px-1.5 text-meta tabular-nums transition-colors duration-100', s.verdict === 'contradicted' ? 'bg-error-wash text-error' : 'bg-tint-well text-body');
         return (
           <li key={`${s.kind}:${s.claim}`} className="min-w-0 max-w-full">
             {s.itemId && locate ? (
