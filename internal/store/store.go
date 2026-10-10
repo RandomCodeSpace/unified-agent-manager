@@ -699,7 +699,8 @@ type WebSettings struct {
 	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
 	// to make none, at most MaxUtilityDailyLimit; nil means
 	// DefaultUtilityDailyLimit.
-	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
+	UtilityDailyLimit    *int           `json:"utility_daily_limit,omitempty"`
+	UtilityPurposeLimits map[string]int `json:"utility_purpose_limits,omitempty"`
 	// SuggestReplies, when false, stops suggesting replies after a turn;
 	// absent means on.
 	SuggestReplies *bool `json:"suggest_replies,omitempty"`
@@ -715,9 +716,27 @@ type WebSettings struct {
 	unknown map[string]json.RawMessage
 }
 
+// DefaultUtilityPurposeLimit names the supported Utility jobs and their daily limits.
+func DefaultUtilityPurposeLimit(purpose string) (int, bool) {
+	switch purpose {
+	case "outcome":
+		return 200, true
+	case "suggest-replies":
+		return 80, true
+	case "title":
+		return 40, true
+	case "commit-message":
+		return 30, true
+	case "configuration-draft":
+		return 20, true
+	default:
+		return 0, false
+	}
+}
+
 // The bounds of WebSettings.UtilityDailyLimit.
 const (
-	DefaultUtilityDailyLimit = 200
+	DefaultUtilityDailyLimit = 400
 	MaxUtilityDailyLimit     = 1000
 )
 
@@ -928,18 +947,19 @@ const (
 type webSettingsAlias WebSettings
 
 var knownWebSettingsFields = map[string]struct{}{
-	"token_prices":        {},
-	"send_default":        {},
-	"terminal":            {},
-	"hidden_models":       {},
-	"subagent_models":     {},
-	"title_model":         {},
-	"custom_models":       {},
-	"task_defaults":       {},
-	"utility_daily_limit": {},
-	"suggest_replies":     {},
-	"compact_threshold":   {},
-	"github_mcp":          {},
+	"token_prices":           {},
+	"send_default":           {},
+	"terminal":               {},
+	"hidden_models":          {},
+	"subagent_models":        {},
+	"title_model":            {},
+	"custom_models":          {},
+	"task_defaults":          {},
+	"utility_purpose_limits": {},
+	"utility_daily_limit":    {},
+	"suggest_replies":        {},
+	"compact_threshold":      {},
+	"github_mcp":             {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},
@@ -1188,6 +1208,11 @@ func (s *Store) loadNoLock() (Config, error) {
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
 	cleanTaskDefaults(&cfg.WebSettings)
+	for purpose, limit := range cfg.WebSettings.UtilityPurposeLimits {
+		if _, ok := DefaultUtilityPurposeLimit(purpose); !ok || limit < 0 || limit > MaxUtilityDailyLimit {
+			delete(cfg.WebSettings.UtilityPurposeLimits, purpose)
+		}
+	}
 	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && (*l < 0 || *l > MaxUtilityDailyLimit) {
 		log.Warn("clearing invalid stored utility daily limit")
 		cfg.WebSettings.UtilityDailyLimit = nil

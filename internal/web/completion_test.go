@@ -30,7 +30,9 @@ func TestCompletionOutcomeUsesOnlyMatchingAcceptedSummary(t *testing.T) {
 			prov := newAssistProvider()
 			st := openTestStore(t)
 			m, project := assistManager(t, st, prov)
-			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) { return "Utility fallback", nil })
+			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+				return `{"verb":"Reviewed","object":"parser"}`, nil
+			})
 			sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 			if err != nil {
 				t.Fatal(err)
@@ -44,7 +46,7 @@ func TestCompletionOutcomeUsesOnlyMatchingAcceptedSummary(t *testing.T) {
 				conv.EmitItem(agentapi.Item{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Native completion", Completion: tc.completion})
 			}
 			conv.Emit(agentapi.Event{Kind: agentapi.EventTurn, Turn: &agentapi.Turn{State: agentapi.TurnCompleted, Completion: tc.completion}})
-			want := "Utility fallback; 1 file changed"
+			want := "Reviewed parser; 1 file changed"
 			if tc.accepted {
 				want = "Fixed the parser; 1 file changed"
 			}
@@ -153,7 +155,7 @@ func TestCompletionPreviousUserCannotShortcutLatestTiming(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
 	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		return "Latest Utility fallback", nil
+		return `{"verb":"Answered","object":"Second reply"}`, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -172,7 +174,7 @@ func TestCompletionPreviousUserCannotShortcutLatestTiming(t *testing.T) {
 		t.Fatalf("first outcome=%q", got)
 	}
 	finish("message-2", "Second reply", old)
-	waitUntil(t, "the latest timing's Utility fallback", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Latest Utility fallback" })
+	waitUntil(t, "the latest timing's Utility fallback", func() bool { return summaryOf(t, m, sum.ID).Outcome == "Answered Second reply" })
 	if calls := utilityCalls(prov, "outcome"); calls != 1 {
 		t.Fatalf("latest fallback calls=%d", calls)
 	}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,8 +52,10 @@ const (
 	utilityError   = "error"
 	utilitySkipped = "skipped"
 
-	skippedLimit = "daily_limit"
-	skippedOff   = "off"
+	skippedLimit   = "daily_limit"
+	skippedOff     = "off"
+	skippedPurpose = "purpose_limit"
+	skippedInvalid = "invalid_streak"
 )
 
 const codeUtilityPaused = "utility_paused"
@@ -149,16 +152,28 @@ type UtilityCall struct {
 	DurationMS   int64     `json:"duration_ms"`
 	Outcome      string    `json:"outcome"`
 	Reason       string    `json:"reason,omitempty"`
+	Answer       string    `json:"answer,omitempty"`
+	Valid        *bool     `json:"valid,omitempty"`
+	Retry        bool      `json:"retry,omitempty"`
+	Fallback     bool      `json:"fallback,omitempty"`
 }
 
-// UtilityToday is today's use against the limit. Paused is set once no
-// more calls run today; ResetsAt is the server's next local midnight.
+// UtilityPurpose is today's calls and pause state for one purpose.
+type UtilityPurpose struct {
+	Purpose string `json:"purpose"`
+	Calls   int    `json:"calls"`
+	Limit   int    `json:"limit"`
+	Paused  bool   `json:"paused"`
+}
+
+// UtilityToday is today's use against the limit. ResetsAt is local midnight.
 type UtilityToday struct {
-	Day      string    `json:"day"`
-	Calls    int       `json:"calls"`
-	Limit    int       `json:"limit"`
-	Paused   bool      `json:"paused"`
-	ResetsAt time.Time `json:"resets_at"`
+	Purposes []UtilityPurpose `json:"purposes"`
+	Day      string           `json:"day"`
+	Calls    int              `json:"calls"`
+	Limit    int              `json:"limit"`
+	Paused   bool             `json:"paused"`
+	ResetsAt time.Time        `json:"resets_at"`
 }
 
 // UtilityDay totals one day of the log. Estimated is set when some of its
@@ -190,12 +205,15 @@ type UtilityLog struct {
 // they ended, which is ID order. started counts the calls begun on day,
 // running ones included.
 type utilityLog struct {
-	mu      sync.Mutex
-	path    string
-	calls   []UtilityCall
-	nextID  int64
-	day     string
-	started int
+	mu       sync.Mutex
+	path     string
+	calls    []UtilityCall
+	nextID   int64
+	day      string
+	started  int
+	purposes map[string]int
+	answers  map[string][]bool
+	paused   map[string]bool
 }
 
 func dayOf(t time.Time) string { return t.Local().Format(time.DateOnly) }
@@ -233,6 +251,12 @@ func pausedError(reason string, limit int) *Error {
 	if reason == skippedLimit {
 		msg = fmt.Sprintf("Background AI is paused until tomorrow: today's %d calls are used. Raise the limit in Settings → Background AI", limit)
 	}
+	if reason == skippedPurpose {
+		msg = "Background AI purpose is paused: today's purpose limit is reached"
+	}
+	if reason == skippedInvalid {
+		msg = "Background AI purpose is paused until tomorrow after repeated invalid answers"
+	}
 	return &Error{Status: http.StatusConflict, Code: codeUtilityPaused, Message: msg}
 }
 
@@ -242,11 +266,19 @@ func pausedError(reason string, limit int) *Error {
 // is logged. call names the purpose, provider, model and Task or Project;
 // prompt is the text sent.
 func (m *Manager) runUtility(ctx context.Context, call UtilityCall, prompt string, run func(context.Context, func(agentapi.UtilityUsage)) (string, error)) (string, error) {
+	return m.runUtilityChecked(ctx, call, prompt, run, nil)
+}
+
+func (m *Manager) runUtilityChecked(ctx context.Context, call UtilityCall, prompt string, run func(context.Context, func(agentapi.UtilityUsage)) (string, error), check func(*UtilityCall, string, error)) (string, error) {
 	m.mu.Lock()
 	limit := m.utilityLimitLocked()
+	line := utilityPurposeLimit(call.Purpose, m.settings.UtilityPurposeLimits)
 	m.mu.Unlock()
 	call.At = m.now()
-	if reason := m.utility.reserve(call.At, limit); reason != "" {
+	if reason := m.utility.reserve(call.At, call.Purpose, line, limit); reason != "" {
+		if check != nil {
+			call.Fallback = true
+		}
 		call.Outcome, call.Reason = utilitySkipped, reason
 		m.utility.add(call)
 		return "", pausedError(reason, limit)
@@ -275,6 +307,9 @@ func (m *Manager) runUtility(ctx context.Context, call UtilityCall, prompt strin
 	if err != nil {
 		call.Outcome, call.Reason = utilityError, clipRunes(displaytext.Sanitize(err.Error()), maxDetailRunes)
 	}
+	if check != nil {
+		check(&call, reply, err)
+	}
 	m.utility.add(call)
 	return reply, err
 }
@@ -289,17 +324,22 @@ func (m *Manager) runUtilityRequest(ctx context.Context, call UtilityCall, runne
 }
 
 // reserve counts a call starting at now, or says why it may not start.
-func (l *utilityLog) reserve(now time.Time, limit int) string {
+func (l *utilityLog) reserve(now time.Time, purpose string, line, total int) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rollLocked(now)
 	switch {
-	case limit <= 0:
+	case total <= 0:
 		return skippedOff
-	case l.started >= limit:
+	case l.started >= total:
 		return skippedLimit
+	case l.paused[purpose]:
+		return skippedInvalid
+	case l.purposes[purpose] >= line:
+		return skippedPurpose
 	}
 	l.started++
+	l.purposes[purpose]++
 	return ""
 }
 
@@ -307,6 +347,9 @@ func (l *utilityLog) reserve(now time.Time, limit int) string {
 func (l *utilityLog) rollLocked(now time.Time) {
 	if day := dayOf(now); day != l.day {
 		l.day, l.started = day, 0
+		l.purposes = map[string]int{}
+		l.answers = map[string][]bool{}
+		l.paused = map[string]bool{}
 	}
 }
 
@@ -315,6 +358,7 @@ func (l *utilityLog) rollLocked(now time.Time) {
 func (l *utilityLog) add(call UtilityCall) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.recordAnswerLocked(call)
 	l.nextID++
 	call.ID, call.Day = l.nextID, ""
 	l.calls = append(l.calls, call)
@@ -409,6 +453,8 @@ func (m *Manager) loadUtilityLog() {
 	for _, c := range l.calls {
 		if c.Outcome != utilitySkipped && dayOf(c.At) == l.day {
 			l.started++
+			l.purposes[c.Purpose]++
+			l.recordAnswerLocked(c)
 		}
 	}
 }
@@ -418,6 +464,7 @@ func (m *Manager) loadUtilityLog() {
 func (m *Manager) UtilityLog(before int64, limit int) UtilityLog {
 	m.mu.Lock()
 	dailyLimit := m.utilityLimitLocked()
+	limits := maps.Clone(m.settings.UtilityPurposeLimits)
 	m.mu.Unlock()
 	now := m.now()
 	l := &m.utility
@@ -428,6 +475,10 @@ func (m *Manager) UtilityLog(before int64, limit int) UtilityLog {
 		Today: UtilityToday{Day: l.day, Calls: l.started, Limit: dailyLimit, Paused: l.started >= dailyLimit, ResetsAt: midnightAfter(now)},
 		Days:  []UtilityDay{},
 		Calls: []UtilityCall{},
+	}
+	for _, purpose := range utilityPurposes {
+		line := utilityPurposeLimit(purpose, limits)
+		out.Today.Purposes = append(out.Today.Purposes, UtilityPurpose{Purpose: purpose, Calls: l.purposes[purpose], Limit: line, Paused: out.Today.Paused || l.paused[purpose] || l.purposes[purpose] >= line})
 	}
 	byDay := map[string]*UtilityDay{}
 	for i := len(l.calls) - 1; i >= 0; i-- {
@@ -459,6 +510,9 @@ func (m *Manager) UtilityLog(before int64, limit int) UtilityLog {
 		if len(out.Calls) == limit {
 			out.Next = out.Calls[len(out.Calls)-1].ID
 			continue
+		}
+		if c.Valid != nil {
+			c.Valid = new(*c.Valid)
 		}
 		out.Calls = append(out.Calls, c)
 	}

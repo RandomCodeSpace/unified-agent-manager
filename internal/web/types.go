@@ -168,7 +168,8 @@ type Settings struct {
 	TaskDefaults TaskDefaults `json:"task_defaults,omitzero"`
 	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
 	// for none; omitted for store.DefaultUtilityDailyLimit (utility.go).
-	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
+	UtilityDailyLimit    *int           `json:"utility_daily_limit,omitempty"`
+	UtilityPurposeLimits map[string]int `json:"utility_purpose_limits,omitempty"`
 	// SuggestReplies is false when replies to send next are not offered
 	// after a turn (assist.go); omitted while they are, the default.
 	SuggestReplies *bool `json:"suggest_replies,omitempty"`
