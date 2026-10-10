@@ -7,6 +7,7 @@ const call = (id, day = '2026-10-01') => ({ id, day, at: `${day}T10:00:00+02:00`
 test('purposes and outcomes read as words', () => {
   assert.equal(purposeLabel('title'), 'Task title');
   assert.equal(purposeLabel('commit-message'), 'Commit message');
+  assert.equal(purposeLabel('done-check'), 'Task done check');
   assert.equal(purposeLabel('some-new-job'), 'some new job');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'daily_limit' }), 'Skipped: daily limit');
   assert.equal(outcomeLabel({ outcome: 'skipped', reason: 'off' }), 'Skipped: Background AI off');

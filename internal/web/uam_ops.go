@@ -68,6 +68,7 @@ type uamTaskRow struct {
 	Project   string    `json:"project"`
 	Stage     string    `json:"stage"`
 	SettledBy string    `json:"settled_by,omitempty"`
+	Done      bool      `json:"done,omitempty"`
 	State     string    `json:"state"`
 	Mode      string    `json:"mode"`
 	Model     string    `json:"model"`
@@ -81,7 +82,7 @@ type uamTaskRow struct {
 func (m *Manager) uamTaskRowLocked(s *webSession) uamTaskRow {
 	v := m.summaryLocked(s)
 	return uamTaskRow{ID: v.ID, Name: firstNonEmpty(v.Name, v.Title, "New task"), Project: v.ProjectID,
-		Stage: stageName(v.Stage), SettledBy: v.SettledBy, State: v.State, Mode: v.Mode, Model: v.Model, Updated: v.UpdatedAt,
+		Stage: stageName(v.Stage), SettledBy: v.SettledBy, Done: !v.DoneAt.IsZero(), State: v.State, Mode: v.Mode, Model: v.Model, Updated: v.UpdatedAt,
 		Outcome: v.Outcome, Queued: v.Queued, Pending: v.Pending, Diff: v.Diff}
 }
 
