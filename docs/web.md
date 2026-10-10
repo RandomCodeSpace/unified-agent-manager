@@ -606,6 +606,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the conversation's inline file link opens the preview without a separate
   card. Opening a file still checks current availability, and temporary
   files require an explicit grant. Declaration metadata does not grant access.
+- **Reading uam**: every Task has the `uam` tool with six read operations:
+  `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
+  Reads are limited to its Project unless the Task is in Yolo. `tasks`
+  accepts a Project ID or exact name and optional stage and state filters.
+  Results carry compact summaries and outcomes, framed as data. They
+  contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
+  the agent follows `next` by passing it as `args.cursor` while `more` is
+  positive. `who_touched` uses edit-tool records, includes settled and
+  archived Tasks, and marks results partial when history has not been read.
+  Shell writes are not attributed. `changes` lists the Task's edited files
+  still changed against HEAD. Settled or archived Tasks cannot call the
+  tool. Calls fold into the turn's activity like other tool calls.
 - **Tasks started by an agent**: the agent can call `uam_create_task` to
   start a new Task in an existing Project. It gives the Project's ID or
   exact name, the first message (up to 16 KiB, with no control characters
