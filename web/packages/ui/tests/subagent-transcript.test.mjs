@@ -54,6 +54,7 @@ const modules = {
   './Interactions': { DecidedRow: ({ interaction }) => React.createElement('p', null, interaction.id) },
   './LiveOutput': { LiveOutput: () => null },
   './Todos': { TurnTodo: () => null },
+  './TurnWaybill': { TurnWaybill: () => null },
   './VisualBoundary': { VisualBoundary: ({ children }) => children },
   './Plan': { PlanNotice: () => null },
   './ui/button': { Button: element('button') },

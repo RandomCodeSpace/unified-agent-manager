@@ -20,6 +20,7 @@ import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { TurnTodo } from './Todos';
+import { TurnWaybill } from './TurnWaybill';
 import { VisualBoundary } from './VisualBoundary';
 import { PlanNotice } from './Plan';
 import { Button } from './ui/button';
@@ -829,22 +830,27 @@ function Copyable({ text, read, label, className, side = 'right', at, timing, re
   );
 }
 
-/** The reply's foot: the turn's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count. */
+/** The reply's foot: the turn's tokens out and, when the calls reported their duration, tokens per second of generation; the tooltip holds the whole count, and a press opens the turn's waybill. */
 function TurnTokens({ timing }: Readonly<{ timing: TurnTiming }>) {
+  const [button, setButton] = useState<HTMLButtonElement | null>(null);
+  const [reader, setReader] = useState<{ open: boolean; phone: boolean } | null>(null);
   const out = timing.output_tokens ?? 0;
   if (!out) return null;
   const rate = timing.generation_ms ? Math.round(out / (timing.generation_ms / 1000)) : 0;
   const title = `${(timing.input_tokens ?? 0).toLocaleString()} tokens in · ${out.toLocaleString()} out${timing.generation_ms ? ` · ${Math.round(timing.generation_ms / 1000)}s generating` : ''}`;
   return (
-    <span className="whitespace-nowrap" title={title}>
+    <span className="whitespace-nowrap">
       <span aria-hidden="true"> · </span>
-      {compactTokens(out)} tokens
-      {rate > 0 && (
-        <>
-          <span aria-hidden="true"> · </span>
-          {rate} tok/s
-        </>
-      )}
+      <button ref={setButton} data-turn-waybill="" type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} title={title} className="relative h-6 rounded-sm px-1 text-stamp whitespace-nowrap tabular-nums text-faint transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5" onClick={() => setReader({ open: true, phone: window.matchMedia('(max-width: 639px)').matches })}>
+        {compactTokens(out)} tokens
+        {rate > 0 && (
+          <>
+            <span aria-hidden="true"> · </span>
+            {rate} tok/s
+          </>
+        )}
+      </button>
+      {reader && <TurnWaybill timing={timing} anchor={button} phone={reader.phone} open={reader.open} onClose={() => setReader(r => r && { ...r, open: false })} onClosed={() => setReader(null)} />}
     </span>
   );
 }
