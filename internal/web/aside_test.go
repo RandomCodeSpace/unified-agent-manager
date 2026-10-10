@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -66,20 +69,31 @@ func TestAskAsideIsTransient(t *testing.T) {
 	for len(sub.ch) > 0 {
 		<-sub.ch
 	}
-	before, _ := json.Marshal(detail(t, m, sum.ID))
-	got, err := m.AskAside(context.Background(), sum.ID, "  what changed?  ")
+	// The kept aside's event takes a sequence number; nothing else changes.
+	unsequenced := func() string {
+		d := detail(t, m, sum.ID)
+		d.Seq = 0
+		data, _ := json.Marshal(d)
+		return string(data)
+	}
+	before := unsequenced()
+	got, err := m.AskAside(context.Background(), sum.ID, "  what changed?  ", "")
 	if err != nil || got == nil || got.Text != "aside answer" {
 		t.Fatalf("aside = %+v, %v", got, err)
 	}
 	if q := c.asked(); len(q) != 1 || q[0] != "what changed?" {
 		t.Fatalf("questions = %q", q)
 	}
-	after, _ := json.Marshal(detail(t, m, sum.ID))
-	if string(before) != string(after) || strings.Contains(string(after), "aside answer") {
+	after := unsequenced()
+	if before != after || strings.Contains(after, "aside answer") {
 		t.Fatalf("aside changed the Task:\nbefore %s\nafter  %s", before, after)
 	}
-	if len(sub.ch) != 0 || len(base.Sends()) != 0 || len(p.Opens()) != 1 {
+	// Its one event is the kept aside.
+	if len(sub.ch) != 1 || len(base.Sends()) != 0 || len(p.Opens()) != 1 {
 		t.Fatalf("aside published %d events, sent %d prompts or reopened", len(sub.ch), len(base.Sends()))
+	}
+	if f := nextFrame(t, sub); f.event != "aside" {
+		t.Fatalf("aside published %s", f.event)
 	}
 	m.mu.Lock()
 	asking := m.sessions[sum.ID].asking
@@ -94,7 +108,7 @@ func TestAskAsideValidatesQuestionBeforeProvider(t *testing.T) {
 	sum, base := createSession(t, m, p)
 	c := attachAsideAsker(m, sum.ID, base)
 	for _, q := range []string{"", " \n\t", strings.Repeat("x", maxAsideQuestionBytes+1), "bad \xff"} {
-		if got, err := m.AskAside(context.Background(), sum.ID, q); statusOf(err) != http.StatusBadRequest || got != nil {
+		if got, err := m.AskAside(context.Background(), sum.ID, q, ""); statusOf(err) != http.StatusBadRequest || got != nil {
 			t.Fatalf("question %.20q = %+v, %v", q, got, err)
 		}
 	}
@@ -128,7 +142,7 @@ func TestAskAsideDeclinesInactiveTasksWithoutResume(t *testing.T) {
 				}
 				m.mu.Unlock()
 			}
-			if got, err := m.AskAside(context.Background(), sum.ID, "hi"); statusOf(err) != http.StatusConflict || got != nil {
+			if got, err := m.AskAside(context.Background(), sum.ID, "hi", ""); statusOf(err) != http.StatusConflict || got != nil {
 				t.Fatalf("%s = %+v, %v", state, got, err)
 			}
 			if len(c.asked()) != 0 || len(p.Opens()) != 1 || len(base.Sends()) != 0 {
@@ -171,7 +185,7 @@ func TestAskAsideDropsAnswerFromChangedTask(t *testing.T) {
 					s.stage = StageSettled
 				}
 			}
-			if got, err := m.AskAside(context.Background(), sum.ID, "hi"); statusOf(err) != http.StatusConflict || got != nil {
+			if got, err := m.AskAside(context.Background(), sum.ID, "hi", ""); statusOf(err) != http.StatusConflict || got != nil {
 				t.Fatalf("stale %s = %+v, %v", change, got, err)
 			}
 		})
@@ -194,11 +208,11 @@ func TestAskAsideReleasesOpAndAllowsOneAtATime(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := m.AskAside(context.Background(), sum.ID, "first")
+		_, err := m.AskAside(context.Background(), sum.ID, "first", "")
 		done <- err
 	}()
 	<-entered
-	if _, err := m.AskAside(context.Background(), sum.ID, "second"); statusOf(err) != http.StatusConflict {
+	if _, err := m.AskAside(context.Background(), sum.ID, "second", ""); statusOf(err) != http.StatusConflict {
 		t.Fatalf("second aside = %v", err)
 	}
 	if _, err := m.SetModel(sum.ID, setting("a"), nil, nil); err != nil {
@@ -241,7 +255,7 @@ func TestAskAsideMapsProviderErrors(t *testing.T) {
 		{nil, nil, http.StatusBadGateway},
 	} {
 		c.err, c.answer = tc.err, tc.answer
-		_, err := m.AskAside(context.Background(), sum.ID, "hi")
+		_, err := m.AskAside(context.Background(), sum.ID, "hi", "")
 		if statusOf(err) != tc.status || err != nil && strings.Contains(err.Error(), "\x1b") {
 			t.Fatalf("%v = %v", tc.err, err)
 		}
@@ -256,7 +270,7 @@ func TestAskAsideHeldConversationDoesNotReachProvider(t *testing.T) {
 	m.sessions[sum.ID].terminalID = "linked"
 	m.mu.Unlock()
 	p.SetInUse([]string{sum.ConversationID}, nil)
-	if _, err := m.AskAside(context.Background(), sum.ID, "hi"); !errors.Is(err, errHeldElsewhere) || len(c.asked()) != 0 {
+	if _, err := m.AskAside(context.Background(), sum.ID, "hi", ""); !errors.Is(err, errHeldElsewhere) || len(c.asked()) != 0 {
 		t.Fatalf("held = %v, asked %d", err, len(c.asked()))
 	}
 }
@@ -290,7 +304,7 @@ func TestAskAsideKeepsItsConversationThroughACLIRestart(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := m.AskAside(context.Background(), sum.ID, "what changed?")
+		_, err := m.AskAside(context.Background(), sum.ID, "what changed?", "")
 		done <- err
 	}()
 	<-entered
@@ -317,10 +331,178 @@ func TestAskAsideRefusesAnotherAccount(t *testing.T) {
 	prov.switchAccount("mallory", agentapi.AccountEnv)
 	later := time.Now().Add(time.Minute)
 	m.now = func() time.Time { return later }
-	if _, err := m.AskAside(context.Background(), sum.ID, "what changed?"); errCode(err) != codeAccountNotLinked {
+	if _, err := m.AskAside(context.Background(), sum.ID, "what changed?", ""); errCode(err) != codeAccountNotLinked {
 		t.Fatalf("aside as another account = %v (code %q)", err, errCode(err))
 	}
 	if q := c.asked(); len(q) != 0 {
 		t.Fatalf("the provider was asked %q", q)
+	}
+}
+
+// An answered aside is kept with its Task under the question as typed,
+// anchored to the turn it was asked in or after, and survives a restart. It
+// is no Task activity: no session event, write or updated_at change.
+func TestAskAsideKeepsAnsweredAsides(t *testing.T) {
+	m, p, st := newTestManager(t)
+	sum, base := createSession(t, m, p)
+	c := attachAsideAsker(m, sum.ID, base)
+	sub, _, err := m.Subscribe(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Unsubscribe(sub)
+	base.EmitTurn(agentapi.TurnWorking, "")
+	base.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "fix it", Time: time.Now()})
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	for len(sub.ch) > 0 {
+		<-sub.ch
+	}
+	before, _ := json.Marshal(detail(t, m, sum.ID).SessionSummary)
+
+	got, err := m.AskAside(context.Background(), sum.ID, "Earlier: …\n\nNew question: why?", " why? ")
+	if err != nil || got.Aside == nil || got.Text != "aside answer" {
+		t.Fatalf("aside = %+v, %v", got, err)
+	}
+	during := *got.Aside
+	if during.Question != "why?" || during.Answer != "aside answer" || !during.Working || during.Turn != "u1" || during.ID == "" || during.AskedAt.IsZero() || during.AnsweredAt.Before(during.AskedAt) {
+		t.Fatalf("kept during the turn = %+v", during)
+	}
+	if q := c.asked(); len(q) != 1 || !strings.HasPrefix(q[0], "Earlier:") {
+		t.Fatalf("the model was asked %q", q)
+	}
+	var published Aside
+	f := nextFrame(t, sub)
+	decodeField(t, f, "aside", &published)
+	if f.event != "aside" || !sameAside(published, during) || len(sub.ch) != 0 {
+		t.Fatalf("published %s %+v, %d more", f.event, published, len(sub.ch))
+	}
+	m.mu.Lock()
+	_, dirty := m.dirty[sum.ID]
+	m.mu.Unlock()
+	m.mu.Lock()
+	unseen := m.sessions[sum.ID].unseenEnd
+	m.mu.Unlock()
+	if after, _ := json.Marshal(detail(t, m, sum.ID).SessionSummary); dirty || unseen || string(after) != string(before) {
+		t.Fatalf("aside touched the Task: dirty %v, unseen %v\nbefore %s\nafter  %s", dirty, unseen, before, after)
+	}
+
+	// After the turn ended it still belongs to that turn; a steer starts none.
+	base.EmitTurn(agentapi.TurnCompleted, "")
+	if got, err = m.AskAside(context.Background(), sum.ID, "and then?", ""); err != nil || got.Aside.Working || got.Aside.Turn != "u1" || got.Aside.Question != "and then?" {
+		t.Fatalf("after the turn = %+v, %v", got.Aside, err)
+	}
+	base.EmitTurn(agentapi.TurnWorking, "")
+	base.EmitItem(agentapi.Item{ID: "u2", Kind: agentapi.ItemUser, Text: "next"})
+	base.EmitItem(agentapi.Item{ID: "s1", Kind: agentapi.ItemUser, Text: "faster", Delivery: agentapi.DeliverySteer})
+	base.EmitItem(agentapi.Item{ID: "c1", Kind: agentapi.ItemUser, Text: "child", AgentID: "helper"})
+	if got, err = m.AskAside(context.Background(), sum.ID, "now?", ""); err != nil || !got.Aside.Working || got.Aside.Turn != "u2" {
+		t.Fatalf("next turn = %+v, %v", got.Aside, err)
+	}
+	questions := func(list []Aside) string {
+		var q []string
+		for _, a := range list {
+			q = append(q, a.Question)
+		}
+		return strings.Join(q, ",")
+	}
+	if list, err := m.Asides(sum.ID); err != nil || questions(list) != "why?,and then?,now?" || !sameAside(list[0], during) {
+		t.Fatalf("asides = %+v, %v", list, err)
+	}
+	path := filepath.Join(m.taskUploadDir(sum.ID), asidesFile)
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("asides file = %v, %v", info, err)
+	}
+
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	m = startManager(t, st, p)
+	if list, err := m.Asides(sum.ID); err != nil || questions(list) != "why?,and then?,now?" || !sameAside(list[0], during) {
+		t.Fatalf("asides after a restart = %+v, %v", list, err)
+	}
+	// Deleting the Task deletes them.
+	if _, err := m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Delete(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("deleted Task's asides: %v", err)
+	}
+}
+
+// sameAside compares as the wire does, without monotonic clock readings.
+func sameAside(a, b Aside) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+// A failed or stale aside keeps nothing; a long answer is kept cut.
+func TestAskAsideKeepsOnlyAnsweredAndBounded(t *testing.T) {
+	m, p, _ := newTestManager(t)
+	sum, base := createSession(t, m, p)
+	c := attachAsideAsker(m, sum.ID, base)
+	c.err = errors.New("model busy")
+	if _, err := m.AskAside(context.Background(), sum.ID, "hi", ""); statusOf(err) != http.StatusBadGateway {
+		t.Fatalf("failed aside = %v", err)
+	}
+	c.err, c.during = nil, func(context.Context) {
+		m.mu.Lock()
+		m.sessions[sum.ID].model = "next"
+		m.mu.Unlock()
+	}
+	if _, err := m.AskAside(context.Background(), sum.ID, "hi", ""); statusOf(err) != http.StatusConflict {
+		t.Fatalf("stale aside = %v", err)
+	}
+	if list, err := m.Asides(sum.ID); err != nil || len(list) != 0 {
+		t.Fatalf("failed asides kept = %+v, %v", list, err)
+	}
+	if _, err := os.Stat(filepath.Join(m.taskUploadDir(sum.ID), asidesFile)); !os.IsNotExist(err) {
+		t.Fatalf("asides file after failures: %v", err)
+	}
+	if _, err := m.AskAside(context.Background(), sum.ID, "hi", strings.Repeat("x", maxAsideQuestionBytes+1)); statusOf(err) != http.StatusBadRequest {
+		t.Fatalf("long typed question = %v", err)
+	}
+	c.during, c.answer = nil, &agentapi.AsideAnswer{Text: strings.Repeat("é", maxAnswerBytes)}
+	got, err := m.AskAside(context.Background(), sum.ID, "long?", "")
+	if err != nil || !got.Aside.Truncated || len(got.Aside.Answer) > maxAnswerBytes+len(truncatedMarker) || !utf8.ValidString(got.Aside.Answer) {
+		t.Fatalf("long answer kept as %d bytes, truncated %v, %v", len(got.Aside.Answer), got.Aside.Truncated, err)
+	}
+	// A line a crash cut short is skipped.
+	f, err := os.OpenFile(filepath.Join(m.taskUploadDir(sum.ID), asidesFile), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString(`{"id":"cut","question":"x"`)
+	_ = f.Close()
+	if list, err := m.Asides(sum.ID); err != nil || len(list) != 1 || list[0].ID != got.Aside.ID {
+		t.Fatalf("asides with a cut line = %+v, %v", list, err)
+	}
+}
+
+func TestAsidesRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{Assets: fstest.MapFS{"index.html": {Data: []byte("test")}}})
+	sum, base := createSession(t, ts.m, ts.prov)
+	attachAsideAsker(ts.m, sum.ID, base)
+	path := "/api/sessions/" + sum.ID + "/asides"
+	if w := ts.do(http.MethodGet, path, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated = %d", w.Code)
+	}
+	if w := ts.do(http.MethodGet, path, "", withCookie(ts)); w.Code != http.StatusOK || w.Body.String() != `{"asides":[]}`+"\n" {
+		t.Fatalf("none = %d %q", w.Code, w.Body)
+	}
+	w := ts.do(http.MethodPost, "/api/sessions/"+sum.ID+"/aside", `{"question":"ctx + hi","typed":"hi"}`, withCookie(ts))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"aside":{"id":`) || !strings.Contains(w.Body.String(), `"question":"hi"`) {
+		t.Fatalf("ask = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, path, "", withCookie(ts)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"question":"hi","answer":"aside answer"`) {
+		t.Fatalf("kept = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, "/api/sessions/nope/asides", "", withCookie(ts)); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown Task = %d", w.Code)
 	}
 }

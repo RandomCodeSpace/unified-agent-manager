@@ -5,7 +5,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -24,6 +24,7 @@ import { RecentTasks } from './lib/recentTasks';
 import { useResizable } from './lib/useResizable';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
+import { keepAside, rereadAsides } from './components/AskAside';
 import type { FirstMessage } from './components/Composer';
 import { TaskActionsContext, TaskList, type Renaming, type TaskActions } from './components/taskActions';
 import { TryModelDialog } from './components/Assist';
@@ -509,6 +510,8 @@ export default function App() {
       flush();
       confirmedDetail.current = null;
       recentTasks.confirm(data);
+      // Asides kept while the stream was down come with the next read.
+      rereadAsides(api);
       // Open the Task as soon as its snapshot arrives; a view transition delays readiness.
       onEvent?.({ type: 'snapshot', data });
       dispatch({ type: 'snapshot', data });
@@ -559,6 +562,12 @@ export default function App() {
         }
         return next;
       });
+    });
+    // An aside kept with the selected Task, from this page or another (AskAside).
+    es.addEventListener('aside', (e) => {
+      if (!alive) return;
+      const data = JSON.parse((e as MessageEvent).data) as { session_id: string; aside: Aside };
+      keepAside(api, data.session_id, data.aside);
     });
     // A Task needs you or finished: a notification, when this browser asked for them (lib/notify.ts).
     es.addEventListener('notify', (e) => {

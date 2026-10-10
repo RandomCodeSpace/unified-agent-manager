@@ -1,4 +1,6 @@
-// Ask aside (`/btw`): the follow-up question built from the Task's earlier asides on this page.
+// Ask aside (`/btw`): the follow-up question built from the Task's kept asides, and the turn a new one belongs to.
+
+import type { Item } from '../api';
 
 /** The service's limit on an aside question (internal/web/aside.go `maxAsideQuestionBytes`), in UTF-8 bytes. */
 export const ASIDE_QUESTION_BYTES = 16 << 10;
@@ -26,4 +28,13 @@ export function asideQuestion(prior: readonly PriorAside[], question: string): s
     if (bytes(text) <= ASIDE_QUESTION_BYTES) return text;
   }
   return question;
+}
+
+/** The turn an aside asked now belongs to, as the transcript keys turns: the latest message the owner sent (not a steer); '' before any. */
+export function asideTurn(items: readonly Item[]): string {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (item.kind === 'user' && !item.delivery && !item.agent_id) return item.id;
+  }
+  return '';
 }
