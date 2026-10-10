@@ -19,6 +19,22 @@ test('active tasks come first; settled and archived go to their shelves', () => 
   assert.deepEqual(g.archived.map((t) => t.id), ['c']);
 });
 
+test('a judged-done Task leaves the active list for Done, newest judgement first, read or not', () => {
+  const list = [
+    s('a', 'p1', '1', { done_at: '2026-10-10T10:00:00Z' }),
+    s('b', 'p1', '2', { done_at: '2026-10-10T12:00:00Z' }),
+    s('c', 'p1', '3'),
+    // Working again, or on a shelf: the judgement does not count.
+    s('d', 'p1', '4', { state: 'working', done_at: '2026-10-10T11:00:00Z' }),
+    s('e', 'p1', '5', { subagents_running: 1, done_at: '2026-10-10T11:00:00Z' }),
+    s('f', 'p1', '6', { stage: 'settled', done_at: '2026-10-10T11:00:00Z' }),
+  ];
+  const g = groupTasks(list);
+  assert.deepEqual(g.done.map((t) => t.id), ['b', 'a']);
+  assert.deepEqual(g.active.map((t) => t.id), ['c', 'd', 'e']);
+  assert.deepEqual(g.settled.map((t) => t.id), ['f']);
+});
+
 test('the project filter shows one project while it exists, else every project', () => {
   assert.deepEqual(visibleProjects([p1, p2], null), [p1, p2]);
   assert.deepEqual(visibleProjects([p1, p2], 'p2'), [p2]);
@@ -211,6 +227,20 @@ test('compact Task labels retain request priority and distinguish working, revie
   for (const [state, expected] of Object.entries({ starting: 'Starting', failed: 'Error', interrupted: 'Interrupted', cancelled: 'Stopped', closed: 'Closed', idle: 'Idle' })) assert.equal(label({ state }), expected);
   assert.equal(label({ state: 'completed', stage: 'settled' }), 'Settled');
   assert.equal(label({ state: 'completed', stage: 'archived' }), 'Archived');
+});
+
+test('a judged-done Task reads Done with the reply line that says so, read or not; never while it waits, works or sits on a shelf', async () => {
+  const { taskStatus } = await import('../src/lib/tasks.ts');
+  const status = (extra, unread = false) => taskStatus(s('t', 'p1', '2026-10-01T12:00:00Z', { done_at: '2026-10-01T12:05:00Z', ...extra }), unread);
+  assert.deepEqual(status({ done_line: 'Tests pass.', outcome: 'Fixed it' }), { label: 'Done', text: 'Tests pass.', tone: 'success' });
+  assert.deepEqual(status({ done_line: 'Tests pass.' }, true), { label: 'Done', text: 'Tests pass.', tone: 'success' });
+  assert.equal(status({ outcome: 'Fixed it' }).text, 'Fixed it');
+  assert.equal(status({}).text, 'Done');
+  assert.equal(status({ state: 'awaiting_answer' }).label, 'Input');
+  assert.equal(status({ state: 'working' }).label, 'Working');
+  assert.equal(status({ subagents_running: 1 }).label, 'Working');
+  assert.equal(status({ stage: 'settled' }).label, 'Settled');
+  assert.equal(status({ done_at: undefined }, true).label, 'Review');
 });
 
 test('Alt+J and Alt+K cycle through the Needs you Tasks and wrap', async () => {

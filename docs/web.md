@@ -1560,7 +1560,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   without group headings. Each row's status line says whether it needs
   input, is ready for review, is running, or is idle. Tasks needing attention
   come first, followed by review, running, and idle Tasks. Collapsible
-  "Settled" and "Archived" shelves remain at the foot of the list.
+  "Done", "Settled" and "Archived" sections remain at the foot of the list.
+  Done lists the active Tasks the service judged done, read or not, newest
+  first: the newest eight, then **Show all**. A new turn takes a Task back
+  to the list; once you have reviewed it the service settles it.
 
   "Opened since" is tracked per browser: a Task you never opened in this
   browser counts as unread once it changes after your first visit. The open
@@ -1569,9 +1572,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Tasks are dropped.
   A row first shows the Project badge, Project name, and a short status
   with an icon: "Input", "Starting", "Working", "Compacting", "Review",
-  "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
+  "Done", "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
-  Review teal; Finished green; Error red; inactive states gray.
+  Review teal; Done and Finished green; Error red; inactive states gray.
   The second line shows the Task title, the Project branch in muted text,
   and how long ago the Task changed. Hovering the row shows the full request
   or outcome, quiet duration, branch, and `+N −M` line counts when known. Hovering an
@@ -1586,9 +1589,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
-  A shelf row shows the Project badge and title, faded until hovered or
-  selected; its tooltip adds the Project name and directory and when the Task
-  was created, settled and archived.
+  A Done or shelf row shows the Project badge and title, faded until hovered
+  or selected (a Done row less so); its tooltip adds the Project name and
+  directory and when the Task was created, judged done, settled and archived.
+  A Done row's tooltip also shows the reply line that says it is done; a Task
+  the service settled says "Settled automatically after 7 quiet days" or
+  "Settled after you reviewed it".
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch

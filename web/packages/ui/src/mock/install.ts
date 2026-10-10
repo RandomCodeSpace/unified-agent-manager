@@ -291,6 +291,8 @@ export function install(): { received: Received[] } {
     }
   }
   const touch = (t: MockTask, patch: Partial<MockTask> = {}) => {
+    // A new turn clears the service's done judgement.
+    if (patch.state === 'working') Object.assign(t, { done_at: undefined, done_item_id: undefined, done_line: undefined });
     Object.assign(t, patch, { updated_at: now() });
     broadcast('session', { session: summary(t) });
   };
@@ -970,7 +972,7 @@ export function install(): { received: Received[] } {
           return json(200, summary(t));
         case 'reopen':
           if (stage !== 'settled') return fail(409, `a ${stage} task cannot be reopened`);
-          touch(t, { stage: 'active', settled_at: undefined });
+          touch(t, { stage: 'active', settled_at: undefined, settled_by: undefined });
           return json(200, summary(t));
         case 'archive':
           if (stage === 'archived') return fail(409, 'the task is already archived');
