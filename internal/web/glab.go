@@ -172,7 +172,7 @@ func (b *glabOutput) Write(p []byte) (int, error) {
 func glabExec(ctx context.Context, timeout time.Duration, dir, bin string, discard bool, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...) // #nosec G204 -- resolved glab or fixed git, internal command argv, no shell.
 	cmd.Dir, cmd.Env = dir, append(os.Environ(), "NO_COLOR=1")
 	cmd.WaitDelay = time.Second
 	var out glabOutput
