@@ -564,8 +564,11 @@ type ToolUse struct {
 	Workdir        string
 }
 
-// ToolVerdict adds host context or refuses a tool call before execution.
-type ToolVerdict struct{ Context, Deny string }
+// ToolVerdict adds host context, refuses a call, or replaces its arguments.
+type ToolVerdict struct {
+	Context, Deny string
+	Args          map[string]any
+}
 
 // ToolHooks binds provider hook calls to their owning Task.
 type ToolHooks struct {

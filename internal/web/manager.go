@@ -111,6 +111,8 @@ type Manager struct {
 	cli cliUpdates
 	// cliKick wakes a pending CLI restart when a Task changes.
 	cliKick chan struct{}
+	// glab owns background origin/auth refreshes outside the Manager lock.
+	glab glabGovernor
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -2847,6 +2849,7 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // any, the built-in skills and the compaction threshold to req. The caller
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
+	go m.glab.gate(m.ctx, req.Workdir)
 	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
 	req.Hooks.Failed = func(ctx context.Context, use agentapi.ToolUse, failure string) string {
 		return m.failedToolUse(ctx, s, use, failure)

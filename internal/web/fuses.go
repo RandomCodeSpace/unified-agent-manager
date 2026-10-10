@@ -19,13 +19,24 @@ type fuseEntry struct {
 	warned    bool
 }
 
-// preToolUse is shared by the Task and its subagents. No work here needs I/O.
-func (m *Manager) preToolUse(_ context.Context, s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
+// preToolUse is shared by the Task and its subagents. Lint never holds mu.
+func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.closed || s.removed || s.base == StateClosed || m.sessions[s.id] != s {
+		m.mu.Unlock()
 		return agentapi.ToolVerdict{}
 	}
+	out := m.localPreToolUseLocked(s, use)
+	m.mu.Unlock()
+	if out.Deny == "" {
+		glab := m.glabPre(ctx, use)
+		out.Context = strings.TrimSpace(out.Context + "\n" + glab.Context)
+		out.Deny, out.Args = glab.Deny, glab.Args
+	}
+	return out
+}
+
+func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
 	out := agentapi.ToolVerdict{Context: m.trailContextLocked(s, use)}
 	kind := use.PermissionKind
 	if kind == "" {
