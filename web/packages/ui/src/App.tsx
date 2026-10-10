@@ -1448,7 +1448,7 @@ export default function App() {
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title="Archive this task?"
-              description="Archiving makes the task permanently read-only. It stays in the sidebar's Archived shelf with its full conversation. It cannot be reopened."
+              description="Archiving makes the task permanently read-only. It stays in Settings → Archived with its full conversation. It cannot be reopened."
               confirmLabel="Archive task"
               danger={false}
               busy={dialogBusy}

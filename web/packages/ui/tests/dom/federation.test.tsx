@@ -486,7 +486,7 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   const row = await nav.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   const shelf = () => Number(/(\d+)/.exec(nav.getByRole('button', { name: /^Settled/ }).textContent ?? '')?.[1] ?? 0);
   const settled = shelf();
-  expect(nav.getByRole('button', { name: /^Archived/ })).toBeTruthy();
+  expect(nav.queryByRole('button', { name: /^Archived/ })).toBeNull();
   const settle = row.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!;
   await user.click(settle);
   await waitFor(() => expect(shelf()).toBe(settled + 1));

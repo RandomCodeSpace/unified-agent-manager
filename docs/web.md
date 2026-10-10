@@ -1217,6 +1217,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   model fails or takes more than 20 s, the provider's title stays, and the
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
+- **Archived**: Settings → **Archived** lists the archived Tasks of the
+  instance on screen, in every Project, newest archived first: the Project
+  badge, the Task title, the Project name and how long ago it was archived.
+  Past eight Tasks a filter box narrows them by Task, Project, folder or
+  branch. Clicking a row opens the Task, read-only; its **⋯** menu holds the
+  Task menu's actions (Run again, Export as Markdown, Delete behind its
+  confirmation). The sidebar has no Archived shelf; its search still finds
+  archived Tasks.
 - **Background AI**: every call UAM makes on the Utility model (Task
   titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines and done checks) counts
   against a daily limit and is logged. Settings → **Background AI** shows
@@ -1582,7 +1590,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   without group headings. Each row's status line says whether it needs
   input, is ready for review, is running, or is idle. Tasks needing attention
   come first, followed by review, running, and idle Tasks. Collapsible
-  "Done", "Settled" and "Archived" sections remain at the foot of the list.
+  "Done" and "Settled" sections remain at the foot of the list; archived
+  Tasks are listed in Settings → Archived.
   Done lists the active Tasks the service judged done, read or not, newest
   first: the newest eight, then **Show all**. A new turn takes a Task back
   to the list; once you have reviewed it the service settles it.
@@ -1611,14 +1620,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
-  A Done or shelf row shows the Project badge and title, faded until hovered
+  A Done or Settled row shows the Project badge and title, faded until hovered
   or selected (a Done row less so); its tooltip adds the Project name and
-  directory and when the Task was created, judged done, settled and archived.
+  directory and when the Task was created, judged done and settled.
   A Done row's tooltip also shows the reply line that says it is done; a Task
   the service settled says "Settled automatically after 7 quiet days" or
   "Settled after you reviewed it".
   A settled or archived Task opens read-only. Search matches Task names and
-  titles, Project names and branches within the chosen Project filter.
+  titles, Project names and branches within the chosen Project filter,
+  archived Tasks included.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation, Settle or Reopen, Archive and Delete.
   Arrow keys move between rows,

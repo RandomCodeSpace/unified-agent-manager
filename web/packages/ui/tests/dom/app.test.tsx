@@ -11,7 +11,8 @@ describe('app shell', () => {
     const side = await sidebar();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     expect(side.getByRole('button', { name: /Fix re-attach redraw regression/ })).toBeTruthy();
-    expect(side.getByRole('button', { name: /Archived 2/ })).toBeTruthy();
+    // Archived Tasks are in Settings → Archived, not on a shelf.
+    expect(side.queryByRole('button', { name: /^Archived/ })).toBeNull();
     expect(side.getByRole('status').textContent).toContain('Connected');
     // Seven tasks wait for the user: two for permission, five for an answer.
     expect(document.title).toBe('(7) UAM');
@@ -128,7 +129,7 @@ describe('app shell', () => {
 describe('sidebar list keyboard', () => {
   const navRows = () => Array.from(document.querySelectorAll<HTMLElement>('nav[aria-label="Tasks"] [data-nav]'));
 
-  test('the list is one tab stop; arrows and End reach the Archived shelf past a closed one', async () => {
+  test('the list is one tab stop; End reaches the Settled shelf and arrows move from it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     const stops = () => navRows().filter((el) => el.tabIndex === 0);
@@ -138,14 +139,14 @@ describe('sidebar list keyboard', () => {
     for (const settle of settles) expect(settle.tabIndex).toBe(-1);
     stops()[0].focus();
     await user.keyboard('{End}');
-    const archived = side.getByRole('button', { name: /^Archived/ });
-    expect(document.activeElement).toBe(archived);
+    const settled = side.getByRole('button', { name: /^Settled/ });
+    expect(document.activeElement).toBe(settled);
     await user.keyboard('{ArrowUp}');
-    expect(document.activeElement).toBe(side.getByRole('button', { name: /^Settled/ }));
+    expect(document.activeElement).not.toBe(settled);
     await user.keyboard('{ArrowDown}');
-    expect(document.activeElement).toBe(archived);
+    expect(document.activeElement).toBe(settled);
     // The stop follows focus.
-    await waitFor(() => expect(stops()).toEqual([archived]));
+    await waitFor(() => expect(stops()).toEqual([settled]));
   });
 
   test('a row\'s Settle is reached with Right and left with Left', async () => {

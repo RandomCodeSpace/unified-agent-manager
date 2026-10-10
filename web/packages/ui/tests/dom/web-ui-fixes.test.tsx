@@ -16,16 +16,16 @@ afterEach(() => vi.restoreAllMocks());
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
 describe('sidebar shelves', () => {
-  test('the pinned shelf headers sit flush with the foot of the list, past its bottom padding', async () => {
+  test('the pinned section headers sit flush with the foot of the list, past its bottom padding', async () => {
     renderApp();
     const side = await sidebar();
-    const archived = side.getByRole('button', { name: /^Archived/ });
     const settled = side.getByRole('button', { name: /^Settled/ });
+    const done = side.getByRole('button', { name: /^Done/ });
     // The scroller's 12px bottom padding insets the sticky edge; the headers reach past it, so no row shows under them.
-    expect(archived.parentElement!.parentElement!.className).toContain('pb-3');
-    expect(archived.className).toContain('-bottom-3');
-    expect(settled.className).toContain('bottom-4');
-    expect(settled.className).toContain('pointer-coarse:bottom-8');
+    expect(settled.parentElement!.parentElement!.className).toContain('pb-3');
+    expect(settled.className).toContain('-bottom-3');
+    expect(done.className).toContain('bottom-4');
+    expect(done.className).toContain('pointer-coarse:bottom-8');
   });
 });
 
