@@ -538,7 +538,7 @@ export interface UtilityCall {
   valid?: boolean;
   retry?: boolean;
   fallback?: boolean;
-  /** Why it was skipped (`daily_limit`, `purpose_limit`, `invalid_streak`, `off`) or failed. */
+  /** Why it was skipped (`daily_limit`, `invalid_streak`, `off`) or failed. */
   reason?: string;
 }
 

@@ -18,9 +18,11 @@ export function purposeLabel(purpose: string): string {
   return PURPOSES[purpose] ?? purpose.replaceAll('-', ' ');
 }
 
-/** What became of a call that did not run cleanly: "Skipped: daily limit", "Skipped: Background AI off", "Failed"; "" when it ran. */
+const SKIPPED: Record<string, string> = { off: 'Skipped: Background AI off', invalid_streak: 'Skipped: repeated unusable answers' };
+
+/** What became of a call that did not run cleanly: "Skipped: daily limit", "Skipped: Background AI off", "Skipped: repeated unusable answers", "Failed"; "" when it ran. */
 export function outcomeLabel(call: Pick<UtilityCall, 'outcome' | 'reason'>): string {
-  if (call.outcome === 'skipped') return call.reason === 'off' ? 'Skipped: Background AI off' : 'Skipped: daily limit';
+  if (call.outcome === 'skipped') return SKIPPED[call.reason ?? ''] ?? 'Skipped: daily limit';
   return call.outcome === 'error' ? 'Failed' : '';
 }
 
