@@ -83,7 +83,7 @@ export function claimsOf(text: string): Claim[] {
   return out;
 }
 
-interface Run { itemId: string; command: string; exit?: number; failed: boolean; output: string }
+interface Run { itemId: string; command: string; exit?: number; failed: boolean; output: string; tests?: { passed: number; failed: number } }
 interface Record { changed: Map<string, string>; viewed: Map<string, string>; runs: Run[]; subagents: number }
 
 const pathTokens = (command: string) => command.split(/\s+/).filter((t) => !t.startsWith('-') && looksLikePath(t)).map(cleanPath);
@@ -110,7 +110,7 @@ function recordOf(items: readonly Item[]): Record {
       if (!command) continue;
       const exit = tool.exit_code;
       const failed = tool.status === 'failed' || (exit !== undefined && exit !== 0);
-      record.runs.push({ itemId: item.id, command, exit, failed, output: tool.output ?? '' });
+      record.runs.push({ itemId: item.id, command, exit, failed, output: tool.output ?? '', tests: tool.tests });
       // What a shell read (cat, sed, head) counts as viewed.
       if (/^(?:rtk\s+)?(cat|sed|head|tail|less|bat)\b/.test(command)) for (const p of pathTokens(command)) if (!record.viewed.has(p)) record.viewed.set(p, item.id);
     } else if (kind === 'subagent') record.subagents++;
@@ -131,10 +131,11 @@ function findPath(paths: Map<string, string>, claim: string): string | undefined
   return undefined;
 }
 
-/** The run of a command the reply names: the one whose line holds it whole, at a boundary. */
+/** The run of a command the reply names: the last one whose line holds it whole, at a boundary, so a passing rerun stands for the command. */
 function findRun(runs: Run[], claim: string): Run | undefined {
   const re = new RegExp(`(^|[\\s;&|(])${escape(claim)}($|[\\s;&|)])`);
-  return runs.find((r) => re.test(r.command));
+  for (let i = runs.length - 1; i >= 0; i--) if (re.test(runs[i].command)) return runs[i];
+  return undefined;
 }
 
 const exitNote = (run: Run) => (run.exit !== undefined ? `exit ${run.exit}` : run.failed ? 'failed' : 'ran');
@@ -170,9 +171,10 @@ export function receipts(text: string, items: readonly Item[]): Stamp[] {
       const tests = record.runs.filter((r) => TEST_COMMAND.test(r.command));
       const last = tests.at(-1);
       if (!last) stamps.push({ claim, kind, verdict: missing, note: `no test command ran${record.subagents ? ' in the main agent’s work' : ' this turn'}${aside}` });
-      else if (last.failed || FAILED_OUTPUT.test(last.output)) stamps.push({ claim, kind, verdict: 'contradicted', note: `last test run ${last.failed ? exitNote(last) : 'reported failures'}`, itemId: last.itemId });
+      // The service's counts come from the whole output, loaded or not; the output's own words stand in without them.
+      else if (last.failed || (last.tests ? last.tests.failed > 0 : FAILED_OUTPUT.test(last.output))) stamps.push({ claim, kind, verdict: 'contradicted', note: `last test run ${last.failed ? exitNote(last) : 'reported failures'}`, itemId: last.itemId });
       // A piped run exits with the pipe's last command, so without its output a green exit proves nothing.
-      else if (PIPED.test(last.command) && !last.output) stamps.push({ claim, kind, verdict: 'unseen', note: 'piped test run, output not loaded', itemId: last.itemId });
+      else if (PIPED.test(last.command) && !last.output && !last.tests) stamps.push({ claim, kind, verdict: 'unseen', note: 'piped test run, output not loaded', itemId: last.itemId });
       else stamps.push({ claim, kind, verdict: 'verified', note: `${last.command.length > 40 ? `${last.command.slice(0, 40)}…` : last.command} · ${exitNote(last)}`, itemId: last.itemId });
     }
   }
