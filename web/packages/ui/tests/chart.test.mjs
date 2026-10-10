@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chartCsv, chartHeight, chartOption, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
+import { chartCsv, chartHeight, chartOption, chartTheme, headline, isChartCall, niceCeil, seriesColorIndexes, labelInterval } from '../src/lib/chart.ts';
 import { callProduct } from '../src/lib/transcript.ts';
 import { init } from '../src/lib/echarts.ts';
 import * as charts from 'echarts/charts';
-import { use } from 'echarts/core';
+import { registerTheme, use } from 'echarts/core';
 
 // The app loads each chart type with its first drawing (EChart.tsx); these tests draw with init directly.
 use(Object.values(charts));
@@ -303,6 +303,53 @@ test('series colours are fixed: several take the palette in order, a lone one th
   assert.equal(palette(named('lines')), '#6c4fc6');
   assert.equal(palette(named('open')), '#0e7089');
   assert.deepEqual(seriesColorIndexes(named('lines')), [4]);
+});
+
+test('the chart theme takes its colours from the tokens of the scheme on screen', () => {
+  const schemes = {
+    light: { 'badge-blue': '#3260c4', ink: '#25262b', body: '#494b53', hairline: '#e6e7ec', raised: '#ffffff', selection: '#cfdaf3' },
+    dark: { 'badge-blue': '#86a6ff', ink: '#ededed', body: '#c2c2c2', hairline: '#1f1f1f', raised: '#121212', selection: '#213a6b' },
+  };
+  const root = { dataset: {} };
+  globalThis.document = { documentElement: root };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: (name) => schemes[root.dataset.theme][name.replace('--color-', '')] ?? '' });
+  try {
+    for (const [scheme, t] of Object.entries(schemes)) {
+      root.dataset.theme = scheme;
+      const theme = chartTheme();
+      assert.equal(theme.color[0], t['badge-blue']);
+      assert.equal(theme.textStyle.color, t.body);
+      assert.equal(theme.title.textStyle.color, t.ink);
+      assert.equal(theme.valueAxis.splitLine.lineStyle.color, t.hairline);
+      assert.equal(theme.tooltip.backgroundColor, t.raised);
+      assert.deepEqual(theme.gradientColor, [t.selection, t['badge-blue']]);
+      assert.equal(theme.pie.label.color, t.body);
+      assert.equal(theme.treemap.label.color, t.raised);
+      assert.equal(theme.sankey.label.color, t.body);
+    }
+  } finally {
+    delete globalThis.document;
+    delete globalThis.getComputedStyle;
+  }
+});
+
+test('a saved specification\'s own colours win over the theme; the rest, line and bar charts included, take it', () => {
+  const theme = chartTheme();
+  registerTheme('uam-test', theme);
+  const drawing = init(null, 'uam-test', { renderer: 'svg', ssr: true, width: 480, height: 300 });
+  try {
+    drawing.setOption(chartOption({ ...pie, options: { ...pie.options, title: { text: 'Languages' } } }, { width: 480, height: 300 }));
+    assert.equal(drawing.getOption().title[0].textStyle.color, theme.title.textStyle.color);
+    assert.deepEqual(drawing.getOption().color, theme.color);
+    const own = { ...pie.options, color: ['#111111', '#222222'], title: { text: 'Languages', textStyle: { color: '#333333' } }, series: [{ ...pie.options.series[0], label: { color: '#444444' } }] };
+    drawing.setOption(chartOption({ ...pie, options: own }, { width: 480, height: 300 }), { notMerge: true });
+    assert.deepEqual(drawing.getOption().color, ['#111111', '#222222']);
+    assert.equal(drawing.getOption().title[0].textStyle.color, '#333333');
+    assert.equal(drawing.getOption().series[0].label.color, '#444444');
+    drawing.setOption(chartOption(chart, { width: 480, height: 300 }), { notMerge: true });
+    assert.equal(drawing.getOption().yAxis[0].splitLine.lineStyle.color, theme.valueAxis.splitLine.lineStyle.color);
+    assert.equal(drawing.getOption().xAxis[0].axisLabel.color, theme.categoryAxis.axisLabel.color);
+  } finally { drawing.dispose(); }
 });
 
 test('crowded axis labels thin out while categories and tooltip labels stay intact', () => {

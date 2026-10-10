@@ -44,6 +44,37 @@ function token(name: string, fallback: string): string {
 }
 const seriesColors = () => SERIES_TOKENS.map((name, i) => token(name, SERIES_FALLBACK[i]));
 
+/**
+ * The ECharts theme for the scheme on screen, from the same tokens: every chart, line/bar or
+ * agent-authored, takes its palette, text, grid and tooltip colours from here. Colours a saved
+ * specification sets still win (ECharts merges a theme under the option).
+ */
+export function chartTheme(): Record<string, unknown> {
+  const ink = token('ink', '#25262b');
+  const body = token('body', '#494b53');
+  const muted = token('muted', '#686b77');
+  const hairline = token('hairline', '#e6e7ec');
+  const line = token('hairline-strong', '#c9ccd5');
+  const raised = token('raised', '#ffffff');
+  const axis = { axisLine: { lineStyle: { color: line } }, axisTick: { lineStyle: { color: line } }, axisLabel: { color: muted }, splitLine: { lineStyle: { color: hairline } }, nameTextStyle: { color: muted } };
+  return {
+    color: seriesColors(),
+    backgroundColor: 'transparent',
+    // A two-stop ramp for visual maps and heatmaps, low to high.
+    gradientColor: [token('selection', '#cfdaf3'), token('badge-blue', SERIES_FALLBACK[0])],
+    textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', color: body },
+    title: { textStyle: { color: ink }, subtextStyle: { color: muted } },
+    legend: { textStyle: { color: body }, inactiveColor: line, pageTextStyle: { color: muted }, pageIconColor: body, pageIconInactiveColor: line },
+    categoryAxis: axis, valueAxis: axis, logAxis: axis, timeAxis: axis,
+    tooltip: { backgroundColor: raised, borderColor: line, textStyle: { color: ink }, axisPointer: { lineStyle: { color: line }, crossStyle: { color: line } } },
+    visualMap: { textStyle: { color: body } },
+    pie: { label: { color: body }, itemStyle: { borderColor: raised } },
+    // Treemap labels sit on the badge fills, which carry `raised` text at 4.5:1 or more.
+    treemap: { label: { color: raised }, upperLabel: { color: raised }, itemStyle: { borderColor: raised }, breadcrumb: { itemStyle: { color: hairline, textStyle: { color: body } }, emphasis: { itemStyle: { color: line } } } },
+    sankey: { label: { color: body } },
+  };
+}
+
 /** A round upper bound for the y axis, so the top gridline reads as a plain number. */
 export function niceCeil(v: number): number {
   if (v <= 0) return 0;
@@ -74,14 +105,10 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
   const values = chart.series.flatMap((s) => s.values);
   const lo = Math.min(0, ...values);
   const hi = Math.max(lo + 1, niceCeil(Math.max(0, ...values)));
-  const muted = token('muted', '#686b77');
-  const body = token('body', '#494b53');
-  const line = token('hairline-strong', '#c9ccd5');
   return {
     animation: false,
     color: seriesColorIndexes(chart.series).map((i) => seriesColors()[i]),
     legend: { show: false, selected: Object.fromEntries(chart.series.map((s) => [s.name, !hidden?.has(s.name)])) },
-    textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', fontSize: 12, color: body },
     grid: { left: look.spark ? 0 : 8, right: look.spark ? 0 : 16, top: look.spark ? 4 : look.compact ? 8 : 28, bottom: 4, outerBoundsMode: look.spark ? 'none' : 'same', outerBoundsContain: 'all' },
     tooltip: { show: !look.spark, trigger: 'axis', renderMode: 'richText', confine: true },
     dataZoom: look.spark ? [] : [
@@ -95,9 +122,8 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
       nameLocation: 'middle',
       nameGap: 28,
       boundaryGap: chart.kind === 'bar',
-      axisLabel: { color: muted, interval: labelInterval(chart.labels, look.width) },
-      axisLine: { lineStyle: { color: line } },
-      axisTick: { alignWithLabel: true, lineStyle: { color: line } },
+      axisLabel: { interval: labelInterval(chart.labels, look.width) },
+      axisTick: { alignWithLabel: true },
     },
     yAxis: {
       type: 'value',
@@ -105,8 +131,6 @@ export function chartOption(chart: Pick<Chart, 'title' | 'kind' | 'x_label' | 'y
       max: hi,
       show: !look.spark,
       name: look.spark ? '' : chart.y_label,
-      axisLabel: { color: muted },
-      splitLine: { lineStyle: { color: token('hairline', '#e6e7ec') } },
     },
     series: chart.series.map((s, i) => chart.kind === 'bar' && i === 0
       ? { type: 'bar', name: s.name, data: s.values, barMaxWidth: 48, emphasis: { disabled: true } }
@@ -245,7 +269,6 @@ function specOption(options: EChartsOption, look: ChartLook): EChartsOption {
     legend: smallPie ? legends.map((legend) => ({ ...legend, type: 'scroll', orient: 'horizontal', left: 8, right: 8, top: 'auto', bottom: 0, width: 'auto', height: 'auto' }))
       : topLegend ? { ...legends[0], type: 'scroll', ...(legendText && { left: 'center', width: legendWidth, itemGap: 24, textStyle: { ...legends[0].textStyle, width: legendText, overflow: 'truncate' } }) } : option.legend,
     animation: false,
-    textStyle: { fontFamily: 'Figtree Variable, system-ui, sans-serif', color: token('body', '#494b53'), ...option.textStyle },
     tooltip: { ...(Array.isArray(option.tooltip) ? option.tooltip[0] : option.tooltip), renderMode: 'richText', confine: true },
     series: series.map((s) => s.type === 'graph' || s.type === 'tree' || s.type === 'treemap'
       ? { ...s, animation: false, roam: s.roam ?? true }
