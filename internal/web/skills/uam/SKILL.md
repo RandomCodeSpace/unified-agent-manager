@@ -27,6 +27,8 @@ and conventions below instead.
   Files written by shell commands, or changed by another Task, show only
   under **All changes**, the whole working tree against `HEAD`.
 
+When uam attaches a `uam trail:` note, another running Task recently edited that file; re-read it before relying on its contents.
+
 ## What the owner sees
 
 - **Each turn folds into one line** such as "Took 1m 2s · 3 commands ·

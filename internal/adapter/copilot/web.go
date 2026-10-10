@@ -100,6 +100,8 @@ type sdkSession interface {
 	// SetName names the session through the experimental session.name.set,
 	// which also stops the CLI from naming it.
 	SetName(ctx context.Context, name string) error
+	// Log persists a notification in the provider timeline.
+	Log(ctx context.Context, text string) error
 	// ListCommands lists the session's built-in commands and skills.
 	ListCommands(ctx context.Context) ([]rpc.SlashCommandInfo, error)
 	// InvokeCommand resolves a command; it starts no turn.
@@ -290,6 +292,10 @@ func (a sdkSessionAdapter) SendAndWait(ctx context.Context, msg copilot.MessageO
 		return d.Content, nil
 	}
 	return "", nil
+}
+
+func (a sdkSessionAdapter) Log(ctx context.Context, text string) error {
+	return a.s.Log(ctx, text, &copilot.LogOptions{Ephemeral: copilot.Bool(false)})
 }
 
 func (a sdkSessionAdapter) SetName(ctx context.Context, name string) error {
@@ -916,7 +922,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c := &conversation{
-		p: p, client: client, id: req.ConversationID, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		p: p, client: client, id: req.ConversationID, sink: req.Events, hooks: req.Hooks, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
@@ -1792,6 +1798,7 @@ type conversation struct {
 	sess   sdkSession
 	id     string
 	sink   agentapi.EventSink
+	hooks  agentapi.ToolHooks
 
 	mu        sync.Mutex
 	closed    bool

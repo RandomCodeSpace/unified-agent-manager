@@ -553,6 +553,22 @@ type Usage struct {
 	AIUnits float64 `json:"ai_units"`
 }
 
+// ToolUse is a provider tool call before execution. Providers normalize raw
+// patch strings to Args["patch"].
+type ToolUse struct {
+	Tool    string
+	Args    map[string]any
+	Workdir string
+}
+
+// ToolVerdict adds host context without changing the tool call.
+type ToolVerdict struct{ Context string }
+
+// ToolHooks binds provider hook calls to their owning Task.
+type ToolHooks struct {
+	Pre func(context.Context, ToolUse) ToolVerdict
+}
+
 // OpenRequest identifies the managed session and its project.
 type OpenRequest struct {
 	// SessionID is the uam managed-session ID (a UUID).
@@ -581,6 +597,8 @@ type OpenRequest struct {
 	// ValidateFile checks a declaration candidate without granting access or
 	// reading file bytes, and returns its normalized absolute display path.
 	ValidateFile func(context.Context, string) (string, error)
+	// Hooks run host policy for this Task, including calls by its subagents.
+	Hooks ToolHooks
 	// Tools are the web service's host tools, registered beside the
 	// adapter's own when Capabilities.HostTools is set. CallTool, bound to
 	// this Task by the web service, runs each of their calls.
