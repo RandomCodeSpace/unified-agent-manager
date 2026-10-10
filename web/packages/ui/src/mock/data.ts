@@ -760,8 +760,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       created_at: ago(24),
       updated_at: ago(1),
       turn_timings: [
-        { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed', input_tokens: 23400, output_tokens: 940, generation_ms: 18800 },
-        { id: 'tt-2', user_item_id: 'u2', started_at: ago(14), ended_at: ago(13.5), state: 'completed' },
+        { id: 'tt-1', user_item_id: 'i1', started_at: ago(24), ended_at: ago(15), state: 'completed', model: 'gpt-6-luna', input_tokens: 23400, output_tokens: 940, cache_read_tokens: 18000, calls: 2, nano_aiu: 29243500, premium_cost: 2, generation_ms: 18800 },
+        { id: 'tt-2', user_item_id: 'u2', started_at: ago(14), ended_at: ago(13.5), state: 'completed', model: 'ollama/deepseek-v4.1-flash', input_tokens: 1600, output_tokens: 80, cache_read_tokens: 800, calls: 1, generation_ms: 2400 },
         { id: 'tt-3', user_item_id: 'u3', started_at: ago(12), state: 'working', input_tokens: 31200, output_tokens: 610, generation_ms: 9400 },
       ],
       items: (() => {

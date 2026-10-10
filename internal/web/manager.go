@@ -2399,15 +2399,15 @@ func validModelSelectionID(value string, limit int) bool {
 
 func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	s.invalidateNativeDiff()
+	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
+		s.lastModel = model
+	}
 	m.turnActivityTurnLocked(s, turn.State)
 	finalizedTiming := m.observeTurnTimingLocked(s, turn.State)
 	if turn.State != agentapi.TurnWorking {
 		m.kickDiffLocked(s) // the turn may have changed files without an edit tool
 	}
 	m.outcomeTurnLocked(s, turn.State, turn.Completion)
-	if model := clipRunes(strings.TrimSpace(displaytext.Sanitize(turn.Model)), maxNameRunes); model != "" {
-		s.lastModel = model
-	}
 	switch turn.State {
 	case agentapi.TurnWorking:
 		s.setBase(StateWorking, "")

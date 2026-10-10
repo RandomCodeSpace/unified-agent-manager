@@ -253,6 +253,8 @@ type TokenUsage struct {
 	Input, Output, CacheRead, CacheWrite int64
 	// DurationMS is the model call's own duration when the provider reports it.
 	DurationMS int64
+	NanoAIU    int64
+	Cost       float64
 }
 
 // UsageSessionRecorder lets the host persist ownership of provider sessions
