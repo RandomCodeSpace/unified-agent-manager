@@ -35,6 +35,15 @@ test('a judged-done Task leaves the active list for Done, newest judgement first
   assert.deepEqual(g.settled.map((t) => t.id), ['f']);
 });
 
+test('Settled lists the newest settled first; records without a settled time go last', () => {
+  const list = [
+    s('a', 'p1', '1', { stage: 'settled' }),
+    s('b', 'p1', '2', { stage: 'settled', settled_at: '2026-10-08T10:00:00Z' }),
+    s('c', 'p1', '3', { stage: 'settled', settled_at: '2026-10-09T10:00:00Z' }),
+  ];
+  assert.deepEqual(groupTasks(list).settled.map((t) => t.id), ['c', 'b', 'a']);
+});
+
 test('the project filter shows one project while it exists, else every project', () => {
   assert.deepEqual(visibleProjects([p1, p2], null), [p1, p2]);
   assert.deepEqual(visibleProjects([p1, p2], 'p2'), [p2]);

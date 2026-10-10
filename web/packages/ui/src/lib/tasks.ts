@@ -151,7 +151,8 @@ export function groupTasks(tasks: SessionSummary[]) {
   return {
     active: tasks.filter((t) => !readOnly(t) && !isDone(t)),
     done: tasks.filter(isDone).sort((a, b) => b.done_at!.localeCompare(a.done_at!)),
-    settled: tasks.filter((t) => t.stage === 'settled'),
+    // Newest settled first; older records without `settled_at` last, in the given order.
+    settled: tasks.filter((t) => t.stage === 'settled').sort((a, b) => (b.settled_at ?? '').localeCompare(a.settled_at ?? '')),
     archived: tasks.filter((t) => t.stage === 'archived'),
   };
 }
