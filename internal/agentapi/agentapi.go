@@ -553,20 +553,25 @@ type Usage struct {
 	AIUnits float64 `json:"ai_units"`
 }
 
-// ToolUse is a provider tool call before execution. Providers normalize raw
+// ToolUse identifies a provider tool call for pre-execution or failure hooks.
+// Providers normalize raw
 // patch strings to Args["patch"].
 type ToolUse struct {
-	Tool    string
-	Args    map[string]any
-	Workdir string
+	// PermissionKind comes from verified provider metadata or a permission request.
+	PermissionKind string
+	Tool           string
+	Args           map[string]any
+	Workdir        string
 }
 
-// ToolVerdict adds host context without changing the tool call.
-type ToolVerdict struct{ Context string }
+// ToolVerdict adds host context or refuses a tool call before execution.
+type ToolVerdict struct{ Context, Deny string }
 
 // ToolHooks binds provider hook calls to their owning Task.
 type ToolHooks struct {
 	Pre func(context.Context, ToolUse) ToolVerdict
+	// Failed also receives native automatic permission denials, with PermissionKind.
+	Failed func(context.Context, ToolUse, string) string
 }
 
 // OpenRequest identifies the managed session and its project.

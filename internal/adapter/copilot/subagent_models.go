@@ -45,8 +45,8 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 		if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
 			args = map[string]any{"patch": patch}
 		}
-		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory})
-		if verdict.Context != "" {
+		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)})
+		if verdict.Context != "" || verdict.Deny != "" {
 			if strings.HasPrefix(verdict.Context, "uam trail:") {
 				// SDK hook context reaches the model but is not in hook.end.
 				// A durable SDK notification uses the existing notice mapper.
@@ -57,7 +57,11 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 					log.Warn("persist trail notice failed", "session", c.id, "error", err)
 				}
 			}
-			return &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}, nil
+			out := &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}
+			if verdict.Deny != "" {
+				out.PermissionDecision, out.PermissionDecisionReason = "deny", verdict.Deny
+			}
+			return out, nil
 		}
 	}
 	allowed := c.p.subagentModels()
@@ -98,4 +102,20 @@ func (p *webProvider) subagentModel(allowed []string, requested, task string) st
 		}
 	}
 	return ""
+}
+
+// failedToolUse receives native execution failures, including subagent calls.
+func (c *conversation) failedToolUse(in copilot.PostToolUseFailureHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseFailureHookOutput, error) {
+	if c.hooks.Failed == nil {
+		return nil, nil
+	}
+	args, _ := in.ToolArgs.(map[string]any)
+	if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
+		args = map[string]any{"patch": patch}
+	}
+	note := c.hooks.Failed(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)}, in.Error)
+	if note == "" {
+		return nil, nil
+	}
+	return &copilot.PostToolUseFailureHookOutput{AdditionalContext: note}, nil
 }

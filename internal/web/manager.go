@@ -452,6 +452,9 @@ type webSession struct {
 	// changes, and such a Task does not get uam_create_task either.
 	routineID string
 
+	// fuses are transient Task-local refusals shared with subagents.
+	fuses map[fuseKey]*fuseEntry
+
 	// edits maps each file the Task's edit tools touched, as the tool gave
 	// its path, to when it was last touched, and turnStart is when the
 	// latest ordinary prompt to the main agent began (task_changes.go).
@@ -2829,6 +2832,9 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
 	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
+	req.Hooks.Failed = func(ctx context.Context, use agentapi.ToolUse, failure string) string {
+		return m.failedToolUse(ctx, s, use, failure)
+	}
 	req.SkillDirectories = m.skillDirs
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100
@@ -3943,6 +3949,7 @@ func (m *Manager) disconnectLocked(s *webSession) agentapi.Conversation {
 	m.endSubagentsLocked(s)
 	m.forgetBackgroundTaskStateLocked(s)
 	m.pauseQueueLocked(s)
+	s.fuses = nil
 	s.setBase(StateClosed, "")
 	m.releaseClosedHistoryLocked(s)
 	return conv
@@ -4357,6 +4364,9 @@ func (m *Manager) respond(s *webSession, ix *interaction, conv agentapi.Conversa
 	}
 	switch {
 	case err == nil:
+		if ix.Kind == agentapi.InteractionPermission && answer.Decision == "approve_session" {
+			s.fuses = nil
+		}
 		if ix.State == agentapi.InteractionPending {
 			ix.State, ix.Resolution = resolution(ix.Interaction, answer)
 			ix.Plan = clampPlanReview(ix.Plan, false)
@@ -4537,6 +4547,9 @@ func (m *Manager) setMode(id, mode string, opHeld bool) (SessionSummary, error) 
 		return SessionSummary{}, err
 	}
 	before := m.summaryLocked(s)
+	if s.mode != md {
+		s.fuses = nil
+	}
 	s.mode = md
 	m.autoAllowPendingLocked(s)
 	m.changedLocked(s, before)
@@ -4590,6 +4603,9 @@ func (m *Manager) setAssistedMode(s *webSession, md store.Mode) (SessionSummary,
 		return SessionSummary{}, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	before := m.summaryLocked(s)
+	if s.mode != md || s.modeUnknown {
+		s.fuses = nil
+	}
 	s.mode, s.modeUnknown = md, false
 	m.autoAllowPendingLocked(s)
 	m.changedLocked(s, before)
@@ -4635,6 +4651,9 @@ func (m *Manager) assistedModeFailed(s *webSession, conv agentapi.Conversation, 
 			// it off: Safe, never Yolo, is what the runtime then does.
 			s.mode = store.ModeSafe
 		}
+	}
+	if string(s.mode) != before.Mode {
+		s.fuses = nil
 	}
 	m.autoAllowPendingLocked(s)
 	m.changedLocked(s, before)

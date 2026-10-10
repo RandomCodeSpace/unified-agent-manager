@@ -60,6 +60,8 @@ type toolGate struct {
 	session    string
 	ready      bool
 	closed     bool
+
+	permissionKinds map[string]string // verified MCP names; invalidated with ready
 	// changes counts the tool list changes seen. A proof holds only if none
 	// came while it ran. One seen before it started is part of what it
 	// reads: the CLI lists the server's tools again when the server reports
@@ -442,6 +444,12 @@ func (d *toolGate) catalog(ctx context.Context, session sdkSession, originals ..
 	if d.closed || d.changes != changes || ctx.Err() != nil {
 		return errors.New("declaration catalog observation was invalidated")
 	}
+	d.permissionKinds = make(map[string]string)
+	for _, tool := range after {
+		if tool.MCPServerName != nil && tool.MCPToolName != nil {
+			d.permissionKinds[tool.Name] = "mcp"
+		}
+	}
 	d.session, d.ready = session.ID(), true
 	return nil
 }
@@ -499,4 +507,17 @@ func (d *toolGate) stop() {
 	d.closed, d.ready = true, false
 	d.mu.Unlock()
 	d.stopCancel()
+}
+
+// permissionKind uses only the catalog already proved for this session.
+func (d *toolGate) permissionKind(name string) string {
+	if d == nil {
+		return ""
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.ready || d.closed {
+		return ""
+	}
+	return d.permissionKinds[name]
 }

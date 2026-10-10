@@ -29,6 +29,8 @@ and conventions below instead.
 
 When uam attaches a `uam trail:` note, another running Task recently edited that file; re-read it before relying on its contents.
 
+When uam reports repeated permission denials or a refused fetch with a reopening time, stop retrying that kind of action or URL segment; continue work that does not need it.
+
 ## What the owner sees
 
 - **Each turn folds into one line** such as "Took 1m 2s · 3 commands ·
