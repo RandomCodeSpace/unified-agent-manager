@@ -182,13 +182,13 @@ describe('MCP servers', () => {
     await user.click(section.getByRole('button', { name: 'Add server' }));
     expect(section.getByRole('radio', { name: 'Command' })).toBeTruthy();
     await user.click(section.getByRole('button', { name: 'Cancel' }));
-    await user.click(screen.getByRole('button', { name: 'General', exact: true }));
+    await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
     await user.click(screen.getByRole('switch', { name: 'Terminal' }));
     await waitFor(() => expect((screen.getByRole('switch', { name: 'Terminal' }) as HTMLElement).getAttribute('aria-checked')).toBe('false'));
     await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
     await user.click(section.getByRole('button', { name: 'Add server' }));
     expect(section.queryByRole('radio', { name: 'Command' })).toBeNull();
-    expect(section.getByText(/needs Settings → Shell access → Terminal on/)).toBeTruthy();
+    expect(section.getByText(/needs Settings → UAM and access → Terminal on/)).toBeTruthy();
     await user.type(section.getByRole('textbox', { name: 'Name' }), 'notes');
     await user.type(section.getByRole('textbox', { name: 'Address' }), 'https://notes.example.com/mcp');
     await user.click(section.getByRole('button', { name: 'Add server' }));

@@ -83,6 +83,7 @@ describe('settings help', () => {
 
   test('settings rows and sections expose help beside labels while service warnings remain visible', async () => {
     const { user } = renderApp('#settings');
+    await user.click(await screen.findByRole('button', { name: 'Composer', exact: true }));
     const help = await screen.findByRole('button', { name: 'About Suggest replies' });
     const composer = within(screen.getByRole('region', { name: 'Composer' }));
     const toggle = composer.getByRole('switch', { name: 'Suggest replies' });
@@ -93,14 +94,15 @@ describe('settings help', () => {
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(tooltip()).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'Background AI', exact: true }));
     const background = within(screen.getByRole('region', { name: 'Background AI' }));
     expect((await background.findByRole('status')).textContent).toMatch(/^Background AI is paused/);
     expect(background.getByRole('button', { name: 'About Background AI' })).toBeTruthy();
     const limit = background.getByRole('spinbutton', { name: 'Daily limit (calls)' });
     expect(document.getElementById(limit.getAttribute('aria-describedby')!)?.className).toBe('sr-only');
-    await user.click(screen.getByRole('button', { name: 'Providers', exact: true }));
-    const providers = within(screen.getByRole('region', { name: 'Providers', exact: true }));
-    expect(providers.getByRole('button', { name: 'About Providers' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Custom providers', exact: true }));
+    const providers = within(screen.getByRole('region', { name: 'Custom providers', exact: true }));
+    expect(providers.getByRole('button', { name: 'About Custom providers' })).toBeTruthy();
     expect(providers.getByText("UAM_BYOM_OPENROUTER is not set in the service's environment").classList.contains('sr-only')).toBe(false);
   });
 });

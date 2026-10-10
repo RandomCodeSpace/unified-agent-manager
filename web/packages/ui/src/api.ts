@@ -1583,7 +1583,7 @@ export interface McpServer {
 
 export interface McpServers {
   available: boolean;
-  /** Settings → Shell access → Terminal: a server that runs a command can be added or edited only while it is on. */
+  /** Settings → UAM and access → Terminal: a server that runs a command can be added or edited only while it is on. */
   stdio_allowed: boolean;
   servers: McpServer[];
 }

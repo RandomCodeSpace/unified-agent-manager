@@ -12,6 +12,7 @@ async function backgroundAI() {
     if (url.pathname === '/api/utility') reads.push(url.searchParams.get('limit') ?? '');
     return mocked(input, init);
   };
+  await rendered.user.click(await screen.findByRole('button', { name: 'Background AI', exact: true }));
   const card = await waitFor(() => {
     const found = screen.getByRole('region', { name: 'Background AI' });
     within(found).getByRole('meter', { name: 'Background AI calls today' });

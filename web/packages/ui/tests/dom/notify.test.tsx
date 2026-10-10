@@ -24,8 +24,8 @@ function fakeNotifications(answer: NotificationPermission) {
 
 async function notifySwitch() {
   const { user } = renderApp('#settings');
-  await user.click(await screen.findByRole('button', { name: 'This browser', exact: true }));
-  const card = within(await screen.findByRole('region', { name: 'This browser' }));
+  await user.click(await screen.findByRole('button', { name: 'Appearance & alerts', exact: true }));
+  const card = within(await screen.findByRole('region', { name: 'Appearance & alerts' }));
   return { card, toggle: card.getByRole('switch', { name: 'Notify me when a task needs me or finishes' }) };
 }
 

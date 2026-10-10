@@ -39,7 +39,7 @@ export const TYPE_LABEL: Record<string, string> = { stdio: 'Command', http: 'HTT
 const SOURCE_LABEL: Record<string, string> = { plugin: 'From a plugin', builtin: 'Built in', managed: 'Managed' };
 /** The card groups: the servers configured here first, then each read-only source. */
 const GROUP_LABEL: Record<string, string> = { user: 'Global', ...SOURCE_LABEL };
-export const STDIO_OFF = 'A server that runs a command runs it on this machine for anyone signed in, so adding or editing one needs Settings → Shell access → Terminal on.';
+export const STDIO_OFF = 'A server that runs a command runs it on this machine for anyone signed in, so adding or editing one needs Settings → UAM and access → Terminal on.';
 /** Copilot's built-in GitHub MCP server: UAM's own setting (`Settings.github_mcp`) turns it on or off for tasks. */
 const GITHUB_MCP = 'github-mcp-server';
 const GITHUB_MCP_HELP = "UAM's own switch, not shared with the copilot command. Off by default: starting it takes about a second each time a task opens, and a message sent meanwhile waits. A change reaches open tasks too.";
@@ -207,7 +207,7 @@ function ServerDetail({ s }: Readonly<{ s: McpServer }>) {
  * Adding or editing a server that runs a command needs Terminal on (the service checks too).
  * The built-in GitHub server's switch is UAM's own setting instead, offered when the instance has it.
  */
-export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Settings → Shell access → Terminal as saved now; the list's own copy is from its last read. */ terminal: boolean; githubMcp?: GithubMcpSetting }>) {
+export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Settings → UAM and access → Terminal as saved now; the list's own copy is from its last read. */ terminal: boolean; githubMcp?: GithubMcpSetting }>) {
   const api = useApi();
   const [data, setData] = useState<McpServers | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

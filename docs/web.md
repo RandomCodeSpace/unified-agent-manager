@@ -1259,8 +1259,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "unlimited", "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
   [newest first], "next"}`; pass `next` as `?before=` for the following
   page, and `?limit=` (1 to 200, default 200) to size it.
-- **Custom models (bring your own model)**: Settings → Models → Custom
-  models adds OpenAI-compatible endpoints to Copilot's model list, next to
+- **Custom models (bring your own model)**: Settings → Custom providers
+  adds OpenAI-compatible endpoints to Copilot's model list, next to
   the account's own models, so a Task can switch between them mid-Task in
   the composer's model menu. Each entry has a provider name (letters,
   digits, `.`, `_`, `-`), a base URL (`http` or `https`, no credentials,
@@ -1922,9 +1922,9 @@ resolves the path of its binary once, when it starts (symlinks followed), and
 looks at that file every 30 seconds and when Settings opens: when its size,
 modification time or inode changed, it runs `<binary> version` (10 second
 limit, only `PATH` in the environment). A version other than the running one
-shows in Settings → General → **UAM** as "UAM <installed> is installed
-(running <running>)" with **Restart**, and the Settings gear and the General
-tab carry an amber dot. A binary that is missing or whose `version` fails
+shows in Settings → UAM and access → **UAM** as "UAM <installed> is installed
+(running <running>)" with **Restart**, and the Settings gear and the UAM and access
+page carry an amber dot. A binary that is missing or whose `version` fails
 shows the reason instead, and offers no restart. Nothing restarts until
 **Restart** is chosen.
 
@@ -2138,7 +2138,7 @@ Lifetime means all recorded usage, not a provider account's complete history.
 The popover distinguishes collection failures from zero usage. Prompt-length
 estimates are excluded. The open popover refreshes every 15 seconds.
 
-Settings → Models → Token costs lets you set prices for a model, including
+Settings → Token costs lets you set prices for a model, including
 models missing from the bundled catalog. Prices are USD per million tokens.
 Input and Output are required; Cache read and Cache write are optional. An
 absent cache price uses the Input rate; an explicit zero is free. Removing a

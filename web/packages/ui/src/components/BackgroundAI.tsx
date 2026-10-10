@@ -57,9 +57,11 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
  */
-export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLimit, onSaveUnlimited }: Readonly<{ limitSetting?: number; unlimited?: boolean; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSaveUnlimited: (on: boolean) => Promise<void> }>) {
+export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLimit, onSaveUnlimited, onPaused }: Readonly<{ limitSetting?: number; unlimited?: boolean; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSaveUnlimited: (on: boolean) => Promise<void>; /** Today's calls are paused at the limit, as last read (Settings marks the page). */ onPaused?: (paused: boolean) => void }>) {
   const api = useApi();
   const [log, setLog] = useState<UtilityLog | null>(null);
+  const paused = !!log?.today.paused;
+  useEffect(() => onPaused?.(paused), [paused, onPaused]);
   const [calls, setCalls] = useState<UtilityCall[]>([]);
   const [next, setNext] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);

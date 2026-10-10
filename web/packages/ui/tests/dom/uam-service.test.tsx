@@ -5,8 +5,10 @@ import { renderApp } from './render';
 
 const NOTICE = 'UAM v0.16.0 installed; restart to run it';
 
-/** The Version group of Settings → General → UAM. */
+/** The Version group of Settings → UAM and access → UAM. */
 async function card() {
+  const page = await screen.findByRole('button', { name: 'UAM and access', exact: true });
+  if (page.getAttribute('aria-current') !== 'page') page.click();
   const region = within(await screen.findByRole('region', { name: 'UAM' }));
   return within(await region.findByRole('group', { name: 'Version' }));
 }
@@ -24,14 +26,14 @@ describe('UAM version and restart', () => {
     expect(group.getByText('The installed version is running.')).toBeTruthy();
     expect(group.queryByRole('button', { name: 'Restart' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'General', description: 'Restart available' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'UAM and access', description: 'Restart available' })).toBeNull();
   });
 
-  test('a newer version installed puts a dot on Settings and General, names both versions and offers Restart', async () => {
+  test('a newer version installed puts a dot on Settings and UAM and access, names both versions and offers Restart', async () => {
     const { user } = renderApp('?uam=installed#settings');
     const settings = await screen.findByRole('button', { name: 'Settings', description: NOTICE });
     expect(settings.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
-    const tab = screen.getByRole('button', { name: 'General', description: 'Restart available' });
+    const tab = screen.getByRole('button', { name: 'UAM and access', description: 'Restart available' });
     expect(tab.querySelector('.bg-warning[aria-hidden="true"]')).toBeTruthy();
     const group = await card();
     expect(await group.findByText('UAM v0.16.0 is installed (running dev-mock).')).toBeTruthy();

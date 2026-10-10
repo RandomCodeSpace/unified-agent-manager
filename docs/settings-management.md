@@ -1,19 +1,29 @@
 # Configure agents, skills, hooks, and instructions
 
-Open **Settings** and choose the section for what you want to change.
+Open **Settings** and choose a page in the rail on the left, or type in
+**Find a setting** to list the pages that hold those words.
 Field and setting descriptions are available from the info icon beside their
 labels. Hover, focus, or tap the icon to read the help. Errors and reasons an
 action is unavailable stay visible.
 
-General contains task defaults and shell access. Models contains model
-visibility and Utility-model selection. Providers contains Copilot sign-in
-and custom model endpoint setup. MCP servers and this browser's preferences have their own sections.
+The pages are grouped. **Tasks** holds New tasks (task defaults), Composer
+and Archived. **Models & AI** holds Models (visibility and subagent models),
+Background AI (the Utility model and its daily limit) and Token costs.
+**Accounts** holds GitHub Copilot (sign-in and CLI updates) and Custom
+providers (your own endpoints). **Agent toolkit** holds Agents, Skills,
+Hooks, Instructions and MCP servers. **Server** holds UAM and access (the
+version, Terminal and Log out) and Connected instances. **This browser**
+holds Appearance & alerts. A dot on a page means something there needs you,
+such as a missing API key or a paused Background AI. On a phone the rail is
+a list showing each page's current values; tap a page to open it.
 
 ## Choose the scope
 
 Agents, Skills, Hooks, and Instructions edit native Copilot configuration
 on the machine running UAM. Choose **Global** for the service user's
 configuration or select a registered project for that project's files.
+The four pages share one scope: changing it on one changes it on the others.
+It cannot change while one of them has an unsaved form open.
 Global changes can also affect Copilot sessions started outside UAM under
 the same user account.
 
@@ -38,7 +48,7 @@ under `COPILOT_HOME`, or `~/.copilot` when that variable is unset.
   use (`disable-model-invocation`) and manual use (`user-invocable`). Editing requires Terminal because skill metadata
   can grant tool permissions.
 - **Hooks:** configure actions for Copilot lifecycle events. Command hooks
-  run on the service host. Turn on **General → Shell access → Terminal**
+  run on the service host. Turn on **UAM and access → Shell access → Terminal**
   before changing executable configuration.
 - **Instructions:** edit `AGENTS.md` at the project root or the project’s
   `.github/copilot-instructions.md`. Global edits
