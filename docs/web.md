@@ -1590,11 +1590,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   without group headings. Each row's status line says whether it needs
   input, is ready for review, is running, or is idle. Tasks needing attention
   come first, followed by review, running, and idle Tasks. Collapsible
-  "Done" and "Settled" sections remain at the foot of the list; archived
-  Tasks are listed in Settings → Archived.
+  "Done" and "Settled" sections sit at the foot of the sidebar, under the
+  Task list, which scrolls on its own; archived Tasks are listed in
+  Settings → Archived. One of Done and Settled is open at a time: opening
+  one closes the other. An open section's rows scroll on their own within
+  40% of the screen height, so the Task list always keeps the rest.
   Done lists the active Tasks the service judged done, read or not, newest
-  first: the newest eight, then **Show all**. A new turn takes a Task back
-  to the list; once you have reviewed it the service settles it.
+  first: the newest ten, then **Show all**. A new turn takes a Task back
+  to the list; once you have reviewed it the service settles it. Settled
+  lists the newest settled first, also ten until **Show all**.
 
   "Opened since" is tracked per browser: a Task you never opened in this
   browser counts as unread once it changes after your first visit. The open

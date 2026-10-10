@@ -16,16 +16,15 @@ afterEach(() => vi.restoreAllMocks());
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
 describe('sidebar shelves', () => {
-  test('the pinned section headers sit flush with the foot of the list, past its bottom padding', async () => {
+  test('Done and Settled sit under the Task list\'s scroller; an open section scrolls on its own within 40% of the screen', async () => {
     renderApp();
     const side = await sidebar();
-    const settled = side.getByRole('button', { name: /^Settled/ });
-    const done = side.getByRole('button', { name: /^Done/ });
-    // The scroller's 12px bottom padding insets the sticky edge; the headers reach past it, so no row shows under them.
-    expect(settled.parentElement!.parentElement!.className).toContain('pb-3');
-    expect(settled.className).toContain('-bottom-3');
-    expect(done.className).toContain('bottom-4');
-    expect(done.className).toContain('pointer-coarse:bottom-8');
+    const tasks = document.querySelector('ul[aria-label="Unsettled tasks"]')!.parentElement!;
+    expect(tasks.className).toContain('overflow-y-auto');
+    for (const header of [side.getByRole('button', { name: /^Done/ }), side.getByRole('button', { name: /^Settled/ })]) expect(tasks.contains(header)).toBe(false);
+    const rows = document.querySelector('nav[aria-label="Tasks"] [data-task-row="d1"]')!.closest('ul')!.parentElement!;
+    expect(rows.className).toContain('overflow-y-auto');
+    expect(rows.className).toContain('max-h-[40dvh]');
   });
 });
 
