@@ -15,6 +15,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
 const (
@@ -22,6 +23,9 @@ const (
 	maxTokenBytes   = 1024
 	webAuthTimeout  = 10 * time.Second
 	webLoginTimeout = 30 * time.Second
+	// signInRecheck is how soon a signed-out CLI may be restarted again to
+	// look for a sign-in made outside UAM.
+	signInRecheck = 3 * time.Second
 )
 
 // tokenEnvVars are the environment variables the CLI reads a token from, in
@@ -84,12 +88,40 @@ func (p *webProvider) signedOut(ctx context.Context) bool {
 }
 
 // Account reads the CLI's sign-in. No credential leaves this function.
+// A running CLI reads its sign-in only when it starts, so while it says it is
+// signed out and no conversation is open it is restarted and read again: a
+// copilot login run on the server then shows without restarting UAM.
 func (p *webProvider) Account(ctx context.Context) (agentapi.Account, error) {
+	acct, err := p.readAccount(ctx)
+	if err != nil || acct.SignedIn || acct.EnvVar != "" || !p.recheckSignIn() {
+		return acct, err
+	}
+	if err := p.restartClient(ctx); err != nil {
+		log.Warn("restart signed-out copilot CLI failed", "error", err)
+		return acct, nil
+	}
+	p.signInChanged()
+	return p.readAccount(ctx)
+}
+
+func (p *webProvider) readAccount(ctx context.Context) (agentapi.Account, error) {
 	ac, err := p.accountClient(ctx)
 	if err != nil {
 		return agentapi.Account{}, err
 	}
 	return readAccount(ctx, ac)
+}
+
+// recheckSignIn reports whether a signed-out CLI may be restarted now: none
+// was in the last signInRecheck and no conversation is open.
+func (p *webProvider) recheckSignIn() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.convs) > 0 || time.Since(p.signInChecked) < signInRecheck {
+		return false
+	}
+	p.signInChecked = time.Now()
+	return true
 }
 
 func readAccount(ctx context.Context, ac accountClient) (agentapi.Account, error) {

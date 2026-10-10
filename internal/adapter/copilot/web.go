@@ -364,6 +364,9 @@ type webProvider struct {
 	// the utility prompts running, which it waits for too.
 	outdated  bool
 	utilities int
+	// signInChecked is when a signed-out CLI was last restarted to look
+	// for a sign-in made outside UAM (Account).
+	signInChecked time.Time
 
 	// Guarded by mu; invoked outside the lock before a session can send.
 	usageSessionRecorder func(string, bool) error

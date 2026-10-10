@@ -2,8 +2,11 @@ package copilot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +51,53 @@ func TestDeviceSignInShowsTheCodeAndRestartsTheCLI(t *testing.T) {
 	fc.mu.Lock()
 	started, stopped := fc.started, fc.stopped
 	fc.mu.Unlock()
-	if started != 2 || stopped != 1 {
+	// The signed-out read restarted the CLI once already.
+	if started != 3 || stopped != 2 {
 		t.Fatalf("CLI started %d, stopped %d times; want a restart", started, stopped)
+	}
+}
+
+func TestDeviceSignInWithoutAKeychainStoresInPlaintextAfterASecondCode(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"model": "gpt-6-luna"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, fc := accountProvider(t, map[string]string{"COPILOT_HOME": home})
+	// The first run is approved but cannot store the token; the second stores it.
+	fakeLogin(t, devicePromptScript+`if grep -q storeTokenPlaintext "$COPILOT_SETTINGS"; then echo "Signed in successfully as octo."; else echo "Login succeeded, but the token was not saved. Install a system keychain or rerun login and accept plaintext storage." >&2; exit 1; fi`)
+	t.Setenv("COPILOT_SETTINGS", filepath.Join(home, "settings.json"))
+	fc.status = copilot.GetAuthStatusResponse{IsAuthenticated: true, AuthType: copilot.String("user"), Login: copilot.String("octo"), Host: copilot.String(githubHost)}
+	var shown []agentapi.DeviceCode
+	acct, err := p.DeviceSignIn(context.Background(), func(c agentapi.DeviceCode) { shown = append(shown, c) })
+	if err != nil || !acct.SignedIn {
+		t.Fatalf("DeviceSignIn = %+v, %v", acct, err)
+	}
+	if len(shown) != 2 || shown[0].Notice != "" || shown[1].Notice != noKeychainNotice {
+		t.Fatalf("shown = %+v", shown)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if json.Unmarshal(data, &settings) != nil || settings["storeTokenPlaintext"] != true || settings["model"] != "gpt-6-luna" {
+		t.Fatalf("settings.json = %s", data)
+	}
+	if info, err := os.Stat(filepath.Join(home, "settings.json")); err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("settings.json mode = %v, %v", info.Mode(), err)
+	}
+}
+
+func TestDeviceSignInWithoutAKeychainAndUnreadableSettingsSaysWhatToSet(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte("// a comment\n{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := accountProvider(t, map[string]string{"COPILOT_HOME": home})
+	runs := fakeLogin(t, devicePromptScript+`echo "Login succeeded, but the token was not saved." >&2; exit 1`)
+	_, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) {})
+	if !errors.Is(err, agentapi.ErrSignInRejected) || !strings.Contains(err.Error(), "is not plain JSON") || !strings.Contains(err.Error(), `"storeTokenPlaintext": true`) || *runs != 1 {
+		t.Fatalf("DeviceSignIn error = %v after %d runs", err, *runs)
 	}
 }
 

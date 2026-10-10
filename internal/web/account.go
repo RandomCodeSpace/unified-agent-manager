@@ -286,11 +286,13 @@ const (
 const deviceCodeWait = 30 * time.Second
 
 // DeviceSignIn is a device sign-in's state. URL and Code are set while it
-// waits for the person to approve; Account once signed in; Error once failed.
+// waits for the person to approve, with Notice when a second approval is
+// needed; Account once signed in; Error once failed.
 type DeviceSignIn struct {
 	State   string       `json:"state"`
 	URL     string       `json:"verification_uri,omitempty"`
 	Code    string       `json:"user_code,omitempty"`
+	Notice  string       `json:"notice,omitempty"`
 	Error   string       `json:"error,omitempty"`
 	Account *AccountView `json:"account,omitempty"`
 }
@@ -358,8 +360,8 @@ func (m *Manager) runDeviceSignIn(ctx context.Context, p agentapi.Provider, dm a
 	defer d.cancel()
 	acct, err := dm.DeviceSignIn(ctx, func(c agentapi.DeviceCode) {
 		m.devices.mu.Lock()
-		if d.State == deviceStarting {
-			d.State, d.URL, d.Code = deviceWaiting, c.URL, c.Code
+		if d.live() {
+			d.State, d.URL, d.Code, d.Notice = deviceWaiting, c.URL, c.Code, c.Notice
 		}
 		m.devices.mu.Unlock()
 		d.once.Do(func() { close(d.ready) })
@@ -383,7 +385,7 @@ func (m *Manager) runDeviceSignIn(ctx context.Context, p agentapi.Provider, dm a
 		_, msg := errorStatus(d.err)
 		d.State, d.Error = deviceFailed, msg
 	}
-	d.URL, d.Code = "", ""
+	d.URL, d.Code, d.Notice = "", "", ""
 	m.devices.mu.Unlock()
 	d.once.Do(func() { close(d.ready) })
 }

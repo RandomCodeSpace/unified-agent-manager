@@ -140,3 +140,46 @@ func TestSignOutRemovesOnlyAStoredSignIn(t *testing.T) {
 		t.Fatalf("logout request = %#v", fc.logouts[0].AuthInfo)
 	}
 }
+
+func TestAccountRestartsASignedOutCLIToFindALoginMadeElsewhere(t *testing.T) {
+	p, fc := accountProvider(t, nil)
+	started := func() int {
+		fc.mu.Lock()
+		defer fc.mu.Unlock()
+		return fc.started
+	}
+	fc.status = copilot.GetAuthStatusResponse{StatusMessage: copilot.String("Not authenticated")}
+	if acct, err := p.Account(context.Background()); err != nil || acct.SignedIn {
+		t.Fatalf("Account = %+v, %v", acct, err)
+	}
+	// The signed-out CLI was restarted to read a sign-in made outside UAM.
+	if n := started(); n != 2 {
+		t.Fatalf("CLI started %d times, want 2", n)
+	}
+	// Within signInRecheck, or with a conversation open, it is not restarted again.
+	if _, err := p.Account(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.signInChecked = time.Time{}
+	p.convs[&conversation{}] = struct{}{}
+	p.mu.Unlock()
+	if _, err := p.Account(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	clear(p.convs)
+	p.mu.Unlock()
+	if n := started(); n != 2 {
+		t.Fatalf("CLI started %d times, want no more restarts", n)
+	}
+	// Signed in on the server: the next read reports it.
+	fc.status = copilot.GetAuthStatusResponse{IsAuthenticated: true, AuthType: copilot.String("user"), Login: copilot.String("octo"), Host: copilot.String(githubHost)}
+	if acct, err := p.Account(context.Background()); err != nil || !acct.SignedIn || acct.Login != "octo" {
+		t.Fatalf("Account = %+v, %v", acct, err)
+	}
+	// A signed-in CLI is not restarted.
+	if n := started(); n != 2 {
+		t.Fatalf("CLI started %d times, want 2", n)
+	}
+}
