@@ -732,6 +732,12 @@ export interface SessionSummary {
   /** When the Task was settled (cleared by Reopen) and archived; absent otherwise and from older records. */
   settled_at?: string;
   archived_at?: string;
+  /** Why the service settled the Task: `auto` after 7 quiet days, `reviewed` once you reviewed it after it was judged done; absent when you settled it, and once reopened. */
+  settled_by?: 'auto' | 'reviewed';
+  /** When the service judged the last finished turn done, the reply item it judged and the line of that reply that says so; absent otherwise, and once a new turn starts. */
+  done_at?: string;
+  done_item_id?: string;
+  done_line?: string;
   /** The Task whose agent started this one with uam_create_task; absent otherwise. */
   spawned_by?: string;
   /** The routine whose run started this Task; absent otherwise. */

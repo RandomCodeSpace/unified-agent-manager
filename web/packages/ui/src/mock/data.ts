@@ -707,6 +707,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       state: 'closed',
       stage: 'settled',
       settled_at: ago(60 * 47),
+      settled_by: 'auto',
       created_at: ago(60 * 50),
       updated_at: ago(60 * 47),
       items: [
@@ -1044,6 +1045,28 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
         { id: 'w7', kind: 'assistant', time: ago(8), text: 'The release job signs every archive now. Next: upload the `.sig` files, then document the key. #26 (verifying signatures in the install script) waits on the checksums in #31.' },
       ],
     }),
+  );
+
+  // Tasks the service judged done (`done_at`): more than the sidebar's Done section shows before "Show all".
+  const judged = (id: string, project_id: string, name: string, min: number, line: string) =>
+    task({
+      id, project_id, workdir: p(project_id), model: 'gpt-6-luna', name, title: '', state: 'completed', created_at: ago(min + 40), updated_at: ago(min + 2),
+      done_at: ago(min), done_item_id: `${id}-a`, done_line: line,
+      items: [
+        { id: `${id}-u`, kind: 'user', time: ago(min + 40), text: `${name}.` },
+        { id: `${id}-a`, kind: 'assistant', time: ago(min + 2), text: `${line}\n\nNothing else is left to do.` },
+      ],
+    });
+  tasks.push(
+    judged('d1', 'p1', 'Rename SessionSummary.stage values', 25, 'Renamed the stage values; the store migration and its tests pass.'),
+    judged('d2', 'p3', 'Add an RSS link to the footer', 60 * 2, 'The footer links the feed on every page.'),
+    judged('d3', 'p2', 'Move git aliases into their own file', 60 * 3, 'The aliases live in git/aliases and .gitconfig includes it.'),
+    judged('d4', 'p1', 'Drop the vterm build tag from CI', 60 * 5, 'CI builds without the vterm tag and stays green.'),
+    judged('d5', 'p3', 'Lazy-load cover images', 60 * 9, 'Cover images load lazily; the page weight on first paint halved.'),
+    judged('d6', 'p1', 'Explain the ProjectPicker search ranking', 60 * 20, 'Name matches rank before folder-only matches, in the given order.'),
+    judged('d7', 'p2', 'Fix the tmux status line clock', 60 * 28, 'The clock reads the local time zone again.'),
+    judged('d8', 'p1', 'Sonar: mark the folder-picker findings', 60 * 48, 'All five findings are marked accepted with the trust model as the reason.'),
+    judged('d9', 'p3', 'Fix broken links in the 2025 archive', 60 * 72, 'Fixed 14 links; the link checker reports none broken.'),
   );
 
   // t22: subagents at scale. Three replies spawned 12, 22 and 7 audits (one per package); the first
