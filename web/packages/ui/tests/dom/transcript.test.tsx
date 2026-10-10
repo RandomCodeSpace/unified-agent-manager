@@ -7,6 +7,7 @@ import { Markdown } from '../../src/components/common';
 import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
+import { VisualBoundary } from '../../src/components/VisualBoundary';
 import { saveDensity } from '../../src/lib/density';
 import { composer, log, openMenu, openTask } from './render';
 
@@ -514,6 +515,26 @@ describe('activity', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy input' }));
     await waitFor(() => expect(copy).toHaveBeenCalledWith('*** Begin Patch\n*** Add File: web/a.html\n+<!doctype html>\n*** End Patch\n'));
     copy.mockRestore();
+  });
+
+  test('a test run shows its passed and failed counts on its row, without a total', () => {
+    const run = (id: string, tests?: { passed: number; failed: number }): Item => ({ id, kind: 'tool', time: new Date().toISOString(), tool: { name: 'bash', status: 'completed', exit_code: tests?.failed ? 1 : 0, input: JSON.stringify({ command: 'go test ./...' }), ...(tests && { tests }) } });
+    const failing = render(<ToolRow item={run('b1', { passed: 12, failed: 2 })} live={false} />);
+    expect(failing.getByText('12 passed · 2 failed')).toBeTruthy();
+    expect(failing.queryByText(/\d+\/\d+/)).toBeNull();
+    failing.unmount();
+    const passing = render(<ToolRow item={run('b2', { passed: 15, failed: 0 })} live={false} />);
+    expect(passing.getByText('15 passed')).toBeTruthy();
+    passing.unmount();
+    expect(render(<ToolRow item={run('b3')} live={false} />).queryByText(/passed/)).toBeNull();
+  });
+
+  test('a visual that throws while drawing leaves its fallback, not a broken transcript', () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const Boom = () => { throw new Error('bad strip'); };
+    const view = render(<VisualBoundary fallback={<span>plain row</span>}><Boom /></VisualBoundary>);
+    expect(view.getByText('plain row')).toBeTruthy();
+    quiet.mockRestore();
   });
 
   test('detailed density keeps one row per run of tool calls', async () => {

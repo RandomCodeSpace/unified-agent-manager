@@ -82,6 +82,17 @@ test('a command matches whole at a boundary, a path by its tail; a patch names i
   ]);
 });
 
+test('a command named after a failing run and a passing rerun stands for the rerun', () => {
+  const items = [bash('b1', 'go test ./...', 1), bash('b2', 'go test ./...', 0)];
+  assert.deepEqual(receipts('Ran `go test ./...`; all tests pass.', items).map((s) => [s.claim, s.verdict, s.itemId]), [['go test ./...', 'verified', 'b2'], ['all tests pass', 'verified', 'b2']]);
+});
+
+test('the service\'s test counts decide a tests claim, loaded output or not', () => {
+  assert.equal(receipts('tests pass', [bash('b1', 'go test ./...', 0, { tests: { passed: 3, failed: 1 } })])[0].verdict, 'contradicted');
+  assert.equal(receipts('tests pass', [bash('b1', 'go test ./... 2>&1 | tail -3', 0, { tests: { passed: 4, failed: 0 } })])[0].verdict, 'verified');
+  assert.equal(receipts('tests pass', [bash('b1', 'go test ./... 2>&1 | tail -3', 0)])[0].verdict, 'unseen');
+});
+
 test('subagent calls and running calls are not evidence', () => {
   const items = [{ ...bash('b1', 'go test ./...'), agent_id: 'a1' }];
   assert.deepEqual(receipts('tests pass', items).map((s) => s.verdict), ['contradicted']);

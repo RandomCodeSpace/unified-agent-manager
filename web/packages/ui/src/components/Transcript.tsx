@@ -20,6 +20,7 @@ import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
 import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { TurnTodo } from './Todos';
+import { VisualBoundary } from './VisualBoundary';
 import { PlanNotice } from './Plan';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -1097,6 +1098,36 @@ function ApprovalMark({ interactions }: Readonly<{ interactions: Interaction[] }
   );
 }
 
+const STRIP_W = 40;
+
+/**
+ * A test run's counts on its collapsed row, from the served `tests`: "12 passed · 2 failed" and
+ * a two-segment strip, passed in `success` and failed in `error` (a failure keeps at least 6px,
+ * so one of hundreds still shows). The counts are the runner's own lines, which for some runners
+ * mix packages and tests, so there is no total. The words carry it all; nothing is colour alone.
+ */
+function TestCount({ tests }: Readonly<{ tests: { passed: number; failed: number } }>) {
+  const total = tests.passed + tests.failed;
+  if (total <= 0) return null;
+  const failed = tests.failed > 0;
+  const label = failed ? `${tests.passed} passed · ${tests.failed} failed` : `${tests.passed} passed`;
+  const gap = failed && tests.passed > 0 ? 2 : 0;
+  const fail = failed ? Math.max(6, Math.round(((STRIP_W - gap) * tests.failed) / total)) : 0;
+  const pass = tests.passed > 0 ? STRIP_W - gap - fail : 0;
+  return (
+    <>
+      <span className="min-w-2 flex-1" />
+      <span className={cn('flex shrink-0 items-center gap-1.5 font-sans text-caption tabular-nums', failed ? 'text-error' : 'text-muted')}>
+        <span>{label}</span>
+        <svg aria-hidden="true" width={STRIP_W} height={4} viewBox={`0 0 ${STRIP_W} 4`} className="shrink-0">
+          {pass > 0 && <rect x={0} y={0} width={pass} height={4} rx={2} className="fill-success" />}
+          {fail > 0 && <rect x={pass + gap} y={0} width={fail} height={4} rx={2} className="fill-error" />}
+        </svg>
+      </span>
+    </>
+  );
+}
+
 /**
  * One tool call: mark, tool name (weight 500), its main argument in `code-sm` on one line,
  * and its approval when a request named it; expands to the full input and output, and while
@@ -1151,6 +1182,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
               {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
               <span className="sr-only">, {word}</span>
               {decided.length > 0 && <ApprovalMark interactions={decided} />}
+              {t?.tests && <VisualBoundary fallback={null}><TestCount tests={t.tests} /></VisualBoundary>}
             </button>
           </div>
           {t?.edit_event_id && <NativeEdits item={item} />}
