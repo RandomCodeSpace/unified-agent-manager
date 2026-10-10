@@ -6,6 +6,7 @@ import { api, type Item, type SessionSummary, type TurnChanges, type TurnTiming 
 import { ChangesSheet } from '../../src/components/Changes';
 import { Transcript } from '../../src/components/Transcript';
 import { SessionContext } from '../../src/components/common';
+import { LiftedRow } from '../../src/components/Subagents';
 import { DetailVisibility } from '../../src/components/Details';
 
 const at = '2026-10-09T12:00:00Z';
@@ -127,4 +128,19 @@ test('All changes starts the current workspace scope even when the Task default 
   await waitFor(() => expect(changes).toHaveBeenCalledTimes(1));
   expect(changes.mock.calls[0].slice(0, 2)).toEqual(['task', 'workspace']);
   expect(await screen.findByText('No uncommitted changes.')).toBeTruthy();
+});
+
+test('the lifted copy of a foot chip keeps the small type its row gives it, so the chip is not cut', () => {
+  const foot = document.createElement('div');
+  foot.style.fontSize = '10px';
+  foot.style.lineHeight = '10px';
+  foot.style.color = 'rgb(1, 2, 3)';
+  const chip = foot.appendChild(document.createElement('button'));
+  chip.textContent = '1 file +1 −0';
+  document.body.append(foot);
+  const { container } = render(<LiftedRow row={chip} />);
+  const host = container.firstElementChild as HTMLElement;
+  expect(host.textContent).toBe('1 file +1 −0');
+  expect([host.style.fontSize, host.style.lineHeight, host.style.color]).toEqual(['10px', '10px', 'rgb(1, 2, 3)']);
+  foot.remove();
 });
