@@ -2,12 +2,15 @@ package copilot
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
+
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
 
 // taskTool is the CLI tool that starts a subagent; its model argument picks
@@ -35,6 +38,16 @@ func (p *webProvider) subagentModels() []string {
 // otherwise pick is not known here; the call is refused when no allowed model
 // is usable.
 func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.HookInvocation) (*copilot.PreToolUseHookOutput, error) {
+	if in.ToolName != taskTool && c.hooks.Pre != nil {
+		args, _ := in.ToolArgs.(map[string]any)
+		if patch, ok := in.ToolArgs.(string); ok && in.ToolName == "apply_patch" {
+			args = map[string]any{"patch": patch}
+		}
+		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory})
+		if verdict.Context != "" {
+			return &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}, nil
+		}
+	}
 	allowed := c.p.subagentModels()
 	if in.ToolName != taskTool || len(allowed) == 0 {
 		return nil, nil

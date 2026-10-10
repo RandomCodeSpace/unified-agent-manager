@@ -458,8 +458,10 @@ type webSession struct {
 	// Both outlive trimmed and evicted transcripts. editsKnown is set once
 	// the whole record passed through them. diff is the cached task-scope
 	// total; diffRunning and diffDirty schedule its recount.
-	edits     map[string]time.Time
-	turnStart time.Time
+	trailTurn  time.Time
+	trailPaths map[string]bool
+	edits      map[string]time.Time
+	turnStart  time.Time
 	// activity is what the turn evidence keeps of the main agent's items,
 	// by ID (turn_evidence.go). Closed and staged Tasks retain these bounded
 	// facts without item bodies; other evicted transcripts rebuild them.
@@ -2826,6 +2828,7 @@ func (m *Manager) finishOpeningLocked(s *webSession) {
 // any, the built-in skills and the compaction threshold to req. The caller
 // holds mu.
 func (m *Manager) withHostToolsLocked(req agentapi.OpenRequest, s *webSession) agentapi.OpenRequest {
+	req.Hooks.Pre = func(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict { return m.preToolUse(ctx, s, use) }
 	req.SkillDirectories = m.skillDirs
 	if t := m.settings.CompactionThreshold; t != nil {
 		req.CompactionThreshold = float64(*t) / 100

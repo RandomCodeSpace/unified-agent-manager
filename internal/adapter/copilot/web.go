@@ -916,7 +916,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 		return nil, err
 	}
 	c := &conversation{
-		p: p, client: client, id: req.ConversationID, sink: req.Events, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
+		p: p, client: client, id: req.ConversationID, sink: req.Events, hooks: req.Hooks, pending: map[string]*interaction{}, tr: newTranscript(), subs: newSubagentLog(),
 		seen: map[string]bool{}, watch: map[string]time.Time{},
 		reportEmptyTasks: req.ConversationID != "",
 	}
@@ -1792,6 +1792,7 @@ type conversation struct {
 	sess   sdkSession
 	id     string
 	sink   agentapi.EventSink
+	hooks  agentapi.ToolHooks
 
 	mu        sync.Mutex
 	closed    bool
@@ -3863,6 +3864,13 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		t.streamedReasoning(it.AgentID)
 		it.ID, it.Kind, it.Text = reasoningItemID(d.ReasoningID), agentapi.ItemReasoning, d.Content
 		it.Time, it.EndedAt = t.thoughtStart(it.AgentID, ev.Timestamp), ev.Timestamp
+	case *rpc.HookEndData:
+		output, _ := d.Output.(map[string]any)
+		text, _ := output["additionalContext"].(string)
+		if !d.Success || d.HookType != "preToolUse" || !strings.HasPrefix(text, "uam trail:") {
+			return it, false
+		}
+		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, text
 	case *rpc.SessionCompactionCompleteData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Compacted the conversation."
 		if d.TokensRemoved != nil && *d.TokensRemoved > 0 {
