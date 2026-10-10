@@ -12,13 +12,11 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse } from './ui/collapse';
 import { Input } from './ui/input';
+import { Switch } from './ui/switch';
 import { HelpTip } from './ui/tooltip';
 
 /** How often the open section reads today's count and the newest calls again. */
 const REFRESH_MS = 15000;
-const MAX_LIMIT = 1000;
-/** How long a purpose's line waits after typing stops before it saves. */
-const SAVE_DELAY_MS = 600;
 
 function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
   const { sessions, projects, openTask } = useContext(TaskList);
@@ -53,65 +51,13 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
   );
 }
 
-type PurposeToday = UtilityLog['today']['purposes'][number];
-
-/** Why a paused purpose stopped; the service sends only `paused`, so the reason is read from its numbers. */
-function pauseReason(line: PurposeToday, totalPaused: boolean): string {
-  if (line.limit === 0) return 'Off: its line is 0.';
-  if (line.calls >= line.limit) return 'At its line; it resumes at midnight on the server.';
-  if (totalPaused) return 'Paused with the daily limit.';
-  return 'Stopped after repeated unusable answers; it resumes at midnight on the server.';
-}
-
-/**
- * One Utility purpose's day: "120 today /" and its own daily line as a number (0 turns it off), saved a moment
- * after typing stops. A paused purpose says so and why.
- */
-function PurposeLine({ line, limit, totalPaused, saving, onSave }: Readonly<{ line: PurposeToday; limit: number; totalPaused: boolean; saving: boolean; onSave: (purpose: string, limit: number) => Promise<void> }>) {
-  const [draft, setDraft] = useState<string | null>(null);
-  const value = draft ?? String(limit);
-  const parsed = Number(value);
-  const valid = value.trim() !== '' && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_LIMIT;
-  useEffect(() => {
-    if (draft === null || !valid || parsed === limit) return;
-    const timer = window.setTimeout(() => void onSave(line.purpose, parsed).then(() => setDraft(null)), SAVE_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [draft, valid, parsed, limit, line.purpose, onSave]);
-  const label = purposeLabel(line.purpose);
-  const id = `utility-purpose-${line.purpose}`;
-  return (
-    <Row id={id} label={label} htmlFor={`${id}-input`} help={`Its own calls a day, inside the daily limit. At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns it off.`}>
-      <span className={cn('w-16 text-right text-ui tabular-nums', line.paused ? 'text-warning' : 'text-body')}>{line.calls.toLocaleString('en-US')} today</span>
-      <span aria-hidden="true" className="text-muted">
-        /
-      </span>
-      <Input
-        id={`${id}-input`}
-        className="w-20"
-        type="number"
-        inputMode="numeric"
-        min={0}
-        max={MAX_LIMIT}
-        step={1}
-        aria-describedby={`${id}-help`}
-        aria-invalid={!valid || undefined}
-        disabled={saving}
-        value={value}
-        onChange={(e) => setDraft(e.target.value)}
-      />
-      {line.paused && <Chip tone="warning">Paused today</Chip>}
-      {line.paused && <span className="basis-full text-caption text-muted">{pauseReason(line, totalPaused)}</span>}
-    </Row>
-  );
-}
-
 /**
  * Settings → Background AI: UAM's own calls on the Utility model (titles, suggested replies), today's
  * count against the daily limit, the limit, and the log grouped by server-local day with each day's totals. The log
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
  */
-export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit, onSavePurposeLimit }: Readonly<{ limitSetting?: number; purposeLimits?: Record<string, number>; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSavePurposeLimit: (purpose: string, limit: number) => Promise<void> }>) {
+export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLimit, onSaveUnlimited }: Readonly<{ limitSetting?: number; unlimited?: boolean; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSaveUnlimited: (on: boolean) => Promise<void> }>) {
   const api = useApi();
   const [log, setLog] = useState<UtilityLog | null>(null);
   const [calls, setCalls] = useState<UtilityCall[]>([]);
@@ -146,7 +92,7 @@ export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit,
       current = false;
       window.clearInterval(timer);
     };
-  }, [apply, limitSetting, reads, open, api]);
+  }, [apply, limitSetting, unlimited, reads, open, api]);
 
   async function loadOlder() {
     if (next === undefined) return;
@@ -164,20 +110,10 @@ export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit,
     }
   }
 
-  // A saved line reads the day again. The ref keeps each line's pending save from restarting when Settings renders.
-  const savePurposeLimit = useRef(onSavePurposeLimit);
-  useEffect(() => {
-    savePurposeLimit.current = onSavePurposeLimit;
-  });
-  const savePurpose = useCallback(async (purpose: string, n: number) => {
-    await savePurposeLimit.current(purpose, n);
-    setReads((r) => r + 1);
-  }, []);
-
   const limit = log?.today.limit ?? limitSetting;
   const value = draft ?? (limit === undefined ? '' : String(limit));
   const parsed = Number(value);
-  const valid = value.trim() !== '' && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_LIMIT;
+  const valid = value.trim() !== '' && Number.isInteger(parsed) && parsed >= 0;
   async function save(e: SubmitEvent) {
     e.preventDefault();
     if (!valid) return;
@@ -207,11 +143,12 @@ export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit,
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline gap-x-2">
           <span className="text-title text-ink tabular-nums">
-            {today.calls.toLocaleString('en-US')} of {today.limit.toLocaleString('en-US')}
+            {today.calls.toLocaleString('en-US')}
+            {!today.unlimited && ` of ${today.limit.toLocaleString('en-US')}`}
           </span>
-          <span className="text-caption text-muted">calls today</span>
+          <span className="text-caption text-muted">{today.unlimited ? 'calls today · no daily limit' : 'calls today'}</span>
         </div>
-        <div
+        {!today.unlimited && <div
           role="meter"
           aria-label="Background AI calls today"
           aria-valuemin={0}
@@ -220,7 +157,7 @@ export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit,
           className="h-1.5 w-full max-w-md overflow-hidden rounded-xs bg-sunken shadow-well"
         >
           <div className={today.paused ? 'h-full origin-left bg-warning' : 'h-full origin-left bg-accent'} style={{ transform: `scaleX(${fraction})` }} />
-        </div>
+        </div>}
         {today.paused && (
           <Note tone="warn" role="status" className="max-w-3xl">
             {today.limit === 0
@@ -231,33 +168,28 @@ export function BackgroundAI({ limitSetting, purposeLimits, saving, onSaveLimit,
       </div>
       {/* A Settings row like the others: the label in the label column, the field and its Save together beside it. */}
       <form aria-label="Daily limit" onSubmit={(e) => void save(e)}>
-        <Row id="utility-limit" label="Daily limit (calls)" htmlFor="utility-limit-input" help={`At most ${MAX_LIMIT.toLocaleString('en-US')}; 0 turns Background AI off. The count starts again at midnight on the server.`}>
+        <Row id="utility-limit" label="Daily limit (calls)" htmlFor="utility-limit-input" help="0 turns Background AI off. The count starts again at midnight on the server.">
           <Input
             id="utility-limit-input"
             className="w-28"
             type="number"
             inputMode="numeric"
             min={0}
-            max={MAX_LIMIT}
             step={1}
             aria-describedby="utility-limit-help"
             aria-invalid={!valid || undefined}
-            disabled={saving}
+            disabled={saving || unlimited}
             value={value}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <Button type="submit" variant="secondary" size="lg" disabled={saving || !valid || parsed === limit}>
+          <Button type="submit" variant="secondary" size="lg" disabled={saving || unlimited || !valid || parsed === limit}>
             Save
           </Button>
         </Row>
       </form>
-      {today.purposes.length > 0 && (
-        <section aria-label="Daily line per purpose" className="flex flex-col gap-2">
-          {today.purposes.map((line) => (
-            <PurposeLine key={line.purpose} line={line} limit={purposeLimits?.[line.purpose] ?? line.limit} totalPaused={today.paused} saving={saving} onSave={savePurpose} />
-          ))}
-        </section>
-      )}
+      <Row id="utility-unlimited" label="No daily limit" help="Background AI calls run without a daily count. The limit above is kept for when you turn this off.">
+        <Switch aria-label="No daily limit" aria-describedby="utility-unlimited-help" checked={unlimited} disabled={saving} onCheckedChange={(on) => void onSaveUnlimited(on).then(refresh)} />
+      </Row>
       <div className="flex flex-col gap-1">
         {error && (
           <Note tone="error" role="alert">

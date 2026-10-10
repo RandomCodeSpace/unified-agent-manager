@@ -697,10 +697,11 @@ type WebSettings struct {
 	// TaskDefaults are the settings a new Task starts with; zero when unset.
 	TaskDefaults WebTaskDefaults `json:"task_defaults,omitzero"`
 	// UtilityDailyLimit is how many Utility model calls UAM makes a day, 0
-	// to make none, at most MaxUtilityDailyLimit; nil means
-	// DefaultUtilityDailyLimit.
-	UtilityDailyLimit    *int           `json:"utility_daily_limit,omitempty"`
-	UtilityPurposeLimits map[string]int `json:"utility_purpose_limits,omitempty"`
+	// to make none; nil means DefaultUtilityDailyLimit.
+	UtilityDailyLimit *int `json:"utility_daily_limit,omitempty"`
+	// UtilityUnlimited lifts the daily limit: Utility calls are not counted
+	// against UtilityDailyLimit, which is kept for when it is turned off.
+	UtilityUnlimited bool `json:"utility_unlimited,omitempty"`
 	// SuggestReplies, when false, stops suggesting replies after a turn;
 	// absent means on.
 	SuggestReplies *bool `json:"suggest_replies,omitempty"`
@@ -716,29 +717,8 @@ type WebSettings struct {
 	unknown map[string]json.RawMessage
 }
 
-// DefaultUtilityPurposeLimit names the supported Utility jobs and their daily limits.
-func DefaultUtilityPurposeLimit(purpose string) (int, bool) {
-	switch purpose {
-	case "outcome":
-		return 200, true
-	case "suggest-replies":
-		return 80, true
-	case "title":
-		return 40, true
-	case "commit-message":
-		return 30, true
-	case "configuration-draft":
-		return 20, true
-	default:
-		return 0, false
-	}
-}
-
-// The bounds of WebSettings.UtilityDailyLimit.
-const (
-	DefaultUtilityDailyLimit = 400
-	MaxUtilityDailyLimit     = 1000
-)
+// DefaultUtilityDailyLimit is WebSettings.UtilityDailyLimit when unset.
+const DefaultUtilityDailyLimit = 400
 
 // The bounds of WebSettings.CompactionThreshold, in percent.
 const (
@@ -955,8 +935,9 @@ var knownWebSettingsFields = map[string]struct{}{
 	"title_model":            {},
 	"custom_models":          {},
 	"task_defaults":          {},
-	"utility_purpose_limits": {},
+	"utility_purpose_limits": {}, // retired per-purpose Utility limits; known, so they drop on the next save
 	"utility_daily_limit":    {},
+	"utility_unlimited":      {},
 	"suggest_replies":        {},
 	"compact_threshold":      {},
 	"github_mcp":             {},
@@ -1208,12 +1189,7 @@ func (s *Store) loadNoLock() (Config, error) {
 	cleanTitleModels(&cfg.WebSettings)
 	cleanCustomModels(&cfg.WebSettings)
 	cleanTaskDefaults(&cfg.WebSettings)
-	for purpose, limit := range cfg.WebSettings.UtilityPurposeLimits {
-		if _, ok := DefaultUtilityPurposeLimit(purpose); !ok || limit < 0 || limit > MaxUtilityDailyLimit {
-			delete(cfg.WebSettings.UtilityPurposeLimits, purpose)
-		}
-	}
-	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && (*l < 0 || *l > MaxUtilityDailyLimit) {
+	if l := cfg.WebSettings.UtilityDailyLimit; l != nil && *l < 0 {
 		log.Warn("clearing invalid stored utility daily limit")
 		cfg.WebSettings.UtilityDailyLimit = nil
 	}

@@ -679,21 +679,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "task_defaults must be an object with provider, model, effort, context_size and mode")
 				return
 			}
-		case "utility_purpose_limits":
-			var values map[string]*int
-			if json.Unmarshal(raw, &values) != nil || values == nil {
-				writeError(w, http.StatusBadRequest, "utility_purpose_limits must be an object of whole numbers")
+		case "utility_unlimited":
+			patch.UtilityUnlimited = new(bool)
+			if json.Unmarshal(raw, patch.UtilityUnlimited) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "utility_unlimited must be true or false")
 				return
 			}
-			limits := make(map[string]int, len(values))
-			for purpose, limit := range values {
-				if limit == nil {
-					writeError(w, http.StatusBadRequest, "utility_purpose_limits must contain whole numbers")
-					return
-				}
-				limits[purpose] = *limit
-			}
-			patch.UtilityPurposeLimits = &limits
 		case "utility_daily_limit":
 			// null puts the default back.
 			patch.UtilityLimit = new(*int)

@@ -226,7 +226,7 @@ func TestUtilityLimitSettingAndRoutes(t *testing.T) {
 		}
 		return strings.TrimSpace(w.Body.String())
 	}
-	for _, body := range []string{`{"utility_daily_limit":-1}`, `{"utility_daily_limit":1001}`, `{"utility_daily_limit":"5"}`, `{"utility_daily_limit":1.5}`} {
+	for _, body := range []string{`{"utility_daily_limit":-1}`, `{"utility_daily_limit":"5"}`, `{"utility_daily_limit":1.5}`} {
 		patch(body, http.StatusBadRequest)
 	}
 	if got := patch(`{"utility_daily_limit":0}`, http.StatusOK); !strings.Contains(got, `"utility_daily_limit":0`) {
@@ -242,6 +242,19 @@ func TestUtilityLimitSettingAndRoutes(t *testing.T) {
 	if got := patch(`{"utility_daily_limit":null}`, http.StatusOK); strings.Contains(got, "utility_daily_limit") {
 		t.Fatalf("limit reset = %s", got)
 	}
+	if got := patch(`{"utility_daily_limit":250000}`, http.StatusOK); !strings.Contains(got, `"utility_daily_limit":250000`) {
+		t.Fatalf("limit past the old cap = %s", got)
+	}
+	for _, body := range []string{`{"utility_unlimited":null}`, `{"utility_unlimited":"yes"}`, `{"utility_unlimited":1}`} {
+		patch(body, http.StatusBadRequest)
+	}
+	if got := patch(`{"utility_unlimited":true}`, http.StatusOK); !strings.Contains(got, `"utility_unlimited":true`) || !strings.Contains(got, `"utility_daily_limit":250000`) {
+		t.Fatalf("unlimited = %s", got)
+	}
+	if got := patch(`{"utility_unlimited":false}`, http.StatusOK); strings.Contains(got, "utility_unlimited") {
+		t.Fatalf("unlimited off = %s", got)
+	}
+	patch(`{"utility_daily_limit":null}`, http.StatusOK)
 	if w := ts.do(http.MethodGet, "/api/utility", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/utility without sign-in = %d", w.Code)
 	}
@@ -257,50 +270,32 @@ func TestUtilityLimitSettingAndRoutes(t *testing.T) {
 	}
 }
 
-func TestUtilityPurposeLimitsAndRebuild(t *testing.T) {
+func TestUtilityUnlimitedAndRebuild(t *testing.T) {
 	m, _, st, _ := titleManager(t)
-	limits := map[string]int{purposeTitle: 1, purposeOutcome: 0}
-	if _, err := m.UpdateSettings(SettingsPatch{UtilityPurposeLimits: &limits}); err != nil {
+	limit, on := new(int), true
+	*limit = 1
+	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit, UtilityUnlimited: &on}); err != nil {
 		t.Fatal(err)
 	}
 	run := func(context.Context, func(agentapi.UtilityUsage)) (string, error) { return "A title", nil }
-	if _, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeTitle}, "prompt", run); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeTitle}, "prompt", run); err == nil {
-		t.Fatal("purpose limit not enforced")
-	}
-	if _, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeOutcome}, "prompt", run); err == nil {
-		t.Fatal("disabled purpose ran")
+	for i := 0; i < 2; i++ {
+		if _, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeTitle}, "prompt", run); err != nil {
+			t.Fatalf("call %d past the lifted limit: %v", i, err)
+		}
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	again := startManager(t, st)
-	today := again.UtilityLog(0, 10).Today
-	if today.Calls != 1 || len(today.Purposes) != 5 {
+	if today := again.UtilityLog(0, 10).Today; today.Calls != 2 || today.Limit != 1 || !today.Unlimited || today.Paused {
 		t.Fatalf("today=%+v", today)
 	}
-	for _, p := range today.Purposes {
-		if p.Purpose == purposeTitle && (p.Calls != 1 || p.Limit != 1 || !p.Paused) {
-			t.Fatalf("purpose=%+v", p)
-		}
+	off := false
+	if _, err := again.UpdateSettings(SettingsPatch{UtilityUnlimited: &off}); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestUtilityPurposeSettingsRoute(t *testing.T) {
-	ts := newTestServer(t, ServerConfig{})
-	auth := withCookie(ts)
-	for _, body := range []string{`{"utility_purpose_limits":{"typo":1}}`, `{"utility_purpose_limits":{"title":-1}}`, `{"utility_purpose_limits":{"title":1001}}`, `{"utility_purpose_limits":{"title":1.5}}`, `{"utility_purpose_limits":null}`, `{"utility_purpose_limits":{"title":null}}`} {
-		if w := ts.do(http.MethodPatch, "/api/settings", body, auth); w.Code != 400 {
-			t.Fatalf("PATCH %s=%d %s", body, w.Code, w.Body)
-		}
-	}
-	for _, body := range []string{`{"utility_purpose_limits":{"title":0,"outcome":1000}}`, `{"utility_purpose_limits":{}}`} {
-		w := ts.do(http.MethodPatch, "/api/settings", body, auth)
-		if w.Code != 200 {
-			t.Fatalf("PATCH=%d %s", w.Code, w.Body)
-		}
+	if today := again.UtilityLog(0, 10).Today; today.Unlimited || !today.Paused {
+		t.Fatalf("limit back: today=%+v", today)
 	}
 }
 
@@ -309,35 +304,14 @@ func TestUtilityInvalidPauseRebuilt(t *testing.T) {
 	m := startManager(t, st)
 	now := time.Now()
 	for i := 0; i < 4; i++ {
-		m.utility.reserve(now, purposeOutcome, 200, 400)
+		m.utility.reserve(now, purposeOutcome, 400, false)
 		m.utility.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false)})
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	again := startManager(t, st)
-	if reason := again.utility.reserve(now, purposeOutcome, 200, 400); reason != skippedInvalid {
+	if reason := again.utility.reserve(now, purposeOutcome, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
-	}
-}
-
-func TestUtilityPurposeSettingsDoNotAlias(t *testing.T) {
-	m := startManager(t, openTestStore(t))
-	limits := map[string]int{purposeTitle: 1}
-	out, err := m.UpdateSettings(SettingsPatch{UtilityPurposeLimits: &limits})
-	if err != nil {
-		t.Fatal(err)
-	}
-	limits[purposeTitle] = 2
-	out.UtilityPurposeLimits[purposeTitle] = 3
-	got := m.Settings()
-	got.UtilityPurposeLimits[purposeTitle] = 4
-	same, err := m.UpdateSettings(SettingsPatch{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	same.UtilityPurposeLimits[purposeTitle] = 5
-	if got := m.Settings().UtilityPurposeLimits[purposeTitle]; got != 1 {
-		t.Fatalf("aliased limit=%d", got)
 	}
 }

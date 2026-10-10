@@ -1148,10 +1148,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   with ≈. **Show older calls** pages back through everything kept: the log
   keeps 30 days, by the server's local date, in `utility-log.jsonl` beside
   `sessions.json`.
-  The limit is `utility_daily_limit` in the settings, 200 calls a day when
-  unset, 0 to 1000; `PATCH /api/settings` with
+  The limit is `utility_daily_limit` in the settings, 400 calls a day when
+  unset, any whole number from 0; `PATCH /api/settings` with
   `{"utility_daily_limit": 50}` sets it, `0` turns Background AI off, and
-  `null` puts the default back. The day starts at midnight on the server.
+  `null` puts the default back. **No daily limit**
+  (`{"utility_unlimited": true}`) lifts it: calls are still counted and
+  logged but never paused for the day, and the number is kept for when it
+  is turned off. The day starts at midnight on the server.
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Tasks
   keep their first message as the title, completed subagents keep their own
@@ -1159,7 +1162,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   outcome lines keep the evidence alone. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
-  "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
+  "unlimited", "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
   [newest first], "next"}`; pass `next` as `?before=` for the following
   page, and `?limit=` (1 to 200, default 200) to size it.
 - **Custom models (bring your own model)**: Settings → Models → Custom
