@@ -1,6 +1,8 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 import { Children, isValidElement, memo, useCallback, useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactElement, type ReactNode } from 'react';
 import { cn } from '../lib/cn';
+import { barColumns, numeric } from '../lib/table-visual';
+import { VisualBoundary } from './VisualBoundary';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Popover } from './ui/popover';
@@ -11,15 +13,6 @@ export interface TableRow { id: number; values: readonly Value[]; cells: readonl
 const PAGE_SIZE = 100;
 // Text sorts naturally: "item 9" before "item 10".
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
-// Numbers as tables print them: a sign, a leading currency symbol, thousands separators and a
-// trailing percent. Leading zeros (IDs), dates and other units remain text.
-const formatted = /^([+-]?)\p{Sc}?((?:0|[1-9]\d{0,2}(?:,\d{3})+|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)%?$/u;
-function numeric(v: Value): number | null {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  const match = v == null ? null : formatted.exec(v);
-  const n = match ? Number(match[1] + match[2].replaceAll(',', '')) : NaN;
-  return Number.isFinite(n) ? n : null;
-}
 const alignment = (align: CSSProperties['textAlign']) => align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
 
 /** One tab stop for a row of controls: Tab returns to the last one used; arrow keys, Home and End move along. */
@@ -49,9 +42,12 @@ function headingBefore(element: Element | null): string {
 }
 
 /** Local view over immutable rows. No data fetch, transcript update or model call. */
-export const DataTable = memo(function DataTable({ columns, rows, label, rowHeaders = false }: Readonly<{
+export const DataTable = memo(function DataTable({ columns, rows, label, rowHeaders = false, visual = false }: Readonly<{
   columns: readonly TableColumn[]; rows: readonly TableRow[]; label?: string; rowHeaders?: boolean;
+  /** Draw a bar behind each number of a column that reads as one quantity (a reply's table). */
+  visual?: boolean;
 }>) {
+  const bars = useMemo(() => visual ? barColumns(columns, rows) : null, [visual, columns, rows]);
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
   const [filters, setFilters] = useState<Record<number, string>>({});
   const [page, setPage] = useState(0);
@@ -110,7 +106,16 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           })}</tr></thead>
           <tbody>{visible.slice(start, start + PAGE_SIZE).map(row => <tr key={row.id}>{columns.map((column, index) => {
             const Cell = rowHeaders && index === 0 ? 'th' : 'td';
-            return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
+            const max = bars?.[index];
+            const n = max ? numeric(row.values[index]) : null;
+            if (!max || !n) return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn(alignment(column.align), column.align === 'right' && 'tabular-nums')}>{row.cells[index]}</Cell>;
+            // The bar sits behind the number on its first line, in a track at most 9rem wide, from the side the column is aligned to, so the number ends on it.
+            const pct = (n / max) * 100;
+            const end = column.align === 'right';
+            return <Cell key={index} scope={Cell === 'th' ? 'row' : undefined} className={cn('relative', alignment(column.align), 'tabular-nums')}>
+              <svg aria-hidden="true" className={cn('pointer-events-none absolute top-1 h-5.5 w-[min(calc(100%-0.5rem),9rem)]', end ? 'right-1' : 'left-1')}><rect x={end ? `${100 - pct}%` : 0} y="0" width={`${pct}%`} height="100%" rx="2" className="fill-accent-wash" /></svg>
+              <span className="relative">{row.cells[index]}</span>
+            </Cell>;
           })}</tr>)}</tbody>
         </table>
         {visible.length === 0 && <p className="px-2 py-4 text-center text-caption text-muted">No matching rows</p>}
@@ -147,7 +152,8 @@ export function MarkdownTable({ children, streaming }: Readonly<{ children?: Rea
       }),
     };
   }, [children, streaming]);
-  if (data) return <DataTable {...data} />;
+  // The bars are drawn inside a boundary: a throw while working them out shows today's plain table.
+  if (data) return <VisualBoundary fallback={<DataTable {...data} />}><DataTable {...data} visual /></VisualBoundary>;
   // While streaming, skip indexing, controls and sorting entirely.
   // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard-accessible overflow, as for completed tables.
   return <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-y-auto overflow-x-hidden"><table className="!my-0 w-full">{children}</table></div>;
