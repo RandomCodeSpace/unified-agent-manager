@@ -83,9 +83,10 @@ describe('assist', () => {
   test('the visible Use button at the end of the ghost text uses the suggestion', async () => {
     const { user, mock } = await openTask('t3');
     const use = await screen.findByRole('button', { name: 'Use suggestion' });
-    // Shown on every pointer, so the ghost is never only a keyboard affordance; its text says what it does.
+    // Shown on every pointer, so the ghost is never only a keyboard affordance; an arrow alone, named for assistive tech.
     expect(use.classList.contains('hidden')).toBe(false);
-    expect(use.textContent).toBe('Use');
+    expect(use.textContent).toBe('');
+    expect(use.querySelector('svg')).toBeTruthy();
     await user.click(use);
     expect(composer().value).toBe('Run the whole test suite');
     expect(document.activeElement).toBe(composer());
