@@ -1,8 +1,19 @@
-// The sidebar's Done section: Tasks the service judged done (mock d1–d9), above the Settled shelf.
+// The sidebar's Done section: Tasks the service judged done (mock d1–d9, plus d10–d11 where the cap matters), above the Settled shelf.
 import { act, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { SessionSummary } from '../../src/api';
+import * as data from '../../src/mock/data';
 import { renderApp, sidebar, type User } from './render';
+
+afterEach(() => vi.restoreAllMocks());
+
+/** The mock with d10 and d11 judged done after d9, past Done's ten. */
+function elevenDone() {
+  const state = data.seed();
+  const d9 = state.tasks.find((t) => t.id === 'd9')!;
+  for (const n of [10, 11]) state.tasks.push({ ...d9, id: `d${n}`, done_at: new Date(Date.parse(d9.done_at!) - n * 60_000).toISOString() });
+  vi.spyOn(data, 'seed').mockReturnValue(state);
+}
 
 const nav = () => document.querySelector<HTMLElement>('nav[aria-label="Tasks"]')!;
 const doneHeader = () => within(nav()).getByRole('button', { name: /^Done \d+$/ });
@@ -52,29 +63,46 @@ async function withStream() {
 }
 
 describe('the Done section', () => {
-  test('sits above Settled with compact rows, newest judgement first, eight until Show all', async () => {
+  test('sits above Settled with compact rows, newest judgement first, ten until Show all', async () => {
+    elevenDone();
     const { user } = renderApp();
     await sidebar();
     const header = doneHeader();
-    expect(header.textContent).toBe('Done 9');
+    expect(header.textContent).toBe('Done 11');
     expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(header.compareDocumentPosition(settledHeader()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Not in the active list; one line, badge and title, no status.
     expect(nav().querySelector('ul[aria-label="Unsettled tasks"] [data-task-row="d1"]')).toBeNull();
     expect(row('d1')!.textContent).toBe('UMunified-agent-manager, Rename SessionSummary.stage values');
-    expect(doneRows()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8']);
+    const ten = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9', 'd10'];
+    expect(doneRows()).toEqual(ten);
 
-    await user.click(within(nav()).getByRole('button', { name: 'Show all 9' }));
-    expect(doneRows()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9']);
+    await user.click(within(nav()).getByRole('button', { name: 'Show all 11' }));
+    expect(doneRows()).toEqual([...ten, 'd11']);
     await user.click(within(nav()).getByRole('button', { name: 'Show fewer' }));
-    expect(doneRows()).toHaveLength(8);
+    expect(doneRows()).toEqual(ten);
   });
 
-  test('keeps the open Task on screen past the eight', async () => {
-    renderApp('#task=d9');
+  test('keeps the open Task on screen past the ten', async () => {
+    elevenDone();
+    renderApp('#task=d11');
     await sidebar();
-    expect(doneRows()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9']);
-    expect(row('d9')!.querySelector('[aria-current="true"]')).not.toBeNull();
+    expect(doneRows()).toEqual(['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'd7', 'd8', 'd9', 'd10', 'd11']);
+    expect(row('d11')!.querySelector('[aria-current="true"]')).not.toBeNull();
+  });
+
+  test('opening Settled closes Done and opening Done closes Settled, remembered', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    await user.click(settledHeader());
+    expect(settledHeader().getAttribute('aria-expanded')).toBe('true');
+    expect(doneHeader().getAttribute('aria-expanded')).toBe('false');
+    expect(doneRows()).toEqual([]);
+    expect(JSON.parse(localStorage.getItem('uam.shelves')!)).toMatchObject({ 'all:done': false, 'all:settled': true });
+    await user.click(doneHeader());
+    expect(doneHeader().getAttribute('aria-expanded')).toBe('true');
+    expect(settledHeader().getAttribute('aria-expanded')).toBe('false');
+    expect(JSON.parse(localStorage.getItem('uam.shelves')!)).toMatchObject({ 'all:done': true, 'all:settled': false });
   });
 
   test('collapses, and remembers it like the shelves', async () => {
@@ -86,6 +114,21 @@ describe('the Done section', () => {
     expect(JSON.parse(localStorage.getItem('uam.shelves')!)).toMatchObject({ 'all:done': false });
     await user.click(doneHeader());
     expect(doneHeader().getAttribute('aria-expanded')).toBe('true');
+  });
+
+  test('Settled shows the latest ten settled until Show all', async () => {
+    const state = data.seed();
+    const base = state.tasks.find((t) => t.id === 't11')!;
+    for (let i = 1; i <= 11; i++) state.tasks.push({ ...base, id: `s${i}`, name: `Settled chore ${i}`, settled_at: new Date(Date.now() - i * 60_000).toISOString() });
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    const { user } = renderApp();
+    await sidebar();
+    await user.click(settledHeader());
+    expect(settledHeader().textContent).toBe('Settled 12');
+    const settledRows = () => Array.from(nav().querySelectorAll<HTMLElement>('[data-task-row^="s"], [data-task-row="t11"]')).filter((el) => !el.closest('[inert]')).map((el) => el.dataset.taskRow);
+    expect(settledRows()).toEqual(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10']);
+    await user.click(within(nav()).getByRole('button', { name: 'Show all 12' }));
+    expect(settledRows()).toEqual(['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 't11']);
   });
 
   test('a Task leaves it for the active list once the service drops the judgement', async () => {
