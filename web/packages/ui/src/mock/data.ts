@@ -397,6 +397,11 @@ export function seed(): MockState {
 The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the upstream tracker has the [original report](https://example.com/issue/56.png).`,
         },
         tool('i7', 1, { name: 'bash', title: 'go test ./internal/vterm/...', status: 'running', input: 'go test ./internal/vterm/... -run Redraw -count=1' }),
+        tool('i8', 1, {
+          name: 'bash', title: 'go test ./internal/attach/...', status: 'failed',
+          display_arg: 'go test ./internal/attach/...', has_input: true, has_output: true,
+          tests: { passed: 14, failed: 1 },
+        }),
       ],
       interactions: [
         { id: 'perm-i6', kind: 'permission', title: 'Write file', detail: 'internal/vterm/redraw.go', state: 'answered', resolution: 'allowed (yolo)', time: ago(4), tool_call_id: 'i6' },

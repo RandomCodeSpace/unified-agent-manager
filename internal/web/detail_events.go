@@ -228,6 +228,9 @@ func compactItemBytes(it compactItem) int {
 		tool := 64 + str("name", t.Name, false) + str("status", string(t.Status), false)
 		tool += str("title", t.Title, true) + str("input", t.Input, true) + str("output", t.Output, true) + str("progress", t.Progress, true) + str("display_arg", t.DisplayArg, true) + str("path", t.Path, true)
 		tool += field("has_input", 4) + field("has_output", 4)
+		if t.Tests != nil {
+			tool += field("tests", 64+field("passed", 8)+field("failed", 8))
+		}
 		tool += str("edit_event_id", t.EditEventID, true)
 		if t.FileEditsTruncated {
 			tool += field("file_edits_truncated", 4)

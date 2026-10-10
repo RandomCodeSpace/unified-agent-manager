@@ -32,11 +32,16 @@ type compactItem struct {
 }
 type compactTool struct {
 	agentapi.ToolCall
-	DisplayArg string   `json:"display_arg,omitempty"`
-	Path       string   `json:"path,omitempty"`
-	FilePaths  []string `json:"file_paths,omitempty"`
-	HasInput   bool     `json:"has_input"`
-	HasOutput  bool     `json:"has_output"`
+	DisplayArg string             `json:"display_arg,omitempty"`
+	Path       string             `json:"path,omitempty"`
+	FilePaths  []string           `json:"file_paths,omitempty"`
+	HasInput   bool               `json:"has_input"`
+	HasOutput  bool               `json:"has_output"`
+	Tests      *compactTestCounts `json:"tests,omitempty"`
+}
+type compactTestCounts struct {
+	Passed int `json:"passed"`
+	Failed int `json:"failed"`
 }
 type compactSubagent struct {
 	agentapi.Subagent
@@ -237,6 +242,11 @@ func projectItem(it agentapi.Item) compactItem {
 			}
 		}
 		projected := compactTool{ToolCall: tool, HasInput: tool.Input != "", HasOutput: tool.Output != "", DisplayArg: arg, Path: path, FilePaths: paths}
+		if commandTools[strings.ToLower(tool.Name)] && (tool.Status == agentapi.ToolCompleted || tool.Status == agentapi.ToolFailed) && !it.Clipped && !strings.Contains(tool.Output, truncatedMarker) && len(commandChecks(toolCommand(&tool))) > 0 {
+			if counts := countsOf(tool.Output); counts != nil {
+				projected.Tests = &compactTestCounts{Passed: counts.passed, Failed: counts.failed}
+			}
+		}
 		// Question text and its recorded answer are semantic UI, including after reload.
 		if tool.Name != "ask_user" {
 			tool.Input, tool.Output = "", ""
