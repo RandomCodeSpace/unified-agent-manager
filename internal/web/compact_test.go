@@ -71,6 +71,63 @@ func TestCompactProjectionPreservesDisplayAndSemanticContent(t *testing.T) {
 	}
 }
 
+func TestCompactTestCounts(t *testing.T) {
+	const output = "ok\texample/pass\t0.01s\nFAIL\texample/fail\t0.02s\nFAIL\n"
+	for _, tt := range []struct {
+		name, tool, command, output string
+		status                      agentapi.ToolStatus
+		clipped, counted            bool
+	}{
+		{"go test", "bash", "go test ./...", output, agentapi.ToolCompleted, false, true},
+		{"failed shell", "shell", "go test ./...", output, agentapi.ToolFailed, false, true},
+		{"echo", "bash", "echo 'go test ./...'", output, agentapi.ToolCompleted, false, false},
+		{"not shell", "view", "go test ./...", output, agentapi.ToolCompleted, false, false},
+		{"running", "bash", "go test ./...", output, agentapi.ToolRunning, false, false},
+		{"clipped", "bash", "go test ./...", output, agentapi.ToolCompleted, true, false},
+		{"truncated marker", "bash", "go test ./...", output + truncatedMarker, agentapi.ToolCompleted, false, false},
+		{"no counts", "bash", "go test ./...", "no test files", agentapi.ToolCompleted, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": tt.command})
+			it := agentapi.Item{ID: "check", Kind: agentapi.ItemTool, Clipped: tt.clipped, Tool: &agentapi.ToolCall{Name: tt.tool, Input: string(input), Output: tt.output, Status: tt.status}}
+			row := projectItem(it)
+			if got := row.Tool.Tests; tt.counted {
+				if got == nil || got.Passed != 1 || got.Failed != 1 {
+					t.Fatalf("tests = %+v", got)
+				}
+			} else if got != nil {
+				t.Fatalf("unexpected tests = %+v", got)
+			}
+			raw, err := json.Marshal(row)
+			if err != nil || strings.Contains(string(raw), `"tests":`) != tt.counted {
+				t.Fatalf("projected JSON = %s, error = %v", raw, err)
+			}
+			if it.Tool.Input != string(input) || it.Tool.Output != tt.output {
+				t.Fatal("projection mutated retained tool")
+			}
+		})
+	}
+}
+
+func TestCompactTestCountsReachPagesAndRowUpdates(t *testing.T) {
+	it := agentapi.Item{ID: "check", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Input: `{"command":"go test ./..."}`, Output: "ok\texample/pass\t0.01s\n", Status: agentapi.ToolCompleted}}
+	items := []agentapi.Item{it}
+	for _, page := range []compactHistoryPage{compactPage(items, 1), compactForwardPage(items, 0)} {
+		if counts := page.Items[0].Tool.Tests; counts == nil || counts.Passed != 1 || counts.Failed != 0 {
+			t.Fatalf("history counts = %+v", counts)
+		}
+	}
+	updated := cloneBody(it)
+	updated.Tool.Output += "FAIL\texample/fail\t0.02s\n"
+	if sameCompactRow(it, updated) {
+		t.Fatal("changed counts must publish a live row update")
+	}
+	raw, err := json.Marshal(it)
+	if err != nil || strings.Contains(string(raw), `"tests":`) {
+		t.Fatalf("retained JSON = %s, error = %v", raw, err)
+	}
+}
+
 // An input that is one JSON string shows decoded: a patch as the files it
 // names, any other text without its quotes and escapes.
 func TestCompactArgumentDecodesAStringInput(t *testing.T) {
@@ -851,6 +908,7 @@ func TestCompactWindowAccountingMatchesBrowser(t *testing.T) {
 		{ID: "native-edit", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolFailed, EditEventID: "event😀", FileEditsTruncated: true, FileEdits: []agentapi.FileEdit{{Path: "/work/文😀.go", Kind: "edit", Additions: 2, Deletions: 1, DiffStatus: "available"}, {Path: "/work/other", Kind: "delete", DiffStatus: "missing"}}}},
 		{ID: "ask", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "ask_user", Input: "<\n界", Output: "😀", Status: agentapi.ToolCompleted}},
 		{ID: "shell", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolRunning, Input: `{"command":"make"}`, Output: "hidden", Progress: "Waiting 界😀", Tail: []agentapi.OutputLine{{Text: "ok 界"}, {Text: "", Err: true}, {Text: "warn 😀", Err: true}}}},
+		{ID: "test-counts", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./..."}`, Output: "ok\texample/pass\t0.01s\n"}},
 		{ID: "thought", Kind: agentapi.ItemReasoning, Text: "hidden"},
 		{ID: "receipt", Kind: agentapi.ItemNotice, Text: "Completion blocked", Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionBlocked, UserItemID: "user😀", Summary: "Summary界", Reason: "reason", Blocker: &agentapi.CompletionBlocker{Kind: "permission", Reason: "denied", Resumable: true}}},
 		{ID: "accepted", Kind: agentapi.ItemNotice, Completion: &agentapi.TaskCompletion{Decision: agentapi.CompletionAccepted}},

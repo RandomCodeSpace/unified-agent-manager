@@ -808,6 +808,8 @@ export interface ToolCall {
   path?: string;
   has_input?: boolean;
   has_output?: boolean;
+  /** Parsed counts from a completed check command with complete output. */
+  tests?: { passed: number; failed: number };
   /** A running shell call's newest output lines, oldest first, at most 10; absent once it ends. */
   tail?: OutputLine[];
   /** Client-only semantic outcome retained after page eviction. */
