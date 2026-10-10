@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { Check, Copy, ExternalLink } from 'lucide-react';
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { ACCOUNT_NOT_LINKED, describeError, errorCode, type DeviceSignIn, type ProviderAccount, type ProviderInfo } from '../api';
-import { useCopied } from '../lib/clipboard';
+import { copyText, useCopied } from '../lib/clipboard';
 import { Dot, Note, Skeleton, useApp, WorkingMark } from './common';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Button, buttonVariants } from './ui/button';
@@ -71,6 +71,8 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   const unlink = useConfirm<string>();
   const [device, setDevice] = useState<DeviceSignIn | null>(null);
   const [starting, setStarting] = useState(false);
+  // What Sign in with GitHub did on its own: whether the code was copied (GitHub's page is opened either way).
+  const [handed, setHanded] = useState<{ copied: boolean } | null>(null);
   const [copied, copy] = useCopied();
   const copyButton = useRef<HTMLButtonElement>(null);
   // Set by a click on Sign in with GitHub, so focus moves to Copy code once the code shows; never on a resumed one.
@@ -183,9 +185,18 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
     setStarting(true);
     setFormError(null);
     setDone(null);
+    setHanded(null);
     focusCopy.current = true;
     try {
-      follow(await api.startDeviceSignIn(name));
+      const d = await api.startDeviceSignIn(name);
+      follow(d);
+      // The click still counts as the person's action here: copy the code first, then open GitHub's page, which
+      // takes the focus, so the code is ready to paste there. A browser that blocks either leaves the buttons below.
+      if (d.state === 'waiting' && d.user_code && d.verification_uri) {
+        const ok = await copyText(d.user_code);
+        window.open(d.verification_uri, '_blank', 'noopener,noreferrer');
+        setHanded({ copied: ok });
+      }
     } catch (e) {
       focusCopy.current = false;
       setDevice(null);
@@ -348,7 +359,14 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
                   </Button>
                 </div>
               )}
-              {code && <Note>Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.</Note>}
+              {device?.notice && <Note tone="warn">{device.notice}</Note>}
+              {code && (
+                <Note>
+                  {handed && !device?.notice
+                    ? `${handed.copied ? 'The code is copied. ' : ''}GitHub opened in a new tab: paste the code there and approve Copilot CLI. No tab? Use Open GitHub. This page updates when you are done.`
+                    : 'Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.'}
+                </Note>
+              )}
               <div className="flex flex-wrap items-center gap-2 animate-rise">
                 {code && device?.verification_uri && (
 

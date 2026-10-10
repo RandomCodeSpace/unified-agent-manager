@@ -373,6 +373,8 @@ export interface DeviceSignIn {
   state: 'idle' | 'starting' | 'waiting' | 'signed_in' | 'failed' | 'canceled';
   verification_uri?: string;
   user_code?: string;
+  /** Why a second approval is needed, with its new code (no system keychain on the server). */
+  notice?: string;
   error?: string;
   account?: ProviderAccount;
 }

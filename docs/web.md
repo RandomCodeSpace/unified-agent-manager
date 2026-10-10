@@ -157,7 +157,11 @@ are logged only at debug level (`UAM_DEBUG=1`).
 Copilot has one sign-in per server: the one the `copilot` CLI uses for the
 service user. Every Task on the server, and the `copilot` command run as the
 same user, uses it. Settings → **GitHub Copilot** shows it, read again each
-time Settings opens or **Check again** is chosen:
+time Settings opens or **Check again** is chosen. A running Copilot reads its
+sign-in only when it starts, so while it says it is signed out and no Copilot
+conversation is open, that read restarts it first (at most every 3 seconds):
+a `copilot login` run on the server shows on **Check again** without
+restarting UAM.
 
 - **Signed in as** the account's login, and how: a sign-in Copilot stored on
   the server, the token in a named environment variable (never its value),
@@ -171,17 +175,22 @@ time Settings opens or **Check again** is chosen:
   `available: false` with `signed_out: true`.
 
 **Sign in with GitHub.** Offered while Copilot is signed out and no
-environment token is set. Choose **Sign in with GitHub**: Settings shows a
-short code, with **Copy code**, and **Open GitHub**, which opens GitHub's
-device page in a new tab. Enter the code there and approve Copilot CLI; no
-token passes through UAM.
+environment token is set. Choose **Sign in with GitHub**: Settings gets a
+short code, copies it and opens GitHub's device page in a new tab, so the code
+only needs pasting there; approve Copilot CLI. No token passes through UAM.
+If the browser blocks either step, the code stays on screen with **Copy code**
+and **Open GitHub**.
 Settings checks every 2 seconds and shows the sign-in once GitHub approves it;
 **Cancel** stops it. A code not approved within about 15 minutes expires and
 the sign-in fails with **Try again**. A sign-in started in another tab or
 before a reload shows its code again when Settings opens. It signs in the
-whole server: every Task uses the account. To store the sign-in, the server
-needs a system keychain, or Copilot's `storeTokenPlaintext` setting in
-`~/.copilot/settings.json`. Signing in restarts Copilot, so it is refused while
+whole server: every Task uses the account. Copilot stores the sign-in in the
+system keychain. On a server with none, GitHub's first approval cannot be
+stored: UAM then turns on Copilot's `storeTokenPlaintext` setting in its
+`settings.json` (in `COPILOT_HOME`, else `~/.copilot`; its other settings are
+kept) and shows a second code with a notice. Approving it stores the sign-in
+in Copilot's own config file, which only the service user can read; later
+sign-ins need one approval. Signing in restarts Copilot, so it is refused while
 Copilot Tasks have open conversations; close them first. While signed in,
 **Use another token** replaces the sign-in.
 

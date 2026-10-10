@@ -47,16 +47,25 @@ describe('GitHub Copilot sign-in', () => {
     expect(card.getByLabelText('Or sign in with a token')).toBeTruthy();
     expect(card.queryByText(/not supported here/)).toBeNull();
 
+    const opened: unknown[][] = [];
+    const open = window.open;
+    window.open = (...args: unknown[]) => { opened.push(args); return null; };
+    const written: string[] = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => { written.push(t); } } });
     await user.click(start);
     const code = within(await card.findByRole('group', { name: 'Device code' }));
     expect(code.getByText('B4F2-9C1D')).toBeTruthy();
+    // The click copies the code, then opens GitHub's device page.
+    await waitFor(() => expect(opened).toEqual([['https://github.com/login/device', '_blank', 'noopener,noreferrer']]));
+    expect(written).toEqual(['B4F2-9C1D']);
+    window.open = open;
+    expect(card.getByText('The code is copied. GitHub opened in a new tab: paste the code there and approve Copilot CLI. No tab? Use Open GitHub. This page updates when you are done.')).toBeTruthy();
     const copy = code.getByRole('button', { name: 'Copy code' });
     await waitFor(() => expect(document.activeElement).toBe(copy));
     const link = card.getByRole('link', { name: 'Open GitHub' });
     expect(link.getAttribute('href')).toBe('https://github.com/login/device');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
-    expect(card.getByText('Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.')).toBeTruthy();
     expect(card.getByText('Waiting for approval on GitHub…').getAttribute('role')).toBe('status');
     expect(card.queryByLabelText('Or sign in with a token')).toBeNull();
 
@@ -67,6 +76,20 @@ describe('GitHub Copilot sign-in', () => {
     expect(card.queryByRole('group', { name: 'Device code' })).toBeNull();
     expect(card.queryByRole('button', { name: 'Sign in with GitHub' })).toBeNull();
     await waitFor(() => expect(screen.queryByText('GitHub Copilot is signed out. Sign in in Settings.')).toBeNull());
+  });
+
+  test('with no keychain on the server, a second code comes with a notice and then signs in', async () => {
+    const open = window.open;
+    window.open = () => null;
+    const { user } = renderApp('?copilot=out&device=keychain#settings');
+    const card = await account();
+    await user.click(await card.findByRole('button', { name: 'Sign in with GitHub' }));
+    expect(await card.findByText('B4F2-9C1D')).toBeTruthy();
+    expect(await card.findByText('K7Q3-2M8P', {}, { timeout: 5000 })).toBeTruthy();
+    expect(card.getByText(/^This server has no system keychain/)).toBeTruthy();
+    expect(card.getByText('Enter the code on GitHub and approve Copilot CLI. This page updates when you are done.')).toBeTruthy();
+    expect(await card.findByText(SIGNED_IN, {}, { timeout: 5000 })).toBeTruthy();
+    window.open = open;
   });
 
   test('a failed device sign-in says why and starts again with Try again', async () => {

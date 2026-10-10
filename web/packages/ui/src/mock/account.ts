@@ -3,6 +3,7 @@
 // A token starting github_pat_ signs in; any other is refused the way GitHub refuses a bad one.
 // Sign in with GitHub shows a code; a read 1.5 s after it started signs in. `?device=off` lacks the capability,
 // `?device=waiting` has a sign-in waiting already, `?device=fail` fails it and `?device=hold` never finishes it.
+// `?device=keychain` is a server with no keychain: the first approval brings a second code with a notice.
 // Both sign in as octocat. The first read of a signed-in account, or the first sign-in, links the server to it;
 // `?linked=<login>` starts linked to that login, so a sign-in as octocat is refused, and `?mismatch=1` starts
 // signed in as octocat while linked to monalisa (or the `?linked` login). Unlink clears the link and signs out a
@@ -108,6 +109,10 @@ export function accountMock(meta: Meta) {
         began ||= Date.now();
         if (deviceMode !== 'hold' && Date.now() - began >= 1500) {
           if (deviceMode === 'fail') device = { state: 'failed', error: 'the code expired before it was approved on GitHub' };
+          else if (deviceMode === 'keychain' && !device.notice) {
+            device = { ...WAITING, user_code: 'K7Q3-2M8P', notice: 'This server has no system keychain, so Copilot will keep the sign-in in its own settings folder, readable only by this user. Approve this new code to finish.' };
+            began = Date.now();
+          }
           else {
             const refused = signInAs({ ...SIGNED_IN, stored: true });
             device = refused ? { state: 'failed', error: refused } : { state: 'signed_in', account: view() };
