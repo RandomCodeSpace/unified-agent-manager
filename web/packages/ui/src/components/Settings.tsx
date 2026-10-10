@@ -695,7 +695,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             ))}
           </Section>}
           {loaded && <Section hidden={section !== 'general'} id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
-            <BackgroundAI limitSetting={settings.utility_daily_limit} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} />
+            {/* The service replaces the whole map, so a line's save carries the others as stored. */}
+            <BackgroundAI limitSetting={settings.utility_daily_limit} purposeLimits={settings.utility_purpose_limits} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSavePurposeLimit={(purpose, limit) => save({ utility_purpose_limits: { ...settings.utility_purpose_limits, [purpose]: limit } })} />
           </Section>}
           {loaded && !catalogPending && <Section hidden={section !== 'models'} id="models" title="Models" help="Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.">
             {metaError && (
