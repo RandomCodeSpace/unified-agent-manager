@@ -28,6 +28,9 @@ const COMMAND_HEADS = new Set(['go', 'npm', 'npx', 'pnpm', 'yarn', 'bun', 'deno'
 const TEST_COMMAND = /(^|[;&|(]\s*|\bthen\s+|\bdo\s+)(?:rtk\s+)?(?:go\s+test|npm\s+(?:run\s+)?test|pnpm\s+(?:run\s+)?test|yarn\s+(?:run\s+)?test|bun\s+test|npx\s+(?:vitest|jest|playwright\s+test|mocha)|vitest|jest|pytest|python3?\s+-m\s+pytest|cargo\s+test|make\s+test|node\s+--test|dotnet\s+test|mvn\s+(?:test|verify)|gradle\s+test|\.\/gradlew\s+test|rspec|phpunit|ctest)\b/;
 /** The words that claim the tests pass, in prose outside code spans. */
 const TESTS_PASS = /\b(?:all\s+)?(?:\d+\s+)?(?:unit\s+|integration\s+|e2e\s+)?tests?\s+(?:(?:are|is|now|still|all)\s+)*(?:pass(?:es|ed|ing)?|green|succeed(?:s|ed)?)\b|\btest\s+suites?\s+(?:(?:is|are|now)\s+)*(?:pass(?:es|ed|ing)?|green)\b|\b(?:\d+)\s+passed\b(?!\s*,?\s*\d+\s+failed)|\b(?:everything|they)\s+pass(?:es|ed)\b/i;
+/** A single pipe: the shell reports the last command's exit, not the test runner's. */
+const PIPED = /[^|]\|[^|]/;
+
 /** Test output that says some test failed, whatever the exit code. */
 const FAILED_OUTPUT = /\b([1-9]\d*)\s+failed\b|^(?:FAIL|--- FAIL|FAILED)\b/m;
 
@@ -137,9 +140,11 @@ function findRun(runs: Run[], claim: string): Run | undefined {
 const exitNote = (run: Run) => (run.exit !== undefined ? `exit ${run.exit}` : run.failed ? 'failed' : 'ran');
 
 /**
- * The reply's claims against the turn's record, at most `MAX_STAMPS`. A claim the main agent's
- * calls do not bear out is contradicted, unless the turn started subagents, whose work is not
- * read here: then it is only unseen, and the note says so.
+ * The reply's claims against the turn's record, at most `MAX_STAMPS`. A test claim the main
+ * agent's calls do not bear out is contradicted, unless the turn started subagents, whose work
+ * is not read here: then it is only unseen, and the note says so. A command the record lacks is
+ * only unseen too, since a reply often names a command it suggests or a wrapper of what it ran;
+ * it is contradicted only when the run it names failed.
  */
 export function receipts(text: string, items: readonly Item[]): Stamp[] {
   const claims = claimsOf(text);
@@ -160,12 +165,14 @@ export function receipts(text: string, items: readonly Item[]): Stamp[] {
     } else if (kind === 'command') {
       const run = findRun(record.runs, claim);
       if (run) stamps.push({ claim, kind, verdict: run.failed ? 'contradicted' : 'verified', note: exitNote(run), itemId: run.itemId });
-      else stamps.push({ claim, kind, verdict: missing, note: `not run${record.subagents ? ' by the main agent' : ' this turn'}${aside}` });
+      else stamps.push({ claim, kind, verdict: 'unseen', note: `not run${record.subagents ? ' by the main agent' : ' this turn'}${aside}` });
     } else {
       const tests = record.runs.filter((r) => TEST_COMMAND.test(r.command));
       const last = tests.at(-1);
       if (!last) stamps.push({ claim, kind, verdict: missing, note: `no test command ran${record.subagents ? ' in the main agent’s work' : ' this turn'}${aside}` });
       else if (last.failed || FAILED_OUTPUT.test(last.output)) stamps.push({ claim, kind, verdict: 'contradicted', note: `last test run ${last.failed ? exitNote(last) : 'reported failures'}`, itemId: last.itemId });
+      // A piped run exits with the pipe's last command, so without its output a green exit proves nothing.
+      else if (PIPED.test(last.command) && !last.output) stamps.push({ claim, kind, verdict: 'unseen', note: 'piped test run, output not loaded', itemId: last.itemId });
       else stamps.push({ claim, kind, verdict: 'verified', note: `${last.command.length > 40 ? `${last.command.slice(0, 40)}…` : last.command} · ${exitNote(last)}`, itemId: last.itemId });
     }
   }
