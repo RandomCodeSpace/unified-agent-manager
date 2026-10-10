@@ -1586,6 +1586,31 @@ reloading the page or losing the connection hangs up the shell and the
 command it runs; there is no reattach. Turning the setting off or stopping
 the service closes every open terminal the same way.
 
+## GitLab command bounds
+
+For Tasks whose session directory has a GitLab `origin`, UAM enables shell
+rules after finding `glab` on PATH and verifying `glab auth status` for that
+host. The origin/auth cache refreshes in the background at Task open and after
+ten minutes. A cold or expired gate leaves the current call unchanged. GitHub
+origins, missing glab and failed authentication leave these rules disabled.
+
+The rules recognize `glab`, `rtk glab` and `rtk proxy glab` command heads. They
+refuse raw API/search, pagination-all and interactive forms with a replacement
+in the existing refused-tool row. Supported issue, incident, MR and CI lists
+get `-P 10` by default; explicit page sizes above 20 become 20. Other tool
+arguments are preserved. Loops and subshells are not rewritten.
+
+Before a `git push`, committed CI changes relative to the push ref (or the
+origin default branch) receive `glab ci lint`. A branch with an origin tracking
+ref uses a dry run with its branch context; otherwise the note says static
+only. Invalid CI refuses the push with at most 20 diagnostic lines. Timeouts,
+glab errors and inaccessible includes allow it. Commands use argv directly,
+nil stdin, a 20-second deadline and a 1 MiB output limit. Authentication output
+is discarded. This does not add a new setting or guarantee pipeline success.
+
+The gate uses the SDK session directory, not a shell `cd` destination. Shell
+aliases, computed command heads and other wrappers are not interpreted.
+
 ## MCP servers
 
 MCP servers give the agent extra tools: a command this host runs (stdio) or

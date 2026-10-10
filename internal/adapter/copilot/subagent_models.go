@@ -46,7 +46,7 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 			args = map[string]any{"patch": patch}
 		}
 		verdict := c.hooks.Pre(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)})
-		if verdict.Context != "" || verdict.Deny != "" {
+		if verdict.Context != "" || verdict.Deny != "" || verdict.Args != nil {
 			if strings.HasPrefix(verdict.Context, "uam trail:") {
 				// SDK hook context reaches the model but is not in hook.end.
 				// A durable SDK notification uses the existing notice mapper.
@@ -58,6 +58,9 @@ func (c *conversation) preToolUse(in copilot.PreToolUseHookInput, _ copilot.Hook
 				}
 			}
 			out := &copilot.PreToolUseHookOutput{AdditionalContext: verdict.Context}
+			if verdict.Args != nil {
+				out.ModifiedArgs = verdict.Args
+			}
 			if verdict.Deny != "" {
 				out.PermissionDecision, out.PermissionDecisionReason = "deny", verdict.Deny
 			}

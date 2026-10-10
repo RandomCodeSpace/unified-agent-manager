@@ -31,6 +31,22 @@ When uam attaches a `uam trail:` note, another running Task recently edited that
 
 When uam reports repeated permission denials or a refused fetch with a reopening time, stop retrying that kind of action or URL segment; continue work that does not need it.
 
+## GitLab via glab
+
+In a GitLab Project with glab installed and signed in, uam bounds supported
+`glab` shell calls. Use `issue list`, `incident list`, `mr list` or `ci list`
+with `-P 10`; request another page with `-p 2`. Missing page sizes become 10,
+and explicit sizes above 20 become 20. Do not use `api`, `search`, `--paginate`
+or list `-A/--all`. Use `ci get` instead of `ci view`, a single `ci status`
+instead of `--live`, and give `ci trace`/`ci retry` a job ID. Use `mr create`
+with `-y` or `-f`; sign in outside the Task. Do not retry a refused form.
+
+Before `git push`, changed GitLab CI files are linted when the gate is ready.
+Fix reported CI errors before pushing. A new branch receives a static check;
+unavailable lint or inaccessible includes do not block the push. This is not
+a guarantee that a pipeline will pass. Rules leave calls unchanged while the
+background origin/auth check is cold, and do not rewrite loops or subshells.
+
 ## What the owner sees
 
 - **Each turn folds into one line** such as "Took 1m 2s · 3 commands ·
