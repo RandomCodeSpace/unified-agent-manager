@@ -686,6 +686,8 @@ type WebSettings struct {
 	// SendDefault is what Enter does while a turn runs: WebSendSteer or
 	// WebSendQueue. Empty or unrecognised values mean steer at runtime.
 	SendDefault string `json:"send_default,omitempty"`
+	// DefaultProjectDir is where project folder browsing starts on this instance. Empty uses home.
+	DefaultProjectDir string `json:"default_project_dir,omitempty"`
 	// Terminal turns on the web terminal: a shell as the service user for
 	// anyone signed in. Off when absent.
 	Terminal bool `json:"terminal,omitempty"`
@@ -941,6 +943,7 @@ type webSettingsAlias WebSettings
 var knownWebSettingsFields = map[string]struct{}{
 	"token_prices":           {},
 	"send_default":           {},
+	"default_project_dir":    {},
 	"terminal":               {},
 	"hidden_models":          {},
 	"subagent_models":        {},

@@ -221,7 +221,7 @@ describe('collapsed sidebar rail', () => {
   test('Add project opens the Add project dialog', async () => {
     const { user, nav } = await rail();
     await user.click(nav.getByRole('button', { name: 'Add project' }));
-    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Choose a project folder' })).toBeTruthy();
   });
 
   test('Settings and the connection sit at its foot', async () => {
@@ -296,7 +296,7 @@ describe('new task', () => {
     expect(within(palette.getByRole('option')).getByText(/^Alt\+\d$/).textContent).toBe(key);
     await user.type(search, 'zzzz');
     await user.click(palette.getByRole('button', { name: 'Add project' }));
-    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Choose a project folder' })).toBeTruthy();
   });
 
   test('Alt+N in the terminal stays with the shell', async () => {

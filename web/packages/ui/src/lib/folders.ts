@@ -10,7 +10,7 @@ export interface Crumb {
 /**
  * Turns what was typed into the clean, absolute form the server accepts: repeated and
  * trailing slashes go, `.` and `..` resolve. A relative or empty value comes back trimmed and
- * otherwise untouched, so the server refuses it and the picker falls back to home.
+ * otherwise untouched, so the server refuses it and the picker falls back to the instance default.
  */
 export function cleanPath(input: string): string {
   const s = input.trim();

@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { useFederation } from '../FederationContext';
-import { ChevronLeft, ChevronRight, LogOut, X } from 'lucide-react';
-import { useCallback, useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
+import { ChevronLeft, ChevronRight, FolderOpen, LogOut, X } from 'lucide-react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, type ReactNode, type SubmitEvent } from 'react';
 import { DEFAULT_COMPACT_THRESHOLD, describeError, resolveTaskDefaults, type ConfigurationKind, type CustomModel, type Model, type ProviderInfo, type SendDefault, type Settings } from '../api';
 import { ArchivedTasks } from './ArchivedTasks';
 import { BackgroundAI } from './BackgroundAI';
@@ -31,9 +31,12 @@ import { Select } from './ui/select';
 import { Switch } from './ui/switch';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { Collapse, usePresence } from './ui/collapse';
 import { Input } from './ui/input';
 import { Segmented } from './ui/segmented';
 import { HelpTip, Tip } from './ui/tooltip';
+
+const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
 
 /** Wide enough for the rail beside the page; narrower, the rail is a list of pages that opens one at a time. */
 const WIDE = '(min-width: 768px)';
@@ -83,7 +86,7 @@ function PendingSection({ id, title, label, hidden = false }: Readonly<{ id: str
 }
 
 /** The optional connected-instance features (Federation capabilities), named as Settings names them. */
-const OPTIONAL_FEATURES = ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1'];
+const OPTIONAL_FEATURES = ['files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'project-location-v1'];
 
 /** In place of a section whose routes the connected instance on screen does not offer: why, not a form that fails. */
 function Unsupported({ what }: Readonly<{ what: string }>) {
@@ -461,6 +464,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const instance = federation?.machines ? api.owner?.label ?? 'This server' : null;
   const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
+  const [projectDir, setProjectDir] = useState<string | null>(null);
+  const [projectBrowsing, setProjectBrowsing] = useState(false);
+  const projectPicker = usePresence(projectBrowsing);
+  const projectInput = useRef<HTMLInputElement>(null);
+  const projectBrowse = useRef<HTMLButtonElement>(null);
   const { projects } = useContext(TaskList);
   // The catalogs are not here yet and have not failed: their sections are skeletons, never absent or empty.
   const catalogPending = !meta && !metaError;
@@ -552,7 +560,10 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     setSaving(true);
     try {
       const saved = await api.updateWebSettings(patch);
-      if (sequence === saveSequence.current) dispatch({ type: 'settings', settings: saved });
+      if (sequence === saveSequence.current) {
+        dispatch({ type: 'settings', settings: saved });
+        if (patch.default_project_dir !== undefined) setProjectDir(null);
+      }
       // Hiding a model can change a provider's cheapest_model, which only the service computes.
       if (patch.hidden_models) refreshMeta();
     } catch (e) {
@@ -776,6 +787,38 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       {/* A service too old to report its binary has no card: nothing to show or restart. */}
       {meta?.service && <Section id="uam" title="UAM">
         <UamService />
+      </Section>}
+      {loaded && api.supports('project-location-v1') && <Section id="project-folders" title="Project folders">
+        <form className="flex flex-col gap-3" onSubmit={(e) => {
+          e.preventDefault();
+          if (!saving && !projectBrowsing) void save({ default_project_dir: (projectDir ?? settings.default_project_dir ?? '').trim() });
+        }}>
+          <Field id="default-project-dir" label="Default project location" hint={`Add project starts browsing here on ${api.owner?.label ?? 'this instance'}. Use this folder saves your choice; press Enter to save a typed path. Leave empty to use the home directory. Existing projects stay where they are.`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input ref={projectInput} id="default-project-dir" className="min-w-0 flex-1 basis-full text-ui sm:basis-48" spellCheck={false} autoComplete="off" placeholder="/path/to/projects" aria-describedby="default-project-dir-hint" value={projectDir ?? settings.default_project_dir ?? ''} readOnly={saving} onChange={(e) => setProjectDir(e.target.value)} />
+              <Button ref={projectBrowse} variant="secondary" disabled={saving || !api.supports('files-v1')} aria-describedby={api.supports('files-v1') ? undefined : 'default-project-dir-browse-note'} aria-expanded={projectBrowsing} aria-controls={projectBrowsing ? 'default-project-dir-picker' : undefined} onClick={() => setProjectBrowsing(!projectBrowsing)}>
+                <FolderOpen />
+                Browse
+              </Button>
+            </div>
+          </Field>
+          {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'This server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
+          {projectPicker.mounted && (
+            <Collapse open={projectBrowsing} appear soft onClosed={projectPicker.onClosed}>
+              <Suspense fallback={null}>
+                <FolderPicker id="default-project-dir-picker" start={projectDir ?? settings.default_project_dir ?? ''} onUse={(path) => {
+                  setProjectDir(path);
+                  void save({ default_project_dir: path });
+                  setProjectBrowsing(false);
+                  projectInput.current?.focus();
+                }} onClose={() => {
+                  setProjectBrowsing(false);
+                  projectBrowse.current?.focus();
+                }} />
+              </Suspense>
+            </Collapse>
+          )}
+        </form>
       </Section>}
       {loaded && <Section id="shell" title="Shell access">
         {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>

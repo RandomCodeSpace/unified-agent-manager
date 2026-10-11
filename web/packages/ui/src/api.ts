@@ -490,6 +490,8 @@ export interface Settings {
   token_prices?: Record<string, Record<string, TokenPrice>>;
   /** What Enter does while a turn runs. */
   send_default: SendDefault;
+  /** Initial project folder on this instance. Empty or absent uses the service user's home; PATCH an empty string clears it. */
+  default_project_dir?: string;
   /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
   hidden_models?: Record<string, string[]>;
   /**

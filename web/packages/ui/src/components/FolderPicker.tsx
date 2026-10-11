@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { Check, ChevronRight, Eye, EyeOff, Folder, FolderPlus, FolderUp, GitBranch, Link, X } from 'lucide-react';
+import { Check, ChevronRight, Eye, EyeOff, Folder, FolderOpen, FolderPlus, FolderUp, GitBranch, Link, X } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { ApiError, describeError, isStatus, type DirList } from '../api';
 import { cn } from '../lib/cn';
@@ -10,11 +10,11 @@ import { Input } from './ui/input';
 
 /** One listing request. A fresh object each time, so the same folder can be listed again after a folder is created in it. */
 interface Want {
-  /** Absent: the service user's home. */
+  /** Absent: the instance's default project location, or the service user's home. */
   path?: string;
   /** Dot-folders too; the server filters and caps after the filter. */
   hidden: boolean;
-  /** Fall back to home when this path cannot be listed (the path field held something that is not a folder). */
+  /** Fall back to the instance default when this path cannot be listed (the field held something that is not a folder). */
   fallback?: boolean;
 }
 
@@ -35,20 +35,29 @@ function nextIndex(key: string, current: number, last: number): number {
 }
 
 /**
- * The Add project dialog's inline folder browser (DESIGN.md: Folder picker). A breadcrumb, a
+ * The inline browser shared by Add project and its default location setting (DESIGN.md: Folder picker). A breadcrumb, a
  * listbox of folders in a `canvas` well, and a footer. The selection is the target: **Use this
  * folder** takes the selected path, else the folder being shown. Focus stays on the listbox
  * (`aria-activedescendant`): arrows move, Enter opens, Backspace goes up, typing jumps to a
- * name, Ctrl/Cmd+Enter uses. Escape cancels the New folder row first, then closes the picker;
- * the dialog stays open either way.
+ * name, Ctrl/Cmd+Enter uses. Escape cancels the New folder row first, then calls onClose.
+ * The project variant reports its target to the dialog's Continue action.
  */
-export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: string; start: string; onUse: (path: string) => void; onClose: () => void }>) {
+export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', onTargetChange }: Readonly<{
+  id: string;
+  start: string;
+  onUse: (path: string) => void;
+  onClose: () => void;
+  /** The project flow owns its Continue action; it also offers typed paths and a folder filter. */
+  variant?: 'inline' | 'project';
+  /** Null while the current project target has not been resolved or cannot be used. */
+  onTargetChange?: (path: string | null) => void;
+}>) {
   const api = useApi();
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const nameInput = useRef<HTMLInputElement>(null);
   const typed = useRef({ text: '', at: 0 });
-  const [want, setWant] = useState<Want>(() => ({ path: cleanPath(start) || undefined, hidden: false, fallback: true }));
+  const [want, setWant] = useState<Want>(() => ({ path: cleanPath(start) || undefined, hidden: false, fallback: variant === 'inline' }));
   /** The request in flight or answered last; a create that finishes after the user moved on must not undo the move. */
   const latest = useRef(want);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -57,13 +66,23 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
   const [newName, setNewName] = useState('');
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const [pathDraft, setPathDraft] = useState<string | null>(null);
 
   const loading = listing?.for !== want;
-  const entries = listing?.entries ?? [];
+  const entries = (listing?.entries ?? []).filter((entry) => entry.name.toLowerCase().includes(filter.toLowerCase()));
   const selIndex = entries.findIndex((e) => e.path === selected);
   // A path, not an index: a folder just created is the target before the re-list shows it.
   const target = selected ?? listing?.path;
   const crumbs = breadcrumbs(listing?.path ?? '');
+  const pathValue = pathDraft ?? want.path ?? listing?.path ?? '';
+  const absolutePath = cleanPath(pathValue).startsWith('/');
+  const pathChanged = pathDraft !== null && cleanPath(pathDraft) !== listing?.path;
+  const projectTarget = !loading && !listing?.error && !creating && !createBusy && !pathChanged ? target ?? null : null;
+
+  useEffect(() => {
+    onTargetChange?.(projectTarget);
+  }, [onTargetChange, projectTarget]);
 
   useEffect(() => {
     latest.current = want;
@@ -74,7 +93,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
       .catch((e: unknown) => {
         if (!live) return;
         const status = e instanceof ApiError ? e.status : 0;
-        // Not a folder (400, 404): start at home instead. A folder that exists but cannot be read says so.
+        // Not a folder (400, 404): start at the instance default. An unreadable folder says so.
         if (want.fallback && status !== 403) {
           setWant({ hidden: want.hidden });
           return;
@@ -104,6 +123,8 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
   function open(path: string) {
     setWant({ path, hidden: want.hidden });
     setSelected(null);
+    setFilter('');
+    setPathDraft(null);
     setCreating(false);
     setCreateError(null);
     list.current?.focus();
@@ -114,7 +135,13 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
   }
 
   function choose() {
-    if (target) onUse(target);
+    const path = variant === 'project' ? projectTarget : target;
+    if (path) onUse(path);
+  }
+
+  function select(path: string) {
+    setPathDraft(null);
+    setSelected(path);
   }
 
   function toggleHidden() {
@@ -147,6 +174,8 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
       // Select the new folder only while the user is still in the folder it was made in; a move made meanwhile stands.
       if (latest.current.path === at.path) {
         setSelected(path);
+        setFilter('');
+        setPathDraft(null);
         setWant({ path: at.path, hidden: latest.current.hidden || name.startsWith('.') });
       }
       list.current?.focus();
@@ -177,22 +206,22 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
       case 'Home':
       case 'End': {
         e.preventDefault();
-        if (entries.length === 0) return;
+        if (entries.length === 0 || loading) return;
         const last = entries.length - 1;
         const next = nextIndex(e.key, selIndex, last);
-        setSelected(entries[next].path);
+        select(entries[next].path);
         return;
       }
       case 'Enter':
         e.preventDefault();
-        if (selIndex >= 0) open(entries[selIndex].path);
+        if (!loading && selIndex >= 0) open(entries[selIndex].path);
         return;
       case 'Backspace':
         e.preventDefault();
         up();
         return;
     }
-    if (e.key.length !== 1) return;
+    if (e.key.length !== 1 || loading) return;
     e.preventDefault();
     // Keys within TYPEAHEAD_MS of each other extend the prefix; the event's own clock is enough.
     const extending = typed.current.text !== '' && e.timeStamp - typed.current.at < TYPEAHEAD_MS;
@@ -202,7 +231,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
       extending ? selIndex - 1 : selIndex,
       typed.current.text,
     );
-    if (hit >= 0) setSelected(entries[hit].path);
+    if (hit >= 0) select(entries[hit].path);
   }
 
   /** The option is one button. Its chevron is a hit region, not a control: a press there opens the folder, anywhere else selects it. */
@@ -211,7 +240,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
       open(path);
       return;
     }
-    setSelected(path);
+    select(path);
     list.current?.focus();
   }
 
@@ -221,6 +250,35 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- every control inside is focusable; this only relays Ctrl/Cmd+Enter and Escape from them.
     <div ref={root} id={id} className="flex flex-col gap-2 animate-fade-in" onKeyDown={onRootKey}>
+      {variant === 'project' && (
+        <div className="mb-2">
+          <label htmlFor={`${id}-path`} className="mb-1.5 block text-ui text-ink">Folder path</label>
+          <div className="flex gap-2">
+            <Input
+              id={`${id}-path`}
+              className="min-w-0 flex-1 text-ui"
+              placeholder="/path/to/project"
+              spellCheck={false}
+              autoComplete="off"
+              value={pathValue}
+              aria-invalid={pathDraft !== null && !absolutePath || undefined}
+              aria-describedby={pathDraft !== null && !absolutePath ? `${id}-path-error` : undefined}
+              onChange={(e) => setPathDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+                  e.preventDefault();
+                  if (absolutePath) open(cleanPath(pathValue));
+                }
+              }}
+            />
+            <Button variant="secondary" aria-label="Open folder path" disabled={!absolutePath} onClick={() => open(cleanPath(pathValue))}>
+              <FolderOpen />
+              Open
+            </Button>
+          </div>
+          {pathDraft !== null && !absolutePath && <Note id={`${id}-path-error`} tone="error" className="mt-2">Enter an absolute folder path.</Note>}
+        </div>
+      )}
       <div className="flex items-start gap-2">
         <nav aria-label="Folder path" className="min-w-0 flex-1 pt-0.5">
           <ol className="flex flex-wrap items-center gap-y-0.5 text-caption">
@@ -253,6 +311,19 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
           Show hidden
         </Button>
       </div>
+
+      {variant === 'project' && (
+        <Input
+          aria-label="Filter folders"
+          className="text-ui"
+          placeholder="Filter folders…"
+          value={filter}
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setSelected(null);
+          }}
+        />
+      )}
 
       <div className="flex h-picker flex-col overflow-hidden rounded-sm bg-canvas max-sm:h-picker-phone">
         {creating && (
@@ -302,7 +373,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
             {listing.error}
           </output>
         )}
-        {listing && !listing.error && !loading && entries.length === 0 && <p className={statusClass}>No folders here</p>}
+        {listing && !listing.error && !loading && entries.length === 0 && <p className={statusClass}>{filter ? 'No matching folders' : 'No folders here'}</p>}
         <div
           ref={list}
           id={`${id}-list`}
@@ -324,6 +395,7 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
                 id={`${id}-opt-${i}`}
                 aria-selected={sel}
                 tabIndex={-1}
+                disabled={variant === 'project' && loading}
                 className={cn(
                   'flex h-8 w-full cursor-default items-center gap-2 rounded-sm pr-0 pl-2 text-left outline-hidden transition-[background-color,color,box-shadow] duration-100 select-none pointer-coarse:h-11',
                   sel ? 'bg-raised text-ink shadow-raised' : 'text-body hover:bg-surface',
@@ -371,13 +443,17 @@ export function FolderPicker({ id, start, onUse, onClose }: Readonly<{ id: strin
           <FolderPlus />
           New folder
         </Button>
-        {/* The folder "Use this folder" takes. RTL direction puts the ellipsis at the start, so the folder's own name stays visible; <bdi> keeps the path itself left-to-right. */}
-        <span dir="rtl" className="min-w-0 flex-1 truncate text-caption text-muted max-sm:order-first max-sm:basis-full max-sm:text-left" title={target}>
-          <bdi>{target}</bdi>
-        </span>
-        <Button variant="secondary" disabled={!target} onClick={choose}>
-          Use this folder
-        </Button>
+        {variant === 'inline' && (
+          <>
+            {/* RTL keeps the folder's own name visible when the path is truncated; bdi keeps the path left-to-right. */}
+            <span dir="rtl" className="min-w-0 flex-1 truncate text-caption text-muted max-sm:order-first max-sm:basis-full max-sm:text-left" title={target}>
+              <bdi>{target}</bdi>
+            </span>
+            <Button variant="secondary" disabled={!target} onClick={choose}>
+              Use this folder
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

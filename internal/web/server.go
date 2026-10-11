@@ -627,6 +627,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			patch.TokenPrices = &prices
+		case "default_project_dir":
+			patch.DefaultProjectDir = new(string)
+			if string(raw) == "null" || json.Unmarshal(raw, patch.DefaultProjectDir) != nil {
+				writeError(w, http.StatusBadRequest, "default_project_dir must be a string")
+				return
+			}
 		case "send_default":
 			patch.SendDefault = new(string)
 			if json.Unmarshal(raw, patch.SendDefault) != nil {
@@ -750,7 +756,11 @@ func (s *Server) handleUsage(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	list, err := listDirs(q.Get("path"), q.Get("hidden") == "1", maxDirEntries)
+	path := q.Get("path")
+	if path == "" {
+		path = s.m.Settings().DefaultProjectDir
+	}
+	list, err := listDirs(path, q.Get("hidden") == "1", maxDirEntries)
 	if err != nil {
 		writeFailure(w, err)
 		return

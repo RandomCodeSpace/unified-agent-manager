@@ -1,11 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, test, vi } from 'vitest';
 import { renderApp, sidebar, type User } from './render';
 
 async function addProjectDialog(user: User) {
   const side = await sidebar();
   await user.click(side.getByRole('button', { name: 'Add project' }));
-  return within(await screen.findByRole('dialog', { name: 'Add a project' }));
+  return within(await screen.findByRole('dialog', { name: 'Choose a project folder' }));
 }
 
 async function editProjectDialog(user: User, name: string) {
@@ -17,44 +17,66 @@ async function editProjectDialog(user: User, name: string) {
 }
 
 describe('add project', () => {
-  test('a typed directory becomes a project with a badge', async () => {
+  test('a typed directory is reviewed before creation and Back preserves its name and folder', async () => {
     const { user } = renderApp();
+    const requests = vi.spyOn(window, 'fetch');
+    const projectWrites = () => requests.mock.calls.filter(([url, init]) => url === '/api/projects' && init?.method === 'POST');
     const dialog = await addProjectDialog(user);
-    const add = dialog.getByRole('button', { name: 'Add project' });
-    expect(add).toHaveProperty('disabled', true);
-    await user.type(dialog.getByRole('textbox', { name: 'Directory on the host' }), '/home/user/projects/scratch');
-    await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Scratch pad');
-    expect(dialog.getByText(/Badge assigned when added/)).toBeTruthy();
-    await user.click(add);
+    const path = await dialog.findByRole('textbox', { name: 'Folder path' });
+    await user.clear(path);
+    await user.type(path, '/home/user/projects/scratch');
+    await user.click(dialog.getByRole('button', { name: 'Open folder path' }));
+    await dialog.findByText('No folders here');
+    await user.click(dialog.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('dialog', { name: 'Add a project' });
+    expect(projectWrites()).toHaveLength(0);
+    expect(dialog.getByText('/home/user/projects/scratch')).toBeTruthy();
+    await user.type(dialog.getByRole('textbox', { name: 'Project name' }), 'Scratch pad');
+    await user.click(dialog.getByRole('button', { name: 'Back' }));
+    await screen.findByRole('dialog', { name: 'Choose a project folder' });
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', false));
+    expect(dialog.getByRole('textbox', { name: 'Folder path' })).toHaveProperty('value', '/home/user/projects/scratch');
+    await user.click(dialog.getByRole('button', { name: 'Continue' }));
+    expect(dialog.getByRole('textbox', { name: 'Project name' })).toHaveProperty('value', 'Scratch pad');
+    expect(projectWrites()).toHaveLength(0);
+    await user.click(dialog.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull());
+    expect(projectWrites()).toHaveLength(1);
+    requests.mockRestore();
     const side = await sidebar();
     await user.click(side.getByRole('button', { name: 'Project filter: all projects' }));
     expect(await screen.findByRole('option', { name: /Scratch pad/ })).toBeTruthy();
   });
 
-  test('a directory that already has a project selects that project', async () => {
+  test('a recent directory that already has a project selects that project after review', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);
-    await user.type(dialog.getByRole('textbox', { name: 'Directory on the host' }), '/home/user/dotfiles');
+    await user.click(dialog.getByRole('combobox', { name: 'Recent folders' }));
+    await user.click(await screen.findByRole('option', { name: '/home/user/dotfiles' }));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', false));
+    expect(dialog.getByRole('textbox', { name: 'Folder path' })).toHaveProperty('value', '/home/user/dotfiles');
+    await user.click(dialog.getByRole('button', { name: 'Continue' }));
     await user.click(dialog.getByRole('button', { name: 'Add project' }));
     expect(await screen.findByRole('button', { name: 'Project filter: dotfiles' })).toBeTruthy();
     expect(localStorage.getItem('uam.projectFilter')).toBe('"p2"');
   });
 
-  test('a relative directory is refused with the reason', async () => {
+  test('a relative folder path is refused with the reason and cannot be selected', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);
-    await user.type(dialog.getByRole('textbox', { name: 'Directory on the host' }), 'relative/path');
-    await user.click(dialog.getByRole('button', { name: 'Add project' }));
-    expect((await dialog.findByRole('alert')).textContent).toMatch(/absolute path/);
+    const path = await dialog.findByRole('textbox', { name: 'Folder path' });
+    await user.clear(path);
+    await user.type(path, 'relative/path');
+    expect(dialog.getByRole('button', { name: 'Open folder path' })).toHaveProperty('disabled', true);
+    expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true);
+    expect(dialog.getByRole('textbox', { name: 'Folder path', description: 'Enter an absolute folder path.' }).getAttribute('aria-invalid')).toBe('true');
     await user.click(dialog.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Choose a project folder' })).toBeNull());
   });
 
-  test('Browse walks the folders and Use this folder fills the directory', async () => {
+  test('folders open immediately, filtering preserves browsing, and a selected folder supplies the default project name', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);
-    await user.click(dialog.getByRole('button', { name: 'Browse' }));
     const folders = within(await dialog.findByRole('listbox', { name: 'Folders' }));
     // Home first; folders sorted, dot-folders hidden.
     const projects = await folders.findByRole('option', { name: /^projects/ });
@@ -66,19 +88,27 @@ describe('add project', () => {
     expect(await folders.findByRole('option', { name: /^archive.*link/ })).toBeTruthy();
     const path = within(dialog.getByRole('navigation', { name: 'Folder path' }));
     expect(path.getByRole('button', { name: 'projects' }).getAttribute('aria-current')).toBe('location');
-    await user.click(folders.getByRole('option', { name: /^notes-site/ }));
-    expect(folders.getByRole('option', { name: /^notes-site/ }).getAttribute('aria-selected')).toBe('true');
-    await user.click(dialog.getByRole('button', { name: 'Use this folder' }));
-    await waitFor(() => expect(dialog.getByRole('textbox', { name: 'Directory on the host' })).toHaveProperty('value', '/home/user/projects/notes-site'));
+    await user.type(dialog.getByRole('textbox', { name: 'Filter folders' }), 'arch');
+    expect(folders.queryByRole('option', { name: /^notes-site/ })).toBeNull();
+    await user.click(folders.getByRole('option', { name: /^archive/ }));
+    expect(folders.getByRole('option', { name: /^archive/ }).getAttribute('aria-selected')).toBe('true');
+    await user.click(dialog.getByRole('button', { name: 'Continue' }));
+    expect(dialog.getByText('/home/user/projects/archive')).toBeTruthy();
+    const name = dialog.getByRole('textbox', { name: 'Project name' });
+    // Leaving the optional name empty lets the folder's own name become the Project name.
+    await user.clear(name);
+    await user.click(dialog.getByRole('button', { name: 'Add project' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull());
+    await user.click((await sidebar()).getByRole('button', { name: 'Project filter: all projects' }));
+    expect(await screen.findByRole('option', { name: /archive/ })).toBeTruthy();
   });
 
-  test('the folder picker goes up, makes a folder, and moves by keyboard', async () => {
+  test('folder creation and keyboard navigation preserve the selection and refuse unreadable folders', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);
-    await user.type(dialog.getByRole('textbox', { name: 'Directory on the host' }), '/home/user/projects');
-    await user.click(dialog.getByRole('button', { name: 'Browse' }));
     const list = await dialog.findByRole('listbox', { name: 'Folders' });
     const folders = within(list);
+    await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
     await folders.findByRole('option', { name: /^archive/ });
     await user.click(dialog.getByRole('button', { name: 'New folder' }));
     const name = await dialog.findByRole('textbox', { name: 'New folder name' });
@@ -86,26 +116,67 @@ describe('add project', () => {
     expect((await dialog.findByRole('alert')).textContent).toBe('A folder with this name already exists');
     await user.clear(name);
     await user.type(name, 'fresh');
+    expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true);
+    fireEvent.keyDown(name, { key: 'Enter', ctrlKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull();
     await user.click(dialog.getByRole('button', { name: 'Create folder' }));
     expect(await folders.findByRole('option', { name: /^fresh/, selected: true })).toBeTruthy();
-    list.focus();
+    await user.click(dialog.getByRole('button', { name: 'Continue' }));
+    expect(dialog.getByText('/home/user/projects/fresh')).toBeTruthy();
+    await user.click(dialog.getByRole('button', { name: 'Back' }));
+    const resumed = await dialog.findByRole('listbox', { name: 'Folders' });
+    await waitFor(() => expect(resumed.getAttribute('aria-busy')).not.toBe('true'));
+    const current = within(resumed);
+    await current.findByRole('option', { name: /^archive/ });
+    resumed.focus();
     await user.keyboard('{Home}');
-    expect(folders.getByRole('option', { name: /^archive/ }).getAttribute('aria-selected')).toBe('true');
+    expect(current.getByRole('option', { name: /^archive/ }).getAttribute('aria-selected')).toBe('true');
     await user.keyboard('{ArrowDown}');
-    expect(folders.getByRole('option', { name: /^fresh/ }).getAttribute('aria-selected')).toBe('true');
+    expect(current.getByRole('option', { name: /^fresh/ }).getAttribute('aria-selected')).toBe('true');
     await user.keyboard('u');
-    expect(folders.getByRole('option', { name: /^unified-agent-manager/ }).getAttribute('aria-selected')).toBe('true');
+    expect(current.getByRole('option', { name: /^unified-agent-manager/ }).getAttribute('aria-selected')).toBe('true');
     await user.keyboard('{Backspace}');
-    expect(await folders.findByRole('option', { name: /^projects/ })).toBeTruthy();
+    expect(await current.findByRole('option', { name: /^projects/ })).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Up' }));
-    expect(await folders.findByRole('option', { name: /^user/ })).toBeTruthy();
+    expect(await current.findByRole('option', { name: /^user/ })).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Root' }));
-    await user.click(await folders.findByRole('option', { name: /^root/ }));
+    await user.click(await current.findByRole('option', { name: /^root/ }));
     await user.keyboard('{Enter}');
     expect((await dialog.findByRole('status')).textContent).toBe("You don't have access to this folder");
+    expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true);
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull();
     await user.keyboard('{Escape}');
-    await waitFor(() => expect(dialog.queryByRole('listbox', { name: 'Folders' })).toBeNull());
-    expect(screen.getByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Choose a project folder' })).toBeNull());
+  });
+
+  test('loading another folder blocks Continue and its keyboard shortcut until that listing arrives', async () => {
+    const { user } = renderApp();
+    const dialog = await addProjectDialog(user);
+    const list = await dialog.findByRole('listbox', { name: 'Folders' });
+    const projects = await within(list).findByRole('option', { name: /^projects/ });
+    const fetch = window.fetch;
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const requests = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/fs/dirs?path=%2Fhome%2Fuser%2Fprojects')) await pending;
+      return fetch(input, init);
+    });
+    try {
+      await user.dblClick(projects);
+      await waitFor(() => expect(list.getAttribute('aria-busy')).toBe('true'));
+      expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', true);
+      fireEvent.keyDown(list, { key: 'Enter', ctrlKey: true });
+      expect(screen.queryByRole('dialog', { name: 'Add a project' })).toBeNull();
+      release();
+      await within(list).findByRole('option', { name: /^archive/ });
+      await waitFor(() => expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', false));
+      await user.click(dialog.getByRole('button', { name: 'Continue' }));
+      expect(dialog.getByText('/home/user/projects')).toBeTruthy();
+    } finally {
+      release();
+      requests.mockRestore();
+    }
   });
 });
 
