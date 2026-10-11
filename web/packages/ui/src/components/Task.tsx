@@ -4,7 +4,6 @@ import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayou
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
-import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
@@ -328,7 +327,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   useEffect(() => {
     if (locateError) locateNote.current?.focus({ preventScroll: true });
   }, [locateError]);
-  const density = useDensity();
   const scroller = useRef<HTMLElement>(null);
   const previewOpened = useCallback(() => { setFilesOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
@@ -923,7 +921,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
               workdir={session.workdir}
               footVerb={false}
               compacting={compacting}
-              density={density}
               onOpenChanges={openTurnChanges}
               onOpenAllChanges={noGit ? undefined : openAllChanges}
               readersActive={active && connected}

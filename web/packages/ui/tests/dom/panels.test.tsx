@@ -3,7 +3,6 @@ import { describe, expect, test, vi } from 'vitest';
 import { api } from '../../src/api';
 import * as mockData from '../../src/mock/data';
 import { headerRoom } from '../../src/components/Task';
-import { saveDensity } from '../../src/lib/density';
 import { VERBS } from '../../src/lib/verbs';
 import { log, openMenu, openTask, renderApp } from './render';
 
@@ -259,20 +258,6 @@ describe('subagents', () => {
     expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
   });
 
-  test('Detailed: a long reply\'s activity holds its list instead of a row per subagent', async () => {
-    saveDensity('detailed');
-    try {
-      const { user } = await openTask('t22');
-      await user.click(log().getByRole('button', { name: /^22 subagents/ }));
-      const list = within(await log().findByRole('region', { name: '22 subagents' }));
-      const rows = list.getAllByRole('button', { name: /^Audit package / });
-      expect(rows).toHaveLength(22);
-      expect(rows.slice(0, 2).every((row) => /, failed/.test(row.getAttribute('aria-label') ?? ''))).toBe(true);
-    } finally {
-      saveDensity('compact');
-    }
-  });
-
   test('older subagents load from the record on request and open by the header; where they were spawned is gone, and it says so', async () => {
     const { user } = await openTask('t15');
     await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
@@ -394,34 +379,6 @@ describe('one working ring per place', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Subagent transcript' });
     await within(dialog).findByText(new RegExp(`^(${VERBS.join('|')})…$`));
     expect(rings(dialog)).toHaveLength(0);
-  });
-
-  test('Detailed: an open run hands its ring to the running call inside it', async () => {
-    saveDensity('detailed');
-    try {
-      const { user } = await openTask('t1');
-      const conversation = screen.getByRole('region', { name: 'Conversation' });
-      const run = rings(conversation)[0]?.closest<HTMLElement>('[data-activity] > button');
-      expect(rings(conversation)).toHaveLength(1);
-      expect(run).toBeTruthy();
-      await user.click(run!);
-      // Open, the run's chevron stands still in `accent` and the closed run of calls inside turns.
-      expect(rings(run!)).toHaveLength(0);
-      expect(run!.querySelector('.text-accent')).not.toBeNull();
-      const calls = await waitFor(() => {
-        const found = rings(conversation)[0]?.closest<HTMLElement>('[data-tool-run] > button');
-        expect(found).toBeTruthy();
-        return found!;
-      });
-      expect(rings(conversation)).toHaveLength(1);
-      await user.click(calls);
-      // Open too, the running call's own row is the step.
-      await waitFor(() => expect(rings(calls)).toHaveLength(0));
-      expect(rings(conversation)).toHaveLength(1);
-      expect(rings(conversation)[0].closest('[data-tool-run] > button')).toBeNull();
-    } finally {
-      saveDensity('compact');
-    }
   });
 
   test('a running background shell reads "Running" beside a still dot', async () => {

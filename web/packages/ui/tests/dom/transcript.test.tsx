@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { ApiContext } from '../../src/ApiContext';
 import { ApiError, api, type Item, type TurnTiming, type TurnTodos } from '../../src/api';
 import { Markdown } from '../../src/components/common';
@@ -8,16 +8,12 @@ import { EChart } from '../../src/components/EChart';
 import { chartOption } from '../../src/lib/chart';
 import { ToolRow, Transcript, replyEnds } from '../../src/components/Transcript';
 import { VisualBoundary } from '../../src/components/VisualBoundary';
-import { saveDensity } from '../../src/lib/density';
 import { composer, log, openMenu, openTask } from './render';
-
-afterEach(() => saveDensity('compact'));
 
 const conversation = () => screen.getByRole('region', { name: 'Conversation' });
 
 describe('messages', () => {
-  test.each(['compact', 'detailed'] as const)('skill invocation notices stay visible and ordered in %s turns', (density) => {
-    saveDensity(density);
+  test('skill invocation notices stay visible and ordered in turns', () => {
     const items: Item[] = [
       { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Review the change' },
       { id: 's1', kind: 'notice', time: '2026-10-09T00:00:01Z', text: 'Skill: ` uam `' },
@@ -38,8 +34,7 @@ describe('messages', () => {
     expect(view.queryByRole('button', { name: 'Show full message' })).toBeNull();
   });
 
-  test.each(['compact', 'detailed'] as const)('native completion decisions remain visible in %s history', (density) => {
-    saveDensity(density);
+  test('native completion decisions remain visible in history', () => {
     const items: Item[] = [
       { id: 'u', kind: 'user', text: 'Fix the parser', time: '2026-10-09T10:00:00Z' },
       { id: 'a', kind: 'assistant', text: 'Fixed the parser.', time: '2026-10-09T10:00:01Z' },
@@ -348,10 +343,10 @@ describe('messages', () => {
 });
 
 describe('activity', () => {
-  test.each(['compact', 'detailed'] as const)('tool progress shows its latest plain status before its body loads (%s)', (density) => {
+  test('tool progress shows its latest plain status before its body loads', () => {
     const call: Item = { id: 'call', kind: 'tool', time: '2026-10-09T00:00:01Z', compact: { has_reasoning: false, has_text: false }, tool: { name: 'mcp_fetch', status: 'running', has_input: true, has_output: false, progress: '**Reading** https://example.test' } };
     const prompt: Item = { id: 'u', kind: 'user', time: '2026-10-09T00:00:00Z', text: 'Fetch the file' };
-    const draw = (item: Item, live = true) => <Transcript sessionId="s" items={[prompt, item]} interactions={[]} subagents={[]} live={live} working={live} provider="copilot" workdir="/w" density={density} liveCard />;
+    const draw = (item: Item, live = true) => <Transcript sessionId="s" items={[prompt, item]} interactions={[]} subagents={[]} live={live} working={live} provider="copilot" workdir="/w" liveCard />;
     const view = render(draw(call));
     const progress = () => view.getByRole('status', { name: 'Tool progress' });
     expect(progress().textContent).toContain('**Reading** https://example.test');
@@ -366,8 +361,10 @@ describe('activity', () => {
     expect(view.queryByRole('status', { name: 'Tool progress' })).toBeNull();
   });
 
-  test('a compact turn folds its work into one line that opens the timeline', async () => {
+  test('a saved Detailed preference still uses the turn timeline and its tool details', async () => {
+    localStorage.setItem('uam.activity', 'detailed');
     const { user } = await openTask('t3');
+    expect(conversation().querySelector('[data-activity]')).toBeNull();
     const head = log().getAllByRole('button', { name: /activity of this turn/ })[0];
     expect(head.getAttribute('aria-expanded')).toBe('false');
     expect(head.textContent).toMatch(/1 thought/);
@@ -427,12 +424,12 @@ describe('activity', () => {
     await waitFor(() => expect(conversation().textContent).toContain('{"command":"ls ~/projects/sky-dodge"}'));
   });
 
-  test.each(['detailed', 'compact'] as const)('a call a stopped turn left running is not the running step while the next turn starts (%s)', (density) => {
+  test('a call a stopped turn left running is not the running step while the next turn starts', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled' };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
     const ring = () => view.container.querySelector('.animate-spin');
     const view = render(draw([stopped], false));
     expect(ring()).toBeNull();
@@ -447,12 +444,12 @@ describe('activity', () => {
     expect(ring()).toBeTruthy();
   });
 
-  test.each(['detailed', 'compact'] as const)('a stopped turn keeps its end and its reply foot while the next turn starts (%s)', (density) => {
+  test('a stopped turn keeps its end and its reply foot while the next turn starts', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, { id: 'a1', kind: 'assistant', time: at(2), text: 'Counting.' }, bash('c1', 3)];
     const stopped: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), ended_at: at(5), state: 'cancelled', output_tokens: 940, generation_ms: 4000 };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} provider="copilot" workdir="/w" footVerb={false} liveCard />;
     const view = render(draw([stopped], false));
     const ends = () => [view.container.textContent?.includes('Took 5s'), within(view.getByText('Counting.').closest('[data-history-anchor]')!.parentElement as HTMLElement).queryByRole('time')?.parentElement?.textContent?.includes('940 tokens')];
     expect(ends()).toEqual([true, true]);
@@ -466,13 +463,13 @@ describe('activity', () => {
     expect(view.container.textContent).not.toContain('Took 5s');
   });
 
-  test.each(['detailed', 'compact'] as const)('a call a turn the service cut off left running is not the running step while the next turn starts; a dropped stream keeps it (%s)', (density) => {
+  test('a call a turn the service cut off left running is not the running step while the next turn starts; a dropped stream keeps it', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });
     const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Count to 60' }, bash('c1', 2)];
     // A restart or close cut the turn off: the service marks it unknown, without an end.
     const cut: TurnTiming = { id: 't1', user_item_id: 'u1', started_at: at(0), state: 'unknown' };
-    const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" density={density} footVerb={false} liveCard />;
+    const draw = (turnTimings: TurnTiming[], working: boolean, list = items, connected = true) => <Transcript sessionId="s" items={list} turnTimings={turnTimings} interactions={[]} subagents={[]} live={working} working={working} connected={connected} provider="copilot" workdir="/w" footVerb={false} liveCard />;
     const ring = () => view.container.querySelector('.animate-spin');
     const view = render(draw([cut], false));
     expect(ring()).toBeNull();
@@ -539,18 +536,6 @@ describe('activity', () => {
     const view = render(<VisualBoundary fallback={<span>plain row</span>}><Boom /></VisualBoundary>);
     expect(view.getByText('plain row')).toBeTruthy();
     quiet.mockRestore();
-  });
-
-  test('detailed density keeps one row per run of tool calls', async () => {
-    saveDensity('detailed');
-    const { user } = await openTask('t3');
-    expect(log().queryByRole('button', { name: /activity of this turn/ })).toBeNull();
-    const run = await log().findByRole('button', { name: /^Thought, ran 1 command and used 1 tool/ });
-    await user.click(run);
-    await waitFor(() => expect(run.getAttribute('aria-expanded')).toBe('true'));
-    // Inside, consecutive calls share one disclosure.
-    await user.click(await log().findByRole('button', { name: 'Ran 1 command and used 1 tool' }));
-    expect(await log().findByRole('button', { name: /^bash.*go test \.\/cmd\/\.\.\..*done$/ })).toBeTruthy();
   });
 
   test('subagents in use sit at the foot in one-line rows; a row opens its transcript beside it, one at a time', async () => {

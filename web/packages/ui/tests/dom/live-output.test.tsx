@@ -9,7 +9,7 @@ const outputs = (view: ReturnType<typeof render>) => view.queryAllByRole('group'
 
 test('the live step shows a running command\'s newest lines from its row, stderr marked in words, not as a live region', () => {
   const items: Item[] = [{ id: 'u1', kind: 'user', time: at(0), text: 'Build it' }, running];
-  const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" density="compact" liveCard />);
+  const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: at(0), state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" liveCard />);
   const [tail] = outputs(view);
   expect(tail.tagName).toBe('PRE');
   expect(tail.getAttribute('translate')).toBe('no');

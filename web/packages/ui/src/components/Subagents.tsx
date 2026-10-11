@@ -10,7 +10,6 @@ import { createContext, Fragment, memo, useCallback, useContext, useEffect, useE
 import { describeError, modelName, readOnly, type Interaction, type Item, type OutlineItem, type SessionDetail, type Subagent, type SubagentStatus } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import { useDensity } from '../lib/density';
 import { historyPage } from '../lib/historyArchive';
 import { compactTokens } from '../lib/cost';
 import { EXIT_MS } from './ui/collapse';
@@ -551,7 +550,7 @@ function useHeldOrder(list: Family[], hold: boolean): Family[] {
 /**
  * A reply's subagents (DESIGN.md subagent list): their rows in columns, failed families first;
  * past twelve a filter by name or line. A `locate` for one of them clears the filter and pages to
- * it. Reused by Detailed for a reply past eight.
+ * it.
  */
 export function SubagentList({ id, subagents, calls = subagents.length, tones }: Readonly<{ id: string; subagents: Subagent[]; calls?: number; tones: ReadonlyMap<string, IdentityTone> }>) {
   const [query, setQuery] = useState('');
@@ -1523,7 +1522,6 @@ function AgentTranscriptView({
 }>) {
   const api = useApi();
   const { dispatch } = useApp();
-  const density = useDensity();
   const scroller = useRef<HTMLDivElement>(null);
   const live = subagent.status === 'running';
   // A running one follows its output; a finished one opens at the top of what is held.
@@ -1714,7 +1712,7 @@ function AgentTranscriptView({
     body = (
       <>
         <HistoryAnchor scroller={scroller} firstItem={items[0]?.id ?? ''} lastItem={items.at(-1)?.id} itemIds={detail.compact ? items.map(item => item.id) : undefined} knownIds={detail.agent?.index?.map(item => item.id)} resetKey={`${detail.store?.value.epoch}:${windowReset}`} className="flex flex-col gap-3">
-          <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={work} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} density={density} />
+          <AgentItems sessionId={sessionId} provider={provider} workdir={workdir} agentId={subagent.id} items={work} identityItems={detail.agent?.index} historyItemSeq={detail.agent?.itemSeq} interactions={visibleInteractions} live={live && !detail.agent?.after} />
         </HistoryAnchor>
         {work.length === 0 && <Note>{items.length === 0 ? 'Nothing recorded yet.' : 'No other steps.'}</Note>}
       </>

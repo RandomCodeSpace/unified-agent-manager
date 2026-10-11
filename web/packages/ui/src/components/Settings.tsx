@@ -23,7 +23,6 @@ import { customProviders, matchingIds, withProvider, type CustomProvider } from 
 import { modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
-import { loadDensity, saveDensity, type Density } from '../lib/density';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
 import { disableNotifications, enableNotifications, loadNotifyMode, notifySupport } from '../lib/notify';
@@ -529,7 +528,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [error, setError] = useState<string | null>(null);
   const [motion, setMotion] = useState(loadMotion);
   const [theme, setTheme] = useState(loadTheme);
-  const [density, setDensity] = useState(loadDensity);
   const [scrolled, sentinel] = useScrolled();
   const cliUpdate = meta?.providers.find((p) => p.cli_update)?.cli_update;
   const restart = restartOffered(meta?.service);
@@ -642,7 +640,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     copilot: accounts.length ? [accounts.some((p) => p.signed_out) ? 'Signed out' : 'Signed in', cliUpdate && `CLI ${cliUpdate} available`].filter(Boolean).join(' · ') : undefined,
     providers: configured.length ? `${configured.map((p) => p.name).join(', ')} · ${customCount} ${customCount === 1 ? 'model' : 'models'}` : 'None added',
     uam: [meta?.service && `Running ${meta.service.running}`, `Terminal ${settings.terminal ? 'on' : 'off'}`].filter(Boolean).join(' · '),
-    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]} · Activity: ${density === 'compact' ? 'Compact' : 'Detailed'}`,
+    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]}`,
   };
   // A page the instance on screen cannot fill is left out of the rail.
   const pages = SETTINGS_PAGES.filter((p) => {
@@ -866,21 +864,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           items={[
             { value: 'on', label: 'Always on' },
             { value: 'system', label: 'Match system' },
-          ]}
-        />
-      </Row>
-      <Row id="density" label="Activity" help="Compact folds a turn's thinking and tool calls into its head row, which opens the timeline; Detailed keeps one activity row for every run of work between paragraphs.">
-        <Segmented
-          aria-labelledby="density-label"
-          aria-describedby="density-help"
-          value={density}
-          onValueChange={(v) => {
-            setDensity(v as Density);
-            saveDensity(v as Density);
-          }}
-          items={[
-            { value: 'compact', label: 'Compact' },
-            { value: 'detailed', label: 'Detailed' },
           ]}
         />
       </Row>

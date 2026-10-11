@@ -42,7 +42,6 @@ const modules = {
   './Subagents': {
     SubagentChip: ({ subagents, calls, tones, open }) => React.createElement('button', { 'aria-expanded': String(open), 'data-tones': subagents.map((s) => tones.get(s.id) ?? '-').join(',') }, `CHIP ${subagents.map((s) => s.name).join(',')} OF ${calls}`),
     SubagentList: ({ id, subagents, calls = subagents.length }) => React.createElement('ul', { id }, `LIST OF ${calls}`, subagents.map((s) => React.createElement('li', { key: s.id, id: `item-${s.parent_tool_call_id}` }, `LISTED ${s.name}`))),
-    SubagentRow: ({ subagent, anchor }) => React.createElement('div', { id: anchor ? `item-${subagent.parent_tool_call_id}` : undefined }, `ROW ${subagent.name}`),
     LiveSubagents: () => React.createElement('section', null, 'LIVE'),
     useSubagentDisclosure: (key) => { disclosureKeys.push(key); return React.useState(disclosureValues.get(key) ?? expanded); },
     useSubagentReplies: () => scopeReplies,
@@ -68,7 +67,7 @@ runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.Modul
   exports, require: name => modules[name] ?? require(name), sessionStorage: { getItem: () => null },
 });
 
-test('subagent compact density uses turn heads, follow-up boundaries and lazy timelines', () => {
+test('subagent transcripts use turn heads, follow-up boundaries and lazy timelines', () => {
   const item = (id, kind, rest = {}) => ({ id, kind, agent_id: 'child', time: `2026-09-26T12:00:0${id.slice(-1)}Z`, ...rest });
   const items = [
     item('user1', 'user', { text: 'First request' }),
@@ -82,8 +81,8 @@ test('subagent compact density uses turn heads, follow-up boundaries and lazy ti
   const question = (id, text, agent_id) => ({ id, kind: 'question', state: 'answered', agent_id, time: '2026-09-26T12:00:06Z', questions: [{ text, choices: [], custom: true }], resolution: 'Answered' });
   const interactions = [question('own-question', 'Child question', 'child'), question('parent-question', 'Parent question', undefined), question('other-question', 'Other child question', 'sibling')];
   const props = { sessionId: 'task', provider: 'copilot', workdir: '/project', agentId: 'child', items, interactions, live: false };
-  const draw = density => renderToStaticMarkup(React.createElement(exports.AgentItems, { ...props, density }));
-  const compact = draw('compact');
+  const draw = () => renderToStaticMarkup(React.createElement(exports.AgentItems, props));
+  const compact = draw();
   assert.equal((compact.match(/activity of this turn/g) ?? []).length, 2);
   assert.doesNotMatch(compact, /data-activity|PRIVATE_COMMAND|PRIVATE_PATH|Private thought body|Took /);
   assert.match(compact, /First answer/);
@@ -91,20 +90,19 @@ test('subagent compact density uses turn heads, follow-up boundaries and lazy ti
   assert.match(compact, /Follow-up answer/);
   assert.match(compact, /Child question/);
   assert.doesNotMatch(compact, /Parent question|Other child question/);
-  assert.match(draw('detailed'), /data-activity/);
   expanded = true;
   try {
-    assert.match(draw('compact'), /PRIVATE_COMMAND/);
+    assert.match(draw(), /PRIVATE_COMMAND/);
   } finally {
     expanded = false;
   }
   assert.ok(items.every(entry => entry.agent_id === 'child'));
   const running = { ...items[5], tool: { ...items[5].tool, status: 'running' } };
-  const live = renderToStaticMarkup(React.createElement(exports.AgentItems, { ...props, items: [...items.slice(0, 5), running], live: true, density: 'compact' }));
+  const live = renderToStaticMarkup(React.createElement(exports.AgentItems, { ...props, items: [...items.slice(0, 5), running], live: true }));
   // The running call is the panel's live step: its tool row, unfolded at the foot.
   assert.match(live, /animate-rise[\s\S]*>view<[\s\S]*, running/);
   assert.doesNotMatch(live, /Busy for|Took /);
-  const main = renderToStaticMarkup(React.createElement(exports.Transcript, { ...props, agentId: undefined, items: [], subagents: [], working: false, density: 'compact' }));
+  const main = renderToStaticMarkup(React.createElement(exports.Transcript, { ...props, agentId: undefined, items: [], subagents: [], working: false }));
   assert.match(main, /Parent question/);
   assert.doesNotMatch(main, /Child question|Other child question/);
 });
@@ -115,7 +113,7 @@ test('a compact turn line with nothing counted yet draws no bare chevron; the fo
     { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'bash', input: '{"command":"rm -rf build"}', status: 'running' } },
   ];
   const waiting = { id: 'p1', kind: 'permission', state: 'pending', tool_call_id: 'c2', title: 'Run shell command', time: '2026-09-26T12:00:03Z' };
-  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true, density: 'compact', footVerb: false }));
+  const draw = interactions => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions, subagents: [], live: true, working: true, footVerb: false }));
   const pending = draw([waiting]);
   assert.doesNotMatch(pending, /activity of this turn/);
   assert.match(pending, /Waiting for your approval: bash rm -rf build/);
@@ -131,7 +129,7 @@ test('same-ID main and child turns keep disclosure state and DOM targets indepen
     { id: 'shared', kind: 'reasoning', text: 'Private thought', time: '2026-09-26T12:00:01Z' },
     { id: 'answer', kind: 'assistant', text: 'Answer', time: '2026-09-26T12:00:02Z' },
   ];
-  const props = { sessionId: 'task', provider: 'copilot', workdir: '/project', interactions: [], live: false, working: false, density: 'compact', subagents: [] };
+  const props = { sessionId: 'task', provider: 'copilot', workdir: '/project', interactions: [], live: false, working: false, subagents: [] };
   const draw = child => renderToStaticMarkup(React.createElement(exports.Transcript, { ...props, agentId: child ? 'child' : undefined, items: child ? mainItems.map(item => ({ ...item, agent_id: 'child' })) : mainItems }));
   disclosureValues.set('turn:shared', true);
   disclosureKeys.length = 0;
@@ -164,7 +162,7 @@ test('same-ID main and child turns keep disclosure state and DOM targets indepen
   }
 });
 
-test('subagents leave the answer: a chip on the turn line (Compact), rows in the activity (Detailed), the live card at the foot', () => {
+test('subagents use a turn chip and the live card at the foot', () => {
   const task = (id, description) => ({ id, kind: 'tool', time: `2026-09-26T12:00:0${id.slice(-1)}Z`, tool: { name: 'task', input: JSON.stringify({ description }), status: id === 'call2' ? 'running' : 'completed' } });
   const items = [
     { id: 'request1', kind: 'user', text: 'Request', time: '2026-09-26T12:00:01Z' },
@@ -176,19 +174,19 @@ test('subagents leave the answer: a chip on the turn line (Compact), rows in the
     { id: 'a2', name: 'RUNNING_AGENT', status: 'running', parent_tool_call_id: 'call2' },
     { id: 'a3', name: 'SETTLED_AGENT', status: 'completed', parent_tool_call_id: 'call3' },
   ];
-  const draw = (density, liveCard = true) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density, liveCard }));
-  const compact = draw('compact');
+  const draw = (liveCard = true) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, liveCard }));
+  const compact = draw();
   // One chip for the reply, in spawn order with identity tones; no row at the running call, no count on the turn line.
   assert.match(compact, /data-tones="violet,pink"[^>]*>CHIP RUNNING_AGENT,SETTLED_AGENT OF 2</);
   assert.doesNotMatch(compact, /ROW |LISTED |subagent/);
   // The live card sits after the reply's answer, before the foot.
   assert.match(compact, /Answer[\s\S]*LIVE/);
-  assert.doesNotMatch(draw('compact', false), /LIVE</);
+  assert.doesNotMatch(draw(false), /LIVE</);
   // Its open state is remembered per reply, like the turn line's.
   assert.ok(disclosureKeys.includes('subagents:call2'));
   expanded = true;
   try {
-    const open = draw('compact');
+    const open = draw();
     assert.match(open, /LISTED RUNNING_AGENT[\s\S]*LISTED SETTLED_AGENT/);
     // The timeline leaves the calls to the list, so each row's target id is there once.
     const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map((match) => match[1]);
@@ -196,22 +194,8 @@ test('subagents leave the answer: a chip on the turn line (Compact), rows in the
   } finally {
     expanded = false;
   }
-  const detailed = draw('detailed');
-  assert.doesNotMatch(detailed, /CHIP |ROW /);
-  assert.match(detailed, /LIVE</);
-  // Its run is named by its subagents, never counted among the calls.
-  assert.match(detailed, />2 subagents · 2s</);
-  expanded = true;
-  try {
-    const open = draw('detailed');
-    assert.match(open, /ROW RUNNING_AGENT[\s\S]*ROW SETTLED_AGENT/);
-    const ids = [...open.matchAll(/\sid="(item-[^"]+)"/g)].map((match) => match[1]);
-    assert.deepEqual(ids.sort(), ['item-call2', 'item-call3']);
-  } finally {
-    expanded = false;
-  }
   // A subagent's own transcript draws none of it.
-  const child = renderToStaticMarkup(React.createElement(exports.AgentItems, { sessionId: 'task', provider: 'copilot', workdir: '/project', agentId: 'a2', items: items.map((item) => ({ ...item, agent_id: 'a2' })), interactions: [], live: true, density: 'compact' }));
+  const child = renderToStaticMarkup(React.createElement(exports.AgentItems, { sessionId: 'task', provider: 'copilot', workdir: '/project', agentId: 'a2', items: items.map((item) => ({ ...item, agent_id: 'a2' })), interactions: [], live: true }));
   assert.doesNotMatch(child, /CHIP |LIVE<|ROW /);
 });
 
@@ -222,7 +206,7 @@ test('a reply past five subagents draws them neutral; a turn of only subagent ca
     items.push({ id: `c${n}`, kind: 'tool', time: `2026-09-26T12:00:0${n}Z`, tool: { name: 'task', status: 'completed' } });
     subagents.push({ id: `a${n}`, name: `AGENT_${n}`, status: 'completed', parent_tool_call_id: `c${n}` });
   }
-  const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false, density: 'compact' }));
+  const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false }));
   assert.match(html, /data-tones="-,-,-,-,-,-"[^>]*>CHIP AGENT_1/);
   assert.doesNotMatch(html, /activity of this turn/);
 });
@@ -233,7 +217,7 @@ test('reply membership comes from the scope\'s identity index: a partly loaded r
   const subagents = [{ id: 'a1', name: 'AGENT_1', status: 'running', parent_tool_call_id: 'c1' }, { id: 'a3', name: 'AGENT_3', status: 'completed', parent_tool_call_id: 'c3' }];
   scopeReplies = subagentsLib.replyIndex(index, subagents);
   try {
-    const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, identityItems: index, interactions: [], subagents, live: false, working: false, density: 'compact' }));
+    const html = renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, identityItems: index, interactions: [], subagents, live: false, working: false }));
     // AGENT_1's call is outside the window, yet it belongs to this reply; the chip counts all three calls.
     assert.match(html, /CHIP AGENT_1,AGENT_3 OF 3/);
   } finally {
@@ -244,7 +228,7 @@ test('reply membership comes from the scope\'s identity index: a partly loaded r
 test('while the live card shows every subagent of a reply, that reply\'s chip waits; an open list keeps it', () => {
   const items = [{ id: 'u1', kind: 'user', text: 'Go', time: '2026-09-26T12:00:00Z' }, { id: 'c1', kind: 'tool', time: '2026-09-26T12:00:01Z', tool: { name: 'task', status: 'running' } }, { id: 'c2', kind: 'tool', time: '2026-09-26T12:00:02Z', tool: { name: 'task', status: 'running' } }];
   const subagents = [{ id: 'a1', name: 'AGENT_1', status: 'running', parent_tool_call_id: 'c1' }, { id: 'a2', name: 'AGENT_2', status: 'running', parent_tool_call_id: 'c2' }];
-  const draw = (liveCard) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, density: 'compact', liveCard }));
+  const draw = (liveCard) => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: true, working: true, liveCard }));
   liveIds = new Set(['a1', 'a2']);
   try {
     assert.doesNotMatch(draw(true), /CHIP /);
@@ -258,29 +242,6 @@ test('while the live card shows every subagent of a reply, that reply\'s chip wa
   } finally {
     expanded = false;
     liveIds = undefined;
-  }
-});
-
-test('Detailed: a reply past eight shows one grouped list at its first call, and its activity is named by its subagents', () => {
-  const items = [{ id: 'u1', kind: 'user', text: 'Fan out', time: '2026-09-26T12:00:00Z' }];
-  const subagents = [];
-  for (let n = 1; n <= 9; n++) {
-    items.push({ id: `c${n}`, kind: 'tool', time: `2026-09-26T12:00:0${n}Z`, tool: { name: 'task', status: 'completed' } });
-    subagents.push({ id: `a${n}`, name: `AGENT_${n}`, status: 'completed', parent_tool_call_id: `c${n}` });
-  }
-  const draw = () => renderToStaticMarkup(React.createElement(exports.Transcript, { sessionId: 'task', provider: 'copilot', workdir: '/project', items, interactions: [], subagents, live: false, working: false, density: 'detailed' }));
-  const closed = draw();
-  assert.match(closed, />9 subagents</);
-  // The run holds the whole reply's list, so locate opens it for any of the nine.
-  assert.match(closed, /data-subagent-items="\[&quot;c1&quot;,(&quot;c\d&quot;,?){8}\]"/);
-  expanded = true;
-  try {
-    const open = draw();
-    assert.equal((open.match(/LIST OF 9/g) ?? []).length, 1);
-    assert.doesNotMatch(open, /ROW /);
-    assert.equal((open.match(/LISTED /g) ?? []).length, 9);
-  } finally {
-    expanded = false;
   }
 });
 

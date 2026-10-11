@@ -370,11 +370,6 @@ function answered(q: AskedQuestion, answer: string): AskedQuestion {
 }
 
 const noun = (n: number, word: string, plural = `${word}s`) => `${n} ${n === 1 ? word : plural}`;
-/** "a, b and c", capitalised. */
-const sentence = (parts: string[]) => {
-  const s = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0] ?? '';
-  return s && s[0].toUpperCase() + s.slice(1);
-};
 
 /** The tools that write to the tree, by the names providers report; the Changes count follows their completions. */
 export const CHANGE_TOOLS: readonly string[] = ['edit', 'write', 'create', 'apply_patch'];
@@ -412,39 +407,6 @@ export function completedChanges(items: readonly Item[]): number {
   return n;
 }
 
-/** What a run of tool calls did: the successful, recognizable operations as phrases, and the counts that stay explicit. */
-function toolCounts(items: Item[], live: boolean): { done: string[]; active: number; failed: number; noResult: number } {
-  let commands = 0, other = 0, failed = 0, active = 0, noResult = 0;
-  const changed = new Set<string>();
-  const read = new Set<string>();
-  for (const item of items) {
-    const t = item.tool;
-    if (t?.status === 'failed') { failed++; continue; }
-    if (t?.status !== 'completed') {
-      if (live) active++;
-      else noResult++;
-      continue;
-    }
-    const name = t.name.toLowerCase();
-    if (['bash', 'shell', 'powershell'].includes(name)) { commands++; continue; }
-    const input = inputOf(t);
-    const path = t.path || (input && [input.path, input.file_path, input.filePath].find((v): v is string => typeof v === 'string' && !!v.trim()));
-    const patched = name === 'apply_patch' ? changePaths(t) : [];
-    if (patched.length) patched.forEach((p) => changed.add(p));
-    else if (path && CHANGE_TOOLS.includes(name)) changed.add(path);
-    else if (path && ['read', 'view'].includes(name)) read.add(path);
-    else other++;
-  }
-  const done = [changed.size && `changed ${noun(changed.size, 'file')}`, commands && `ran ${noun(commands, 'command')}`, read.size && `read ${noun(read.size, 'file')}`, other && `used ${noun(other, 'tool')}`].filter(Boolean) as string[];
-  return { done, active, failed, noResult };
-}
-
-/** Count only successful, recognizable operations; failed or unresolved calls stay explicit. */
-export function summarizeTools(items: Item[], live: boolean): string {
-  const { done, active, failed, noResult } = toolCounts(items, live);
-  return [sentence(done), active && `${active} running`, failed && `${failed} failed`, noResult && `${noResult} without a result`].filter(Boolean).join(' · ');
-}
-
 /** "12s", "1m 4s" or "<1s" between two ISO timestamps; null when they are not in order. */
 export function duration(from: string, to: string): string | null {
   return formatMs(new Date(to).getTime() - new Date(from).getTime());
@@ -474,104 +436,10 @@ function activityTone(failed: number, waiting: boolean): 'muted' | 'error' | 'at
   return waiting ? 'attention' : 'muted';
 }
 
-const isActiveTool = (item: Item) => item.tool?.status === 'pending' || item.tool?.status === 'running';
-
 /** Work between two messages: thinking, tool calls, decided requests and questions that no longer wait. Prose, the user's bubbles and notices bound it. */
 export function isWork(entry: Entry): boolean {
   if (entry.interaction) return entry.interaction.state !== 'pending';
   return entry.item.kind === 'reasoning' || entry.item.kind === 'tool';
-}
-
-export interface Segment {
-  /** The first entry's id: it never changes while entries append to the run, so the row keeps its key and its state. */
-  key: string;
-  entries: Entry[];
-  /** A run of work, folded into one activity row; otherwise one entry that stands on its own. */
-  work: boolean;
-}
-
-/**
- * A turn's entries as segments: every contiguous run of work (as `work` says) is one
- * segment, and every other entry is a segment of its own, in order.
- */
-export function segmentActivity(entries: Entry[], work: (entry: Entry) => boolean = isWork): Segment[] {
-  const out: Segment[] = [];
-  for (const entry of entries) {
-    const key = entry.item ? entry.item.id : entry.interaction.id;
-    const last = out.at(-1);
-    if (work(entry) && last?.work) last.entries.push(entry);
-    else out.push({ key, entries: [entry], work: work(entry) });
-  }
-  return out;
-}
-
-export interface ActivitySummary {
-  /** "Thought 4×, ran 4 commands and answered 2 questions · 1 failed · 12s"; empty when the run has nothing to show. */
-  label: string;
-  /** `error` when a call failed, `attention` while a call waits for the user's permission. */
-  tone: 'muted' | 'error' | 'attention';
-  /** A call is still running or thinking still streams: the label names it and the row carries the working mark. */
-  active: boolean;
-}
-
-/**
- * The activity row's label for one run of work. Finished thoughts are counted ("Thought",
- * "Thought 4×") with what the tools did and the questions answered or declined, then what
- * stays explicit: failures (a failed question too), calls without a result, questions
- * without an answer, images returned, the call waiting for permission or an answer or
- * still running (the last one, by name and argument), thinking still streaming; and, once
- * the run ended and the next item's time is known, how long it took from the first item.
- */
-export function summarizeActivity(entries: Entry[], { live, streamingId, approvals, endedAt }: { live: boolean; streamingId?: string; approvals?: Map<string, Interaction[]>; endedAt?: string }): ActivitySummary {
-  const items = entries.flatMap((e) => (e.item ? [e.item] : []));
-  // A subagent's call is its row (and the live card), never a count or the running step here.
-  const tools = items.filter((it) => it.kind === 'tool' && !isSubagentCall(it));
-  const thinking = items.some((it) => it.kind === 'reasoning' && it.id === streamingId);
-  const thoughts = items.filter((it) => it.kind === 'reasoning' && it.id !== streamingId && (it.text?.trim() || it.compact?.has_reasoning)).length;
-  // A question that no longer waits counts as a question, never as a tool call; one still waiting stays a call.
-  const outcomes: AskedQuestion['outcome'][] = [];
-  const calls = tools.filter((it) => {
-    const q = askedOn(it, approvals, live);
-    if (!q || q.outcome === 'pending') return true;
-    outcomes.push(q.outcome);
-    return false;
-  });
-  let decided = 0;
-  for (const { interaction } of entries) {
-    if (interaction?.kind === 'question') outcomes.push(questionOf(undefined, interaction, live)!.outcome);
-    else if (interaction) decided++;
-  }
-  const asked = (outcome: AskedQuestion['outcome']) => outcomes.filter((o) => o === outcome).length;
-  const [answeredQs, declinedQs, cancelledQs, unanswered] = [asked('answered'), asked('declined'), asked('cancelled'), asked('none')];
-  const counts = toolCounts(calls, live);
-  const { done, noResult } = counts;
-  const failed = counts.failed + asked('failed');
-  const running = live ? tools.filter(isActiveTool).at(-1) : undefined;
-  const pending = running && approvals?.get(running.id)?.find(awaitsUser);
-  const waiting = !!pending;
-  const images = tools.reduce((n, it) => n + (it.images?.length ?? 0), 0);
-  const active = !!running || thinking;
-  const took = !active && endedAt && items[0] ? duration(items[0].time, endedAt) : null;
-  let now = '';
-  if (running) {
-    const { name, arg } = toolLabel(running.tool);
-    const need = pending?.kind === 'question' ? 'answer' : 'approval';
-    const lead = pending ? `Waiting for your ${need}` : 'Running';
-    const call = arg ? `${name} ${arg}` : name;
-    now = `${lead}: ${call}`;
-  } else if (thinking) {
-    now = 'Thinking…';
-  }
-  const label = [
-    sentence([thoughts && (thoughts === 1 ? 'thought' : `thought ${thoughts}×`), ...done, answeredQs && `answered ${noun(answeredQs, 'question')}`, declinedQs && `declined ${noun(declinedQs, 'question')}`, cancelledQs && `cancelled ${noun(cancelledQs, 'question')}`, decided && `decided ${noun(decided, 'request')}`].filter(Boolean) as string[]),
-    failed && `${failed} failed`,
-    noResult && `${noResult} without a result`,
-    unanswered && `${noun(unanswered, 'question')} not answered`,
-    images && noun(images, 'image'),
-    now,
-    took,
-  ].filter(Boolean).join(' · ');
-  return { label, tone: activityTone(failed, waiting), active };
 }
 
 /** The current turn includes every segment across steer messages. */
