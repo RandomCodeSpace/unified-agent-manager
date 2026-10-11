@@ -115,40 +115,22 @@ test('duplicate page records appear once and an existing live record wins in bot
   }
 });
 
-// Outer activity may include reasoning, but each inner tool run needs its own key.
+// A turn keeps its key as earlier history pages arrive.
 import { groupIdentities, indexPage } from '../src/lib/historyState.ts';
 
-test('declarations group like any tool call, so the index replays run keys without their metadata', () => {
+test('declarations stay in their turn, so the index replays its key without their metadata', () => {
   const ordinary = id => ({ id, kind: 'tool', time: id, tool: { name: 'view', status: 'completed' } });
   const declared = { id: 'b', kind: 'tool', time: 'b', tool: { name: 'uam_show_file', status: 'completed', declaration: { artifact_id: 'artifact-1', path: '/repo/README' } } };
   const all = [ordinary('a'), declared, ordinary('c')];
   const index = indexPage([], all);
   assert.equal(index[1].tool.declaration, undefined, 'the lightweight index must not retain path metadata');
-  for (const toolsOnly of [false, true]) {
-    const replay = groupIdentities(index, toolsOnly);
-    assert.deepEqual([...replay], [...groupIdentities(all, toolsOnly)]);
-    assert.deepEqual([...replay.values()], ['a', 'a', 'a']);
-    // A run first seen from its declaration keeps that key when an older page adds a call before it.
-    const newer = groupIdentities(indexPage([], all.slice(1)), toolsOnly);
-    const later = groupIdentities(indexPage(indexPage([], all.slice(1)), all.slice(0, 1), 'older'), toolsOnly, undefined, [], newer);
-    assert.deepEqual([...later.values()], ['b', 'b', 'b']);
-  }
-});
-test('inner tool run identities split at reasoning and questions while retained metadata keeps adjacent keys stable', () => {
-  const items = [
-    { id: 'a', kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } },
-    { id: 'b', kind: 'reasoning', time: '', compact: { has_reasoning: true } },
-    { id: 'c', kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } },
-    { id: 'd', kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } },
-    { id: 'q', kind: 'tool', time: '', tool: { name: 'ask_user', status: 'completed', question_outcome: 'answered' } },
-    { id: 'e', kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } },
-  ];
-  const activity = groupIdentities(items), tools = groupIdentities(items, true);
-  assert.equal(activity.get('c'), 'a');
-  assert.equal(tools.get('a'), 'a');
-  assert.equal(tools.get('c'), 'c');
-  assert.equal(tools.get('d'), 'c');
-  assert.equal(tools.get('e'), 'e');
+  const replay = groupIdentities(index);
+  assert.deepEqual([...replay], [...groupIdentities(all)]);
+  assert.deepEqual([...replay.values()], ['a', 'a', 'a']);
+  // A run first seen from its declaration keeps that key when an older page adds a call before it.
+  const newer = groupIdentities(indexPage([], all.slice(1)));
+  const later = groupIdentities(indexPage(indexPage([], all.slice(1)), all.slice(0, 1), 'older'), newer);
+  assert.deepEqual([...later.values()], ['b', 'b', 'b']);
 });
 
 test('metadata pages update known IDs in place and add only unknown boundary IDs', () => {
@@ -160,35 +142,21 @@ test('metadata pages update known IDs in place and add only unknown boundary IDs
   assert.equal(updated[2].text, undefined);
   assert.deepEqual(indexPage(updated, [{ id: 'earlier', kind: 'user', time: '' }, rows[0]], 'older').map(item => item.id), ['earlier', 'a', 'b', 'c', 'd']);
 });
-test('loose decided interactions split adjacent inner tool runs', () => {
-  const items = ['a', 'b', 'c'].map((id, i) => ({ id, kind: 'tool', time: String(i + 1), tool: { name: 'read', status: 'completed' } }));
-  const keys = groupIdentities(items, true, undefined, ['1.5']);
-  assert.equal(keys.get('a'), 'a');
-  assert.equal(keys.get('b'), 'b');
-  assert.equal(keys.get('c'), 'b');
-});
 
-test('hidden empty reasoning does not split the inner tool run', () => {
-  const items = [{ id: 'a', kind: 'tool', time: '' }, { id: 'empty', kind: 'reasoning', time: '' }, { id: 'b', kind: 'tool', time: '' }];
-  assert.equal(groupIdentities(items, true).get('b'), 'a');
-});
-
-test('backward group extension preserves the established disclosure identity', () => {
+test('backward turn extension preserves the established disclosure identity', () => {
   const items = ['a', 'b', 'c', 'd'].map(id => ({ id, kind: 'tool', time: '', tool: { name: 'read', status: 'completed' } }));
-  for (const toolsOnly of [false, true]) {
-    const before = groupIdentities(items.slice(2), toolsOnly);
-    const after = groupIdentities(items, toolsOnly, undefined, [], before);
-    assert.deepEqual([...after.values()], ['c', 'c', 'c', 'c']);
-    const split = groupIdentities(items, toolsOnly, item => item.id === 'b', [], after);
-    assert.notEqual(split.get('a'), split.get('c'));
-  }
+  const before = groupIdentities(items.slice(2));
+  const after = groupIdentities(items, before);
+  assert.deepEqual([...after.values()], ['c', 'c', 'c', 'c']);
+  const split = groupIdentities([items[0], { id: 'user', kind: 'user', time: '' }, ...items.slice(1)], after);
+  assert.notEqual(split.get('a'), split.get('c'));
 });
 
 test('discovering the parent user preserves a partial compact turn disclosure key', () => {
   const content = ['c', 'd'].map(id => ({ id, kind: 'assistant', time: '' }));
-  const before = groupIdentities(content, 'turn');
+  const before = groupIdentities(content);
   const items = [{ id: 'parent', kind: 'user', time: '' }, { id: 'a', kind: 'reasoning', time: '' }, ...content, { id: 'next-user', kind: 'user', time: '' }, { id: 'next-answer', kind: 'assistant', time: '' }];
-  const after = groupIdentities(items, 'turn', undefined, [], before);
+  const after = groupIdentities(items, before);
   assert.equal(after.get('a'), 'c');
   assert.equal(after.get('c'), 'c');
   assert.equal(after.get('d'), 'c');

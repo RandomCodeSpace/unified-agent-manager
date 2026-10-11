@@ -1,16 +1,15 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
-import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, Terminal, X } from 'lucide-react';
-import { Fragment, Suspense, lazy, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
+import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
+import { Suspense, lazy, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
 import { isChartCall } from '../lib/chart';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
-import type { Density } from '../lib/density';
 import { compactTokens } from '../lib/cost';
-import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentStep, duration, foregroundItems, itemTook, completedDuration, isSubagentCall, isWork, promoted, segmentActivity, summarizeActivity, summarizeTurn, timingForTurn, showTurnEnd, summarizeTools, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
+import { approvalMark, askedOn, callProduct, changedFiles, scratchPlan, currentStep, duration, foregroundItems, itemTook, completedDuration, isWork, promoted, summarizeTurn, timingForTurn, showTurnEnd, linkInteractions, mergeByTime, questionOf, readableInput, toolKind, toolLabel, type AskedQuestion, type Entry, type Step, type TurnSummary } from '../lib/transcript';
 import { groupIdentities } from '../lib/historyState';
-import { GROUP_OVER, parentMap, replyIndex, subagentNoun, type IdentityTone, type Replies } from '../lib/subagents';
+import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { receipts, type Stamp } from '../lib/receipts';
 import { Receipts } from './Receipts';
@@ -19,7 +18,7 @@ import { ImageThumbs, ItemAttachments } from './Attachments';
 import { CodeBlock, Markdown, SessionContext, Skeleton, Spinner, WorkdirContext, WorkingMark, clockTime, dateTime } from './common';
 import { APPROVAL_ICONS, DecidedRow } from './Interactions';
 import { LiveOutput } from './LiveOutput';
-import { LiveSubagents, SubagentChip, SubagentList, SubagentRow, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
+import { LiveSubagents, SubagentChip, SubagentList, useLiveSubagentIds, useSubagentDisclosure, useSubagentReplies } from './Subagents';
 import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
 import { VisualBoundary } from './VisualBoundary';
@@ -67,8 +66,6 @@ interface Props {
   workdir: string;
   /** The window ends at the live tail: the live subagent card sits at its foot. */
   liveCard?: boolean;
-  /** Compact folds a turn's work into its head row (DESIGN.md turn line); detailed draws one activity row per run. */
-  density?: Density;
   /** Open the Changes sheet on a turn's edits, from its "Changed n files" line; `latest` when it is the Task's latest turn. */
   onOpenChanges?: (turn: { files: string[]; latest: boolean }) => void;
   /** Keep a compact turn's "Changed n files" line; off where the Task's folder has no Changes view (no Git). */
@@ -93,7 +90,6 @@ type BranchReply = (userItemId: string, anchor: HTMLElement | null) => void;
 
 const NO_SUBAGENTS: Subagent[] = [];
 const NO_TONES: ReadonlyMap<string, IdentityTone> = new Map();
-const NO_ROWS: ReadonlyMap<string, ReactNode> = new Map();
 
 /** Rows that arrive after mount rise in; rows present at mount appear at once. Stable, so memoised rows hold. */
 function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
@@ -108,13 +104,13 @@ function useArrivals(ids: string[], historyItemSeq?: Record<string, number>) {
 
 /**
  * Main transcript. User items are bubbles on the right; everything between two user items
- * is one flat assistant turn: thinking inline, one row per tool call with its approval on
- * it, a question block for each `ask_user` call once it no longer waits, and the prose. A
- * decided request without a tool row joins the turn at its time. The subagents a reply spawned
- * are a chip on its turn line (Compact) or rows in its activity (Detailed), and the live card
+ * is one flat assistant turn: a head row opens the timeline of thinking and tool calls,
+ * while prose and answered questions stay in the answer. A decided request without a
+ * tool row joins the timeline at its time. The subagents a reply spawned
+ * are a chip on its turn line, and the live card
  * at the foot while one runs; each opens in place onto its own transcript.
  */
-export function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, density = 'detailed', onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
+export function Transcript({ sessionId, planVersion, planAvailable, planPath, agentId, items, identityItems = items, liveItems = items, historyItemSeq, turnTimings = [], interactions, subagents, live, working, connected = true, workdir, onOpenChanges, onOpenAllChanges, readersActive = true, readerGeneration = '', changedLine = true, footVerb = true, compacting = false, liveCard = false, onBranch, onRewind, onEdit }: Readonly<Props>) {
   const arrival = useArrivals([...items.map((i) => i.id), ...interactions.map((i) => i.id)], historyItemSeq);
   const byParent = parentMap(subagents);
   // Only the main transcript draws subagents; a subagent's own has none.
@@ -125,46 +121,18 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
   const replies = scoped ?? unscoped;
   const tones = replies?.tones ?? NO_TONES;
   const liveIds = useLiveSubagentIds();
-  // Detailed: a reply past eight shows its subagents as one list at its first call in the window.
-  const hosts = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!replies || density === 'compact') return map;
-    const shown = new Set(items.map((item) => item.id));
-    for (const r of replies.list) {
-      const first = r.subagents.length > GROUP_OVER ? r.calls.find((call) => shown.has(call)) : undefined;
-      if (first) map.set(first, r.key);
-    }
-    return map;
-  }, [replies, items, density]);
   const { linked, loose, questions } = linkInteractions(items, interactions, agentId);
   const groupItems = useIdentityEntries(identityItems, loose, questions);
-  const turnIds = useGroupIdentities(groupItems, 'turn');
-  const groupIds = useGroupIdentities(groupItems, false);
-  const toolGroupIds = useGroupIdentities(identityItems, true, item => byParent.has(item.id) || !!endedQuestion(item, linked, live), [...loose, ...questions].filter(interaction => interaction.state !== 'pending').map(interaction => interaction.time));
-  // Detailed: a subagent's row, in any state, takes its `task` call's place in the turn's activity.
-  const subagentRow = (item: Item) => {
-    const reply = inline ? replies?.ofCall.get(item.id) : undefined;
-    if (reply && reply.subagents.length > GROUP_OVER) {
-      const key = hosts.get(item.id);
-      return key ? <HostedList key={item.id} replyKey={key} unscoped={unscoped} /> : <Fragment key={item.id} />;
-    }
-    const agent = inline ? byParent.get(item.id) : undefined;
-    return agent ? (
-      <div key={item.id} className="max-w-2xl overflow-hidden rounded-md bg-raised shadow-raised">
-        <SubagentRow subagent={agent} tone={tones.get(agent.id)} anchor />
-      </div>
-    ) : null;
-  };
+  const turnIds = useGroupIdentities(groupItems);
   const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const stamps = new Map<string, Stamp[]>();
-  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, groupIds, toolGroupIds, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined), foldedSubagentRow: subagentRow, tones, hostedBy: (item) => replies?.byKey.get(hosts.get(item.id) ?? '')?.calls };
+  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
   const scratch = scratchPlan(planPath, workdir);
-  const compact = density === 'compact';
   // What a call produced for the person stands in the answer while the call folds like any
-  // other: a chart in both densities, the images its result returned in Compact.
+  // other: a chart or the images its result returned.
   const product = (item: Item) => {
     const kind = callProduct(item);
-    return kind === 'chart' || (compact && kind) ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} className={arrival(item.id)} /> : null;
+    return kind ? <CallProduct key={`${item.agent_id ?? 'main'}:${item.id}`} item={item} sessionId={sessionId} className={arrival(item.id)} /> : null;
   };
   const own = (item: Item) => callProduct(item) === 'chart';
 
@@ -176,8 +144,6 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
   let showedWorking = false;
   const firstIndex = identityItems.findIndex(item => item.id === items[0]?.id);
   let userItemId: string | undefined = identityItems.slice(0, Math.max(0, firstIndex)).reverse().find(item => item.kind === 'user' && !item.delivery)?.id;
-  // A turn is keyed by the user message before it, so it keeps its rows when its first entry changes.
-  let after = userItemId ?? 'start';
   // The turn's message is in this window, so all of its reply would be too (the last one only when the window reaches the live tail).
   let ownMessage = false;
   let footLive = live;
@@ -208,52 +174,39 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
     if (runs) showedWorking = true;
     // One status row heads the turn and keeps its slot while it runs, so "Took 12s" lands there
     // at the end and streamed content lands below it: nothing on screen moves at either moment.
-    if (compact) {
-      // Compact: the head row carries the turn's counts and opens its timeline; only promoted
-      // entries stand in the answer, and a steer bubble sits in the turn at its place.
-      const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked, scratch });
-      const changed = changedFiles(group, scratch);
-      const first = (group[0].item ?? group[0].interaction).id;
-      const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
-      const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
-      const spawned = reply?.subagents ?? NO_SUBAGENTS;
-      // The live card shows every one of them: its chip waits until the card leaves. Every call has spawned one
-      // the card shows (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
-      const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
-      out.push(
-        <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-          {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
-          {renderCompact(group, gctx, product, own)}
-          {changedLine && changed.length > 0 && <ChangedLine files={changed} latest={last && liveCard} onOpen={onOpenChanges} />}
-        </div>,
-      );
-    } else {
-      const nodes = renderEntries(group, gctx, product);
-      out.push(
-        <div key={`turn-${after}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
-          {runs ? <TurnStatus working /> : showEnd && <TurnStatus timing={timing} />}
-          {nodes}
-        </div>,
-      );
-    }
+    // Compact: the head row carries the turn's counts and opens its timeline; only promoted
+    // entries stand in the answer, and a steer bubble sits in the turn at its place.
+    const summary = summarizeTurn(group, { live: groupLive, streamingId: gctx.streamingId, approvals: linked, scratch });
+    const changed = changedFiles(group, scratch);
+    const first = (group[0].item ?? group[0].interaction).id;
+    const id = (first && turnIds.get(first)) ?? userItemId ?? 'start';
+    const reply = inline ? replies?.byKey.get(userItemId ?? 'start') : undefined;
+    const spawned = reply?.subagents ?? NO_SUBAGENTS;
+    // The live card shows every one of them: its chip waits until the card leaves. Every call has spawned one
+    // the card shows (a nested subagent's call may or may not be among the reply's: it is in its parent's transcript).
+    const covered = !!(liveCard && liveIds && reply && spawned.every((s) => liveIds.has(s.id)) && reply.calls.every((call) => spawned.some((s) => s.parent_tool_call_id === call)));
+    out.push(
+      <div key={`turn-${id}`} data-reply={userItemId ?? 'start'} className="flex flex-col gap-3">
+        {runs || showEnd || summary.count > 0 || spawned.length > 0 ? <TurnHead id={id} agentId={agentId} working={runs} timing={timing} summary={summary} entries={group} ctx={gctx} subagents={spawned} calls={reply?.calls.length} chip={!covered} tones={tones} /> : null}
+        {renderCompact(group, gctx, product, own)}
+        {changedLine && changed.length > 0 && <ChangedLine files={changed} latest={last && liveCard} onOpen={onOpenChanges} />}
+      </div>,
+    );
     group = [];
   };
   mergeByTime(items, [...loose, ...questions]).forEach((entry) => {
-    if (entry.item?.kind !== 'user' || (compact && entry.item.delivery)) {
+    if (entry.item?.kind !== 'user' || entry.item.delivery) {
       group.push(entry);
       return;
     }
-    flush(false, !entry.item.delivery);
-    after = entry.item.id;
-    if (!entry.item.delivery) {
-      userItemId = entry.item.id;
-      ownMessage = true;
-    }
-    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !entry.item.delivery && !replied.has(entry.item.id) ? entry.item.id : undefined} />);
+    flush();
+    userItemId = entry.item.id;
+    ownMessage = true;
+    out.push(<UserBubble key={entry.item.id} item={entry.item} sessionId={sessionId} className={arrival(entry.item.id)} asideTurn={!agentId && !replied.has(entry.item.id) ? entry.item.id : undefined} />);
   });
   flush(true);
   // Compact draws no live activity row, so the foot shows the current step itself, unfolded.
-  const step = compact && working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
+  const step = working && !compacting ? currentStep(items, { live: footLive, streamingId: footLive ? ctx.streamingId : undefined, approvals: linked }, own) : null;
   const current = step?.item && <LiveStep key={step.item.id} item={step.item} live={live} sessionId={sessionId} approvals={linked.get(step.item.id)} />;
   return (
     <SessionContext.Provider value={sessionId}>
@@ -261,7 +214,7 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
         {out}
         {working && !showedWorking && <TurnStatus working />}
         {inline && liveCard && <LiveSubagents />}
-        <WorkingTail working={working && (compacting || compact || (footVerb && !liveAtFoot(items)))} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
+        <WorkingTail working={working} turnId={userItemId ?? 'start'} step={step} verb={footVerb} current={current} compacting={compacting} />
       </WorkdirContext.Provider>
     </SessionContext.Provider>
   );
@@ -394,7 +347,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary,
   );
 }, (a, b) => {
   const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
-  // Its counts and its timeline follow from its entries and these context fields alone, as an `ActivityRun`'s do; `summary` is rebuilt every render.
+  // Its counts and its timeline follow from its entries and these context fields alone; `summary` is rebuilt every render.
   return a.id === b.id && a.agentId === b.agentId && a.working === b.working && a.timing === b.timing && a.subagents === b.subagents && a.calls === b.calls && a.chip === b.chip && a.tones === b.tones
     && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.replyActions === b.ctx.replyActions && a.ctx.approvals === b.ctx.approvals
     && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
@@ -468,17 +421,6 @@ function ChangedLine({ files, latest, onOpen }: Readonly<{ files: string[]; late
       )}
     </div>
   );
-}
-
-/**
- * Whether the last row is already live: a thought streaming or a call running folds into an
- * activity row that carries the working mark and says so ("Thinking…", "Running: …").
- */
-function liveAtFoot(items: Item[]): boolean {
-  const last = items.at(-1);
-  if (!last) return false;
-  if (last.kind === 'reasoning') return true;
-  return last.kind === 'tool' && (last.tool?.status === 'pending' || last.tool?.status === 'running');
 }
 
 /**
@@ -566,15 +508,9 @@ interface RenderContext {
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
-  groupIds?: Map<string, string>;
-  toolGroupIds?: Map<string, string>;
-  /** The subagent a `task` call spawned (main transcript only), and its row, which takes the call's place in its turn's activity (Detailed). */
+  /** The subagent a `task` call spawned, shown in the reply's list instead of its timeline. */
   subagentOf?: (item: Item) => Subagent | undefined;
-  foldedSubagentRow?: (item: Item) => ReactNode | null;
-  /** The subagents' identity tones, which their rows (in `foldedSubagentRow`) draw. */
-  tones?: ReadonlyMap<string, IdentityTone>;
-  /** The `task` calls of the reply whose list a call hosts (Detailed, past eight), so `locate` finds the run that holds it. */
-  hostedBy?: (item: Item) => string[] | undefined;
+
 }
 
 
@@ -585,143 +521,8 @@ function thoughtEnds(items: Item[]): Map<string, string> {
   return m;
 }
 
-/**
- * Entries in order. Each contiguous run of work between two messages (thinking, tool calls,
- * subagents' calls, decided requests, questions that no longer wait) folds into one activity
- * row; prose stands on its own between them, and what `product` draws for a call in a run (a
- * chart) stands right after that run.
- */
-function renderEntries(entries: Entry[], ctx: RenderContext, product?: (item: Item) => ReactNode | null): ReactNode[] {
-  // A pending request is the action card under the transcript; it is not drawn twice.
-  const drawn = entries.filter((entry) => entry.interaction?.state !== 'pending');
-  const out: ReactNode[] = [];
-  let pos = 0;
-  for (const segment of segmentActivity(drawn, isWork)) {
-    pos += segment.entries.length;
-    if (!segment.work) {
-      out.push(...renderRows(segment.entries, ctx, NO_ROWS));
-      continue;
-    }
-    // The run ended when the next item began; the same clock as a thought's.
-    let endedAt: string | undefined;
-    for (let k = pos; k < drawn.length && !endedAt; k++) endedAt = drawn[k].item?.time;
-    out.push(<ActivityRun key={ctx.groupIds?.get(segment.key) ?? segment.key} identity={ctx.groupIds?.get(segment.key) ?? segment.key} entries={segment.entries} ctx={ctx} endedAt={endedAt} className={ctx.arrival(segment.key)} />);
-    for (const { item } of segment.entries) {
-      const node = item && product?.(item);
-      if (node) out.push(node);
-    }
-  }
-  return out;
-}
-
-/**
- * The rows themselves: consecutive tool calls form one run of rows, `own` holds the blocks
- * that take a tool call over, and a question that no longer waits is its question block. A
- * question still waiting is the action card; its tool row stays until it is answered.
- */
-function renderRows(entries: Entry[], ctx: RenderContext, own: ReadonlyMap<string, ReactNode>): ReactNode[] {
-  const out: ReactNode[] = [];
-  let run: Item[] = [];
-  // Runs are keyed by their order: a call taken out of a run (a subagent row) must not remount the rest.
-  let runs = 0;
-  const flush = () => {
-    if (run.length) out.push(<ToolRun key={ctx.toolGroupIds?.get(run[0].id) ?? `run-${runs++}`} identity={ctx.toolGroupIds?.get(run[0].id) ?? run[0].id} items={run} live={ctx.live} sessionId={ctx.sessionId} approvals={ctx.approvals} arrival={ctx.arrival} />);
-    run = [];
-  };
-  for (const entry of entries) {
-    if (entry.interaction) {
-      flush();
-      const ix = entry.interaction;
-      const asked = questionOf(undefined, ix, ctx.live);
-      out.push(asked ? <QuestionBlock key={ix.id} id={ix.id} asked={asked} className={ctx.arrival(ix.id)} /> : <DecidedRow key={ix.id} interaction={ix} className={ctx.arrival(ix.id)} />);
-      continue;
-    }
-    const item = entry.item;
-    if (item.kind === 'tool') {
-      const asked = own.has(item.id) ? null : askedOn(item, ctx.approvals, ctx.live);
-      const node = own.get(item.id) ?? (asked && asked.outcome !== 'pending' ? <QuestionBlock key={item.id} id={item.id} asked={asked} className={ctx.arrival(item.id)} /> : null);
-      if (!node) {
-        run.push(item);
-        continue;
-      }
-      flush();
-      out.push(node);
-      continue;
-    }
-    // A reasoning item the provider closed without any text has nothing to show.
-    if (item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
-    flush();
-    out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
-  }
-  flush();
-  return out;
-}
-
 /** The streaming item's id when it is in `entries`; the row only cares about its own. */
 const streamingIn = (entries: Entry[], id: string | undefined) => (id && entries.some((e) => e.item?.id === id) ? id : undefined);
-
-/**
- * One run of work as a 24px `caption` row (DESIGN.md activity row): a chevron, or the
- * working mark while a call runs or thinking streams and the run is closed (open, the chevron
- * turns `accent` and the running row inside has the mark), and the summary, which updates in
- * place as the run grows and truncates rather than wraps, so streaming never moves the
- * page. Failures turn it `error`, a call waiting for permission `attention`. It opens
- * through the shared height collapse onto the rows themselves, indented, each with its own
- * disclosure. Memoised on its entries: text streaming into another item leaves it alone.
- */
-const ActivityRun = memo(function ActivityRun({ identity, entries, ctx, endedAt, className }: { identity: string; entries: Entry[]; ctx: RenderContext; endedAt?: string; className?: string }) {
-  const [open, setOpen] = useDisclosure(`activity:${entries[0]?.item?.agent_id ?? ''}:${identity}`);
-  // The rows are mounted on the first open only: a closed run costs one button.
-  const [opened, setOpened] = useState(open);
-  const summary = summarizeActivity(entries, { live: ctx.live, streamingId: ctx.streamingId, approvals: ctx.approvals, endedAt });
-  const { tone, active } = summary;
-  // Subagents are not counted in the label; a run of nothing else is named by them.
-  const only = entries.length > 0 && entries.every((e) => isSubagentCall(e.item));
-  const label = only ? [subagentNoun(entries.length), summary.label].filter(Boolean).join(' · ') : summary.label;
-  const hosted = entries.flatMap((e) => (e.item && ctx.hostedBy?.(e.item)) || []);
-  if (!label) return null;
-  return (
-    <div data-activity="" className={cn('flex flex-col', className)}>
-      <button data-history-anchor={`activity-${identity}`} data-history-items={JSON.stringify(entries.flatMap(entry => entry.item ? [entry.item.id] : []))} data-subagent-items={hosted.length ? JSON.stringify(hosted) : undefined} type="button" aria-expanded={open} title={label} className={cn('flex h-6 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-caption text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', tone === 'error' && 'text-error', tone === 'attention' && 'text-attention')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
-        <span className="flex size-3.5 shrink-0 items-center justify-center">
-          {active && !open ? <WorkingMark /> : <ChevronRight aria-hidden="true" className={cn('size-3 text-faint transition-transform duration-160 ease-app', open && 'rotate-90', active && 'text-accent')} />}
-        </span>
-        <span className="min-w-0 truncate tabular-nums">{label}</span>
-      </button>
-      {!open && ctx.live && entries.map(({ item }) => item?.tool?.progress && <div key={item.id}>{toolProgress(item.tool, true)}</div>)}
-      {opened && (
-        <Collapse open={open} appear>
-          <DetailVisibility open={open}><div className="mt-1 flex flex-col gap-1 pl-5.5">{renderRows(entries, ctx, subagentRows(entries, ctx))}</div></DetailVisibility>
-        </Collapse>
-      )}
-    </div>
-  );
-}, (a, b) => {
-  const same = (x: Entry, y: Entry) => (x.item ?? x.interaction) === (y.item ?? y.interaction);
-  // `thoughtEnd` is rebuilt every render; what it says about these entries changes only with them or with `endedAt`.
-  return a.endedAt === b.endedAt && a.className === b.className && a.ctx.live === b.ctx.live && a.ctx.sessionId === b.ctx.sessionId && a.ctx.replyActions === b.ctx.replyActions && a.ctx.approvals === b.ctx.approvals && a.ctx.arrival === b.ctx.arrival && a.ctx.tones === b.ctx.tones
-    && streamingIn(a.entries, a.ctx.streamingId) === streamingIn(b.entries, b.ctx.streamingId) && a.entries.length === b.entries.length && a.entries.every((e, i) => same(e, b.entries[i]))
-    && a.entries.every((e) => !e.item || (a.ctx.subagentOf?.(e.item) === b.ctx.subagentOf?.(e.item) && a.ctx.hostedBy?.(e.item) === b.ctx.hostedBy?.(e.item)));
-});
-
-/** A long reply's subagents as one list in its activity (Detailed): the reply comes from the scope, so the list follows all of them. */
-function HostedList({ replyKey, unscoped }: Readonly<{ replyKey: string; /** The replies, outside a Task scope. */ unscoped?: Replies }>) {
-  const id = useId();
-  const replies = useSubagentReplies() ?? unscoped;
-  const reply = replies?.byKey.get(replyKey);
-  if (!replies || !reply) return null;
-  return <SubagentList id={id} subagents={reply.subagents} calls={reply.calls.length} tones={replies.tones} />;
-}
-
-/** The subagents' rows among `entries`, which take their `task` calls over. */
-function subagentRows(entries: Entry[], ctx: RenderContext): Map<string, ReactNode> {
-  const rows = new Map<string, ReactNode>();
-  for (const { item } of entries) {
-    const row = item?.kind === 'tool' ? ctx.foldedSubagentRow?.(item) : null;
-    if (row) rows.set(item!.id, row);
-  }
-  return rows;
-}
 
 /**
  * The row that heads a turn (DESIGN.md turn status), in one slot for both states: empty while
@@ -995,40 +796,6 @@ function WholeNote({ whole }: Readonly<{ whole: WholeText }>) {
     </p>
   );
 }
-
-interface ToolRunProps {
-  identity: string;
-  items: Item[];
-  live: boolean;
-  sessionId?: string;
-  approvals: Map<string, Interaction[]>;
-  arrival: (id: string) => string;
-}
-
-/** Consecutive tools share a compact disclosure; prose and questions stay in time order. While a call runs the closed run has the working mark; open, its glyph turns `accent` and the call's row has it. Memoised on its calls, which a streamed delta elsewhere leaves alone. */
-const ToolRun = memo(function ToolRun({ identity, items, live, sessionId, approvals, arrival }: ToolRunProps) {
-  const [open, setOpen] = useDisclosure(`tools:${items[0]?.agent_id ?? ''}:${identity}`);
-  const [opened, setOpened] = useState(open);
-  const failed = items.some((item) => item.tool?.status === 'failed');
-  const active = live && items.some((item) => isActive(item.tool?.status));
-  return (
-    <div data-tool-run="">
-      <button data-history-anchor={`tools-${identity}`} data-history-items={JSON.stringify(items.map(item => item.id))} type="button" aria-expanded={open} className={cn('flex min-h-7 w-fit max-w-full items-center gap-2 rounded-full bg-tint-well pr-3 pl-2 text-left text-ui text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-body pointer-coarse:min-h-11', failed && 'text-error')} onClick={() => { setOpened(true); setOpen((o) => !o); }}>
-        {active && !open ? <WorkingMark /> : <Terminal aria-hidden="true" className={cn('size-4 shrink-0', active && 'text-accent')} />}
-        <span>{summarizeTools(items, live)}</span>
-        <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 transition-transform duration-160 ease-app', open && 'rotate-90')} />
-      </button>
-      {!open && live && items.map((item) => item.tool?.progress && <div key={item.id}>{toolProgress(item.tool, true)}</div>)}
-      {opened && (
-        <Collapse open={open} appear>
-          <div className="relative mt-1 flex flex-col gap-1 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-px before:fade-rule-y before:content-['']">
-            <DetailVisibility open={open}>{items.map((item) => <ToolRow key={item.id} item={item} live={live} sessionId={sessionId} approvals={approvals.get(item.id)} className={arrival(item.id)} />)}</DetailVisibility>
-          </div>
-        </Collapse>
-      )}
-    </div>
-  );
-}, (a, b) => a.live === b.live && a.sessionId === b.sessionId && a.approvals === b.approvals && a.arrival === b.arrival && a.items.length === b.items.length && a.items.every((item, i) => item === b.items[i]));
 
 const isActive = (s?: ToolStatus) => s === 'pending' || s === 'running';
 
@@ -1516,26 +1283,19 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
 }
 
 /** A subagent's own transcript at 13px: the same rows, blocks and bubbles as the main one, with its own requests. */
-export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live, density }: Readonly<{ sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean; density: Density }>) {
+export function AgentItems({ sessionId, workdir, provider, agentId, items, identityItems = items, historyItemSeq, interactions, live }: Readonly<{ sessionId: string; workdir: string; provider: string; agentId: string; items: Item[]; identityItems?: Item[]; historyItemSeq?: Record<string, number>; interactions: Interaction[]; live: boolean }>) {
   return (
     <div className="flex flex-col gap-3 text-ui [&_.text-chat]:text-ui [&_.text-chat-lg]:text-ui">
-      <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} density={density} />
+      <Transcript sessionId={sessionId} agentId={agentId} provider={provider} workdir={workdir} items={items} identityItems={identityItems} historyItemSeq={historyItemSeq} interactions={interactions} subagents={[]} live={live} working={live} />
     </div>
   );
 }
 
-
-function endedQuestion(item: Item, approvals: Map<string, Interaction[]>, live: boolean) {
-  const question = askedOn(item, approvals, live);
-  return question && question.outcome !== 'pending';
-}
-
 /** Keep group IDs across backward extension without retaining any row content. */
-function useGroupIdentities(items: Item[], toolsOnly: boolean | 'turn' = false, special: (item: Item) => boolean = () => false, interruptions: string[] = []) {
-  const key = JSON.stringify([items.filter(special).map(item => item.id), interruptions]);
-  const [saved, setSaved] = useState(() => ({ items, key, ids: groupIdentities(items, toolsOnly, special, interruptions) }));
-  if (saved.items !== items || saved.key !== key) {
-    const next = { items, key, ids: groupIdentities(items, toolsOnly, special, interruptions, saved.ids) };
+function useGroupIdentities(items: Item[]) {
+  const [saved, setSaved] = useState(() => ({ items, ids: groupIdentities(items) }));
+  if (saved.items !== items) {
+    const next = { items, ids: groupIdentities(items, saved.ids) };
     setSaved(next);
     return next.ids;
   }

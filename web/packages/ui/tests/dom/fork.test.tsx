@@ -1,7 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api, ApiError } from '../../src/api';
-import { saveDensity } from '../../src/lib/density';
 import * as data from '../../src/mock/data';
 import { composer, openTask } from './render';
 
@@ -37,9 +36,8 @@ describe('native task branching', () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  test.each(['compact', 'detailed'] as const)('%s branches the selected prefix once and keeps the source draft', async density => {
+  test('branches the selected prefix once and keeps the source draft', async () => {
     const { source, forked } = fixture();
-    saveDensity(density);
     const fork = vi.spyOn(api, 'fork').mockImplementation(async () => forked());
     const { user, mock } = await openTask(source.id);
     await user.type(composer(), 'Draft stays on the source');

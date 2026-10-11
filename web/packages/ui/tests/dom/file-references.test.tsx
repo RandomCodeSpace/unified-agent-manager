@@ -15,12 +15,12 @@ const items: Item[] = [
 const text = '# Code review\n\nThe report contents are available.';
 const openPanel = () => {};
 
-function Conversation({ density = 'compact', entries = items }: { density?: 'compact' | 'detailed'; entries?: Item[] }) {
+function Conversation({ entries = items }: { entries?: Item[] }) {
   const fallback = useRef<HTMLDivElement>(null);
   const preview = useFilePreview('task', 'history', true, openPanel, fallback);
   return <FileReferencesProvider sessionId="task" workdir="/repo" generation="history" active items={entries}>
     <PreviewContext.Provider value={preview.open}>
-      <Transcript sessionId="task" workdir="/repo" items={entries} interactions={[]} subagents={[]} live={false} working={false} density={density} />
+      <Transcript sessionId="task" workdir="/repo" items={entries} interactions={[]} subagents={[]} live={false} working={false} />
       {preview.selection && <FilePreview selection={preview.selection} sessionId="task" workdir="/repo" inline onClose={preview.close} />}
     </PreviewContext.Provider>
   </FileReferencesProvider>;
@@ -44,8 +44,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-test.each(['compact', 'detailed'] as const)('%s keeps the inline file preview without a declaration card', async density => {
-  render(<Conversation density={density} />);
+test('keeps the inline file preview without a declaration card', async () => {
+  render(<Conversation />);
   const link = await screen.findByRole('link', { name: `Open ${path}` });
   expect(screen.queryByRole('group', { name: /^Declared file/ })).toBeNull();
   expect(screen.getAllByRole('link', { name: `Open ${path}` })).toHaveLength(1);

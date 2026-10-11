@@ -39,7 +39,7 @@ export const SETTINGS_GROUPS = [
     { id: 'connections', label: 'Connected instances', blurb: 'Other UAM servers to switch to.', keywords: 'instance instances federation pair remote server connect' },
   ] },
   { label: 'This browser', scope: 'browser', pages: [
-    { id: 'browser', label: 'Appearance & alerts', blurb: 'Notifications, theme, motion and activity density.', keywords: 'theme dark light system motion animation reduced activity compact detailed density notifications notify push alerts' },
+    { id: 'browser', label: 'Appearance & alerts', blurb: 'Notifications, theme and motion.', keywords: 'theme dark light system motion animation reduced notifications notify push alerts' },
   ] },
 ] as const satisfies readonly { label: string; scope: SettingsScope; pages: readonly { id: string; label: string; blurb: string; keywords: string }[] }[];
 

@@ -10,9 +10,7 @@ export type IdentityTone = (typeof IDENTITY_TONES)[number];
 
 /** A reply with more subagents than this draws them neutral: past five, colours stop telling them apart. */
 export const IDENTITY_LIMIT = 5;
-/** In Detailed, a reply with more subagents than this is one list instead of a row per call… */
-export const GROUP_OVER = 8;
-/** …and offers a filter with more than this. */
+/** A subagent list offers a filter with more than this many families. */
 export const FILTER_OVER = 12;
 /** Families a list (or the live set) renders at a time; "Show 50 more" adds the next. */
 export const PAGE_ROWS = 50;

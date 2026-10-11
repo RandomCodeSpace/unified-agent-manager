@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { changedFiles, currentStep, itemTook, promoted, scratchPlan, summarizeTurn, toolKind } from '../src/lib/transcript.ts';
-import { DENSITY_KEY, parseDensity } from '../src/lib/density.ts';
 import { DECLINED_OUTPUT } from '../src/lib/transcript.ts';
 
 const at = (s) => `2026-09-25T10:00:${String(s).padStart(2, '0')}Z`;
@@ -137,15 +136,6 @@ test('a step took the span from its recorded start to its recorded end; nothing 
   assert.equal(itemTook({ ...bash('c1', 'npm test', at(2)), ended_at: at(12) }), '10s');
   assert.equal(itemTook(bash('c2', 'ls', at(2))), null);
   assert.equal(itemTook(thought('r2', at(5))), null);
-});
-
-test('activity density is compact unless the browser stored "detailed"', () => {
-  assert.equal(DENSITY_KEY, 'uam.activity');
-  assert.equal(parseDensity(null), 'compact');
-  assert.equal(parseDensity('compact'), 'compact');
-  assert.equal(parseDensity('detailed'), 'detailed');
-  assert.equal(parseDensity('dense'), 'compact');
-  assert.equal(parseDensity(''), 'compact');
 });
 
 test('an apply_patch call changes every file its patch names, framed loosely or not', async () => {

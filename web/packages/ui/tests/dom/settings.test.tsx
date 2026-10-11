@@ -503,7 +503,7 @@ describe('settings', () => {
     expect(models.queryByRole('form')).toBeNull();
   });
 
-  test('the terminal switch and this browser\'s theme, motion and activity settings', async () => {
+  test('the terminal switch and this browser\'s theme and motion without an activity selector', async () => {
     const { user } = await openSettings('UAM and access', 'Shell access');
     const shell = await section('Shell access');
     await user.click(shell.getByRole('switch', { name: 'Terminal' }));
@@ -519,8 +519,8 @@ describe('settings', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
     await user.click(within(browser.getByRole('radiogroup', { name: 'Motion' })).getByRole('radio', { name: 'Match system' }));
     expect(localStorage.getItem('uam.motion')).toBe('system');
-    await user.click(browser.getByRole('radio', { name: 'Detailed' }));
-    expect(localStorage.getItem('uam.activity')).toBe('detailed');
+    expect(browser.queryByRole('radiogroup', { name: 'Activity' })).toBeNull();
+    expect(browser.queryByRole('radio', { name: 'Detailed' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Close settings' }));
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull());
   });

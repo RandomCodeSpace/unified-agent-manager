@@ -1,4 +1,3 @@
-import { byCodeUnit } from './order.ts';
 import type { HistoryPage, Item, SessionDetail } from '../api';
 import { boundItems, idleSteerEcho, itemCursor, mergeItems, placeIdleSteerEchoes, TAIL_ITEMS } from './historyWindow.ts';
 import { questionOf } from './transcript.ts';
@@ -72,8 +71,8 @@ export function liveWindow(detail: SessionDetail, items: Item[], tail: Item[], c
   };
 }
 
-/** An outer work group can contain several separate runs of tool rows. */
-export function groupIdentities(items: Item[], toolsOnly: boolean | 'turn' = false, special: (item: Item) => boolean = () => false, interruptions: string[] = [], previous?: Map<string, string>): Map<string, string> {
+/** Keep each turn's disclosure identity stable while older history extends it. */
+export function groupIdentities(items: Item[], previous?: Map<string, string>): Map<string, string> {
   const identities = new Map<string, string>();
   const used = new Set<string>();
   const known = new Set(items.map(item => item.id));
@@ -86,21 +85,9 @@ export function groupIdentities(items: Item[], toolsOnly: boolean | 'turn' = fal
     for (const id of group) identities.set(id, key);
     group = [];
   };
-  // Code-unit order, as `<` compares the ISO times below; a locale order need not agree with it.
-  const times = [...interruptions].sort(byCodeUnit);
-  let interruption = 0;
   for (const item of items) {
-    while (interruption < times.length && times[interruption] < item.time) { flush(); interruption++; }
-    if (toolsOnly === 'turn') {
-      if (item.kind === 'user' && !item.delivery) flush();
-      else group.push(item.id);
-      continue;
-    }
-    if (toolsOnly && item.kind === 'reasoning' && !item.text?.trim() && !item.compact?.has_reasoning) continue;
-    const question = item.tool?.question_outcome;
-    const work = toolsOnly ? item.kind === 'tool' && (!question || question === 'pending') : item.kind === 'tool' || item.kind === 'reasoning';
-    if (work && !special(item)) group.push(item.id);
-    else flush();
+    if (item.kind === 'user' && !item.delivery) flush();
+    else group.push(item.id);
   }
   flush();
   return identities;

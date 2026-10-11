@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTools, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
+import { DECLINED_OUTPUT, approvalMark, callProduct, firstLine, foldWindow, isFileDeclaration, linkInteractions, mainArgument, mergeByTime, promoted, questionOf, readableInput, subagentSummary, summarizeTurn, toolLabel, transcriptWindowStart, windowInteractions } from '../src/lib/transcript.ts';
 
 test('a recorded file declaration folds into activity without a separate file card', () => {
   const declaration = { artifact_id: 'artifact-1', path: '/repo/README' };
@@ -241,16 +241,6 @@ test('a question interaction alone drives the block, so any provider gets it', (
   assert.deepEqual(questions, []);
 });
 
-
-test('tool summaries count successful distinct paths and report failed or missing results', async () => {
-  const { summarizeTools } = await import('../src/lib/transcript.ts');
-  const row = (name, status = 'completed', input) => ({ kind: 'tool', tool: { name, status, input } });
-  const rows = [row('edit', 'completed', '{"path":"a.ts"}'), row('edit', 'completed', '{"path":"a.ts"}'), row('bash'), row('bash', 'failed'), row('read', 'completed', '{"path":"b.ts"}'), row('mcp__unknown'), row('edit', 'running')];
-  assert.equal(summarizeTools(rows, true), 'Changed 1 file, ran 1 command, read 1 file and used 1 tool · 1 running · 1 failed');
-  assert.equal(summarizeTools(rows, false), 'Changed 1 file, ran 1 command, read 1 file and used 1 tool · 1 failed · 1 without a result');
-  assert.equal(summarizeTools([row('edit')], false), 'Used 1 tool');
-});
-
 test('foreground elapsed uses recorded turn evidence across steer and rejects unknown times', async () => {
   const { foregroundStart, elapsedSince } = await import('../src/lib/transcript.ts');
   const start = '2026-09-24T12:00:00Z';
@@ -352,144 +342,27 @@ test('links are the same objects while only text streams, and change when a tool
   assert.notEqual(linkInteractions([call, ask, reply('ab')], [...interactions]), first);
 });
 
-test('a tool call input is parsed once however often its turn re-renders', () => {
-  const items = [{ id: 'c1', kind: 'tool', time: 't', tool: tool('edit', '{"path":"a.go"}') }, { id: 'c2', kind: 'tool', time: 't', tool: tool('view', '{"path":"b.go"}') }];
+test('a question input is parsed once however often its turn re-renders', () => {
+  const call = tool('ask_user', '{"question":"Which file?","choices":["a.go","b.go"]}');
   const parse = JSON.parse;
   let calls = 0;
   JSON.parse = (...args) => (calls++, parse(...args));
   try {
-    const first = summarizeTools(items, false);
+    const first = questionOf(call, undefined, false);
     const before = calls;
-    for (let i = 0; i < 50; i++) assert.equal(summarizeTools(items, false), first);
+    for (let i = 0; i < 50; i++) assert.deepEqual(questionOf(call, undefined, false), first);
     assert.equal(calls, before);
-    assert.equal(first, 'Changed 1 file and read 1 file');
+    assert.deepEqual(first.questions, [{ text: 'Which file?', choices: ['a.go', 'b.go'] }]);
   } finally {
     JSON.parse = parse;
   }
 });
 
-const reasoning = (id, time, text = 'because') => ({ id, kind: 'reasoning', time, text });
-const prose = (id, time, kind = 'assistant') => ({ id, kind, time, text: 'hello' });
-const at = (s) => `2026-09-24T10:00:${String(s).padStart(2, '0')}Z`;
-
-test('work between two messages is one segment; prose and notices stand alone', async () => {
-  const { segmentActivity } = await import('../src/lib/transcript.ts');
-  const decided = ix('p1', { time: at(3) });
-  const question = q('q1', 'Which?', { time: at(6) });
-  const entries = mergeByTime([prose('u1', at(0), 'user'), reasoning('r1', at(1)), item('c1', undefined, at(2)), item('c2', undefined, at(4)), prose('m1', at(5)), item('c3', undefined, at(7)), prose('n1', at(8), 'notice'), reasoning('r2', at(9))], [decided, question]);
-  const segments = segmentActivity(entries);
-  assert.deepEqual(segments.map((s) => [s.key, s.work, s.entries.map((e) => e.item?.id ?? e.interaction.id)]), [
-    ['u1', false, ['u1']],
-    ['r1', true, ['r1', 'c1', 'p1', 'c2']],
-    ['m1', false, ['m1']],
-    ['q1', true, ['q1', 'c3']],
-    ['n1', false, ['n1']],
-    ['r2', true, ['r2']],
-  ]);
-  // The caller can keep a tool call out of the run (a subagent row): it splits the run and stands alone.
-  const split = segmentActivity(entries, (e) => e.item?.id !== 'c1' && (e.item?.kind === 'reasoning' || e.item?.kind === 'tool' || (e.interaction && e.interaction.kind === 'permission')));
-  assert.deepEqual(split.slice(1, 4).map((s) => [s.key, s.work]), [['r1', true], ['c1', false], ['p1', true]]);
-});
-
-test('a question that no longer waits is work: it joins its run and merges the runs around it', async () => {
-  const { isWork, segmentActivity } = await import('../src/lib/transcript.ts');
-  // Copilot's ask_user calls are tool items; other providers' questions are interactions.
-  const items = [prose('u1', at(0), 'user'), reasoning('r1', at(1)), item('c1', undefined, at(2)), asked('a1', 'Which?', at(3)), item('c2', undefined, at(4)), asked('a2', 'Then?', at(5)), reasoning('r2', at(7)), prose('m1', at(9))];
-  const answered = q('q1', 'And?', { time: at(6) });
-  const segments = segmentActivity(mergeByTime(items, [answered]));
-  assert.deepEqual(segments.map((s) => [s.key, s.work, s.entries.map((e) => e.item?.id ?? e.interaction.id)]), [
-    ['u1', false, ['u1']],
-    ['r1', true, ['r1', 'c1', 'a1', 'c2', 'a2', 'q1', 'r2']],
-    ['m1', false, ['m1']],
-  ]);
+test('a settled question belongs to the timeline; a pending question stays an action card', async () => {
+  const { isWork } = await import('../src/lib/transcript.ts');
   for (const state of ['answered', 'rejected', 'expired']) assert.equal(isWork({ interaction: q('q1', 'And?', { state }) }), true);
   // A question still waiting is the action card, not work.
   assert.equal(isWork({ interaction: q('q1', 'And?', { state: 'pending' }) }), false);
-});
-
-test('segment keys hold while a run grows, so the row keeps its state as items stream in', async () => {
-  const { segmentActivity } = await import('../src/lib/transcript.ts');
-  const items = [prose('u1', at(0), 'user'), reasoning('r1', at(1))];
-  const keys = () => segmentActivity(mergeByTime(items, [])).map((s) => `${s.key}:${s.entries.length}`);
-  assert.deepEqual(keys(), ['u1:1', 'r1:1']);
-  items.push(item('c1', undefined, at(2)));
-  items.push(item('c2', undefined, at(3)));
-  assert.deepEqual(keys(), ['u1:1', 'r1:3']);
-  items.push(prose('m1', at(4)));
-  items.push(reasoning('r2', at(5)));
-  assert.deepEqual(keys(), ['u1:1', 'r1:3', 'm1:1', 'r2:1']);
-  // An empty reasoning item is not drawn but still anchors its run, so the key does not move once its text arrives.
-  items.push(prose('m2', at(6)), reasoning('r3', at(7), ''));
-  assert.equal(keys().at(-1), 'r3:1');
-  items[items.length - 1] = reasoning('r3', at(7), 'now with text');
-  items.push(item('c3', undefined, at(8)));
-  assert.equal(keys().at(-1), 'r3:2');
-});
-
-test('the activity label counts thoughts and what the tools did, with a duration once the run ended', async () => {
-  const { summarizeActivity } = await import('../src/lib/transcript.ts');
-  const run = (id, t) => ({ item: item(id, undefined, at(2), t) });
-  const entries = [
-    { item: reasoning('r1', at(1)) }, { item: reasoning('r2', at(1)) }, { item: reasoning('r3', at(1)) }, { item: reasoning('r4', at(1)) },
-    run('c1', tool('bash', '{"command":"ls"}')), run('c2', tool('bash', '{"command":"ls"}')), run('c3', tool('bash', '{"command":"ls"}')), run('c4', tool('bash', '{"command":"ls"}')),
-    run('c5', tool('view', '{"path":"a.ts"}')), run('c6', tool('read', '{"path":"b.ts"}')),
-  ];
-  assert.deepEqual(summarizeActivity(entries, { live: false, endedAt: '2026-09-24T10:01:05Z' }), { label: 'Thought 4×, ran 4 commands and read 2 files · 1m 4s', tone: 'muted', active: false });
-  assert.equal(summarizeActivity([{ item: reasoning('r1', at(1)) }], { live: false, endedAt: at(1) }).label, 'Thought · <1s');
-  assert.equal(summarizeActivity([{ item: reasoning('r1', at(1)) }], { live: true }).label, 'Thought');
-  assert.equal(summarizeActivity([{ item: reasoning('r1', at(1)) }, { interaction: ix('p1') }, { interaction: ix('p2') }], { live: false }).label, 'Thought and decided 2 requests');
-  assert.equal(summarizeActivity([run('c1', tool('edit', '{"path":"a.ts"}')), { item: { ...item('c2', undefined, at(2), tool('view', '{"path":"x.png"}')), images: [{ id: 'i1' }, { id: 'i2' }] } }], { live: false }).label, 'Changed 1 file and read 1 file · 2 images');
-  // Nothing drawn, nothing said: the row is not shown.
-  assert.equal(summarizeActivity([{ item: reasoning('r1', at(1), '') }], { live: false }).label, '');
-});
-
-test('the activity label keeps what needs attention: the running call, a waiting permission, failures, thinking', async () => {
-  const { summarizeActivity } = await import('../src/lib/transcript.ts');
-  const running = item('c2', undefined, at(2), tool('bash', '{"command":"npm test"}', { status: 'running' }));
-  const entries = [{ item: reasoning('r1', at(1)) }, { item: item('c1', undefined, at(2)) }, { item: running }];
-  const live = summarizeActivity(entries, { live: true, endedAt: at(9) });
-  assert.deepEqual(live, { label: 'Thought and ran 1 command · Running: bash npm test', tone: 'muted', active: true });
-  const approvals = new Map([['c2', [ix('p1', { tool_call_id: 'c2', state: 'pending', resolution: undefined })]]]);
-  const waiting = summarizeActivity(entries, { live: true, approvals });
-  assert.deepEqual(waiting, { label: 'Thought and ran 1 command · Waiting for your approval: bash npm test', tone: 'attention', active: true });
-  // A request yolo mode is answering does not wait for the user.
-  const auto = new Map([['c2', [ix('p1', { tool_call_id: 'c2', state: 'pending', resolution: undefined, auto: true })]]]);
-  assert.deepEqual(summarizeActivity(entries, { live: true, approvals: auto }), live);
-  const { awaitsUser } = await import('../src/lib/transcript.ts');
-  assert.deepEqual([ix('p', { state: 'pending' }), ix('p', { state: 'pending', auto: true }), ix('p', { auto: true })].map(awaitsUser), [true, false, false]);
-  // The turn ended before the call reported: no longer active, its duration known.
-  assert.deepEqual(summarizeActivity(entries, { live: false, endedAt: at(9) }), { label: 'Thought and ran 1 command · 1 without a result · 8s', tone: 'muted', active: false });
-  const failed = [{ item: item('c1', undefined, at(2), tool('bash', '{"command":"ls"}', { status: 'failed' })) }, { item: item('c3', undefined, at(2)) }];
-  assert.deepEqual(summarizeActivity(failed, { live: false }), { label: 'Ran 1 command · 1 failed', tone: 'error', active: false });
-  // Failure outranks a waiting permission in the tone; the label keeps both.
-  assert.equal(summarizeActivity([...failed, { item: running }], { live: true, approvals }).tone, 'error');
-  // Thinking that still streams is named, not counted, and holds the duration back.
-  const thinking = summarizeActivity([{ item: reasoning('r1', at(1)) }, { item: reasoning('r2', at(3)) }], { live: true, streamingId: 'r2', endedAt: at(9) });
-  assert.deepEqual(thinking, { label: 'Thought · Thinking…', tone: 'muted', active: true });
-  assert.equal(summarizeActivity([{ item: reasoning('r2', at(3), '') }], { live: true, streamingId: 'r2' }).label, 'Thinking…');
-});
-
-test('the activity label counts questions by outcome, never as tool calls', async () => {
-  const { summarizeActivity } = await import('../src/lib/transcript.ts');
-  const run = [{ item: item('c1', undefined, at(2)) }, { item: asked('a1', 'Which?', at(3)) }, { item: item('c2', undefined, at(4)) }, { interaction: q('q1', 'Then?', { time: at(5), resolution: 'Answered: red' }) }];
-  assert.deepEqual(summarizeActivity(run, { live: false, endedAt: at(9) }), { label: 'Ran 2 commands and answered 2 questions · 7s', tone: 'muted', active: false });
-  const declined = asked('a2', 'Which?', at(3), { output: `User responded: ${DECLINED_OUTPUT}` });
-  assert.equal(summarizeActivity([{ item: asked('a1', 'Which?', at(3)) }, { item: declined }, { interaction: q('q1', 'Then?', { state: 'rejected' }) }], { live: false }).label, 'Answered 1 question and declined 2 questions');
-  // A call left open by a stopped turn got no answer; an expired request neither.
-  const open = asked('a3', 'Which?', at(3), { status: 'running', output: undefined });
-  assert.equal(summarizeActivity([{ item: open }, { interaction: q('q1', 'Then?', { state: 'expired' }) }], { live: false }).label, '2 questions not answered');
-  // A failed question counts with the failures and turns the row to error.
-  const failed = asked('a4', 'Which?', at(3), { status: 'failed', output: 'boom' });
-  assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: failed }], { live: false }), { label: 'Ran 1 command · 1 failed', tone: 'error', active: false });
-  // The question request on the call is the one read: declined there means declined.
-  const approvals = new Map([['a1', [q('q1', 'Which?', { state: 'rejected', tool_call_id: 'a1' })]]]);
-  assert.equal(summarizeActivity([{ item: asked('a1', 'Which?', at(3), { output: '' }) }], { live: false, approvals }).label, 'Declined 1 question');
-  // A question still waiting stays the running call.
-  const waiting = asked('a5', 'Which?', at(3), { status: 'running', output: undefined });
-  assert.deepEqual(summarizeActivity([{ item: item('c1', undefined, at(2)) }, { item: waiting }], { live: true }), { label: 'Ran 1 command · Running: ask_user Which?', tone: 'muted', active: true });
-  // Its pending question request waits for an answer, not an approval.
-  const pending = new Map([['a5', [q('q1', 'Which?', { state: 'pending', tool_call_id: 'a5' })]]]);
-  assert.deepEqual(summarizeActivity([{ item: waiting }], { live: true, approvals: pending }), { label: 'Waiting for your answer: ask_user Which?', tone: 'attention', active: true });
 });
 
 test('completed edit, write and create calls are counted for the live Changes count; running, failed and other tools are not', async () => {
@@ -535,7 +408,7 @@ test('compact tool labels and exact semantic paths preserve summaries without de
   const a = { id: 'a', kind: 'tool', tool: { name: 'edit', status: 'completed', path: '/long/exact/path.ts', display_arg: '/long/exact/…', has_input: true, has_output: true } };
   const b = { ...a, id: 'b', tool: { ...a.tool, display_arg: 'a different clipped label' } };
   assert.deepEqual(toolLabel(a.tool), { name: 'edit', arg: '/long/exact/…' });
-  assert.equal(summarizeTools([a, b], false), 'Changed 1 file');
+  assert.equal(summarizeTurn([a, b].map(item => ({ item })), { live: false }).label, '1 file changed');
   assert.equal(subagentSummary({ status: 'running', preview: 'Reviewing parser behavior' }, undefined, undefined), 'Reviewing parser behavior');
   assert.equal(subagentSummary({ status: 'completed', result_summary: 'Found two edge cases' }, undefined, undefined), 'Found two edge cases');
 });
