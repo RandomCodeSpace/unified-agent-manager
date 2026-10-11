@@ -37,10 +37,10 @@ export interface Opened<T> {
   button: HTMLElement;
   open: boolean;
   phone: boolean;
-  then?: () => void;
+  afterClose?: () => void;
 }
 
-/** One reader at a time: `show` opens it over the card whose button was pressed; `close(then)` runs `then` after the exit, with focus back on the card. */
+/** One reader at a time: `show` opens it over the card whose button was pressed; `close(afterClose)` runs `afterClose` after the exit, with focus back on the card. */
 export function useCardReader<T>() {
   const id = useId();
   const [reader, setReader] = useState<Opened<T> | null>(null);
@@ -48,13 +48,13 @@ export function useCardReader<T>() {
     id,
     reader,
     show: (item: T, button: HTMLElement) => setReader({ item, button, card: button.closest('li') ?? button, open: true, phone: window.matchMedia(PHONE).matches }),
-    close: (then?: () => void) => setReader((r) => r && { ...r, open: false, then }),
+    close: (afterClose?: () => void) => setReader((r) => r && { ...r, open: false, afterClose }),
     closed: () => {
       const r = reader;
       setReader(null);
-      if (!r?.then) return;
+      if (!r?.afterClose) return;
       if (r.button.isConnected) r.button.focus();
-      r.then();
+      r.afterClose();
     },
   };
 }
@@ -122,7 +122,7 @@ export function ItemReader({ reader, id, label, title, facts, actions, onClose, 
   const { card, button, open, phone } = reader;
   const sheet = phone;
   // Closing for a follow-up (Edit) leaves focus to it: `closed` puts it on the card, then the form takes it.
-  const back = () => (!reader.then && button.isConnected ? button : false);
+  const back = () => (!reader.afterClose && button.isConnected ? button : false);
   const body = (close: ReactNode) => (
     <div className="flex min-h-0 flex-1 flex-col">
       <PanelHead className={cn('gap-0.5 pt-2 pb-2 pl-4', sheet ? 'pr-2' : 'pr-3')}>
