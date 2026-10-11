@@ -1,6 +1,6 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
 import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { ViewTransition, memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { encodeEntity } from '../lib/instanceIdentity';
@@ -17,6 +17,7 @@ import { UsageButton } from './UsageButton';
 import { restartNotice } from './UamService';
 import { BUILD_VERSION, shortVersion } from '../lib/update';
 import { InstanceSwitcher } from './InstanceSwitcher';
+import { InstanceBadge } from './InstanceBadge';
 
 /** Project-level navigation and actions. */
 export interface WorkspaceActions {
@@ -309,14 +310,6 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/**
- * Rows enter, leave and move with a view transition when the Task list changes (type "sessions"); every other render, the selection included, leaves them to their CSS transitions.
- * An update that keeps the rows' order (a Task's state, time or title) repaints them in place: `update` applies only while the order changes (TaskRow `moves`).
- */
-const ROW_TRANSITION = { sessions: 'vt-row', default: 'none' } as const;
-const ROW_ENTER = { sessions: 'vt-row-enter', default: 'none' } as const;
-const ROW_EXIT = { sessions: 'vt-row-exit', default: 'none' } as const;
-
 /** A shelf or Done row's tip: the full title, its Project with the directory, why it is done, and when the Task was created, judged done and settled. */
 function shelfTip(s: SessionSummary, project: Project, done = false) {
   const at = (label: string, iso?: string) => iso && <span className="block">{label} <time dateTime={iso}>{dateTime(iso)}</time></span>;
@@ -375,7 +368,7 @@ const STATUS_MARKS = {
 };
 
 /** Shared task presentation; owner-specific actions stay with each caller. */
-export function TaskRowContent({ session, project, selected, unread, instanceName, reserveActionSpace = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; instanceName?: string; reserveActionSpace?: boolean }>) {
+export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
   const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
   return (
@@ -383,16 +376,16 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} />}
         <span className="min-w-0 flex-1 truncate font-normal text-muted">{project?.name ?? 'Project'}</span>
-        {instanceName && <span className="max-w-20 shrink-0 truncate text-meta font-normal text-muted" title={instanceName}>{instanceName}</span>}
-        <span className={cn('flex shrink-0 items-center gap-1 font-normal', statusTone)}>
+        <span className={cn('flex shrink-0 items-center justify-end gap-1 font-normal', statusTone, settleable && 'min-w-14 group-hover/row:opacity-0 group-focus-within/row:opacity-0')}>
           <StatusIcon aria-hidden="true" className="size-3.5 shrink-0" />
           {status.label}
         </span>
       </span>
-      <span className={cn('flex w-full min-w-0 items-baseline gap-1.5', reserveActionSpace && 'pr-6')}>
+      <span className="flex w-full min-w-0 items-baseline gap-1.5">
         <TaskTitle session={session} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
         {project?.branch && <span className="min-w-0 max-w-20 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{project.branch}</span></span>}
         <time dateTime={session.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(session.updated_at)}</time>
+        {machine && <InstanceBadge id={machine.id} label={machine.label} />}
       </span>
     </>
   );
@@ -404,12 +397,12 @@ export function TaskRowContent({ session, project, selected, unread, instanceNam
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
- * `moves`: this render changes the rows' order, so the row slides to its place with the Task list's view transition.
  */
-const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, done = false, tabStop, moves, rowKey = s.id, machine, named = true }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; done?: boolean; tabStop: boolean; moves: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine's name: not while the list shows one instance. */ named?: boolean }>) {
+const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, done = false, tabStop, rowKey = s.id, machine, named = true }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; done?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
+  const revealSettleOnTouch = useRef(false);
   const strong = selected || attention || unread;
   const items = taskMenuItems(s, a, 'row');
   // The menu's own Settle item, shown on hover only while its rules allow it.
@@ -451,7 +444,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
-        <Tip label={<>{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project, done) : rowTip(s, project, status.text, diff)}</>} side="right">
+        <Tip label={<>{machine && !unavailable && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project, done) : rowTip(s, project, status.text, diff)}</>} side="right">
           <button
             type="button"
             data-nav={rowKey}
@@ -476,30 +469,36 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
                 <ProjectBadge badge={project.badge} />
                 <span className="sr-only">{project.name}, </span>
                 <TaskTitle session={s} className={cn('min-w-0 flex-1 truncate', selected && 'font-semibold')} />
-                {machine && named && <span className="max-w-20 shrink-0 truncate text-meta font-normal text-muted">{machine.short}</span>}
+                {machine && named && <InstanceBadge id={machine.id} label={machine.label} />}
               </>
             ) : (
-              <TaskRowContent session={s} project={project} selected={selected} unread={unread} reserveActionSpace={!!settle} instanceName={named ? machine?.short : undefined} />
+              <TaskRowContent session={s} project={project} selected={selected} unread={unread} settleable={!!settle} machine={named ? machine : undefined} />
             )}
           </button>
         </Tip>
       )}
       {settle && !renaming && (
-        // A sibling of the row button, not inside it, so clicking Settle never selects the row. Its reserved space at the end of the second line keeps the time visible.
+        // A sibling of the row button, so Settle replaces the status without selecting the Task.
+        // A first touch on the status reveals Settle; a second tap activates it.
         // Not a tab stop of its own: Right from the row reaches it (onListKeyDown), and the row's menu has it too.
         <Tip label="Settle">
           <Button
-            size="icon-sm"
+            size="sm"
             tabIndex={-1}
             data-settle=""
             aria-label={`Settle ${taskName(s) || 'New task'}`}
             className={cn(
-              'absolute right-1.5 bottom-1.5 text-muted opacity-0 transition-[opacity,background-color,color] group-hover/row:opacity-100 group-has-focus-visible/row:opacity-100 pointer-coarse:opacity-100',
+              'pointer-events-none absolute top-1.5 right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:after:inset-0 [&_svg]:size-3.5',
               selected ? 'bg-tint-selected' : 'bg-raised',
             )}
-            onClick={settle.onSelect}
+            onPointerDown={(event) => { revealSettleOnTouch.current = event.pointerType === 'touch' && document.activeElement !== event.currentTarget; }}
+            onClick={(event) => {
+              if (event.detail && revealSettleOnTouch.current) { revealSettleOnTouch.current = false; return; }
+              settle.onSelect();
+            }}
           >
-            <CircleCheck />
+            <CircleCheck aria-hidden="true" />
+            Settle
           </Button>
         </Tip>
       )}
@@ -507,16 +506,14 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   );
 
   return (
-    <ViewTransition name={machine && !machine.active ? `task-${machine.id}-${s.id}` : `task-${s.id}`} update={moves ? ROW_TRANSITION : 'none'} enter={ROW_ENTER} exit={ROW_EXIT} share="none" default="none">
-      <li>
-        <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
-          <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
-          <ContextMenu.Content>
-            <ContextMenu.Actions items={items} />
-          </ContextMenu.Content>
-        </ContextMenu.Root>
-      </li>
-    </ViewTransition>
+    <li>
+      <ContextMenu.Root onOpenChange={(open) => { contextOpen.current = open; }}>
+        <ContextMenu.Trigger render={<div />}>{row}</ContextMenu.Trigger>
+        <ContextMenu.Content>
+          <ContextMenu.Actions items={items} />
+        </ContextMenu.Content>
+      </ContextMenu.Root>
+    </li>
   );
 });
 
@@ -564,7 +561,7 @@ function Shelf({ label, icon, rows, selectedKey, open, onToggle, tabStop, render
       <Collapse open={open} soft>
         <div className="max-h-[40dvh] overflow-y-auto overscroll-contain">
           <ul className="flex flex-col gap-px pt-px">
-            {/* The pinned copy below owns the selected row while the shelf is closed: one view-transition name each. */}
+            {/* The pinned copy below owns the selected row while the shelf is closed. */}
             {shown.filter((r) => r !== pinned).map((r) => render(r, true))}
           </ul>
           {rows.length > SHELF_CAP && (
@@ -589,6 +586,59 @@ interface ListRow {
   task: SessionSummary;
   project: Project;
   machine?: Machine;
+}
+
+type TaskGroup = keyof ReturnType<typeof groupTasks>;
+type Placement = readonly [group: TaskGroup, order: string];
+const samePlacement = (a: Placement | undefined, b: Placement) => a?.[0] === b[0] && a[1] === b[1];
+
+/** Defer only automatic shelf placement. Rows always render the latest Task and action eligibility. */
+function useSidebarGroups(rows: ListRow[], list: RefObject<HTMLDivElement | null>) {
+  const rowOf = new Map(rows.map((row) => [row.task, row]));
+  const desired = new Map<string, Placement>();
+  for (const [group, tasks] of Object.entries(groupTasks(rows.map((row) => row.task)))) {
+    for (const task of tasks) desired.set(rowOf.get(task)!.key, [group as TaskGroup, group === 'done' ? task.done_at ?? '' : task.settled_at ?? '']);
+  }
+  const [placements, setPlacements] = useState(desired);
+  const shown = new Map<string, Placement>();
+  for (const row of rows) {
+    const target = desired.get(row.key)!;
+    const automatic = target[0] === 'done' || (target[0] === 'settled' && !!row.task.settled_by);
+    shown.set(row.key, automatic ? placements.get(row.key) ?? target : target);
+  }
+  // New Tasks, resumed work, explicit stage changes and removed sources take effect in this render.
+  if (shown.size !== placements.size || [...shown].some(([key, value]) => !samePlacement(placements.get(key), value))) setPlacements(shown);
+  // Task text/usage updates do not restart the quiet period; only a new placement target does.
+  const pending = JSON.stringify([...desired].filter(([key, value]) => !samePlacement(shown.get(key), value)));
+  useEffect(() => {
+    const changes = JSON.parse(pending) as [string, Placement][];
+    const node = list.current;
+    if (!changes.length || !node) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        // A stationary pointer or keyboard focus still owns this list. Leaving it starts a fresh quiet period.
+        if (node.matches(':hover') || node.contains(node.ownerDocument.activeElement)) return;
+        setPlacements((current) => {
+          const next = new Map(current);
+          for (const [key, value] of changes) if (next.has(key)) next.set(key, value);
+          return next;
+        });
+      }, 5000);
+    };
+    const events = ['pointerenter', 'pointerleave', 'pointermove', 'pointerdown', 'pointerup', 'focusin', 'focusout', 'keydown', 'scroll'] as const;
+    for (const event of events) node.addEventListener(event, schedule, { passive: true, capture: true });
+    schedule();
+    return () => {
+      clearTimeout(timer);
+      for (const event of events) node.removeEventListener(event, schedule, true);
+    };
+  }, [pending, list, placements]);
+  const grouped: Record<TaskGroup, ListRow[]> = { active: [], done: [], settled: [], archived: [] };
+  for (const row of rows) grouped[shown.get(row.key)![0]].push(row);
+  for (const group of ['done', 'settled'] as const) grouped[group].sort((a, b) => shown.get(b.key)![1].localeCompare(shown.get(a.key)![1]));
+  return grouped;
 }
 
 const machineLabelId = (machine: Machine) => `uam-task-source-${machine.id || 'home'}`;
@@ -648,9 +698,7 @@ export const Sidebar = memo(function Sidebar({
       return sidebarTasks(own.projects, own.sessions, chosen ? chosen.id : null, query).map((task) => ({ key: encodeEntity(m.id || null, task.id), task, project: projectMap.get(task.project_id)!, machine: m }));
     }).sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
   }, [machines, projects, sessions, actions.filter, query, chosen, filterMachine]);
-  const grouped = groupTasks(rows.map((r) => r.task));
-  const rowOf = new Map(rows.map((r) => [r.task, r]));
-  const [active, done, settled] = [grouped.active, grouped.done, grouped.settled].map((tasks) => tasks.map((t) => rowOf.get(t)!));
+  const { active, done, settled } = useSidebarGroups(rows, list);
   // Newest first, whatever their state: a row never moves because its Task changed.
   const unsettled = active;
   const here = machines?.find((m) => m.active);
@@ -666,20 +714,11 @@ export const Sidebar = memo(function Sidebar({
   const searching = !!query.trim();
   const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Done', done, doneOpen, selectedKey, doneAll), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
-  // The rows' order on screen. A Task list update moves the rows (the "sessions" view transition) only when it changes
-  // that order; one that changes Tasks in place (state, time, title) repaints them without a transition.
-  const layout = keys.join('\n');
-  const shown = useRef(layout);
-  useLayoutEffect(() => {
-    shown.current = layout;
-  }, [layout]);
-  // eslint-disable-next-line react-hooks/refs -- the rows move from the order last committed, which only a commit can record.
-  const moves = shown.current !== layout;
   const anyProject = useAnyProject(projects);
   const renderRow = (r: ListRow, compact = false, isDone = false) => {
     // Inactive machines keep their own read marks; the active one follows App's open Task.
     const reader = r.machine && !r.machine.active ? r.machine.hasNews : hasNews;
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} done={isDone} tabStop={r.key === tabStop} moves={moves} />;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} done={isDone} tabStop={r.key === tabStop} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
@@ -755,19 +794,18 @@ export const Sidebar = memo(function Sidebar({
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
-        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} />
+        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
         {/* The field lifts when focused and carries the keyboard focus ring; the input's own outline is off. */}
         <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted transition-[background-color,box-shadow] duration-100 focus-within:bg-raised focus-within:shadow-focus focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-focus">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input ref={search} type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
+        {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
         {anyProject && <FilterButton projects={projects} actions={actions} />}
         {projects.length > 0 && <RoutinesButton actions={actions} />}
         <AddProjectButton actions={actions} />
         {anyProject && <NewTaskButton actions={actions} id="new-task" />}
       </header>
-      {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
-
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them. */}
       <div ref={list} className="flex min-h-0 flex-1 flex-col" aria-busy={!loaded || undefined} onKeyDown={(e) => onListKeyDown(e)} onFocus={(e) => { const key = (e.target as HTMLElement).dataset.nav; if (key) setFocused(key); }}>
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-2 pt-1 pb-3" onScroll={carry && ((e) => carry.write({ scroll: e.currentTarget.scrollTop }))}>

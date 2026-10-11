@@ -461,7 +461,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Switching the instance on screen keeps the page open (connected instances only).
   const carry = federation?.carry;
   // The connected instance on screen, or this one; null without connected instances, where nothing names it.
-  const instance = federation?.machines ? api.owner?.label ?? 'This server' : null;
+  const instance = federation?.machines ? api.owner?.label ?? 'Main Server' : null;
   const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const [projectDir, setProjectDir] = useState<string | null>(null);
@@ -802,7 +802,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               </Button>
             </div>
           </Field>
-          {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'This server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
+          {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'Main Server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
           {projectPicker.mounted && (
             <Collapse open={projectBrowsing} appear soft onClosed={projectPicker.onClosed}>
               <Suspense fallback={null}>

@@ -6,9 +6,9 @@ import { createContext, useContext, type ReactNode } from 'react';
 /** One enabled instance ("machine") the hosting UAM shows: this one (`id` '') or a connection. */
 export interface Machine {
   id: string;
-  /** "This server" or the connection's label. */
+  /** "Main Server" or the connection's label. */
   label: string;
-  /** The compact row label: "This server" or the connection's label. */
+  /** The compact row label: "Main Server" or the connection's label. */
   short: string;
   connection: ConnectedInstance | null;
   client: ApiClient;

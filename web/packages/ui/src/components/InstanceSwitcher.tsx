@@ -1,5 +1,5 @@
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { Check, ChevronsUpDown, Network, Plus, Server, X } from 'lucide-react';
+import { Check, ChevronsUpDown, Network, Plus, X } from 'lucide-react';
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import type { ConnectedStatus, SessionSummary } from '../api';
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
@@ -11,11 +11,13 @@ import { Key } from './InlinePicker';
 import { BottomSheet } from './Subagents';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
+import { Tip } from './ui/tooltip';
+import { InstanceBadge } from './InstanceBadge';
 import { PanelFoot, PanelHead } from './ui/panel';
 
 /**
  * The instance switcher (DESIGN.md Connected instances): which instance the Task list shows and which one is on screen.
- * In the sidebar it opens below a row under the header, with All instances first; in the Settings header it picks the
+ * In the sidebar it opens from the header toolbar, with All instances first; in the Settings header it picks the
  * instance whose Settings show. Its list is an anchored reader, a bottom sheet on a phone.
  */
 
@@ -38,14 +40,11 @@ interface Instance {
   open: number;
   working: number;
   needs: number;
-  /** Two letters for a connection's mark: the first of its first two words, or its first. */
-  initials: string;
 }
 
 /** The instance on screen counts from `live` (App's own state); the others from what they last streamed. */
 function describe(machine: Machine, live: { sessions: SessionSummary[]; hasNews: Unread } | undefined, version: string | undefined): Instance {
   const sessions = machine.active && live ? live.sessions : machine.state.sessions;
-  const words = machine.label.trim().split(/\s+/);
   return {
     id: machine.id,
     label: machine.label,
@@ -55,7 +54,6 @@ function describe(machine: Machine, live: { sessions: SessionSummary[]; hasNews:
     open: groupTasks(sessions).active.length,
     working: sessions.filter((s) => s.state === 'working').length,
     needs: needsYouCount(sessions, machine.active && live ? live.hasNews : machine.hasNews),
-    initials: (words.length > 1 ? words[0][0] + words[1][0] : words[0][0] ?? '?').toUpperCase(),
   };
 }
 
@@ -65,13 +63,12 @@ function facts(instance: Instance): string {
   return parts.filter(Boolean).join(' · ');
 }
 
-/** An instance's mark: a server glyph for this one, its initials for a connection, its status as a dot on the corner; All instances (null) is a network glyph. */
+/** The same coloured text initials used on Task cards, with a status dot; All instances uses a network glyph. */
 function InstanceMark({ instance, size = 'md' }: Readonly<{ instance: Instance | null; size?: 'sm' | 'md' | 'lg' }>) {
   const box = { sm: 'size-5 rounded-xs text-stamp', md: 'size-7 rounded-sm text-meta', lg: 'size-9 rounded-md text-caption' }[size];
-  const Glyph = instance === null ? Network : Server;
   return (
-    <span aria-hidden="true" className={cn('relative inline-flex shrink-0 items-center justify-center bg-sunken font-semibold text-ink', box, instance && !['online', 'connecting'].includes(instance.status) && 'text-muted')}>
-      {instance && !instance.home ? instance.initials : <Glyph className={size === 'sm' ? 'size-3' : 'size-4'} />}
+    <span aria-hidden="true" className={cn('relative inline-flex shrink-0 items-center justify-center text-muted', box, !instance && 'bg-sunken')}>
+      {instance ? <InstanceBadge id={instance.id} label={instance.label} className={size === 'sm' ? 'text-stamp' : size === 'lg' ? 'text-caption' : undefined} /> : <Network className={size === 'sm' ? 'size-3' : 'size-4'} />}
       {instance && size !== 'sm' && <Dot tone={STATUS[instance.status][1]} className="absolute -right-0.5 -bottom-0.5 ring-2 ring-(--mark-ring)" />}
     </span>
   );
@@ -134,13 +131,13 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them.
     <div className="flex min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain px-2 pt-1 pb-3 [--mark-ring:var(--color-raised)]" onKeyDown={onKeyDown}>
       {all && row(null, 'All instances', 'Every task in one list', <InstanceMark instance={null} size="lg" />, instances.reduce((n, i) => n + i.needs, 0))}
-      {section('This server', instances.filter((i) => i.home))}
+      {section('Main Server', instances.filter((i) => i.home))}
       {section(
         'Connected',
         instances.filter((i) => !i.home),
         unavailable.map((u) => (
           <div key={u.id} className="flex min-h-12 items-center gap-3 px-2 text-muted">
-            <span aria-hidden="true" className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-sunken text-caption font-semibold">{u.label.trim()[0]?.toUpperCase()}</span>
+            <InstanceBadge id={u.id} label={u.label} className="w-9 text-center text-caption opacity-60" />
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-ui">{u.label}</span>
               <span className="truncate text-caption">{u.reason}</span>
@@ -233,24 +230,21 @@ export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect 
   const name = `Instance: ${label}${sidebar && (chosen ? chosen.needs : total) ? `, ${chosen ? chosen.needs : total} need you` : ''}`;
   const open = () => setView({ open: true, phone: window.matchMedia(PHONE).matches });
   const button = sidebar ? (
-    <button
-      ref={trigger}
-      type="button"
-      aria-label={name}
-      aria-haspopup="dialog"
-      aria-expanded={view.open}
-      aria-keyshortcuts="Alt+I"
-      onClick={open}
-      className={cn('mx-2 mb-1 flex h-10 shrink-0 items-center gap-2.5 rounded-md px-2 text-left transition-[background-color,box-shadow] duration-100 hover:bg-tint-hover focus-visible:-outline-offset-2 pointer-coarse:h-12 [--mark-ring:var(--color-rail)]', view.open && 'bg-raised shadow-raised [--mark-ring:var(--color-raised)]')}
-    >
-      <InstanceMark instance={chosen} />
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-ui font-medium text-ink">{label}</span>
-        <span className="truncate text-meta text-muted">{chosen ? STATUS[chosen.status][0] : summary}</span>
-      </span>
-      <NeedsCount count={chosen ? chosen.needs : total} />
-      <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted" />
-    </button>
+    <Tip label={<>{label}<span className="block text-on-primary/70">{chosen ? STATUS[chosen.status][0] : summary}{(chosen ? chosen.needs : total) > 0 && ` · ${chosen ? chosen.needs : total} need you`}</span><span className="block text-on-primary/70">Alt+I</span></>} disabled={view.open}>
+      <Button
+        ref={trigger}
+        size="icon"
+        aria-label={name}
+        aria-haspopup="dialog"
+        aria-expanded={view.open}
+        aria-keyshortcuts="Alt+I"
+        onClick={open}
+        className={cn('text-muted [--mark-ring:var(--color-rail)]', (view.open || chosen) && 'bg-raised shadow-raised [--mark-ring:var(--color-raised)]')}
+      >
+        {chosen ? <InstanceMark instance={chosen} size="sm" /> : <Network />}
+        {(chosen ? chosen.needs : total) > 0 && <span aria-hidden="true" className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-attention ring-2 ring-rail" />}
+      </Button>
+    </Tip>
   ) : (
     <Button ref={trigger} size="md" aria-label={name} aria-haspopup="dialog" aria-expanded={view.open} onClick={open} className={cn('min-w-0 max-w-64 gap-2 px-2', view.open && 'bg-raised shadow-raised')}>
       <InstanceMark instance={chosen} size="sm" />

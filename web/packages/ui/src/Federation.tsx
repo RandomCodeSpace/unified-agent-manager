@@ -17,7 +17,7 @@ interface Registry { instance_id: string; connections: ConnectedInstance[] }
 interface Source { id: string; label: string; connection: ConnectedInstance | null; client: ApiClient }
 const HOME = '';
 const EMPTY_CONNECTIONS: ConnectedInstance[] = [];
-const homeSource: Source = { id: HOME, label: 'This server', connection: null, client: api };
+const homeSource: Source = { id: HOME, label: 'Main Server', connection: null, client: api };
 const FILTER_KEY = 'uam.machineFilter';
 
 function readFilter(): MachineFilter | null {
@@ -312,7 +312,7 @@ export default function Federation() {
   const machines = useMemo<Machine[] | undefined>(() => federated ? sources.map(source => {
     const value = sourceStates[source.id];
     const status = (source.connection && accountStatus(registry?.connections.find(connection => connection.id === source.id))) ?? value?.status ?? { status: 'connecting' };
-    return { id: source.id, label: source.label, short: source.connection?.label ?? 'This server', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status, hasNews: unreadFor(source) };
+    return { id: source.id, label: source.label, short: source.connection?.label ?? 'Main Server', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status, hasNews: unreadFor(source) };
   }) : undefined,
   // unreadFor reads this browser's marks, which change only while their machine is on screen.
   [federated, sources, sourceStates, activeID, registry]);

@@ -4,7 +4,7 @@ import { scopedMachine, useFederation, type Machine } from './FederationContext'
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
@@ -91,18 +91,10 @@ export const popupOpen = () => !!document.querySelector('[data-popup]');
 /** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
 const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
 
-/**
- * Task rows enter, leave and reorder with a view transition (type "sessions"), except while a menu, dialog
- * or panel is open: the transition's snapshots paint in the top layer, above its backdrop, so the rows
- * would flash undimmed. Then the list changes at once.
- */
+/** Task streams render concurrently, without snapshot animations. Open overlays keep their immediate updates. */
 export function sessionsUpdate(update: () => void) {
-
   if (keysTaken()) return update();
-  startTransition(() => {
-    addTransitionType('sessions');
-    update();
-  });
+  startTransition(update);
 }
 
 /** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane. */

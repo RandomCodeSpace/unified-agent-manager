@@ -161,6 +161,20 @@ describe('sidebar list keyboard', () => {
     expect(document.activeElement).toBe(row);
   });
 
+  test('touching a status reveals Settle before a second tap settles without opening the task', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const settle = side.getByRole('button', { name: 'Settle Doctor: add terminal line' });
+    const tap = () => user.pointer([{ target: settle, keys: '[TouchA>]' }, { keys: '[/TouchA]' }]);
+    await tap();
+    expect(document.activeElement).toBe(settle);
+    expect(side.getByRole('button', { name: 'Settle Doctor: add terminal line' })).toBe(settle);
+    expect(window.location.hash).toBe('');
+    await tap();
+    await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
+    expect(window.location.hash).toBe('');
+  });
+
   test('search counts its matches in words, and a search with none offers to clear it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
@@ -397,6 +411,7 @@ describe('task lifecycle', () => {
     await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
     const menu = await openMenu(user);
     expect(within(menu).getByRole('menuitem', { name: 'Settle' }).getAttribute('aria-disabled')).toBe('true');
+    expect(document.querySelector('[data-task-row="t1"] [data-settle]')).toBeNull();
     expect(within(menu).getAllByText(/Stop the turn, answer what is waiting/).length).toBeGreaterThan(0);
   });
 });
