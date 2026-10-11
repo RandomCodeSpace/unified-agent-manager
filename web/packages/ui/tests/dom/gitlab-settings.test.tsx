@@ -1,13 +1,12 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
-import { api, type GitLabStatus, type Project } from '../../src/api';
+import { api, type GitLabStatus } from '../../src/api';
 import { ApiContext } from '../../src/ApiContext';
 import { GitLabSettings } from '../../src/components/GitLabSettings';
 import { renderApp } from './render';
 
 const status: GitLabStatus = { installed: true, checked_at: '2026-10-11T15:00:00Z', hostname: 'gitlab.example.test', authenticated: true, username: 'alex', name: 'Alex Morgan', token: { scopes: ['api', 'read_repository'], expires_at: '2027-01-31' } };
-const projects = [{ id: 'project', name: 'Platform', dir: '/workspace/platform' }] as Project[];
 
 test('GitLab is discoverable in Settings and only checks when its page opens', async () => {
   const check = vi.spyOn(api, 'gitlabStatus').mockResolvedValue(status);
@@ -26,27 +25,42 @@ test('GitLab is discoverable in Settings and only checks when its page opens', a
   } finally { check.mockRestore(); }
 });
 
-test('switching projects hides the previous access while the new check runs', async () => {
-  let resolve!: (value: GitLabStatus) => void;
-  const check = vi.spyOn(api, 'gitlabStatus').mockResolvedValueOnce(status).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+test('one global switch saves both modes without a project selector', async () => {
+  const save = vi.spyOn(api, 'updateWebSettings');
   try {
-    const user = userEvent.setup();
-    render(<GitLabSettings projects={projects} />);
-    await screen.findByText('@alex');
-    await user.click(screen.getByRole('combobox', { name: 'Check access for' }));
-    await user.click(await screen.findByRole('option', { name: 'Platform' }));
-    expect(screen.queryByText('@alex')).toBeNull();
-    expect(check).toHaveBeenLastCalledWith('project');
-    resolve({ ...status, hostname: 'work.example.test', project: { path: 'group/platform', readable: true, access_level: 40 } });
-    expect(await screen.findByText('Maintainer')).toBeTruthy();
-    expect(screen.getByText('work.example.test')).toBeTruthy();
-  } finally { check.mockRestore(); }
+    const { user } = renderApp('#settings');
+    const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
+    await user.click(rail.getByRole('button', { name: 'GitLab' }));
+    const toggle = await screen.findByRole('switch', { name: 'Automatic investigation' });
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByRole('combobox', { name: 'Check access for' })).toBeNull();
+    await user.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_auto_investigate: true }));
+    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('true'));
+    await waitFor(() => expect(toggle.hasAttribute('data-disabled')).toBe(false));
+    await user.click(toggle);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_auto_investigate: false }));
+    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
+  } finally { save.mockRestore(); }
+});
+
+test('a rejected automatic setting restores its saved value and explains the failure', async () => {
+  const save = vi.spyOn(api, 'updateWebSettings').mockRejectedValueOnce(new Error('The setting could not be persisted.'));
+  try {
+    const { user } = renderApp('#settings');
+    const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
+    await user.click(rail.getByRole('button', { name: 'GitLab' }));
+    const toggle = await screen.findByRole('switch', { name: 'Automatic investigation' });
+    await user.click(toggle);
+    expect((await screen.findByRole('alert')).textContent).toContain('The setting could not be persisted.');
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+  } finally { save.mockRestore(); }
 });
 
 test('unavailable scopes and an unreported role are not presented as permissions', async () => {
   const check = vi.spyOn(api, 'gitlabStatus').mockResolvedValue({ ...status, token: undefined, project: { path: 'group/platform', readable: true } });
   try {
-    render(<GitLabSettings projects={projects} />);
+    render(<GitLabSettings />);
     await screen.findByText('@alex');
     expect(screen.getAllByText('Not available')).toHaveLength(2);
     expect(screen.getByText('Readable · role not reported')).toBeTruthy();
@@ -59,9 +73,9 @@ test('changing the UAM instance hides the previous account until that instance a
   let resolve!: (value: GitLabStatus) => void;
   const first = { ...api, gitlabStatus: vi.fn().mockResolvedValue(status) };
   const second = { ...api, gitlabStatus: vi.fn(() => new Promise<GitLabStatus>((done) => { resolve = done; })) };
-  const { rerender } = render(<ApiContext.Provider value={first}><GitLabSettings projects={[]} /></ApiContext.Provider>);
+  const { rerender } = render(<ApiContext.Provider value={first}><GitLabSettings /></ApiContext.Provider>);
   await screen.findByText('@alex');
-  rerender(<ApiContext.Provider value={second}><GitLabSettings projects={[]} /></ApiContext.Provider>);
+  rerender(<ApiContext.Provider value={second}><GitLabSettings /></ApiContext.Provider>);
   expect(screen.queryByText('@alex')).toBeNull();
   resolve({ ...status, username: 'sam', name: 'Sam', hostname: 'other.example.test' });
   expect(await screen.findByText('@sam')).toBeTruthy();
@@ -74,7 +88,7 @@ test.each([
 ])('shows $label with the recovery message', async ({ installed, label, message }) => {
   const check = vi.spyOn(api, 'gitlabStatus').mockResolvedValue({ installed, authenticated: false, checked_at: status.checked_at, message });
   try {
-    render(<GitLabSettings projects={[]} />);
+    render(<GitLabSettings />);
     expect(await screen.findByText(label)).toBeTruthy();
     expect(screen.getByText(message)).toBeTruthy();
     expect(screen.queryByText('Token scopes')).toBeNull();
@@ -85,7 +99,7 @@ test('a failed check can be retried without retaining a successful status', asyn
   const check = vi.spyOn(api, 'gitlabStatus').mockResolvedValueOnce(status).mockRejectedValueOnce(new Error('Server is unavailable')).mockResolvedValueOnce(status);
   try {
     const user = userEvent.setup();
-    render(<GitLabSettings projects={[]} />);
+    render(<GitLabSettings />);
     await screen.findByText('@alex');
     await user.click(screen.getByRole('button', { name: 'Check access' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Server is unavailable');

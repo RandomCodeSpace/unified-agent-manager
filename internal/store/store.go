@@ -85,6 +85,9 @@ type Config struct {
 	// WebForks reserves native fork requests before their RPC. Only unresolved
 	// requests stay here; registered Tasks carry their own exact receipt.
 	WebForks map[string]WebFork `json:"web_forks,omitempty"`
+	// WebGitLab records commits made by Tasks and the investigation reserved
+	// for each pipeline. Receipts remain after an investigation Task is deleted.
+	WebGitLab map[string]WebGitLabCommit `json:"web_gitlab,omitempty"`
 
 	// unknown captures any top-level JSON fields written by a newer binary so
 	// they round-trip untouched instead of being silently dropped (F33). It is
@@ -106,6 +109,26 @@ type AccountLink struct {
 	LinkedAt time.Time `json:"linked_at"`
 }
 
+// WebGitLabCommit ties a repository commit to the Task that made it.
+type WebGitLabCommit struct {
+	TaskID         string                            `json:"task_id"`
+	ProjectID      string                            `json:"project_id"`
+	Host           string                            `json:"host"`
+	Path           string                            `json:"path"`
+	SHA            string                            `json:"sha"`
+	Branch         string                            `json:"branch"`
+	CreatedAt      time.Time                         `json:"created_at"`
+	Investigations map[string]WebGitLabInvestigation `json:"investigations,omitempty"`
+}
+
+// WebGitLabInvestigation reserves one Task for a numeric project ID and
+// pipeline ID. Registered distinguishes a deleted Task from an interrupted
+// creation that can still use its reserved ID.
+type WebGitLabInvestigation struct {
+	TaskID     string `json:"task_id"`
+	Registered bool   `json:"registered,omitempty"`
+}
+
 // ErrReadOnly is returned by Save/Update when asked to write a config loaded
 // from a newer on-disk schema. Refusing the write prevents an older binary
 // from clobbering fields it does not understand (F33).
@@ -115,17 +138,18 @@ var ErrReadOnly = errors.New("store: config loaded from a newer schema is read-o
 // in-memory-only fields) so (Un)MarshalJSON can delegate to the stdlib encoder
 // without recursing.
 type configAlias struct {
-	SchemaVersion   int                      `json:"schema_version"`
-	DefaultAgent    string                   `json:"default_agent"`
-	DefaultProfile  string                   `json:"default_profile"`
-	Profiles        map[string]Profile       `json:"profiles"`
-	Sessions        map[string]SessionRecord `json:"sessions"`
-	UI              UISettings               `json:"ui"`
-	WebProjects     map[string]WebProject    `json:"web_projects,omitempty"`
-	WebSettings     WebSettings              `json:"web_settings,omitzero"`
-	WebRoutines     map[string]WebRoutine    `json:"web_routines,omitempty"`
-	WebAccountLinks map[string]AccountLink   `json:"web_account_links,omitempty"`
-	WebForks        map[string]WebFork       `json:"web_forks,omitempty"`
+	SchemaVersion   int                        `json:"schema_version"`
+	DefaultAgent    string                     `json:"default_agent"`
+	DefaultProfile  string                     `json:"default_profile"`
+	Profiles        map[string]Profile         `json:"profiles"`
+	Sessions        map[string]SessionRecord   `json:"sessions"`
+	UI              UISettings                 `json:"ui"`
+	WebProjects     map[string]WebProject      `json:"web_projects,omitempty"`
+	WebSettings     WebSettings                `json:"web_settings,omitzero"`
+	WebRoutines     map[string]WebRoutine      `json:"web_routines,omitempty"`
+	WebAccountLinks map[string]AccountLink     `json:"web_account_links,omitempty"`
+	WebForks        map[string]WebFork         `json:"web_forks,omitempty"`
+	WebGitLab       map[string]WebGitLabCommit `json:"web_gitlab,omitempty"`
 }
 
 // knownConfigFields lists modeled keys and runtime-only keys that must never
@@ -142,6 +166,7 @@ var knownConfigFields = map[string]struct{}{
 	"web_routines":                {},
 	"web_account_links":           {},
 	"web_forks":                   {},
+	"web_gitlab":                  {},
 	"client_id":                   {},
 	"client_ids":                  {},
 	"client_role":                 {},
@@ -179,6 +204,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		WebRoutines:     c.WebRoutines,
 		WebAccountLinks: c.WebAccountLinks,
 		WebForks:        c.WebForks,
+		WebGitLab:       c.WebGitLab,
 	}, c.unknown, knownConfigFields)
 }
 
@@ -198,6 +224,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	c.WebRoutines = alias.WebRoutines
 	c.WebAccountLinks = alias.WebAccountLinks
 	c.WebForks = alias.WebForks
+	c.WebGitLab = alias.WebGitLab
 	unknown, err := decodeUnknownJSON(data, knownConfigFields)
 	if err != nil {
 		return err
@@ -727,6 +754,9 @@ type WebSettings struct {
 	// GitHubMCP lets Tasks start the provider's built-in GitHub MCP server.
 	// Off when absent.
 	GitHubMCP bool `json:"github_mcp,omitempty"`
+	// GitLabAutoInvestigate starts an investigation when a Task's own
+	// GitLab pipeline fails. Off when absent.
+	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -941,21 +971,22 @@ const (
 type webSettingsAlias WebSettings
 
 var knownWebSettingsFields = map[string]struct{}{
-	"token_prices":           {},
-	"send_default":           {},
-	"default_project_dir":    {},
-	"terminal":               {},
-	"hidden_models":          {},
-	"subagent_models":        {},
-	"title_model":            {},
-	"custom_models":          {},
-	"task_defaults":          {},
-	"utility_purpose_limits": {}, // retired per-purpose Utility limits; known, so they drop on the next save
-	"utility_daily_limit":    {},
-	"utility_unlimited":      {},
-	"suggest_replies":        {},
-	"compact_threshold":      {},
-	"github_mcp":             {},
+	"token_prices":            {},
+	"send_default":            {},
+	"default_project_dir":     {},
+	"terminal":                {},
+	"hidden_models":           {},
+	"subagent_models":         {},
+	"title_model":             {},
+	"custom_models":           {},
+	"task_defaults":           {},
+	"utility_purpose_limits":  {}, // retired per-purpose Utility limits; known, so they drop on the next save
+	"utility_daily_limit":     {},
+	"utility_unlimited":       {},
+	"suggest_replies":         {},
+	"compact_threshold":       {},
+	"github_mcp":              {},
+	"gitlab_auto_investigate": {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},

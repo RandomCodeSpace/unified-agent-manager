@@ -573,6 +573,8 @@ type ToolVerdict struct {
 // ToolHooks binds provider hook calls to their owning Task.
 type ToolHooks struct {
 	Pre func(context.Context, ToolUse) ToolVerdict
+	// Succeeded observes completed tool calls without changing their result.
+	Succeeded func(context.Context, ToolUse)
 	// Failed also receives native automatic permission denials, with PermissionKind.
 	Failed func(context.Context, ToolUse, string) string
 }

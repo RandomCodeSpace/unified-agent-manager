@@ -107,6 +107,16 @@ func (p *webProvider) subagentModel(allowed []string, requested, task string) st
 	return ""
 }
 
+// succeededToolUse observes completed calls, including subagent calls. The
+// provider result is deliberately not used as proof of filesystem changes.
+func (c *conversation) succeededToolUse(in copilot.PostToolUseHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseHookOutput, error) {
+	if c.hooks.Succeeded != nil {
+		args, _ := in.ToolArgs.(map[string]any)
+		c.hooks.Succeeded(context.Background(), agentapi.ToolUse{Tool: in.ToolName, Args: args, Workdir: in.WorkingDirectory, PermissionKind: c.tools.permissionKind(in.ToolName)})
+	}
+	return nil, nil
+}
+
 // failedToolUse receives native execution failures, including subagent calls.
 func (c *conversation) failedToolUse(in copilot.PostToolUseFailureHookInput, _ copilot.HookInvocation) (*copilot.PostToolUseFailureHookOutput, error) {
 	if c.hooks.Failed == nil {

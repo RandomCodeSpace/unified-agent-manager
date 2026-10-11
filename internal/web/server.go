@@ -286,6 +286,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/turns/{timing_id}/todos", s.handleTurnTodos)
 	mux.HandleFunc("GET /api/sessions/{id}/turns/{timing_id}/changes", s.handleTurnChanges)
 	mux.HandleFunc("GET /api/sessions/{id}/changes/file", s.handleFileChange)
+	s.registerGitLabRoutes(mux)
 	mux.HandleFunc("GET /api/sessions/{id}/git", s.handleGitState)
 	mux.HandleFunc("POST /api/sessions/{id}/git/init", s.handleGitInit)
 	mux.HandleFunc("POST /api/sessions/{id}/git/commit", s.handleGitCommit)
@@ -674,6 +675,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			patch.CustomModels = &list
+		case "gitlab_auto_investigate":
+			patch.GitLabAutoInvestigate = new(bool)
+			if json.Unmarshal(raw, patch.GitLabAutoInvestigate) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "gitlab_auto_investigate must be true or false")
+				return
+			}
 		case "github_mcp":
 			patch.GitHubMCP = new(bool)
 			if json.Unmarshal(raw, patch.GitHubMCP) != nil || string(raw) == "null" {

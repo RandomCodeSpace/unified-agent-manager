@@ -33,6 +33,14 @@ func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.To
 		out.Context = strings.TrimSpace(out.Context + "\n" + glab.Context)
 		out.Deny, out.Args = glab.Deny, glab.Args
 	}
+	if out.Deny == "" {
+		if out.Args != nil {
+			use.Args = out.Args
+		}
+		if args := m.stampGitLabCommit(ctx, s, use); args != nil {
+			out.Args = args
+		}
+	}
 	return out
 }
 
@@ -62,7 +70,9 @@ func (m *Manager) localPreToolUseLocked(s *webSession, use agentapi.ToolUse) age
 	return out
 }
 
-func (m *Manager) failedToolUse(_ context.Context, s *webSession, use agentapi.ToolUse, failure string) string {
+func (m *Manager) failedToolUse(ctx context.Context, s *webSession, use agentapi.ToolUse, failure string) string {
+	// A compound shell call may commit successfully before a later command fails.
+	m.succeededToolUse(ctx, s, use)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || s.removed || s.base == StateClosed || m.sessions[s.id] != s {

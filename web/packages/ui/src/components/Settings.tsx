@@ -661,7 +661,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Each page's cards. Token costs, Archived and Connected instances mount only while on screen; Agents, Skills, Hooks
   // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
   const cards: Record<SettingsPage, ReactNode> = {
-    gitlab: <Section id="gitlab" title="GitLab" subtitle={`Check the credentials glab uses on ${api.owner?.label ?? 'this server'}.`}>{api.supports('gitlab-status-v1') ? <GitLabSettings projects={projects} /> : <Unsupported what="GitLab access checks" />}</Section>,
+    gitlab: <Section id="gitlab" title="GitLab" subtitle={`Pipeline investigations and glab access on ${api.owner?.label ?? 'this server'}.`}>{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New tasks" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
       <Section id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
