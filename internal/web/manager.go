@@ -702,7 +702,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	for id, p := range cfg.WebProjects {
 		m.projects[id] = &Project{ID: p.ID, Name: loadedName(p.Name, p.Dir), Dir: p.Dir, CreatedAt: p.CreatedAt, Badge: Badge(p.Badge), Charts: shownPins(p.Charts)}
 	}
-	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
+	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP}
 	if m.settings.SendDefault != store.WebSendQueue {
@@ -1525,16 +1525,17 @@ func (m *Manager) Settings() Settings {
 // store.MaxCompactionThreshold; the default itself is stored as nil.
 // GitHubMCP reaches open Tasks too (agentapi.GitHubMCPUser).
 type SettingsPatch struct {
-	TokenPrices      *map[string]map[string]store.WebTokenPrice
-	SendDefault      *string
-	Terminal         *bool
-	HiddenModels     map[string][]string
-	SubagentModels   map[string][]string
-	TitleModel       map[string]string
-	CustomModels     *[]store.WebCustomModel
-	TaskDefaults     *TaskDefaults
-	UtilityLimit     **int
-	UtilityUnlimited *bool
+	TokenPrices       *map[string]map[string]store.WebTokenPrice
+	SendDefault       *string
+	DefaultProjectDir *string
+	Terminal          *bool
+	HiddenModels      map[string][]string
+	SubagentModels    map[string][]string
+	TitleModel        map[string]string
+	CustomModels      *[]store.WebCustomModel
+	TaskDefaults      *TaskDefaults
+	UtilityLimit      **int
+	UtilityUnlimited  *bool
 	// SuggestReplies turns suggested replies on or off.
 	SuggestReplies      *bool
 	CompactionThreshold **int
@@ -1547,6 +1548,16 @@ type SettingsPatch struct {
 // A Utility model must be one the provider lists now, and the provider must
 // have the titles capability; neither is needed to unset it or opt out.
 func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
+	var projectDir string
+	if p.DefaultProjectDir != nil && *p.DefaultProjectDir != "" {
+		if err := checkPathText("default_project_dir", *p.DefaultProjectDir); err != nil {
+			return Settings{}, err
+		}
+		projectDir = filepath.Clean(*p.DefaultProjectDir)
+		if err := checkDir("default_project_dir", projectDir); err != nil {
+			return Settings{}, err
+		}
+	}
 	if p.TokenPrices != nil {
 		count := 0
 		for provider, models := range *p.TokenPrices {
@@ -1688,6 +1699,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.Terminal != nil {
 		next.Terminal = *p.Terminal
 	}
+	if p.DefaultProjectDir != nil {
+		next.DefaultProjectDir = projectDir
+	}
 	if p.GitHubMCP != nil {
 		next.GitHubMCP = *p.GitHubMCP
 	}
@@ -1725,7 +1739,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -1733,6 +1747,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 			cfg.WebSettings.TokenPrices = next.TokenPrices
 		}
 		cfg.WebSettings.SendDefault = next.SendDefault
+		cfg.WebSettings.DefaultProjectDir = next.DefaultProjectDir
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
@@ -4097,8 +4112,14 @@ func (m *Manager) Reopen(id string) (SessionSummary, error) {
 	return m.moveStage(id, StageActive, StageSettled)
 }
 
-// Archive moves an active or settled Task to its final stage; nothing moves
-// it back. An active Task must meet the same conditions as for Settle.
+// Unarchive restores an archived Task as finished without starting a turn.
+// Its next prompt continues the same conversation.
+func (m *Manager) Unarchive(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageActive, StageArchived)
+}
+
+// Archive puts away an active or settled Task, read-only until unarchived.
+// An active Task must meet the same conditions as for Settle.
 // Archiving ends the Task's host tool calls in progress.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
@@ -4169,6 +4190,12 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 		s.archivedAt = now
 	case StageActive:
 		s.settledAt, s.settledBy = time.Time{}, ""
+		if s.stage == StageArchived {
+			s.archivedAt = time.Time{}
+			s.setBase(StateCompleted, "")
+			s.stopCode, s.unseenEnd = "", false
+			m.clearDoneLocked(s)
+		}
 	}
 	s.stage = to
 	if to != StageActive {

@@ -7,6 +7,7 @@ import { taskStatus, type Unread } from '../lib/tasks';
 import { ProjectBadge, Sep, TaskTitle, TONE_TEXT, dateTime, relTime, useMinuteTick } from './common';
 import { Brand } from './Sidebar';
 import { Button } from './ui/button';
+import { InstanceBadge } from './InstanceBadge';
 
 /** What Home reads of a machine: without connected instances, this one alone. */
 type HomeMachine = Pick<Machine, 'id' | 'short' | 'hasNews'> & { state: { projects: Project[]; sessions: SessionSummary[] } };
@@ -80,7 +81,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
                       <span className="min-w-0">
                         <TaskTitle session={session} className="block truncate text-ui font-medium text-ink" />
                         <Sep />
-                        <span className="mt-1 block truncate text-meta text-muted">{project.name}{machines && <><Sep /><span aria-hidden="true"> · </span>{machine.short}</>}</span>
+                        <span className="mt-1 flex min-w-0 items-center gap-1.5 text-meta text-muted"><span className="truncate">{project.name}</span>{machines && <><Sep /><InstanceBadge id={machine.id} label={machine.short} /><span className="sr-only">{machine.short}</span></>}</span>
                       </span>
                       <span className={cn('col-span-2 col-start-2 row-start-2 min-w-0 break-words text-meta min-[960px]:col-span-1 min-[960px]:col-start-3 min-[960px]:row-start-1', TONE_TEXT[status.tone])}>
                         <Sep />{status.text}

@@ -44,12 +44,12 @@ async function home() {
     stream!.dispatchEvent(new MessageEvent(name, { data: JSON.stringify({ seq: ++seq, ...payload }) }));
   });
   const active = sessions.find((s) => (s.stage ?? 'active') === 'active' && s.state !== 'failed')!;
-  return { send, active };
+  return { send, active, completed: sessions.find((s) => s.id === 't3')! };
 }
 
 const row = (id: string) => document.querySelector(`nav[aria-label="Tasks"] [data-task-row="${id}"]`);
 
-describe('Task list view transition', () => {
+describe('Task list quiet regrouping', () => {
   test('a minute refreshes an unchanged Task time without a view transition', async () => {
     // Keep the mock's request timeouts real; only the relative-time interval advances.
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
@@ -82,24 +82,86 @@ describe('Task list view transition', () => {
     expect(startViewTransition).not.toHaveBeenCalled();
   });
 
-  test('a Task entering the list starts one', async () => {
+  test('automatic Done and Settled moves wait for five quiet seconds while status stays live', async () => {
+    const { send, completed } = await home();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const done = { ...completed, done_at: new Date().toISOString(), done_line: 'Finished the task' };
+      send('session', { session: done });
+      await act(async () => {});
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(row(completed.id)?.textContent).toContain('Done');
+      expect(startViewTransition).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      send('session', { session: { ...done, stage: 'settled', settled_by: 'reviewed', settled_at: new Date().toISOString() } });
+      await act(async () => {});
+      expect(row(completed.id)?.textContent).toContain('Settled');
+      await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).toBeNull();
+      expect(startViewTransition).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('automatic regrouping waits until keyboard focus leaves the list and it stays quiet', async () => {
+    const { send, completed } = await home();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      row(completed.id)!.querySelector<HTMLButtonElement>('[data-nav]')!.focus();
+      send('session', { session: { ...completed, done_at: new Date().toISOString() } });
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      document.querySelector<HTMLInputElement>('input[aria-label="Search tasks"]')!.focus();
+      await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).toBeNull();
+      expect(startViewTransition).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('resumed work cancels a pending automatic move', async () => {
+    const { send, completed } = await home();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      send('session', { session: { ...completed, done_at: new Date().toISOString() } });
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      send('session', { session: { ...completed, state: 'working', done_at: undefined } });
+      await act(async () => {});
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(row(completed.id)?.textContent).toContain('Working');
+      expect(startViewTransition).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a Task entering the list appears immediately without an animation', async () => {
     const { send, active } = await home();
     send('session', { session: { ...active, id: 'entering', name: 'Entering', created_at: new Date().toISOString() } });
     await waitFor(() => expect(row('entering')).not.toBeNull());
-    expect(startViewTransition).toHaveBeenCalled();
+    expect(startViewTransition).not.toHaveBeenCalled();
   });
 
-  test('a Task leaving the list starts one', async () => {
+  test('a Task leaving the list disappears immediately without an animation', async () => {
     const { send, active } = await home();
     send('session_removed', { session_id: active.id });
     await waitFor(() => expect(row(active.id)).toBeNull());
-    expect(startViewTransition).toHaveBeenCalled();
+    expect(startViewTransition).not.toHaveBeenCalled();
   });
 
-  test('a Task moving to the Settled shelf starts one', async () => {
+  test('a manually settled Task moves immediately without a view transition', async () => {
     const { send, active } = await home();
     send('session', { session: { ...active, stage: 'settled', settled_at: new Date().toISOString() } });
     await waitFor(() => expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${active.id}"]`)).toBeNull());
-    expect(startViewTransition).toHaveBeenCalled();
+    expect(startViewTransition).not.toHaveBeenCalled();
   });
 });

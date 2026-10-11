@@ -17,6 +17,7 @@ import { assistMock } from './assist';
 import { seed, type MockState, type MockTask } from './data';
 import { seedAsides } from './asides';
 import { seedUtility, utilityLog } from './utility';
+import { cleanPath } from '../lib/folders';
 import { tokenPriceFixture, tokenUsageFixture } from './token-usage';
 
 /** The Project agents every mock Project offers a Task. */
@@ -655,7 +656,7 @@ export function install(): { received: Received[] } {
   const cleanDir = (p: string) => p.split('/').every((s) => s !== '.' && s !== '..') && !p.endsWith('/') && !p.includes('//');
 
   function listDirs(url: URL): Response {
-    const p = url.searchParams.get('path') || HOME;
+    const p = url.searchParams.get('path') || st.settings.default_project_dir || HOME;
     if (!p.startsWith('/') || (p !== '/' && !cleanDir(p))) return fail(400, 'path must be an absolute path in clean form');
     if (p === '/root' || p.startsWith('/root/')) return fail(403, 'permission denied');
     if (!folders.has(p)) return fail(404, 'path does not exist');
@@ -721,7 +722,15 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
+      if (body.default_project_dir !== undefined) {
+        if (typeof body.default_project_dir !== 'string') return fail(400, 'default_project_dir must be a string');
+        const dir = cleanPath(body.default_project_dir);
+        if (dir && !dir.startsWith('/')) return fail(400, 'default_project_dir must be an absolute path');
+        if (dir && !folders.has(dir)) return fail(404, 'default_project_dir does not exist');
+        st.settings = { ...st.settings, default_project_dir: dir };
+        broadcast('settings', { settings: st.settings });
+      }
       if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
       if (typeof body.suggest_replies === 'boolean') {
         st.settings = { ...st.settings, suggest_replies: body.suggest_replies };
@@ -961,8 +970,8 @@ export function install(): { received: Received[] } {
       }
     }
 
-    // Lifecycle: settle -> archive (from any stage, final) -> delete; a busy Task refuses a stage change.
-    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive)$/)) && method === 'POST') {
+    // Lifecycle: archived Tasks can be restored as Finished or deleted; busy Tasks cannot be put away.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive|unarchive)$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       const stage = t.stage ?? 'active';
@@ -981,6 +990,10 @@ export function install(): { received: Received[] } {
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
+          return json(200, summary(t));
+        case 'unarchive':
+          if (stage !== 'archived') return fail(409, `a ${stage} task cannot be unarchived`);
+          touch(t, { stage: 'active', state: 'completed', open: false, state_detail: '', stop_reason: undefined, archived_at: undefined, settled_at: undefined, settled_by: undefined, done_at: undefined, done_item_id: undefined, done_line: undefined });
           return json(200, summary(t));
       }
     }

@@ -161,6 +161,20 @@ describe('sidebar list keyboard', () => {
     expect(document.activeElement).toBe(row);
   });
 
+  test('touching a status reveals Settle before a second tap settles without opening the task', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const settle = side.getByRole('button', { name: 'Settle Doctor: add terminal line' });
+    const tap = () => user.pointer([{ target: settle, keys: '[TouchA>]' }, { keys: '[/TouchA]' }]);
+    await tap();
+    expect(document.activeElement).toBe(settle);
+    expect(side.getByRole('button', { name: 'Settle Doctor: add terminal line' })).toBe(settle);
+    expect(window.location.hash).toBe('');
+    await tap();
+    await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
+    expect(window.location.hash).toBe('');
+  });
+
   test('search counts its matches in words, and a search with none offers to clear it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
@@ -221,7 +235,7 @@ describe('collapsed sidebar rail', () => {
   test('Add project opens the Add project dialog', async () => {
     const { user, nav } = await rail();
     await user.click(nav.getByRole('button', { name: 'Add project' }));
-    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Choose a project folder' })).toBeTruthy();
   });
 
   test('Settings and the connection sit at its foot', async () => {
@@ -296,7 +310,7 @@ describe('new task', () => {
     expect(within(palette.getByRole('option')).getByText(/^Alt\+\d$/).textContent).toBe(key);
     await user.type(search, 'zzzz');
     await user.click(palette.getByRole('button', { name: 'Add project' }));
-    expect(await screen.findByRole('dialog', { name: 'Add a project' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Choose a project folder' })).toBeTruthy();
   });
 
   test('Alt+N in the terminal stays with the shell', async () => {
@@ -397,6 +411,7 @@ describe('task lifecycle', () => {
     await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
     const menu = await openMenu(user);
     expect(within(menu).getByRole('menuitem', { name: 'Settle' }).getAttribute('aria-disabled')).toBe('true');
+    expect(document.querySelector('[data-task-row="t1"] [data-settle]')).toBeNull();
     expect(within(menu).getAllByText(/Stop the turn, answer what is waiting/).length).toBeGreaterThan(0);
   });
 });

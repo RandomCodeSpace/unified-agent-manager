@@ -490,6 +490,8 @@ export interface Settings {
   token_prices?: Record<string, Record<string, TokenPrice>>;
   /** What Enter does while a turn runs. */
   send_default: SendDefault;
+  /** Initial project folder on this instance. Empty or absent uses the service user's home; PATCH an empty string clears it. */
+  default_project_dir?: string;
   /** Model IDs not offered anywhere a model is chosen, by provider; omitted when none is hidden (#191). */
   hidden_models?: Record<string, string[]>;
   /**
@@ -1953,7 +1955,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
     taskAgents: (projectId: string, provider: string) =>
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
-    stage: (id: string, action: 'settle' | 'reopen' | 'archive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
+    stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
     cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),

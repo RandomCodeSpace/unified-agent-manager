@@ -13,7 +13,7 @@ const FILTER_FROM = 8;
 
 /**
  * Settings → Archived: the archived Tasks of the instance on screen, every Project, newest archived first. They have no
- * sidebar shelf (its search still finds them). A row opens its Task; its menu is the Task menu's (Delete, Run again, Export).
+ * sidebar shelf (its search still finds them). A row opens its Task; its shared menu can unarchive, delete, run again or export it.
  */
 export function ArchivedTasks() {
   const { sessions, projects } = useContext(TaskList);

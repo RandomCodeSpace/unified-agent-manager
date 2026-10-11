@@ -128,6 +128,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/sessions/{id}/subagents/{agent_id}/cancel",
 		"POST /api/sessions/{id}/subagents/{agent_id}/prompt",
 		"POST /api/sessions/{id}/suggestions",
+		"POST /api/sessions/{id}/unarchive",
 		"POST /api/settings/custom-models/discover",
 		"PUT /api/configuration/{kind}/{name}",
 		"PUT /api/mcp/servers/{name}",

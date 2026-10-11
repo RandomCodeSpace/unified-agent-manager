@@ -4,7 +4,7 @@ import { scopedMachine, useFederation, type Machine } from './FederationContext'
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { Suspense, addTransitionType, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
@@ -91,18 +91,10 @@ export const popupOpen = () => !!document.querySelector('[data-popup]');
 /** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
 const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
 
-/**
- * Task rows enter, leave and reorder with a view transition (type "sessions"), except while a menu, dialog
- * or panel is open: the transition's snapshots paint in the top layer, above its backdrop, so the rows
- * would flash undimmed. Then the list changes at once.
- */
+/** Task streams render concurrently, without snapshot animations. Open overlays keep their immediate updates. */
 export function sessionsUpdate(update: () => void) {
-
   if (keysTaken()) return update();
-  startTransition(() => {
-    addTransitionType('sessions');
-    update();
-  });
+  startTransition(update);
 }
 
 /** Where focus lands when the view it came from is gone: the open Task's conversation, else the main pane. */
@@ -1034,6 +1026,12 @@ export default function App() {
       },
       settle: (id) => void runTask(id, () => api.stage(id, 'settle'), 'settle the task').catch(() => {}),
       reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
+      unarchive: meta?.capabilities?.includes('unarchive-v1') ? (id) => void runTask(id, async () => {
+        const s = await api.stage(id, 'unarchive');
+        markViewed(id, s.updated_at);
+        select(id);
+        return s;
+      }, 'unarchive the task').catch(() => {}) : undefined,
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
@@ -1042,7 +1040,7 @@ export default function App() {
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1081,6 +1079,10 @@ export default function App() {
       },
       settle: (id) => run(id, () => c.stage(id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
+      unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
+        await c.stage(id, 'unarchive');
+        open(id);
+      }, 'unarchive the task') : undefined,
       archive: (id) => openTaskDialog({ kind: 'archive', id, owner: m.id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
@@ -1088,7 +1090,7 @@ export default function App() {
       runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog]);
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1346,7 +1348,7 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
               </Sheet>
             )}
@@ -1453,7 +1455,7 @@ export default function App() {
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title="Archive this task?"
-              description="Archiving makes the task permanently read-only. It stays in Settings → Archived with its full conversation. It cannot be reopened."
+              description="The task moves to Settings → Archived with its full conversation. Unarchive returns it to Finished."
               confirmLabel="Archive task"
               danger={false}
               busy={dialogBusy}

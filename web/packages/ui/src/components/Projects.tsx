@@ -1,19 +1,19 @@
 import { ApiContext, useApi } from '../ApiContext';
 import type { Machine, MachineChoice } from '../FederationContext';
-import { Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
-import { Suspense, lazy, useRef, useState, type SubmitEvent } from 'react';
+import { ArrowRight, Check, Clock, FolderMinus, FolderOpen, History } from 'lucide-react';
+import { Suspense, lazy, useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { describeError, isStatus, type Project, type SessionSummary } from '../api';
-import { Note, ProjectBadge, useApp } from './common';
+import { Loading, Note, ProjectBadge, useApp } from './common';
 import { cn } from '../lib/cn';
+import { cleanPath } from '../lib/folders';
 import { PreviousSessionsDialog, canImport } from './PreviousSessions';
 import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
 import { AlertDialog, Dialog } from './ui/dialog';
-import { Collapse, usePresence } from './ui/collapse';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 
-/** The folder picker loads with its first Browse, never with the app. */
+/** The folder picker loads when Add project opens, never with the app. */
 const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
 
 /** Add a project by directory. A 409 means the directory already has one: that project is selected instead. */
@@ -43,17 +43,40 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
   const recent = elsewhere ? [] : meta?.recent_workdirs ?? [];
   const browsable = api.supports('files-v1');
   const first = useRef<HTMLInputElement>(null);
-  const browse = useRef<HTMLButtonElement>(null);
-  const [dir, setDir] = useState('');
-  const [browsing, setBrowsing] = useState(false);
+  const chooser = useRef<HTMLDivElement>(null);
+  const [dir, setDir] = useState<string | null>(null);
+  const [start, setStart] = useState('');
+  const [browseKey, setBrowseKey] = useState(0);
+  const [review, setReview] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // The picker collapses in and out (grid rows) so the dialog's height glides instead of jumping.
-  const picker = usePresence(browsing);
+  const available = !machines || !!target;
+  const ready = available && !!dir?.trim().startsWith('/');
+  const instanceName = target?.label ?? shown.owner?.label ?? 'This instance';
+  const folderName = cleanPath(dir ?? '').split('/').filter(Boolean).at(-1) ?? '/';
+
+  useEffect(() => {
+    if (review) first.current?.focus();
+    else (chooser.current?.querySelector<HTMLElement>('[role="listbox"]') ?? chooser.current?.querySelector<HTMLInputElement>('input'))?.focus();
+  }, [review]);
+
+  function choose(path: string) {
+    if (!available || !path.startsWith('/')) return;
+    setDir(path);
+    setError(null);
+    setReview(true);
+  }
+
+  function openRecent(path: string) {
+    setDir(browsable ? null : path);
+    setStart(path);
+    setBrowseKey((key) => key + 1);
+  }
 
   async function submit(e: SubmitEvent) {
     e.preventDefault();
+    if (!review || !ready || !dir || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -81,31 +104,62 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
       onOpenChange={(o) => !o && onClose()}
       onClosed={onClosed}
       initialFocus={first}
-      title="Add a project"
-      description={target?.connection ? `A directory on ${target.label}. Tasks run inside it.` : 'A directory on this host. Tasks run inside it.'}
-      // The dialog widens while the folder picker is open (DESIGN.md: 560px) and settles back once a folder is chosen.
-      className={cn('transition-[opacity,transform,max-width]', browsing && 'max-w-sheet-wide')}
+      title={review ? 'Add a project' : 'Choose a project folder'}
+      description="Tasks will run inside the folder you choose."
+      className="max-w-sheet-wide"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
+          {!review && dir && (
+            <div className="mr-auto flex min-w-0 flex-1 items-center gap-2 self-center text-caption text-muted max-sm:basis-full">
+              <FolderOpen aria-hidden="true" className="size-4 shrink-0" />
+              <span className="min-w-0 truncate" title={dir}>{dir}</span>
+            </div>
+          )}
+          <Button variant="secondary" disabled={busy} onClick={() => review ? setReview(false) : onClose()}>
+            {review ? 'Back' : 'Cancel'}
           </Button>
-          <Button type="submit" form="add-project" variant="primary" loading={busy} disabled={!dir.trim()}>
-            Add project
-          </Button>
+          {review ? (
+            <Button type="submit" form="add-project" variant="primary" loading={busy} disabled={!ready}>
+              Add project
+            </Button>
+          ) : (
+            <Button variant="primary" disabled={!ready} onClick={(e) => {
+              // React can reuse this button as the review's submit button during this click.
+              e.preventDefault();
+              if (dir) choose(cleanPath(dir));
+            }}>
+              Continue
+              <ArrowRight />
+            </Button>
+          )}
         </>
       }
     >
-      <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
-        {machines && choices && (
+      <ol aria-label="Project setup" className="mb-5 flex items-center gap-3 text-caption">
+        <li aria-current={!review ? 'step' : undefined} className={cn('flex items-center gap-2', review ? 'text-muted' : 'text-ink')}>
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary">{review ? <Check aria-hidden="true" className="size-3.5" /> : '1'}</span>
+          Choose folder
+        </li>
+        <li aria-hidden="true" className="h-px min-w-3 flex-1 bg-hairline" />
+        <li aria-current={review ? 'step' : undefined} className={cn('flex items-center gap-2', review ? 'text-ink' : 'text-muted')}>
+          <span className={cn('flex size-6 shrink-0 items-center justify-center rounded-full', review ? 'bg-primary text-on-primary' : 'bg-sunken')}>2</span>
+          Review project
+        </li>
+      </ol>
+      {/* Keep the browser mounted through review so Back restores the same folder and selection. */}
+      <div ref={chooser} hidden={review} className={cn('flex-col gap-4', review ? 'hidden' : 'flex')}>
+        {machines && choices ? (
           <Field id="add-machine" label="Instance">
             <Select
               id="add-machine"
               value={machine}
               onValueChange={(id) => {
                 setMachine(id);
-                setBrowsing(false);
+                setDir(null);
+                setStart('');
+                setName('');
                 setError(null);
+                setBrowseKey((key) => key + 1);
               }}
               items={choices.map((c) => {
                 const enabled = machines.some((m) => m.id === c.id);
@@ -113,67 +167,63 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
               })}
             />
           </Field>
-        )}
-        <Field id="add-dir" label="Directory on the host">
-          <div className="flex gap-2">
+        ) : <Note>Folders on {instanceName}</Note>}
+        {available && browsable ? (
+          <ApiContext.Provider value={api}>
+            <Suspense fallback={<Loading />}>
+              <FolderPicker key={`${machine}:${browseKey}`} id="add-dir-picker" start={start} variant="project" onTargetChange={setDir} onUse={choose} onClose={onClose} />
+            </Suspense>
+          </ApiContext.Provider>
+        ) : available ? (
+          <Field id="add-dir" label="Directory on the host">
             <Input
               id="add-dir"
               className="text-ui"
-              required
               ref={first}
               spellCheck={false}
               placeholder="/path/to/project"
-              value={dir}
+              value={dir ?? ''}
               onChange={(e) => setDir(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && ready && dir) {
+                  e.preventDefault();
+                  choose(cleanPath(dir));
+                }
+              }}
             />
-            <Button ref={browse} variant="secondary" size="lg" disabled={!browsable} aria-describedby={browsable ? undefined : 'add-dir-browse-note'} aria-expanded={browsing} aria-controls={browsing ? 'add-dir-picker' : undefined} onClick={() => setBrowsing(!browsing)}>
-              <FolderOpen />
-              Browse
-            </Button>
+            <Note className="mt-2">{`${instanceName} does not offer folder browsing to connected instances. Type the folder's path, or update UAM there.`}</Note>
+            {dir && !ready && <Note tone="error" className="mt-2">Enter an absolute folder path.</Note>}
+          </Field>
+        ) : <Note tone="error">This instance is unavailable. Choose another instance.</Note>}
+        {recent.length > 0 && available && (
+          <Select
+            aria-label="Recent folders"
+            value=""
+            items={[{ value: '', label: 'Recent folders…', hidden: true }, ...recent.map((w) => ({ value: w, label: w }))]}
+            onValueChange={(path) => path && openRecent(path)}
+          />
+        )}
+      </div>
+      {review && (
+        <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
+          <div className="flex items-start gap-3">
+            <FolderOpen aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted" />
+            <div className="min-w-0">
+              <h3 className="break-words text-title text-ink">Ready to add {name.trim() || folderName}?</h3>
+              <Note>Review where your tasks will run.</Note>
+            </div>
           </div>
-          {!browsable && <Note id="add-dir-browse-note" className="mt-2">{`${target?.label ?? 'This server'} does not offer folder browsing to connected instances. Type the folder's path, or update UAM there.`}</Note>}
-          {recent.length > 0 && (
-            <Select
-              aria-label="Recent folders"
-              value=""
-              className="mt-2"
-              items={[{ value: '', label: 'Recent folders…', hidden: true }, ...recent.map((w) => ({ value: w, label: w }))]}
-              onValueChange={(w) => w && setDir(w)}
-            />
-          )}
-        </Field>
-        {picker.mounted && (
-          <Collapse open={browsing} appear soft onClosed={picker.onClosed} className="-mt-4" inner="pt-4">
-            <ApiContext.Provider value={api}>
-              <Suspense fallback={null}>
-                <FolderPicker
-                  key={machine}
-                  id="add-dir-picker"
-                  start={dir}
-                  onUse={(p) => {
-                    setDir(p);
-                    setBrowsing(false);
-                    first.current?.focus();
-                  }}
-                  onClose={() => {
-                    setBrowsing(false);
-                    browse.current?.focus();
-                  }}
-                />
-              </Suspense>
-            </ApiContext.Provider>
-          </Collapse>
-        )}
-        <Field id="add-name" label="Name" hint="The project gets a two-letter badge from this name, on a colour of its own.">
-          <Input id="add-name" placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        {(name.trim() || dir.trim()) && <Note>Badge assigned when added. Its letters and colour are chosen from those still available.</Note>}
-        {error && (
-          <Note tone="error" role="alert">
-            {error}
-          </Note>
-        )}
-      </form>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-sm bg-canvas p-3 text-ui">
+            <dt className="text-muted">Instance</dt><dd className="break-words text-ink">{instanceName}</dd>
+            <dt className="text-muted">Folder</dt><dd className="break-all text-ink">{dir}</dd>
+          </dl>
+          <Field id="add-name" label="Project name" hint="Leave empty to use the folder name.">
+            <Input id="add-name" ref={first} placeholder="Defaults to the folder name" aria-describedby="add-name-hint" value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Note>Badge assigned when added. Its letters and colour are chosen from those still available.</Note>
+          {error && <Note tone="error" role="alert">{error}</Note>}
+        </form>
+      )}
     </Dialog>
   );
 }

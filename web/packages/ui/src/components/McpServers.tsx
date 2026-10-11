@@ -146,7 +146,7 @@ function ServerForm({ draft, stdioAllowed, busy, error, onChange, onSave, onCanc
               id="mcp-args"
               rows={3}
               spellCheck={false}
-              className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none disabled:opacity-45"
+              className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:outline-none disabled:opacity-45"
               placeholder={'-y\n@scope/server'}
               disabled={busy || locked}
               value={draft.args}

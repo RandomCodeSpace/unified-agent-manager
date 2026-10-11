@@ -101,7 +101,7 @@ describe('Home', () => {
     expect(main.queryByRole('button', { name: 'New task' })).toBeNull();
     expect(main.queryByRole('region', { name: 'Recent tasks' })).toBeNull();
     await user.click(main.getByRole('button', { name: 'Add project' }));
-    const dialog = within(await screen.findByRole('dialog', { name: 'Add a project' }));
-    expect(dialog.getByRole('textbox', { name: 'Directory on the host' })).toBeTruthy();
+    const dialog = within(await screen.findByRole('dialog', { name: 'Choose a project folder' }));
+    expect(await dialog.findByRole('textbox', { name: 'Folder path' })).toBeTruthy();
   });
 });

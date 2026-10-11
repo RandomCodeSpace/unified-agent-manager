@@ -31,6 +31,80 @@ async function section(name: string) {
 }
 
 describe('settings', () => {
+  test('project location saves a normalized path and clearing restores home', async () => {
+    const { user } = await openSettings('UAM and access', 'Project folders');
+    const folders = await section('Project folders');
+    const input = folders.getByRole('textbox', { name: 'Default project location' });
+    expect(folders.queryByRole('button', { name: 'Save project location' })).toBeNull();
+    await user.type(input, '/home/user/projects/');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(input).toHaveProperty('value', '/home/user/projects'));
+    expect((await api.listDirs()).path).toBe('/home/user/projects');
+    await user.clear(input);
+    await user.keyboard('{Enter}');
+    await waitFor(async () => expect((await api.listDirs()).path).toBe('/home/user'));
+  });
+
+  test('project location saves the chosen folder immediately, including a newly created folder', async () => {
+    const { user } = await openSettings('UAM and access', 'Project folders');
+    const card = await section('Project folders');
+    const input = card.getByRole('textbox', { name: 'Default project location' });
+    const browse = card.getByRole('button', { name: 'Browse' });
+    await user.click(browse);
+    const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
+    await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
+    await folders.findByRole('option', { name: /^archive/ });
+    await user.click(card.getByRole('button', { name: 'New folder' }));
+    await user.type(await card.findByRole('textbox', { name: 'New folder name' }), 'client-work{Enter}');
+    expect((await folders.findByRole('option', { name: 'client-work' })).getAttribute('aria-selected')).toBe('true');
+    expect(input).toHaveProperty('value', '');
+    expect((await api.listDirs()).path).toBe('/home/user');
+    await user.click(card.getByRole('button', { name: 'Use this folder' }));
+    expect(input).toHaveProperty('value', '/home/user/projects/client-work');
+    expect(document.activeElement).toBe(input);
+    expect(card.queryByRole('button', { name: 'Save project location' })).toBeNull();
+    await waitFor(async () => expect((await api.listDirs()).path).toBe('/home/user/projects/client-work'));
+    await waitFor(() => expect(document.getElementById('default-project-dir-picker')).toBeNull());
+    await user.click(browse);
+    await card.findByText('No folders here');
+    expect(card.getByRole('button', { name: 'client-work' }).getAttribute('aria-current')).toBe('location');
+    await user.keyboard('{Escape}');
+    expect(browse.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(browse);
+    expect(input).toHaveProperty('value', '/home/user/projects/client-work');
+  });
+
+  test('project location keeps a refused folder choice for retry without replacing the saved default', async () => {
+    const { user } = await openSettings('UAM and access', 'Project folders');
+    const card = await section('Project folders');
+    const input = card.getByRole('textbox', { name: 'Default project location' });
+    await user.click(card.getByRole('button', { name: 'Browse' }));
+    const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
+    await user.click(await folders.findByRole('option', { name: /^projects/ }));
+    const update = vi.spyOn(api, 'updateWebSettings').mockRejectedValueOnce(new Error('Folder is no longer available'));
+    try {
+      await user.click(card.getByRole('button', { name: 'Use this folder' }));
+      expect((await screen.findByRole('alert')).textContent).toContain('Folder is no longer available');
+      expect(update).toHaveBeenCalledExactlyOnceWith({ default_project_dir: '/home/user/projects' });
+      expect(input).toHaveProperty('value', '/home/user/projects');
+      expect(document.activeElement).toBe(input);
+      expect((await api.listDirs()).path).toBe('/home/user');
+      await user.keyboard('{Enter}');
+      await waitFor(async () => expect((await api.listDirs()).path).toBe('/home/user/projects'));
+    } finally { update.mockRestore(); }
+  });
+
+  test('project location keeps a refused draft and the previously saved location', async () => {
+    const { user } = await openSettings('UAM and access', 'Project folders');
+    const folders = await section('Project folders');
+    const input = folders.getByRole('textbox', { name: 'Default project location' });
+    await user.type(input, 'relative/projects');
+    await user.keyboard('{Enter}');
+    expect((await screen.findByRole('alert')).textContent).toContain('must be an absolute path');
+    expect(input).toHaveProperty('value', 'relative/projects');
+    expect((await api.listDirs()).path).toBe('/home/user');
+  });
+
   test('Log out lives in UAM and access and returns to sign in', async () => {
     const auth = vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true });
     const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined);

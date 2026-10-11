@@ -16,6 +16,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"GET", "/api/meta", true},
 		{"POST", "/api/sessions", true},
 		{"POST", "/api/sessions/task/prompt", true},
+		{"POST", "/api/sessions/task/unarchive", true},
+		{"GET", "/api/sessions/task/unarchive", false},
 		{"POST", "/api/sessions/task/fork", true},
 		{"GET", "/api/sessions/task/fork", false},
 		{"POST", "/api/sessions/task/fork/dismiss", true},

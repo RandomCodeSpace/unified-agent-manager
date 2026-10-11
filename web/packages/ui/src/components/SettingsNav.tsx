@@ -34,7 +34,7 @@ export const SETTINGS_GROUPS = [
     { id: 'mcp', label: 'MCP servers', blurb: 'Tools agents call from other programs and services.', keywords: 'mcp server servers tools http sse command github' },
   ] },
   { label: 'Server', scope: 'service', pages: [
-    { id: 'uam', label: 'UAM and access', blurb: 'The version and restart, terminal access, and signing out.', keywords: 'version restart update binary terminal shell access log out logout sign out session' },
+    { id: 'uam', label: 'UAM and access', blurb: 'Project folders, the version and restart, terminal access, and signing out.', keywords: 'default project location folder directory home path version restart update binary terminal shell access log out logout sign out session' },
     { id: 'connections', label: 'Connected instances', blurb: 'Other UAM servers to switch to.', keywords: 'instance instances federation pair remote server connect' },
   ] },
   { label: 'This browser', scope: 'browser', pages: [

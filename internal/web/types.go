@@ -41,7 +41,7 @@ const (
 )
 
 // Task stages. A Task is active until the user settles or archives it;
-// archived is final.
+// archived is read-only until explicitly unarchived.
 const (
 	StageActive   = ""
 	StageSettled  = "settled"
@@ -144,6 +144,8 @@ type Settings struct {
 	TokenPrices map[string]map[string]store.WebTokenPrice `json:"token_prices,omitempty"`
 	// SendDefault is what Enter does while a turn runs: steer or queue.
 	SendDefault string `json:"send_default"`
+	// DefaultProjectDir is the initial folder for browsing on this instance; empty uses home.
+	DefaultProjectDir string `json:"default_project_dir,omitempty"`
 	// Terminal lets anyone signed in open a shell, as the service user, at a
 	// Project's directory (terminal.go). Off by default.
 	Terminal bool `json:"terminal"`
