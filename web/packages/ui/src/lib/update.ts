@@ -26,3 +26,12 @@ export function decideUpdate(loaded: string | undefined, latest: string | undefi
 export function checkDue(lastAt: number, now: number, gap = CHECK_GAP_MS): boolean {
   return now - lastAt >= gap;
 }
+
+/** A `git describe` build: its release, the commits after it, the commit and `-dirty` for local changes. */
+export const BUILD_VERSION = /^(.+)-(\d+)-g([0-9a-f]{7,})(-dirty)?$/;
+
+/** "v0.7.1-161-g228dbee0" reads as "v0.7.1+161"; release versions read as they are. */
+export function shortVersion(version: string): string {
+  const build = BUILD_VERSION.exec(version);
+  return build ? `${build[1]}+${build[2]}` : version;
+}

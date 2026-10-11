@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CHECK_GAP_MS, checkDue, decideUpdate } from '../src/lib/update.ts';
+import { CHECK_GAP_MS, checkDue, decideUpdate, shortVersion } from '../src/lib/update.ts';
 
 const clear = { draft: false, popup: false };
 
@@ -26,4 +26,11 @@ test('visibility checks are throttled to the gap', () => {
   assert.equal(checkDue(1_000, 1_000 + CHECK_GAP_MS - 1), false);
   assert.equal(checkDue(1_000, 1_000 + CHECK_GAP_MS), true);
   assert.equal(checkDue(0, 5_000, 5_000), true);
+});
+
+test('a build version reads as its release plus commits; a release reads as it is', () => {
+  assert.equal(shortVersion('v0.7.1-278-gd7aaabed'), 'v0.7.1+278');
+  assert.equal(shortVersion('v0.7.1-278-gd7aaabed-dirty'), 'v0.7.1+278');
+  assert.equal(shortVersion('v0.15.0'), 'v0.15.0');
+  assert.equal(shortVersion(''), '');
 });
