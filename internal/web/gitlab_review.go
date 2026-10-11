@@ -131,7 +131,7 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 			return out, err
 		}
 		if len(batch) > gitLabPageSize {
-			return out, errors.New("GitLab returned an oversized merge request list.")
+			return out, errors.New("GitLab returned an oversized merge request list")
 		}
 		for _, mr := range batch {
 			if mr.IID == iid && mr.ID > 0 && gitLabReviewMatches(mr, project.ID, rec.Branch) {
@@ -171,11 +171,11 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 			return out, err
 		}
 		if len(batch) > gitLabPageSize {
-			return out, errors.New("GitLab returned an oversized discussion list.")
+			return out, errors.New("GitLab returned an oversized discussion list")
 		}
 		for _, discussion := range batch {
 			if !gitLabValidDiscussionID(discussion.ID) || seen[discussion.ID] {
-				return out, errors.New("GitLab returned inconsistent discussions.")
+				return out, errors.New("GitLab returned inconsistent discussions")
 			}
 			seen[discussion.ID] = true
 			if notes == gitLabMaxItems {
@@ -190,7 +190,7 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 			for i := range discussion.Notes {
 				note := &discussion.Notes[i]
 				if note.ID <= 0 {
-					return out, errors.New("GitLab returned an invalid discussion note.")
+					return out, errors.New("GitLab returned an invalid discussion note")
 				}
 				out.Truncated = gitLabSanitizeReviewNote(note) || out.Truncated
 			}

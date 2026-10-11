@@ -30,6 +30,7 @@ const modules = {
   '../api': { modelName: (_meta, _provider, model) => model },
   '../lib/chart': chart,
   './Chart': { ChartCard: () => null },
+  './GitLabReviewRequest': { GitLabReviewRequest: () => null, gitLabReviewRequest: () => null },
   '../lib/clipboard': { useCopied: () => [false, () => {}] },
   '../lib/cn': { cn: (...values) => values.filter(value => typeof value === 'string').join(' ') },
   '../lib/transcript': transcript,

@@ -103,7 +103,7 @@ func readGitLabPipeline(ctx context.Context, gate glabGate, sha, branch string) 
 // when GitLab has since created a newer pipeline for the same commit.
 func readGitLabPipelineAt(ctx context.Context, gate glabGate, sha, branch string, projectID, pipelineID int64) (gitLabSnapshot, error) {
 	if projectID <= 0 || pipelineID <= 0 {
-		return gitLabSnapshot{}, errors.New("GitLab requires a valid project and pipeline.")
+		return gitLabSnapshot{}, errors.New("GitLab requires a valid project and pipeline")
 	}
 	return readGitLabPipelineSelection(ctx, gate, sha, branch, projectID, pipelineID)
 }
@@ -111,7 +111,7 @@ func readGitLabPipelineAt(ctx context.Context, gate glabGate, sha, branch string
 func readGitLabPipelineSelection(ctx context.Context, gate glabGate, sha, branch string, projectID, pipelineID int64) (gitLabSnapshot, error) {
 	result := gitLabSnapshot{Jobs: []GitLabJob{}, MergeRequests: []GitLabMergeRequest{}}
 	if !gitLabValidGate(gate) || !gitLabValidSHA(sha) || branch == "" || strings.ContainsAny(branch, "\x00\r\n") {
-		return result, errors.New("GitLab requires a valid repository, full commit SHA, and branch.")
+		return result, errors.New("GitLab requires a valid repository, full commit SHA, and branch")
 	}
 	var project struct {
 		ID                int64  `json:"id"`
@@ -121,7 +121,7 @@ func readGitLabPipelineSelection(ctx context.Context, gate glabGate, sha, branch
 		return result, err
 	}
 	if project.ID <= 0 || !strings.EqualFold(project.PathWithNamespace, gate.Path) || (projectID > 0 && project.ID != projectID) {
-		return result, errors.New("GitLab returned a different project than the repository origin.")
+		return result, errors.New("GitLab returned a different project than the repository origin")
 	}
 	result.ProjectID = project.ID
 	base := "projects/" + strconv.FormatInt(project.ID, 10)
@@ -139,7 +139,7 @@ func readGitLabPipelineSelection(ctx context.Context, gate glabGate, sha, branch
 		// GitLab orders the exact SHA/ref query by descending ID. Reject responses
 		// outside the requested scope instead of silently investigating another ref.
 		if len(pipelines) != 1 || !gitLabMatchingPipeline(pipelines[0], project.ID, sha, branch) {
-			return result, errors.New("GitLab returned a pipeline outside the requested commit and branch.")
+			return result, errors.New("GitLab returned a pipeline outside the requested commit and branch")
 		}
 		pipelineID = pipelines[0].ID
 	}
@@ -148,7 +148,7 @@ func readGitLabPipelineSelection(ctx context.Context, gate glabGate, sha, branch
 		return result, err
 	}
 	if pipeline.ID != pipelineID || !gitLabMatchingPipeline(pipeline, project.ID, sha, branch) {
-		return result, errors.New("GitLab returned a pipeline outside the requested commit and branch.")
+		return result, errors.New("GitLab returned a pipeline outside the requested commit and branch")
 	}
 	pipeline.WebURL = gitLabSafeURL(gate.Host, pipeline.WebURL)
 	result.Pipeline = &pipeline.GitLabPipeline
@@ -178,11 +178,11 @@ func gitLabReadJobs(ctx context.Context, gate glabGate, base string, pipeline gi
 			return nil, err
 		}
 		if len(batch) > gitLabPageSize || len(jobs)+len(batch) > gitLabMaxItems {
-			return nil, errors.New("This GitLab pipeline has more than 200 jobs. Open it in GitLab for the complete job list.")
+			return nil, errors.New("this GitLab pipeline has more than 200 jobs. Open it in GitLab for the complete job list")
 		}
 		for _, job := range batch {
 			if job.ID <= 0 || seen[job.ID] || job.Pipeline.ID != pipeline.ID || !gitLabMatchingPipeline(job.Pipeline, pipeline.ProjectID, pipeline.SHA, pipeline.Ref) {
-				return nil, errors.New("GitLab returned inconsistent pipeline jobs.")
+				return nil, errors.New("GitLab returned inconsistent pipeline jobs")
 			}
 			seen[job.ID] = true
 			job.Name = displaytext.Sanitize(job.Name)
@@ -212,7 +212,7 @@ func gitLabReadMergeRequests(ctx context.Context, gate glabGate, base, sha, bran
 		}
 		count += len(batch)
 		if len(batch) > gitLabPageSize || count > gitLabMaxItems {
-			return nil, errors.New("This commit has more than 200 GitLab merge requests. Open it in GitLab for the complete list.")
+			return nil, errors.New("this commit has more than 200 GitLab merge requests. Open it in GitLab for the complete list")
 		}
 		for _, mr := range batch {
 			if mr.SourceBranch != branch || mr.SourceProjectID != projectID || mr.IID <= 0 {
@@ -242,7 +242,7 @@ func gitLabGetJSON(ctx context.Context, gate glabGate, endpoint string, into any
 		return nil, gitLabCLIError(out)
 	}
 	if parseErr != nil || json.Unmarshal([]byte(body), into) != nil {
-		return nil, errors.New("GitLab returned an invalid or oversized response.")
+		return nil, errors.New("GitLab returned an invalid or oversized response")
 	}
 	return headers, nil
 }
@@ -315,7 +315,7 @@ func gitLabSafeURL(host, raw string) string {
 // tail, with stderr kept separate so diagnostics never become job evidence.
 func readGitLabJobTrace(ctx context.Context, gate glabGate, projectID, jobID int64) (GitLabJobTrace, error) {
 	if !gitLabValidGate(gate) || projectID <= 0 || jobID <= 0 {
-		return GitLabJobTrace{}, errors.New("GitLab requires a valid project and job.")
+		return GitLabJobTrace{}, errors.New("GitLab requires a valid project and job")
 	}
 	ctx, cancel := context.WithTimeout(ctx, glabTimeout)
 	defer cancel()
@@ -337,7 +337,7 @@ func readGitLabJobTrace(ctx context.Context, gate glabGate, projectID, jobID int
 		return GitLabJobTrace{}, gitLabCLIError(diagnostic.buf.String())
 	}
 	if !out.parsed || out.err != nil {
-		return GitLabJobTrace{}, errors.New("GitLab returned invalid job log headers.")
+		return GitLabJobTrace{}, errors.New("GitLab returned invalid job log headers")
 	}
 	return GitLabJobTrace{Text: displaytext.SanitizeText(out.tail.String()), Truncated: out.bytes > gitLabTraceLimit}, nil
 }
