@@ -174,7 +174,7 @@ describe('Usage popover', () => {
     const popover = within(await screen.findByRole('dialog', { name: 'Usage' }));
     await popover.findByRole('button', { name: 'Overview' });
     expect(summaryCost('Estimated cost').textContent).toBe('$1.87');
-    expect(popover.queryByRole('combobox', { name: 'Machine' })).toBeNull();
+    expect(popover.queryByRole('combobox', { name: 'Instance' })).toBeNull();
     expect(popover.queryByText(/not included/)).toBeNull();
   });
 

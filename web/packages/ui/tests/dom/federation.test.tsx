@@ -627,22 +627,22 @@ async function openUsage(user: ReturnType<typeof userEvent.setup>) {
 
 test('Usage sums every machine’s tokens, each priced by its own catalog, and filters to one machine', async () => {
   const { user, owners } = federated('', [record('b', 'Workstation B')]);
-  // Only B prices gpt-6-luna: its cost counts in All machines and on B, never on this instance.
+  // Only B prices gpt-6-luna: its cost counts in All instances and on B, never on this server.
   await act(async () => { await owners[1].fetch('/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token_prices: { copilot: { 'gpt-6-luna': { input: 1, output: 2 } } } }) }); });
   const popover = await openUsage(user);
-  const machine = popover.getByRole('combobox', { name: 'Machine' });
-  expect(machine.textContent).toBe('All machines');
+  const machine = popover.getByRole('combobox', { name: 'Instance' });
+  expect(machine.textContent).toBe('All instances');
   await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$3.77'));
   await waitFor(() => expect(usageSummary('Cache saving')).toBe('$5.02'));
   expect(usageSummary('Total tokens')).toBe('2.6M');
   expect(popover.queryByText(/not included/)).toBeNull();
   await user.click(machine);
-  expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['All machines', 'This server', 'Workstation B']);
+  expect((await screen.findAllByRole('option')).map((option) => option.textContent)).toEqual(['All instances', 'This server', 'Workstation B']);
   await user.click(screen.getByRole('option', { name: 'Workstation B' }));
   await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.90'));
   expect(usageSummary('Total tokens')).toBe('1.3M');
   expect(screen.getByRole('dialog', { name: 'Usage' })).toBeTruthy();
-  await user.click(popover.getByRole('combobox', { name: 'Machine' }));
+  await user.click(popover.getByRole('combobox', { name: 'Instance' }));
   await user.click(await screen.findByRole('option', { name: 'This server' }));
   await waitFor(() => expect(usageSummary('Estimated cost')).toBe('$1.87'));
   expect(usageSummary('Cache saving')).toBe('$2.51');

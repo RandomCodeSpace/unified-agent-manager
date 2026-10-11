@@ -110,7 +110,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
   const excluded = one ? [] : states.filter((state) => state.reason);
   const reading = one ? readings[one.id] ?? UNREAD : null;
   const report = reading ? reading.report : included.length ? mergeTokenReports(included.map((state) => state.reading.report!)) : null;
-  const error = one ? (one.down ? `${one.label}: ${one.down}.` : reading!.error) : !included.length && excluded.every((state) => state.reason !== 'still loading') ? 'No machine is available.' : null;
+  const error = one ? (one.down ? `${one.label}: ${one.down}.` : reading!.error) : !included.length && excluded.every((state) => state.reason !== 'still loading') ? 'No instance is available.' : null;
   const priceFailures = one ? (reading!.priceError ? [one] : []) : included.filter((state) => state.reading.priceError).map((state) => state.source);
   const pricesLoading = (one ? [reading!] : included.map((state) => state.reading)).some((r) => r.prices === null && !r.priceError);
   const shown = report?.periods[period];
@@ -146,10 +146,10 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
         {quotas.length === 0 && <PanelSection label="Allowance"><p className="text-caption text-muted">Account usage not reported yet.</p></PanelSection>}
         {quotas.map((quota) => <Allowance key={`${quota.provider}:${quota.type}`} quota={quota} now={now} stale={usage?.stale} provider={meta?.providers.find((p) => p.name === quota.provider)?.display_name ?? quota.provider} />)}
       </div>
-      <PanelSection label="Tokens" meta="recorded by UAM" className={cn('min-w-0', all ? 'min-h-48 flex-1' : 'shrink-0')} action={machines && (
+      <PanelSection label="Tokens" meta="recorded by UAM" className={cn('@container min-w-0', all ? 'min-h-48 flex-1' : 'shrink-0')} action={machines && (
         // Compact like the period tabs: 24px, with a hit area grown as a small button's.
-        <Select aria-label="Machine" value={one ? scope : ALL_MACHINES} onValueChange={setScope} className="relative h-6 w-auto max-w-40 gap-1 px-2 text-caption after:absolute after:-inset-y-1 after:inset-x-0 after:content-[''] pointer-coarse:min-h-6 pointer-coarse:after:-inset-y-2.5" items={[
-          { value: ALL_MACHINES, label: 'All machines' },
+        <Select aria-label="Instance" value={one ? scope : ALL_MACHINES} onValueChange={setScope} className="relative h-6 w-auto max-w-40 gap-1 px-2 text-caption after:absolute after:-inset-y-1 after:inset-x-0 after:content-[''] pointer-coarse:min-h-6 pointer-coarse:after:-inset-y-2.5" items={[
+          { value: ALL_MACHINES, label: 'All instances' },
           ...sources.map((source) => ({ value: source.id, label: source.label })),
         ]} />
       )}>
@@ -164,7 +164,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
         <span className="min-w-0 flex-1">Could not load token prices{one ? '' : ` for ${priceFailures.map((source) => source.label).join(', ')}`}.</span>
         <Button size="sm" onClick={() => setRetry((n) => n + 1)}>Retry prices</Button>
       </div>}
-      {/* A machine left out of All machines is named, never silently skipped. */}
+      {/* An instance left out of All instances is named, never silently skipped. */}
       {shown && excluded.map(({ source, reason }) => <Note key={source.id} className="mt-2 [overflow-wrap:anywhere]">{source.label} not included: {reason}</Note>)}
       {!shown && !error && <p role="status" className="py-4 text-muted">Loading usage…</p>}
       {shown && <>
