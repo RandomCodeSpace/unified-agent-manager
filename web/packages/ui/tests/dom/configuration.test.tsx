@@ -875,8 +875,10 @@ describe('native discovery metadata', () => {
       await user.click(reader.getByRole('button', { name: 'Disable', exact: true }));
       const dialog = within(await screen.findByRole('alertdialog'));
       expect(dialog.getByText(identity!.path)).toBeTruthy();
+      const { name, path, revision } = identity!;
       await user.click(dialog.getByRole('button', { name: 'Disable', exact: true }));
-      await waitFor(() => expect(toggle).toHaveBeenCalledWith('skills', identity!.name, { path: identity!.path, revision: identity!.revision, disabled: true }, ''));
+      await waitFor(() => expect(identity?.disabled).toBe(true));
+      expect(toggle).toHaveBeenCalledWith('skills', name, { path, revision, disabled: true }, '');
     } finally { read.mockRestore(); toggle.mockRestore(); }
   });
 
