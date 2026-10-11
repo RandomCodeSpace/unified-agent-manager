@@ -23,6 +23,7 @@ import { TurnTodo } from './Todos';
 import { TurnWaybill } from './TurnWaybill';
 import { VisualBoundary } from './VisualBoundary';
 import { PlanNotice } from './Plan';
+import { GitLabReviewRequest, gitLabReviewRequest } from './GitLabReviewRequest';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { Collapse, usePresence } from './ui/collapse';
@@ -718,6 +719,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className, asideT
 interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
+  const reviewRequest = gitLabReviewRequest(text);
   const attachments = item.attachments ?? [];
   const chips = attachments.length > 0 && !!sessionId;
   const accepted = item.steer_status === 'accepted';
@@ -728,7 +730,7 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn }: Mess
       <span className="sr-only">{accepted ? 'You (accepted, not delivered yet): ' : 'You: '}</span>
       {item.delivery === 'autopilot' && <span className="block text-caption text-accent">Autopilot</span>}
       {item.steer_status === 'not_delivered' && <span className="block text-caption text-error">Not delivered</span>}
-      {text && (whole?.status === 'whole' ? plainText(text) : <Markdown text={text} breaks />)}
+      {text && (reviewRequest ? <GitLabReviewRequest request={reviewRequest} text={text} /> : whole?.status === 'whole' ? plainText(text) : <Markdown text={text} breaks />)}
       {whole && <WholeNote whole={whole} />}
       {chips && <ItemAttachments sessionId={sessionId} attachments={attachments} />}
       {/* Nothing to show (a message of only file references, which the item does not list): say so rather than draw an empty bubble. */}

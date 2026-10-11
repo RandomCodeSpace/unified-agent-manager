@@ -522,6 +522,8 @@ export interface Settings {
   compact_threshold?: number | null;
   /** Whether Tasks, open ones included, start the provider's built-in GitHub MCP server; absent while off, the default. */
   github_mcp?: boolean;
+  /** Investigate failed pipelines for commits made through UAM, starting with the Utility model. Off by default. */
+  gitlab_auto_investigate?: boolean;
 }
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
@@ -1739,8 +1741,46 @@ export interface GitLabStatus {
   project?: { path: string; readable: boolean; access_level?: number };
 }
 
+/** Only the latest tracked UAM commit on this Task's current branch can offer investigation. */
+export interface GitLabPipelineState {
+  supported: boolean;
+  message?: string;
+  auto_investigate: boolean;
+  commit?: { sha: string; branch: string; task_id: string; task_name: string; created_at: string };
+  pipeline?: { id: number; status: string; sha: string; ref: string; web_url: string; duration?: number; created_at?: string; updated_at?: string };
+  merge_requests?: { iid: number; title: string; state: string; draft: boolean; web_url: string }[];
+  jobs?: { id: number; name: string; stage: string; status: string; allow_failure: boolean; web_url: string; duration?: number }[];
+  investigation_task_id?: string;
+  can_investigate: boolean;
+  reason?: string;
+  checked_at?: string;
+  error?: string;
+}
+
+export interface GitLabReviewNote {
+  id: number;
+  body: string;
+  author: { name: string; username: string };
+  created_at: string;
+  updated_at: string;
+  resolvable: boolean;
+  resolved: boolean;
+  system: boolean;
+  position?: { old_path: string; new_path: string; old_line?: number; new_line?: number; base_sha: string; head_sha: string; start_sha: string };
+}
+export interface GitLabDiscussion { id: string; individual_note: boolean; notes: GitLabReviewNote[] }
+export interface GitLabReview {
+  merge_request: { iid: number; title: string; state: string; draft: boolean; web_url: string; source_branch: string; target_branch: string; head_sha?: string };
+  discussions: GitLabDiscussion[];
+  truncated: boolean;
+  checked_at: string;
+}
+export type GitLabReviewAction = 'investigate' | 'fix' | 'draft_reply';
+
 /** The capability a connected instance must have for a route family; the first match wins. */
 const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
+  ['gitlab-reviews-v1', (path) => /^\/api\/sessions\/[^/]+\/gitlab\/merge-requests(?:[/?]|$)/.test(path)],
+  ['gitlab-pipelines-v1', (path) => /^\/api\/sessions\/[^/]+\/gitlab(?:[/?]|$)/.test(path)],
   ['gitlab-status-v1', (path) => /^\/api\/glab(?:[?]|$)/.test(path)],
   ['configuration-v1', (path) => path.startsWith('/api/configuration')],
   ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
@@ -1925,6 +1965,14 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
 
     webSettings: () => call<Settings>('GET', '/api/settings'),
     gitlabStatus: (projectId = '') => call<GitLabStatus>('GET', `/api/glab${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+    gitlabPipeline: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('GET', `/api/sessions/${enc(id)}/gitlab`, undefined, false, signal),
+    gitlabReview: (id: string, iid: number, commitSHA: string, signal?: AbortSignal) => call<GitLabReview>('GET', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}?commit_sha=${enc(commitSHA)}`, undefined, false, signal),
+    postGitlabComment: (id: string, iid: number, body: { commit_sha: string; discussion_id?: string; body: string }) => call<{ discussion_id?: string; note_id?: number }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/comments`, body),
+    resolveGitlabThread: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; resolved: boolean }) => call<{ resolved: boolean }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/resolve`, body),
+    gitlabReviewAction: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; action: GitLabReviewAction; request_id: string; mode: 'send' | 'queue' }) => call<Submission>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/actions`, body),
+    refreshGitlabPipeline: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('POST', `/api/sessions/${enc(id)}/gitlab/refresh`, undefined, false, signal),
+    investigateGitlabPipeline: (id: string, commitSHA: string, pipelineId: number) => call<{ task_id: string }>('POST', `/api/sessions/${enc(id)}/gitlab/investigate`, { commit_sha: commitSHA, pipeline_id: pipelineId }),
+    gitlabJobTrace: (id: string, jobId: number, commitSHA: string, pipelineId: number, signal?: AbortSignal) => call<{ text: string; truncated: boolean }>('GET', `/api/sessions/${enc(id)}/gitlab/jobs/${jobId}/trace?commit_sha=${enc(commitSHA)}&pipeline_id=${pipelineId}`, undefined, false, signal),
     configuration: (projectId = '') => call<Configuration>('GET', `/api/configuration${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
     draftConfiguration: (kind: Exclude<ConfigurationKind, 'instructions'>, brief: string, projectId = '') => call<ConfigurationDraft>('POST', `/api/configuration/${kind}/draft${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { brief }),
     saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),

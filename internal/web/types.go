@@ -184,6 +184,9 @@ type Settings struct {
 	// GitHubMCP lets Tasks start the provider's built-in GitHub MCP server
 	// (agentapi.GitHubMCPUser); omitted while off, the default.
 	GitHubMCP bool `json:"github_mcp,omitempty"`
+	// GitLabAutoInvestigate starts an investigation when a Task's own
+	// GitLab pipeline fails; omitted while off, the default.
+	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment

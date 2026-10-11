@@ -699,6 +699,7 @@ export function install(): { received: Received[] } {
       token: { scopes: ['api', 'read_repository', 'write_repository'], expires_at: '2027-01-31' },
       ...(url.searchParams.get('project_id') ? { project: { path: 'platform/customer-portal', readable: true, access_level: 40 } } : {}),
     });
+    if (/^\/api\/sessions\/[^/]+\/gitlab(?:\/refresh)?$/.test(path) && (method === 'GET' || method === 'POST')) return json(200, { supported: false, auto_investigate: !!st.settings.gitlab_auto_investigate, can_investigate: false });
     const accounted = account.route(method, path, body);
     if (accounted) return accounted;
     const versioned = cli(method, url);
@@ -728,7 +729,7 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate') return fail(400, `unknown setting "${key}"`);
       if (body.default_project_dir !== undefined) {
         if (typeof body.default_project_dir !== 'string') return fail(400, 'default_project_dir must be a string');
         const dir = cleanPath(body.default_project_dir);
@@ -769,6 +770,11 @@ export function install(): { received: Received[] } {
       if (body.github_mcp !== undefined) {
         if (typeof body.github_mcp !== 'boolean') return fail(400, 'github_mcp must be true or false');
         st.settings = { ...st.settings, github_mcp: body.github_mcp };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.gitlab_auto_investigate !== undefined) {
+        if (typeof body.gitlab_auto_investigate !== 'boolean') return fail(400, 'gitlab_auto_investigate must be true or false');
+        st.settings = { ...st.settings, gitlab_auto_investigate: body.gitlab_auto_investigate };
         broadcast('settings', { settings: st.settings });
       }
       if (body.task_defaults !== undefined) {

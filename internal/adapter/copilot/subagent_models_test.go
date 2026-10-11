@@ -158,3 +158,31 @@ func TestWebPreToolUseHookOnCreateAndResume(t *testing.T) {
 		t.Fatal("capability SubagentModels not set")
 	}
 }
+
+func TestWebSucceededToolUseHookOnCreateAndResume(t *testing.T) {
+	h := openWeb(t)
+	var calls []agentapi.ToolUse
+	hooks := agentapi.ToolHooks{Succeeded: func(_ context.Context, use agentapi.ToolUse) { calls = append(calls, use) }}
+	for _, conversationID := range []string{"", "s-1"} {
+		if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-2", ConversationID: conversationID, Workdir: "/work", Events: &recSink{}, Hooks: hooks}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, cfg := range map[string]*copilot.SessionHooks{"create": h.fc.create[1].Hooks, "resume": h.fc.resume[0].Hooks} {
+		if cfg == nil || cfg.OnPostToolUse == nil {
+			t.Fatalf("%s success hook missing", name)
+		}
+		out, err := cfg.OnPostToolUse(copilot.PostToolUseHookInput{ToolName: "bash", WorkingDirectory: "/work", ToolArgs: map[string]any{"command": "git commit -m fix"}, ToolResult: "untrusted result"}, copilot.HookInvocation{})
+		if err != nil || out != nil {
+			t.Fatalf("%s success hook = %+v, %v", name, out, err)
+		}
+	}
+	if len(calls) != 2 {
+		t.Fatalf("success callbacks = %d", len(calls))
+	}
+	for _, call := range calls {
+		if call.Tool != "bash" || call.Workdir != "/work" || call.Args["command"] != "git commit -m fix" {
+			t.Fatalf("success callback = %+v", call)
+		}
+	}
+}

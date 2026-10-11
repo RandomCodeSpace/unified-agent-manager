@@ -456,7 +456,14 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 			return GitResult{Output: out}, gitFailed("git could not stage the files", err)
 		}
 	}
-	out, err := runGitWrite(ctx, repo.top, strings.NewReader(message), append([]string{"commit", "--file=-", "--cleanup=verbatim", "--"}, commit...)...)
+	var commitEnv []string
+	if action := gitLabProvenanceAction(ctx, repo.top, id); action != "" {
+		commitEnv = []string{"GIT_REFLOG_ACTION=" + action}
+	}
+	out, err := runGitWriteEnv(ctx, repo.top, strings.NewReader(message), commitEnv, append([]string{"commit", "--file=-", "--cleanup=verbatim", "--"}, commit...)...)
+	// Read the receipt, not whichever commit happens to be HEAD now. The
+	// monitor also recovers it if the service stops before this write.
+	m.succeededToolUse(ctx, t.session, agentapi.ToolUse{Tool: "shell"})
 	if err != nil {
 		var gerr *gitError
 		if errors.As(err, &gerr) {

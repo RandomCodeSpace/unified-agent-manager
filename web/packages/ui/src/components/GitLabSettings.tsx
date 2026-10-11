@@ -1,41 +1,41 @@
 import { Check, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type GitLabStatus, type Project } from '../api';
+import { describeError, type GitLabStatus } from '../api';
 import { dateTime, Note, Skeleton } from './common';
-import { Field } from './TaskDefaults';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
-import { Select } from './ui/select';
+import { Switch } from './ui/switch';
 
 const ROLES: Record<number, string> = { 5: 'Minimal access', 10: 'Guest', 15: 'Planner', 20: 'Reporter', 25: 'Security Manager', 30: 'Developer', 40: 'Maintainer', 50: 'Owner' };
 
-export function GitLabSettings({ projects }: Readonly<{ projects: Project[] }>) {
+export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boolean; saving: boolean; onChange: (on: boolean) => void } }>) {
   const api = useApi();
-  const [project, setProject] = useState('');
   const [check, setCheck] = useState(0);
-  const [result, setResult] = useState<{ client: typeof api; project: string; check: number; status?: GitLabStatus; error?: string }>();
-  const current = result?.client === api && result.project === project ? result : undefined;
+  const [result, setResult] = useState<{ client: typeof api; check: number; status?: GitLabStatus; error?: string }>();
+  const current = result?.client === api ? result : undefined;
   const busy = current?.check !== check;
   const status = current?.status;
 
   useEffect(() => {
     let active = true;
-    void api.gitlabStatus(project).then(
-      (status) => { if (active) setResult({ client: api, project, check, status }); },
-      (error: unknown) => { if (active) setResult({ client: api, project, check, error: describeError(error) }); },
+    void api.gitlabStatus().then(
+      (status) => { if (active) setResult({ client: api, check, status }); },
+      (error: unknown) => { if (active) setResult({ client: api, check, error: describeError(error) }); },
     );
     return () => { active = false; };
-  }, [api, project, check]);
+  }, [api, check]);
 
   return <div className="flex min-w-0 flex-col gap-5">
-    <div className="flex flex-wrap items-end gap-3">
-      <div className="min-w-0 flex-1"><Field id="gitlab-project" label="Check access for">
-        <Select id="gitlab-project" value={project} onValueChange={setProject} items={[
-          { value: '', label: 'Default GitLab instance' },
-          ...projects.map((p) => ({ value: p.id, label: p.name })),
-        ]} />
-      </Field></div>
+    {automatic && <div className="flex items-start justify-between gap-4">
+      <div className="flex min-w-0 flex-col gap-1">
+        <h3 className="text-ui font-medium text-ink">Automatic investigation</h3>
+        <Note id="gitlab-auto-description">When a pipeline fails for a commit made through UAM on the current branch, start a task with the Utility model to collect its pipeline data. You can switch models in the task. Open GitLab in the task header to see pipelines and merge requests. When off, choose Investigate there.</Note>
+      </div>
+      <Switch aria-label="Automatic investigation" aria-describedby="gitlab-auto-description" checked={automatic.on} disabled={automatic.saving} onCheckedChange={automatic.onChange} className="mt-0.5" />
+    </div>}
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h3 className="text-ui font-medium text-ink">Connection</h3>
       <Button variant="secondary" size="lg" loading={busy} onClick={() => setCheck((n) => n + 1)}><RefreshCw aria-hidden="true" />Check access</Button>
     </div>
     {busy && !status && <Skeleton label="Checking GitLab access…" rows={4} />}
@@ -68,7 +68,7 @@ export function GitLabSettings({ projects }: Readonly<{ projects: Project[] }>) 
     </div>}
     <div className="flex flex-col gap-1">
       <h3 className="text-ui font-medium text-ink">Automatic in GitLab projects</h3>
-      <Note>Once glab is signed in, UAM limits supported lists to 10 results by default, up to 20, and checks changed GitLab CI files before a push. Select a project above to check its instance and access.</Note>
+      <Note>Once glab is signed in, UAM limits supported lists to 10 results by default, up to 20, and checks changed GitLab CI files before a push. A task uses the GitLab instance in its repository's origin.</Note>
     </div>
   </div>;
 }
