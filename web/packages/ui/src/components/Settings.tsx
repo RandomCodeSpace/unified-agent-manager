@@ -8,6 +8,7 @@ import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
 import { restartOffered, UamService } from './UamService';
+import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
 import { McpServersSettings } from './McpServers';
 import { TaskList } from './taskActions';
@@ -451,14 +452,13 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connections, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; connections?: ReactNode; focusAccount?: string }>) {
+export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connectionsRequest = 0, connections, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; /** Counts requests to show Connected instances (the instance switcher's Connect another instance). */ connectionsRequest?: number; connections?: ReactNode; focusAccount?: string }>) {
   const api = useApi();
   const federation = useFederation();
-  const instanceControl = federation?.sourceControl;
   // Switching the instance on screen keeps the page open (connected instances only).
   const carry = federation?.carry;
   // The connected instance on screen, or this one; null without connected instances, where nothing names it.
-  const instance = instanceControl ? api.owner?.label ?? 'This instance' : null;
+  const instance = federation?.machines ? api.owner?.label ?? 'This server' : null;
   const unsupported = OPTIONAL_FEATURES.filter((feature) => !api.supports(feature)).map((feature) => feature.replace('-v1', '').replaceAll('-', ' '));
   const { settings, dispatch, meta, metaError, loaded, refreshMeta } = useApp();
   const { projects } = useContext(TaskList);
@@ -471,6 +471,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [page, setPage] = useState<SettingsPage | null>(() => {
     if (tokenPricesRequest) return 'token-costs';
     if (focusAccount) return 'copilot';
+    if (connectionsRequest && connections) return 'connections';
     const next = carry?.read().nextSection;
     return isSettingsPage(next) && (next !== 'connections' || Boolean(connections)) ? next : null;
   });
@@ -483,6 +484,14 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [visited, setVisited] = useState<ReadonlySet<SettingsPage>>(() => new Set(page ? [page] : []));
   useEffect(() => carry?.write({ nextSection: null }), [carry]);
   useEffect(() => carry?.write({ section: shown ?? 'new-tasks' }), [carry, shown]);
+  const [handledConnectionsRequest, setHandledConnectionsRequest] = useState(connectionsRequest);
+  if (handledConnectionsRequest !== connectionsRequest) {
+    setHandledConnectionsRequest(connectionsRequest);
+    if (connectionsRequest && connections) {
+      setPage('connections');
+      setQuery('');
+    }
+  }
   const [handledPriceRequest, setHandledPriceRequest] = useState(tokenPricesRequest);
   if (handledPriceRequest !== tokenPricesRequest) {
     setHandledPriceRequest(tokenPricesRequest);
@@ -848,7 +857,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             </Tip>
             <h1 className="min-w-0 truncate text-display-sm text-ink">{current.label}<span className="sr-only"> · Settings{instance && ` · ${instance}`}</span></h1>
           </> : <h1 className="shrink-0 text-display-sm text-ink">Settings{instance && <span className="sr-only"> · {instance}</span>}</h1>}
-          {instanceControl && <><span aria-hidden="true" className="text-muted">·</span>{instanceControl}</>}
+          {instance && <><span aria-hidden="true" className="text-muted">·</span><InstanceSwitcher place="settings" onConnect={() => { setPage('connections'); setQuery(''); }} /></>}
         </div>
         {saving && <Spinner className="shrink-0" />}
         <Tip label="Close settings">

@@ -11,7 +11,7 @@ import { Button } from './ui/button';
 /** What Home reads of a machine: without connected instances, this one alone. */
 type HomeMachine = Pick<Machine, 'id' | 'short' | 'hasNews'> & { state: { projects: Project[]; sessions: SessionSummary[] } };
 
-export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTask, onAddProject, onSelect, machines, onOpen }: Readonly<{
+export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTask, onAddProject, onSelect, machines, scope, onOpen }: Readonly<{
   projects: Project[];
   sessions: SessionSummary[];
   hasNews: Unread;
@@ -21,6 +21,8 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
   onSelect: (id: string) => void;
   /** With connected instances: every machine, the one on screen with its live state; the lists then span them, each row naming its machine. */
   machines?: Machine[];
+  /** The instance the Task list is scoped to, whose Tasks `machines` holds alone. */
+  scope?: string;
   onOpen?: (machine: string, id: string) => void;
 }>) {
   useMinuteTick();
@@ -61,7 +63,7 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
           <section aria-label="Recent tasks" className="mt-11 min-[960px]:mt-14">
             <div className="mb-3.5 flex items-center justify-between px-1 min-[960px]:px-2.5">
               <h2 className="text-title font-semibold text-ink">Recent tasks</h2>
-              <p className="text-caption text-muted">{machines ? 'Across all machines' : 'Across all projects'}</p>
+              <p className="text-caption text-muted">{scope ? `On ${scope}` : machines ? 'Across all instances' : 'Across all projects'}</p>
             </div>
             <ul>
               {recent.map(({ machine, session, project }) => {

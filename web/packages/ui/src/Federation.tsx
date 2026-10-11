@@ -6,7 +6,6 @@ import { FederationContext, type FederationView, type Machine, type MachineChoic
 import { ConnectedInstancesSettings } from './components/ConnectedInstancesSettings';
 import { Button } from './components/ui/button';
 import { AlertDialog } from './components/ui/dialog';
-import { Select } from './components/ui/select';
 import { initialState, reducer, type State, type Action } from './state';
 import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdentity';
 import { needsYouCount, newsReader } from './lib/tasks';
@@ -18,7 +17,7 @@ interface Registry { instance_id: string; connections: ConnectedInstance[] }
 interface Source { id: string; label: string; connection: ConnectedInstance | null; client: ApiClient }
 const HOME = '';
 const EMPTY_CONNECTIONS: ConnectedInstance[] = [];
-const homeSource: Source = { id: HOME, label: 'This instance', connection: null, client: api };
+const homeSource: Source = { id: HOME, label: 'This server', connection: null, client: api };
 const FILTER_KEY = 'uam.machineFilter';
 
 function readFilter(): MachineFilter | null {
@@ -313,7 +312,7 @@ export default function Federation() {
   const machines = useMemo<Machine[] | undefined>(() => federated ? sources.map(source => {
     const value = sourceStates[source.id];
     const status = (source.connection && accountStatus(registry?.connections.find(connection => connection.id === source.id))) ?? value?.status ?? { status: 'connecting' };
-    return { id: source.id, label: source.label, short: source.connection?.label ?? 'Local', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status, hasNews: unreadFor(source) };
+    return { id: source.id, label: source.label, short: source.connection?.label ?? 'This server', connection: source.connection, client: source.client, active: source.id === activeID, state: value?.state ?? initialState, status, hasNews: unreadFor(source) };
   }) : undefined,
   // unreadFor reads this browser's marks, which change only while their machine is on screen.
   [federated, sources, sourceStates, activeID, registry]);
@@ -361,19 +360,14 @@ export default function Federation() {
       }
       await refresh();
     };
-    // Switching the instance on screen keeps Settings open.
-    const sourceControl = connections.length > 0 ? <Select aria-label="Active instance" className="h-8 w-auto max-w-[min(16rem,40vw)] sm:max-w-64" value={active?.id ?? HOME} onValueChange={id => { carry.write({ nextSection: carry.read().section }); navigate(connections.find(connection => connection.id === id) ?? null, '#settings'); }} items={[
-      { value: HOME, label: homeSource.label },
-      ...connections.map(connection => ({ value: connection.id, label: connection.label, disabled: !connection.enabled, description: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
-    ]} /> : null;
     const choices: MachineChoice[] | undefined = machines ? [
       { id: HOME, label: homeSource.label },
       ...connections.map(connection => ({ id: connection.id, label: connection.label, reason: connection.enabled ? STATUS_NOTE[statuses[connection.id].status] : 'Disabled' })),
     ] : undefined;
     const settings = <><ConnectedInstancesSettings homeInstanceID={homeId} connections={connections} statuses={statuses} onAdd={add} onUpdate={update} onRemove={remove} onRefresh={refresh} onOpenAccount={openAccount} activeTerminalConnectionID={terminalOpen ? active?.id : null} />{registryError && <p role="alert" className="text-caption text-error">{registryError}</p>}</>;
-    return { initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, sourceControl, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
+    return { initialPath: route.path, onRoute, onAuth, onEvent, onTerminal: setTerminalOpen, connectionsSettings: settings, otherAttention: connections.length ? otherAttention : undefined, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, accountMismatch: active ? accountStatus(connections.find(connection => connection.id === active.id))?.error : undefined,
       ...(machines && { machines, choices, go, filter, onFilter, intent, request, consumeIntent, seed: machineStates?.[activeID]?.state, authenticated, carry }) };
-  }, [connections, machineStates, refresh, navigate, carry, homeId, openAccount, terminalOpen, active, registryError, route.path, onRoute, onAuth, onEvent, otherAttention, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, machines, go, filter, onFilter, intent, request, consumeIntent, activeID, authenticated]);
+  }, [connections, machineStates, refresh, carry, homeId, openAccount, terminalOpen, active, registryError, route.path, onRoute, onAuth, onEvent, otherAttention, homeVersion, homeLoadedVersion, onHomeVersion, pendingRoute, metaCache, machines, go, filter, onFilter, intent, request, consumeIntent, activeID, authenticated]);
   return <>
     {authenticated && connections.length > 0 && sources.filter(source => source.id !== (active?.id ?? HOME)).map(source => <SourceStream key={`${source.id}:${source.connection?.generation ?? 0}`} source={source} initial={sourceStates[source.id]?.state ?? initialState} onState={onState} />)}
     {unavailable ? <div role="alert" className="flex min-h-screen flex-col items-center justify-center gap-4 p-6"><p>{unavailable}</p><Button onClick={() => navigate(null, '#settings')}>Open home settings</Button></div> :

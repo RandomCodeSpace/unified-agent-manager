@@ -1,6 +1,6 @@
 import { useApi } from './ApiContext';
 import { decodeEntity, encodeEntity } from './lib/instanceIdentity';
-import { useFederation, type Machine } from './FederationContext';
+import { scopedMachine, useFederation, type Machine } from './FederationContext';
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
@@ -145,6 +145,8 @@ export default function App() {
   const federated = !!federation;
   // With connected instances, every machine; switching the one on screen starts its view from what is known of it, without a blank page.
   const machines = federation?.machines;
+  // The instance the sidebar's switcher scoped the Task list to: Home lists its Tasks alone.
+  const scope = scopedMachine(federation);
   const here = api.owner?.id ?? '';
   const [auth, setAuth] = useState<Auth>(() => (federation?.authenticated ? 'in' : 'checking'));
   const [authRequired, setAuthRequired] = useState(true);
@@ -201,9 +203,9 @@ export default function App() {
   }
   const sidebarOpen = sidebarState.open;
   const [ownFilter, setFilter] = useState<string | null>(() => readJSON<string | null>(FILTER_KEY, null));
-  // Under federation the filter is a Project on a machine, kept by the owner; here it is that Project while its machine is on screen.
+  // Under federation the filter is a Project on a machine (or a machine alone), kept by the owner; here it is that Project while its machine is on screen.
   const machineFilter = machines ? federation?.filter ?? null : undefined;
-  const filter = machineFilter === undefined ? ownFilter : machineFilter?.machine === here ? machineFilter.project : null;
+  const filter = machineFilter === undefined ? ownFilter : machineFilter?.machine === here ? machineFilter.project || null : null;
   const onMachineFilter = federation?.onFilter;
   const applyFilter = useCallback((id: string | null) => {
     if (machines && onMachineFilter) return onMachineFilter(id === null ? null : { machine: here, project: id });
@@ -212,6 +214,7 @@ export default function App() {
   }, [machines, onMachineFilter, here, FILTER_KEY]);
   const [settingsOpen, setSettingsOpen] = useState(() => (initialPath ?? window.location.hash) === SETTINGS_HASH);
   const [tokenPricesRequest, setTokenPricesRequest] = useState(0);
+  const [connectionsRequest, setConnectionsRequest] = useState(0);
   // The provider whose account Settings opens on (the blocked app's Open Settings), or null.
   const [accountFocus, setAccountFocus] = useState<string | null>(null);
   const [routinesFor, setRoutinesFor] = useState<string | null>(() => hashRoutines(initialPath));
@@ -1106,7 +1109,8 @@ export default function App() {
       settingsOpen,
       onSettings: (target) => {
         noteOpener();
-        setTokenPricesRequest((request) => target ? request + 1 : 0);
+        setTokenPricesRequest((request) => target === 'token-prices' ? request + 1 : 0);
+        setConnectionsRequest((request) => target === 'connections' ? request + 1 : 0);
         setAccountFocus(null);
         setSettingsOpen((o) => target ? true : !o);
         setRoutinesFor(null);
@@ -1235,7 +1239,7 @@ export default function App() {
   // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
   let taskPane = false;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} />;
+    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} />;
   } else if (mismatched) {
     // Every view but Settings lands here until the account is fixed there; the next meta read lifts it.
     pane = (
@@ -1307,7 +1311,8 @@ export default function App() {
           onNewTask={openNewTask}
           onAddProject={actions.onAddProject}
           onSelect={select}
-          machines={machines?.map((m) => (m.active ? { ...m, state: { ...m.state, projects: state.projects, sessions: state.sessions }, hasNews } : m))}
+          machines={(scope ? [scope] : machines)?.map((m) => (m.active ? { ...m, state: { ...m.state, projects: state.projects, sessions: state.sessions }, hasNews } : m))}
+          scope={scope?.label}
           onOpen={(machine, id) => (machine === here ? select(id) : go?.(machine, `${HASH_PREFIX}${encodeURIComponent(id)}`))}
         />
       </div>
@@ -1407,7 +1412,7 @@ export default function App() {
               onPick={pickProject}
               onAddProject={actions.onAddProject}
               groups={machines?.map((m) => ({ key: m.id, label: m.label, projects: m.active ? state.projects : m.state.projects }))}
-              start={machines && (federation?.filter && federation.filter.machine !== here ? { group: federation.filter.machine, project: federation.filter.project } : { group: here, project: paletteStart(state.projects, state.sessions, filter, state.selectedId)?.id })}
+              start={machines && (federation?.filter && federation.filter.machine !== here ? { group: federation.filter.machine, project: federation.filter.project || undefined } : { group: here, project: paletteStart(state.projects, state.sessions, filter, state.selectedId)?.id })}
             />
             {dialog?.kind === 'add' && (
               <AddProjectDialog
