@@ -4,7 +4,7 @@ project_name: uam
 
 before:
   hooks:
-    - make web
+    - '{{ if .IsSnapshot }}make web{{ else }}make check-web{{ end }}'
     - go mod download
 
 builds:
