@@ -40,6 +40,8 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		{"POST", "/api/providers/copilot/account/sign-in", true},
 		// Every Settings section of a connected instance is managed through it.
 		{"GET", "/api/settings", true},
+		{"GET", "/api/glab", true},
+		{"POST", "/api/glab", false},
 		{"PATCH", "/api/settings", true},
 		{"POST", "/api/settings/custom-models/discover", true},
 		{"GET", "/api/providers/copilot/account", true},

@@ -1707,6 +1707,20 @@ the service closes every open terminal the same way.
 
 ## GitLab command bounds
 
+Settings → Accounts → GitLab checks `glab` on the UAM server currently on
+screen. It shows the default GitLab instance and signed-in account. Select
+a UAM Project to check that project's origin and reported project role.
+**Check access** makes a fresh read without changing GitLab data or credentials.
+Token scopes and expiry are read from GitLab's [personal access token](https://docs.gitlab.com/api/personal_access_tokens/#self-inform)
+or [OAuth token information](https://docs.gitlab.com/api/oauth2/#retrieve-the-token-information)
+endpoint; unavailable metadata is labelled unknown. These are
+reported permissions, not a write test: branch rules and separate Git credentials
+still govern pushes. The view never returns tokens or raw CLI diagnostics.
+
+The authenticated `GET /api/glab` endpoint accepts an optional `project_id`.
+Connected instances advertise `gitlab-status-v1`; older instances show an
+unavailable message. This status check does not change the governor's cache.
+
 For Tasks whose session directory has a GitLab `origin`, UAM enables shell
 rules after finding `glab` on PATH and verifying `glab auth status` for that
 host. The origin/auth cache refreshes in the background at Task open and after

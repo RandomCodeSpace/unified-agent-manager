@@ -20,6 +20,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"GET /api/events",
 		"GET /api/events/detail",
 		"GET /api/fs/dirs",
+		"GET /api/glab",
 		"GET /api/mcp",
 		"GET /api/meta",
 		"GET /api/previous/counts",

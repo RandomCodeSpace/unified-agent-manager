@@ -1726,8 +1726,22 @@ export interface AddConnectionInput { label: string; base_url: string; token: st
 export type UpdateConnectionInput = Partial<AddConnectionInput> & { enabled?: boolean };
 export interface ConnectedStatus { status: 'connecting' | 'online' | 'offline' | 'auth-required' | 'unsupported' | 'account-mismatch'; error?: string }
 
+/** A read-only check using the selected UAM server's glab credentials. Omitted token details are unknown. */
+export interface GitLabStatus {
+  installed: boolean;
+  checked_at: string;
+  hostname?: string;
+  authenticated: boolean;
+  username?: string;
+  name?: string;
+  message?: string;
+  token?: { scopes?: string[]; expires_at: string | null };
+  project?: { path: string; readable: boolean; access_level?: number };
+}
+
 /** The capability a connected instance must have for a route family; the first match wins. */
 const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
+  ['gitlab-status-v1', (path) => /^\/api\/glab(?:[?]|$)/.test(path)],
   ['configuration-v1', (path) => path.startsWith('/api/configuration')],
   ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
   ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
@@ -1910,6 +1924,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
     webSettings: () => call<Settings>('GET', '/api/settings'),
+    gitlabStatus: (projectId = '') => call<GitLabStatus>('GET', `/api/glab${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
     configuration: (projectId = '') => call<Configuration>('GET', `/api/configuration${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
     draftConfiguration: (kind: Exclude<ConfigurationKind, 'instructions'>, brief: string, projectId = '') => call<ConfigurationDraft>('POST', `/api/configuration/${kind}/draft${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { brief }),
     saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
