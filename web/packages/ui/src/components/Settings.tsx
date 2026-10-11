@@ -699,7 +699,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
     </Section> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
-    archived: loaded ? <Section id="archived" title="Archived" help="Archived tasks are read-only for good. Open one to read its conversation; its menu runs it again, exports it or deletes it. Search in the sidebar finds them too.">
+    archived: loaded ? <Section id="archived" title="Archived" help="Open an archived task to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived tasks too.">
       <ArchivedTasks />
     </Section> : <PendingSection id="archived" title="Archived" label="Loading tasks…" />,
     models: <>

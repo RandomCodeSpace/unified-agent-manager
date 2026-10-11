@@ -970,8 +970,8 @@ export function install(): { received: Received[] } {
       }
     }
 
-    // Lifecycle: settle -> archive (from any stage, final) -> delete; a busy Task refuses a stage change.
-    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive)$/)) && method === 'POST') {
+    // Lifecycle: archived Tasks can be restored as Finished or deleted; busy Tasks cannot be put away.
+    if ((r = m(/^\/api\/sessions\/([^/]+)\/(settle|reopen|archive|unarchive)$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       const stage = t.stage ?? 'active';
@@ -990,6 +990,10 @@ export function install(): { received: Received[] } {
           if (stage === 'archived') return fail(409, 'the task is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
+          return json(200, summary(t));
+        case 'unarchive':
+          if (stage !== 'archived') return fail(409, `a ${stage} task cannot be unarchived`);
+          touch(t, { stage: 'active', state: 'completed', open: false, state_detail: '', stop_reason: undefined, archived_at: undefined, settled_at: undefined, settled_by: undefined, done_at: undefined, done_item_id: undefined, done_line: undefined });
           return json(200, summary(t));
       }
     }

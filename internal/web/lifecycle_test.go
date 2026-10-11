@@ -125,6 +125,88 @@ func TestSettleReopenAndArchive(t *testing.T) {
 
 func errOf(_ SessionSummary, err error) error { return err }
 
+func TestUnarchiveRestoresFinishedTask(t *testing.T) {
+	m, prov, st := newTestManager(t)
+	sum, conv := createSession(t, m, prov)
+	if _, err := m.Settle(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	setSession(m, sum.ID, func(s *webSession) {
+		s.done = &store.WebDone{ItemID: "old-reply", Verdict: doneVerdictDone, At: time.Now()}
+		s.settledBy, s.unseenEnd = settledByAuto, true
+		s.detail, s.stopCode = "old stop", "old-code"
+	})
+	at := time.Date(2030, 1, 3, 3, 4, 5, 0, time.UTC)
+	setNow(m, at)
+	sub, _, err := m.Subscribe("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := m.Unarchive(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(got SessionSummary) {
+		t.Helper()
+		if got.ID != sum.ID || got.ConversationID != sum.ConversationID || got.ProjectID != sum.ProjectID ||
+			got.Stage != StageActive || got.State != StateCompleted || got.Open ||
+			!got.ArchivedAt.IsZero() || !got.SettledAt.IsZero() || got.SettledBy != "" ||
+			!got.DoneAt.IsZero() || got.StateDetail != "" || !got.UpdatedAt.Equal(at) {
+			t.Fatalf("restored = %+v", got)
+		}
+	}
+	check(restored)
+	check(nextSession(t, sub))
+	if len(prov.Opens()) != 1 || conv.Closes() != 1 || len(conv.Sends()) != 0 {
+		t.Fatalf("unarchive started work: opens %d, closes %d, sends %d", len(prov.Opens()), conv.Closes(), len(conv.Sends()))
+	}
+	rec, _ := loadRecord(t, st, "fake", sum.ID)
+	if rec.Web.Turn != StateCompleted || rec.Web.Stage != StageActive || rec.Web.Done != nil || rec.Web.UnseenEnd || rec.Web.StopReason != "" {
+		t.Fatalf("stored unarchive = %+v", rec.Web)
+	}
+	if _, err := m.Unarchive(sum.ID); statusOf(err) != http.StatusConflict {
+		t.Fatalf("unarchive active task = %v, want 409", err)
+	}
+	if _, err := m.Unarchive("missing"); statusOf(err) != http.StatusNotFound {
+		t.Fatalf("unarchive missing task = %v, want 404", err)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	prov2 := agenttest.NewProvider("fake", allCaps)
+	prov2.AddConversation(sum.ConversationID, nil)
+	m2 := startManager(t, st, prov2)
+	got, err := m2.Summary(sum.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(got)
+	if _, err := m2.Submit(sum.ID, PromptRequest{Text: "continue", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	if opens := prov2.Opens(); len(opens) != 1 || opens[0].ConversationID != sum.ConversationID || len(prov2.Last().Sends()) != 1 {
+		t.Fatalf("next prompt did not resume the same conversation: %+v", opens)
+	}
+}
+
+func TestUnarchiveRoute(t *testing.T) {
+	ts := newTestServer(t, ServerConfig{})
+	sum, _ := createSession(t, ts.m, ts.prov)
+	if _, err := ts.m.Archive(sum.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/sessions/" + sum.ID + "/unarchive"
+	if w := ts.do(http.MethodPost, path, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated unarchive = %d", w.Code)
+	}
+	if w := ts.do(http.MethodPost, path, "", withCookie(ts)); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"state":"completed"`) || strings.Contains(w.Body.String(), `"archived_at"`) {
+		t.Fatalf("unarchive = %d %s", w.Code, w.Body)
+	}
+}
+
 // Any Task can be archived: an active one is archived without being settled.
 func TestArchiveActiveTaskLeavesSettledAtEmpty(t *testing.T) {
 	m, prov, st := newTestManager(t)

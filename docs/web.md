@@ -1377,7 +1377,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   row menu (hover "…" or right-click) or the header menu. A settled
   Task is read-only and its conversation is closed; reopen it to continue,
   and your next message picks up the same conversation. Archive a Task, settled
-  or not, to put it away for good; an archived Task cannot be reopened. Only
+  or not, to put it away. **Unarchive** restores the same Task as Finished,
+  keeps its conversation and starts no turn. Only
   an archived Task can be deleted, and a Project can be removed only once
   every Task in it is archived. Deleting or removing never deletes the
   provider's copy of the conversation and never touches the directory. It does
@@ -1390,7 +1391,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   |---|---|---|---|
   | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
   | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
-  | Archive | an active or settled Task | for an active Task, the same as Settle | Read-only for good; there is no unarchive |
+  | Archive | an active or settled Task | for an active Task, the same as Settle | Put away, read-only until unarchived |
+  | Unarchive | an archived Task | – | Finished and active again; the next message continues the same conversation |
   | Delete Task | an archived Task | – | The Task is removed from UAM |
   | Remove Project | any Project | every Task in it archived, or no Tasks | The Project, its archived Tasks, its routines and the prompts saved for it are removed from UAM |
 

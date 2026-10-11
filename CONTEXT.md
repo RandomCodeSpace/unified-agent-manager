@@ -9,7 +9,7 @@
 | **Task** | A UAM record for a conversation in a Project. It has a model, a name, and lifecycle state. It can be created in UAM or imported from an existing Copilot conversation. |
 | **Active** | A Task that can accept work. Its execution state may be idle, working, or waiting for the user. |
 | **Settled** | A Task marked complete by the user. It is read-only and its conversation is closed. Reopening makes it active; the next prompt continues the same conversation. |
-| **Archived** | The final stage of a Task. It is read-only, cannot be reopened, and can be deleted. |
+| **Archived** | A Task put away, read-only. Unarchive restores the same Task as Finished; Delete removes it. |
 | **Imported Task** | A Task linked to an existing Copilot conversation. UAM checks whether another client holds that conversation before importing or sending work. |
 | **Spawned Task** | A Task another Task's agent started with `uam_create_task`, in an existing Project. It starts in safe mode, records the Task that started it (`spawned_by`), and cannot start Tasks itself. |
 | **Routine** | Recurring work in a Project: on its schedule (daily, weekdays, every N hours or weekly, in the host's local time) it starts a Task with its prompt. Its runs never overlap, are capped per day and in minutes, and record their outcome. A Task a run started records the routine (`routine_id`) and cannot start Tasks itself. |

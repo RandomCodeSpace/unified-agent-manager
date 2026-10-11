@@ -24,7 +24,9 @@ export interface TaskActions {
   rename: (id: string, name: string) => Promise<void>;
   settle: (id: string) => void;
   reopen: (id: string) => void;
-  /** Opens the archive confirmation: archive is final here. */
+  /** Restores an archived Task as Finished; absent on older instances. */
+  unarchive?: (id: string) => void;
+  /** Opens the archive confirmation. */
   archive: (id: string) => void;
   /** Opens the delete confirmation; only an archived Task can be deleted. */
   remove: (id: string) => void;
@@ -83,8 +85,7 @@ export function canRename(s: SessionSummary, a: TaskActions): boolean {
 /**
  * The same items everywhere (T3 Code): Rename, Settle or Reopen, Archive, Delete; Close
  * for an open conversation; Run again, Try with another model and Export as Markdown when
- * App provides them. Delete appears only for archived Tasks. Rules unchanged:
- * settle → archive (from any stage, final) → delete only after archive.
+ * App provides them. Unarchive and Delete appear only for archived Tasks.
  */
 export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming['place']): ActionItem[] {
   const stage = s.stage ?? 'active';
@@ -94,12 +95,13 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
     { key: 'rename', label: 'Rename', icon: <Pencil />, disabled: !canRename(s, a), takesFocus: true, onSelect: () => a.startRename(s.id, place) },
   ];
   if (stage === 'active' && s.open) items.push({ key: 'close', label: 'Close conversation', icon: <PowerOff />, disabled: busy, onSelect: () => a.close(s.id) });
-  const { runAgain, tryModel, exportMarkdown } = a;
+  const { runAgain, tryModel, exportMarkdown, unarchive } = a;
   if (runAgain) items.push({ key: 'run-again', label: 'Run again', icon: <RotateCw />, disabled: busy, onSelect: () => runAgain(s.id), separator: true });
   if (tryModel) items.push({ key: 'try-model', label: 'Try with another model…', icon: <Cpu />, disabled: busy, onSelect: () => tryModel(s.id) });
   if (exportMarkdown) items.push({ key: 'export', label: 'Export as Markdown', icon: <Download />, disabled: busy, onSelect: () => exportMarkdown(s.id), separator: !runAgain });
   if (stage === 'active') items.push({ key: 'settle', label: 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
   if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy, onSelect: () => a.reopen(s.id), separator: true });
+  if (stage === 'archived' && unarchive) items.push({ key: 'unarchive', label: 'Unarchive', icon: <ArchiveRestore />, disabled: busy, onSelect: () => unarchive(s.id), separator: true });
   if (stage !== 'archived') items.push({ key: 'archive', label: 'Archive', icon: <Archive />, disabled: busy || (stage === 'active' && blocked), reason: stage === 'active' && blocked ? STAGE_REASON : undefined, onSelect: () => a.archive(s.id) });
   if (stage === 'archived') items.push({ key: 'delete', label: 'Delete', icon: <Trash2 />, danger: true, disabled: busy, onSelect: () => a.remove(s.id), separator: true });
   return items;

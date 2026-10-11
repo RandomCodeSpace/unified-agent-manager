@@ -269,6 +269,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleStage((*Manager).Settle))
 	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleStage((*Manager).Archive))
+	mux.HandleFunc("POST /api/sessions/{id}/unarchive", s.handleStage((*Manager).Unarchive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
 	mux.HandleFunc("GET /api/sessions/{id}/plan-reviews/{rid}", s.handlePlanReview)
 	mux.HandleFunc("GET /api/sessions/{id}/plan", s.handlePlanDraft)

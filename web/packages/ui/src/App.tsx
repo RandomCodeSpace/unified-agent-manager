@@ -1026,6 +1026,12 @@ export default function App() {
       },
       settle: (id) => void runTask(id, () => api.stage(id, 'settle'), 'settle the task').catch(() => {}),
       reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
+      unarchive: meta?.capabilities?.includes('unarchive-v1') ? (id) => void runTask(id, async () => {
+        const s = await api.stage(id, 'unarchive');
+        markViewed(id, s.updated_at);
+        select(id);
+        return s;
+      }, 'unarchive the task').catch(() => {}) : undefined,
       archive: (id) => openTaskDialog({ kind: 'archive', id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
@@ -1034,7 +1040,7 @@ export default function App() {
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1073,6 +1079,10 @@ export default function App() {
       },
       settle: (id) => run(id, () => c.stage(id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
+      unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
+        await c.stage(id, 'unarchive');
+        open(id);
+      }, 'unarchive the task') : undefined,
       archive: (id) => openTaskDialog({ kind: 'archive', id, owner: m.id }),
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
@@ -1080,7 +1090,7 @@ export default function App() {
       runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog]);
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1445,7 +1455,7 @@ export default function App() {
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title="Archive this task?"
-              description="Archiving makes the task permanently read-only. It stays in Settings → Archived with its full conversation. It cannot be reopened."
+              description="The task moves to Settings → Archived with its full conversation. Unarchive returns it to Finished."
               confirmLabel="Archive task"
               danger={false}
               busy={dialogBusy}

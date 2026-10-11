@@ -6,7 +6,7 @@ import { UamApp } from '@uam/ui';
 import { install } from '../../src/mock/install';
 import { createApiClient, type ConnectedInstance } from '../../src/api';
 
-const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'notices-v1'];
+const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'notices-v1', 'unarchive-v1'];
 const record = (id: string, label: string): ConnectedInstance => ({ id, instance_id: `instance-${id}`, label, base_url: `https://${id}.example`, enabled: true, generation: 1, has_key: true, version: 'test', protocol_major: 1, capabilities, allow_private: false });
 
 function federated(hash = '', records = [record('b', 'Workstation B'), record('c', 'Workstation C')], strict = true) {
@@ -244,6 +244,33 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
   await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
   expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner]);
+});
+
+test('Unarchive from a remote search result restores only its owner and opens it as Finished', async () => {
+  const { user, calls, owners } = federated();
+  const rows = await taskRows();
+  await user.type(rows.getByRole('searchbox', { name: 'Search tasks' }), 'Node 24');
+  const task = await rows.findByRole('button', { name: /Pin GitHub Actions to Node 24/, description: 'Workstation B' });
+  fireEvent.contextMenu(task);
+  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Unarchive' }));
+  await waitFor(() => expect(window.location.hash).toContain('task=t12&home=home-a&instance=instance-b&connection=b&generation=1'));
+  const restoredRows = await taskRows();
+  await restoredRows.findByRole('button', { name: /Finished.*Pin GitHub Actions to Node 24/, description: 'Workstation B' });
+  expect(calls.filter(call => call.path.endsWith('/unarchive')).map(call => [call.owner, call.method])).toEqual([['b', 'POST']]);
+  for (const owner of owners) expect(owner.mock.received).toHaveLength(0);
+  for (const label of ['Main Server', 'Workstation C']) expect(restoredRows.getByRole('button', { name: /Archived.*Pin GitHub Actions to Node 24/, description: label })).toBeTruthy();
+});
+
+test('Unarchive is hidden for a connected instance that does not advertise it', async () => {
+  const peer = { ...record('b', 'Older server'), capabilities: capabilities.filter(c => c !== 'unarchive-v1') };
+  const { user, calls } = federated('', [peer]);
+  const rows = await taskRows();
+  await user.type(rows.getByRole('searchbox', { name: 'Search tasks' }), 'Node 24');
+  fireEvent.contextMenu(await rows.findByRole('button', { name: /Pin GitHub Actions to Node 24/, description: 'Older server' }));
+  const menu = within(await screen.findByRole('menu'));
+  expect(menu.queryByRole('menuitem', { name: 'Unarchive' })).toBeNull();
+  expect(menu.getByRole('menuitem', { name: 'Delete' })).toBeTruthy();
+  expect(calls.some(call => call.path.endsWith('/unarchive'))).toBe(false);
 });
 
 

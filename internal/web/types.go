@@ -41,7 +41,7 @@ const (
 )
 
 // Task stages. A Task is active until the user settles or archives it;
-// archived is final.
+// archived is read-only until explicitly unarchived.
 const (
 	StageActive   = ""
 	StageSettled  = "settled"

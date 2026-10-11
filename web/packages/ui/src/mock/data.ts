@@ -136,6 +136,7 @@ export function seed(): MockState {
   const wholeTexts: Record<string, string> = {};
   const meta: Meta = {
     version: 'dev-mock',
+    capabilities: ['unarchive-v1'],
     recent_workdirs: ['/home/user/projects/unified-agent-manager', '/home/user/dotfiles', '/home/user/projects/notes-site', '/home/user/projects/scratch'],
     providers: [
       {

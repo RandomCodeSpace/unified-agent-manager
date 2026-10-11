@@ -4112,8 +4112,14 @@ func (m *Manager) Reopen(id string) (SessionSummary, error) {
 	return m.moveStage(id, StageActive, StageSettled)
 }
 
-// Archive moves an active or settled Task to its final stage; nothing moves
-// it back. An active Task must meet the same conditions as for Settle.
+// Unarchive restores an archived Task as finished without starting a turn.
+// Its next prompt continues the same conversation.
+func (m *Manager) Unarchive(id string) (SessionSummary, error) {
+	return m.moveStage(id, StageActive, StageArchived)
+}
+
+// Archive puts away an active or settled Task, read-only until unarchived.
+// An active Task must meet the same conditions as for Settle.
 // Archiving ends the Task's host tool calls in progress.
 func (m *Manager) Archive(id string) (SessionSummary, error) {
 	summary, err := m.moveStage(id, StageArchived, StageActive, StageSettled)
@@ -4184,6 +4190,12 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 		s.archivedAt = now
 	case StageActive:
 		s.settledAt, s.settledBy = time.Time{}, ""
+		if s.stage == StageArchived {
+			s.archivedAt = time.Time{}
+			s.setBase(StateCompleted, "")
+			s.stopCode, s.unseenEnd = "", false
+			m.clearDoneLocked(s)
+		}
 	}
 	s.stage = to
 	if to != StageActive {

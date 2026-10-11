@@ -47,6 +47,23 @@ describe('Settings → Archived', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
   });
 
+  test('Unarchive opens the same Task as Finished without sending a prompt', async () => {
+    const { user, mock } = await openArchived();
+    const menu = await openMenu(user, 'Actions for Pin GitHub Actions to Node 24');
+    await user.click(menu.getByRole('menuitem', { name: 'Unarchive' }));
+    await waitFor(() => expect(window.location.hash).toBe('#task=t12'));
+    const side = await sidebar();
+    const task = await side.findByRole('button', { name: /Finished.*Pin GitHub Actions to Node 24/ });
+    expect(within(task).getByText('Finished')).toBeTruthy();
+    expect(screen.queryByText('Archived. This task is read-only.')).toBeNull();
+    expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveProperty('disabled', false);
+    expect(mock.received).toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
+    await user.click(await screen.findByRole('button', { name: 'Archived', exact: true }));
+    const list = within(await screen.findByRole('list', { name: 'Archived tasks' }));
+    expect(list.queryByRole('button', { name: /Node 24.*archived/ })).toBeNull();
+  });
+
   test('a long list offers a filter', async () => {
     const state = data.seed();
     const base = state.tasks.find((t) => t.id === 't13')!;
