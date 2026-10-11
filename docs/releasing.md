@@ -62,3 +62,19 @@ CI runs on pull requests and pushes to `main`. Release tags run the same CI
 through the release workflow, without a second standalone CI run. CI, security
 and distro checks cancel superseded runs for the same pull request; main,
 manual and release runs keep separate concurrency groups.
+
+PR CI builds the web bundle once and shares it with the Go build and race tests.
+Web lint, unit coverage and typechecking run in the web job; component tests run
+with coverage in two parallel shards. Sonar imports those reports and the Go race
+coverage report without rerunning tests. The existing 85% Go coverage floor and
+Sonar quality gate remain in force. Missing coverage reports or Sonar credentials
+fail the check. Fork PRs cannot access the Sonar secret: a maintainer must review
+the change and run it on a branch in this repository before merging.
+
+Sonar runs in CI on PRs, main, manual runs and the weekly schedule. Release-tag CI
+repeats the tests and exact bundle verification without a separate Sonar scan.
+Require `web`, both `web-tests` shards
+and `SonarCloud quality gate` alongside the Go, security, CodeQL, distro and release
+smoke checks in branch protection, so a failed dependency cannot hide behind a
+skipped downstream job. Coverage thresholds are floors, not a guarantee that the
+percentage can never decrease.
