@@ -34,7 +34,9 @@ The release workflow repeats the source-parent/child checks, rebuilds the UI
 with the pinned Node version, and refuses a bundle that differs from the tag,
 including extra ignored files. `make check-web` checks existing build output
 without rebuilding it.
-GoReleaser also builds the UI before compiling Go for snapshots and releases.
+GoReleaser builds the UI for snapshots. For releases it checks and embeds the
+tagged bundle already rebuilt and verified by the required quality job; the
+publishing job does not need Node.js or another UI build.
 Only the tag is pushed for the generated child; source PRs carry no bundle.
 
 After publication, install a specific release without Node.js:
@@ -55,3 +57,8 @@ contract in a disposable repository. It exercises source-only behavior,
 alpha preparation, beta verification, version syntax, source isolation, stable ancestry, duplicate-tag refusal, a real
 versioned Go install from a local module proxy, and rejection of source edits
 in a generated child. It does not publish tags or contact a provider.
+
+CI runs on pull requests and pushes to `main`. Release tags run the same CI
+through the release workflow, without a second standalone CI run. CI, security
+and distro checks cancel superseded runs for the same pull request; main,
+manual and release runs keep separate concurrency groups.

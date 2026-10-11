@@ -15,6 +15,11 @@ permissions:
 env:
   GOTOOLCHAIN: local
 
+# Group PR runs together; keep main, manual and release runs independent.
+concurrency:
+  group: security-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   govulncheck:
     name: govulncheck

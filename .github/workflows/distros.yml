@@ -15,6 +15,11 @@ env:
 permissions:
   contents: read
 
+# Group PR runs together; keep main, manual and release runs independent.
+concurrency:
+  group: distros-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build-artifacts:
     name: build static binaries
