@@ -99,7 +99,7 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
   }, []);
   // With an enabled connection, tokens are every machine's (they never overlap); the allowance is the account's, so it is not.
   const machines = federation?.machines && federation.machines.length > 1 ? federation.machines : null;
-  const sources: Source[] = machines ? machines.map((m) => ({ id: m.id, label: m.label, client: m.client, down: cannotReport(m) })) : [{ id: '', label: 'This instance', client: api }];
+  const sources: Source[] = machines ? machines.map((m) => ({ id: m.id, label: m.label, client: m.client, down: cannotReport(m) })) : [{ id: '', label: 'This server', client: api }];
   const [scope, setScope] = useState(ALL_MACHINES);
   const one = machines ? sources.find((source) => source.id === scope) : sources[0];
   const states = sources.map((source) => {

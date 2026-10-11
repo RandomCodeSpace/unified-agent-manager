@@ -131,7 +131,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
               Browse
             </Button>
           </div>
-          {!browsable && <Note id="add-dir-browse-note" className="mt-2">{`${target?.label ?? 'This instance'} does not offer folder browsing to connected instances. Type the folder's path, or update UAM there.`}</Note>}
+          {!browsable && <Note id="add-dir-browse-note" className="mt-2">{`${target?.label ?? 'This server'} does not offer folder browsing to connected instances. Type the folder's path, or update UAM there.`}</Note>}
           {recent.length > 0 && (
             <Select
               aria-label="Recent folders"

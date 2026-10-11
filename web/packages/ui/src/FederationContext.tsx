@@ -6,9 +6,9 @@ import { createContext, useContext, type ReactNode } from 'react';
 /** One enabled instance ("machine") the hosting UAM shows: this one (`id` '') or a connection. */
 export interface Machine {
   id: string;
-  /** "This instance" or the connection's label. */
+  /** "This server" or the connection's label. */
   label: string;
-  /** The compact row label: "Local" or the connection's label. */
+  /** The compact row label: "This server" or the connection's label. */
   short: string;
   connection: ConnectedInstance | null;
   client: ApiClient;
@@ -61,7 +61,6 @@ export interface FederationView {
   onEvent?: (action: Action) => void;
   onTerminal: (open: boolean) => void;
   connectionsSettings: ReactNode;
-  sourceControl: ReactNode;
   otherAttention?: number;
   onHomeVersion: (version: string) => void;
   homeLoadedVersion?: string;
@@ -74,6 +73,7 @@ export interface FederationView {
   choices?: MachineChoice[];
   /** Shows `path` on the machine `id` ('' for this instance). */
   go?: (id: string, path: string) => void;
+  /** The Task list's scope: an instance (`project` '') or a Project on one; null shows every instance. */
   filter?: MachineFilter | null;
   onFilter?: (filter: MachineFilter | null) => void;
   intent?: MachineIntent | null;
@@ -88,3 +88,9 @@ export interface FederationView {
 }
 export const FederationContext = createContext<FederationView | null>(null);
 export const useFederation = () => useContext(FederationContext);
+
+/** The instance the Task list is scoped to (picked in the instance switcher, or the filtered Project's); none while it shows every instance. */
+export function scopedMachine(view: FederationView | null): Machine | undefined {
+  const filter = view?.filter;
+  return filter ? view.machines?.find((m) => m.id === filter.machine) : undefined;
+}
