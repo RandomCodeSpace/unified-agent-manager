@@ -15,6 +15,7 @@ import { ContextMenu } from './ui/menu';
 import { Tip } from './ui/tooltip';
 import { UsageButton } from './UsageButton';
 import { restartNotice } from './UamService';
+import { BUILD_VERSION, shortVersion } from '../lib/update';
 import { InstanceSwitcher } from './InstanceSwitcher';
 
 /** Project-level navigation and actions. */
@@ -186,8 +187,8 @@ function ConnectionMark({ connection, side }: Readonly<{ connection: Connection;
 
 /** "v0.7.1-161-g228dbee0" reads as "v0.7.1+161"; the tip keeps the whole build. Release versions read as they are. */
 function VersionMeta({ version }: Readonly<{ version: string }>) {
-  const build = /^(.+)-(\d+)-g([0-9a-f]{7,})(-dirty)?$/.exec(version);
-  const short = build ? `${build[1]}+${build[2]}` : version;
+  const build = BUILD_VERSION.exec(version);
+  const short = shortVersion(version);
   return (
     <Tip
       label={

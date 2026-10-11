@@ -5,6 +5,7 @@ import type { ConnectedStatus, SessionSummary } from '../api';
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
 import { cn } from '../lib/cn';
 import { groupTasks, needsYouCount, type Unread } from '../lib/tasks';
+import { shortVersion } from '../lib/update';
 import { Dot, useApp, type Tone } from './common';
 import { Key } from './InlinePicker';
 import { BottomSheet } from './Subagents';
@@ -50,7 +51,7 @@ function describe(machine: Machine, live: { sessions: SessionSummary[]; hasNews:
     label: machine.label,
     home: !machine.connection,
     status: machine.status.status,
-    version: machine.connection?.version ?? version,
+    version: shortVersion(machine.connection?.version ?? version ?? '') || undefined,
     open: groupTasks(sessions).active.length,
     working: sessions.filter((s) => s.state === 'working').length,
     needs: needsYouCount(sessions, machine.active && live ? live.hasNews : machine.hasNews),
