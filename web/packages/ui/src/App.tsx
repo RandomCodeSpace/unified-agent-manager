@@ -1338,7 +1338,7 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-[360px]" backdropClassName={DRAWER_BACKDROP}>
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP}>
                 {sidebar}
               </Sheet>
             )}

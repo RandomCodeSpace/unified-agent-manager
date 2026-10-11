@@ -675,7 +675,7 @@ function CommentBox({ label, onSave, onCancel }: Readonly<{ label: string; onSav
         rows={3}
         aria-label={label}
         placeholder="What should the agent change here?"
-        className="w-full resize-y rounded-sm bg-sunken px-2 py-1.5 text-ui text-ink shadow-well placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none"
+        className="w-full resize-y rounded-sm bg-sunken px-2 py-1.5 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none"
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
           if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }

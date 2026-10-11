@@ -30,7 +30,7 @@ const TONE: Record<OutcomeTone, string> = {
 };
 
 const areaClass =
-  'min-h-28 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none';
+  'min-h-28 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none';
 
 /**
  * Routines (docs/web.md, Routines): a view in the main pane like Settings. `#routines` lists every

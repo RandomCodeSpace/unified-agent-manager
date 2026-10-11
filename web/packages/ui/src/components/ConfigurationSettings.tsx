@@ -22,7 +22,7 @@ const HOOK_EVENTS = ['sessionStart', 'sessionEnd', 'userPromptSubmitted', 'userP
 const HOOK_MATCHERS: Record<string, string> = { notification: 'notification_type', permissionRequest: 'toolName', preToolUse: 'toolName', postToolUse: 'toolName', preCompact: 'trigger', subagentStart: 'agentName' };
 
 function TextArea(props: ComponentProps<'textarea'>) {
-  return <textarea rows={6} spellCheck={false} {...props} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:shadow-focus focus-visible:outline-none disabled:opacity-45" />;
+  return <textarea rows={6} spellCheck={false} {...props} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well placeholder:text-muted focus-visible:outline-none disabled:opacity-45" />;
 }
 
 interface Draft {

@@ -1336,9 +1336,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
       // `data-draft` marks unsent work (text, picked files, uploads, a parked draft); an update waits while it is set.
       data-draft={text.trim() || files.length || uploads.length || parked?.text.trim() || parked?.files.length || parked?.uploads.length ? '' : undefined}
       className={cn(
-        // The floating control plane (DESIGN.md Composer): `lg` corners on the float shadow; focus-within fades in
-        // (opacity only) a pseudo-element carrying a deeper neutral shadow (no glow), so no shadow is ever animated.
-        "relative isolate flex flex-col rounded-lg bg-raised shadow-float before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:opacity-0 before:shadow-focus-float before:transition-opacity before:duration-160 before:content-[''] focus-within:before:opacity-100",
+        // The composer keeps its normal surface and shadow while typing.
+        'relative isolate flex flex-col rounded-lg bg-raised shadow-float',
         locked && 'bg-surface',
       )}
       onSubmit={(e) => {

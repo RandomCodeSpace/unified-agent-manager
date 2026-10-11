@@ -146,7 +146,7 @@
   --breakpoint-lg: 1280px;
   --breakpoint-xl: 1800px;
 
-  --spacing-rail: 320px;
+  --spacing-rail: 384px;
   --spacing-rail-collapsed: 48px;
   --spacing-drawer: 300px;
   --spacing-header: 44px;
@@ -316,6 +316,10 @@
   :focus-visible {
     outline: 2px solid var(--color-focus);
     outline-offset: 1px;
+  }
+  /* Text entry stays visually steady on focus; the caret identifies where typing goes. */
+  :is(input:not([type]), input[type='text'], input[type='search'], input[type='password'], input[type='email'], input[type='url'], input[type='tel'], input[type='number'], textarea, [contenteditable='true']):focus-visible {
+    outline: none;
   }
   button,
   [role='button'],

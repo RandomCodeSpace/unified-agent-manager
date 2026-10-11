@@ -793,10 +793,10 @@ export const Sidebar = memo(function Sidebar({
 
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
-      <header className="flex h-header shrink-0 items-center gap-0.5 px-2">
+      <header className="flex h-header shrink-0 items-center gap-0.5 px-2 max-sm:h-auto max-sm:flex-wrap max-sm:py-1">
         <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
-        {/* The field lifts when focused and carries the keyboard focus ring; the input's own outline is off. */}
-        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted transition-[background-color,box-shadow] duration-100 focus-within:bg-raised focus-within:shadow-focus focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-focus">
+        {/* Search uses the spare header width, or its own full row on a phone. */}
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
           <input ref={search} type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>

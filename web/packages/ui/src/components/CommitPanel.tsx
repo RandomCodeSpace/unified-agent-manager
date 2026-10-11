@@ -255,7 +255,7 @@ export function CommitPanel({
             rows={4}
             spellCheck
             placeholder="Summarize the change in one line, then add details after a blank line"
-            className="min-h-24 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well transition-[background-color] placeholder:font-sans placeholder:text-muted focus-visible:bg-raised focus-visible:shadow-focus focus-visible:outline-none"
+            className="min-h-24 w-full resize-y rounded-sm bg-sunken px-2.5 py-2 font-mono text-code-sm text-ink shadow-well transition-[background-color] placeholder:font-sans placeholder:text-muted focus-visible:outline-none"
             value={draft.message}
             onChange={(e) => setDraft({ message: e.target.value })}
           />
