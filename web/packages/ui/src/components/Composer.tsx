@@ -16,6 +16,7 @@ import { SUGGESTION_ID, SuggestionGhost, useSuggestion } from './Assist';
 import { isPanelOutput, panelOutput, type CommandOutput } from './CommandOutput';
 import { ASIDE_COMMAND, TaskAsideReader, useAsides, withAside } from './AskAside';
 import { ComposerTools, type ToolsHandle } from './ComposerTools';
+import { WritingAssistance } from './WritingAssistance';
 import { PHONE } from './Todos';
 import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel, enterActions, enterInPicker, entersRiskiest, filterCommands, parseCommand, pruneFiles, removeToken, triggerAt } from '../lib/composer';
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
@@ -384,6 +385,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /* ---------- `/` and `@` pickers ---------- */
 
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const [writingControl, setWritingControl] = useState<HTMLSpanElement | null>(null);
   // The control row folds to fit its width (lib/toolbarFold) whenever that or its contents change. Folding writes one
   // attribute on the row, never state, so a resize does not render the composer. The row renders with no folds, so
   // a row with room is never written to, and opening a Task forces no layout here.
@@ -1574,6 +1576,15 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         className={cn('max-h-[40dvh] min-h-14 w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-chat text-ink outline-hidden [field-sizing:content] disabled:text-muted max-sm:text-chat-lg', locked && 'min-h-0 h-2 pt-0')}
       />
       {suggestion && <SuggestionGhost text={suggestion} onUse={takeSuggestion} />}
+      <WritingAssistance
+        text={text}
+        textareaRef={textarea}
+        scope={JSON.stringify([storageKey, bufferOwner])}
+        disabled={!!busy || locked}
+        suspended={!!trigger}
+        toolbarTarget={writingControl}
+        onChange={updateText}
+      />
       </div>
 
       {/* One control row (DESIGN.md D3): Attach and the pickers at left, the actions at right. On a phone the effort,
@@ -1736,6 +1747,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         )}
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        <span ref={setWritingControl} className={cn('flex size-7 shrink-0', locked && 'hidden')} />
         {busy === 'settings' && <Spinner className="mr-1" />}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
