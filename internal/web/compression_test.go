@@ -286,6 +286,8 @@ func TestStaticPrecompressedCopies(t *testing.T) {
 	assets["assets/style.css.gz"] = &fstest.MapFile{Data: gzipBytes(t, style)}
 	assets["diagram-frame.html.br"] = &fstest.MapFile{Data: []byte("brotli frame")}
 	assets["index.html.br"] = &fstest.MapFile{Data: []byte("brotli index")}
+	assets["assets/harper_wasm-abc123.wasm"] = &fstest.MapFile{Data: []byte("\x00asm\x01\x00\x00\x00")}
+	assets["assets/harper_wasm-abc123.wasm.br"] = &fstest.MapFile{Data: []byte("brotli wasm")}
 	assets["LICENSE"] = &fstest.MapFile{Data: []byte(strings.Repeat("license text ", 20))}
 	assets["LICENSE.br"] = &fstest.MapFile{Data: []byte("not sent: no type to send it as")}
 	ts := newTestServer(t, ServerConfig{Assets: assets})
@@ -297,6 +299,7 @@ func TestStaticPrecompressedCopies(t *testing.T) {
 		body                                      []byte
 	}{
 		{name: "brotli first", path: "/assets/app.js", accept: "gzip, deflate, br, zstd", encoding: "br", body: []byte("brotli app")},
+		{name: "wasm", path: "/assets/harper_wasm-abc123.wasm", accept: "br", encoding: "br", body: []byte("brotli wasm")},
 		{name: "gzip copy", path: "/assets/app.js", accept: "gzip", encoding: "gzip", body: assets["assets/app.js.gz"].Data},
 		{name: "brotli refused", path: "/assets/app.js", accept: "br;q=0, gzip", encoding: "gzip", body: assets["assets/app.js.gz"].Data},
 		{name: "no encoding", path: "/assets/app.js", body: app},

@@ -96,10 +96,10 @@ func TestFramePolicyWithoutAScriptAllowsNone(t *testing.T) {
 	}
 }
 
-// Every response but the frame document keeps the service policy, byte for
-// byte, and stays unframeable: the relaxation never leaks to a look-alike
+// Responses outside the frame document and writing checker worker keep the
+// service policy, byte for byte: the relaxation never leaks to a look-alike
 // path, an asset, the SPA fallback, the API or a refusal.
-func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
+func TestServicePolicyOutsideIsolatedRenderers(t *testing.T) {
 	const want = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	if contentSecurity != want {
 		t.Fatalf("service policy changed:\n got %q\nwant %q", contentSecurity, want)
@@ -110,6 +110,7 @@ func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 		"/", "/index.html", "/sessions/abc", "/diagram-frame", "/diagram-frame.htm", "/nested/diagram-frame.html", "/diagram-frame.html.bak",
 		"/assets/diagram-frame-abc.js", "/assets/diagram-frame-abc.map", "/assets/app.js", "/assets/style.css", "/assets/inter-latin.woff2",
 		"/missing.js", "/api/auth", "/api/sessions", "/api/nope", "/api/sessions/none",
+		"/assets/writing-checker.worker-missing.js",
 	}
 	for _, p := range paths {
 		w := ts.do(http.MethodGet, p, "", withCookie(ts))
@@ -130,5 +131,39 @@ func TestOnlyTheDiagramFrameRelaxesThePolicy(t *testing.T) {
 		if got := w.Header().Get("Content-Security-Policy"); got != contentSecurity {
 			t.Fatalf("CSP = %q", got)
 		}
+	}
+}
+
+// The worker's policy permits only its local engine to compile WebAssembly.
+// Similar names, the WASM binary, the page and missing assets keep the service policy.
+func TestWritingWorkerPolicy(t *testing.T) {
+	assets := frameAssets()
+	worker := "assets/writing-checker.worker-abc123.js"
+	others := []string{
+		"writing-checker.worker-abc123.js", "assets/nested/writing-checker.worker-abc123.js",
+		"assets/writing-checker.worker-abc123.js.map", "assets/writing-checker.worker-abc123.wasm",
+		"assets/other-writing-checker.worker-abc123.js", "assets/harper_wasm-abc123.wasm",
+	}
+	for _, name := range append(others, worker) {
+		assets[name] = &fstest.MapFile{Data: []byte("engine")}
+	}
+	ts := newTestServer(t, ServerConfig{Assets: assets})
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, name := range append(others, worker, "index.html", "assets/writing-checker.worker-missing.js") {
+			w := ts.do(method, "/"+name, "")
+			want := contentSecurity
+			if name == worker {
+				want = writingWorkerSecurity
+				if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+					t.Fatalf("%s worker = %d %q", method, w.Code, w.Header().Get("Content-Type"))
+				}
+			}
+			if got := w.Header().Get("Content-Security-Policy"); got != want {
+				t.Fatalf("%s %s: CSP = %q, want %q", method, name, got, want)
+			}
+		}
+	}
+	if strings.Contains(writingWorkerSecurity, "'unsafe-eval'") || strings.Contains(writingWorkerSecurity, "blob:") {
+		t.Fatal("the checker must not allow JavaScript evaluation or blob workers")
 	}
 }

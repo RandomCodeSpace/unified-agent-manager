@@ -1,4 +1,4 @@
-// After `vite build`: a brotli (.br) and a gzip (.gz) copy beside each text file of the built
+// After `vite build`: a brotli (.br) and a gzip (.gz) copy beside each compressible file of the built
 // app, at the highest levels, which the service sends as they are to browsers that accept
 // them (Server.precompressed in internal/web/server.go). Static files only: API responses and
 // event streams keep the service's own response compression.
@@ -7,7 +7,7 @@ import { extname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { brotliCompress, constants, gzip } from 'node:zlib';
 
-const TEXT = new Set(['.css', '.html', '.js', '.svg', '.webmanifest']);
+const COMPRESSIBLE = new Set(['.css', '.html', '.js', '.svg', '.wasm', '.webmanifest']);
 const dir = process.argv[2];
 if (!dir) throw new Error('usage: node scripts/precompress.mjs DIST_DIR');
 const [toBrotli, toGzip] = [promisify(brotliCompress), promisify(gzip)];
@@ -27,4 +27,4 @@ async function precompress(file) {
 }
 
 const entries = await readdir(dir, { recursive: true, withFileTypes: true });
-await Promise.all(entries.filter((e) => e.isFile() && TEXT.has(extname(e.name))).map((e) => precompress(join(e.parentPath, e.name))));
+await Promise.all(entries.filter((e) => e.isFile() && COMPRESSIBLE.has(extname(e.name))).map((e) => precompress(join(e.parentPath, e.name))));
