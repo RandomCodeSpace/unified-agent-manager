@@ -7,6 +7,7 @@ import { ArchivedTasks } from './ArchivedTasks';
 import { BackgroundAI } from './BackgroundAI';
 import { CopilotAccount } from './CopilotAccount';
 import { CopilotCli } from './CopilotCli';
+import { GitLabSettings } from './GitLabSettings';
 import { restartOffered, UamService } from './UamService';
 import { InstanceSwitcher } from './InstanceSwitcher';
 import { ConfigurationSettings } from './ConfigurationSettings';
@@ -662,6 +663,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // Each page's cards. Token costs, Archived and Connected instances mount only while on screen; Agents, Skills, Hooks
   // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
   const cards: Record<SettingsPage, ReactNode> = {
+    gitlab: <Section id="gitlab" title="GitLab" subtitle={`Check the credentials glab uses on ${api.owner?.label ?? 'this server'}.`}>{api.supports('gitlab-status-v1') ? <GitLabSettings projects={projects} /> : <Unsupported what="GitLab access checks" />}</Section>,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New tasks" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
       <Section id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
@@ -885,7 +887,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     </Section>,
   };
   for (const kind of ['agents', 'skills', 'hooks', 'instructions'] as const) cards[kind] = <Section id={kind} title={SETTINGS_PAGES.find((p) => p.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} scope={toolkitScope} onScope={setToolkitScope} heldBy={held.find((k) => k !== kind)} onHold={hold} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>;
-  const lazy = (id: SettingsPage) => id === 'token-costs' || id === 'archived' || id === 'connections';
+  const lazy = (id: SettingsPage) => id === 'token-costs' || id === 'archived' || id === 'connections' || id === 'gitlab';
 
   return (
     <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>

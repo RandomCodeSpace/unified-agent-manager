@@ -693,6 +693,12 @@ export function install(): { received: Received[] } {
     if (path === '/api/logout') return json(204);
     if (path === '/api/connections') return json(200, { instance_id: 'mock-home', connections: [] });
     if (path === '/api/meta') return json(200, st.meta);
+    if (path === '/api/glab' && method === 'GET') return json(200, {
+      installed: true, checked_at: new Date().toISOString(), hostname: 'gitlab.example.com',
+      authenticated: true, username: 'alex', name: 'Alex Morgan',
+      token: { scopes: ['api', 'read_repository', 'write_repository'], expires_at: '2027-01-31' },
+      ...(url.searchParams.get('project_id') ? { project: { path: 'platform/customer-portal', readable: true, access_level: 40 } } : {}),
+    });
     const accounted = account.route(method, path, body);
     if (accounted) return accounted;
     const versioned = cli(method, url);

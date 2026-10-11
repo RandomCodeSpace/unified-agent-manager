@@ -85,3 +85,16 @@ test('missing optional capability fails with an explicit unavailable error witho
     assert.equal(calls, 0);
   } finally { globalThis.fetch = original; }
 });
+
+test('GitLab status uses the selected instance and refuses older instances', async () => {
+  const original = globalThis.fetch, requests = [];
+  globalThis.fetch = async (url) => { requests.push(url); return new Response('{}'); };
+  try {
+    const old = createApiClient(connection());
+    await assert.rejects(old.gitlabStatus(), error => errorCode(error) === 'feature_unavailable');
+    assert.equal(requests.length, 0);
+    const remote = createApiClient({ ...connection(), capabilities: ['gitlab-status-v1'] });
+    await remote.gitlabStatus('project/id');
+    assert.equal(requests[0], '/api/connected/remote-b/api/glab?project_id=project%2Fid&uam_generation=3');
+  } finally { globalThis.fetch = original; }
+});

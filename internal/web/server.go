@@ -199,6 +199,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /api/projects/{id}", s.handleUpdateProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.handleRemoveProject)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
+	mux.HandleFunc("GET /api/glab", s.handleGlabStatus)
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/configuration", s.handleConfiguration)
