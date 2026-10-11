@@ -98,7 +98,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
     >
       <form id="add-project" className="flex flex-col gap-4" onSubmit={submit}>
         {machines && choices && (
-          <Field id="add-machine" label="Machine">
+          <Field id="add-machine" label="Instance">
             <Select
               id="add-machine"
               value={machine}

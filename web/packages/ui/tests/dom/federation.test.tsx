@@ -498,7 +498,7 @@ test('Add project on another machine browses and adds there, and the Project sho
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   await user.click(screen.getAllByRole('button', { name: 'Add project' })[0]);
   const dialog = within(await screen.findByRole('dialog', { name: 'Add a project' }));
-  await user.click(dialog.getByRole('combobox', { name: 'Machine' }));
+  await user.click(dialog.getByRole('combobox', { name: 'Instance' }));
   await user.click(await screen.findByRole('option', { name: /^Workstation B/ }));
   const before = calls.length;
   await user.click(dialog.getByRole('button', { name: 'Browse' }));
