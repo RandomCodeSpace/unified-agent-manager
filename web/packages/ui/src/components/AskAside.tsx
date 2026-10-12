@@ -1,6 +1,6 @@
 import { Dialog as BaseDialog } from '@base-ui/react/dialog';
 import { Popover as BasePopover } from '@base-ui/react/popover';
-import { MessageCircleQuestion, X } from 'lucide-react';
+import { Hourglass, MessageCircleQuestion, X } from 'lucide-react';
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ApiClient, type Aside, type AsideAnswer, type Command, type SessionDetail } from '../api';
@@ -13,7 +13,6 @@ import { PHONE } from './Todos';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
-import { Spinner } from './ui/spinner';
 import { HelpTip } from './ui/tooltip';
 
 /** `/btw <question>`: a question to the open conversation, answered by its current model, kept with the Task and never sent to the agent. A bare `/btw` shows the Task's asides. */
@@ -297,7 +296,7 @@ export function AsideChip({ task, turn }: Readonly<{ task: string; turn: string 
       {/* A phone's foot is already full: there the chip is its glyph and count, so Turn actions stay in view. */}
       <span aria-hidden="true" className="max-sm:hidden"> · </span>
       <button ref={button} type="button" data-aside-chip="" aria-haspopup="dialog" aria-expanded={!!at?.open} aria-label={`${count(n)} in this turn${waiting ? ', one waiting for its answer' : ''}`} className="flex h-6 items-center gap-1 rounded-sm bg-raised px-1.5 text-stamp max-sm:px-1 text-muted transition-colors duration-100 hover:bg-tint-hover hover:text-ink aria-expanded:text-ink" onClick={(e) => setAt({ open: true, phone: window.matchMedia(PHONE).matches, anchor: e.currentTarget, lift: e.currentTarget })}>
-        {waiting ? <Spinner className="size-2.5 border-current border-r-transparent text-accent" /> : <MessageCircleQuestion aria-hidden="true" className="size-3" />}
+        {waiting ? <Hourglass aria-hidden="true" className="size-3 text-accent" /> : <MessageCircleQuestion aria-hidden="true" className="size-3" />}
         <span className="font-medium max-sm:hidden">btw</span>
         <span className="tabular-nums">{n}</span>
       </button>

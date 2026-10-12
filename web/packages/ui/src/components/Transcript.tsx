@@ -1,5 +1,5 @@
 import { BodyNotice, DetailVisibility, useDetailVisibility, useBodyCopy, useDisclosure, useItemBody, useEditDiff, useWholeText, type WholeText } from './Details';
-import { Check, ChevronRight, ChevronUp, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronRight, ChevronUp, CircleDashed, Copy, Ellipsis, FileDiff, GitBranch, MessageCircleQuestion, Minus, Pencil, RotateCcw, X } from 'lucide-react';
 import { Suspense, lazy, memo, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Interaction, Item, NativeFileEdit, Subagent, ToolStatus, TurnTiming } from '../api';
@@ -480,7 +480,7 @@ function LiveStep({ item, live, sessionId, approvals }: Readonly<{ item: Item; l
           <span>Thinking…</span>
         </div>
       ) : (
-        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} />
+        <ToolRow item={item} live={live} sessionId={sessionId} approvals={approvals} tail={false} step />
       )}
       {text.trim() && (
         <div className="relative flex max-h-20 flex-col justify-end overflow-hidden pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
@@ -806,9 +806,10 @@ function toolProgress(tool: Item['tool'], named = false) {
   return <p role="status" aria-label="Tool progress" className="ml-6 break-words whitespace-pre-wrap text-caption text-muted">{named && `${toolLabel(tool).name}: `}{tool.progress}</p>;
 }
 
-/** A call's state as a glyph: the spinner while it is open, a check, a cross, or a dash for a call that never reported. */
+/** A call's state as a glyph: the spinner while it runs, a still dashed circle while it waits to start, a check, a cross, or a dash for a call that never reported. */
 export function ToolMark({ tone }: Readonly<{ tone: string }>) {
-  if (tone === 'running' || tone === 'pending') return <Spinner />;
+  if (tone === 'running') return <Spinner />;
+  if (tone === 'pending') return <CircleDashed aria-hidden="true" className="size-3.5 text-muted" strokeWidth={2.5} />;
   if (tone === 'completed' || tone === 'decided') return <Check aria-hidden="true" className="size-3.5 text-success" strokeWidth={2.5} />;
   if (tone === 'failed') return <X aria-hidden="true" className="size-3.5 text-error" strokeWidth={2.5} />;
   return <Minus aria-hidden="true" className="size-3.5 text-faint" strokeWidth={2.5} />;
@@ -925,7 +926,7 @@ function TestCount({ tests }: Readonly<{ tests: { passed: number; failed: number
  * it runs its newest output lines (`tail`; the live step shows them under the row instead). The
  * images its result returned sit under the row, visible without expanding it.
  */
-export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className, tail = true }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string; tail?: boolean }) {
+export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals, className, tail = true, step = false }: { item: Item; live: boolean; sessionId?: string; approvals?: Interaction[]; className?: string; tail?: boolean; /** The step in progress (the live foot): its mark turns even before the call reports running. */ step?: boolean }) {
   const [open, setOpen] = useDisclosure(`tool:${item.agent_id ?? ''}:${item.id}`);
   // The details (code blocks) are mounted on the first open only.
   const [opened, setOpened] = useState(open);
@@ -967,7 +968,7 @@ export const ToolRow = memo(function ToolRow({ item, live, sessionId, approvals,
               onClick={toggle}
             >
               <span className="flex size-4 shrink-0 items-center justify-center">
-                <ToolMark tone={tone} />
+                <ToolMark tone={step && tone === 'pending' ? 'running' : tone} />
               </span>
               <span className={cn('shrink-0 font-medium', tone !== 'failed' && 'text-body')}>{name}</span>
               {arg && <span className="min-w-0 truncate" title={arg}>{arg}</span>}
@@ -1271,7 +1272,7 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
   return (
     <div ref={attach} className={cn('flex flex-col text-ui text-muted', className)}>
       <button type="button" aria-expanded={expanded} className="flex h-6 w-fit items-center gap-1.5 rounded-sm pr-1 text-left transition-colors duration-100 hover:text-body pointer-coarse:min-h-11" onClick={toggle}>
-        {streaming ? <WorkingMark className="size-3" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
+        {streaming ? <span aria-hidden="true" className="mx-[3px] size-1.5 shrink-0 rounded-full bg-accent" /> : <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', expanded && 'rotate-90')} />}
         <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>

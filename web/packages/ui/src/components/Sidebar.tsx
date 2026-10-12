@@ -558,7 +558,7 @@ function Shelf({ label, icon, rows, selectedKey, open, onToggle, tabStop, render
         <span className="fade-rule flex-1" aria-hidden="true" />
         <ChevronRight aria-hidden="true" className={cn('size-3.5 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
       </button>
-      <Collapse open={open} soft>
+      <Collapse open={open}>
         <div className="max-h-[40dvh] overflow-y-auto overscroll-contain">
           <ul className="flex flex-col gap-px pt-px">
             {/* The pinned copy below owns the selected row while the shelf is closed. */}

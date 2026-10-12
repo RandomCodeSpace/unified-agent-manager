@@ -700,7 +700,7 @@ func TestCustomModelDirectKeyValidation(t *testing.T) {
 	}
 }
 
-// settled_by, done and reviewed_item are modeled fields: they load, and
+// settled_by and done are modeled fields: they load, and
 // clearing them is saved rather than restored from the record read.
 func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
@@ -709,7 +709,7 @@ func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 	}
 	const key = "copilot:0f0e0d0c"
 	at := time.Now().UTC().Truncate(time.Second)
-	set := func(by string, done *WebDone, reviewed string) {
+	set := func(by string, done *WebDone) {
 		t.Helper()
 		if err := s.Update(func(cfg *Config) error {
 			rec := cfg.Sessions[key]
@@ -718,7 +718,7 @@ func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 					Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1", Web: &WebState{Turn: "idle", Stage: "settled"}}
 			}
 			web := *rec.Web
-			web.SettledBy, web.Done, web.ReviewedItem = by, done, reviewed
+			web.SettledBy, web.Done = by, done
 			rec.Web.Update(web)
 			cfg.Sessions[key] = rec
 			return nil
@@ -727,20 +727,19 @@ func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		by       string
-		done     *WebDone
-		reviewed string
+		by   string
+		done *WebDone
 	}{
-		{"auto", &WebDone{ItemID: "a1", Verdict: "done", By: "model", Line: "All tests pass.", At: at}, "a1"},
-		{"", nil, ""},
+		{"auto", &WebDone{ItemID: "a1", Verdict: "done", By: "model", Line: "All tests pass.", At: at}},
+		{"", nil},
 	} {
-		set(tc.by, tc.done, tc.reviewed)
+		set(tc.by, tc.done)
 		cfg, err := s.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
 		web := cfg.Sessions[key].Web
-		if web == nil || web.SettledBy != tc.by || web.ReviewedItem != tc.reviewed || len(web.unknown) != 0 ||
+		if web == nil || web.SettledBy != tc.by || len(web.unknown) != 0 ||
 			(web.Done == nil) != (tc.done == nil) || tc.done != nil && (*web.Done != *tc.done) {
 			t.Fatalf("stored %+v loaded as %+v", tc, web)
 		}

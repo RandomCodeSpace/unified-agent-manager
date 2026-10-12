@@ -190,7 +190,8 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         ) : (
           <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
         )}
-        {busy && <Spinner className="shrink-0" />}
+        {/* A Task action in flight is words: the state glyph is the header's one ring. */}
+        {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}
         {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
         {renamable && !renaming && (
           <Tip label="Rename">

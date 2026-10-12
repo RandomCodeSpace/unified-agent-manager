@@ -78,7 +78,7 @@ export function UploadChip({ item, onRemove }: Readonly<{ item: Pending; onRemov
       <Button size="icon" variant="subtle" className="text-muted" aria-label={`Remove ${item.name}`} onClick={onRemove}>
         <X />
       </Button>
-      {item.status === 'uploading' && <span ref={bar} aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 w-(--fill) bg-accent transition-[width] duration-160 ease-app" />}
+      {item.status === 'uploading' && <span ref={bar} aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-(--fill) bg-accent transition-transform duration-160 ease-app" />}
     </div>
   );
 }
