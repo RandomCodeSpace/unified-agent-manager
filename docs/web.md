@@ -391,8 +391,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   added to input or output; model API requests differ from user-initiated
   requests. An agent's model rows are already included in the model rows,
   so do not add the By model and By agent views together.
-  The branch and changed-file count are on the branch button in the Task
-  header, which opens Changes. When the toolbar
+  The changed-file count is on the Changes button in the Thread header.
+  The Thread's branch sits under the composer: the branch of the Thread's
+  folder, "worktree" when the Thread runs in its own worktree, and, when
+  the server reports them, how many files are not committed and how many
+  commits are not pushed there. Click it for the branch and the folder path
+  (with Copy), and a worktree's size once measured. A low-disk warning
+  shows at the strip's end while free space is low. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes
@@ -1366,10 +1371,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   claims match the record". Otherwise the first 12 stamps show and
   **Show N more** reveals the rest. A stamp with evidence opens its call.
 - **Finish evidence**: once the last turn has completed, the Changes panel
-  (the branch button in the Task header) starts with a section titled
+  (the Changes button in the Thread header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
   agent did before what it says it did. While there is evidence, the
-  branch button's name adds "evidence available" and it shows an amber dot,
+  Changes button's name adds "evidence available" and it shows an amber dot,
   as it does while there are changed files; with nothing to review it has no dot.
   It never uses a model; fixed rules in the service read the whole turn,
   however long, and the outcome line reads the same result. The section
@@ -1585,9 +1590,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   anything else with Open in new tab and Download. Only one of Changes, Files,
   Subagents and a file preview is open at a time. On a wide window, a click in
   the conversation or the composer closes whichever of them is open. When the
-  header runs short of room (side panels open beside the sidebar), its buttons
-  drop their labels first, then Files, Charts and Terminal move into the
-  header's "…" menu, so the Task's title keeps its room.
+  header runs short of room (side panels open beside the sidebar), the
+  Thread's title keeps its width (up to about 400 px) first: the buttons drop
+  their labels, then Files, Charts and Terminal move into the header's "…"
+  menu.
 - **Terminal**: off by default. Turn on Settings → Server → UAM and access →
   Shell access → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no

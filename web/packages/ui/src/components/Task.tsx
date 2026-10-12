@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, GitPullRequest, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
@@ -24,6 +24,7 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
+import { BranchChip } from './BranchChip';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
@@ -91,15 +92,21 @@ const LAND_MARGIN = 16;
 /** Tailwind's `max-sm`: a phone-width column. */
 const PHONE = '(width < 40rem)';
 
+/** The title's width the header keeps before its buttons get their labels: a longer title truncates. */
+const TITLE_ROOM = { min: 112, max: 400 };
+
 /**
- * How much the header has room for, by its width: everything (`wide`); the header buttons as
- * icons, with no branch or last outcome (`snug`); and, `tight`, Files, Charts and Terminal folded
- * into the actions menu as on a phone. The title keeps its minimum either way (side panels open
- * beside the sidebar at 1280–1440 used to squeeze it to a letter). 0 is unmeasured: everything.
+ * How much the header has room for, by its width and the title's own width: everything (`wide`);
+ * the header buttons as icons, with no last outcome (`snug`); and, `tight`, Files, Charts and
+ * Terminal folded into the actions menu as on a phone. The title comes first: its width (up to
+ * 400px) is kept before any button label, so a side panel drops the labels instead of cutting the
+ * title to "Fix …". 0 is unmeasured: everything.
  */
-export function headerRoom(width: number): 'wide' | 'snug' | 'tight' {
-  if (!width || width >= 1000) return 'wide';
-  return width >= 600 ? 'snug' : 'tight';
+export function headerRoom(width: number, title = 0): 'wide' | 'snug' | 'tight' {
+  if (!width) return 'wide';
+  const rest = width - Math.min(Math.max(title, TITLE_ROOM.min), TITLE_ROOM.max);
+  if (rest >= 720) return 'wide';
+  return rest >= 460 ? 'snug' : 'tight';
 }
 
 interface HeaderProps {
@@ -120,9 +127,6 @@ interface HeaderProps {
   onOpenChanges: () => void;
   filesOpen: boolean;
   onToggleFiles: () => void;
-  gitlabAvailable: boolean;
-  gitlabOpen: boolean;
-  onToggleGitlab: () => void;
   chartsOpen: boolean;
   onToggleCharts: () => void;
   terminal: boolean;
@@ -159,8 +163,8 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
   return <StateMark state={state} label={label} compacting={compacting} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
 }
 
-/** The Task's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, gitlabAvailable, gitlabOpen, onToggleGitlab, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
+/** The Thread's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. The branch is under the composer (BranchChip). */
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -170,28 +174,29 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
   const phone = useMedia(PHONE);
   const header = useRef<HTMLElement>(null);
+  const titleText = useRef<HTMLHeadingElement>(null);
   const [room, setRoom] = useState<'wide' | 'snug' | 'tight'>('wide');
   useLayoutEffect(() => {
     const el = header.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const measure = () => setRoom(headerRoom(el.clientWidth));
+    // The title's full width, also while it is truncated: a new name measures again.
+    const measure = () => setRoom(headerRoom(el.clientWidth, titleText.current?.scrollWidth ?? 0));
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [name, renaming]);
   const labels = !phone && room === 'wide';
   const fold = phone || room === 'tight';
   const folded: ActionItem[] = [];
   if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: onToggleFiles });
-  if (fold && !noGit && gitlabAvailable) folded.push({ key: 'gitlab', label: gitlabOpen ? 'Close GitLab' : 'GitLab pipelines and merge requests', icon: <GitPullRequest />, onSelect: onToggleGitlab });
   const pinned = project?.charts ?? 0;
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
   if (fold && terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
   const renamable = canRename(session, actions);
-  const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
+  const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
     <header ref={header} className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3" data-scrolled={scrolled || undefined}>
@@ -202,6 +207,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
           <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
         ) : (
           <h1
+            ref={titleText}
             className="min-w-0 truncate text-display-sm text-ink"
             title={name || undefined}
             onDoubleClick={() => renamable && actions.startRename(session.id, 'header')}
@@ -229,7 +235,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         {/* The last completed turn in one line, beside its state (phones show it in the list). It takes only the room the title leaves, so the title truncates only once it is gone. */}
         {state === 'completed' && session.outcome && !readOnly(session) && room === 'wide' && <span className="min-w-0 max-w-[45%] flex-1 truncate text-meta text-muted max-sm:hidden" title={session.outcome}>{session.outcome}</span>}
       </div>
-      {/* The branch-named Changes control and its evidence cue, beside the title. */}
+      {/* The Changes control and its evidence cue, beside the title. */}
       {noGit ? (
         <>
           <Popover.Root>
@@ -252,11 +258,6 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
           <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
             {vcs}
           </div>
-          {gitlabAvailable && !fold && <Tip label="Pipelines and merge requests for this task’s commit">
-            <Button id="gitlab-link" size="md" aria-pressed={gitlabOpen} aria-label="GitLab pipelines and merge requests" className="px-2 text-muted" onClick={onToggleGitlab}>
-              <GitPullRequest /><span>GitLab</span>
-            </Button>
-          </Tip>}
           {!fold && (
             <Tip label={`Files in ${project?.name ?? 'the project'}`}>
               <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={onToggleFiles}>
@@ -657,14 +658,6 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     setFilesOpen((open) => !open);
   }, [onSheet, closePreview]);
   const closeFiles = useCallback(() => setFilesOpen(false), []);
-  const toggleGitlab = useCallback(() => {
-    closePreview(false);
-    setFilesOpen(false);
-    setChartsOpen(false);
-    setOutput(null);
-    onSheet(false);
-    setGitlabOpen((open) => !open);
-  }, [onSheet, closePreview]);
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
   const toggleCharts = useCallback(() => {
     closePreview(false);
@@ -924,7 +917,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} gitlabAvailable={api.supports('gitlab-pipelines-v1')} gitlabOpen={gitlabOpen} onToggleGitlab={toggleGitlab} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -1040,6 +1033,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </div>
           )}
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id ? editing : null} />
+          <ComposerFoot><BranchChip session={session} project={project} /></ComposerFoot>
         </div>
       </div>
 
@@ -1055,6 +1049,11 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     </PreviewContext.Provider>
     </FileReferencesProvider>
   );
+}
+
+/** The strip under the composer: the Thread's branch and folder. */
+function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
+  return <div className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
 }
 
 function NewTaskIntro({ project }: Readonly<{ project: Project | undefined }>) {
@@ -1097,6 +1096,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
       </div>
       <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
+        <ComposerFoot><BranchChip session={session} project={project} /></ComposerFoot>
       </div>
     </div>
   );

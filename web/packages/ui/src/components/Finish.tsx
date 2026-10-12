@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { CheckCircle2, CircleDashed, CircleX, FileDiff, GitBranch, History, X } from 'lucide-react';
+import { CheckCircle2, CircleDashed, CircleX, FileDiff, History, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { describeError, type Changes, type CheckKind, type EvidenceCheck, type Item, type SessionDetail, type TurnEvidence } from '../api';
 import { cn } from '../lib/cn';
@@ -86,11 +86,10 @@ export function useTurnEvidence(session: SessionDetail, changes: Changes | null,
   return { evidence, error, available };
 }
 
-/** One branch-named button always opens Changes, with its evidence in the same panel. */
-export function ChangesButton({ branch, label, compact, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
-  branch?: string;
+/** One button always opens Changes, with its evidence in the same panel; the branch is under the composer. */
+export function ChangesButton({ label, compact, sheetOpen, changes, evidenceAvailable, onOpen }: Readonly<{
   label: boolean;
-  /** A narrower header: the branch truncates sooner. */
+  /** A narrower header: the button drops its word. */
   compact?: boolean;
   sheetOpen: boolean;
   changes: Changes | null;
@@ -100,9 +99,9 @@ export function ChangesButton({ branch, label, compact, sheetOpen, changes, evid
   const fileCount = changes?.supported ? changes.files.length : null;
   const needsReview = evidenceAvailable || (fileCount ?? 0) > 0;
   return (
-    <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${branch ? ` on branch ${branch}` : ''}${fileCount === null ? '' : `, ${fileCount} files`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} title={`Changes${branch ? ` · ${branch}` : ''}`} onClick={onOpen}>
-      <GitBranch aria-hidden="true" />
-      {label && <span className={cn('truncate', compact ? 'max-w-24' : 'max-w-40')}>{branch ?? 'Changes'}</span>}
+    <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${fileCount === null ? '' : `, ${fileCount} files`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} onClick={onOpen}>
+      <FileDiff aria-hidden="true" />
+      {label && !compact && <span>Changes</span>}
       {fileCount !== null && <span className="tabular-nums text-ink">{fileCount}</span>}
       {/* A dot only when there is something to review: its presence, not its colour, carries the state. */}
       {needsReview && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />}

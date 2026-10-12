@@ -398,6 +398,12 @@ describe('the Task header', () => {
     expect(headerRoom(1100)).toBe('wide');
     expect(headerRoom(720)).toBe('snug');
     expect(headerRoom(520)).toBe('tight');
+    // The title's own width comes before the button labels: a side panel at 1440 used to cut "Fix re-attach redraw regression" to "Fix …".
+    expect(headerRoom(1056, 314)).toBe('wide');
+    expect(headerRoom(1000, 400)).toBe('snug');
+    expect(headerRoom(616, 238)).toBe('tight');
+    // A very long title counts only up to its cap.
+    expect(headerRoom(1200, 2000)).toBe('wide');
     const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (this: HTMLElement) {
       return this.tagName === 'HEADER' ? 520 : 0;
     });

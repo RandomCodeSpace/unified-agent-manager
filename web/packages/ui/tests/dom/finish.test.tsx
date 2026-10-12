@@ -66,8 +66,8 @@ describe('evidence inside Changes', () => {
     expect(trigger.closest('header')).not.toBeNull();
     const vcs = within(screen.getByRole('group', { name: 'Version control' }));
     const changes = vcs.getByRole('button');
-    expect(changes.textContent).toContain('feat/web-project-defaults-and-sidebar');
-    expect(changes.textContent).not.toContain('Changes');
+    // The branch is under the composer, not on Changes.
+    expect(changes.textContent).not.toContain('feat/web-project-defaults-and-sidebar');
     expect(changes).toBe(trigger);
     expect(vcs.getAllByRole('button')).toHaveLength(1);
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
