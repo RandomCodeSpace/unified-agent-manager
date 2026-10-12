@@ -793,10 +793,6 @@ export interface SessionSummary {
   created_at: string;
   updated_at: string;
   capabilities: Capabilities;
-  /** The branch checked out in `workdir`, as last read; absent when detached, outside git, or from older servers. */
-  branch?: string;
-  /** The git worktree the Thread runs in and the branch made for it; absent for a Thread in its Project's folder. */
-  worktree?: { path: string; branch: string };
 }
 
 /** Where a new Thread runs: the Project's current branch, a new `uam/…` branch in its folder, or a new worktree from `base` (HEAD when absent). */
