@@ -530,7 +530,7 @@ describe('native configuration', () => {
       await settled();
       dialog = await confirmCard(user, card, view, 'Remove', `Remove ${original.name}?`);
       await user.click(dialog.getByRole('button', { name: 'Remove', exact: true }));
-      await card.findByText(`No ${kind} in this scope. Add one to get started.`);
+      await card.findByText(`No ${kind} in this scope.`);
       await settled();
       expect(remove).toHaveBeenLastCalledWith(kind, original.name, original.revision, '', disabled.path);
       expect((await api.configuration())[kind]).toHaveLength(0);
@@ -824,7 +824,7 @@ describe('native configuration', () => {
       return fetchBefore(input, init);
     };
     await user.click(dialog.getByRole('button', { name: 'Remove', exact: true }));
-    await card.findByText('No skills in this scope. Add one to get started.');
+    await card.findByText('No skills in this scope.');
     expect(bodies).toEqual([{ revision: existing.revision, path: existing.path }]);
   });
 
@@ -905,7 +905,8 @@ describe('native discovery metadata', () => {
       expect(card.getAllByRole('button', { name: 'View agent remote' })).toHaveLength(2);
       const plugin = await openCard(user, card, 'View agent plugin-agent');
       expect(plugin.getByText('/managed/plugin/agent.md')).toBeTruthy();
-      expect(plugin.getByText('Copilot: plugin-agent · Plugin')).toBeTruthy();
+      // Copilot's name for it is the reader's title: not said again.
+      expect(plugin.queryByText(/^Copilot: /)).toBeNull();
       expect(plugin.queryByRole('button', { name: /^(Edit|Disable|Enable|Remove)$/ })).toBeNull();
       expect(plugin.queryByRole('radio', { name: 'Source' })).toBeNull();
       await user.keyboard('{Escape}');
@@ -966,7 +967,7 @@ describe('native discovery metadata', () => {
       expect(within(row).getAllByRole('button')).toHaveLength(1);
       expect(within(row).queryByText('No saved file at this path.')).toBeNull();
       const rules = await openCard(user, instructions, 'View Plugin rules');
-      expect(rules.getByText('Copilot: Plugin rules · Plugin')).toBeTruthy();
+      expect(rules.queryByText(/^Copilot: /)).toBeNull();
       expect(rules.queryByText('No saved file at this path.')).toBeNull();
       expect(rules.queryByRole('button', { name: /^(Edit|Add)/ })).toBeNull();
       await user.keyboard('{Escape}');

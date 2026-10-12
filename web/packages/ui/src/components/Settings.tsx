@@ -20,7 +20,7 @@ import { byCodeUnit } from '../lib/order';
 
 import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSlot, TaskDefaultsFields, choiceLabel, useInlineForm } from './TaskDefaults';
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
-import { modelCostLine } from '../lib/cost';
+import { MODEL_PRICE_UNIT, modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
@@ -120,7 +120,7 @@ function SubagentModels({ provider: p, settings, saving, onSave }: Readonly<{ pr
   const change = (next: string[]) => onSave({ subagent_models: { ...settings.subagent_models, [p.name]: next } });
   const addable = visibleModels(p.models, settings.hidden_models?.[p.name]).filter((m) => !allowed.includes(m.id)).sort(byModelName);
   return <div className="flex flex-col gap-1">
-    {allowed.length === 0 && <Note>No limit: subagents may use any model.</Note>}
+    {allowed.length === 0 && <Note>Any model</Note>}
     {allowed.map((id, index) => {
       const listed = p.models.find((m) => m.id === id);
       const name = listed?.name || id;
@@ -355,22 +355,23 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
                     />
                     <span className="break-all">{id}</span>
                   </label>
-                  <label className="flex shrink-0 items-center gap-2 text-muted">
-                    <input
-                      type="checkbox"
-                      aria-label={`Enable vision for ${id}`}
-                      className="size-3.5 accent-accent"
-                      disabled={busy || !draft.selected.includes(id)}
-                      checked={draft.vision.includes(id)}
-                      onChange={(e) => setDraft({ ...draft, vision: e.target.checked ? [...draft.vision, id] : draft.vision.filter((s) => s !== id) })}
-                    />
-                    Vision
-                  </label>
+                  <Tip label="Only for models that support image input">
+                    <label className="flex shrink-0 items-center gap-2 text-muted">
+                      <input
+                        type="checkbox"
+                        aria-label={`Enable vision for ${id}`}
+                        className="size-3.5 accent-accent"
+                        disabled={busy || !draft.selected.includes(id)}
+                        checked={draft.vision.includes(id)}
+                        onChange={(e) => setDraft({ ...draft, vision: e.target.checked ? [...draft.vision, id] : draft.vision.filter((s) => s !== id) })}
+                      />
+                      Vision
+                    </label>
+                  </Tip>
                 </div>
               ))}
             </fieldset>
           )}
-          {!!draft.ids.length && <Note>Enable Vision only for models that support image input.</Note>}
           <div className="flex flex-wrap items-end gap-2">
             <Field id="custom-manual" label="Add a model ID the endpoint does not list">
               <Input
@@ -651,17 +652,20 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   });
   const visible = new Set(searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])).map((p) => p.id) : shown ? [shown] : []);
   if ([...visible].some((id) => !visited.has(id))) setVisited(new Set([...visited, ...visible]));
+  // A page's line: its blurb on a phone only (the rail says it on a wide screen), and where it is saved unless that is
+  // the server, which the rail's group heading says once.
   const scopeLine = (scope: SettingsScope) => {
-    if (scope === 'browser') return 'Saved in this browser only';
-    if (scope === 'copilot') return `Copilot's own files on ${api.owner ? api.owner.label : 'the server'}, global or for one project`;
-    return `Saved on ${api.owner ? api.owner.label : 'the server'}, for every browser`;
+    if (scope === 'browser') return 'Saved in this browser only.';
+    if (scope === 'copilot') return `Copilot's own files on ${api.owner ? api.owner.label : 'the server'}, global or for one project.`;
+    return '';
   };
+  const pageLine = (p: (typeof pages)[number]) => [!wide && p.blurb, scopeLine(p.group.scope)].filter(Boolean).join(' ');
   const current = pages.find((p) => p.id === shown);
 
   // Each page's cards. Token costs, Archived and Connected instances mount only while on screen; Agents, Skills, Hooks
   // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
   const cards: Record<SettingsPage, ReactNode> = {
-    gitlab: <Section id="gitlab" title="GitLab" subtitle={`Pipeline investigations and glab access on ${api.owner?.label ?? 'this server'}.`}>{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
+    gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New tasks" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
       <Section id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
@@ -715,7 +719,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         {modelGroups.map((p) => {
           const hidden = settings.hidden_models?.[p.owner] ?? [];
           return <div key={p.key} role="group" aria-label={`${p.label} models`} className="flex flex-col gap-1">
-            <h3 className="mb-1 flex items-baseline gap-2 text-ui font-medium">{p.label}{p.custom && <span className="text-meta font-normal text-muted">Custom provider</span>}</h3>
+            <h3 className="mb-1 flex flex-wrap items-baseline gap-x-2 text-ui font-medium">{p.label}{p.custom && <span className="text-meta font-normal text-muted">Custom provider</span>}{p.usage && <span className="text-meta font-normal text-muted">Prices in {MODEL_PRICE_UNIT}</span>}</h3>
             {p.custom?.key_present === false && <Note tone="error">{p.custom.api_key_env ? `${p.custom.api_key_env} is not set in the service's environment.` : 'The API key is missing.'} Check it in Custom providers.</Note>}
             <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2 xl:grid-cols-3">
             {[...p.models].sort(byModelName).map((m) => {
@@ -728,10 +732,9 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
                   <span className="text-ui font-medium text-ink">{m.name}</span>
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-meta text-muted">
                     <span className="min-w-0 break-all">{[idLine, !offered && (idLine ? 'not offered now' : 'Not offered now')].filter(Boolean).join(' · ')}</span>
-                    {p.usage && <span className="tabular-nums">{modelCostLine(m)}</span>}
+                    {p.usage && <span className="tabular-nums">{modelCostLine(m, false)}</span>}
                   </div>
                 </div>
-                {!shown && <span className="text-meta text-muted">Hidden</span>}
                 <Switch aria-label={`Show ${m.name}`} checked={shown} disabled={saving} onCheckedChange={(value) => void save({ hidden_models: { ...settings.hidden_models, [p.owner]: value ? hidden.filter((id) => id !== m.id) : [...hidden, m.id] } })} />
               </div>;
             })}
@@ -762,7 +765,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} />
       </Section>
     </>,
-    'token-costs': loaded && <Section id="token-prices" title="Token costs">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>,
+    'token-costs': loaded && <Section id="token-prices" title="Token costs" help="Usage estimates use these current base rates for every period, not provider bills or Copilot credits.">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>,
     copilot: <>
       {accounts.map((p) => (
         <Section key={p.name} id={`account-${p.name}`} title={p.display_name}>
@@ -826,15 +829,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </Row> : <Unsupported what="the terminal" />}
       </Section>}
       {onLogout && <Section id="session" title="Session">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Note>Sign out of UAM in this browser.</Note>
-          <Button variant="secondary" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
-        </div>
+        <Button variant="secondary" className="self-start" onClick={onLogout}><LogOut aria-hidden="true" />Log out</Button>
       </Section>}
     </>,
     connections: <Section id="connections" title="Connected instances">{connections}</Section>,
     browser: <Section id="browser" title="Appearance & alerts">
-      {api.owner && <Note>Kept in this browser, not on {api.owner.label}: these apply whichever instance is on screen.</Note>}
       <NotifyRow />
       <Row id="theme" label="Theme" help="Match system follows your OS's light or dark setting as it changes.">
         <Segmented
@@ -895,7 +894,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </Tip>
       </header>
       <div className="flex min-h-0 flex-1">
-        {(wide || !shown) && <SettingsRail pages={pages} current={searching ? null : shown} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} list={!wide} />}
+        {(wide || !shown) && <SettingsRail pages={pages} current={searching ? null : shown} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}
         {/* Mounted under the phone's list too: hidden cards keep their forms, and Background AI keeps reading today's state for the rail. */}
         <div ref={scrollArea} hidden={!shown && !wide} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
           <ScrollSentinel sentinelRef={sentinel} />
@@ -908,7 +907,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
               return <div key={p.id} hidden={!on} className="flex flex-col gap-4">
                 {searching ? <button type="button" className="flex items-center gap-1 self-start rounded-sm px-1 text-caption text-muted hover:text-ink" onClick={() => open(p.id)}>
                   {p.group.label}<ChevronRight aria-hidden="true" className="size-3.5" /><span className="font-medium text-ink">{p.label}</span>
-                </button> : <p className="px-1 text-caption text-muted">{p.blurb} {scopeLine(p.group.scope)}.</p>}
+                </button> : pageLine(p) && <p className="px-1 text-caption text-muted">{pageLine(p)}</p>}
                 {cards[p.id]}
               </div>;
             })}

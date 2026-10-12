@@ -230,7 +230,9 @@ describe('settings', () => {
   test('each page shows only its own cards, with where they are saved', async () => {
     const { user } = await openSettings('Models');
     expect(screen.getByRole('region', { name: 'Models', exact: true })).toBeTruthy();
-    expect(screen.getByText(/The models the menus offer.*Saved on the server, for every browser\./)).toBeTruthy();
+    // On a wide screen the rail names the page; a server-saved page has no line of its own.
+    expect(screen.queryByText(/The models the menus offer/)).toBeNull();
+    expect(screen.queryByText(/Saved on/)).toBeNull();
     expect(screen.queryByRole('region', { name: 'Utility model' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add provider' })).toBeNull();
     await user.click(page_('Background AI'));

@@ -79,6 +79,19 @@ describe('Usage popover', () => {
     expect(screen.queryByText('Under pace')).toBeNull();
   });
 
+  test("the bar's legend says the reported count, not one rounded from the bar's share", async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-10-14T12:00:00Z') });
+    vi.spyOn(api, 'tokenUsage').mockResolvedValue(tokenUsageFixture());
+    // 10.53% used of 1,500 is 157.95: the share alone would say 158.
+    const quota = { provider: 'copilot', type: 'premium_interactions', used: 157, entitlement: 1500, remaining_percent: 89.47, unlimited: false, overage: 0, reset_at: '2026-11-01T00:00:00Z' };
+    render(<AppContext.Provider value={{ usage: { quotas: [quota], stale: false }, meta: null } as unknown as AppContextValue}><UsageButton /></AppContext.Provider>);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Usage', exact: true }));
+    const allowance = within(await screen.findByRole('region', { name: 'Allowance' }));
+    expect(allowance.getByText('157')).toBeTruthy();
+    expect(allowance.getByText('Used 157')).toBeTruthy();
+    expect(allowance.getByRole('img').getAttribute('aria-label')).toMatch(/^157 used;/);
+  });
+
   test('the footer chip says each state that needs saying in words, not colour alone', () => {
     const quota = { provider: 'copilot', type: 'premium_interactions', used: 1500, entitlement: 1500, remaining_percent: 0, unlimited: false, overage: 0 };
     const row = (quotas: typeof quota[]) => <AppContext.Provider value={{ usage: { quotas, stale: false }, meta: null } as AppContextValue}><UsageButton variant="chip" /></AppContext.Provider>;
@@ -157,7 +170,7 @@ describe('Usage popover', () => {
     expect(popover.getAllByText('1.6B').length).toBeGreaterThan(0);
     await user.click(popover.getByRole('button', { name: 'Close usage' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
-    await user.click(nav.getByRole('button', { name: 'Hide sidebar' }));
+    await user.click(nav.getByRole('button', { name: /^Hide sidebar/ }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
     // The rail has room for the ring alone: the share left, without its sign.
     expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96%');
@@ -239,12 +252,12 @@ describe('Usage popover', () => {
     render(<UsageButton />);
     await user.click(screen.getByRole('button', { name: 'Usage' }));
     await screen.findByRole('button', { name: 'Overview' });
-    for (const text of [/Costs use/, /Partial estimate: includes known costs only/, /UAM tracking started/]) {
+    for (const text of [/Costs use/, /Partial estimate: includes known costs only/, /^Since .* · server time$/]) {
       expect(screen.getByText(text).closest('.sr-only')).toBeTruthy();
     }
     const about = screen.getByRole('button', { name: 'About Usage' });
     await user.hover(about);
-    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('Cache'));
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('server time'));
     await user.unhover(about);
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
     const cost = screen.getByRole('button', { name: 'About Estimated cost' });
@@ -259,7 +272,7 @@ describe('Usage popover', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
     await user.pointer([{ keys: '[TouchA]', target: about }]);
-    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('UAM tracking started'));
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')?.textContent).toContain('server time'));
   });
 
   test('keeps cost-only harness records, marks partial costs, and explains history limits', async () => {
@@ -284,9 +297,8 @@ describe('Usage popover', () => {
     expect(summaryCost('Estimated cost').textContent).toBe('$2.50');
     expect(screen.queryByText('No usage recorded for this period.')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe(`Updated ${timeAgo(report.collection.updated_at!)}`);
-    expect(screen.getByText(/UAM tracking started/).textContent).toContain('local harness records and UAM task, subagent, and Background AI usage');
-    expect(screen.getByText(/External Copilot usage/).textContent).toContain('requires local telemetry files');
-    expect(screen.getByText(/External Copilot usage/).textContent).toContain(dateTime(report.collection.copilot_since));
+    expect(screen.getByText(/^Since .* · server time$/)).toBeTruthy();
+    expect(screen.getByText(/External Copilot since/).textContent).toContain(dateTime(report.collection.copilot_since));
     expect(screen.getByText(/Costs use/).textContent).toContain('source-reported amounts');
   });
 

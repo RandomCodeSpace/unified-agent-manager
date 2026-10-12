@@ -23,7 +23,7 @@ async function backgroundAI() {
 
 /** Opens the log and waits for its first page. */
 async function openLog(card: Awaited<ReturnType<typeof backgroundAI>>['card'], user: Awaited<ReturnType<typeof backgroundAI>>['user']) {
-  await user.click(card.getByRole('button', { name: 'Show log · 40 calls today' }));
+  await user.click(card.getByRole('button', { name: 'Show log' }));
   await waitFor(() => expect(card.getAllByRole('listitem')).toHaveLength(25));
 }
 
@@ -33,7 +33,7 @@ describe('Background AI', () => {
     expect(card.getByText('40 of 40')).toBeTruthy();
     expect(card.getByRole('status').textContent).toMatch(/^Background AI is paused until tomorrow/);
     expect(card.getByRole('spinbutton', { name: 'Daily limit (calls)' })).toBeTruthy();
-    const toggle = card.getByRole('button', { name: 'Show log · 40 calls today' });
+    const toggle = card.getByRole('button', { name: 'Show log' });
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(card.queryByRole('region', { name: 'Today' })).toBeNull();
     expect(card.queryAllByRole('listitem')).toHaveLength(0);

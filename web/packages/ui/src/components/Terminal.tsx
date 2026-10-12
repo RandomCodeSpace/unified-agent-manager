@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { RotateCcw, SquareTerminal, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import type { ApiClient, Project } from '../api';
 import { exitCode, mouseClipboard, type ClipboardNotice } from '../lib/terminal';
 import { currentScheme, subscribeScheme, type Scheme } from '../lib/theme';
@@ -22,13 +22,25 @@ const NOTICES: Record<ClipboardNotice, string> = {
   'paste-blocked': `Clipboard blocked. Use ${MAC ? 'Cmd+V' : 'Ctrl+Shift+V'} to paste.`,
 };
 
+/** The confirmation's copy for Close and Restart; moving to another Project's folder names it. */
+const ENDINGS = {
+  close: { title: 'Close the terminal?', after: '', label: 'Close terminal' },
+  restart: { title: 'Restart the terminal?', after: ', then starts a new shell', label: 'Restart' },
+};
+
+/** What ends the shell: Restart, Close, or moving to another Project's folder. */
+type Ending = 'restart' | 'close' | Project;
+
+/** What the Task header's Terminal control asks of the open terminal: close it (null), or move it to another Project's folder. */
+export interface TerminalHandle { end: (to: Project | null) => void }
+
 /**
  * The terminal dock's content (App.tsx TerminalDock, under the Task view): a shell in the Project
  * folder. The shell lives as long as its socket: Close and Restart end it; switching Tasks does not. This chunk
  * uses Button and plain markup rather than PanelHeader, Note or Tip: the bundler moves modules that
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
  */
-export default function TerminalPanel({ project, onClose }: Readonly<{ project: Project; onClose: () => void }>) {
+export default function TerminalPanel({ project, ref, onClose }: Readonly<{ project: Project; ref?: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
   // The connected instance the shell runs on, named after the title as in the other views (plain markup: see above).
   const owner = useApi().owner;
   const [status, setStatus] = useState<Status>('connecting');
@@ -38,13 +50,18 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
     setStatus('connecting');
     setShell((n) => n + 1);
   };
-  // A connected shell may be running something, and Restart and Close both kill it: they confirm first.
-  const ending = useConfirm<'restart' | 'close'>();
-  const end = (action: 'restart' | 'close') => {
-    if (status === 'connected') ending.ask(action);
-    else if (action === 'restart') restart();
-    else onClose();
+  // A connected shell may be running something, and Restart, Close and moving to another Project's folder all kill it: they confirm first.
+  const ending = useConfirm<Ending>();
+  const finish = (action: Ending) => {
+    if (action === 'restart') restart();
+    else onClose(action === 'close' ? null : action);
   };
+  const end = (action: Ending) => {
+    if (status === 'connected') ending.ask(action);
+    else finish(action);
+  };
+  useImperativeHandle(ref, () => ({ end: (to) => end(to ?? 'close') }));
+  const copy = typeof ending.target === 'string' ? ENDINGS[ending.target] : { title: 'Move the terminal?', after: `, then starts a new shell in ${ending.target?.name}`, label: 'Move terminal' };
   const [notice, setNotice] = useState<ClipboardNotice | null>(null);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -74,13 +91,12 @@ export default function TerminalPanel({ project, onClose }: Readonly<{ project: 
       </div>
       <AlertDialog
         {...ending.props}
-        title={ending.target === 'close' ? 'Close the terminal?' : 'Restart the terminal?'}
-        description={`This ends the shell and whatever runs in it${ending.target === 'close' ? '' : ', then starts a new shell'}.`}
-        confirmLabel={ending.target === 'close' ? 'Close terminal' : 'Restart'}
+        title={copy.title}
+        description={`This ends the shell and whatever runs in it${copy.after}.`}
+        confirmLabel={copy.label}
         onConfirm={() => {
           ending.close();
-          if (ending.target === 'close') onClose();
-          else restart();
+          if (ending.target) finish(ending.target);
         }}
       />
       {status === 'failed' && (

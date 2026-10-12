@@ -242,8 +242,8 @@ then restart the service.
 **One linked account.** A server uses one Copilot account. The first sign-in
 links the server to its account; a server already signed in when it is
 upgraded links to that account the first time it reads it. Settings shows
-"Linked account: <login>" and, while signed out, says which GitHub account to
-use. A sign-in as another account, by token or with GitHub, is refused ("This
+"Linked account: <login>" when it is not the account signed in, so while
+signed out it says which GitHub account to use. A sign-in as another account, by token or with GitHub, is refused ("This
 server is linked to Copilot account <login>. Sign in with that account.") and
 removed again. If Copilot is signed in as another account some other way (an
 environment token, `copilot login` or `gh` on the server), Copilot is
@@ -1031,6 +1031,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     Editing a recalled prompt makes it the new draft. Only the text changes;
     picked files and uploads stay. When a `/`, `$` or `@` list is open, Up
     and Down move through the list instead.
+  - **Spelling and grammar**: the composer checks English spelling and
+    grammar as you type, in a worker on this device (Harper); the draft is
+    not sent anywhere for it. Each issue gets a wavy underline (red for
+    spelling, blue for grammar). Click one, or the **Spelling and
+    grammar** button (its dot means there are suggestions), to see the
+    suggestion with **Apply** and **Keep original**, and step through the
+    rest. Drafts over 12,000 characters
+    are not checked. If the checker cannot load, you can still type and
+    send.
   Prompt requests accept optional `settings: {model, effort, context_size}`;
   omitted settings snapshot the current Task selection. The service validates
   them again before dispatch. Unsupported selections return 400; different
@@ -1073,6 +1082,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+  When the line says "tests fail" or that commands failed, the Task's state
+  shows no check: the sidebar row reads "Tests fail" or "Command failed" with
+  a warning glyph, and the header chip reads "Finished · tests fail, 1 command
+  failed" in the warning tone. The header chip says "a claim contradicted"
+  too when the last reply's receipts contradict one of its claims.
 - **Done check**: two minutes after a turn completes, if the Task is still
   finished (no queue, nothing running, no question), the service checks
   whether the final reply says the asked work is complete. Code decides
@@ -1185,9 +1199,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   least one model the provider lists must stay visible, and a provider can
   hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
   lists is kept. Hiding is only a display preference: a Task or Project
-  already on a hidden model keeps it. **UAM** (General) shows the version
-  the service runs and, once another version is installed at the binary it
-  started from, **Restart**; see
+  already on a hidden model keeps it. **UAM** (Server → UAM and access)
+  shows the version the service runs and, once another version is
+  installed at the binary it started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
   including Task titles, completed subagent result lines, suggested replies,
@@ -1236,7 +1250,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines and done checks) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
-  **Show log · N calls today** (collapsed until opened, and read only while
+  **Show log** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Suggested replies", "Outcome line", "Task done check";
@@ -1325,11 +1339,38 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The last look is kept per browser: the moment you last had the Task on
   screen, marked while it is open and again as you leave it, hide the page
   or close it.
+- **Receipts**: under the last reply of an ended turn, its claims are
+  stamped against the main agent's tool calls in that turn. Fixed rules
+  in the browser do this; no model is used. Three kinds of claim count:
+  - A file path in a code span with an edit verb next to it ("updated
+    `a.py`", "`a.py`: fixed …").
+  - A command in a code span. It is a run claim when a run verb ("ran",
+    "executed") comes before it.
+  - Words saying the tests pass.
+
+  A sentence with a negation ("No files were edited") claims no edit and
+  no run. Each stamp has a glyph and words, never colour alone:
+  - **Matches**: the file was changed, or the command ran and exited 0.
+  - **Contradicted**: the file was not changed (or only viewed), a run
+    claim's command did not run, the named command failed, no test command
+    ran, or the last test run failed.
+  - **Not seen**: a command the reply only names (it may be suggesting
+    it), or a piped test run with no output. When the turn started
+    subagents, claims missing from the main agent's work are only not
+    seen, since subagent work is not read here.
+  - **Reading the test output**: the last test run's output has not been
+    loaded and the service gave no pass/fail counts. The page fetches the
+    whole output first, so the verdict never depends on what was loaded.
+
+  When every claim matches, one line gives the count, for example "Its 15
+  claims match the record". Otherwise the first 12 stamps show and
+  **Show N more** reveals the rest. A stamp with evidence opens its call.
 - **Finish evidence**: once the last turn has completed, the Changes panel
   (the branch button in the Task header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
   agent did before what it says it did. While there is evidence, the
-  branch button's name adds "evidence available" and its dot turns amber.
+  branch button's name adds "evidence available" and it shows an amber dot,
+  as it does while there are changed files; with nothing to review it has no dot.
   It never uses a model; fixed rules in the service read the whole turn,
   however long, and the outcome line reads the same result. The section
   appears once that reading arrives and shows only the parts below that
@@ -1547,7 +1588,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   header runs short of room (side panels open beside the sidebar), its buttons
   drop their labels first, then Files, Charts and Terminal move into the
   header's "…" menu, so the Task's title keeps its room.
-- **Terminal**: off by default. Turn on Settings → Terminal and the Task
+- **Terminal**: off by default. Turn on Settings → Server → UAM and access →
+  Shell access → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
@@ -1559,9 +1601,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   disconnected; Restart starts a new shell and × closes the panel. The shell
   lives only as long as the panel: closing it, Restart, reloading the page or
   turning the setting off ends the shell and everything it runs, and there
-  is no reattaching. Esc goes to the terminal, so only × (or the header's
-  Terminal button) closes it; Changes, Files, Subagents and file previews
-  open beside the conversation above it. While the terminal has focus, keys
+  is no reattaching. In a Task of another project, the header's Terminal
+  button moves the panel to that project's folder with a new shell. While
+  the shell is connected, closing, Restart and moving ask first. Esc goes to
+  the terminal, so only × (or the header's Terminal button) closes it;
+  Changes, Files, Subagents and file previews open beside the conversation above it. While the terminal has focus, keys
   go to the shell, not to uam's shortcuts. The browser keeps a few keys for
   itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
   Ctrl+Tab on Windows and Linux; those cannot reach the shell. The mouse
@@ -1597,8 +1641,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   makes the ring static when the OS requests reduced motion.
 - **Sidebar**: all unsettled Tasks across every Project share one flat list
   without group headings. Each row's status line says whether it needs
-  input, is ready for review, is running, or is idle. Tasks needing attention
-  come first, followed by review, running, and idle Tasks. Collapsible
+  input, is ready for review, is running, or is idle. Tasks are listed in
+  creation order, newest first, whatever their state. Collapsible
   "Done" and "Settled" sections sit at the foot of the sidebar, under the
   Task list, which scrolls on its own; archived Tasks are listed in
   Settings → Archived. One of Done and Settled is open at a time: opening
@@ -1620,16 +1664,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Done and Finished green; Error red; inactive states gray.
   The second line shows the Task title, the Project branch in muted text,
-  and how long ago the Task changed. Hovering the row shows the full request
-  or outcome, quiet duration, branch, and `+N −M` line counts when known. Hovering an
+  and how long ago the Task changed. Hovering the row shows the full title,
+  the Project, the full request or outcome, the branch, and `+N −M` line
+  counts when known. Hovering an
   active row that can settle shows Settle.
   - **Alt+J / Alt+K** open the next / previous Task needing attention, wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
-  - The tab title, the installed app's badge and the sidebar button on a
-    narrow window carry the Needs you count. The tab title reads "UAM" on
-    the home screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
-    a new Task or one still waiting for a title), and "UAM - Settings"
+  - The tab title, the installed app's badge, the sidebar toggle (the UAM
+    mark in the sidebar header, on the collapsed rail, and the button on a
+    narrow window) carry the Needs you count; at zero it is hidden. The tab
+    title reads "UAM" on the home screen, "UAM - <Task name>" while a Task
+    is open ("UAM - New task" for a new Task or one still waiting for a
+    title), and "UAM - Settings"
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
@@ -1643,7 +1690,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   titles, Project names and branches within the chosen Project filter,
   archived Tasks included.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
-  for Rename, Close conversation, Settle or Reopen, Archive and Delete.
+  for Rename, Close conversation (while one is open), Run again, Try with
+  another model…, Export as Markdown, Settle (or Reopen for a settled Task)
+  and Archive. Delete is offered only for archived Tasks, in Settings →
+  Archived.
   Arrow keys move between rows,
   Enter opens a Task and F2 renames it. There are no Project headings: the
   filter below shows one Project's Tasks.
@@ -1659,8 +1709,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
     the UAM mark alone (shows the sidebar again, with the Needs you count on it),
-    New task, the Project filter, Add project, and at the foot Settings and
-    the connection dot; each opens exactly what the sidebar's
+    the Project filter, Routines, Add project, New task, and at the foot
+    Settings, Usage and the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
@@ -1691,7 +1741,8 @@ received a prompt, the page says so and nothing is resent.
 
 ## Terminal
 
-Settings → Terminal, off by default, adds a terminal panel that runs a login
+Settings → Server → UAM and access → Shell access → Terminal, off by
+default, adds a terminal panel that runs a login
 shell in the Project's folder: your `$SHELL` if it is an absolute path to an
 executable, otherwise `bash` or `sh`. The setting is kept in `sessions.json`
 as `terminal` and can also be changed with `PATCH /api/settings`
@@ -1786,11 +1837,11 @@ their next turn has the GitHub tools, or no longer has them. A connected
 instance has its own setting, shown when that instance offers it.
 
 **Security.** A stdio server is a command run on this host as the uam user.
-Adding or editing one is therefore allowed only while Settings → Shell
-access → Terminal is on (see Terminal), which already grants a shell to
-anyone signed in; with it off the form offers HTTP and SSE only and the
-service refuses a stdio add or edit (`403`). Turning a server on or off and
-removing it need no Terminal.
+Adding or editing one is therefore allowed only while Settings → Server →
+UAM and access → Shell access → Terminal is on (see Terminal), which
+already grants a shell to anyone signed in; with it off the form offers
+HTTP and SSE only and the service refuses a stdio add or edit (`403`).
+Turning a server on or off and removing it need no Terminal.
 
 **In a Task**, the actions menu (`…`) → **MCP servers…** shows each server
 as that Task's conversation sees it: Connected (with its tools; tap the
@@ -2121,7 +2172,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 
 The Usage button beside Settings opens a popover with Today,
 7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
-and estimated USD cost. Cache is read plus write tokens; each model's info
+and estimated USD cost; its bar shows that split as proportions. Cache is read plus write tokens; each model's info
 tip splits it into read and written. Input already includes cache. Totals
 preserve the harness's reported accounting; reasoning already included in
 output is counted once. The 7-day and 30-day windows include today and use

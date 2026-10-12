@@ -1649,7 +1649,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           display={modelLabel}
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
-            const prices = session.capabilities.usage ? modelCostLine(m, true) : '';
+            const prices = session.capabilities.usage ? modelCostLine(m, false) : '';
             const group = appSettings.custom_models?.find((c) => `${c.name}/${c.model_id}` === m.id)?.name;
             return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}

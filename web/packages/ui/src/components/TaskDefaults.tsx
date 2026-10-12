@@ -13,8 +13,10 @@ export const choiceLabel = (name: string, note?: string): string => (note ? `${n
 /**
  * The one column system of Settings cards: a label column capped at 28rem, the control right after it (not at the
  * card's far edge), stacked on a phone. A card header with a control (`Section`'s `control`) uses it too.
+ * Its first child is the label, its last the control. It wraps on the card's width, not the viewport's: the control
+ * drops below its label when the label would get less than 12rem beside it (a narrow card at 1024 wide).
  */
-export const ROW_GRID = 'grid items-start gap-x-6 gap-y-2 sm:grid-cols-[minmax(0,28rem)_auto] sm:justify-start';
+export const ROW_GRID = 'flex flex-wrap items-start gap-x-6 gap-y-2 *:min-w-0 [&>:first-child]:grow [&>:first-child]:basis-full sm:[&>:first-child]:max-w-md sm:[&>:first-child]:basis-48 max-sm:[&>:last-child]:grow';
 
 /** A Settings row: the label and its help in the label column, the control beside it, both centred on a 32px line. */
 export function Row({ id, label, htmlFor, help, helpVisible = false, children }: Readonly<{ id: string; label: string; htmlFor?: string; help: ReactNode; helpVisible?: boolean; children: ReactNode }>) {

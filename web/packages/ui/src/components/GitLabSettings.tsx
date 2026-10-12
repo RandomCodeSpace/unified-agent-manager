@@ -30,7 +30,7 @@ export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boole
     {automatic && <div className="flex items-start justify-between gap-4">
       <div className="flex min-w-0 flex-col gap-1">
         <h3 className="text-ui font-medium text-ink">Automatic investigation</h3>
-        <Note id="gitlab-auto-description">When a pipeline fails for a commit made through UAM on the current branch, start a task with the Utility model to collect its pipeline data. You can switch models in the task. Open GitLab in the task header to see pipelines and merge requests. When off, choose Investigate there.</Note>
+        <Note id="gitlab-auto-description">Start a Utility-model task when a pipeline fails for a UAM commit. Off: choose Investigate in the task's GitLab panel.</Note>
       </div>
       <Switch aria-label="Automatic investigation" aria-describedby="gitlab-auto-description" checked={automatic.on} disabled={automatic.saving} onCheckedChange={automatic.onChange} className="mt-0.5" />
     </div>}
@@ -62,13 +62,8 @@ export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boole
           <dt className="text-muted">Expires</dt><dd className="text-ink">{status.token ? status.token.expires_at ? <time dateTime={status.token.expires_at}>{status.token.expires_at.includes('T') ? dateTime(status.token.expires_at) : status.token.expires_at}</time> : 'No expiry reported' : 'Not available'}</dd>
         </dl>
         {!status.token && <Note>GitLab did not return token details. This instance or credential may not expose them.</Note>}
-        <Note>Token scopes and project roles describe your access. Branch rules still apply, and Git push uses your Git credentials.</Note>
       </>}
       <Note>Checked <time dateTime={status.checked_at}>{dateTime(status.checked_at)}</time>{busy && ' · Checking again…'}</Note>
     </div>}
-    <div className="flex flex-col gap-1">
-      <h3 className="text-ui font-medium text-ink">Automatic in GitLab projects</h3>
-      <Note>Once glab is signed in, UAM limits supported lists to 10 results by default, up to 20, and checks changed GitLab CI files before a push. A task uses the GitLab instance in its repository's origin.</Note>
-    </div>
   </div>;
 }

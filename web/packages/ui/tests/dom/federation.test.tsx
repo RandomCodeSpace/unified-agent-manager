@@ -229,7 +229,10 @@ test('Settings of a selected peer read and write only that peer and name it in t
   });
   expect(calls.slice(switched).filter(call => call.owner !== 'b' && settingsCall(call))).toEqual([]);
   await user.click(screen.getByRole('button', { name: 'Appearance & alerts', exact: true }));
-  expect(screen.getByText('Kept in this browser, not on Workstation B: these apply whichever instance is on screen.')).toBeTruthy();
+  expect(screen.getByText('Saved in this browser only.')).toBeTruthy();
+  // The groups saved on the instance name it once, in the rail.
+  expect(screen.getByRole('group', { name: 'Tasks · on Workstation B' })).toBeTruthy();
+  expect(screen.queryByRole('group', { name: /^This browser · on/ })).toBeNull();
 });
 
 test.each(['', 'b'])('settle and reopen remain responsive with connected navigation for owner %s', async (owner) => {
@@ -477,7 +480,7 @@ test('the instance switcher scopes the Task list, Home and the Project filter to
   expect(await screen.findByText('Across all instances')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: /^Instance: All instances/ }));
   const reader = within(await screen.findByRole('dialog', { name: 'Instances' }));
-  expect(reader.getByRole('button', { name: /^All instances, Every task in one list/ }).getAttribute('aria-current')).toBe('true');
+  expect(reader.getByRole('button', { name: /^All instances(,|$)/ }).getAttribute('aria-current')).toBe('true');
   expect(within(reader.getByRole('region', { name: 'Main Server' })).getByRole('button', { name: /^Main Server, / })).toBeTruthy();
   expect(within(reader.getByRole('region', { name: 'Connected' })).getAllByRole('button').map((row) => row.getAttribute('aria-label')?.split(',')[0])).toEqual(['Workstation B', 'Workstation C']);
   await user.click(reader.getByRole('button', { name: /^Workstation B,/ }));

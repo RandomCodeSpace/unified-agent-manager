@@ -125,7 +125,7 @@ describe('evidence inside Changes', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Changes' })).toBeNull());
   });
 
-  test('a chat-only turn keeps a grey dot and opens Changes directly', async () => {
+  test('a chat-only turn has no review dot and opens Changes directly', async () => {
     const evidence = vi.spyOn(api, 'evidence');
     const { user } = await openTask('t-chart');
     await waitFor(() => expect(evidence).toHaveBeenCalled());
@@ -136,8 +136,8 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull();
     expect(screen.queryByText('No tests, builds or linters ran in this turn.')).toBeNull();
     const trigger = within(screen.getByRole('group', { name: 'Version control' })).getByRole('button');
-    expect(trigger.querySelector('.bg-faint')).not.toBeNull();
-    expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
+    // Nothing to review is no dot at all, not a grey one: the state never rests on colour alone.
+    expect(trigger.querySelector('.rounded-full')).toBeNull();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
     evidence.mockRestore();

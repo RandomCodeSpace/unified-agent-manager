@@ -99,14 +99,14 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
         type="button"
         data-instance=""
         aria-current={on ? 'true' : undefined}
-        aria-label={`${label}, ${sub}${needs ? `, ${needs} need you` : ''}`}
+        aria-label={`${[label, sub].filter(Boolean).join(', ')}${needs ? `, ${needs} need you` : ''}`}
         onClick={() => onPick(id)}
         className={cn('flex min-h-12 w-full items-center gap-3 rounded-md px-2 text-left transition-colors focus-visible:-outline-offset-2 pointer-coarse:min-h-14', on ? 'bg-tint-selected' : 'hover:bg-tint-hover')}
       >
         {mark}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className={cn('truncate text-ui', on ? 'font-medium text-ink' : 'text-body')}>{label}</span>
-          <span className="truncate text-caption text-muted">{sub}</span>
+          {sub && <span className="truncate text-caption text-muted">{sub}</span>}
         </span>
         <NeedsCount count={needs} />
         <Check aria-hidden="true" className={cn('size-4 shrink-0 text-ink', !on && 'invisible')} />
@@ -130,7 +130,7 @@ function InstanceList({ all, instances, unavailable, current, currentRow, onPick
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- the rows are buttons; this only relays arrow keys between them.
     <div className="flex min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain px-2 pt-1 pb-3 [--mark-ring:var(--color-raised)]" onKeyDown={onKeyDown}>
-      {all && row(null, 'All instances', 'Every task in one list', <InstanceMark instance={null} size="lg" />, instances.reduce((n, i) => n + i.needs, 0))}
+      {all && row(null, 'All instances', '', <InstanceMark instance={null} size="lg" />, instances.reduce((n, i) => n + i.needs, 0))}
       {section('Main Server', instances.filter((i) => i.home))}
       {section(
         'Connected',
@@ -223,7 +223,7 @@ export function InstanceSwitcher({ place, live, settingsOpen = false, onConnect 
         <h2 className="flex-1 text-title text-ink">{sidebar ? 'Instances' : 'Settings of which instance?'}</h2>
         {closeButton}
       </div>
-      <p className="text-caption text-muted">{sidebar ? `${summary}${total ? ` · ${total} need you` : ''}` : 'Each instance keeps its own settings.'}</p>
+      {sidebar && <p className="text-caption text-muted">{summary}{total ? ` · ${total} need you` : ''}</p>}
     </PanelHead>
   );
   const list = <InstanceList all={sidebar} instances={instances} unavailable={unavailable} current={current} currentRow={currentRow} onPick={pick} onConnect={connect} />;

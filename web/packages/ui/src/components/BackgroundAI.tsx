@@ -201,7 +201,7 @@ export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLi
         <div className="flex items-center gap-1">
           <Button variant="subtle" className="-ml-3 self-start text-muted" aria-expanded={open} aria-controls="utility-log" onClick={() => setOpen((o) => !o)}>
             <ChevronRight className={cn('transition-transform duration-160', open && 'rotate-90')} />
-            {open ? 'Hide log' : `Show log · ${today.calls.toLocaleString('en-US')} ${today.calls === 1 ? 'call' : 'calls'} today`}
+            {open ? 'Hide log' : 'Show log'}
           </Button>
           <HelpTip label="Background AI log">Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</HelpTip>
         </div>
