@@ -381,6 +381,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     `GET /api/projects/{id}/branches` lists the local and remote branches,
     most recently committed first.
   - A Thread in a worktree cannot be branched from a turn yet.
+  - Settling, archiving or deleting a Thread removes its worktree with
+    `git worktree remove`; the branch stays, so its commits do too. A
+    worktree with changed or untracked files is kept. Using the Thread
+    again (Reopen, then a message) brings the worktree back from the branch.
+  - **Settings → Worktrees** shows the disk holding `~/.uam/worktrees` (free
+    space against a 10% line), every worktree biggest first with its Thread,
+    stage, what is not committed or not pushed, and **Remove**, and the last
+    20 worktrees removed on settling. Sizes are measured in the background.
+    Remove takes a worktree with nothing uncommitted at once and asks first
+    when changes would be lost; it is refused while the Thread works.
+  - Below 10% free space the Worktrees page in the Settings rail and the
+    Settings button carry a warning dot, and the branch chip under the
+    composer says how much is free (`disk` in `GET /api/meta`).
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. A model then titles the Task from its

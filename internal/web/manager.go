@@ -149,6 +149,9 @@ type Manager struct {
 	branchAt map[string]time.Time
 	// worktreeRoot, when set, replaces ~/.uam/worktrees (worktreesDir).
 	worktreeRoot string
+	// worktrees is the removal, recreation and size bookkeeping of Thread
+	// worktrees (worktree_cleanup.go).
+	worktrees worktreeState
 	// gitWrites holds each git write action running, by the real path of its
 	// repository, closed when it ends (git_actions.go). A turn starting there
 	// waits for it.
@@ -1134,7 +1137,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Branch: s.branch,
 	}
 	if s.place != nil && s.place.Worktree != "" {
-		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch}
+		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch, SizeBytes: m.worktrees.sizes[s.place.Worktree].bytes}
 	}
 	return out
 }
@@ -1996,6 +1999,7 @@ func (m *Manager) deleteTask(id string) error {
 	}
 	m.mu.Lock()
 	conv := m.forgetLocked(s)
+	m.kickWorktreeRemoveLocked(s)
 	m.mu.Unlock()
 	if conv != nil {
 		m.closeConversation(conv)
@@ -2523,6 +2527,7 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	if turn.State != agentapi.TurnWorking {
 		// The agent may have switched branches during the turn.
 		m.kickBranchLocked(s.projectID)
+		m.kickWorktreeSizeLocked(s)
 		m.kickQuotaLocked(s.provider)
 		if s.titleWait != nil {
 			m.titleAfterReplyLocked(s)
@@ -3020,6 +3025,7 @@ func (m *Manager) openLocked(s *webSession, explicit bool) error {
 	m.changedLocked(s, before)
 	m.mu.Unlock()
 
+	m.restoreWorktree(m.ctx, s)
 	ctx, cancel := context.WithTimeout(m.ctx, openTimeout)
 	defer cancel()
 	var conv agentapi.Conversation
@@ -4261,6 +4267,7 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 	s.stage = to
 	if to != StageActive {
 		m.releaseClosedHistoryLocked(s)
+		m.kickWorktreeRemoveLocked(s)
 	}
 	if by != "" {
 		// updated_at stays the Task's last activity.

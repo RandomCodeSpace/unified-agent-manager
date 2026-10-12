@@ -236,6 +236,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
 	mux.HandleFunc("GET /api/projects/{id}/files", s.handleProjectFiles)
 	mux.HandleFunc("GET /api/projects/{id}/branches", s.handleProjectBranches)
+	mux.HandleFunc("GET /api/worktrees", s.handleWorktrees)
+	mux.HandleFunc("POST /api/worktrees/remove", s.handleRemoveWorktree)
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)
 	mux.HandleFunc("GET /api/projects/{id}/agents", s.handleTaskAgents)
@@ -563,7 +565,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 	s.m.RefreshModels()
 	descriptor := s.federationDescriptor()
-	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs(), Service: s.m.serviceMeta()}
+	meta := Meta{Version: s.version, InstanceID: descriptor.InstanceID, ProtocolMajor: descriptor.ProtocolMajor, Capabilities: descriptor.Capabilities, Providers: s.m.Providers(), RecentWorkdirs: s.m.RecentWorkdirs(), Service: s.m.serviceMeta(), Disk: s.m.Disk()}
 	if roots, err := s.grants.rootsForUse(); err == nil {
 		meta.TempRoot, meta.TempRootAliases = roots.canonical, roots.aliases
 	}

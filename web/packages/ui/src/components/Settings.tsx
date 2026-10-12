@@ -22,6 +22,8 @@ import { Field, FieldHelpProvider, ROW_GRID, Row, SectionAction, SectionActionSl
 import { customProviders, matchingIds, withProvider, type CustomProvider } from '../lib/customModels';
 import { MODEL_PRICE_UNIT, modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
+import { WorktreesSettings } from './WorktreesSettings';
+import { diskLowText, percentFree, sizeText } from '../lib/worktrees';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
@@ -627,6 +629,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
   else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
   if (restart) attention.uam = { tone: 'warning', text: 'Restart available' };
+  if (meta?.disk?.low) attention.worktrees = { tone: 'warning', text: diskLowText(meta.disk) };
   // The current values under each page's name in the phone's list.
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
@@ -642,6 +645,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     providers: configured.length ? `${configured.map((p) => p.name).join(', ')} · ${customCount} ${customCount === 1 ? 'model' : 'models'}` : 'None added',
     uam: [meta?.service && `Running ${meta.service.running}`, `Terminal ${settings.terminal ? 'on' : 'off'}`].filter(Boolean).join(' · '),
     browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]}`,
+    worktrees: meta?.disk && `${sizeText(meta.disk.free_bytes)} free · ${percentFree(meta.disk)}%`,
   };
   // A page the instance on screen cannot fill is left out of the rail.
   const pages = SETTINGS_PAGES.filter((p) => {
@@ -703,6 +707,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
     </Section> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
+    worktrees: api.supports('worktrees-v1') ? <WorktreesSettings /> : <Section id="worktrees" title="Worktrees"><Unsupported what="worktrees" /></Section>,
     archived: loaded ? <Section id="archived" title="Archived" help="Open an archived task to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived tasks too.">
       <ArchivedTasks />
     </Section> : <PendingSection id="archived" title="Archived" label="Loading tasks…" />,
@@ -869,7 +874,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     </Section>,
   };
   for (const kind of ['agents', 'skills', 'hooks', 'instructions'] as const) cards[kind] = <Section id={kind} title={SETTINGS_PAGES.find((p) => p.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} scope={toolkitScope} onScope={setToolkitScope} heldBy={held.find((k) => k !== kind)} onHold={hold} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>;
-  const lazy = (id: SettingsPage) => id === 'token-costs' || id === 'archived' || id === 'connections' || id === 'gitlab';
+  const lazy = (id: SettingsPage) => id === 'token-costs' || id === 'archived' || id === 'connections' || id === 'gitlab' || id === 'worktrees';
 
   return (
     <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>
