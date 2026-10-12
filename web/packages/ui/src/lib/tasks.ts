@@ -1,4 +1,4 @@
-import type { Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
+import type { GitPending, Item, Project, SessionDetail, SessionState, SessionSummary } from '../api';
 import { stopWords } from './stop.ts';
 
 const readOnly = (s: SessionSummary): boolean => s.stage === 'settled' || s.stage === 'archived';
@@ -151,6 +151,12 @@ export function pageTitle(needsYou: number, shown: string | null): string {
 /** A project's Tasks, newest first. */
 export function tasksOf(sessions: SessionSummary[], projectId: string): SessionSummary[] {
   return sessions.filter((s) => s.project_id === projectId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
+/** The unsaved git work a Thread shares with its repository, or null when there is none. */
+export function pendingWork(s: SessionSummary): GitPending | null {
+  const p = s.git_pending;
+  return p && (p.uncommitted > 0 || p.unpushed > 0) ? p : null;
 }
 
 /** Active Tasks, then the two shelves. */

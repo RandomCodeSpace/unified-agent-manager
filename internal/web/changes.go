@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -549,6 +551,9 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 			m.publishProjectLocked(*p)
 		}
 	}
+	// The unsaved work of the same Projects' repositories is read with
+	// their branches.
+	m.kickGitPendingLocked(m.pendingDirsLocked(slices.Collect(maps.Keys(branches))))
 }
 
 // kickBranchLocked re-reads a Project's branch in the background.

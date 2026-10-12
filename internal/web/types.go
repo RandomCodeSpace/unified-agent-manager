@@ -315,6 +315,10 @@ type SessionSummary struct {
 	// Diff totals the Task's own changes (the task scope of Changes); omitted
 	// while it has none or they are not known yet.
 	Diff *DiffStat `json:"diff,omitempty"`
+	// GitPending is the unsaved git work of the repository holding the
+	// Task's directory, shared by every Task there (git_pending.go); omitted
+	// outside a repository or before the first read.
+	GitPending *GitPending `json:"git_pending,omitempty"`
 	// RerunOf is the ID of the Task whose last message this one runs again
 	// (Run again, Try with another model); omitted otherwise.
 	RerunOf string `json:"rerun_of,omitempty"`
