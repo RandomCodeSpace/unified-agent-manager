@@ -6,8 +6,8 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 )
 
-// Who settled a Task when the owner did not: the quiet-Task sweep, or the
-// done check's sweep once the owner saw a reply checked done.
+// Who settled a Task when the owner did not: the quiet-Task sweep, or, in
+// records written before it was removed, the done check's sweep.
 const (
 	settledByAuto     = "auto"
 	settledByReviewed = "reviewed"

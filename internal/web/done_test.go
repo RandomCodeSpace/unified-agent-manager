@@ -328,78 +328,17 @@ func reviewedDoneTask(t *testing.T, verdict string) (*Manager, SessionSummary, *
 	return m, sum, conv, at
 }
 
-// view opens Task id in a page and returns the page's leaving.
-func view(t *testing.T, m *Manager, id string) func() {
-	t.Helper()
-	sub, _, err := m.Subscribe(id)
+// A Task checked done stays active after a page showed it and left; only
+// the 7-day quiet sweep settles a Task on its own.
+func TestDoneTaskSeenStaysActive(t *testing.T) {
+	m, sum, conv, at := reviewedDoneTask(t, `{"verdict":"done","line":1}`)
+	sub, _, err := m.Subscribe(sum.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return func() { m.Unsubscribe(sub) }
-}
-
-func TestReviewedDoneTaskSettles(t *testing.T) {
-	t.Run("done and unreviewed stays active", func(t *testing.T) {
-		m, sum, _, at := reviewedDoneTask(t, `{"verdict":"done","line":1}`)
-		judgeAt(t, m, at.Add(time.Minute))
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageActive || got.DoneAt.IsZero() {
-			t.Fatalf("unreviewed done = %+v", got)
-		}
-	})
-	t.Run("done, reviewed and left settles", func(t *testing.T) {
-		m, sum, conv, at := reviewedDoneTask(t, `{"verdict":"done","line":1}`)
-		ended := summaryOf(t, m, sum.ID).UpdatedAt
-		view(t, m, sum.ID)()
-		judgeAt(t, m, at.Add(time.Minute))
-		got := summaryOf(t, m, sum.ID)
-		if got.Stage != StageSettled || got.SettledBy != settledByReviewed || !got.UpdatedAt.Equal(ended) || conv.Closes() != 1 {
-			t.Fatalf("reviewed done = %+v, closes %d", got, conv.Closes())
-		}
-	})
-	t.Run("a verdict after the review settles once nobody views it", func(t *testing.T) {
-		a := &doneAnswers{replies: []string{`{"verdict":"done","line":1}`}}
-		m, _, sum, conv := doneTask(t, openTestStore(t), a)
-		finishTurn(conv, "fix it", "Fixed it.")
-		leave := view(t, m, sum.ID)
-		at := summaryOf(t, m, sum.ID).UpdatedAt.Add(doneJudgeDelay)
-		judgeAt(t, m, at)
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageActive || got.DoneAt.IsZero() {
-			t.Fatalf("settled while viewed: %+v", got)
-		}
-		leave()
-		judgeAt(t, m, at.Add(time.Minute))
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageSettled || got.SettledBy != settledByReviewed {
-			t.Fatalf("after the page left = %+v", got)
-		}
-	})
-	t.Run("still viewed waits", func(t *testing.T) {
-		m, sum, _, at := reviewedDoneTask(t, `{"verdict":"done","line":1}`)
-		view(t, m, sum.ID)()
-		leave := view(t, m, sum.ID)
-		defer leave()
-		judgeAt(t, m, at.Add(time.Minute))
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageActive {
-			t.Fatalf("settled while viewed: %+v", got)
-		}
-	})
-	t.Run("new activity after the review cancels it", func(t *testing.T) {
-		m, sum, conv, at := reviewedDoneTask(t, `{"verdict":"done","line":1}`)
-		view(t, m, sum.ID)()
-		moveTo(m, at.Add(time.Minute))
-		conv.EmitTurn(agentapi.TurnWorking, "")
-		conv.EmitItem(agentapi.Item{ID: "a-more", Kind: agentapi.ItemAssistant, Text: "Also fixed the docs."})
-		conv.EmitTurn(agentapi.TurnCompleted, "")
-		judgeAt(t, m, at.Add(time.Hour))
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageActive || got.DoneItemID != "a-more" {
-			t.Fatalf("settled on an older review: %+v", got)
-		}
-	})
-	t.Run("not done and reviewed stays active", func(t *testing.T) {
-		m, sum, _, at := reviewedDoneTask(t, `{"verdict":"not_done"}`)
-		view(t, m, sum.ID)()
-		judgeAt(t, m, at.Add(time.Minute))
-		if got := summaryOf(t, m, sum.ID); got.Stage != StageActive {
-			t.Fatalf("not done settled: %+v", got)
-		}
-	})
+	m.Unsubscribe(sub)
+	judgeAt(t, m, at.Add(time.Hour))
+	if got := summaryOf(t, m, sum.ID); got.Stage != StageActive || got.SettledBy != "" || got.DoneAt.IsZero() || conv.Closes() != 0 {
+		t.Fatalf("seen done Task = %+v, closes %d", got, conv.Closes())
+	}
 }

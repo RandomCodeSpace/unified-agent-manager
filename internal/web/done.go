@@ -74,9 +74,8 @@ type doneRun struct {
 }
 
 // judgeDone judges the Tasks whose turn stayed finished for doneJudgeDelay,
-// at most maxDoneJudges calls a sweep, and settles the Tasks the owner saw
-// checked done. Past today's Utility limit it holds until midnight or a
-// limit or model change.
+// at most maxDoneJudges calls a sweep. Past today's Utility limit it holds
+// until midnight or a limit or model change.
 func (m *Manager) judgeDone() {
 	m.mu.Lock()
 	now := m.now()
@@ -108,7 +107,6 @@ func (m *Manager) judgeDone() {
 	for _, r := range runs {
 		go m.runDone(r)
 	}
-	m.sweepSettle(settledByReviewed, m.reviewedDoneLocked)
 }
 
 // judgeableLocked returns the item s's main transcript ends with when the
@@ -185,22 +183,6 @@ func (m *Manager) clearDoneLocked(s *webSession) {
 func (s *webSession) doneShownLocked() bool {
 	return s.done != nil && s.done.Verdict == doneVerdictDone && s.stage == StageActive && s.state() == StateCompleted &&
 		len(s.queue) == 0 && s.queueSending == "" && s.runningSubagents() == 0 && s.runningBackgroundTasks() == 0 && !s.asking
-}
-
-// reviewLocked records that a page leaving s showed its finished
-// transcript's last item. The caller holds mu.
-func (m *Manager) reviewLocked(s *webSession) {
-	if key := s.finishedItemLocked(); key != "" && key != s.reviewedItem {
-		s.reviewedItem = key
-		m.persistLocked(s)
-	}
-}
-
-// reviewedDoneLocked reports whether the sweep may settle s because the
-// owner saw the reply checked done: its verdict is shown, a page showed that
-// state, and it waits for nothing and nobody. The caller holds mu.
-func (m *Manager) reviewedDoneLocked(s *webSession) bool {
-	return s.doneShownLocked() && s.reviewedItem == s.done.ItemID && m.unattendedLocked(s)
 }
 
 // notDoneByRuleLocked reports whether code alone says the turn ending at
