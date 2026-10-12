@@ -438,7 +438,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the server reports them, how many files are not committed and how many
   commits are not pushed there. Click it for the branch and the folder path
   (with Copy), and a worktree's size once measured. A low-disk warning
-  shows at the strip's end while free space is low. When the toolbar
+  shows at the strip's end while free space is low.
+  On a new Thread the same chip chooses where it runs (see **Branches and
+  worktrees**): **Current branch**, **New branch** (from the Project
+  folder's current branch) or **New worktree**, whose base you pick from the
+  Project's local and remote branches (type to filter, arrow keys and Enter
+  to choose). The panel shows the branch and folder the first message
+  creates. New branch is locked, naming the Thread, while another Thread is
+  working in the Project folder. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes

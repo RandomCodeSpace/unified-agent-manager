@@ -914,6 +914,17 @@ export function install(): { received: Received[] } {
       const { provider, model, effort, context_size } = sel;
       const mode = assisted ? 'assisted' : sel.mode;
       const prompt = String(body.prompt ?? '').trim();
+      // Where the Thread runs: a new branch in the Project folder is refused while another Thread works there.
+      const place = (body.place ?? {}) as { mode?: string; base?: string };
+      let where: Partial<MockTask> = {};
+      if (place.base && place.mode !== 'worktree') return fail(400, 'base is only for a new worktree');
+      if (place.mode === 'branch' || place.mode === 'worktree') {
+        const branch = `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}`;
+        const working = st.tasks.find((x) => x.project_id === p.id && x.workdir === p.dir && LIVE.includes(x.state));
+        if (place.mode === 'branch' && working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder; a new branch there would switch its branch too. Choose New worktree, or wait for it to finish.`, { code: 'branch_busy', refs: [working.id] });
+        const path = `/home/user/.uam/worktrees/${p.name}/${branch.replace('/', '-')}`;
+        where = place.mode === 'branch' ? { branch } : { branch, worktree: { path, branch }, workdir: path };
+      }
       const t: MockTask = {
         id: nextId('t'),
         project_id: p.id,
@@ -941,6 +952,7 @@ export function install(): { received: Received[] } {
         history_truncated: false,
         last_submission: null,
         agentItems: {},
+        ...where,
       };
       st.tasks.push(t);
       if (typeof body.request_id === 'string') createdBy.set(t.id, body.request_id);

@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings } from '../api';
+import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
 import { cn } from '../lib/cn';
@@ -246,11 +246,15 @@ export interface FirstMessage {
   text: string;
   files: string[];
   uploads: { file: File; kind: Kind }[];
+  /** Where the Thread runs, when not on the Project folder's current branch. */
+  place?: ThreadPlace;
 }
 
 /** A composer for a Task that does not exist yet: `send` creates it and delivers the message, and throws while nothing was created. */
 export interface NewTask {
   projectId: string;
+  /** The branch the `@` picker lists files from: a new worktree's base, whose files the Thread will hold. */
+  filesBase?: string;
   send: (first: FirstMessage) => Promise<void>;
 }
 
@@ -495,19 +499,20 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   // Files: debounced search; a stale answer never overwrites a newer one.
   const fileQuery = trigger?.kind === '@' ? trigger.query : null;
   const projectId = newTask?.projectId;
+  const filesBase = newTask?.filesBase;
   useEffect(() => {
     if (fileQuery === null) return;
     const seq = ++fileSeq.current;
     const timer = window.setTimeout(
       () => {
-        (projectId ? api.projectFiles(projectId, fileQuery) : api.files(session.id, fileQuery))
+        (projectId ? api.projectFiles(projectId, fileQuery, 50, filesBase) : api.files(session.id, fileQuery))
           .then((r) => seq === fileSeq.current && setFileList({ q: fileQuery, files: r.files, reason: r.reason }))
           .catch((e) => seq === fileSeq.current && setFileList({ q: fileQuery, files: [], reason: describeError(e) }));
       },
       fileQuery === '' ? 0 : 120,
     );
     return () => window.clearTimeout(timer);
-  }, [fileQuery, session.id, projectId, api]);
+  }, [fileQuery, session.id, projectId, filesBase, api]);
 
   const items = useMemo<PickerItem[]>(() => {
     if (!trigger) return [];

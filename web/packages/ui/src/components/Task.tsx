@@ -1,8 +1,8 @@
 import { useApi } from '../ApiContext';
 import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
-import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { Suspense, lazy, memo, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
+import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
@@ -29,8 +29,9 @@ import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { BranchChip } from './BranchChip';
 import { lowDisk } from '../lib/worktrees';
+import { PLACE_CAPABILITY, PlaceChip } from './PlacePicker';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
-import { canRename, taskMenuItems, useTaskActions } from './taskActions';
+import { canRename, TaskList, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
 import { ForkPicker } from './Fork';
@@ -1157,7 +1158,18 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
     items: [], interactions: [], subagents: [], history_truncated: false, last_submission: null,
   }));
   const onSettings = useCallback((s: SessionSummary) => setSession((d) => ({ ...d, ...s })), []);
-  const newTask = useMemo(() => ({ projectId: project.id, send: (first: FirstMessage) => onSend(project.id, first) }), [project.id, onSend]);
+  // Where the Thread runs: chosen at the composer's foot, sent with the first message.
+  const api = useApi();
+  const placeable = api.supports(PLACE_CAPABILITY) && !project.no_git;
+  const [place, setPlace] = useState<ThreadPlace>({ mode: 'current' });
+  const { sessions } = useContext(TaskList);
+  const blocking = sessions.find((s) => s.project_id === project.id && s.workdir === project.dir && LIVE.includes(s.state) && (s.stage ?? 'active') === 'active');
+  const placed = placeable && place.mode !== 'current';
+  const newTask = useMemo(() => ({
+    projectId: project.id,
+    ...(placed && place.mode === 'worktree' && place.base ? { filesBase: place.base } : {}),
+    send: (first: FirstMessage) => onSend(project.id, placed ? { ...first, place } : first),
+  }), [project.id, onSend, placed, place]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
@@ -1172,7 +1184,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
       </div>
       <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
-        <ComposerFoot><BranchChip session={session} project={project} lowDisk={lowDisk(meta?.disk)} /></ComposerFoot>
+        <ComposerFoot>{placeable ? <PlaceChip project={project} place={place} onPlace={setPlace} blocking={blocking} lowDisk={lowDisk(meta?.disk)} /> : <BranchChip session={session} project={project} lowDisk={lowDisk(meta?.disk)} />}</ComposerFoot>
       </div>
     </div>
   );
