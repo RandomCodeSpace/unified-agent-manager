@@ -1,27 +1,60 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { api, ApiError } from '../../src/api';
 import * as data from '../../src/mock/data';
 import { renderApp, sidebar } from './render';
+
+afterEach(() => vi.restoreAllMocks());
+
+/** The confirmation hangs beside the row that asked (an anchored popover), never centred over the page. */
+function expectAnchoredTo(dialog: HTMLElement, id: string) {
+  const row = document.querySelector(`nav [data-task-row="${id}"]`)!;
+  expect(dialog.hasAttribute('data-side')).toBe(true);
+  expect(row.isConnected).toBe(true);
+}
 
 // In the mock, unified-agent-manager (p1) has 4 files not committed and 1 commit not pushed; notes-site (p3) is clean.
 describe('settling or archiving with unsaved git work', () => {
   const files = data.seed().changes.p1.map((c) => c.path);
 
-  test('the row says Settle…, asks with the counts and the first files, and Settle anyway settles', async () => {
+  test('the row says Settle…, asks at once beside the row with the counts and the first files, and Settle anyway settles', async () => {
     const { user } = renderApp();
     const side = await sidebar();
+    const stage = vi.spyOn(api, 'stage');
     const settle = side.getByRole('button', { name: 'Settle Doctor: add terminal line' });
     expect(settle.textContent).toBe('Settle…');
     await user.click(settle);
-    const guard = within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' });
+    // Known unsaved work asks without a request the service would refuse, beside the row, not centred.
+    expect(stage).not.toHaveBeenCalled();
+    expectAnchoredTo(dialog, 't3');
+    const guard = within(dialog);
     expect(guard.getByText(/Settling moves this Thread out of Active; this work is not saved anywhere else/)).toBeTruthy();
     expect(guard.getByText('4 not committed')).toBeTruthy();
     expect(guard.getByText('1 not pushed')).toBeTruthy();
-    expect(within(guard.getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]);
+    await waitFor(() => expect(within(guard.getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]));
     // Nothing moved yet.
     expect(document.querySelector('ul[aria-label="Unsettled tasks"] [data-task-row="t3"] [data-settle]')).not.toBeNull();
     await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
     await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
+    expect(stage.mock.calls).toEqual([['t3', 'settle', { force: true }]]);
+  });
+
+  test('work the summary did not know yet: the refusal opens the confirmation beside the row, and Escape keeps the Thread active', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    const real = api.stage.bind(api);
+    const stage = vi.spyOn(api, 'stage').mockImplementationOnce(async () => {
+      throw new ApiError(409, 'This Thread\'s folder has unsaved git work.', { code: 'unsaved_work', git_pending: { uncommitted: 1, unpushed: 0 }, refs: ['notes.md'] });
+    }).mockImplementation(real);
+    await user.click(side.getByRole('button', { name: 'Settle Bump dependencies' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' });
+    expectAnchoredTo(dialog, 't10');
+    expect(within(dialog).getByText('notes.md')).toBeTruthy();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(stage).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('ul[aria-label="Unsettled tasks"] [data-task-row="t10"]')).not.toBeNull();
   });
 
   test('Cancel keeps the Thread active; a clean Thread settles with no question', async () => {

@@ -247,8 +247,8 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   await user.click(screen.getByRole('button', { name: 'Task actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
   await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
-  // The refused settle, the forced one and the reopen.
-  expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner, owner]);
+  // Known unsaved work asks without a request: the forced settle and the reopen.
+  expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner]);
 });
 
 test('Unarchive from a remote search result restores only its owner and opens it as Finished', async () => {
@@ -589,7 +589,7 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   const settled = shelf();
   expect(nav.queryByRole('button', { name: /^Archived/ })).toBeNull();
   const settle = row.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!;
-  // Its folder has unsaved git work: Settle asks first, and both requests go to that machine.
+  // Its folder has unsaved git work: Settle asks first, and the forced settle goes to that machine.
   expect(settle.textContent).toBe('Settle…');
   expect(row.contains(settle)).toBe(false);
   expect(within(row).getByText('Finished')).toBeTruthy();
@@ -599,7 +599,7 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   expect(guard.queryByRole('button', { name: 'Open Changes' })).toBeNull();
   await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
   await waitFor(() => expect(shelf()).toBe(settled + 1));
-  expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b', 'b']);
+  expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b']);
   expect(window.location.hash).not.toContain('connection=b');
 });
 

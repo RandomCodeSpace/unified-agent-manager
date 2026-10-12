@@ -6,6 +6,8 @@ import { AlertDialog } from './ui/dialog';
 /** A Settle or Archive the service refused over the Thread folder's unsaved git work (`unsaved_work`). */
 export interface UnsavedTarget {
   kind: 'settle' | 'archive';
+  /** Where the confirmation hangs: the sidebar row or the control that asked, read as it was activated (`rowAnchor`). */
+  anchor: Element | null;
   pending: GitPending;
   /** The first changed files, as the service named them. */
   paths: string[];
@@ -32,14 +34,14 @@ export function SettleGuard({ target, open, onOpenChange, onClosed, busy, onConf
   onConfirm: () => void;
 }>) {
   if (!target) return null;
-  const { kind, pending: p, paths, openChanges } = target;
+  const { kind, pending: p, paths, openChanges, anchor } = target;
   const more = p.uncommitted - paths.length;
   return (
     <AlertDialog
       open={open}
       onOpenChange={onOpenChange}
       onClosed={onClosed}
-      anchorRow
+      anchor={anchor}
       title={`${VERB[kind]} with unsaved work?`}
       description={`${WHERE[kind]}; this work is not saved anywhere else.`}
       confirmLabel={`${VERB[kind]} anyway`}

@@ -131,8 +131,8 @@ export interface AlertDialogProps extends Omit<DialogProps, 'footer' | 'initialF
   cancelLabel?: string;
   /** A quieter action leading the buttons row (the unsaved-work confirmation's Open Changes). */
   aside?: ReactNode;
-  /** Anchored under the whole sidebar row when a row's control asked, so the row stays readable. */
-  anchorRow?: boolean;
+  /** Where it anchors when the asking control may be gone by the time it opens (`rowAnchor`); otherwise the last activated control. */
+  anchor?: Element | null;
 }
 
 /**
@@ -176,10 +176,21 @@ if (typeof document !== 'undefined') {
   document.addEventListener('keydown', () => remember(document.activeElement), true);
 }
 
+const onScreen = (el: Element | null | undefined): el is Element => !!el?.isConnected && el.getClientRects().length > 0;
+
 /** Where a confirmation anchors: the last activated element while it is on screen and the screen is not a phone's, else nowhere (the centred dialog). */
 function confirmAnchor(): Element | null {
   if (window.matchMedia('(width < 40rem)').matches) return null;
-  return lastActivated?.isConnected && lastActivated.getClientRects().length ? lastActivated : null;
+  return onScreen(lastActivated) ? lastActivated : null;
+}
+
+/**
+ * The anchor for a confirmation that opens after a request: read when its control is activated,
+ * as the whole sidebar row that control is in (a row's hover Settle leaves the DOM while the row is
+ * busy; the row stays), else the control itself, such as a header menu's trigger.
+ */
+export function rowAnchor(): Element | null {
+  return lastActivated?.closest('[data-task-row]') ?? lastActivated;
 }
 
 /**
@@ -195,8 +206,8 @@ export function AlertDialog(props: Readonly<AlertDialogProps>) {
   if (props.open !== wasOpen) {
     setWasOpen(props.open);
     if (props.open) {
-      const at = confirmAnchor();
-      setAnchor(at && props.anchorRow ? at.closest('[data-task-row]') ?? at : at);
+      const phone = window.matchMedia('(width < 40rem)').matches;
+      setAnchor(props.anchor !== undefined ? (!phone && onScreen(props.anchor) ? props.anchor : null) : confirmAnchor());
     }
   }
   const onClosed = () => {
