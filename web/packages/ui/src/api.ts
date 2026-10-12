@@ -1524,6 +1524,14 @@ export function onUnauthorized(fn: () => void): void {
   unauthorized = fn;
 }
 
+/** A settle or archive refused because the Thread's folder has unsaved git work: its counts and first changed files; null for any other failure. */
+export function unsavedRefusal(e: unknown): { pending: GitPending; paths: string[] } | null {
+  if (!isStatus(e, 409) || e.body.code !== 'unsaved_work') return null;
+  const p = e.body.git_pending as Partial<GitPending> | undefined;
+  const paths = Array.isArray(e.body.refs) ? e.body.refs.filter((r): r is string => typeof r === 'string') : [];
+  return { pending: { uncommitted: Number(p?.uncommitted) || 0, unpushed: Number(p?.unpushed) || 0 }, paths };
+}
+
 export function describeError(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -2026,7 +2034,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     /** The custom agents a Task of the Project can run as with this provider: user-invocable ones, metadata only. */
     taskAgents: (projectId: string, provider: string) =>
       call<{ agents: ConfigurationDefinition[] }>('GET', `/api/projects/${enc(projectId)}/agents?provider=${encodeURIComponent(provider)}`),
-    stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive') => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`),
+    /** `force`: settle or archive even though the Thread's folder has unsaved git work (otherwise a 409 `unsaved_work`, see `unsavedRefusal`). */
+    stage: (id: string, action: 'settle' | 'reopen' | 'archive' | 'unarchive', body?: { force: true }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/${action}`, body),
     queueAction: (id: string, action: 'resume' | 'clear') => call<void>('POST', `/api/sessions/${enc(id)}/queue/${action}`),
     cancelQueued: (id: string, requestId: string) => call<void>('DELETE', `/api/sessions/${enc(id)}/queue/${enc(requestId)}`),
     cancelSubagent: (id: string, agentId: string) => call<Subagent>('POST', `/api/sessions/${enc(id)}/subagents/${enc(agentId)}/cancel`, undefined, true),

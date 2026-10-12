@@ -1436,10 +1436,24 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive.
 
+  Settle and Archive ask first when the Thread's repository has unsaved git
+  work (changed tracked files not committed, or commits on no remote; see
+  the sidebar's counts). The row's hover button and the menu item then read
+  "Settle…". The service reads the work again and refuses with 409
+  `unsaved_work`, its counts (`git_pending`) and the first three changed
+  files (`refs`), unless the request body is `{"force": true}`. The
+  confirmation opens under the row or the control that asked (centred on a
+  phone) and shows the counts, the first three files and how many more,
+  **Open Changes** (the Thread's Changes on All changes), Cancel and
+  **Settle anyway** or **Archive anyway**. A clean Thread settles at once,
+  and a clean Archive asks as before.
+
   A Task with no activity for 7 days settles itself. The check runs every
   hour and skips any Task that Settle would refuse, that has an unanswered
-  request, an unreconciled rewind or an unseen failure, or that a page has
-  open. This settle doesn't count as activity, so the Task keeps its last
+  request, an unreconciled rewind or an unseen failure, that a page has
+  open, or whose repository has unsaved git work, read again before each
+  check; that row's tip says "Quiet N days; stays active until this work is
+  saved". This settle doesn't count as activity, so the Task keeps its last
   activity time. Its record says `settled_by: "auto"`; Reopen clears that and
   starts the 7 days again. Tasks the removed done-check settle moved keep
   `settled_by: "reviewed"`.

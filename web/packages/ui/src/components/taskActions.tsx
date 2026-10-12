@@ -1,6 +1,7 @@
 import { Archive, ArchiveRestore, Check, Cpu, Download, Pencil, PowerOff, RotateCw, Trash2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
 import { LIVE, needsYou, type Project, type SessionSummary } from '../api';
+import { pendingWork } from '../lib/tasks';
 import type { ActionItem } from './ui/menu';
 
 /** Where an in-place rename is happening: the sidebar row or the Task header. */
@@ -99,7 +100,7 @@ export function taskMenuItems(s: SessionSummary, a: TaskActions, place: Renaming
   if (runAgain) items.push({ key: 'run-again', label: 'Run again', icon: <RotateCw />, disabled: busy, onSelect: () => runAgain(s.id), separator: true });
   if (tryModel) items.push({ key: 'try-model', label: 'Try with another model…', icon: <Cpu />, disabled: busy, onSelect: () => tryModel(s.id) });
   if (exportMarkdown) items.push({ key: 'export', label: 'Export as Markdown', icon: <Download />, disabled: busy, onSelect: () => exportMarkdown(s.id), separator: !runAgain });
-  if (stage === 'active') items.push({ key: 'settle', label: 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
+  if (stage === 'active') items.push({ key: 'settle', label: pendingWork(s) ? 'Settle…' : 'Settle', icon: <Check />, disabled: busy || blocked, reason: blocked ? STAGE_REASON : undefined, onSelect: () => a.settle(s.id), separator: true });
   if (stage === 'settled') items.push({ key: 'reopen', label: 'Reopen', icon: <ArchiveRestore />, disabled: busy, onSelect: () => a.reopen(s.id), separator: true });
   if (stage === 'archived' && unarchive) items.push({ key: 'unarchive', label: 'Unarchive', icon: <ArchiveRestore />, disabled: busy, onSelect: () => unarchive(s.id), separator: true });
   if (stage !== 'archived') items.push({ key: 'archive', label: 'Archive', icon: <Archive />, disabled: busy || (stage === 'active' && blocked), reason: stage === 'active' && blocked ? STAGE_REASON : undefined, onSelect: () => a.archive(s.id) });

@@ -337,6 +337,8 @@ type DiffStat = { files: number; additions: number; deletions: number };
 /** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Project branch, the Task's changes and its folder's unsaved git work. */
 function rowTip(s: SessionSummary, project: Project, status: string, diff?: DiffStat) {
   const pending = readOnly(s) ? null : pendingWork(s);
+  // The 7-day settle skips a Thread with unsaved work: the tip says why it is still here.
+  const quietDays = Math.floor((Date.now() - Date.parse(s.updated_at)) / 86_400_000);
   return (
     <>
       <span className="block font-medium">{taskName(s) || 'New task'}</span>
@@ -346,6 +348,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
         {project.branch && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{project.branch}</span>}
         {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
         {pending && <span className="block">{pendingWords(pending)}</span>}
+        {pending && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
       </span>
     </>
   );
@@ -492,7 +495,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
         // A sibling of the row button, so Settle replaces the status without selecting the Task.
         // A first touch on the status reveals Settle; a second tap activates it.
         // Not a tab stop of its own: Right from the row reaches it (onListKeyDown), and the row's menu has it too.
-        <Tip label="Settle">
+        <Tip label={settle.label}>
           <Button
             size="sm"
             tabIndex={-1}
@@ -509,7 +512,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
             }}
           >
             <CircleCheck aria-hidden="true" />
-            Settle
+            {settle.label}
           </Button>
         </Tip>
       )}

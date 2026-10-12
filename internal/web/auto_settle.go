@@ -1,6 +1,7 @@
 package web
 
 import (
+	"slices"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -22,8 +23,25 @@ var autoSettleAfter = 7 * 24 * time.Hour
 // be settled by hand and waits for nothing (unattendedLocked). Reopen
 // restarts its week. The settle is not activity, so updated_at keeps the
 // Task's last message.
+//
+// A Task whose repository has unsaved git work stays active: the unsaved
+// work of the due Tasks' directories is read first.
 func (m *Manager) autoSettle() {
-	m.sweepSettle(settledByAuto, m.autoSettleableLocked)
+	m.mu.Lock()
+	var dirs []string
+	for _, s := range m.sessions {
+		if m.autoSettleableLocked(s) && !slices.Contains(dirs, s.workdir) {
+			dirs = append(dirs, s.workdir)
+		}
+	}
+	m.mu.Unlock()
+	if len(dirs) > 0 {
+		m.refreshGitPending(m.ctx, dirs...)
+	}
+	m.sweepSettle(settledByAuto, func(s *webSession) bool {
+		p := m.gitPending[m.pendingTop[s.workdir]]
+		return m.autoSettleableLocked(s) && (p == nil || *p == GitPending{})
+	})
 }
 
 // sweepSettle settles, as by, every Task settleable reports, then writes

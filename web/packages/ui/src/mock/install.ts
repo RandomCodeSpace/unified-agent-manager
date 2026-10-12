@@ -986,6 +986,11 @@ export function install(): { received: Received[] } {
       if (!t) return fail(404, 'session not found');
       const stage = t.stage ?? 'active';
       const blocked = busy(t) || t.interactions.some((i) => i.state === 'pending') || (t.queue?.length ?? 0) > 0;
+      // Settle and Archive refuse a Thread whose folder has unsaved git work unless forced, as the service does.
+      const p = t.git_pending;
+      if ((r[2] === 'settle' || r[2] === 'archive') && p && (p.uncommitted > 0 || p.unpushed > 0) && body.force !== true && stage !== 'archived' && !(r[2] === 'settle' && stage !== 'active')) {
+        return fail(409, 'This Thread\'s folder has unsaved git work that is not saved anywhere else.', { code: 'unsaved_work', git_pending: { ...p }, refs: (st.changes[t.project_id] ?? []).slice(0, 3).map((c) => c.path) });
+      }
       switch (r[2]) {
         case 'settle':
           if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);

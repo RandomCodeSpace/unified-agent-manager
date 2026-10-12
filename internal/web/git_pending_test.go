@@ -2,8 +2,11 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -71,10 +74,77 @@ func TestCountTrackedChanges(t *testing.T) {
 		"2 R. N... 100644 100644 100644 a a R100 new.txt\x00old.txt\x00" +
 		"u UU N... 100644 100644 100644 100644 a a a both.txt\x00" +
 		"1 D. N... 100644 000000 000000 a 0 gone.txt\x00"
-	if n := countTrackedChanges([]byte(status)); n != 4 {
-		t.Fatalf("count = %d, want 4", n)
+	status += "1 .M N... 100644 100644 100644 a a sub/with space.txt\x00"
+	n, paths := trackedChanges([]byte(status), 4)
+	if n != 5 || !slices.Equal(paths, []string{"a.txt", "new.txt", "both.txt", "gone.txt"}) {
+		t.Fatalf("count = %d, paths %q", n, paths)
 	}
-	if n := countTrackedChanges(nil); n != 0 {
-		t.Fatalf("empty count = %d", n)
+	if _, paths := trackedChanges([]byte("1 .M N... 100644 100644 100644 a a sub/with space.txt\x00"), 3); !slices.Equal(paths, []string{"sub/with space.txt"}) {
+		t.Fatalf("paths with a space = %q", paths)
+	}
+	if n, paths := trackedChanges(nil, 3); n != 0 || paths != nil {
+		t.Fatalf("empty = %d %q", n, paths)
+	}
+}
+
+// Settle and Archive refuse a Thread whose repository has unsaved work
+// unless forced, naming the counts and the first changed files; a clean
+// Thread settles as before.
+func TestSettleAndArchiveAskFirstWithUnsavedWork(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	for _, action := range []string{"settle", "archive"} {
+		w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/"+action, "", withCookie(g.ts))
+		var refused struct {
+			Error   string     `json:"error"`
+			Code    string     `json:"code"`
+			Refs    []string   `json:"refs"`
+			Pending GitPending `json:"git_pending"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &refused); err != nil || w.Code != http.StatusConflict {
+			t.Fatalf("%s = %d %s", action, w.Code, w.Body)
+		}
+		if refused.Code != codeUnsavedWork || refused.Pending != (GitPending{Uncommitted: 1}) || !slices.Equal(refused.Refs, []string{"tracked.txt"}) ||
+			!strings.Contains(refused.Error, "1 not committed") {
+			t.Fatalf("%s refused = %+v", action, refused)
+		}
+		if got := summaryOf(t, g.m, g.id); got.Stage != StageActive {
+			t.Fatalf("%s moved the Thread: %+v", action, got)
+		}
+	}
+	w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/settle", `{"force":true}`, withCookie(g.ts))
+	if w.Code != http.StatusOK || summaryOf(t, g.m, g.id).Stage != StageSettled {
+		t.Fatalf("forced settle = %d %s", w.Code, w.Body)
+	}
+	if w := g.ts.do(http.MethodPost, "/api/sessions/"+g.id+"/archive", `{"force":true}`, withCookie(g.ts)); w.Code != http.StatusOK {
+		t.Fatalf("forced archive = %d %s", w.Code, w.Body)
+	}
+
+	gitIn(t, repo, "commit", "-q", "-am", "fix: tracked")
+	clean, err := g.m.Create(CreateRequest{Provider: g.prov.Name(), ProjectID: summaryOf(t, g.m, g.id).ProjectID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := g.ts.do(http.MethodPost, "/api/sessions/"+clean.ID+"/settle", "", withCookie(g.ts)); w.Code != http.StatusOK {
+		t.Fatalf("clean settle = %d %s", w.Code, w.Body)
+	}
+}
+
+// The 7-day sweep leaves a quiet Thread with unsaved work active and
+// settles it once the work is saved.
+func TestAutoSettleSparesUnsavedWork(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	setNow(g.m, summaryOf(t, g.m, g.id).UpdatedAt.Add(autoSettleAfter))
+	g.m.autoSettle()
+	if got := summaryOf(t, g.m, g.id); got.Stage != StageActive {
+		t.Fatalf("settled with unsaved work: %+v", got)
+	}
+	gitIn(t, repo, "commit", "-q", "-am", "fix: tracked")
+	g.m.autoSettle()
+	if got := summaryOf(t, g.m, g.id); got.Stage != StageSettled || got.SettledBy != settledByAuto {
+		t.Fatalf("clean quiet Thread = %+v", got)
 	}
 }

@@ -2,11 +2,14 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/execpath"
 )
 
@@ -105,7 +108,7 @@ func (m *Manager) refreshGitPending(ctx context.Context, dirs ...string) {
 	reads := make(map[string]*GitPending, len(unique))
 	for _, top := range unique {
 		wg.Go(func() {
-			p := readGitPending(ctx, git, top)
+			p, _ := readGitPending(ctx, git, top, 0)
 			mu.Lock()
 			reads[top] = p
 			mu.Unlock()
@@ -171,45 +174,105 @@ func repoTop(ctx context.Context, git, dir string) string {
 	return ""
 }
 
-// readGitPending counts top's unsaved work, nil when git fails.
-func readGitPending(ctx context.Context, git, top string) *GitPending {
+// readGitPending counts top's unsaved work and keeps the paths of the
+// first keep changed files, nil when git fails.
+func readGitPending(ctx context.Context, git, top string, keep int) (*GitPending, []string) {
 	status, code, _, err := runGit(ctx, git, top, maxPendingStatus, "status", "--porcelain=v2", "-z", "--untracked-files=no")
 	if err != nil || code != 0 {
-		return nil
+		return nil, nil
 	}
-	p := &GitPending{Uncommitted: countTrackedChanges(status)}
+	n, paths := trackedChanges(status, keep)
+	p := &GitPending{Uncommitted: n}
 	remotes, code, _, err := runGit(ctx, git, top, 64<<10, "remote")
 	if err != nil || code != 0 {
-		return nil
+		return nil, nil
 	}
 	if len(strings.Fields(string(remotes))) == 0 {
-		return p
+		return p, paths
 	}
 	// Before the first commit there is no HEAD and nothing to push.
 	count, code, _, err := runGit(ctx, git, top, 4096, "rev-list", "--count", "HEAD", "--not", "--remotes")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	if code == 0 {
 		p.Unpushed, _ = strconv.Atoi(strings.TrimSpace(string(count)))
 	}
-	return p
+	return p, paths
 }
 
-// countTrackedChanges counts the changed tracked files in git status
-// --porcelain=v2 -z output: ordinary, renamed or copied, and unmerged
-// entries. A rename's or copy's source path is its own NUL-ended field.
-func countTrackedChanges(status []byte) int {
+// trackedChanges counts the changed tracked files in git status
+// --porcelain=v2 -z output, ordinary, renamed or copied, and unmerged
+// entries, and returns the paths of the first keep, made safe to show. A
+// rename's or copy's source path is its own NUL-ended field.
+func trackedChanges(status []byte, keep int) (int, []string) {
 	n := 0
+	var paths []string
 	fields := strings.Split(string(status), "\x00")
 	for i := 0; i < len(fields); i++ {
+		// The fields before the path: 8 for an ordinary entry, 9 for a
+		// rename or copy, 10 for an unmerged one.
+		var before int
 		switch {
-		case strings.HasPrefix(fields[i], "1 "), strings.HasPrefix(fields[i], "u "):
-			n++
+		case strings.HasPrefix(fields[i], "1 "):
+			before = 8
 		case strings.HasPrefix(fields[i], "2 "):
-			n++
+			before = 9
+		case strings.HasPrefix(fields[i], "u "):
+			before = 10
+		default:
+			continue
+		}
+		n++
+		if parts := strings.SplitN(fields[i], " ", before+1); len(paths) < keep && len(parts) == before+1 {
+			paths = append(paths, clipRunes(displaytext.Sanitize(parts[before]), maxNameRunes))
+		}
+		if before == 9 {
 			i++ // the source path
 		}
 	}
-	return n
+	return n, paths
+}
+
+// maxUnsavedPaths is how many changed files a refusal over unsaved work
+// names.
+const maxUnsavedPaths = 3
+
+// codeUnsavedWork classifies a refusal to settle or archive a Task whose
+// repository has unsaved work.
+const codeUnsavedWork = "unsaved_work"
+
+// checkUnsaved refuses putting away the Task id while the repository
+// holding its directory has unsaved work, read now: the refusal carries the
+// counts and the first changed files. The cached count is read again too.
+func (m *Manager) checkUnsaved(ctx context.Context, id string) error {
+	s, err := m.lookup(id)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	dir := s.workdir
+	m.kickGitPendingLocked([]string{dir})
+	m.mu.Unlock()
+	git, err := execpath.Resolve("git")
+	if err != nil {
+		return nil
+	}
+	top := repoTop(ctx, git, dir)
+	if top == "" {
+		return nil
+	}
+	p, paths := readGitPending(ctx, git, top, maxUnsavedPaths)
+	if p == nil || *p == (GitPending{}) {
+		return nil
+	}
+	var parts []string
+	if p.Uncommitted > 0 {
+		parts = append(parts, fmt.Sprintf("%d not committed", p.Uncommitted))
+	}
+	if p.Unpushed > 0 {
+		parts = append(parts, fmt.Sprintf("%d not pushed", p.Unpushed))
+	}
+	return &Error{Status: http.StatusConflict, Code: codeUnsavedWork, Pending: p, Refs: paths,
+		Message: "This Thread's folder has unsaved git work (" + strings.Join(parts, ", ") + ") that is not saved anywhere else."}
 }

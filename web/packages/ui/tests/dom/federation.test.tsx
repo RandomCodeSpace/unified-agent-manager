@@ -241,12 +241,14 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: owner ? 'Workstation B' : 'Main Server' }));
   await screen.findByRole('region', { name: 'Conversation' });
   await user.click(await screen.findByRole('button', { name: 'Task actions' }));
-  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle' }));
+  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle…' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
   await screen.findByText('Settled.');
   await user.click(screen.getByRole('button', { name: 'Task actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
   await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
-  expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner]);
+  // The refused settle, the forced one and the reopen.
+  expect(calls.filter(call => /\/(settle|reopen)$/.test(call.path)).map(call => call.owner)).toEqual([owner, owner, owner]);
 });
 
 test('Unarchive from a remote search result restores only its owner and opens it as Finished', async () => {
@@ -587,13 +589,17 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   const settled = shelf();
   expect(nav.queryByRole('button', { name: /^Archived/ })).toBeNull();
   const settle = row.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!;
-  expect(settle.textContent).toBe('Settle');
+  // Its folder has unsaved git work: Settle asks first, and both requests go to that machine.
+  expect(settle.textContent).toBe('Settle…');
   expect(row.contains(settle)).toBe(false);
   expect(within(row).getByText('Finished')).toBeTruthy();
   await user.hover(row);
   await user.click(settle);
+  const guard = within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' }));
+  expect(guard.queryByRole('button', { name: 'Open Changes' })).toBeNull();
+  await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
   await waitFor(() => expect(shelf()).toBe(settled + 1));
-  expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b']);
+  expect(calls.filter((call) => /\/(settle|stage)$/.test(call.path) || call.path.includes('/stage')).map((call) => call.owner)).toEqual(['b', 'b']);
   expect(window.location.hash).not.toContain('connection=b');
 });
 

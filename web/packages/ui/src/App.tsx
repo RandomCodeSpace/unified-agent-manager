@@ -5,7 +5,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type Ref } from 'react';
-import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -17,7 +17,7 @@ import { cn } from './lib/cn';
 import { kindOf } from './lib/attachments';
 import { staleReviewKeys } from './lib/review';
 import { createRequest, draftKey, serializeDraft, staleDraftKeys, type DraftAttachment } from './lib/drafts';
-import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, sidebarTasks, tasksOf } from './lib/tasks';
+import { cycleTask, needsYouCount, needsYouNow, newTaskProject as paletteStart, newsReader, pageTitle, pendingWork, sidebarTasks, tasksOf } from './lib/tasks';
 import { handleNotice, setViewing, startNotifications, streamOpened, type Notice } from './lib/notify';
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
@@ -32,6 +32,7 @@ import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
 import { AlertDialog, Sheet } from './components/ui/dialog';
+import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
 
@@ -1012,6 +1013,34 @@ export default function App() {
     }
   }, []);
 
+  // Settle and Archive of a Thread whose folder has unsaved git work ask first (SettleGuard): the service refuses
+  // without `force`, naming the counts and the first files. `allChanges` asks the Thread's view to open All changes.
+  const [unsaved, setUnsaved] = useState<UnsavedTarget | null>(null);
+  const [unsavedOpen, setUnsavedOpen] = useState(false);
+  const [forcing, setForcing] = useState(false);
+  const [allChanges, setAllChanges] = useState<{ id: string; at: number } | null>(null);
+  /** `request` settles or archives; a refusal over unsaved work opens the confirmation instead of failing. */
+  const askUnsaved = useCallback(async <T,>(request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths'>) => UnsavedTarget): Promise<T | void> => {
+    try {
+      return await request();
+    } catch (e) {
+      const refused = unsavedRefusal(e);
+      if (!refused) throw e;
+      setUnsaved(target(refused));
+      setUnsavedOpen(true);
+    }
+  }, []);
+  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(() => api.stage(id, kind), (refused) => ({
+    kind,
+    ...refused,
+    force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the task`),
+    openChanges: () => {
+      setUnsavedOpen(false);
+      select(id);
+      setAllChanges({ id, at: Date.now() });
+    },
+  })), `${kind} the task`), [runTask, askUnsaved, api, select]);
+
   /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
   const rerun = useCallback((id: string, model?: string) => runTask(id, async () => {
     const s = await api.rerun(id, { model, request_id: newRequestId() });
@@ -1032,7 +1061,7 @@ export default function App() {
         if (!current || current.name === name) return;
         await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => void runTask(id, () => api.stage(id, 'settle'), 'settle the task').catch(() => {}),
+      settle: (id) => void putAway(id, 'settle').catch(() => {}),
       reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
       unarchive: meta?.capabilities?.includes('unarchive-v1') ? (id) => void runTask(id, async () => {
         const s = await api.stage(id, 'unarchive');
@@ -1040,7 +1069,12 @@ export default function App() {
         select(id);
         return s;
       }, 'unarchive the task').catch(() => {}) : undefined,
-      archive: (id) => openTaskDialog({ kind: 'archive', id }),
+      // Known unsaved work goes straight to its confirmation; otherwise today's dialog, which may still meet a refusal.
+      archive: (id) => {
+        const s = latestSessions.current.find((x) => x.id === id);
+        if (s && pendingWork(s)) void putAway(id, 'archive').catch(() => {});
+        else openTaskDialog({ kind: 'archive', id });
+      },
       remove: (id) => openTaskDialog({ kind: 'delete', id }),
       close: (id) => openTaskDialog({ kind: 'close', id }),
       busy: busyTasks,
@@ -1048,7 +1082,7 @@ export default function App() {
       tryModel: setTryModel,
       exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
     }),
-    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed],
+    [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway],
   );
 
   /** Another machine's lifecycle request: its stream brings the result; a failure becomes the notice line, naming the machine. */
@@ -1073,6 +1107,7 @@ export default function App() {
   const machineActions = useMemo(() => new Map((machines ?? []).filter((m) => !m.active).map((m): [string, TaskActions] => {
     const c = m.client;
     const run = (id: string, op: () => Promise<unknown>, verb: string) => void runRemote(m, id, op, verb).catch(() => {});
+    const away = (id: string, kind: UnsavedTarget['kind']) => () => askUnsaved(() => c.stage(id, kind), (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => c.stage(id, kind, { force: true }), `${kind} the task`) }));
     const open = (id: string) => go?.(m.id, `${HASH_PREFIX}${encodeURIComponent(id)}`);
     return [m.id, {
       select: open,
@@ -1085,20 +1120,24 @@ export default function App() {
         if (!current || current.name === name) return;
         await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => run(id, () => c.stage(id, 'settle'), 'settle the task'),
+      settle: (id) => run(id, away(id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
       unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
         await c.stage(id, 'unarchive');
         open(id);
       }, 'unarchive the task') : undefined,
-      archive: (id) => openTaskDialog({ kind: 'archive', id, owner: m.id }),
+      archive: (id) => {
+        const s = m.state.sessions.find((x) => x.id === id);
+        if (s && pendingWork(s)) run(id, away(id, 'archive'), 'archive the task');
+        else openTaskDialog({ kind: 'archive', id, owner: m.id });
+      },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
       busy: remoteBusy[m.id] ?? NO_BUSY,
       runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache]);
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, askUnsaved]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1199,7 +1238,7 @@ export default function App() {
     if (dialogMachine) {
       const c = dialogMachine.client;
       try {
-        if (kind === 'archive') await runRemote(dialogMachine, id, () => c.stage(id, 'archive'), 'archive the task');
+        if (kind === 'archive') await runRemote(dialogMachine, id, () => askUnsaved(() => c.stage(id, 'archive'), (refused) => ({ kind, ...refused, force: () => runRemote(dialogMachine, id, () => c.stage(id, 'archive', { force: true }), 'archive the task') })), 'archive the task');
         else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
         else {
           await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the task');
@@ -1212,7 +1251,7 @@ export default function App() {
       return;
     }
     try {
-      if (kind === 'archive') await runTask(id, () => api.stage(id, 'archive'), 'archive the task');
+      if (kind === 'archive') await putAway(id, 'archive');
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
         await runTask(id, () => api.deleteSession(id), 'delete the task');
@@ -1286,6 +1325,7 @@ export default function App() {
         sheetOpen={sheetOpen}
         sidePanelInline={sheetInline}
         onSheet={onSheet}
+        allChangesRequest={allChanges}
         terminalOpen={!!terminalProject}
         onTerminal={toggleTerminal}
         onSessionUpdate={onSessionUpdate}
@@ -1490,6 +1530,18 @@ export default function App() {
               danger={false}
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
+            />
+            <SettleGuard
+              target={unsaved}
+              open={unsavedOpen}
+              onOpenChange={(o) => !o && setUnsavedOpen(false)}
+              onClosed={() => setUnsaved(null)}
+              busy={forcing}
+              onConfirm={() => {
+                if (!unsaved) return;
+                setForcing(true);
+                void unsaved.force().catch(() => {}).finally(() => { setForcing(false); setUnsavedOpen(false); });
+              }}
             />
             <TryModelDialog session={state.sessions.find((s) => s.id === tryModel) ?? null} onClose={() => setTryModel(null)} onRun={(model) => rerun(tryModel ?? '', model)} />
           </div>

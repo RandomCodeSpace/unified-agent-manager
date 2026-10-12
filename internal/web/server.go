@@ -271,9 +271,9 @@ func (s *Server) routes() {
 	mux.HandleFunc("DELETE /api/sessions/{id}/queue/{request_id}", s.handleQueueCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/sessions/{id}/close", s.handleClose)
-	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handleStage((*Manager).Settle))
+	mux.HandleFunc("POST /api/sessions/{id}/settle", s.handlePutAway((*Manager).Settle))
 	mux.HandleFunc("POST /api/sessions/{id}/reopen", s.handleStage((*Manager).Reopen))
-	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handleStage((*Manager).Archive))
+	mux.HandleFunc("POST /api/sessions/{id}/archive", s.handlePutAway((*Manager).Archive))
 	mux.HandleFunc("POST /api/sessions/{id}/unarchive", s.handleStage((*Manager).Unarchive))
 	mux.HandleFunc("POST /api/sessions/{id}/interactions/{iid}", s.handleAnswer)
 	mux.HandleFunc("GET /api/sessions/{id}/plan-reviews/{rid}", s.handlePlanReview)
@@ -482,6 +482,9 @@ func writeFailure(w http.ResponseWriter, err error) {
 	}
 	if len(webErr.Refs) > 0 {
 		body["refs"] = webErr.Refs
+	}
+	if webErr.Pending != nil {
+		body["git_pending"] = webErr.Pending
 	}
 	writeJSON(w, status, body)
 }
@@ -1251,7 +1254,32 @@ func (s *Server) handleClose(w http.ResponseWriter, r *http.Request) {
 
 // handleStage serves a Task stage change, answering with the summary.
 func (s *Server) handleStage(move func(*Manager, string) (SessionSummary, error)) http.HandlerFunc {
+	return s.stageHandler(move, false)
+}
+
+// handlePutAway serves Settle and Archive: unless the body says
+// {"force": true}, a Task whose repository has unsaved git work is refused
+// with 409 unsaved_work, its counts and first changed files.
+func (s *Server) handlePutAway(move func(*Manager, string) (SessionSummary, error)) http.HandlerFunc {
+	return s.stageHandler(move, true)
+}
+
+func (s *Server) stageHandler(move func(*Manager, string) (SessionSummary, error), guarded bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if guarded {
+			var body struct {
+				Force bool `json:"force"`
+			}
+			if !decodeOptionalBody(w, r, &body) {
+				return
+			}
+			if !body.Force {
+				if err := s.m.checkUnsaved(r.Context(), r.PathValue("id")); err != nil {
+					writeFailure(w, err)
+					return
+				}
+			}
+		}
 		summary, err := move(s.m, r.PathValue("id"))
 		if err != nil {
 			writeFailure(w, err)
