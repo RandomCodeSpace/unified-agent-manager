@@ -1,8 +1,11 @@
 import { ArrowLeft, Check, FileCode2, MessageSquare, RefreshCw, Search, WandSparkles, Wrench } from 'lucide-react';
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { ApiError, LIVE, describeError, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
-import { dateTime, Note, Skeleton } from './common';
+import { cn } from '../lib/cn';
+import { gitLabMarkdown, markdownSummary } from '../lib/gitlabRefs';
+import { dateTime, Markdown, Note, Skeleton } from './common';
+import { GitLabItemsContext } from './GitLabStrip';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 
@@ -43,9 +46,20 @@ function savedReview(storageKey: string): SavedReview {
   } catch { return { replies: {}, uncertain: false }; }
 }
 
-export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessionId: string; session?: SessionDetail; iid: number; sha: string }>) {
+/** A GitLab Markdown body (a note, a description, a draft) rendered as replies are; uploads link to GitLab. */
+export function GitLabMarkdown({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const origin = useContext(GitLabItemsContext)?.origin;
+  return <Markdown text={gitLabMarkdown(text, origin)} className={cn('min-w-0 break-words text-ui text-body', className)} />;
+}
+
+/**
+ * A merge request's discussions. With `sha` (the Thread's own commit) they can be answered,
+ * resolved and handed to the agent; without it they are read-only.
+ */
+export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0 }: Readonly<{ sessionId: string; session?: SessionDetail; iid: number; sha?: string; onLoad?: (review: Review) => void; /** Read again when this changes: the merge request is due a read. */ refresh?: number }>) {
   const api = useApi();
-  const storageKey = api.storageKey(`uam:gitlab-review:${sessionId}:${iid}:${sha}`);
+  const writable = !!sha;
+  const storageKey = api.storageKey(`uam:gitlab-review:${sessionId}:${iid}:${sha ?? 'read'}`);
   const [saved] = useState(() => savedReview(storageKey));
   const [review, setReview] = useState<Review>();
   const [readError, setReadError] = useState<string>();
@@ -68,6 +82,8 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
     catch { /* The open panel still works when browser storage is unavailable. */ }
   }, [storageKey, replies, pending, candidate, uncertain]);
 
+  const onLoaded = useEffectEvent((next: Review) => onLoad?.(next));
+  useEffect(() => { if (review) onLoaded(review); }, [review]);
   const load = useCallback((reconcile = false) => {
     request.current?.abort();
     const controller = new AbortController();
@@ -88,6 +104,13 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
     void load();
     return () => { live.current = false; request.current?.abort(); };
   }, [load]);
+  const shown = useRef(refresh);
+  const reload = useEffectEvent(() => { if (!busy && !writing.current) void load(); });
+  useEffect(() => {
+    if (refresh === shown.current) return;
+    shown.current = refresh;
+    reload();
+  }, [refresh]);
 
   const finishDraft = useEffectEvent((action: PendingAction, text: string) => {
     if (!live.current) return;
@@ -157,7 +180,7 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
     setReplies((before) => ({ ...before, [key]: text }));
   };
   const startAction = async (action: GitLabReviewAction) => {
-    if (!discussion || writing.current || pending || actionBlocked || stale) return;
+    if (!sha || !discussion || writing.current || pending || actionBlocked || stale) return;
     writing.current = true;
     setBusy(action);
     setNotice(undefined);
@@ -186,7 +209,7 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
     }
   };
   const write = async (kind: 'post' | 'resolve') => {
-    if (writing.current || stale || uncertain || locked || (kind === 'post' && !reply.trim())) return;
+    if (!sha || writing.current || stale || uncertain || locked || (kind === 'post' && !reply.trim())) return;
     writing.current = true;
     setBusy(kind);
     setUncertain(true);
@@ -198,14 +221,14 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
       if (!live.current) return;
       setUncertain(false);
       if (kind === 'post' && (revision.current[key] ?? 0) === capturedRevision) setReplies((before) => ({ ...before, [key]: '' }));
-      setNotice({ key, text: kind === 'post' ? 'Posted to GitLab.' : 'Thread updated in GitLab.' });
+      setNotice({ key, text: kind === 'post' ? 'Posted to GitLab.' : 'Discussion updated in GitLab.' });
       setLoading(true);
       await load();
     } catch (error) {
       if (!live.current) return;
       const unknown = !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
       setUncertain(unknown);
-      setNotice({ key, text: unknown ? 'GitLab may have saved this change. Refresh and check the thread before trying again.' : describeError(error), error: true });
+      setNotice({ key, text: unknown ? 'GitLab may have saved this change. Refresh and check the discussion before trying again.' : describeError(error), error: true });
     } finally {
       writing.current = false;
       if (live.current) setBusy(undefined);
@@ -230,40 +253,42 @@ export function GitLabReview({ sessionId, session, iid, sha }: Readonly<{ sessio
           const replies = entry.notes.filter((note) => !note.system).length - 1;
           return <button key={entry.id} type="button" aria-pressed={entry.id === currentId} className="flex min-w-0 flex-col gap-1 rounded-sm px-2 py-2 text-left text-ui hover:bg-tint-hover aria-pressed:bg-sunken" onClick={() => setSelected(entry.id)}>
             <span className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{first.author.name || first.author.username}</span><span className="text-caption text-muted">{entry.individual_note ? 'Comment' : `${replies} ${replies === 1 ? 'reply' : 'replies'}`}</span>{canResolve(entry) && <Chip tone={unresolved(entry) ? 'warning' : 'success'}>{unresolved(entry) ? 'Unresolved' : 'Resolved'}</Chip>}</span>
-            <span className="line-clamp-2 break-words text-body">{first.body}</span>
+            <span className="line-clamp-2 break-words text-body">{markdownSummary(first.body)}</span>
           </button>;
         })}
         {!discussions.length && <Note>No comments yet.</Note>}
-        {!!discussions.length && !discussions.some((entry) => filter === 'all' || (filter === 'unresolved' ? unresolved(entry) : canResolve(entry) && !unresolved(entry))) && <Note>No {filter} threads.</Note>}
+        {!!discussions.length && !discussions.some((entry) => filter === 'all' || (filter === 'unresolved' ? unresolved(entry) : canResolve(entry) && !unresolved(entry))) && <Note>No {filter} discussions.</Note>}
       </div>
-      <Button size="sm" variant="subtle" className="self-start" onClick={() => setSelected(null)}><MessageSquare />Add comment</Button>
+      {writable && <Button size="sm" variant="subtle" className="self-start" onClick={() => setSelected(null)}><MessageSquare />Add comment</Button>}
       {discussion ? <section aria-label="Selected discussion" className="flex min-w-0 flex-col gap-3 border-t border-hairline pt-3">
         {discussion.notes.filter((note) => !note.system).map((note) => <article key={note.id} className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap items-baseline gap-x-2"><span className="text-ui font-medium text-ink">{note.author.name || note.author.username}</span><time dateTime={note.created_at} className="text-meta text-muted">{dateTime(note.created_at)}</time></div>
           {note.position && <div className="flex items-start gap-1.5 text-caption text-muted"><FileCode2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><code className="min-w-0 break-all font-mono">{note.position.new_path || note.position.old_path}:{note.position.new_line ?? note.position.old_line}</code>{note.position.head_sha !== (review.merge_request.head_sha || sha) && <Chip fill="outline">Earlier commit</Chip>}</div>}
-          <p className="whitespace-pre-wrap break-words text-ui text-body">{note.body}</p>
+          <GitLabMarkdown text={note.body} />
         </article>)}
-        <div className="flex flex-wrap gap-2">
+        {writable && <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="primary" loading={busy === 'investigate'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('investigate')}><Search />Investigate</Button>
           <Button size="sm" variant="secondary" loading={busy === 'fix'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('fix')}><Wrench />Fix</Button>
-        </div>
-        {session && <p className="text-caption text-muted">{locked ? 'Reopen this task to work on the review.' : `Uses ${session.model || 'the task’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
-      </section> : <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
+        </div>}
+        {writable && session && <p className="text-caption text-muted">{locked ? 'Reopen this task to work on the review.' : `Uses ${session.model || 'the task’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
+      </section> : writable && <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
       {notice && notice.key === key && <Note role={notice.error ? 'alert' : 'status'} tone={notice.error ? 'error' : undefined}>{notice.text}</Note>}
-      {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the thread before trying again.</Note>}
+      {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the discussion before trying again.</Note>}
       {pending && !busy && (!notice || notice.key !== key) && <Note>{actionLabel[pending.action]} {pending.receipt.status === 'uncertain' ? 'may have started. Check the task before trying again.' : 'is pending. Follow progress in the task.'}</Note>}
       {pending?.receipt.status === 'uncertain' && !busy && <Button size="sm" className="self-start" onClick={() => { setPending(undefined); setNotice(undefined); }}>I checked the task</Button>}
+      {writable && <>
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={`gitlab-reply-${iid}`} className="text-caption text-muted">{discussion && !discussion.individual_note ? `Reply on MR !${iid}` : `Comment on MR !${iid}`}</label>
         {discussion && <Button size="sm" variant="subtle" loading={busy === 'draft_reply'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('draft_reply')}><WandSparkles />Draft reply</Button>}
       </div>
       <textarea id={`gitlab-reply-${iid}`} rows={4} value={reply} maxLength={16000} onChange={(event) => updateReply(event.target.value)} placeholder={discussion && !discussion.individual_note ? 'Write a reply…' : 'Write a comment…'} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-      {candidate?.key === key && <details className="text-ui text-body"><summary className="cursor-pointer">Agent draft</summary><p className="my-2 whitespace-pre-wrap break-words">{candidate.text}</p><Button size="sm" onClick={() => { updateReply(candidate.text); setCandidate(undefined); }}>Use draft</Button></details>}
+      {candidate?.key === key && <details className="text-ui text-body"><summary className="cursor-pointer">Agent draft</summary><GitLabMarkdown text={candidate.text} className="my-2" /><Button size="sm" onClick={() => { updateReply(candidate.text); setCandidate(undefined); }}>Use draft</Button></details>}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {discussion && canResolve(discussion) ? <Button size="sm" variant="subtle" loading={busy === 'resolve'} disabled={stale || !!busy || uncertain || locked} onClick={() => void write('resolve')}><Check />{unresolved(discussion) ? 'Resolve thread' : 'Reopen thread'}</Button> : <span />}
+        {discussion && canResolve(discussion) ? <Button size="sm" variant="subtle" loading={busy === 'resolve'} disabled={stale || !!busy || uncertain || locked} onClick={() => void write('resolve')}><Check />{unresolved(discussion) ? 'Resolve discussion' : 'Reopen discussion'}</Button> : <span />}
         <Button size="sm" variant="secondary" loading={busy === 'post'} disabled={!reply.trim() || stale || !!busy || uncertain || locked} onClick={() => void write('post')}>{discussion && !discussion.individual_note ? 'Post reply' : 'Post comment'}</Button>
       </div>
-      {selected === null && discussions.length > 0 && <Button size="sm" variant="subtle" className="self-start" onClick={() => setSelected(undefined)}><ArrowLeft />Back to thread</Button>}
+      {selected === null && discussions.length > 0 && <Button size="sm" variant="subtle" className="self-start" onClick={() => setSelected(undefined)}><ArrowLeft />Back to discussion</Button>}
+      </>}
     </>}
   </div>;
 }

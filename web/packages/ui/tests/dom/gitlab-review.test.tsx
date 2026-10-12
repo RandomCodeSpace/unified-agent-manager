@@ -41,10 +41,10 @@ test('review shows anchored thread context, comments, and useful filters', async
   expect(screen.getByText('1 unresolved · fix/timeout → main')).toBeTruthy();
   const filters = within(screen.getByRole('group', { name: 'Filter discussions' }));
   await user.click(filters.getByRole('button', { name: 'Resolved' }));
-  expect(screen.getByText('No resolved threads.')).toBeTruthy();
+  expect(screen.getByText('No resolved discussions.')).toBeTruthy();
   await user.click(filters.getByRole('button', { name: 'All' }));
   await user.click(screen.getByRole('button', { name: /Luca Comment/ }));
-  expect(screen.queryByRole('button', { name: 'Resolve thread' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Resolve discussion' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Post comment' })).toBeTruthy();
 });
 
@@ -128,16 +128,16 @@ test('an unrelated or unfinished agent turn cannot become a draft', async () => 
 
 test('post and resolve are separate explicit writes, and replies remain scoped to their thread', async () => {
   const { user, post, resolve } = draw();
-  await screen.findByRole('button', { name: 'Resolve thread' });
+  await screen.findByRole('button', { name: 'Resolve discussion' });
   await user.type(screen.getByRole('textbox'), 'Keep this draft');
   await user.click(screen.getByRole('button', { name: 'Add comment' }));
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('');
   await user.type(screen.getByRole('textbox'), 'A general comment');
   await user.click(screen.getByRole('button', { name: 'Post comment' }));
   expect(post).toHaveBeenCalledWith('task', 42, { commit_sha: sha, body: 'A general comment' });
-  await user.click(screen.getByRole('button', { name: 'Back to thread' }));
+  await user.click(screen.getByRole('button', { name: 'Back to discussion' }));
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Keep this draft');
-  await user.click(screen.getByRole('button', { name: 'Resolve thread' }));
+  await user.click(screen.getByRole('button', { name: 'Resolve discussion' }));
   expect(resolve).toHaveBeenCalledExactlyOnceWith('task', 42, { commit_sha: sha, discussion_id: 'thread', resolved: true });
   expect(post).toHaveBeenCalledTimes(1);
 });

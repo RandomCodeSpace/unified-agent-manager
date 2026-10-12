@@ -6,23 +6,10 @@ import { dateTime, Note, Skeleton } from './common';
 import { GitLabReview } from './GitLabReview';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
-import { Chip, type ChipProps } from './ui/chip';
+import { Chip } from './ui/chip';
+import { statusLabel, statusTone } from './GitLabStrip';
 
-function statusTone(status: string): ChipProps['tone'] {
-  if (status === 'failed') return 'error';
-  if (status === 'success' || status === 'opened') return 'success';
-  if (status === 'merged') return 'accent';
-  if (status === 'running' || status === 'pending') return 'accent';
-  return 'muted';
-}
-
-function statusLabel(status: string) {
-  if (status === 'opened') return 'Open';
-  const label = status.replaceAll('_', ' ');
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-function externalURL(value: string): string | undefined {
+export function externalURL(value: string): string | undefined {
   try {
     const url = new URL(value);
     return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;

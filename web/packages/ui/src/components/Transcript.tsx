@@ -12,6 +12,8 @@ import { groupIdentities } from '../lib/historyState';
 import { parentMap, replyIndex, type IdentityTone } from '../lib/subagents';
 import { turnVerb } from '../lib/verbs';
 import { receipts, type Stamp } from '../lib/receipts';
+import { gitLabCandidates, type GitLabOrigin } from '../lib/gitlabRefs';
+import { GitLabItemsContext, TurnStrip } from './GitLabStrip';
 import { Receipts } from './Receipts';
 import { AsideChip, useTurnHasAsides } from './AskAside';
 import { ImageThumbs, ItemAttachments } from './Attachments';
@@ -127,7 +129,9 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
   const turnIds = useGroupIdentities(groupItems);
   const replyActions = useMemo(() => ({ allChanges: onOpenAllChanges, branch: agentId ? undefined : onBranch, rewind: agentId ? undefined : onRewind, edit: agentId ? undefined : onEdit, active: readersActive, generation: readerGeneration }), [onOpenAllChanges, agentId, onBranch, onRewind, onEdit, readersActive, readerGeneration]);
   const stamps = new Map<string, Stamp[]>();
-  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
+  const gitlab = useContext(GitLabItemsContext);
+  const gitlabRefs = new Map<string, Item[]>();
+  const ctx: RenderContext = { replyActions, sessionId, planVersion, planAvailable, live, streamingId: working ? liveItems.at(-1)?.id : undefined, thoughtEnd: thoughtEnds(items), replyEnd: replyEnds(identityItems, turnTimings, working), receipts: stamps, gitlab: gitlabRefs, arrival, approvals: linked, subagentOf: (item) => (inline ? byParent.get(item.id) : undefined) };
   const scratch = scratchPlan(planPath, workdir);
   // What a call produced for the person stands in the answer while the call folds like any
   // other: a chart or the images its result returned.
@@ -167,6 +171,9 @@ export function Transcript({ sessionId, planVersion, planAvailable, planPath, ag
     if (!agentId && !open) {
       const reply = group.map((e) => e.item).filter((i): i is Item => !!i && !i.agent_id && i.kind === 'assistant').at(-1);
       if (reply?.text && ctx.replyEnd?.has(reply.id)) stamps.set(reply.id, stampsFor(reply, group.flatMap((e) => (e.item ? [e.item] : []))));
+      // And the GitLab items the turn touched, when the Thread's project is a signed-in GitLab one.
+      const refs = reply && gitlab && ctx.replyEnd?.has(reply.id) ? gitLabCallsFor(reply, group.flatMap((e) => (e.item ? [e.item] : [])), gitlab.origin) : undefined;
+      if (reply && refs) gitlabRefs.set(reply.id, refs);
     }
     const groupLive = live && group.some((entry) => entry.item && foreground.has(entry.item.id) && begunSince(entry));
     const gctx = { ...ctx, live: groupLive, streamingId: groupLive ? ctx.streamingId : undefined };
@@ -244,7 +251,7 @@ function renderCompact(entries: Entry[], ctx: RenderContext, special: (item: Ite
       continue;
     }
     if (item.kind !== 'tool') {
-      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
+      out.push(<Turn key={item.id} item={item} sessionId={ctx.sessionId} planVersion={ctx.planVersion} planAvailable={ctx.planAvailable} streaming={item.id === ctx.streamingId} endedAt={ctx.thoughtEnd.get(item.id)} end={ctx.replyEnd?.get(item.id)} stamps={ctx.receipts?.get(item.id)} gitlab={ctx.gitlab?.get(item.id)} replyActions={ctx.replyActions} className={ctx.arrival(item.id)} />);
       continue;
     }
     const node = special(item);
@@ -506,6 +513,8 @@ interface RenderContext {
   replyEnd?: ReadonlyMap<string, ReplyEnd>;
   /** For the last reply of each ended turn: its claims stamped against the turn's record (lib/receipts). */
   receipts?: ReadonlyMap<string, Stamp[]>;
+  /** For the last reply of each ended turn: the turn's items that can name GitLab items (lib/gitlabRefs). */
+  gitlab?: ReadonlyMap<string, Item[]>;
   arrival: (id: string) => string;
   /** Requests by the tool item they sit on, oldest first. */
   approvals: Map<string, Interaction[]>;
@@ -678,6 +687,18 @@ function stampsFor(reply: Item, items: Item[]): Stamp[] {
   return stamps;
 }
 
+/** A turn's items that can name GitLab items, kept while they are unchanged, so a memoised turn holds; none is undefined. */
+const gitLabCallsOf = new WeakMap<Item, { key: string; items?: Item[] }>();
+function gitLabCallsFor(reply: Item, items: Item[], origin: GitLabOrigin): Item[] | undefined {
+  const found = gitLabCandidates(items, origin);
+  const key = `${origin.host}/${origin.path}|${found.map((i) => `${i.id}:${i.tool?.status ?? ''}:${i.tool?.input?.length ?? 0}:${i.tool?.output?.length ?? 0}:${i.text?.length ?? 0}`).join('|')}`;
+  const held = gitLabCallsOf.get(reply);
+  if (held?.key === key) return held.items;
+  const kept = found.length ? found : undefined;
+  gitLabCallsOf.set(reply, { key, items: kept });
+  return kept;
+}
+
 /** Each reply's last foot: an unchanged one keeps its identity, so its memoised `Turn` holds while other rows stream. */
 const replyEndOf = new WeakMap<Item, ReplyEnd>();
 
@@ -716,7 +737,7 @@ const UserBubble = memo(function UserBubble({ item, sessionId, className, asideT
 });
 
 /** A message row's parts: `text` is the item's, or a clipped item's shown part, with `whole` for its note and copy. Plain functions, so a row costs no extra component. */
-interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; asideTurn?: string }
+interface MessageParts { item: Item; text: string; sessionId?: string; streaming?: boolean; className?: string; whole?: WholeText; /** Set when this reply ends its turn: the foot shows then. */ end?: ReplyEnd; replyActions?: ReplyActions; /** The reply's claims against its turn's record, when it ends the turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends the turn. */ gitlab?: Item[]; asideTurn?: string }
 
 function userBubble({ item, text, sessionId, className, whole, asideTurn }: MessageParts) {
   const reviewRequest = gitLabReviewRequest(text);
@@ -751,7 +772,7 @@ function userBubble({ item, text, sessionId, className, whole, asideTurn }: Mess
   );
 }
 
-function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps }: MessageParts) {
+function assistantMessage({ item, text, streaming = false, className, whole, end, replyActions, stamps, gitlab }: MessageParts) {
   const onBranch = replyActions?.branch;
   const onRewind = replyActions?.rewind;
   const onEdit = replyActions?.edit;
@@ -761,6 +782,7 @@ function assistantMessage({ item, text, streaming = false, className, whole, end
         {whole?.status === 'whole' ? plainText(text) : <Markdown text={text} streaming={streaming} />}
         {whole && <WholeNote whole={whole} />}
         {stamps && <Receipts stamps={stamps} />}
+        {gitlab && <TurnStrip items={gitlab} />}
       </div>
     </Copyable>
   );
@@ -779,9 +801,9 @@ function noticeRow({ text, className, whole }: MessageParts) {
 const plainText = (text: string) => <p className="break-words whitespace-pre-wrap">{text}</p>;
 
 /** A message the service holds shortened (`clipped`, a text over its memory bound): the part held, then the way to the whole text, read only on request. */
-function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string }>) {
+function ClippedMessage({ item, sessionId, streaming, className, end, replyActions, asideTurn, gitlab }: Readonly<{ item: Item; sessionId?: string; streaming?: boolean; className?: string; end?: ReplyEnd; replyActions?: ReplyActions; asideTurn?: string; gitlab?: Item[] }>) {
   const whole = useWholeText(item);
-  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn };
+  const parts = { item, text: whole.text, sessionId, streaming, className, whole, end, replyActions, asideTurn, gitlab };
   if (item.kind === 'user') return userBubble(parts);
   if (item.kind === 'notice') return noticeRow(parts);
   return assistantMessage(parts);
@@ -1223,15 +1245,15 @@ function QuestionDetail({ asked }: Readonly<{ asked: AskedQuestion }>) {
 }
 
 /** One non-user item. Everything from the provider is markdown, rendered without raw HTML, also while it streams. */
-export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; replyActions?: ReplyActions; className?: string }) {
+export const Turn = memo(function Turn({ item, sessionId, planVersion, planAvailable, streaming, endedAt, end, replyActions, className, stamps, gitlab }: { item: Item; sessionId?: string; planVersion?: number; planAvailable?: boolean; streaming: boolean; endedAt?: string; /** Set when this reply ends its turn: it gets the foot with the end time and the turn's tokens. */ end?: ReplyEnd; /** The reply's receipts, when it ends its turn. */ stamps?: Stamp[]; /** Its turn's items that can name GitLab items, when it ends its turn. */ gitlab?: Item[]; replyActions?: ReplyActions; className?: string }) {
   switch (item.kind) {
     case 'user':
       return <UserBubble item={item} sessionId={sessionId} className={className} />;
     case 'assistant':
     case 'notice':
       if (item.kind === 'notice' && item.plan) return <PlanNotice item={item} sessionId={sessionId} planVersion={planVersion} draftAvailable={planAvailable} className={className} />;
-      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} />;
-      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps }) : noticeRow({ item, text: item.text ?? '', className });
+      if (item.clipped) return <ClippedMessage item={item} streaming={streaming} className={className} end={end} replyActions={replyActions} gitlab={gitlab} />;
+      return item.kind === 'assistant' ? assistantMessage({ item, text: item.text ?? '', streaming, end, replyActions, className, stamps, gitlab }) : noticeRow({ item, text: item.text ?? '', className });
     case 'reasoning':
       return <Thinking item={item} streaming={streaming} endedAt={endedAt} className={className} />;
     case 'tool':

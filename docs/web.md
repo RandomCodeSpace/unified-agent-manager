@@ -1902,6 +1902,72 @@ is discarded. This does not add a new setting or guarantee pipeline success.
 The gate uses the SDK session directory, not a shell `cd` destination. Shell
 aliases, computed command heads and other wrappers are not interpreted.
 
+## GitLab from the conversation
+
+In a Thread whose folder has a GitLab `origin` and whose host `glab` is
+signed in to, each reply that ends a turn which touched GitLab items ends
+in a **GitLab** strip: one entry per item, in the order the turn touched
+them, each with its state word (`!2 draft · pipeline running`,
+`Pipeline #91 failed`, `#14 open`); a merge request also shows its head
+pipeline's state. Links in the reply itself stay plain links. An item counts when
+the turn named it on the Thread's own project:
+
+- a GitLab link to a merge request, issue, work item, pipeline or job of the
+  project, or to an epic of one of its groups, in the reply or in a
+  `git push` or `glab` call's output (the merge request link `git push`
+  prints included);
+- a `glab mr`, `glab issue`, `glab work-items` or `glab ci` call: the item it
+  names (`glab mr view 2`, `glab ci trace <job> -p <pipeline>`) and the
+  `!iid`, `#iid`, `&iid` and pipeline IDs it prints (a call with `-R` for
+  another project does not count);
+- the pipeline of the Thread's own commit, on the turn whose `git commit` or
+  `git push` made it.
+
+A strip lists at most 20 items. Pressing an entry opens the GitLab side panel
+on that item, with the turn's other items above it to step between; a
+modified click opens it in GitLab instead, and every view has **Open in
+GitLab**. The views:
+
+- **Merge request**: title, state, branches, its head pipeline (which opens
+  the pipeline view) and its discussions. The merge requests of the Thread's
+  own commit keep their reply, resolve, Investigate, Fix and Draft reply
+  controls; any other merge request of the project is read-only.
+- **Work item**: labels, assignees, milestone, description, parent and
+  child items. Issues are read through the REST API; epics and tasks through
+  one fixed, read-only GraphQL query the UAM server runs (agents cannot run
+  GraphQL: the shell rules refuse `glab api`).
+- **Pipeline** (also for a job): jobs by stage with their states, the failed
+  job (or the job opened) selected, the last 60 lines of its log with error
+  lines marked, and **Full log**. The pipeline of the Thread's own commit
+  offers **Investigate**.
+
+Discussion notes, work item descriptions and agent reply drafts render as
+Markdown, the same safe renderer replies use (no raw HTML, no image from
+another origin); the discussion list shows each first note as plain text. A
+GitLab `suggestion` block shows as a code block labelled **Suggested
+change**. Project uploads (`/uploads/…`) become links to them in GitLab and
+are never loaded inline. `!iid`, `#iid`, `&iid` and `@user` stay text.
+
+Item states stay live while they are on screen: a strip in view, or the
+item open in the panel (and the panel's switcher). While the browser tab is
+visible, a running or pending pipeline or job is read again every 20
+seconds, an open merge request (draft included) or open work item every
+minute; a finished pipeline or job, a merged or closed merge request and a
+closed work item are not read again. Due items go to the server together, up
+to 20 per request, and a tab that comes back reads at once what is older
+than 15 seconds. The open panel reads its view (discussions, jobs, a running
+job's log) again each time its item is read again. The server keeps each
+item's state for 15 seconds, shared by every browser and connected instance,
+so viewers do not multiply `glab` calls. While GitLab rate limits reads the
+server reads nothing until its `Retry-After` passes and answers with the last
+known states marked stale; the strip keeps them and says **stale**, never
+blank. Nothing here writes to GitLab except the existing discussion
+controls. The routes are `GET /api/sessions/{id}/gitlab/items?ref=…`,
+`GET /api/sessions/{id}/gitlab/work-items?ref=…` and
+`GET /api/sessions/{id}/gitlab/pipelines/{pipeline_id}`; the merge request
+and job log routes read any item of the project when called without
+`commit_sha`. Connected instances advertise `gitlab-items-v1`.
+
 ## MCP servers
 
 MCP servers give the agent extra tools: a command this host runs (stdio) or
