@@ -14,6 +14,9 @@ import (
 )
 
 const glabTTL = 10 * time.Minute
+
+// glabNegativeTTL is shorter so signing in to glab takes effect quickly.
+const glabNegativeTTL = time.Minute
 const glabTimeout = 20 * time.Second
 const glabOutputLimit = 1 << 20
 
@@ -47,7 +50,7 @@ func (g *glabGovernor) gate(ctx context.Context, dir string) (glabGate, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	e := g.dirs[dir]
-	if !e.at.IsZero() && time.Since(e.at) < glabTTL {
+	if !e.at.IsZero() && time.Since(e.at) < glabCacheTTL(e.ok) {
 		return e.gate, e.ok
 	}
 	if !e.loading {
@@ -69,6 +72,13 @@ func (g *glabGovernor) refresh(ctx context.Context, dir string) {
 	g.mu.Lock()
 	g.dirs[dir] = glabCachedGate{gate: gate, ok: ok, at: time.Now()}
 	g.mu.Unlock()
+}
+
+func glabCacheTTL(ok bool) time.Duration {
+	if ok {
+		return glabTTL
+	}
+	return glabNegativeTTL
 }
 
 func glabOrigin(ctx context.Context, dir string) (glabGate, bool) {
@@ -118,7 +128,7 @@ func (g *glabGovernor) authenticated(ctx context.Context, gate glabGate) bool {
 				return false
 			}
 		}
-		if time.Since(e.at) < glabTTL {
+		if time.Since(e.at) < glabCacheTTL(e.ok) {
 			g.mu.Unlock()
 			return e.ok
 		}

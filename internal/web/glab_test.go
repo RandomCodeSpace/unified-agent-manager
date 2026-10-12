@@ -131,6 +131,38 @@ func TestGlabAuthCacheAndExpiry(t *testing.T) {
 	}
 }
 
+// A failed sign-in check expires after a minute, so signing in to glab
+// takes effect quickly; a good one is kept longer.
+func TestGlabNegativeAuthExpiresSooner(t *testing.T) {
+	// The exit code is read from a file: rewriting a script that was just
+	// executed can fail with "text file busy".
+	bin := glabTestFake(t, "printf 'auth\\n' >> \"$0.calls\"\nexit \"$(cat \"$0.code\")\"")
+	glabTestWrite(t, bin+".code", "1")
+	var g glabGovernor
+	dir := glabTestRepo(t, "https://gitlab.com/group/repo.git")
+	g.gate(t.Context(), dir)
+	if glabWait(t, &g, dir).ok {
+		t.Fatal("signed-out gate enabled")
+	}
+	g.mu.Lock()
+	e := g.dirs[dir]
+	e.at = time.Now().Add(-glabNegativeTTL)
+	g.dirs[dir] = e
+	g.hosts["gitlab.com"].at = e.at
+	g.mu.Unlock()
+	glabTestWrite(t, bin+".code", "0")
+	g.gate(t.Context(), dir)
+	if !glabWait(t, &g, dir).ok {
+		t.Fatal("sign-in was not picked up after the negative cache expired")
+	}
+	if data, _ := os.ReadFile(bin + ".calls"); string(data) != "auth\nauth\n" {
+		t.Fatalf("calls=%q", data)
+	}
+	if glabCacheTTL(true) != glabTTL {
+		t.Fatal("a good sign-in check expired early")
+	}
+}
+
 func TestGlabRunnerBounds(t *testing.T) {
 	bin := glabTestFake(t, "printf '%s' sensitive-auth-text\nexit 0")
 	gate := glabGate{Dir: t.TempDir(), Host: "gitlab.com", Path: "group/repo", executable: bin}

@@ -1463,6 +1463,7 @@ func (m *Manager) removeProject(id string) error {
 				delete(cfg.WebRoutines, key)
 			}
 		}
+		pruneGitLabCommits(cfg)
 		return nil
 	})
 	if err == nil {
@@ -1970,6 +1971,7 @@ func (m *Manager) deleteTask(id string) error {
 				delete(cfg.WebForks, requestID)
 			}
 		}
+		pruneGitLabCommits(cfg)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("delete web session: %w", err)

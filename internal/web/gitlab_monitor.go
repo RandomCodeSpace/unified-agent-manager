@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -509,19 +510,78 @@ func (m *Manager) gitlabLoop() {
 			return
 		case <-timer.C:
 		}
-		m.reconcileGitLabCommits(m.ctx)
-		cfg, err := m.store.Load()
-		if err == nil {
-			seen := make(map[string]bool)
-			for _, rec := range cfg.WebGitLab {
-				if seen[rec.TaskID] || m.ctx.Err() != nil {
-					continue
-				}
-				seen[rec.TaskID] = true
-				_, _ = m.gitLabState(m.ctx, rec.TaskID, true)
-			}
-		}
+		m.gitLabMonitorPass(m.ctx)
 		timer.Reset(time.Minute)
+	}
+}
+
+// gitLabSettleAfter is how long a finished pipeline is still polled, so a
+// retried job is seen. Owner refreshes always read GitLab.
+const gitLabSettleAfter = 10 * time.Minute
+
+func gitLabSettled(p *GitLabPipeline, now time.Time) bool {
+	if p == nil {
+		return false
+	}
+	switch p.Status {
+	case "success", "failed", "canceled", "skipped":
+	default:
+		return false
+	}
+	at, err := time.Parse(time.RFC3339, p.UpdatedAt)
+	return err != nil || now.Sub(at) >= gitLabSettleAfter
+}
+
+// gitLabMonitorPass refreshes each Thread's selected commit. Removed Threads,
+// Threads without a selection and pipelines finished long ago cost no GitLab
+// call; receipts of deleted Threads are dropped.
+func (m *Manager) gitLabMonitorPass(ctx context.Context) {
+	m.reconcileGitLabCommits(ctx)
+	cfg, err := m.store.Load()
+	if err != nil {
+		return
+	}
+	if len(staleGitLabCommits(&cfg)) > 0 {
+		if err := m.store.Update(func(cfg *store.Config) error {
+			pruneGitLabCommits(cfg)
+			return nil
+		}); err != nil {
+			log.Warn("prune GitLab commits failed", "error", err)
+		}
+	}
+	seen := make(map[string]bool)
+	for _, rec := range cfg.WebGitLab {
+		if seen[rec.TaskID] || ctx.Err() != nil {
+			continue
+		}
+		seen[rec.TaskID] = true
+		cached, err := m.gitLabState(ctx, rec.TaskID, false)
+		if err != nil || cached.Commit == nil || gitLabSettled(cached.Pipeline, m.now()) {
+			continue
+		}
+		_, _ = m.gitLabState(ctx, rec.TaskID, true)
+	}
+}
+
+// staleGitLabCommits lists commit receipts whose Thread has no record left.
+func staleGitLabCommits(cfg *store.Config) []string {
+	live := make(map[string]bool, len(cfg.Sessions))
+	for _, rec := range cfg.Sessions {
+		live[rec.ID] = true
+	}
+	var stale []string
+	for key, rec := range cfg.WebGitLab {
+		if !live[rec.TaskID] {
+			stale = append(stale, key)
+		}
+	}
+	return stale
+}
+
+// pruneGitLabCommits runs inside a store update after Thread records go.
+func pruneGitLabCommits(cfg *store.Config) {
+	for _, key := range staleGitLabCommits(cfg) {
+		delete(cfg.WebGitLab, key)
 	}
 }
 
