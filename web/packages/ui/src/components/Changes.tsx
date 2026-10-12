@@ -14,9 +14,6 @@ import { ContextMenu, Menu, type ActionItem } from './ui/menu';
 import { Segmented } from './ui/segmented';
 import { Tip } from './ui/tooltip';
 
-/** What This task lists, as the server labels that listing (taskLabel): said on its tab's tooltip, not under the tabs. */
-const TASK_SCOPE_HELP = "Files this task's agent edited, compared with HEAD. Changes made to them by anything else show too.";
-
 /** A turn's "View changes": the files it edited, and whether it is the Task's latest turn; `at` tells two asks apart. */
 export interface ChangesTurn {
   files: string[];
@@ -308,15 +305,15 @@ export function ChangesSheet({
             { value: 'session', label: 'This task' },
             { value: 'workspace', label: 'All changes' },
           ] : [
-            { value: 'task', label: <Tip label={TASK_SCOPE_HELP}><span className="tabular-nums">This task{count('task')}</span></Tip> },
+            { value: 'task', label: <span className="tabular-nums">This task{count('task')}</span> },
             { value: 'turn', label: <span className="tabular-nums">Last turn{count('turn')}</span> },
             { value: 'workspace', label: <span className="tabular-nums">All changes{count('workspace')}</span> },
           ]}
         />
       </div>
-      {label !== TASK_SCOPE_HELP && <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
+      <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any task or source.' : label}
-      </p>}
+      </p>
       {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
       {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
