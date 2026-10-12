@@ -8,9 +8,9 @@ describe('the UAM wordmark', () => {
   test('the sidebar toggle and Home show the mark with UAM; the collapsed rail shows the mark alone', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const hide = side.getByRole('button', { name: 'Hide sidebar' });
+    const hide = side.getByRole('button', { name: /^Hide sidebar/ });
     expect(hide.querySelector('svg')).toBeTruthy();
-    expect(hide.textContent).toBe('UAM');
+    expect(within(hide).getByText('UAM')).toBeTruthy();
     const home = within(await screen.findByRole('region', { name: 'Home' }));
     const brand = home.getByText('UAM');
     expect(brand.parentElement!.querySelector('svg')).toBeTruthy();

@@ -47,7 +47,7 @@ export interface WorkspaceActions {
  * of the main pane's header, once hidden, it brings it back. On a narrow screen it opens
  * and closes the drawer instead.
  */
-export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, count = 0, side, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; /** Tasks that need you, shown on the button while the list is out of sight. */ count?: number; side?: TipSide; className?: string }>) {
+export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = false, count = 0, side, className }: Readonly<{ id?: string; open: boolean; onToggle: () => void; size?: 'icon' | 'icon-md'; wordmark?: boolean; /** Tasks that need you, shown on the button (beside the wordmark in the sidebar header); hidden at zero. */ count?: number; side?: TipSide; className?: string }>) {
   const label = (open ? 'Hide sidebar' : 'Show sidebar') + (count > 0 ? `, ${count} need you` : '');
   return (
     <Tip
@@ -62,7 +62,7 @@ export function SidebarToggle({ id, open, onToggle, size = 'icon', wordmark = fa
       <Button id={id} size={wordmark ? 'md' : size} aria-label={label} aria-expanded={open} aria-keyshortcuts="Control+B Meta+B" className={cn('[&_svg]:size-4', wordmark && 'px-2', className)} onClick={onToggle}>
         <Brand markOnly={!wordmark} />
         {count > 0 && (
-          <span aria-hidden="true" className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-attention px-1 text-meta font-semibold text-on-primary tabular-nums pointer-coarse:top-0.5 pointer-coarse:right-0.5">
+          <span aria-hidden="true" className={cn('flex h-4 min-w-4 items-center justify-center rounded-full bg-attention px-1 text-meta font-semibold text-on-primary tabular-nums', !wordmark && 'absolute -top-0.5 -right-0.5 pointer-coarse:top-0.5 pointer-coarse:right-0.5')}>
             {count}
           </span>
         )}
@@ -657,6 +657,7 @@ export const Sidebar = memo(function Sidebar({
   connection,
   version,
   machineActions,
+  count = 0,
 }: {
   /** False until the first snapshot: the list is a skeleton, never "No projects yet". */
   loaded: boolean;
@@ -669,6 +670,8 @@ export const Sidebar = memo(function Sidebar({
   version?: string;
   /** Under federation, the row actions of each machine not on screen, which run against that machine. */
   machineActions?: ReadonlyMap<string, TaskActions>;
+  /** Tasks that need you (the collapsed rail's count), shown beside the header's wordmark. */
+  count?: number;
 }) {
   const federation = useFederation();
   // With connected instances, every machine's Tasks in one list; the machine on screen is this App's own state.
@@ -796,7 +799,7 @@ export const Sidebar = memo(function Sidebar({
   return (
     <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2 max-sm:h-auto max-sm:flex-wrap max-sm:py-1">
-        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
+        <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} count={count} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
         {/* Search uses the spare header width, or its own full row on a phone. */}
         <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
