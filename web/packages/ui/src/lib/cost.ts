@@ -165,19 +165,26 @@ export function formatCredits(n: number): string {
 
 export const COST_TIER_LABEL: Record<CostTier, string> = { low: 'Low cost', medium: 'Medium cost', high: 'High cost', very_high: 'Very high cost' };
 
-/** "Low cost · 0.25 in, 2 out credits per 1M tokens", "10% off usage", or "" when the model reports no cost. Prices are in AI Credits. */
-export function modelCostLine(model: Pick<Model, 'cost_tier' | 'discount_percent' | 'prices'>): string {
+/**
+ * "Low cost · 0.25 in, 2 out credits per 1M tokens", "10% off usage", or "" when the model reports no cost. Prices are in AI Credits.
+ * Without `unit` (a list that says MODEL_PRICE_UNIT once): "Low cost · 0.25 in / 2 out", naming only a batch other than 1M.
+ */
+export function modelCostLine(model: Pick<Model, 'cost_tier' | 'discount_percent' | 'prices'>, unit = true): string {
   const parts: string[] = [];
   if (model.cost_tier) parts.push(COST_TIER_LABEL[model.cost_tier]);
   if (model.discount_percent) parts.push(`${model.discount_percent}% off usage`);
   const p = model.prices;
   if (p && (p.input !== undefined || p.output !== undefined)) {
-    const per = compactTokens(p.batch_size || BATCH);
-    const io = [p.input !== undefined ? `${p.input} in` : '', p.output !== undefined ? `${p.output} out` : ''].filter(Boolean).join(', ');
-    parts.push(`${io} credits per ${per} tokens`);
+    const batch = p.batch_size || BATCH;
+    const io = [p.input !== undefined ? `${p.input} in` : '', p.output !== undefined ? `${p.output} out` : ''].filter(Boolean).join(unit ? ', ' : ' / ');
+    if (unit) parts.push(`${io} credits per ${compactTokens(batch)} tokens`);
+    else parts.push(batch === BATCH ? io : `${io} per ${compactTokens(batch)}`);
   }
   return parts.join(' · ');
 }
+
+/** The unit of `modelCostLine` without its own. */
+export const MODEL_PRICE_UNIT = `credits per ${compactTokens(BATCH)} tokens`;
 
 /** The quota the credits chip shows for a provider: its first limited one, else its first; null when it reports none. */
 export function providerQuota(quotas: readonly Quota[] | undefined, provider: string): Quota | null {

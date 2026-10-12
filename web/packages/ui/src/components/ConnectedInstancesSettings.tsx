@@ -143,7 +143,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
 
   return (
     <div className="flex flex-col gap-4">
-      <Note>Connect your other UAM servers here. Each server keeps its own tasks, files, settings, and Copilot account. Only the instances listed here are included, even when they connect back to this server.</Note>
+      <Note>Each server keeps its own tasks, settings and Copilot account.</Note>
       {homeInstanceID && <Note>Main Server: <span className="break-all font-mono">{homeInstanceID}</span></Note>}
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={busy || adding} onClick={() => { setAdding(true); setEditor(null); setError(null); }}>Add instance</Button>

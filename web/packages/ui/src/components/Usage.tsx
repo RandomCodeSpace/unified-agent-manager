@@ -126,14 +126,13 @@ export function UsageContent({ onClose, onAddPrices, now }: Readonly<{ onClose: 
     <PanelHead scrolled={scrolled} className="px-4 pt-3 pb-2">
       <div className="flex items-center gap-1">
         <Popover.Title className="text-display-sm text-ink">Usage</Popover.Title>
-        <HelpTip label="Usage">
-          <span className="block">Input, Output, and Cache are separate parts of the recorded token split. Cache includes reads and writes. Bars show proportions within each model; totals retain the source-reported count.</span>
-          {report && <span className="mt-2 block">UAM tracking started {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })}. Days use server time. Includes {report.collection ? 'local harness records and UAM ' : ''}task, subagent, and Background AI usage.</span>}
-          {report?.collection && <>
-            <span className="mt-2 block">External Copilot usage requires local telemetry files and is included from {dateTime(report.collection.copilot_since)}. Other harness history may start earlier.</span>
+        {report && <HelpTip label="Usage">
+          <span className="block">Since {new Date(report.since).toLocaleDateString(undefined, { dateStyle: 'medium' })} · server time</span>
+          {report.collection && <>
+            <span className="block">External Copilot since {dateTime(report.collection.copilot_since)}</span>
             {report.collection.status !== 'ready' && <span className="mt-2 block">{COLLECTION_STATUS[report.collection.status]}</span>}
           </>}
-        </HelpTip>
+        </HelpTip>}
         <span className="flex-1" />
         {account && <span className="mr-1 text-title tabular-nums text-ink">{quotaFace(account)}</span>}
         <Button size="icon-sm" aria-label="Close usage" className="text-muted" onClick={onClose}><X aria-hidden="true" /></Button>
@@ -257,7 +256,7 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
               </span>
             )}
           </div>
-          {burn && <BurnBar burn={burn} tone={pace.tone} entitlement={quota.entitlement} />}
+          {burn && <BurnBar burn={burn} tone={pace.tone} used={quota.used} entitlement={quota.entitlement} />}
           {projection && (
             <dl className="flex flex-col text-ui">
               <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -281,9 +280,11 @@ function Allowance({ quota, now, stale, provider }: Readonly<{ quota: Quota; now
  * runs out first), and a tick at the even pace's budget to date. A legend line under it says each in
  * words; the bar is an image named with the same.
  */
-function BurnBar({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; entitlement: number }>) {
+function BurnBar({ burn, tone, used, entitlement }: Readonly<{ burn: NonNullable<ReturnType<typeof quotaBurn>>; tone: keyof typeof QUOTA_TONES; used: number; entitlement: number }>) {
   const n = (share: number) => Math.round(share * entitlement).toLocaleString('en-US');
-  const label = `${n(burn.used)} used; ${n(burn.elapsed)} is the even budget to date; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${n(burn.projected)} by the reset`}.`;
+  // The reported count, as the headline prints it: the bar's share times the allowance can round to one more or less.
+  const usedText = Math.round(used).toLocaleString('en-US');
+  const label = `${usedText} used; ${n(burn.elapsed)} is the even budget to date; at this pace ${burn.runsOut ? `it runs out ${day(burn.runsOut)}` : `about ${n(burn.projected)} by the reset`}.`;
   return (
     <figure className="flex flex-col gap-1.5">
       <div role="img" aria-label={label} className="relative h-2">
@@ -294,7 +295,7 @@ function BurnBar({ burn, tone, entitlement }: Readonly<{ burn: NonNullable<Retur
         <span aria-hidden="true" className="absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-ink" style={{ left: `${burn.elapsed * 100}%` }} />
       </div>
       <figcaption aria-hidden="true" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-meta tabular-nums text-muted">
-        <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs', QUOTA_FILLS[tone])} />Used {n(burn.used)}</span>
+        <span className="flex items-center gap-1"><span className={cn('size-2 rounded-xs', QUOTA_FILLS[tone])} />Used {usedText}</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-0.5 rounded-full bg-ink" />Budget to date {n(burn.elapsed)}</span>
         <span className={cn('flex items-center gap-1', burn.runsOut && 'text-error')}><span className={cn('size-2 rounded-xs opacity-30', QUOTA_FILLS[tone])} />{burn.runsOut ? `Runs out ~${day(burn.runsOut)}` : `At this pace ~${n(burn.projected)}`}</span>
         <span className="ml-auto">{entitlement.toLocaleString('en-US')}</span>

@@ -4,7 +4,7 @@ import { cn } from '../lib/cn';
 import { Dot, Note } from './common';
 import { Input } from './ui/input';
 
-/** Where a group's settings are kept, said under each of its pages. */
+/** Where a group's settings are kept: the server's after its rail heading, the others' under each of its pages. */
 export type SettingsScope = 'service' | 'browser' | 'copilot';
 
 /**
@@ -70,7 +70,7 @@ export interface PageAttention {
  * The Settings rail: Find a setting, then the pages by group. On a phone (`list`) it is the whole view, each page with
  * its current values under its name and a chevron to open it.
  */
-export function SettingsRail({ pages, current, query, onQuery, onOpen, attention, summary, list }: Readonly<{
+export function SettingsRail({ pages, current, query, onQuery, onOpen, attention, summary, where, list }: Readonly<{
   pages: readonly (Page & { group: Group })[];
   /** The page on screen; none while searching, or on a phone's list. */
   current: SettingsPage | null;
@@ -79,6 +79,8 @@ export function SettingsRail({ pages, current, query, onQuery, onOpen, attention
   onOpen: (page: SettingsPage) => void;
   attention: Partial<Record<SettingsPage, PageAttention>>;
   summary: Partial<Record<SettingsPage, string>>;
+  /** The instance whose settings are on screen, named after each group saved there; none with no connected instance. */
+  where?: string;
   list: boolean;
 }>) {
   const id = useId();
@@ -101,7 +103,7 @@ export function SettingsRail({ pages, current, query, onQuery, onOpen, attention
       {groups.length === 0 && <Note role="status" className="px-2">No setting matches “{query.trim()}”.</Note>}
       {groups.map(({ group, pages: items }) => (
         <div key={group.label} role="group" aria-labelledby={`${id}-${group.label}`} className="flex flex-col gap-0.5">
-          <div id={`${id}-${group.label}`} className="px-2 pb-1 text-eyebrow uppercase text-muted">{group.label}</div>
+          <div id={`${id}-${group.label}`} className="truncate px-2 pb-1 text-eyebrow uppercase text-muted">{group.label}{where && group.scope === 'service' && <span className="normal-case"> · on {where}</span>}</div>
           {items.map((page) => {
             const mark = attention[page.id];
             const on = page.id === current;

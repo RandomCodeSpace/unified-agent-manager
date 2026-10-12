@@ -99,7 +99,7 @@ describe('AI configuration creator', () => {
     const { user } = await creator('hooks');
     await user.click(screen.getByRole('combobox', { name: 'Scope' }));
     await user.click(await screen.findByRole('option', { name: 'unified-agent-manager', exact: true }));
-    await screen.findByText('No hooks in this scope. Add one to get started.');
+    await screen.findByText('No hooks in this scope.');
     await user.click(screen.getByText('Create with AI'));
     await user.type(screen.getByLabelText('Describe your hook file'), 'Log completed tools.');
     const original = window.fetch;
@@ -159,7 +159,7 @@ describe('AI configuration creator', () => {
     const { user } = await creator('hooks');
     await user.click(screen.getByRole('combobox', { name: 'Scope' }));
     await user.click(await screen.findByRole('option', { name: 'unified-agent-manager', exact: true }));
-    await screen.findByText('No hooks in this scope. Add one to get started.');
+    await screen.findByText('No hooks in this scope.');
     await user.click(screen.getByText('Create with AI'));
     await user.type(screen.getByLabelText('Describe your hook file'), 'Review tools.');
     await user.click(screen.getByRole('button', { name: 'Generate draft' }));

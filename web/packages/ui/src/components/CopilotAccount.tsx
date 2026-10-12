@@ -5,6 +5,7 @@ import { ACCOUNT_NOT_LINKED, describeError, errorCode, type DeviceSignIn, type P
 import { copyText, useCopied } from '../lib/clipboard';
 import { Dot, Note, Skeleton, useApp, WorkingMark } from './common';
 import { AlertDialog, useConfirm } from './ui/dialog';
+import { HelpTip } from './ui/tooltip';
 import { Button, buttonVariants } from './ui/button';
 import { Input } from './ui/input';
 
@@ -283,6 +284,13 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
   const linked = account.linked;
   // Signed in as another account than the one this server is linked to: Copilot is unavailable until that is fixed.
   const mismatch = account.signed_in && !!linked && (account.login?.toLowerCase() !== linked.login.toLowerCase() || (account.host || GITHUB) !== (linked.host || GITHUB));
+  // The gh sign-in says how in the headline; another source in a line under it.
+  const viaGh = account.signed_in && account.source === 'gh-cli' && !env;
+  const unlinkButton = linked && (
+    <Button size={account.signed_in && !mismatch ? 'md' : 'sm'} variant="danger" disabled={busy} onClick={() => unlink.ask(linked.login)}>
+      Unlink
+    </Button>
+  );
 
   return (
     <>
@@ -290,12 +298,13 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
         <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1" role="status">
           <span className="flex items-center gap-2 text-ui font-medium text-ink">
             <Dot tone={account.signed_in ? 'success' : 'warning'} className="transition-colors duration-160 ease-app" />
-            {account.signed_in ? <span className="min-w-0 [overflow-wrap:anywhere]">Signed in{account.login ? ` as ${account.login}` : ''}{host}</span> : 'Signed out'}
+            {account.signed_in ? <span className="min-w-0 [overflow-wrap:anywhere]">Signed in{account.login ? ` as ${account.login}` : ''}{host}{viaGh && ' · via gh'}</span> : 'Signed out'}
+            {viaGh && <HelpTip label="gh sign-in">To sign this account out, run <code className="font-mono">gh auth logout</code> on the server.</HelpTip>}
           </span>
-          <Note>
+          {!viaGh && <Note>
             {account.signed_in ? sourceText(account) : 'Tasks cannot start or run until Copilot is signed in.'}
             {!account.signed_in && account.message ? <> Copilot says: {account.message}</> : null}
-          </Note>
+          </Note>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button size="md" variant="secondary" disabled={busy} onClick={() => { setDone(null); setReads((n) => n + 1); }}>
@@ -311,6 +320,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
               Sign out
             </Button>
           )}
+          {account.signed_in && !mismatch && unlinkButton}
         </div>
       </div>
       {mismatch && linked && (
@@ -318,25 +328,19 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
           GitHub Copilot is signed in as {account.login}{host}, but this server is linked to {linked.login}{onHost(linked.host)}. Sign in as {linked.login}, or unlink the account.
         </Note>
       )}
-      {linked && (
+      {/* The linked account is said only when it is not the one signed in. */}
+      {linked && (!account.signed_in || mismatch) && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <Note className="min-w-0 [overflow-wrap:anywhere]">
             Linked account: {linked.login}
             {onHost(linked.host)}
           </Note>
-          <Button size="sm" variant="danger" disabled={busy} onClick={() => unlink.ask(linked.login)}>
-            Unlink
-          </Button>
+          {unlinkButton}
         </div>
       )}
       {env && (
         <Note tone="warn">
           The token in <Code>{env}</Code>, set in the service environment, takes precedence over any sign-in made here, so signing in and out here is off. Change or remove it where the service starts, then restart the service.
-        </Note>
-      )}
-      {account.signed_in && account.source === 'gh-cli' && !env && (
-        <Note>
-          To sign this account out, run <Code>gh auth logout</Code> on the server.
         </Note>
       )}
       {offerDevice && (

@@ -52,11 +52,10 @@ function PriceForm({ row, onSaved }: Readonly<{ row: TokenPriceCatalog['models']
   return <form onSubmit={submit} className="flex max-w-xl flex-col gap-3">
     <p className="text-caption text-muted">{row.source === 'manual' ? 'Manual prices' : row.source === 'bundled' ? 'Bundled LiteLLM prices' : 'Unpriced. Add input and output prices to estimate cost.'}</p>
     <div className="grid grid-cols-2 gap-3">
-      {FIELDS.map(({ key, label, required }) => <Field key={key} id={`token-price-${key}`} label={label} hint={!required ? 'Optional. Leave blank to use the input price.' : undefined}>
+      {FIELDS.map(({ key, label, required }) => <Field key={key} id={`token-price-${key}`} label={label} hint={!required ? 'Optional. Leave blank to use the input price; 0 means free.' : undefined}>
         <Input id={`token-price-${key}`} type="number" min="0" max="1000000000" step="any" required={required} disabled={busy} value={draft[key]} placeholder={required ? 'USD / 1M tokens' : 'Input rate'} onChange={(event) => setDraft((value) => ({ ...value, [key]: event.target.value }))} />
       </Field>)}
     </div>
-    <p className="text-caption text-muted">Cache prices are optional. Blank uses the Input rate; 0 means free.</p>
     {error && <p role="alert" className="text-caption text-error">{error}</p>}
     <div className="flex flex-wrap gap-2">
       <Button type="submit" variant="secondary" size="sm" disabled={!valid || busy} loading={busy}>Save token prices</Button>
@@ -83,7 +82,7 @@ export function TokenPricing() {
   const listed = (row: { provider: string; model: string }) => !!meta?.providers.some((p) => p.name === row.provider && p.models.some((m) => m.id === row.model));
   const row = models.find((model) => rowKey(model) === selected) ?? models.find(listed) ?? models[0];
   return <div className="flex flex-col gap-3">
-    <p className="text-caption text-muted">USD per million tokens. Usage estimates use these current base rates for every period, not provider bills or Copilot credits.</p>
+    <p className="text-caption text-muted">USD per 1M tokens. Estimates only.</p>
     <label className="flex min-h-8 items-center gap-2 self-start text-ui text-ink">
       <input type="checkbox" className="size-3.5 accent-accent" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />
       Show all models
@@ -97,6 +96,6 @@ export function TokenPricing() {
       </Field>
       <PriceForm key={`${rowKey(row)}/${revision}`} row={row} onSaved={() => { setSelected(rowKey(row)); setCatalog(null); setRevision((n) => n + 1); }} />
     </>}
-    {catalog && <p className="text-meta text-muted">Pricing snapshot <a className="underline underline-offset-2" href={`https://github.com/BerriAI/litellm/blob/${catalog.commit}/model_prices_and_context_window.json`} target="_blank" rel="noreferrer">{catalog.commit.slice(0, 7)}</a>. Unmatched models need manual prices.</p>}
+    {catalog && <p className="text-meta text-muted">Prices from LiteLLM (<a className="underline underline-offset-2" href={`https://github.com/BerriAI/litellm/blob/${catalog.commit}/model_prices_and_context_window.json`} target="_blank" rel="noreferrer">{catalog.commit.slice(0, 7)}</a>)</p>}
   </div>;
 }
