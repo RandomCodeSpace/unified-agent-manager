@@ -12,7 +12,7 @@ import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
-import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled } from './common';
+import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, type Tone } from './common';
 import { byCodeUnit } from '../lib/order';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
@@ -132,6 +132,33 @@ interface HeaderProps {
   onMcp: (open: boolean) => void;
 }
 
+/** The header's state chip: the state's glyph and word, or what took their place (compacting, who stopped it, the finished turn's failures). */
+function HeaderState({ session, state, compacting, failures, label }: Readonly<{ session: SessionSummary; state: SessionState; compacting: boolean; failures: string; label: boolean }>) {
+  let title = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
+  let text: string | undefined;
+  let icon: ReactNode;
+  let tone: Tone | undefined;
+  // "Stopped", with what stopped it when it was not you (lib/stop).
+  const stop = state === 'cancelled' ? stopWords(session) : null;
+  if (compacting) {
+    text = 'Compacting…';
+    title = 'Compacting the conversation';
+  } else if (stop) {
+    text = stop.short;
+    title = stop.title;
+    if (stop.notYours) icon = <CircleStop aria-hidden="true" className="size-3.5 text-warning" />;
+  } else {
+    if (state !== session.state) title = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
+    // A finished turn whose own record failed has no check: a warning glyph and the failures in words.
+    if (state === 'completed' && failures) {
+      text = `Finished · ${failures}`;
+      icon = <CircleAlert aria-hidden="true" className="size-3.5 text-warning" />;
+      tone = 'warning';
+    }
+  }
+  return <StateMark state={state} label={label} compacting={compacting} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
+}
+
 /** The Task's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. */
 const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, gitlabAvailable, gitlabOpen, onToggleGitlab, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
@@ -139,7 +166,6 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   const busy = !!actions.busy[session.id];
   const name = taskName(session);
   const noGit = project?.no_git;
-  const detail = session.state_detail && session.state !== 'failed' ? session.state_detail : undefined;
   // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
   // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
   const phone = useMedia(PHONE);
@@ -165,11 +191,6 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   const items = [...taskMenuItems(session, actions, 'header'), ...folded.map((item, i) => ({ ...item, separator: i === 0 }))];
   if (session.capabilities.mcp && (session.stage ?? 'active') === 'active') items.push({ key: 'mcp', label: 'MCP servers…', icon: <Plug />, takesFocus: true, separator: !folded.length, onSelect: () => onMcp(true) });
   const renamable = canRename(session, actions);
-  const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
-  // "Stopped", with what stopped it when it was not you (lib/stop).
-  const stop = state === 'cancelled' ? stopWords(session) : null;
-  // A finished turn whose own record failed has no check: a warning glyph and the failures in words.
-  const failed = state === 'completed' && !!failures;
   const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
@@ -192,7 +213,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         {readOnly(session) ? (
           <Chip fill="outline">{stageLabel(session)}</Chip>
         ) : (
-          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : failed ? `Finished · ${failures}` : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-warning" /> : undefined} tone={failed ? 'warning' : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
+          <HeaderState session={session} state={state} compacting={compacting} failures={failures} label={!phone} />
         )}
         {/* A Task action in flight is words: the state glyph is the header's one ring. */}
         {busy && <output className="shrink-0 text-caption text-muted">Updating…</output>}

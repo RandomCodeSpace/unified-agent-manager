@@ -188,9 +188,13 @@ export const allUnseen = (stamps: readonly Stamp[]) => stamps.length > 0 && stam
 
 /** Whether the last turn's reply makes a claim the turn's own record contradicts, as its receipts would stamp it. */
 export function lastTurnContradicted(items: readonly Item[]): boolean {
+  // Back from the end to the turn's message, keeping the main agent's last reply on the way.
   let start = items.length;
-  while (start > 0 && !(items[start - 1].kind === 'user' && !items[start - 1].agent_id && !items[start - 1].delivery)) start--;
-  const turn = items.slice(start);
-  const reply = turn.filter((i) => i.kind === 'assistant' && !i.agent_id).at(-1);
-  return !!reply?.text && receipts(reply.text, turn).some((stamp) => stamp.verdict === 'contradicted');
+  let reply: Item | undefined;
+  for (; start > 0; start--) {
+    const item = items[start - 1];
+    if (item.kind === 'user' && !item.agent_id && !item.delivery) break;
+    if (!reply && item.kind === 'assistant' && !item.agent_id) reply = item;
+  }
+  return !!reply?.text && receipts(reply.text, items.slice(start)).some((stamp) => stamp.verdict === 'contradicted');
 }
