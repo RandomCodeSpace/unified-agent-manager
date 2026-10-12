@@ -1327,6 +1327,32 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The last look is kept per browser: the moment you last had the Task on
   screen, marked while it is open and again as you leave it, hide the page
   or close it.
+- **Receipts**: under the last reply of an ended turn, its claims are
+  stamped against the main agent's tool calls in that turn. Fixed rules
+  in the browser do this; no model is used. Three kinds of claim count:
+  - A file path in a code span with an edit verb next to it ("updated
+    `a.py`", "`a.py`: fixed …").
+  - A command in a code span. It is a run claim when a run verb ("ran",
+    "executed") comes before it.
+  - Words saying the tests pass.
+
+  A sentence with a negation ("No files were edited") claims no edit and
+  no run. Each stamp has a glyph and words, never colour alone:
+  - **Matches**: the file was changed, or the command ran and exited 0.
+  - **Contradicted**: the file was not changed (or only viewed), a run
+    claim's command did not run, the named command failed, no test command
+    ran, or the last test run failed.
+  - **Not seen**: a command the reply only names (it may be suggesting
+    it), or a piped test run with no output. When the turn started
+    subagents, claims missing from the main agent's work are only not
+    seen, since subagent work is not read here.
+  - **Reading the test output**: the last test run's output has not been
+    loaded and the service gave no pass/fail counts. The page fetches the
+    whole output first, so the verdict never depends on what was loaded.
+
+  When every claim matches, one line gives the count, for example "Its 15
+  claims match the record". Otherwise the first 12 stamps show and
+  **Show N more** reveals the rest. A stamp with evidence opens its call.
 - **Finish evidence**: once the last turn has completed, the Changes panel
   (the branch button in the Task header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
