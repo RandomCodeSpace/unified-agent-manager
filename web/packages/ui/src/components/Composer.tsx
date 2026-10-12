@@ -22,7 +22,7 @@ import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel,
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Loading, Markdown, Note, Spinner, useApp } from './common';
+import { Loading, Markdown, Note, useApp } from './common';
 import { ExecutionItems } from './ExecutionStatus';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerPlan, ComposerQuestion } from './Interactions';
@@ -1471,7 +1471,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         </div>
       )}
       {queueStrip.mounted && (
-        <Collapse open={queue.length > 0} appear={!queueAtMount} soft onClosed={queueStrip.onClosed}>
+        <Collapse open={queue.length > 0} appear={!queueAtMount} onClosed={queueStrip.onClosed}>
         <details className="group/queue px-3.5 py-1.5" open>
           <summary className="flex h-6 list-none items-center gap-2 text-caption text-muted select-none [&::-webkit-details-marker]:hidden">
             <ListEnd aria-hidden="true" className="size-3.5" />
@@ -1748,7 +1748,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         {/* The actions: the send button keeps the far right, so Stop and Decline rise in beside it and nothing else moves. */}
         <span className="ml-auto flex shrink-0 items-center gap-0.5">
         <span ref={setWritingControl} className={cn('flex size-7 shrink-0', locked && 'hidden')} />
-        {busy === 'settings' && <Spinner className="mr-1" />}
+        {/* Saving a setting is words: the Task's state glyph is the one ring. */}
+        {busy === 'settings' && <output className="mr-1 text-caption text-muted">Saving…</output>}
         <Appear show={live || session.execution?.objective?.status === 'active'}>
           <Tip label={!session.capabilities.cancel ? 'This provider cannot cancel a turn' : 'Stop the turn and hold the waiting messages'}>
             <Button size="icon-md" variant="primary" aria-label={autopilot ? "Stop autopilot" : "Stop turn"} className="rounded-full" loading={busy === 'stop'} disabled={!!busy || locked || !session.capabilities.cancel} onClick={() => void action('stop', async () => onSessionUpdate(await api.cancel(session.id)))}>

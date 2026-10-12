@@ -118,7 +118,7 @@ export function SidePanel({ id, inline, open, onClose, onClosed, label, children
           className="group/handle absolute inset-y-0 -left-1 z-10 flex w-2 cursor-col-resize items-center justify-center outline-hidden focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-focus"
           title="Drag to resize · double-click to reset"
         >
-          <span aria-hidden="true" className="fade-rule-y h-full w-px flex-none transition-[background-color,width] duration-100 group-hover/handle:w-0.5 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
+          <span aria-hidden="true" className="fade-rule-y h-full w-px flex-none transition-[background-color,scale] duration-100 group-hover/handle:scale-x-200 group-hover/handle:bg-accent group-hover/handle:bg-none group-focus-visible/handle:scale-x-200 group-focus-visible/handle:bg-accent group-focus-visible/handle:bg-none group-active/handle:bg-accent group-active/handle:bg-none" />
         </div>
         {children}
       </div>
