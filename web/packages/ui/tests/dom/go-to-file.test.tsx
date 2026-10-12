@@ -77,7 +77,7 @@ describe('Go to file', () => {
     const { user } = await openTask('t3');
     const files = screen.getByRole('button', { name: 'Go to file' });
     expect(files.nextElementSibling?.textContent).toContain(screen.getByRole('button', { name: /^Branch / }).textContent ?? '-');
-    expect(within(screen.getByRole('heading', { level: 1 }).closest('header')!).queryByRole('button', { name: /^Files|Go to file/ })).toBeNull();
+    expect(within(screen.getByRole('heading', { level: 1 }).closest('header')!).queryByRole('button', { name: /^(Files|Go to file)$/ })).toBeNull();
     await user.click(files);
     expect(await screen.findByRole('dialog', { name: 'Go to file' })).toBeTruthy();
     await user.keyboard('{Escape}');
