@@ -444,6 +444,17 @@ describe('activity', () => {
     expect(ring()).toBeTruthy();
   });
 
+  test('a call waiting to start is still in its row and turns only as the step in progress', () => {
+    const item: Item = { id: 'c1', kind: 'tool', time: '2026-10-05T10:00:02Z', tool: { name: 'bash', status: 'pending', input: JSON.stringify({ command: 'ls' }) } };
+    const row = render(<ToolRow item={item} live sessionId="s" />);
+    expect(row.container.querySelector('.animate-spin')).toBeNull();
+    expect(row.container.querySelector('.lucide-circle-dashed')).not.toBeNull();
+    row.unmount();
+    const items: Item[] = [{ id: 'u1', kind: 'user', time: '2026-10-05T10:00:00Z', text: 'List' }, item];
+    const view = render(<Transcript sessionId="s" items={items} turnTimings={[{ id: 't1', user_item_id: 'u1', started_at: '2026-10-05T10:00:00Z', state: 'working' }]} interactions={[]} subagents={[]} live working provider="copilot" workdir="/w" footVerb={false} liveCard />);
+    expect(view.container.querySelectorAll('.animate-spin')).toHaveLength(1);
+  });
+
   test('a stopped turn keeps its end and its reply foot while the next turn starts', () => {
     const at = (s: number) => `2026-10-05T10:00:${String(s).padStart(2, '0')}Z`;
     const bash = (id: string, s: number): Item => ({ id, kind: 'tool', time: at(s), tool: { name: 'bash', status: 'running', input: JSON.stringify({ command: 'seq 1 60' }) } });

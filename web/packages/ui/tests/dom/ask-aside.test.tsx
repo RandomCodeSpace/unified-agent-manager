@@ -145,7 +145,9 @@ describe('/btw', () => {
     expect(signal.aborted).toBe(false);
     const chip = chips().find((c) => c.item === 'i6')!.chip;
     expect(chip.getAttribute('aria-label')).toBe('2 asides in this turn, one waiting for its answer');
-    expect(chip.querySelectorAll('.animate-spin')).toHaveLength(1);
+    // The turn's ring is enough: the waiting aside is a still hourglass.
+    expect(chip.querySelector('.animate-spin')).toBeNull();
+    expect(chip.querySelector('.lucide-hourglass')).not.toBeNull();
     // One question waits at a time; the history still opens.
     await user.type(composer(), '/btw another{Enter}');
     expect(ask).toHaveBeenCalledTimes(1);
