@@ -4,7 +4,7 @@ import { scopedMachine, useFederation, type Machine } from './FederationContext'
 import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
-import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type Ref } from 'react';
 import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
@@ -33,6 +33,7 @@ import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
 import { AlertDialog, Sheet } from './components/ui/dialog';
 import { TooltipProvider } from './components/ui/tooltip';
+import type { TerminalHandle } from './components/Terminal';
 
 /** The terminal's content brings xterm.js, so it loads with the first terminal opened. */
 const TerminalPanel = lazy(() => import('./components/Terminal'));
@@ -654,10 +655,17 @@ export default function App() {
     // Log out is in Settings: closing it leaves the sign-in screen the plain title and no fragment, as a fresh one has.
     void api.logout().finally(() => { dispatch({ type: 'reset' }); setSettingsOpen(false); setAuth('out'); });
   }, [api, recentTasks]);
-  const toggleTerminal = useCallback((projectId: string) => setTerminalId((id) => (id ? null : projectId)), []);
-  const closeTerminal = useCallback(() => {
-    setTerminalId(null);
-    document.getElementById('terminal-link')?.focus();
+  // The header's Terminal opens a closed terminal; an open one closes, or moves to the pressed Task's Project, through the panel, which confirms while its shell is connected.
+  const terminalPanel = useRef<TerminalHandle>(null);
+  const toggleTerminal = useCallback((projectId: string) => {
+    const to = terminalId === projectId ? null : state.projects.find((p) => p.id === projectId);
+    // A panel still loading has no shell to confirm for.
+    if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
+    else setTerminalId(to === null ? null : projectId);
+  }, [terminalId, state.projects]);
+  const closeTerminal = useCallback((to: Project | null) => {
+    setTerminalId(to?.id ?? null);
+    if (!to) document.getElementById('terminal-link')?.focus();
   }, []);
   const onSheet = useCallback((open: boolean, restoreFocus = true) => {
     if (open) changesOpener.current = document.activeElement;
@@ -1401,7 +1409,7 @@ export default function App() {
                 {/* Settings, routines and a new Task do not wait on the stream. */}
                 <LoadingVeil show={loading && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>
-              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} onClose={closeTerminal} />}
+              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} />}
             </main>
 
             <NewTaskPalette
@@ -1526,7 +1534,7 @@ function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.
  * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
  * across Task switches, hides (its shell running) while another view fills the pane, and ends with Close, which ends the shell.
  */
-function TerminalDock({ project, hidden, onClose }: Readonly<{ project: Project; hidden: boolean; onClose: () => void }>) {
+function TerminalDock({ project, hidden, panel, onClose }: Readonly<{ project: Project; hidden: boolean; panel: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
   const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
   return (
     <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
@@ -1534,7 +1542,7 @@ function TerminalDock({ project, hidden, onClose }: Readonly<{ project: Project;
         <div className="fade-rule w-full" />
       </div>
       <Suspense fallback={null}>
-        <TerminalPanel project={project} onClose={onClose} />
+        <TerminalPanel ref={panel} project={project} onClose={onClose} />
       </Suspense>
     </section>
   );
