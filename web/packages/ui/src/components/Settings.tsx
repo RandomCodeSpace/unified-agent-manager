@@ -807,7 +807,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Field>
           {!api.supports('files-v1') && <Note id="default-project-dir-browse-note">{`${api.owner?.label ?? 'Main Server'} does not offer folder browsing. Type the folder's path, or update UAM there.`}</Note>}
           {projectPicker.mounted && (
-            <Collapse open={projectBrowsing} appear soft onClosed={projectPicker.onClosed}>
+            <Collapse open={projectBrowsing} appear onClosed={projectPicker.onClosed}>
               <Suspense fallback={null}>
                 <FolderPicker id="default-project-dir-picker" start={projectDir ?? settings.default_project_dir ?? ''} onUse={(path) => {
                   setProjectDir(path);

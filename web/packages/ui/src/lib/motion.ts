@@ -1,22 +1,32 @@
-// The Motion setting, kept per browser (`uam.motion`). By default everything animates, even
-// when the OS asks for reduced motion (Windows with animation effects off, Remote Desktop);
-// "Match system" honours that request. The choice is `data-motion="system"` on <html>, which
-// the reduced-motion rules in index.css (and the `motion-reduce:` variant) require.
+// The Motion setting, kept per browser (`uam.motion`). "Match system" honours the OS request for
+// reduced motion; "Always on" animates even then (Windows with animation effects off, Remote
+// Desktop). With no choice stored, a touch-first device (a phone, a tablet) matches the system
+// and a desktop animates. The choice is `data-motion="system"` on <html>, which the
+// reduced-motion rules in index.css (and the `motion-reduce:` variant) require.
 
 export type Motion = 'on' | 'system';
 
 export const MOTION_KEY = 'uam.motion';
 
-/** A stored value as a setting: anything but "system" (nothing stored, or garbage) is on. */
-export function parseMotion(raw: string | null): Motion {
-  return raw === 'system' ? 'system' : 'on';
+/** The setting with nothing stored: "Match system" on a coarse pointer, else "Always on". */
+export function defaultMotion(): Motion {
+  try {
+    return globalThis.matchMedia?.('(pointer: coarse)').matches ? 'system' : 'on';
+  } catch {
+    return 'on';
+  }
+}
+
+/** A stored value as a setting: "on" or "system" as chosen; nothing stored, or garbage, is `fallback`. */
+export function parseMotion(raw: string | null, fallback: Motion = 'on'): Motion {
+  return raw === 'system' || raw === 'on' ? raw : fallback;
 }
 
 export function loadMotion(): Motion {
   try {
-    return parseMotion(localStorage.getItem(MOTION_KEY));
+    return parseMotion(localStorage.getItem(MOTION_KEY), defaultMotion());
   } catch {
-    return 'on';
+    return defaultMotion();
   }
 }
 
