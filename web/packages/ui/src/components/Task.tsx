@@ -706,7 +706,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
   const openGitlabItem = useCallback((refs: GitLabRef[], ref: GitLabRef) => {
     closePreview(false);
-    setFilesOpen(false);
+    setFilePath(null);
     setChartsOpen(false);
     setOutput(null);
     onSheet(false);
