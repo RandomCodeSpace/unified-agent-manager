@@ -1583,9 +1583,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   disconnected; Restart starts a new shell and × closes the panel. The shell
   lives only as long as the panel: closing it, Restart, reloading the page or
   turning the setting off ends the shell and everything it runs, and there
-  is no reattaching. Esc goes to the terminal, so only × (or the header's
-  Terminal button) closes it; Changes, Files, Subagents and file previews
-  open beside the conversation above it. While the terminal has focus, keys
+  is no reattaching. In a Task of another project, the header's Terminal
+  button moves the panel to that project's folder with a new shell. While
+  the shell is connected, closing, Restart and moving ask first. Esc goes to
+  the terminal, so only × (or the header's Terminal button) closes it;
+  Changes, Files, Subagents and file previews open beside the conversation above it. While the terminal has focus, keys
   go to the shell, not to uam's shortcuts. The browser keeps a few keys for
   itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
   Ctrl+Tab on Windows and Linux; those cannot reach the shell. The mouse

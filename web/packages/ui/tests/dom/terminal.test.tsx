@@ -18,6 +18,20 @@ test('without WebGL the terminal dock says why instead of a shell', async () => 
   expect(document.activeElement).toBe(toggle);
 });
 
+test("without a shell, the Terminal button in another Project's Task moves the dock there at once", async () => {
+  const { user } = await openTask('t3');
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  const dock = within(await screen.findByRole('region', { name: 'Terminal' }));
+  expect(await dock.findByRole('alert')).toBeTruthy();
+  history.pushState(null, '', '/#task=t6');
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Tidy zsh startup'));
+  expect(screen.getByRole('button', { name: 'Terminal' }).getAttribute('aria-pressed')).toBe('true');
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  await waitFor(() => expect(within(screen.getByRole('region', { name: 'Terminal' })).getByText('/home/user/dotfiles')).toBeTruthy());
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
 test('the dock keeps its height across tasks and resizes from the keyboard', async () => {
   const { user } = await openTask('t3');
   await user.click(screen.getByRole('button', { name: 'Terminal' }));
