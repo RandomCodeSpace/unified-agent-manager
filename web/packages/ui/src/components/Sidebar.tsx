@@ -1,5 +1,5 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
-import { Archive, ChevronRight, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
@@ -199,7 +199,7 @@ function VersionMeta({ version }: Readonly<{ version: string }>) {
         </>
       }
     >
-      <span data-version className="min-w-0 truncate text-meta text-faint tabular-nums">
+      <span data-version className="min-w-0 truncate text-meta text-muted tabular-nums">
         {short}
       </span>
     </Tip>
@@ -358,6 +358,8 @@ const STATUS_MARKS = {
   Review: { icon: Eye, tone: 'text-badge-teal' },
   Done: { icon: CircleCheck, tone: 'text-success' },
   Finished: { icon: CircleCheck, tone: 'text-success' },
+  'Tests fail': { icon: CircleAlert, tone: 'text-warning' },
+  'Command failed': { icon: CircleAlert, tone: 'text-warning' },
   Error: { icon: TriangleAlert, tone: 'text-error' },
   Interrupted: { icon: Pause, tone: 'text-warning' },
   Stopped: { icon: Square, tone: 'text-muted' },

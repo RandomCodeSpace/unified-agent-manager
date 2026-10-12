@@ -318,7 +318,7 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
         aria-expanded={!!reader?.open}
         aria-controls={reader?.open ? id : undefined}
         aria-label={turnTodoName(counts)}
-        className="relative flex h-6 items-center gap-1 rounded-sm px-1 text-stamp whitespace-nowrap tabular-nums text-faint transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5"
+        className="relative flex h-6 items-center gap-1 rounded-sm px-1 text-stamp whitespace-nowrap tabular-nums text-muted transition-colors duration-100 after:absolute after:inset-x-0 after:-inset-y-1 after:content-[''] hover:bg-tint-hover hover:text-ink aria-expanded:text-ink pointer-coarse:after:-inset-y-2.5"
         onClick={show}
       >
         <ListChecks aria-hidden="true" className="size-3 shrink-0" />

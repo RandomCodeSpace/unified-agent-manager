@@ -1070,6 +1070,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+  When the line says "tests fail" or that commands failed, the Task's state
+  shows no check: the sidebar row reads "Tests fail" or "Command failed" with
+  a warning glyph, and the header chip reads "Finished · tests fail, 1 command
+  failed" in the warning tone. The header chip says "a claim contradicted"
+  too when the last reply's receipts contradict one of its claims.
 - **Done check**: two minutes after a turn completes, if the Task is still
   finished (no queue, nothing running, no question), the service checks
   whether the final reply says the asked work is complete. Code decides
@@ -1352,7 +1357,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (the branch button in the Task header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
   agent did before what it says it did. While there is evidence, the
-  branch button's name adds "evidence available" and its dot turns amber.
+  branch button's name adds "evidence available" and it shows an amber dot,
+  as it does while there are changed files; with nothing to review it has no dot.
   It never uses a model; fixed rules in the service read the whole turn,
   however long, and the outcome line reads the same result. The section
   appears once that reading arrives and shows only the parts below that

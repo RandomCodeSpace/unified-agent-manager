@@ -207,6 +207,12 @@ test('a Task row says in plain words what it needs or how it stands', async () =
   assert.equal(status({ state: 'completed' }), 'Finished');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass' }), 'Fixed the test; tests pass');
   assert.equal(status({ state: 'completed', outcome: 'Fixed the test' }, true), 'Ready for review: Fixed the test');
+  // Failures the outcome's evidence parts report read as such, read or not, judged done or not; a verb phrase never counts.
+  assert.equal(status({ state: 'completed', outcome: 'Tests fail; 2 commands failed' }, true), 'Finished · tests fail, 2 commands failed');
+  assert.equal(status({ state: 'completed', outcome: 'Fixed the test; tests pass; 1 command failed', done_at: at(1) }), 'Finished · 1 command failed');
+  assert.equal(status({ state: 'completed', outcome: 'Explained why tests fail; tests pass' }), 'Explained why tests fail; tests pass');
+  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: 'tests fail' }), false, now).label, 'Tests fail');
+  assert.equal(taskStatus(s('t', 'p1', at(60), { state: 'completed', outcome: '3 commands failed' }), false, now).label, 'Command failed');
   assert.equal(status({ state: 'failed' }), 'Stopped with an error');
   // No reason is not proof it was you: Copilot reports uam's own Stop and any other as user_initiated.
   assert.equal(status({ state: 'cancelled' }), 'Stopped');
