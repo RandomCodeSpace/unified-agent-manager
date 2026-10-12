@@ -67,6 +67,12 @@ func TestGlabShellRules(t *testing.T) {
 		{"echo glab api projects", "", ""},
 		{"other-glab issue list", "", ""},
 		{"glab issue list | head -5", "glab issue list -P 10 | head -5", ""},
+		{"glab work-items list", "glab work-items list -P 10", ""},
+		{"glab work-items ls --type epic -g group", "glab work-items ls --type epic -g group -P 10", ""},
+		{"rtk glab work-items list --per-page 50 -F json", "rtk glab work-items list --per-page 20 -F json", ""},
+		{"glab work-items list -A", "", "--after <cursor>"},
+		{"glab work-items list --paginate", "", "-P 10"},
+		{"glab work-items list -P 5", "", ""},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			args := map[string]any{"command": tc.command, "description": "kept", "timeout": 1000}
@@ -82,6 +88,9 @@ func TestGlabShellRules(t *testing.T) {
 			}
 			if got.Args["command"] != tc.want || got.Args["description"] != "kept" || got.Args["timeout"] != 1000 || got.Context == "" || args["command"] != tc.command {
 				t.Fatalf("rewrite=%+v", got)
+			}
+			if workItems := strings.Contains(tc.command, "work-items"); strings.Contains(got.Context, "--after <cursor>") != workItems || strings.Contains(got.Context, "-p 2") == workItems {
+				t.Fatalf("next-page hint=%q", got.Context)
 			}
 		})
 	}

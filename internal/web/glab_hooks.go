@@ -23,6 +23,8 @@ type glabShell struct {
 	edits []glabEdit
 	deny  string
 	push  bool
+	// workItems marks a capped work-items list, which pages by cursor.
+	workItems bool
 }
 
 func (m *Manager) glabPre(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict {
@@ -66,7 +68,11 @@ func glabCommand(ctx context.Context, gate glabGate, command string, args map[st
 		}
 		out.Args = maps.Clone(args)
 		out.Args["command"] = command
-		out.Context = strings.TrimSpace(out.Context + "\nuam capped this glab list: default 10, maximum 20; use -p 2 for the next page.")
+		next := "use -p 2 for the next page"
+		if w.workItems {
+			next = "page work items with --after <cursor> from -F json output"
+		}
+		out.Context = strings.TrimSpace(out.Context + "\nuam capped this glab list: default 10, maximum 20; " + next + ".")
 	}
 	return out
 }
@@ -161,6 +167,7 @@ func (w *glabShell) call(c *syntax.CallExpr, rewrite bool) {
 			w.capWord(c.Args[base+i], strings.TrimPrefix(flag, "-P"), "-P")
 		}
 	}
+	w.workItems = w.workItems || a[0] == "work-items"
 	if found {
 		return
 	}
@@ -200,7 +207,7 @@ func (w *glabShell) capWord(word *syntax.Word, value, prefix string) {
 }
 
 func glabList(a []string) bool {
-	return len(a) >= 2 && (a[1] == "list" || a[1] == "ls") && (a[0] == "issue" || a[0] == "incident" || a[0] == "mr" || a[0] == "ci")
+	return len(a) >= 2 && (a[1] == "list" || a[1] == "ls") && (a[0] == "issue" || a[0] == "incident" || a[0] == "mr" || a[0] == "ci" || a[0] == "work-items")
 }
 
 func glabDeny(a []string) string {
@@ -209,6 +216,9 @@ func glabDeny(a []string) string {
 			return "use one page with -P 10 and -p <page> instead of --paginate."
 		}
 		if glabList(a) && (arg == "-A" || arg == "--all" || strings.HasPrefix(arg, "--all=")) {
+			if a[0] == "work-items" {
+				return "use a filtered list with -P 10 and --after <cursor> instead of -A/--all."
+			}
 			return "use a filtered list with -P 10 and -p <page> instead of -A/--all."
 		}
 	}
