@@ -243,7 +243,7 @@ function useElapsed(since: string | undefined, timing: TurnTiming | undefined): 
 /** The clock's digits: only they re-render each second. Under an hour they are at most three characters wide, and the slot holds them all, so the line keeps its width. */
 function Clock({ since, timing }: Readonly<{ since?: string; timing?: TurnTiming }>) {
   const elapsed = useElapsed(since, timing);
-  return elapsed && <span className="min-w-[3ch] shrink-0 text-right tabular-nums text-faint">{elapsed}</span>;
+  return elapsed && <span className="min-w-[3ch] shrink-0 text-right tabular-nums text-muted">{elapsed}</span>;
 }
 
 /** The clock as the button's name says it, by the minute. */

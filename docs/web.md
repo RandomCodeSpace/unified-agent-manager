@@ -1070,6 +1070,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
+  When the line says "tests fail" or that commands failed, the Task's state
+  shows no check: the sidebar row reads "Tests fail" or "Command failed" with
+  a warning glyph, and the header chip reads "Finished · tests fail, 1 command
+  failed" in the warning tone. The header chip says "a claim contradicted"
+  too when the last reply's receipts contradict one of its claims.
 - **Done check**: two minutes after a turn completes, if the Task is still
   finished (no queue, nothing running, no question), the service checks
   whether the final reply says the asked work is complete. Code decides
@@ -1322,11 +1327,38 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The last look is kept per browser: the moment you last had the Task on
   screen, marked while it is open and again as you leave it, hide the page
   or close it.
+- **Receipts**: under the last reply of an ended turn, its claims are
+  stamped against the main agent's tool calls in that turn. Fixed rules
+  in the browser do this; no model is used. Three kinds of claim count:
+  - A file path in a code span with an edit verb next to it ("updated
+    `a.py`", "`a.py`: fixed …").
+  - A command in a code span. It is a run claim when a run verb ("ran",
+    "executed") comes before it.
+  - Words saying the tests pass.
+
+  A sentence with a negation ("No files were edited") claims no edit and
+  no run. Each stamp has a glyph and words, never colour alone:
+  - **Matches**: the file was changed, or the command ran and exited 0.
+  - **Contradicted**: the file was not changed (or only viewed), a run
+    claim's command did not run, the named command failed, no test command
+    ran, or the last test run failed.
+  - **Not seen**: a command the reply only names (it may be suggesting
+    it), or a piped test run with no output. When the turn started
+    subagents, claims missing from the main agent's work are only not
+    seen, since subagent work is not read here.
+  - **Reading the test output**: the last test run's output has not been
+    loaded and the service gave no pass/fail counts. The page fetches the
+    whole output first, so the verdict never depends on what was loaded.
+
+  When every claim matches, one line gives the count, for example "Its 15
+  claims match the record". Otherwise the first 12 stamps show and
+  **Show N more** reveals the rest. A stamp with evidence opens its call.
 - **Finish evidence**: once the last turn has completed, the Changes panel
   (the branch button in the Task header) starts with a section titled
   "Finished — check the evidence", above its files, that puts what the
   agent did before what it says it did. While there is evidence, the
-  branch button's name adds "evidence available" and its dot turns amber.
+  branch button's name adds "evidence available" and it shows an amber dot,
+  as it does while there are changed files; with nothing to review it has no dot.
   It never uses a model; fixed rules in the service read the whole turn,
   however long, and the outcome line reads the same result. The section
   appears once that reading arrives and shows only the parts below that
@@ -1557,9 +1589,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   disconnected; Restart starts a new shell and × closes the panel. The shell
   lives only as long as the panel: closing it, Restart, reloading the page or
   turning the setting off ends the shell and everything it runs, and there
-  is no reattaching. Esc goes to the terminal, so only × (or the header's
-  Terminal button) closes it; Changes, Files, Subagents and file previews
-  open beside the conversation above it. While the terminal has focus, keys
+  is no reattaching. In a Task of another project, the header's Terminal
+  button moves the panel to that project's folder with a new shell. While
+  the shell is connected, closing, Restart and moving ask first. Esc goes to
+  the terminal, so only × (or the header's Terminal button) closes it;
+  Changes, Files, Subagents and file previews open beside the conversation above it. While the terminal has focus, keys
   go to the shell, not to uam's shortcuts. The browser keeps a few keys for
   itself before the page sees them, such as Ctrl+W, Ctrl+T, Ctrl+N and
   Ctrl+Tab on Windows and Linux; those cannot reach the shell. The mouse
