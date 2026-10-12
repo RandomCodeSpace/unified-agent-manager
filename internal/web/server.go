@@ -293,6 +293,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("GET /api/sessions/{id}/git", s.handleGitState)
 	mux.HandleFunc("POST /api/sessions/{id}/git/init", s.handleGitInit)
 	mux.HandleFunc("POST /api/sessions/{id}/git/commit", s.handleGitCommit)
+	mux.HandleFunc("POST /api/sessions/{id}/git/branch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/sessions/{id}/git/push", s.handleGitRemote((*Manager).GitPush))
 	mux.HandleFunc("POST /api/sessions/{id}/git/pull", s.handleGitRemote((*Manager).GitPull))
 	mux.HandleFunc("POST /api/sessions/{id}/git/message", s.handleCommitMessage)

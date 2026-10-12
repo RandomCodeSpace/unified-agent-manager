@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -27,21 +28,31 @@ const (
 	placeCurrent  = "current"
 	placeBranch   = "branch"
 	placeWorktree = "worktree"
+	// placeSwitch checks out an existing branch in the Project's folder.
+	placeSwitch = "switch"
 	// branchPrefix starts every branch uam makes for a Thread.
 	branchPrefix = "uam/"
 	// maxSlugBytes caps the title part of a branch name and a folder name.
 	maxSlugBytes = 48
 	// maxBranchRefs caps GET /api/projects/{id}/branches.
-	maxBranchRefs  = 500
-	codeBranchBusy = "branch_busy"
+	maxBranchRefs   = 500
+	codeBranchBusy  = "branch_busy"
+	codeBranchDirty = "branch_dirty"
 )
 
 // PlaceRequest is where a new Thread runs (CreateRequest.Place): on the
 // Project's current branch, on a new branch made in the Project's folder,
-// or on a new branch in a new git worktree started from Base ("" is HEAD).
+// on an existing branch the folder switches to, or on a new branch in a new
+// git worktree started from Base ("" is HEAD). It is also the body of
+// POST /api/sessions/{id}/git/branch (modes branch and switch).
 type PlaceRequest struct {
 	Mode string `json:"mode"`
 	Base string `json:"base,omitempty"`
+	// Branch is the branch mode switch checks out: a local one, or with
+	// Remote a remote-tracking one ("origin/main"), which a new local
+	// branch of the same name then tracks.
+	Branch string `json:"branch,omitempty"`
+	Remote bool   `json:"remote,omitempty"`
 }
 
 // WorktreeInfo is the worktree a Thread runs in and the branch made for it.
@@ -61,10 +72,21 @@ type BranchEntry struct {
 }
 
 // BranchList answers GET /api/projects/{id}/branches, most recently
-// committed first. Reason says why it is empty or cut short.
+// committed first. Reason says why it is empty or cut short. Busy and
+// Uncommitted are what keeps the Project's folder from switching branch
+// now (checkSwitch): the first Thread not finished there, and its changed
+// tracked files.
 type BranchList struct {
-	Branches []BranchEntry `json:"branches"`
-	Reason   string        `json:"reason,omitempty"`
+	Branches    []BranchEntry `json:"branches"`
+	Reason      string        `json:"reason,omitempty"`
+	Busy        *ThreadRef    `json:"busy,omitempty"`
+	Uncommitted int           `json:"uncommitted"`
+}
+
+// ThreadRef names a Thread.
+type ThreadRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // checkPlace refuses a malformed place before anything is made.
@@ -72,17 +94,23 @@ func checkPlace(p *PlaceRequest) error {
 	if p == nil {
 		return nil
 	}
+	if p.Mode != placeSwitch && (p.Branch != "" || p.Remote) {
+		return newError(http.StatusBadRequest, "branch is only for switching the folder's branch")
+	}
 	switch p.Mode {
-	case "", placeCurrent, placeBranch:
+	case "", placeCurrent, placeBranch, placeSwitch:
 		if p.Base != "" {
 			return newError(http.StatusBadRequest, "base is only for a new worktree")
+		}
+		if p.Mode == placeSwitch && !validBase(p.Branch) {
+			return newError(http.StatusBadRequest, "branch must be a branch name")
 		}
 	case placeWorktree:
 		if p.Base != "" && !validBase(p.Base) {
 			return newError(http.StatusBadRequest, "base must be a branch or commit name")
 		}
 	default:
-		return newError(http.StatusBadRequest, "place mode must be current, branch or worktree")
+		return newError(http.StatusBadRequest, "place mode must be current, branch, switch or worktree")
 	}
 	return nil
 }
@@ -90,7 +118,7 @@ func checkPlace(p *PlaceRequest) error {
 // validBase keeps a base name git will read as a revision, never as an
 // option or several arguments; git itself says whether it exists.
 func validBase(base string) bool {
-	return len(base) <= 255 && utf8.ValidString(base) && !strings.HasPrefix(base, "-") &&
+	return base != "" && len(base) <= 255 && utf8.ValidString(base) && !strings.HasPrefix(base, "-") &&
 		strings.IndexFunc(base, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) < 0
 }
 
@@ -258,6 +286,13 @@ func (m *Manager) makePlace(ctx context.Context, project Project, req *PlaceRequ
 	if !repo.hasHead {
 		return "", nil, none, newError(http.StatusConflict, "the repository has no commits yet; a new branch needs one")
 	}
+	if req.Mode == placeSwitch {
+		undo, err := m.switchFolder(ctx, repo, req.Branch, req.Remote)
+		if err != nil {
+			return "", nil, none, err
+		}
+		return project.Dir, nil, undo, nil
+	}
 	branch, err := freeBranch(ctx, repo)
 	if err != nil {
 		return "", nil, none, err
@@ -288,18 +323,133 @@ func refExists(ctx context.Context, repo *gitRepo, ref string) bool {
 	return err == nil && code == 0
 }
 
-// makeBranch switches the Project's folder to branch, a new branch from
-// HEAD. Every Thread in the folder shares its working tree, so it is
-// refused while another Thread there could still be writing.
-func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo, branch string) (string, *store.WebPlace, func(), error) {
-	none := func() {}
+// checkSwitch refuses switching the branch of repo's working tree, which
+// every Thread in the folder shares, while one of them has not finished
+// (busyThreads), and, for an existing branch, while tracked files there are
+// not committed; a new branch takes those changes along.
+func (m *Manager) checkSwitch(ctx context.Context, repo *gitRepo, existing bool) error {
 	if ids, names := m.busyThreads(repo.top); len(ids) > 0 {
 		who := "“" + names[0] + "”"
 		if len(names) > 1 {
 			who += fmt.Sprintf(" and %d other %s", len(names)-1, plural(len(names)-1, "Thread", "Threads"))
 		}
-		return "", nil, none, &Error{Status: http.StatusConflict, Code: codeBranchBusy, Refs: ids,
-			Message: who + " is working in this folder, and a new branch would switch it too. Wait for it to finish, or start the Thread in a new worktree."}
+		return &Error{Status: http.StatusConflict, Code: codeBranchBusy, Refs: ids, Message: who + " is working in this folder. Wait for it to finish."}
+	}
+	if !existing {
+		return nil
+	}
+	n, err := folderUncommitted(ctx, repo)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return &Error{Status: http.StatusConflict, Code: codeBranchDirty, Refs: []string{strconv.Itoa(n)}, Message: fmt.Sprintf("%d %s not committed", n, plural(n, "file", "files"))}
+	}
+	return nil
+}
+
+// folderUncommitted counts the tracked files changed in repo's working tree or
+// index (trackedChanges); untracked files do not count.
+func folderUncommitted(ctx context.Context, repo *gitRepo) (int, error) {
+	out, code, stderr, err := runGit(ctx, repo.git, repo.top, maxPendingStatus, "status", "--porcelain=v2", "-z", "--untracked-files=no")
+	if err != nil {
+		return 0, err
+	}
+	if code != 0 {
+		return 0, newError(http.StatusBadGateway, "git status failed: %s", gitMessage(stderr))
+	}
+	n, _ := trackedChanges(out, 0)
+	return n, nil
+}
+
+// switchFolder checks out the existing branch name in repo's working tree
+// (checkSwitch): a local branch, or with remote a remote-tracking one,
+// which a new local branch of the same name then tracks. It returns the
+// function that switches back and deletes the branch it made.
+func (m *Manager) switchFolder(ctx context.Context, repo *gitRepo, name string, remote bool) (func(), error) {
+	none := func() {}
+	shown := clipRunes(displaytext.Sanitize(name), maxDetailRunes)
+	local, create := name, false
+	if remote {
+		if !refExists(ctx, repo, "refs/remotes/"+name) {
+			return none, newError(http.StatusBadRequest, "%q is not a remote branch of this repository", shown)
+		}
+		if local = remoteBranchName(ctx, repo, name); !validBase(local) {
+			return none, newError(http.StatusBadRequest, "%q is not a remote branch of this repository", shown)
+		}
+		if refExists(ctx, repo, "refs/heads/"+local) {
+			upstream, code, _, err := runGit(ctx, repo.git, repo.top, 4096, "for-each-ref", "--format=%(upstream)", "refs/heads/"+local)
+			if err != nil || code != 0 || strings.TrimSpace(string(upstream)) != "refs/remotes/"+name {
+				return none, newError(http.StatusConflict, "a local branch %s already exists; choose it under Local", clipRunes(displaytext.Sanitize(local), maxDetailRunes))
+			}
+		} else {
+			create = true
+		}
+	} else if !refExists(ctx, repo, "refs/heads/"+name) {
+		return none, newError(http.StatusBadRequest, "%q is not a branch of this repository", shown)
+	}
+	previous, _ := readBranch(ctx, repo.top)
+	if previous == local {
+		return none, nil
+	}
+	if err := m.checkSwitch(ctx, repo, true); err != nil {
+		return none, err
+	}
+	end, err := m.beginWrite(repo.top)
+	if err != nil {
+		return none, err
+	}
+	defer end()
+	args := []string{"switch", "--no-guess", local}
+	if create {
+		args = []string{"switch", "--track", "-c", local, name}
+	}
+	if _, err := runGitWrite(ctx, repo.top, nil, args...); err != nil {
+		return none, gitFailed("Could not switch the branch", err)
+	}
+	log.Info("web project folder switched branch", "branch", local, "created", create)
+	undo := func() {
+		ctx, cancel := context.WithTimeout(m.ctx, gitWriteTimeout)
+		defer cancel()
+		if previous != "" {
+			if _, err := runGitWrite(ctx, repo.top, nil, "switch", previous); err != nil {
+				log.Warn("web project folder left on the switched branch", "branch", local, "error", err)
+				return
+			}
+		}
+		if create {
+			_, _ = runGitWrite(ctx, repo.top, nil, "branch", "-D", local)
+		}
+	}
+	return undo, nil
+}
+
+// remoteBranchName is the remote-tracking branch name ("origin/feat/x")
+// without its remote ("feat/x"), the longest remote name that fits; "" when
+// none does.
+func remoteBranchName(ctx context.Context, repo *gitRepo, name string) string {
+	out, code, _, err := runGit(ctx, repo.git, repo.top, 64<<10, "remote")
+	if err != nil || code != 0 {
+		return ""
+	}
+	best := ""
+	for r := range strings.FieldsSeq(string(out)) {
+		if strings.HasPrefix(name, r+"/") && len(r) > len(best) {
+			best = r
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return name[len(best)+1:]
+}
+
+// makeBranch switches the Project's folder to branch, a new branch from
+// HEAD, under the rules of checkSwitch.
+func (m *Manager) makeBranch(ctx context.Context, project Project, repo *gitRepo, branch string) (string, *store.WebPlace, func(), error) {
+	none := func() {}
+	if err := m.checkSwitch(ctx, repo, false); err != nil {
+		return "", nil, none, err
 	}
 	end, err := m.beginWrite(repo.top)
 	if err != nil {
@@ -375,9 +525,9 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 }
 
 // busyThreads returns the IDs and names of the Threads in the repository
-// or folder top that could still be writing there (repoBusy), by name.
+// or folder top that hold its branch (holdsFolderLocked), by name.
 func (m *Manager) busyThreads(top string) (ids, names []string) {
-	busy := m.tasksIn(top, func(s *webSession) bool { return s.settleableLocked() != nil })
+	busy := m.tasksIn(top, func(s *webSession) bool { return s.holdsFolderLocked() })
 	m.mu.Lock()
 	slices.SortFunc(busy, func(a, b *webSession) int { return strings.Compare(a.name+a.title, b.name+b.title) })
 	for _, s := range busy {
@@ -386,6 +536,94 @@ func (m *Manager) busyThreads(top string) (ids, names []string) {
 	}
 	m.mu.Unlock()
 	return ids, names
+}
+
+// holdsFolderLocked reports whether s keeps the folder it shares with other
+// Threads from switching branch: it is active, not in a worktree of its
+// own, and has not finished: working, starting, compacting, waiting for an
+// answer or a permission, prompts queued, subagents or background tasks
+// running.
+func (s *webSession) holdsFolderLocked() bool {
+	return s.stage == StageActive && (s.place == nil || s.place.Worktree == "") &&
+		(s.settleableLocked() != nil || s.compacting && s.conv != nil)
+}
+
+// SwitchBranch switches the branch of the folder the started Thread id runs
+// in, which every Thread there shares: to a new branch uam/<8 hex digits>
+// that takes the Thread's title (mode branch), or to an existing branch
+// (mode switch). The rules of checkSwitch hold, the Thread itself included.
+func (m *Manager) SwitchBranch(ctx context.Context, id string, req PlaceRequest) (SessionSummary, error) {
+	if req.Mode != placeBranch && req.Mode != placeSwitch {
+		return SessionSummary{}, newError(http.StatusBadRequest, "mode must be branch or switch")
+	}
+	if err := checkPlace(&req); err != nil {
+		return SessionSummary{}, err
+	}
+	s, err := m.lookup(id)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	m.mu.Lock()
+	err = s.readOnlyLocked()
+	own := s.place != nil && s.place.Worktree != ""
+	project := Project{ID: s.projectID, Dir: s.workdir}
+	m.mu.Unlock()
+	switch {
+	case err != nil:
+		return SessionSummary{}, err
+	case own:
+		return SessionSummary{}, newError(http.StatusConflict, "a Thread in its own worktree keeps its branch")
+	}
+	repo, reason, err := openRepo(ctx, project.Dir)
+	switch {
+	case err != nil:
+		return SessionSummary{}, err
+	case repo == nil:
+		return SessionSummary{}, newError(http.StatusConflict, "%s", reason)
+	case !repo.hasHead:
+		return SessionSummary{}, newError(http.StatusConflict, "the repository has no commits yet; a new branch needs one")
+	}
+	var place *store.WebPlace
+	if req.Mode == placeSwitch {
+		if _, err := m.switchFolder(ctx, repo, req.Branch, req.Remote); err != nil {
+			return SessionSummary{}, err
+		}
+	} else {
+		branch, err := freeBranch(ctx, repo)
+		if err != nil {
+			return SessionSummary{}, err
+		}
+		if _, place, _, err = m.makeBranch(ctx, project, repo, branch); err != nil {
+			return SessionSummary{}, err
+		}
+	}
+	m.mu.Lock()
+	before := m.summaryLocked(s)
+	// A branch uam made for the Thread names it only while the Thread is on it.
+	if place != nil || s.place != nil && s.place.Mode == placeBranch {
+		s.place = place
+	}
+	if place != nil {
+		s.branch = place.Branch
+	}
+	m.changedLocked(s, before)
+	m.kickPlaceNameLocked(s)
+	m.mu.Unlock()
+	m.refreshBranches(ctx, true, project.ID)
+	return m.Summary(id)
+}
+
+func (s *Server) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
+	var req PlaceRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	sum, err := s.m.SwitchBranch(r.Context(), r.PathValue("id"), req)
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sum)
 }
 
 // loadedPlace is a stored place, or nil when it is not one this version
@@ -485,8 +723,9 @@ func pushed(ctx context.Context, repo *gitRepo, branch string) bool {
 	return slices.Contains(strings.Split(string(remotes), "\n"), branch)
 }
 
-// ProjectBranches lists the branches a new worktree of the Project can
-// start from: local and remote-tracking, most recently committed first.
+// ProjectBranches lists the branches of the Project's repository, local and
+// remote-tracking, most recently committed first, and what keeps its folder
+// from switching branch now.
 func (m *Manager) ProjectBranches(ctx context.Context, projectID string) (BranchList, error) {
 	dir, err := m.projectDir(projectID)
 	if err != nil {
@@ -501,6 +740,11 @@ func (m *Manager) ProjectBranches(ctx context.Context, projectID string) (Branch
 		out.Reason = reason
 		return out, nil
 	}
+	if ids, names := m.busyThreads(repo.top); len(ids) > 0 {
+		out.Busy = &ThreadRef{ID: ids[0], Name: names[0]}
+	}
+	// Only a hint for the menu: the switch itself checks again.
+	out.Uncommitted, _ = folderUncommitted(ctx, repo)
 	raw, code, stderr, err := runGit(ctx, repo.git, repo.top, maxStatusBytes, "for-each-ref", "--sort=-committerdate", "--format=%(refname)%00%(committerdate:iso-strict)%00%(symref)", "refs/heads", "refs/remotes")
 	if err != nil {
 		return out, err

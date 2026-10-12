@@ -357,14 +357,34 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   size, so New thread does not fail on a stale default. A provider that is not installed or
   not compatible is reported with the reason. The Thread runs in the Project's
   directory.
-- **Branches and worktrees**: a new Thread runs on the Project's current
-  branch, on a new branch, or in a new git worktree. The choice is made with
-  the first message (`place` in `POST /api/sessions`:
-  `{"mode": "current" | "branch" | "worktree", "base": "<branch>"}`), so an
-  abandoned draft leaves nothing behind.
+- **Branches and worktrees**: a new Thread runs in the Project's folder, on
+  its current branch, on a new branch or on another existing branch, or in a
+  new git worktree. The choice is made with the first message (`place` in
+  `POST /api/sessions`: `{"mode": "current" | "branch" | "switch" |
+  "worktree", "base": "<branch>", "branch": "<branch>", "remote": true}`),
+  so an abandoned draft leaves nothing behind.
   - **New branch** runs `git switch -c uam/<8 hex digits>` in the Project's
-    folder. Every Thread in that folder shares its working tree, so this is
-    refused, naming the Thread, while another Thread there is working.
+    folder; changes not committed move along to it.
+  - **Switch** (`"mode": "switch"`) checks out an existing local branch
+    in the Project's folder, or, with `"remote": true`, a remote branch
+    (`origin/feat/x`) through a new local branch `feat/x` tracking it (an
+    existing local branch is used only when it already tracks it).
+  - Every Thread in the Project's folder shares its working tree, so the
+    folder switches branch only while every active Thread there (not the
+    ones in their own worktree) has finished: none is working, starting,
+    compacting, waiting for an answer or a permission, or has prompts
+    queued, subagents or background tasks running. Otherwise the request is
+    refused with 409 `branch_busy`, naming the Thread. Changed tracked files
+    (untracked ones do not count) refuse a switch to an existing branch with
+    409 `branch_dirty` ("4 files not committed"); a new branch is allowed.
+    `GET /api/projects/{id}/branches` reports both: `busy` (`{id, name}`)
+    and `uncommitted`.
+  - A started Thread in the Project's folder switches it at once with
+    `POST /api/sessions/{id}/git/branch` (`{"mode": "branch"}` or
+    `{"mode": "switch", "branch": …, "remote": …}`), under the same rules,
+    the Thread itself included; a Thread in its own worktree keeps its
+    branch. A new branch made this way takes the Thread's title like any
+    other. Connected instances advertise `branch-switch-v1`.
   - **New worktree** runs `git worktree add -b uam/<8 hex digits>` from the
     chosen base branch, local or remote (the current `HEAD` without one), in
     `<folder for new worktrees>/<project>/uam-<8 hex digits>` (by default
