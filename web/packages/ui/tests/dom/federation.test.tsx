@@ -603,6 +603,29 @@ test('Settle on another machine’s row runs on that machine only, and its shelf
   expect(window.location.hash).not.toContain('connection=b');
 });
 
+test('Archive and a clean Settle on another machine’s rows run on that machine', async () => {
+  const { user, calls } = federated();
+  const nav = await taskRows();
+  const remote = () => calls.filter((call) => /\/(settle|archive)$/.test(call.path)).map((call) => `${call.owner} ${call.path.split('/').pop()}`);
+  // A clean Thread settles at once.
+  const clean = await nav.findByRole('button', { name: /Bump dependencies/, description: 'Workstation B' });
+  await user.hover(clean);
+  await user.click(clean.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-settle]')!);
+  await waitFor(() => expect(remote()).toEqual(['b settle']));
+  // Known unsaved work: Archive asks first.
+  const dirty = await nav.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  fireEvent.contextMenu(dirty);
+  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' })).getByRole('button', { name: 'Archive anyway' }));
+  await waitFor(() => expect(remote()).toEqual(['b settle', 'b archive']));
+  // A clean Thread's Archive keeps today's dialog.
+  const other = await nav.findByRole('button', { name: /Draft release notes/, description: 'Workstation B' });
+  fireEvent.contextMenu(other);
+  await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this task?' })).getByRole('button', { name: 'Archive task' }));
+  await waitFor(() => expect(remote()).toEqual(['b settle', 'b archive', 'b archive']));
+});
+
 test('a page load opens one stream, reads the catalogs once and reports what it shows once per stream', async () => {
   // Without StrictMode's development double mount: the requests a production page makes.
   const { user, calls, streams, owners } = federated('', [record('b', 'Workstation B')], false);
