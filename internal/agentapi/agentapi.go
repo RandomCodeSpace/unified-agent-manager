@@ -965,6 +965,8 @@ type History struct {
 	// Model is the main agent's model as the record last states it, or ""
 	// when the record does not say.
 	Model string
+	// Skills are the skill loads the record holds, oldest first.
+	Skills []SkillLoad
 	// Truncated is set when only the newest part of a record too large to
 	// read whole was returned.
 	Truncated bool
@@ -1020,6 +1022,9 @@ const (
 	EventModelSelection EventKind = "model_selection"
 	// EventMCPStatus replaces lightweight state of the open conversation's servers.
 	EventMCPStatus EventKind = "mcp_status"
+	// EventSkill reports one skill load in Event.Skill. Skill loads are not
+	// transcript items.
+	EventSkill EventKind = "skill"
 )
 
 // Event is one adapter notification. Exactly one payload matches Kind.
@@ -1048,6 +1053,19 @@ type Event struct {
 	Todos          *TodoList
 	ModelSelection *ModelSelection
 	MCPStatus      *MCPStatusSnapshot
+	Skill          *SkillLoad
+}
+
+// SkillLoad is one load of a skill by the main agent or a subagent: its name
+// and the description from its SKILL.md frontmatter, never its body. AgentID
+// and ID (the provider's event ID) identify the load, so a load reported both
+// live and by the record counts once.
+type SkillLoad struct {
+	ID          string
+	AgentID     string
+	Name        string
+	Description string
+	At          time.Time
 }
 
 // ModelSelection contains confirmed settings. Nil optional fields mean the

@@ -10,12 +10,12 @@ import { contextLabel, ContextReport, ContextRing, contextShown } from './Compos
 import { ContextTab } from './Context';
 import { Key } from './InlinePicker';
 import { BottomSheet, LiftedRow } from './Subagents';
-import { AgentChoices, useTaskAgents } from './TaskAgent';
+import { AgentChoices, LoadedSkills, useTaskAgents } from './TaskAgent';
 import { UsageTab } from './TaskUsage';
 import { PHONE } from './Todos';
 import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
-import { PanelFoot, PanelHead } from './ui/panel';
+import { PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Tip } from './ui/tooltip';
 
 export type Tool = 'context' | 'usage' | 'agent';
@@ -27,8 +27,8 @@ const LABEL: Record<Tool, string> = { context: 'Context', usage: 'Usage', agent:
 /**
  * The composer's Tools: one button for the Task's context, usage and custom agent, opening one
  * anchored reader (a bottom sheet on phones) with a tab per tool. A tool the Task cannot show has no
- * tab (Agent shows only when the Project has a custom agent, or the Task names one), and a Task with
- * none has no button. The button carries the context ring, the one live value worth keeping on the
+ * tab (Agent shows only when the Project has a custom agent, the Task names one, or the Thread
+ * loaded skills), and a Task with none has no button. The button carries the context ring, the one live value worth keeping on the
  * toolbar. Each tab mounts its body only while shown, so a native read happens on open, again when
  * the Task's pushed counts change, and is aborted on close; a change of Task, conversation,
  * selection, stage or open state, or of the owning API, closes the panel.
@@ -50,10 +50,12 @@ export function ComposerTools({ session, model, agentReason, onAgent, ref }: Rea
   // Each opening reads the Project's agents again, so one added since shows its tab.
   const [opens, setOpens] = useState(0);
   const { agents, error: agentsError } = useTaskAgents(session, !!session.capabilities.custom_agents, opens);
+  const agentShown = !!(session.capabilities.custom_agents && (session.agent || agents?.length || agentsError));
+  const skills = session.skills_loaded ?? [];
   const tools: Tool[] = [
     ...(contextShown(session) ? ['context' as const] : []),
     ...(session.capabilities.usage || session.capabilities.usage_metrics ? ['usage' as const] : []),
-    ...(session.capabilities.custom_agents && (session.agent || agents?.length || agentsError) ? ['agent' as const] : []),
+    ...(agentShown || skills.length ? ['agent' as const] : []),
   ];
   const [chosen, setChosen] = useState<Tool>('context');
   if (reader && (reader.scope !== scope || reader.owner !== api)) setReader(null);
@@ -97,7 +99,10 @@ export function ComposerTools({ session, model, agentReason, onAgent, ref }: Rea
       <Tabs.Panel value={tab} className={cn('flex flex-none flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4 outline-hidden', sheet ? 'h-[60dvh]' : 'h-[min(440px,60vh)]')}>
         {tab === 'context' && <ContextTab session={session}><ContextReport session={session} model={model} /></ContextTab>}
         {tab === 'usage' && <UsageTab session={session} />}
-        {tab === 'agent' && <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />}
+        {tab === 'agent' && (skills.length ? <>
+          {agentShown && <PanelSection label="Agent"><AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} /></PanelSection>}
+          <PanelSection label="Skills" meta={`${skills.length} loaded`}><LoadedSkills skills={skills} /></PanelSection>
+        </> : <AgentChoices session={session} agents={agents} error={agentsError} reason={agentReason} onChange={onAgent} />)}
       </Tabs.Panel>
       {!sheet && <PanelFoot>
         {tools.length > 1 && <span className="flex items-center gap-1.5"><Key>←</Key><Key>→</Key>switch tab</span>}

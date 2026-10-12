@@ -3283,6 +3283,11 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	case *rpc.SessionTitleChangedData:
 		c.emitLocked(agentapi.Event{Kind: agentapi.EventTitle, Title: d.Title})
 		return
+	case *rpc.SkillInvokedData, *rpc.SkillInvokedRefData:
+		if load, ok := skillLoad(ev); ok {
+			c.emitLocked(agentapi.Event{Kind: agentapi.EventSkill, Skill: &load})
+		}
+		return
 	case *rpc.SubagentStartedData, *rpc.SubagentConfiguredData, *rpc.SubagentCompletedData, *rpc.SubagentFailedData:
 		if sa, ok := c.subs.apply(ev); ok {
 			if sa.Status == agentapi.SubagentCancelled {
@@ -3811,6 +3816,14 @@ type transcript struct {
 	// Clipped, and clippedInput holds the running tool calls whose input was.
 	whole        bool
 	clippedInput map[string]bool
+	// hidden holds the IDs of running skill tool calls, which are not
+	// transcript items.
+	hidden map[string]struct{}
+}
+
+func (t *transcript) isHidden(id string) bool {
+	_, ok := t.hidden[id]
+	return ok
 }
 
 // clip bounds s unless t keeps texts whole, and reports whether it cut.
@@ -3831,7 +3844,7 @@ const maxEndedTools = 1024
 const maxAssets = 64
 
 func newTranscript() *transcript {
-	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}}
+	return &transcript{tools: map[string]*agentapi.ToolCall{}, toolAgents: map[string]string{}, ended: map[string]struct{}{}, shells: map[string]*shellOutput{}, assets: map[string]*rpc.SessionBinaryAssetData{}, reasoned: map[string]bool{}, stepStart: map[string]time.Time{}, clippedInput: map[string]bool{}, hidden: map[string]struct{}{}}
 }
 
 // items maps one event to its transcript items. An assistant message whose
@@ -3928,11 +3941,12 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, completionNotice(it.Completion)
 	case *rpc.SessionErrorData:
 		it.ID, it.Kind, it.Text = ev.ID, agentapi.ItemNotice, "Error: "+displaytext.Sanitize(d.Message)
-	case *rpc.SkillInvokedData:
-		return skillNotice(it, ev.ID, d.Name)
-	case *rpc.SkillInvokedRefData:
-		return skillNotice(it, ev.ID, d.Name)
 	case *rpc.ToolExecutionStartData:
+		if d.ToolName == skillTool {
+			// Loading a skill is bookkeeping, not work: skillLoad reports it.
+			t.hidden[d.ToolCallID] = struct{}{}
+			return it, false
+		}
 		input, cut := t.clip(compactJSON(d.Arguments), maxToolText)
 		tc := &agentapi.ToolCall{Name: d.ToolName, Status: agentapi.ToolRunning, Input: input}
 		t.tools[d.ToolCallID] = tc
@@ -3946,14 +3960,18 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 		}
 		it.ID, it.Kind, it.Tool, it.Clipped = d.ToolCallID, agentapi.ItemTool, cloneTool(tc), cut
 	case *rpc.ToolExecutionProgressData:
-		if !t.toolProgress(d, &it) {
+		if t.isHidden(d.ToolCallID) || !t.toolProgress(d, &it) {
 			return it, false
 		}
 	case *rpc.ToolShellOutputData:
-		if !t.shellOutput(d, &it) {
+		if t.isHidden(d.ToolCallID) || !t.shellOutput(d, &it) {
 			return it, false
 		}
 	case *rpc.ToolExecutionCompleteData:
+		if t.isHidden(d.ToolCallID) {
+			delete(t.hidden, d.ToolCallID)
+			return it, false
+		}
 		if _, started := t.tools[d.ToolCallID]; started {
 			it.EndedAt = ev.Timestamp
 		}
@@ -4005,21 +4023,38 @@ func (t *transcript) item(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	return it, true
 }
 
-func skillNotice(it agentapi.Item, id, name string) (agentapi.Item, bool) {
-	// The name is display metadata, even in a whole-history window. Never
-	// retain the skill body or resolve a recorded body's reference for it.
-	name = clip(strings.TrimSpace(displaytext.Sanitize(name)), 256)
+const (
+	// skillTool is the CLI tool the agent loads a skill with.
+	skillTool = "skill"
+	// maxSkillName and maxSkillDescription bound a load's display text in
+	// bytes; 1024 is the most a SKILL.md description may hold.
+	maxSkillName        = 256
+	maxSkillDescription = 1024
+)
+
+// skillLoad reports a skill.invoked event as a load: the name and the
+// description, as display metadata, even in a whole-history window. Never
+// retain the skill body or resolve a recorded body's reference for it.
+func skillLoad(ev copilot.SessionEvent) (agentapi.SkillLoad, bool) {
+	var name string
+	var description *string
+	switch d := ev.Data.(type) {
+	case *rpc.SkillInvokedData:
+		name, description = d.Name, d.Description
+	case *rpc.SkillInvokedRefData:
+		name, description = d.Name, d.Description
+	default:
+		return agentapi.SkillLoad{}, false
+	}
+	name = clip(strings.TrimSpace(displaytext.Sanitize(name)), maxSkillName)
 	if name == "" {
-		return it, false
+		return agentapi.SkillLoad{}, false
 	}
-	// Notices render Markdown; a code span keeps the name literal, including
-	// URLs and backticks. Padding is trimmed by the code-span renderer.
-	fence := "`"
-	for strings.Contains(name, fence) {
-		fence += "`"
+	load := agentapi.SkillLoad{ID: ev.ID, AgentID: agentOf(ev), Name: name, At: ev.Timestamp}
+	if description != nil {
+		load.Description = clip(strings.TrimSpace(displaytext.Sanitize(*description)), maxSkillDescription)
 	}
-	it.ID, it.Kind, it.Text = id, agentapi.ItemNotice, "Skill: "+fence+" "+name+" "+fence
-	return it, true
+	return load, true
 }
 
 func (t *transcript) toolProgress(d *rpc.ToolExecutionProgressData, it *agentapi.Item) bool {
@@ -4093,7 +4128,8 @@ func history(evs []copilot.SessionEvent) agentapi.History {
 	t, subs := newTranscript(), newSubagentLog()
 	var items []agentapi.Item
 	var model string
-	index := map[[2]string]int{}
+	var skills []agentapi.SkillLoad
+	index, loaded := map[[2]string]int{}, map[[2]string]bool{}
 	for _, ev := range evs {
 		if ev.Ephemeral != nil && *ev.Ephemeral {
 			continue
@@ -4102,6 +4138,10 @@ func history(evs []copilot.SessionEvent) agentapi.History {
 			model = m
 		}
 		subs.apply(ev)
+		if load, ok := skillLoad(ev); ok && !loaded[[2]string{load.AgentID, load.ID}] {
+			loaded[[2]string{load.AgentID, load.ID}] = true
+			skills = append(skills, load)
+		}
 		for _, it := range t.items(ev) {
 			key := [2]string{it.AgentID, it.ID}
 			if i, seen := index[key]; seen {
@@ -4113,7 +4153,7 @@ func history(evs []copilot.SessionEvent) agentapi.History {
 			items = append(items, it)
 		}
 	}
-	h := agentapi.History{Items: items, Subagents: subs.list(), Model: model}
+	h := agentapi.History{Items: items, Subagents: subs.list(), Model: model, Skills: skills}
 	if total, ok := recordedTotal(evs); ok {
 		h.Usage = &agentapi.Usage{AIUnits: total / nanoPerUnit}
 	}

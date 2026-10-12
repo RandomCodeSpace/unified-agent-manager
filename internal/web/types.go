@@ -427,6 +427,9 @@ type SessionDetail struct {
 	// Schedules is the open conversation's native schedules, display only.
 	Schedules *agentapi.ScheduleSnapshot  `json:"schedules,omitempty"`
 	MCPStatus *agentapi.MCPStatusSnapshot `json:"mcp_status,omitempty"`
+	// SkillsLoaded lists the skills the Task's agents loaded, first loaded
+	// first; skill loads are not transcript items.
+	SkillsLoaded []LoadedSkill `json:"skills_loaded,omitempty"`
 	// Queue holds the prompts waiting for the running turn, oldest first.
 	Queue []QueuedPrompt `json:"queue"`
 	// QueuePaused is set while the queue waits for the user to resume or

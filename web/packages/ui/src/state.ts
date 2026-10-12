@@ -367,6 +367,8 @@ export function reducer(state: State, action: Action): State {
           return { ...state, detail: { ...detail, schedules: d.schedules } };
         case 'mcp_status':
           return { ...state, detail: { ...detail, mcp_status: d.mcp_status } };
+        case 'skills_loaded':
+          return { ...state, detail: { ...detail, skills_loaded: d.skills_loaded } };
       }
     }
   }

@@ -22,8 +22,8 @@ import { accountItem } from './historyWindow.ts';
  * next idle pass.
  */
 
-/** Bump with any change to the records or to the representation the client requests; the upgrade starts empty. */
-export const SCHEMA = 1;
+/** Bump with any change to the records or to the representation the client requests; the upgrade starts empty. 2: skill loads left the transcript. */
+export const SCHEMA = 2;
 export const REPRESENTATION = 'compact-v1';
 const MIB = 1024 * 1024;
 export const TTL = 14 * 24 * 60 * 60 * 1000;
