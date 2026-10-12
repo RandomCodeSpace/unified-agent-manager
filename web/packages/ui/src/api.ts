@@ -729,6 +729,12 @@ export interface SessionSummary {
   /** Provider-generated conversation title; empty until it arrives. */
   title: string;
   workdir: string;
+  /** The branch checked out in the Thread's working folder; absent on a detached head and from older servers (the Project's branch stands in). */
+  branch?: string;
+  /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
+  worktree?: { path: string; branch: string };
+  /** Work in the Thread's working tree saved nowhere else: changed tracked files and commits on no remote; absent when unknown. */
+  git_pending?: { uncommitted: number; unpushed: number };
   conversation_id: string;
   /** Selected model; empty means the provider default (and cannot be set back to empty). */
   model: string;

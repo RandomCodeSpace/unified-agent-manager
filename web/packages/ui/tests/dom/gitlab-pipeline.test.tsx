@@ -5,7 +5,6 @@ import { api, createApiClient, type GitLabPipelineState } from '../../src/api';
 import { ApiContext } from '../../src/ApiContext';
 import { GitLabPipelinePanel } from '../../src/components/GitLabPipeline';
 import { TaskActionsContext, useTaskActions } from '../../src/components/taskActions';
-import { renderApp } from './render';
 
 const sha = 'c81f4a2c81f4a2c81f4a2c81f4a2c81f4a2c81f4a2';
 const state: GitLabPipelineState = {
@@ -32,11 +31,9 @@ function fixture(value: GitLabPipelineState = state) {
   return { ...render(<View />), read, refresh, investigate, select, user: userEvent.setup() };
 }
 
-test('the Task GitLab panel shows the exact commit, visible job rows and merge request details', async () => {
-  vi.spyOn(api, 'gitlabPipeline').mockResolvedValue(state);
-  const { user } = renderApp('?gitidle#task=t3');
-  await user.click(await screen.findByRole('button', { name: 'GitLab pipelines and merge requests' }));
-  const panel = within(await screen.findByRole('dialog', { name: 'GitLab' }));
+test('the Thread GitLab panel shows the exact commit, visible job rows and merge request details', async () => {
+  fixture();
+  const panel = screen;
   expect(await panel.findByText(sha.slice(0, 8))).toBeTruthy();
   expect(panel.getByText('feat/pipeline')).toBeTruthy();
   expect(panel.getByRole('heading', { name: 'Pipeline' })).toBeTruthy();
