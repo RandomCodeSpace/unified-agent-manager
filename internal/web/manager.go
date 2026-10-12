@@ -2747,6 +2747,10 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	if place != nil {
 		s.branch = place.Branch
 	}
+	switched := req.Place != nil && req.samePlace == nil && (req.Place.Mode == placeSwitch || req.Place.Mode == placeBranch)
+	if switched && place == nil {
+		s.branch, _ = readBranch(m.ctx, workdir)
+	}
 	s.effort, s.contextSize, s.agent = req.Effort, req.ContextSize, req.Agent
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
@@ -2804,6 +2808,10 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	log.Info("web session created", "session", id, "provider", prov.Name())
 	m.mu.Lock()
 	m.kickPlaceNameLocked(s)
+	if switched {
+		// The Project and the Threads sharing its folder are on the new branch.
+		m.kickBranchLocked(req.ProjectID)
+	}
 	m.mu.Unlock()
 	if req.autopilot {
 		m.startAutopilot(s)

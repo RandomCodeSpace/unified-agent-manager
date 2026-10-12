@@ -15,7 +15,9 @@ and conventions below instead.
 - **Project**: a named working directory. A **Thread** is one Copilot
   conversation running in its Project's directory. Several Threads can work in
   the same directory at once, so the working tree can change under you: check
-  `git status` before you treat a change as yours. The owner may instead
+  `git status` before you treat a change as yours. Between turns the owner
+  may switch the Project folder to another branch, so check the branch
+  before you commit. The owner may instead
   start a conversation on a new `uam/…` branch, or in its own git worktree
   (by default under `~/.uam/worktrees/`): then your working directory is that worktree,
   other conversations do not share it, and uam renames the branch after the
