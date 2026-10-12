@@ -154,8 +154,8 @@ export function tasksOf(sessions: SessionSummary[], projectId: string): SessionS
 }
 
 /** The unsaved git work a Thread shares with its repository, or null when there is none. */
-export function pendingWork(s: SessionSummary): GitPending | null {
-  const p = s.git_pending;
+export function pendingWork(s: Pick<SessionSummary, 'git_pending'> | undefined): GitPending | null {
+  const p = s?.git_pending;
   return p && (p.uncommitted > 0 || p.unpushed > 0) ? p : null;
 }
 

@@ -5,7 +5,7 @@ import { recentProjection } from './lib/historyState';
 import { DetailsProvider } from './components/Details';
 import { X } from 'lucide-react';
 import { Suspense, lazy, startTransition, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useReducer, useRef, useState, type Ref } from 'react';
-import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
+import { ACCOUNT_NOT_LINKED, SIGNED_OUT, UPDATE_EVENTS, describeError, errorCode, isStatus, newRequestId, onUnauthorized, provider, readOnly, resolveTaskDefaults, taskName, unsavedRefusal, type Aside, type Changes as ChangesData, type GitPending, type Interaction, type Meta, type Project, type SessionDetail, type SessionSummary, type SnapshotData, type TaskDefaults, type UpdateData } from './api';
 import { initialState, reducer, type Action } from './state';
 import { AppContext, Dot, Loading, Spinner, TranscriptSkeleton, useLate, useMedia } from './components/common';
 import { Login } from './components/Login';
@@ -31,7 +31,7 @@ import { TryModelDialog } from './components/Assist';
 import { saveBlob } from './lib/assist';
 import { Button } from './components/ui/button';
 import { Appear } from './components/ui/appear';
-import { AlertDialog, Sheet } from './components/ui/dialog';
+import { AlertDialog, Sheet, rowAnchor } from './components/ui/dialog';
 import { SettleGuard, type UnsavedTarget } from './components/SettleGuard';
 import { TooltipProvider } from './components/ui/tooltip';
 import type { TerminalHandle } from './components/Terminal';
@@ -1030,18 +1030,34 @@ export default function App() {
   const [unsavedOpen, setUnsavedOpen] = useState(false);
   const [forcing, setForcing] = useState(false);
   const [allChanges, setAllChanges] = useState<{ id: string; at: number } | null>(null);
-  /** `request` settles or archives; a refusal over unsaved work opens the confirmation instead of failing. */
-  const askUnsaved = useCallback(async <T,>(request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths'>) => UnsavedTarget): Promise<T | void> => {
+  /** Opens the confirmation; `list` reads the folder's first changed files when no refusal named them. */
+  const openUnsaved = useCallback((t: UnsavedTarget, list?: () => Promise<ChangesData>) => {
+    setUnsaved(t);
+    setUnsavedOpen(true);
+    list?.().then((c) => {
+      const paths = c.files.filter((f) => f.status !== 'untracked').slice(0, 3).map((f) => f.path);
+      setUnsaved((u) => (u === t ? { ...t, paths } : u));
+    }).catch(() => {});
+  }, []);
+  /**
+   * Settle or Archive Thread `id`. Unsaved work the summary knows (`known`) opens the confirmation at once, with no
+   * request; otherwise `request` runs, and a refusal over work the summary did not know yet opens it instead of failing.
+   * The anchor is read now, as the control is activated: the row stays on screen while its hover Settle leaves it.
+   */
+  const askUnsaved = useCallback(async <T,>(id: string, known: GitPending | null, request: () => Promise<T>, target: (refused: Pick<UnsavedTarget, 'pending' | 'paths' | 'anchor'>) => UnsavedTarget, list: () => Promise<ChangesData>): Promise<T | void> => {
+    let anchor = rowAnchor();
+    // A control inside a closing confirmation (today's Archive dialog) is gone by then: the Thread's row stands for it.
+    if (anchor?.closest('[data-popup]')) anchor = document.querySelector(`nav [data-task-row="${CSS.escape(id)}"]`);
+    if (known) return openUnsaved(target({ pending: known, paths: [], anchor }), list);
     try {
       return await request();
     } catch (e) {
       const refused = unsavedRefusal(e);
       if (!refused) throw e;
-      setUnsaved(target(refused));
-      setUnsavedOpen(true);
+      openUnsaved(target({ ...refused, anchor }));
     }
-  }, []);
-  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(() => api.stage(id, kind), (refused) => ({
+  }, [openUnsaved]);
+  const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(id, pendingWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
     kind,
     ...refused,
     force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the task`),
@@ -1050,7 +1066,7 @@ export default function App() {
       select(id);
       setAllChanges({ id, at: Date.now() });
     },
-  })), `${kind} the task`), [runTask, askUnsaved, api, select]);
+  }), () => api.changes(id, 'workspace')), `${kind} the task`), [runTask, askUnsaved, api, select]);
 
   /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
   const rerun = useCallback((id: string, model?: string) => runTask(id, async () => {
@@ -1113,12 +1129,19 @@ export default function App() {
       });
     }
   }, []);
+  /** Another machine's Settle or Archive: the same confirmation, its forced request run against that machine. */
+  const remoteAway = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => askUnsaved(
+    id,
+    pendingWork(m.state.sessions.find((s) => s.id === id)),
+    () => m.client.stage(id, kind),
+    (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the task`) }),
+    () => m.client.changes(id, 'workspace'),
+  ), [askUnsaved, runRemote]);
   const go = federation?.go;
   /** The row actions of each machine not on screen: the same verbs, run against that machine's own client. */
   const machineActions = useMemo(() => new Map((machines ?? []).filter((m) => !m.active).map((m): [string, TaskActions] => {
     const c = m.client;
     const run = (id: string, op: () => Promise<unknown>, verb: string) => void runRemote(m, id, op, verb).catch(() => {});
-    const away = (id: string, kind: UnsavedTarget['kind']) => () => askUnsaved(() => c.stage(id, kind), (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => c.stage(id, kind, { force: true }), `${kind} the task`) }));
     const open = (id: string) => go?.(m.id, `${HASH_PREFIX}${encodeURIComponent(id)}`);
     return [m.id, {
       select: open,
@@ -1131,7 +1154,7 @@ export default function App() {
         if (!current || current.name === name) return;
         await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => run(id, away(id, 'settle'), 'settle the task'),
+      settle: (id) => run(id, () => remoteAway(m, id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
       unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
         await c.stage(id, 'unarchive');
@@ -1139,7 +1162,7 @@ export default function App() {
       }, 'unarchive the task') : undefined,
       archive: (id) => {
         const s = m.state.sessions.find((x) => x.id === id);
-        if (s && pendingWork(s)) run(id, away(id, 'archive'), 'archive the task');
+        if (s && pendingWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the task');
         else openTaskDialog({ kind: 'archive', id, owner: m.id });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
@@ -1148,7 +1171,7 @@ export default function App() {
       runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, askUnsaved]);
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, remoteAway]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1249,7 +1272,7 @@ export default function App() {
     if (dialogMachine) {
       const c = dialogMachine.client;
       try {
-        if (kind === 'archive') await runRemote(dialogMachine, id, () => askUnsaved(() => c.stage(id, 'archive'), (refused) => ({ kind, ...refused, force: () => runRemote(dialogMachine, id, () => c.stage(id, 'archive', { force: true }), 'archive the task') })), 'archive the task');
+        if (kind === 'archive') await runRemote(dialogMachine, id, () => remoteAway(dialogMachine, id, 'archive'), 'archive the task');
         else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
         else {
           await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the task');

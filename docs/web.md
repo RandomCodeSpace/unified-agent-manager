@@ -1499,9 +1499,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the sidebar's counts). The row's hover button and the menu item then read
   "Settle…". The service reads the work again and refuses with 409
   `unsaved_work`, its counts (`git_pending`) and the first three changed
-  files (`refs`), unless the request body is `{"force": true}`. The
-  confirmation opens under the row or the control that asked (centred on a
-  phone) and shows the counts, the first three files and how many more,
+  files (`refs`), unless the request body is `{"force": true}`. When the
+  Thread's counts already show unsaved work, the confirmation opens at once
+  without that request; otherwise a refusal opens it. Either way it hangs
+  under the sidebar row or the control that asked, read as it was
+  activated (centred only on a phone), and shows the counts, the first three files and how many more,
   **Open Changes** (the Thread's Changes on All changes), Cancel and
   **Settle anyway** or **Archive anyway**. A clean Thread settles at once,
   and a clean Archive asks as before.
