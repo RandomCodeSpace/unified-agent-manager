@@ -1231,6 +1231,7 @@ export default function App() {
       connection={connection}
       version={meta?.version}
       machineActions={machines ? machineActions : undefined}
+      count={needsYouTasks}
     />
   );
 
