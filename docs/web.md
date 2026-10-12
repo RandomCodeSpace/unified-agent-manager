@@ -380,11 +380,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     (`GET /api/projects/{id}/files?base=<branch>`).
     `GET /api/projects/{id}/branches` lists the local and remote branches,
     most recently committed first.
-  - A Thread in a worktree cannot be branched from a turn yet.
+  - A Thread in a worktree cannot be branched from a turn yet: the branch
+    would start in the Project's folder. Run again starts the new Thread in
+    the same worktree, on the same branch.
   - Settling, archiving or deleting a Thread removes its worktree with
-    `git worktree remove`; the branch stays, so its commits do too. A
-    worktree with changed or untracked files is kept. Using the Thread
-    again (Reopen, then a message) brings the worktree back from the branch.
+    `git worktree remove`; the branch stays, so its commits do too, and the
+    Thread still shows it. A worktree with changed or untracked files is
+    kept, and so is one another active Thread runs in. Using the Thread
+    again (Reopen, then a message, or Run again) brings the worktree back
+    from the branch.
   - **Settings → Worktrees** shows the disk holding `~/.uam/worktrees` (free
     space against a 10% line), every worktree biggest first with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last

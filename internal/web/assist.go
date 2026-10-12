@@ -545,6 +545,12 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 	if req.Model != "" && req.Model != s.model {
 		create.Model, create.Effort, create.ContextSize = req.Model, "", "default"
 	}
+	if s.place != nil && s.place.Worktree != "" {
+		// It runs in the same worktree, and the branch keeps its name.
+		place := *s.place
+		place.Named = true
+		create.samePlace, create.sameWorkdir = &place, s.workdir
+	}
 	text := ""
 	for i := len(s.items) - 1; i >= 0 && text == ""; i-- {
 		if ownerMessage(s.items[i]) {

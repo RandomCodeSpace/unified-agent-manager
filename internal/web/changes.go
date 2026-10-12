@@ -566,6 +566,9 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 	m.kickGitPendingLocked(m.pendingDirsLocked(slices.Collect(maps.Keys(dirs))))
 	for _, s := range m.sessions {
 		r, read := branches[s.workdir]
+		if r.branch == "" && s.place != nil && s.place.Worktree != "" {
+			r.branch = s.place.Branch // its worktree was removed; the branch is kept
+		}
 		if _, refreshed := dirs[s.projectID]; !refreshed || !read || s.removed || s.branch == r.branch {
 			continue
 		}
