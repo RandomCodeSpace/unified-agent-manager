@@ -567,10 +567,21 @@ export interface Settings {
   github_mcp?: boolean;
   /** Investigate failed pipelines for commits made through UAM, starting with the Utility model. Off by default. */
   gitlab_auto_investigate?: boolean;
+  /** The prompt the Utility model writes merge request descriptions with; absent for `DEFAULT_MR_PROMPT`. PATCH `''` puts the default back. */
+  gitlab_mr_prompt?: string;
 }
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */
 export const DEFAULT_COMPACT_THRESHOLD = 80;
+
+/** The service's built-in merge request description prompt: what an empty `Settings.gitlab_mr_prompt` uses. */
+export const DEFAULT_MR_PROMPT = `Write the description of a GitLab merge request from the commits and changed files shown.
+Use these sections, in this order, as level-2 Markdown headings: Summary, Changes, How it was tested, Notes.
+- Summary: one or two sentences on what the merge request does and why.
+- Changes: a short bullet list of the notable changes.
+- How it was tested: only the tests or checks the commits mention; write "Not stated in the commits." when they mention none. Never invent tests.
+- Notes: risks, follow-ups or hints for reviewers; leave the section out when there are none.
+Be concise and concrete. Plain Markdown, no other headings, no filler.`;
 
 /** Replies suggested for the transcript ending with item `item_id`; both empty when none are offered. */
 export interface Suggestions {

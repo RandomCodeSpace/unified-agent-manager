@@ -770,6 +770,9 @@ type WebSettings struct {
 	// GitLabAutoInvestigate starts an investigation when a Task's own
 	// GitLab pipeline fails. Off when absent.
 	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
+	// GitLabMRPrompt is the prompt for merge request descriptions; the
+	// built-in one when empty.
+	GitLabMRPrompt string `json:"gitlab_mr_prompt,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -1000,6 +1003,7 @@ var knownWebSettingsFields = map[string]struct{}{
 	"compact_threshold":       {},
 	"github_mcp":              {},
 	"gitlab_auto_investigate": {},
+	"gitlab_mr_prompt":        {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},

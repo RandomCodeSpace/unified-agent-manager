@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
-import { api, type GitLabStatus } from '../../src/api';
+import { api, DEFAULT_MR_PROMPT, type GitLabStatus } from '../../src/api';
 import { ApiContext } from '../../src/ApiContext';
 import { GitLabSettings } from '../../src/components/GitLabSettings';
 import { renderApp } from './render';
@@ -41,6 +41,28 @@ test('one global switch saves both modes without a project selector', async () =
     await user.click(toggle);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_auto_investigate: false }));
     await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
+  } finally { save.mockRestore(); }
+});
+
+test('the merge request description prompt shows the default until one is saved, and resets to it', async () => {
+  const save = vi.spyOn(api, 'updateWebSettings');
+  try {
+    const { user } = renderApp('#settings');
+    const rail = within(await screen.findByRole('navigation', { name: 'Settings sections' }));
+    await user.click(rail.getByRole('button', { name: 'GitLab' }));
+    const prompt = await screen.findByRole<HTMLTextAreaElement>('textbox', { name: 'Merge request description' });
+    expect(prompt.value).toBe('');
+    expect(prompt.placeholder).toBe(DEFAULT_MR_PROMPT);
+    const saveButton = screen.getByRole('button', { name: 'Save' });
+    const reset = screen.getByRole('button', { name: 'Reset to default' });
+    expect(saveButton.hasAttribute('disabled') || saveButton.getAttribute('aria-disabled') === 'true').toBe(true);
+    await user.type(prompt, '  Be brief.  ');
+    await user.click(saveButton);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_mr_prompt: 'Be brief.' }));
+    await user.click(reset);
+    await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_mr_prompt: '' }));
+    await waitFor(() => expect(prompt.value).toBe(''));
+    expect(save).toHaveBeenCalledTimes(2);
   } finally { save.mockRestore(); }
 });
 

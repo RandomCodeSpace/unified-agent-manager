@@ -187,6 +187,9 @@ type Settings struct {
 	// GitLabAutoInvestigate starts an investigation when a Task's own
 	// GitLab pipeline fails; omitted while off, the default.
 	GitLabAutoInvestigate bool `json:"gitlab_auto_investigate,omitempty"`
+	// GitLabMRPrompt is the owner's prompt for merge request descriptions
+	// (mr_description.go); omitted while the default is used.
+	GitLabMRPrompt string `json:"gitlab_mr_prompt,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment

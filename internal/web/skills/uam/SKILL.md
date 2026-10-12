@@ -48,6 +48,12 @@ sizes above 20 become 20. For one issue with its discussion, use
 instead of `--live`, and give `ci trace`/`ci retry` a job ID. Use `mr create`
 with `-y` or `-f`; sign in outside the Task. Do not retry a refused form.
 
+Create a merge request with `glab mr create -f -y [--title "…"] [-b <target>]`
+and do not write a description: uam writes it with the Utility model and adds
+`--description-file`. A note says when it could not; then glab fills the
+description from the commits. Pass `-d` only when the owner asked for specific
+wording.
+
 Before `git push`, changed GitLab CI files are linted when the gate is ready.
 Fix reported CI errors before pushing. A new branch receives a static check;
 unavailable lint or inaccessible includes do not block the push. This is not
