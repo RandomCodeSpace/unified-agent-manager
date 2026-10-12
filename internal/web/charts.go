@@ -60,10 +60,10 @@ var chartTool = agentapi.HostTool{
 	Name: chartToolName,
 	Description: "Show the owner a chart in this conversation; their browser draws it. " +
 		"The card already contains the chart and its inspectable data. Give only a brief interpretation around it; do not emit a duplicate Markdown table before or after this call unless the owner explicitly requests a separate copy. " +
-		"Prefer `command`, even when the rows need computing: uam runs it in the task's directory and reads its CSV or JSON output itself, " +
+		"Prefer `command`, even when the rows need computing: uam runs it in the thread's directory and reads its CSV or JSON output itself, " +
 		"so the rows never pass through you, and you get back only a short summary (row count, ranges). Pass the rows as `data` only when you have a few at hand. " +
 		fmt.Sprintf("Line and bar charts take at most %d rows and %d series; x values must be unique, y values numbers. ", maxChartRows, maxChartSeries) +
-		"If uam refuses the command because the task is in Safe mode, run it with your shell tool and pass its rows as `data`. " +
+		"If uam refuses the command because the thread is in Safe mode, run it with your shell tool and pass its rows as `data`. " +
 		"Use line, bar, scatter, heatmap, pie/donut, boxplot, treemap or sankey charts. For charts beyond line/bar, use kind echarts with options, or a command printing one JSON option object with format json. " +
 		"For tabular ECharts data, prefer one dataset.source with named dimensions and an explicit sourceHeader so the same data can be inspected as a sortable, filterable table. " +
 		"Do not pass x, y or data with echarts. Options are bounded JSON only: no JavaScript, external images, maps, custom series, toolbox or force layouts. " +
@@ -76,7 +76,7 @@ var chartTool = agentapi.HostTool{
 		"x":       stringProp("Required for line/bar: the field holding each row's x value, a CSV column or JSON object key. Rows keep their order."),
 		"y": listProp(fmt.Sprintf("Required for line/bar: the fields holding the numbers, one series each, 1 to %d.", maxChartSeries),
 			map[string]any{"type": "string"}),
-		"command": stringProp(fmt.Sprintf("A shell command, such as a pipeline or a short script, run in the task's directory with a %s limit and %d KiB of output. "+
+		"command": stringProp(fmt.Sprintf("A shell command, such as a pipeline or a short script, run in the thread's directory with a %s limit and %d KiB of output. "+
 			"For line/bar it prints CSV with a header row, or JSON rows. For echarts it prints one JSON option object. It must not depend on files you made, since a refresh runs it again later.", chartTimeout, maxChartOutput>>10)),
 		"format":  enumProp("The command's output: csv or json. Required with command.", "csv", "json"),
 		"data":    listProp("Rows instead of a command: objects holding the x and y fields.", map[string]any{"type": "object"}),
@@ -566,7 +566,7 @@ func (m *Manager) chartCall(ctx context.Context, taskID string, call agentapi.Ho
 
 func (m *Manager) drawChart(ctx context.Context, taskID string, call agentapi.HostToolCall) (string, error) {
 	if call.TaskID != taskID {
-		return "", errors.New("the call does not belong to this task")
+		return "", errors.New("the call does not belong to this thread")
 	}
 	if call.CallID == "" || len(call.CallID) > maxToolCallID {
 		return "", errors.New("the call has no usable ID")
@@ -594,7 +594,7 @@ func (m *Manager) drawChart(ctx context.Context, taskID string, call agentapi.Ho
 	// A command runs without a permission request, so only where the owner
 	// allows every request without asking.
 	if spec.Command != "" && mode != store.ModeYolo {
-		return "", errors.New("this task is in Safe mode, so uam does not run commands for it. Run the command with your shell tool, which asks the owner, and pass its rows as data or its echarts option object as options")
+		return "", errors.New("this thread is in Safe mode, so uam does not run commands for it. Run the command with your shell tool, which asks the owner, and pass its rows as data or its echarts option object as options")
 	}
 	data, took, err := readChart(ctx, spec, dir, inline)
 	if err != nil {

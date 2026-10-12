@@ -74,7 +74,7 @@ export function ReadPlan({ plan, sessionId, planVersion = 0, draftAvailable = tr
     <button ref={setAnchor} type="button" aria-haspopup="dialog" aria-expanded={!!reader?.open} aria-controls={reader?.open ? id : undefined} onClick={show} className="inline-flex h-7 shrink-0 items-center gap-1 rounded-sm px-1.5 text-caption text-muted hover:bg-tint-hover hover:text-ink pointer-coarse:min-h-11">
       <FileText aria-hidden="true" className="size-3.5" />Read plan
     </button>
-    {reader && <PlanReader id={id} open={reader.open} phone={reader.phone} anchor={anchor} plan={snapshot} error={error} current={current} draft={draft?.version === planVersion ? draft.value ?? null : null} draftError={!draftAvailable ? 'The current draft is unavailable while this Task is closed.' : draft?.version === planVersion ? draft.error ?? '' : ''} onCurrent={sessionId ? () => { setCurrent((value) => !value); setDraft(null); } : undefined} onClose={close} onClosed={() => { setReader(null); setSnapshot(null); setDraft(null); }} />}
+    {reader && <PlanReader id={id} open={reader.open} phone={reader.phone} anchor={anchor} plan={snapshot} error={error} current={current} draft={draft?.version === planVersion ? draft.value ?? null : null} draftError={!draftAvailable ? 'The current draft is unavailable while this Thread is closed.' : draft?.version === planVersion ? draft.error ?? '' : ''} onCurrent={sessionId ? () => { setCurrent((value) => !value); setDraft(null); } : undefined} onClose={close} onClosed={() => { setReader(null); setSnapshot(null); setDraft(null); }} />}
   </>;
 }
 

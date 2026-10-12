@@ -338,7 +338,7 @@ describe('messages', () => {
 
   test('a task another task started names that task at the start of its conversation', async () => {
     await openTask('t4');
-    expect(log().getByText('Started by another task, Doctor: add terminal line.')).toBeTruthy();
+    expect(log().getByText('Started by another thread, Doctor: add terminal line.')).toBeTruthy();
   });
 });
 

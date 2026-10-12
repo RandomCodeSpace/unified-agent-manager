@@ -23,9 +23,9 @@ test('a known list shows its count and opens a read-only list of cadence, timezo
   const fetch = vi.spyOn(globalThis, 'fetch');
   const user = userEvent.setup();
   render(<Schedules snapshot={known} open />);
-  await user.click(screen.getByRole('button', { name: 'Scheduled in this Task: 4' }));
+  await user.click(screen.getByRole('button', { name: 'Scheduled in this Thread: 4' }));
   const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).getByText('Scheduled in this Task')).toBeTruthy();
+  expect(within(dialog).getByText('Scheduled in this Thread')).toBeTruthy();
   expect(within(dialog).getByText('Every 5m 0s')).toBeTruthy();
   expect(within(dialog).getByText('Cron 0 9 * * 1-5')).toBeTruthy();
   expect(within(dialog).getByText('Once')).toBeTruthy();
@@ -43,7 +43,7 @@ test('a known list shows its count and opens a read-only list of cadence, timezo
 test('a partial list says so; unknown, unsupported, empty and closed Tasks show nothing', () => {
   const partial = { supported: true, known: false, truncated: true, entries: known.entries };
   const view = render(<Schedules snapshot={partial} open />);
-  expect(screen.getByRole('button', { name: 'Scheduled in this Task: 4+' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Scheduled in this Thread: 4+' })).toBeTruthy();
   for (const snapshot of [
     null,
     undefined,
@@ -61,11 +61,11 @@ test('a partial list says so; unknown, unsupported, empty and closed Tasks show 
 test('the list closes when the schedules go and updates in place by ID', async () => {
   const user = userEvent.setup();
   const view = render(<Schedules snapshot={known} open />);
-  await user.click(screen.getByRole('button', { name: 'Scheduled in this Task: 4' }));
+  await user.click(screen.getByRole('button', { name: 'Scheduled in this Thread: 4' }));
   await screen.findByRole('dialog');
   view.rerender(<Schedules snapshot={{ ...known, entries: known.entries.slice(1) }} open />);
   expect(screen.queryByText('Every 5m 0s')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Scheduled in this Task: 3' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Scheduled in this Thread: 3' })).toBeTruthy();
   view.rerender(<Schedules snapshot={null} open />);
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   view.rerender(<Schedules snapshot={known} open />);

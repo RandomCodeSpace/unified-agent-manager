@@ -143,7 +143,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
 
   return (
     <div className="flex flex-col gap-4">
-      <Note>Each server keeps its own tasks, settings and Copilot account.</Note>
+      <Note>Each server keeps its own threads, settings and Copilot account.</Note>
       {homeInstanceID && <Note>Main Server: <span className="break-all font-mono">{homeInstanceID}</span></Note>}
       <div className="flex flex-wrap gap-2">
         <Button variant="primary" disabled={busy || adding} onClick={() => { setAdding(true); setEditor(null); setError(null); }}>Add instance</Button>
@@ -151,7 +151,7 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
       </div>
       {error && <Note tone="error" role="alert">Could not update connected instances: {error}</Note>}
       {adding && <ConnectionForm busy={busy} onSubmit={(input) => save(undefined, input)} onCancel={() => setAdding(false)} />}
-      {connections.length === 0 && !adding && <Note>No connected instances yet. Your local tasks are available as usual.</Note>}
+      {connections.length === 0 && !adding && <Note>No connected instances yet. Your local threads are available as usual.</Note>}
       {connections.map((connection) => {
         const status = statuses[connection.id];
         const statusNote = status ? statusText[status.status] : 'Waiting for connection status';
@@ -184,8 +184,8 @@ export function ConnectedInstancesSettings({ homeInstanceID, connections, status
         {...confirm.props}
         title={confirm.target?.action === 'disable' ? `Disable ${confirm.target.connection.label}?` : `Remove ${confirm.target?.connection.label ?? 'connection'}?`}
         description={confirm.target?.action === 'disable'
-          ? 'The active terminal shell will close. Running agent tasks continue on that instance. You can enable the connection again later.'
-          : 'This removes the saved connection and closes any active terminal shell. Tasks and files on the other instance are not deleted. To connect again, you will need its access key.'}
+          ? 'The active terminal shell will close. Running agent threads continue on that instance. You can enable the connection again later.'
+          : 'This removes the saved connection and closes any active terminal shell. Threads and files on the other instance are not deleted. To connect again, you will need its access key.'}
         confirmLabel={confirm.target?.action === 'disable' ? 'Disable connection' : 'Remove connection'}
 
         busy={busy}

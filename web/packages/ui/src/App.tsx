@@ -488,7 +488,7 @@ export default function App() {
         recentTasks.remove(opened);
         forgetArchive(api.cacheKey(opened));
         dispatch({ type: 'select', id: null });
-        setNotice('That task no longer exists.');
+        setNotice('That thread no longer exists.');
       });
     };
     const selected = state.selectedId;
@@ -855,7 +855,7 @@ export default function App() {
       const project = state.projects.find((p) => p.id === projectId);
       const defaults = project && resolveTaskDefaults(meta, state.settings.task_defaults, state.settings.hidden_models);
       if (!defaults) {
-        setNotice(`Could not start a task: ${meta ? 'No provider is available.' : 'The provider list has not loaded yet.'}`);
+        setNotice(`Could not start a thread: ${meta ? 'No provider is available.' : 'The provider list has not loaded yet.'}`);
         return;
       }
       select(null);
@@ -967,7 +967,7 @@ export default function App() {
   const createTask = useCallback(
     async (projectId: string, first: FirstMessage) => {
       const entry = creating.current.get(projectId) ?? { id: newRequestId(), busy: false };
-      if (entry.busy) throw new Error('This task is already being created.');
+      if (entry.busy) throw new Error('This thread is already being created.');
       creating.current.set(projectId, { ...entry, busy: true });
       let s: SessionSummary;
       try {
@@ -977,7 +977,7 @@ export default function App() {
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
         if (errorCode(e) === SIGNED_OUT || errorCode(e) === ACCOUNT_NOT_LINKED) refreshMeta();
-        throw new Error(`Could not start the task: ${describeError(e)}`, { cause: e });
+        throw new Error(`Could not start the thread: ${describeError(e)}`, { cause: e });
       }
       creating.current.delete(projectId);
       sessionsUpdate(() => dispatch({ type: 'upsert_session', session: s }));
@@ -1004,7 +1004,7 @@ export default function App() {
         }
       }
       select(s.id);
-      if (failed) setNotice(`The task was created, but its first message was not sent: ${failed}. The message is in its composer.`);
+      if (failed) setNotice(`The thread was created, but its first message was not sent: ${failed}. The message is in its composer.`);
     },
     [select, meta, api, refreshMeta],
   );
@@ -1060,20 +1060,20 @@ export default function App() {
   const putAway = useCallback((id: string, kind: UnsavedTarget['kind']) => runTask(id, () => askUnsaved(id, pendingWork(latestSessions.current.find((s) => s.id === id)), () => api.stage(id, kind), (refused) => ({
     kind,
     ...refused,
-    force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the task`),
+    force: () => runTask(id, () => api.stage(id, kind, { force: true }), `${kind} the thread`),
     openChanges: () => {
       setUnsavedOpen(false);
       select(id);
       setAllChanges({ id, at: Date.now() });
     },
-  }), () => api.changes(id, 'workspace')), `${kind} the task`), [runTask, askUnsaved, api, select]);
+  }), () => api.changes(id, 'workspace')), `${kind} the thread`), [runTask, askUnsaved, api, select]);
 
   /** Run again and Try with another model: the new Task opens; a refusal becomes the notice line. */
   const rerun = useCallback((id: string, model?: string) => runTask(id, async () => {
     const s = await api.rerun(id, { model, request_id: newRequestId() });
     dispatch({ type: 'upsert_session', session: s });
     select(s.id);
-  }, 'run the task again'), [api, runTask, select]);
+  }, 'run the thread again'), [api, runTask, select]);
   const [tryModel, setTryModel] = useState<string | null>(null);
 
   const taskActions: TaskActions = useMemo(
@@ -1086,16 +1086,16 @@ export default function App() {
         setRenaming(null);
         const current = latestSessions.current.find((s) => s.id === id);
         if (!current || current.name === name) return;
-        await runTask(id, () => api.rename(id, name), 'rename the task').catch(() => {});
+        await runTask(id, () => api.rename(id, name), 'rename the thread').catch(() => {});
       },
       settle: (id) => void putAway(id, 'settle').catch(() => {}),
-      reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the task').catch(() => {}),
+      reopen: (id) => void runTask(id, () => api.stage(id, 'reopen'), 'reopen the thread').catch(() => {}),
       unarchive: meta?.capabilities?.includes('unarchive-v1') ? (id) => void runTask(id, async () => {
         const s = await api.stage(id, 'unarchive');
         markViewed(id, s.updated_at);
         select(id);
         return s;
-      }, 'unarchive the task').catch(() => {}) : undefined,
+      }, 'unarchive the thread').catch(() => {}) : undefined,
       // Known unsaved work goes straight to its confirmation; otherwise today's dialog, which may still meet a refusal.
       archive: (id) => {
         const s = latestSessions.current.find((x) => x.id === id);
@@ -1107,7 +1107,7 @@ export default function App() {
       busy: busyTasks,
       runAgain: (id) => void rerun(id).catch(() => {}),
       tryModel: setTryModel,
-      exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task').catch(() => {}),
+      exportMarkdown: (id) => void runTask(id, async () => { const f = await api.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread').catch(() => {}),
     }),
     [renaming, busyTasks, select, runTask, api, openTaskDialog, rerun, meta, markViewed, putAway],
   );
@@ -1134,7 +1134,7 @@ export default function App() {
     id,
     pendingWork(m.state.sessions.find((s) => s.id === id)),
     () => m.client.stage(id, kind),
-    (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the task`) }),
+    (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the thread`) }),
     () => m.client.changes(id, 'workspace'),
   ), [askUnsaved, runRemote]);
   const go = federation?.go;
@@ -1152,24 +1152,24 @@ export default function App() {
         setRenaming(null);
         const current = m.state.sessions.find((s) => s.id === id);
         if (!current || current.name === name) return;
-        await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
+        await runRemote(m, id, () => c.rename(id, name), 'rename the thread').catch(() => {});
       },
-      settle: (id) => run(id, () => remoteAway(m, id, 'settle'), 'settle the task'),
-      reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
+      settle: (id) => run(id, () => remoteAway(m, id, 'settle'), 'settle the thread'),
+      reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the thread'),
       unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
         await c.stage(id, 'unarchive');
         open(id);
-      }, 'unarchive the task') : undefined,
+      }, 'unarchive the thread') : undefined,
       archive: (id) => {
         const s = m.state.sessions.find((x) => x.id === id);
-        if (s && pendingWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the task');
+        if (s && pendingWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the thread');
         else openTaskDialog({ kind: 'archive', id, owner: m.id });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
       close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
       busy: remoteBusy[m.id] ?? NO_BUSY,
-      runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
-      exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
+      runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the thread again'),
+      exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread'),
     }];
   })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, remoteAway]);
 
@@ -1254,7 +1254,7 @@ export default function App() {
   const dialogMachine = taskDialog?.owner !== undefined ? machines?.find((m) => m.id === taskDialog.owner) : undefined;
   const dialogTask = taskDialog ? (dialogMachine ? dialogMachine.state.sessions : state.sessions).find((s) => s.id === taskDialog.id) : undefined;
   const dialogBusy = !!taskDialog && !!(dialogMachine ? remoteBusy[dialogMachine.id]?.[taskDialog.id] : busyTasks[taskDialog.id]);
-  const dialogTaskName = dialogTask ? `“${dialogTask.name || dialogTask.title || 'this task'}”` : 'this task';
+  const dialogTaskName = dialogTask ? `“${dialogTask.name || dialogTask.title || 'this thread'}”` : 'this thread';
   const newTaskProject = newTask ? state.projects.find((p) => p.id === newTask.projectId) : undefined;
   // A removed Project, or a `#routines=` link to none, lands on the usual view.
   const routinesKnown = routinesFor === ALL_ROUTINES || state.projects.some((p) => p.id === routinesFor);
@@ -1272,10 +1272,10 @@ export default function App() {
     if (dialogMachine) {
       const c = dialogMachine.client;
       try {
-        if (kind === 'archive') await runRemote(dialogMachine, id, () => remoteAway(dialogMachine, id, 'archive'), 'archive the task');
+        if (kind === 'archive') await runRemote(dialogMachine, id, () => remoteAway(dialogMachine, id, 'archive'), 'archive the thread');
         else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
         else {
-          await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the task');
+          await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the thread');
           forgetArchive(c.cacheKey(id));
         }
       } catch {
@@ -1288,7 +1288,7 @@ export default function App() {
       if (kind === 'archive') await putAway(id, 'archive');
       else if (kind === 'close') await runTask(id, () => api.close(id), 'close the conversation');
       else {
-        await runTask(id, () => api.deleteSession(id), 'delete the task');
+        await runTask(id, () => api.deleteSession(id), 'delete the thread');
         sweptMembership.current = null;
         recentTasks.remove(id);
         forgetArchive(api.cacheKey(id));
@@ -1374,7 +1374,7 @@ export default function App() {
   } else if (state.selectedId && state.snapshotSeq >= 0 && !selected) {
     pane = (
       <EmptyPane leading={leading} connection={connection}>
-        <h1 className="text-display-md">This task no longer exists.</h1>
+        <h1 className="text-display-md">This thread no longer exists.</h1>
         <p className="text-ui text-muted">It was deleted, or its project was removed.</p>
         <Button variant="secondary" onClick={() => select(null)}>
           Back to projects
@@ -1473,7 +1473,7 @@ export default function App() {
               )}
               {stale && state.previousCached && (
                 <output className="flex items-center gap-2 bg-surface px-4 py-1 text-caption text-muted">
-                  <Dot tone="accent" /> Refreshing task…
+                  <Dot tone="accent" /> Refreshing thread…
                 </output>
               )}
               <div className="relative flex min-h-0 flex-1 flex-col">
@@ -1537,9 +1537,9 @@ export default function App() {
               open={taskDialogOpen && taskDialog?.kind === 'archive'}
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
-              title="Archive this task?"
-              description="The task moves to Settings → Archived with its full conversation. Unarchive returns it to Finished."
-              confirmLabel="Archive task"
+              title="Archive this thread?"
+              description="The thread moves to Settings → Archived with its full conversation. Unarchive returns it to Finished."
+              confirmLabel="Archive thread"
               danger={false}
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
@@ -1549,8 +1549,8 @@ export default function App() {
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title={`Delete ${dialogTaskName}?`}
-              description="This removes the task record from UAM. The provider conversation on the host is untouched."
-              confirmLabel="Delete task"
+              description="This removes the thread record from UAM. The provider conversation on the host is untouched."
+              confirmLabel="Delete thread"
               busy={dialogBusy}
               onConfirm={() => void confirmTaskDialog()}
             />
@@ -1559,7 +1559,7 @@ export default function App() {
               onOpenChange={(o) => !o && setTaskDialogOpen(false)}
               onClosed={() => setTaskDialog(null)}
               title="Close this conversation?"
-              description="Closing disconnects the provider conversation. The task and its conversation ID are kept, so nothing is deleted; sending another prompt reopens the same conversation. To interrupt the current turn without closing, use Stop instead."
+              description="Closing disconnects the provider conversation. The thread and its conversation ID are kept, so nothing is deleted; sending another prompt reopens the same conversation. To interrupt the current turn without closing, use Stop instead."
               confirmLabel="Close conversation"
               danger={false}
               busy={dialogBusy}

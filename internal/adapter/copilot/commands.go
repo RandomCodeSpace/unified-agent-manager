@@ -129,7 +129,7 @@ func commandDisabled(name string) string {
 	case "every", "after":
 		return "Scheduled commands are not supported by the web client"
 	case "cwd", "add-dir":
-		return "This command changes directories outside the Task's project settings"
+		return "This command changes directories outside the Thread's project settings"
 	case "share", "remote":
 		return "Publishing and remote sessions are not supported by the web client"
 	default:
@@ -171,19 +171,19 @@ func (c *conversation) Commands(ctx context.Context) ([]agentapi.Command, error)
 			item.InputChoices = nil
 			item.InputRequired = false
 		case "model":
-			item.Description = "Choose the model for this Task"
+			item.Description = "Choose the model for this Thread"
 			item.InputHint = "model ID (omit to open settings)"
 			item.InputChoices = nil
 			item.InputRequired = false
 		case "rename":
-			item.Description = "Rename this web Task"
-			item.InputHint = "Task name (omit to open rename)"
+			item.Description = "Rename this web Thread"
+			item.InputHint = "Thread name (omit to open rename)"
 			item.InputChoices = nil
 			item.InputRequired = false
 		case allowAllCommand:
-			item.Description = "Set this Task's permission policy: on (Yolo), off (Safe), show; omit to toggle"
+			item.Description = "Set this Thread's permission policy: on (Yolo), off (Safe), show; omit to toggle"
 		case "permissions":
-			item.Description = "Manage this Task's Safe/Yolo permission policy"
+			item.Description = "Manage this Thread's Safe/Yolo permission policy"
 		}
 		out = append(out, item)
 	}
@@ -230,7 +230,7 @@ func (c *conversation) ExecuteCommand(ctx context.Context, name string, args age
 	name = offered.Name
 	switch name {
 	case "model", "rename", allowAllCommand, "permissions":
-		return nil, errors.New("this command is handled by the web Task settings")
+		return nil, errors.New("this command is handled by the web Thread settings")
 	}
 	if offered.InputRequired && strings.TrimSpace(args.Text) == "" {
 		return nil, errors.New("this command requires arguments")

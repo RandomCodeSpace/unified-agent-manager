@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import * as data from '../../src/mock/data';
 import { openTask, renderApp, sidebar } from './render';
 
-const row = (id: string) => document.querySelector<HTMLElement>(`nav[aria-label="Tasks"] [data-task-row="${id}"]`)!;
+const row = (id: string) => document.querySelector<HTMLElement>(`nav[aria-label="Threads"] [data-task-row="${id}"]`)!;
 
 describe('unsaved git work', () => {
   const st = data.seed();

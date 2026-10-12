@@ -44,7 +44,7 @@ describe('UAM version and restart', () => {
     const { user } = renderApp('?uam=busy#settings');
     const group = await card();
     await user.click(await group.findByRole('button', { name: 'Restart' }));
-    expect(await group.findByText('Restarts when no task is working or waiting.')).toBeTruthy();
+    expect(await group.findByText('Restarts when no thread is working or waiting.')).toBeTruthy();
     expect(group.getByText('UAM v0.16.0 is installed (running dev-mock).')).toBeTruthy();
     expect(group.queryByRole('button', { name: 'Restart' })).toBeNull();
   });

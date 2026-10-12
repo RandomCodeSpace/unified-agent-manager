@@ -78,7 +78,7 @@ export function assistMock(host: AssistHost) {
       const t = host.task(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
       const text = t.items.filter((i) => !i.agent_id && i.kind === 'user').at(-1)?.text;
-      if (!text) return fail(409, 'this task has no message to run again');
+      if (!text) return fail(409, 'this thread has no message to run again');
       const other = typeof body.model === 'string' && body.model && body.model !== t.model;
       const res = host.create({ project_id: t.project_id, provider: t.provider, model: other ? body.model : t.model, effort: other ? '' : t.effort, context_size: other ? 'default' : t.context_size, mode: t.mode, prompt: text, request_id: body.request_id });
       const made = host.newest();
@@ -90,7 +90,7 @@ export function assistMock(host: AssistHost) {
     if ((r = path.match(/^\/api\/sessions\/([^/]+)\/export$/)) && method === 'GET') {
       const t = host.task(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
-      const lines = [`# ${t.name || t.title || 'New task'}`, ''];
+      const lines = [`# ${t.name || t.title || 'New thread'}`, ''];
       for (const it of t.items) {
         if (it.kind === 'user') lines.push(`## You`, '', it.text ?? '', '');
         if (it.kind === 'assistant') lines.push(`## Assistant`, '', it.text ?? '', '');

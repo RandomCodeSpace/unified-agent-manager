@@ -182,7 +182,7 @@ export function install(): { received: Received[] } {
     } catch {
       return fail(400, 'invalid history cursor');
     }
-    if (at < 0) return fail(409, 'history changed; reload the task');
+    if (at < 0) return fail(409, 'history changed; reload the thread');
     const boundary = Math.max(0, items.length - held);
     const start = before !== null ? Math.max(at - PAGE, at > boundary ? boundary : 0) : at + 1;
     const end = before !== null ? at : Math.min(start + PAGE, start < boundary ? boundary : items.length);
@@ -263,7 +263,7 @@ export function install(): { received: Received[] } {
     const attachments: (Attachment & { id: string })[] = [];
     for (const id of ids) {
       const u = uploads.get(id);
-      if (!u || u.task !== t.id) return fail(400, `attachment ${JSON.stringify(id)} is not an upload of this task`);
+      if (!u || u.task !== t.id) return fail(400, `attachment ${JSON.stringify(id)} is not an upload of this thread`);
       attachments.push({ id: u.id, name: u.name, mime: u.mime, size: u.size });
     }
     const media = modelMedia(t);
@@ -342,7 +342,7 @@ export function install(): { received: Received[] } {
   /** Streams reasoning, then an assistant reply, then a tool call, then a closing line, and completes the turn. */
   async function reply(t: MockTask, text: string, model = 'mai-code-1.1-flash') {
     await wait(600);
-    if (!t.name && !t.title) touch(t, { title: (t.items.find((i) => i.kind === 'user')?.text ?? 'New task').slice(0, 60) });
+    if (!t.name && !t.title) touch(t, { title: (t.items.find((i) => i.kind === 'user')?.text ?? 'New thread').slice(0, 60) });
     if (!(await stream(t, THINKING, 'reasoning', 70))) return;
     await wait(200);
     if (!(await stream(t, text, 'assistant', 45))) return;
@@ -835,7 +835,7 @@ export function install(): { received: Received[] } {
       }
       if (method === 'DELETE') {
         const tasks = st.tasks.filter((t) => t.project_id === p.id);
-        if (tasks.some(busy)) return fail(409, 'a task in this project is busy');
+        if (tasks.some(busy)) return fail(409, 'a thread in this project is busy');
         st.tasks = st.tasks.filter((t) => t.project_id !== p.id);
         st.projects = st.projects.filter((x) => x.id !== p.id);
         for (const t of tasks) broadcast('session_removed', { session_id: t.id });
@@ -968,8 +968,8 @@ export function install(): { received: Received[] } {
       if (method === 'PATCH') {
         const keys = ['name', 'model', 'effort', 'context_size', 'mode', 'agent'].filter((k) => body[k] !== undefined);
         if (keys.length === 0) return fail(400, 'name, model, effort, context_size, mode or agent required');
-        if (t.stage === 'archived' && keys.some((k) => k !== 'name')) return fail(409, 'an archived task is read-only');
-        if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled task takes no changes; reopen it first');
+        if (t.stage === 'archived' && keys.some((k) => k !== 'name')) return fail(409, 'an archived thread is read-only');
+        if (t.stage === 'settled' && keys.some((k) => k !== 'name')) return fail(409, 'a settled thread takes no changes; reopen it first');
         if (typeof body.name === 'string') t.name = body.name.trim();
         if (body.mode !== undefined) {
           if (body.mode === 'assisted' && !t.capabilities.assisted_permissions) return fail(409, 'this provider does not support assisted permissions');
@@ -996,7 +996,7 @@ export function install(): { received: Received[] } {
         return json(200, summary(t));
       }
       if (method === 'DELETE') {
-        if (t.stage !== 'archived') return fail(409, 'only an archived task can be deleted');
+        if (t.stage !== 'archived') return fail(409, 'only an archived thread can be deleted');
         st.tasks = st.tasks.filter((x) => x.id !== t.id);
         broadcast('session_removed', { session_id: t.id });
         return json(204);
@@ -1016,21 +1016,21 @@ export function install(): { received: Received[] } {
       }
       switch (r[2]) {
         case 'settle':
-          if (stage !== 'active') return fail(409, `a ${stage} task cannot be settled`);
+          if (stage !== 'active') return fail(409, `a ${stage} thread cannot be settled`);
           if (blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'settled', settled_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'reopen':
-          if (stage !== 'settled') return fail(409, `a ${stage} task cannot be reopened`);
+          if (stage !== 'settled') return fail(409, `a ${stage} thread cannot be reopened`);
           touch(t, { stage: 'active', settled_at: undefined, settled_by: undefined });
           return json(200, summary(t));
         case 'archive':
-          if (stage === 'archived') return fail(409, 'the task is already archived');
+          if (stage === 'archived') return fail(409, 'the thread is already archived');
           if (stage === 'active' && blocked) return fail(409, 'stop the turn, resolve pending requests and clear queued prompts first');
           touch(t, { stage: 'archived', archived_at: now(), state: 'closed', open: false });
           return json(200, summary(t));
         case 'unarchive':
-          if (stage !== 'archived') return fail(409, `a ${stage} task cannot be unarchived`);
+          if (stage !== 'archived') return fail(409, `a ${stage} thread cannot be unarchived`);
           touch(t, { stage: 'active', state: 'completed', open: false, state_detail: '', stop_reason: undefined, archived_at: undefined, settled_at: undefined, settled_by: undefined });
           return json(200, summary(t));
       }
@@ -1138,10 +1138,10 @@ export function install(): { received: Received[] } {
     if ((r = m(/^\/api\/sessions\/([^/]+)\/command$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
-      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
+      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} thread takes no messages`);
       const name = String(body.name ?? '');
       const offered = st.commands.find((c) => c.name === name);
-      if (!offered) return fail(404, `/${name} is not one of this task's commands`);
+      if (!offered) return fail(404, `/${name} is not one of this thread's commands`);
       if (offered.disabled_reason) return fail(409, offered.disabled_reason);
       // A read-only command answers with native text laid out for a terminal, and starts no turn.
       if (name === 'context') {
@@ -1176,7 +1176,7 @@ export function install(): { received: Received[] } {
     if ((r = m(/^\/api\/sessions\/([^/]+)\/attachments$/)) && method === 'POST') {
       const t = find(decodeURIComponent(r[1]));
       if (!t) return fail(404, 'session not found');
-      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no attachments`);
+      if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} thread takes no attachments`);
       const bytes = raw ?? new Uint8Array();
       const sniffed = sniff(bytes);
       if ('status' in sniffed) return fail(sniffed.status, sniffed.error);
@@ -1212,7 +1212,7 @@ export function install(): { received: Received[] } {
       switch (r[2]) {
         case 'prompt': {
           received.push({ route: 'prompt', session: t.id, body });
-          if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} task takes no messages`);
+          if (t.stage && t.stage !== 'active') return fail(409, `a ${t.stage} thread takes no messages`);
           // As the service: blank text beside files or uploads goes as none.
           const text = String(body.text ?? '').trim() ? String(body.text) : '';
           const extras = checkExtras(t, body);
@@ -1301,7 +1301,7 @@ export function install(): { received: Received[] } {
       const files = scope === 'task' ? mine : scope === 'turn' ? turn : all;
       return json(200, {
         scope,
-        label: scope === 'workspace' ? `Uncommitted changes in ${p?.name ?? t.workdir}, from any source, versus HEAD` : scope === 'turn' ? 'Files the agent edited in its latest turn, compared with HEAD.' : "Files this task's agent edited, compared with HEAD. Changes made to them by anything else show too.",
+        label: scope === 'workspace' ? `Uncommitted changes in ${p?.name ?? t.workdir}, from any source, versus HEAD` : scope === 'turn' ? 'Files the agent edited in its latest turn, compared with HEAD.' : "Files this thread's agent edited, compared with HEAD. Changes made to them by anything else show too.",
         supported: true,
         counts: { task: mine.length, turn: turn.length, workspace: all.length },
         files: files.map(({ path: fp, status, additions, deletions, patch }) => ({ path: fp, status, additions, deletions, digest: `${patch.length}` })),
@@ -1406,7 +1406,7 @@ export function install(): { received: Received[] } {
       const requestId = String(body.request_id ?? '');
       const recorded = followUps.get(requestId);
       if (recorded) return json(202, recorded);
-      if (busy(t)) return fail(409, 'the task is running a turn; wait for it to finish');
+      if (busy(t)) return fail(409, 'the thread is running a turn; wait for it to finish');
       if (s.status !== 'idle') return fail(409, `the subagent is ${s.status}; only an idle subagent takes a follow-up`);
       const sub: Submission = { request_id: requestId, status: 'accepted', time: now() };
       followUps.set(requestId, sub);

@@ -37,8 +37,8 @@ const session = { id: 't', capabilities: { permissions: true, questions: true } 
 const request: Interaction = { id: 'p', kind: 'permission', title: 'Write file', detail: 'a.txt', state: 'pending', time: '2026-10-09T00:00:00Z', options: [{ id: 'approve_once', label: 'Allow once', allow_once: true }, { id: 'reject', label: 'Deny', reject: true }] };
 
 test('a request the reviewer did not approve says why it still asks', () => {
-  render(<InteractionCard session={session} interaction={{ ...request, assisted: { recommendation: 'requireApproval', model: 'gpt-6-luna', reason: 'writes outside the task' } }} onUpdate={() => {}} />);
-  expect(screen.getByText('Assisted review (gpt-6-luna) asks for your decision: writes outside the task')).toBeTruthy();
+  render(<InteractionCard session={session} interaction={{ ...request, assisted: { recommendation: 'requireApproval', model: 'gpt-6-luna', reason: 'writes outside the thread' } }} onUpdate={() => {}} />);
+  expect(screen.getByText('Assisted review (gpt-6-luna) asks for your decision: writes outside the thread')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Allow once' })).toBeTruthy();
 });
 

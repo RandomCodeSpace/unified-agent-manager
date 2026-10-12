@@ -85,7 +85,7 @@ export function PreviousSessionsDialog({ project, onClose }: Readonly<{ project:
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title={`Previous sessions in ${project.name}`} description="Import a recorded conversation as a task. Importing reads its history without sending a message."
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }} title={`Previous sessions in ${project.name}`} description="Import a recorded conversation as a thread. Importing reads its history without sending a message."
       footer={<>
         {progress && <Note role="status" className="mr-auto">Importing {progress.done + 1} of {progress.total}…</Note>}
         {progress && <Button variant="secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); }}>Cancel</Button>}

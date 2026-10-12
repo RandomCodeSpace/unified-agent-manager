@@ -14,7 +14,7 @@ function withChart(change: (task: ReturnType<typeof data.seed>['tasks'][number])
 }
 
 const header = () => screen.getByRole('heading', { level: 1 }).parentElement!;
-const row = () => document.querySelector<HTMLElement>('nav[aria-label="Tasks"] [data-task-row="t-chart"]')!;
+const row = () => document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-task-row="t-chart"]')!;
 
 test('failed tests and commands in the outcome turn the header chip and the row from a check to a warning, in words', async () => {
   withChart((t) => { t.outcome = 'Charted the commits; tests fail; 1 command failed'; });

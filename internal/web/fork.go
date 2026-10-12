@@ -92,7 +92,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 			return SessionSummary{}, allowed
 		}
 		if changed {
-			return SessionSummary{}, newError(http.StatusConflict, "the task changed while checking its holder; choose the turn again")
+			return SessionSummary{}, newError(http.StatusConflict, "the thread changed while checking its holder; choose the turn again")
 		}
 		if checkErr != nil {
 			return SessionSummary{}, checkErr
@@ -115,7 +115,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 		return SessionSummary{}, allowed
 	}
 	if changed {
-		return SessionSummary{}, newError(http.StatusConflict, "the task changed while reading its record; choose the turn again")
+		return SessionSummary{}, newError(http.StatusConflict, "the thread changed while reading its record; choose the turn again")
 	}
 	targetID, err := newUUID()
 	if err != nil {
@@ -131,7 +131,7 @@ func (m *Manager) Fork(id string, req ForkRequest) (SessionSummary, error) {
 			return errShuttingDown
 		}
 		if !forkSourcePresent(cfg, reservation) {
-			return newError(http.StatusConflict, "the source task or project changed before branching")
+			return newError(http.StatusConflict, "the source thread or project changed before branching")
 		}
 		if _, exists := cfg.Sessions[store.Key(reservation.Provider, reservation.ID)]; exists {
 			return errors.New("the reserved task identity is already in use")
@@ -221,10 +221,10 @@ func (m *Manager) forkAllowedLocked(s *webSession) error {
 		return newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if s.convID == "" {
-		return newError(http.StatusConflict, "this task has no recorded provider conversation")
+		return newError(http.StatusConflict, "this thread has no recorded provider conversation")
 	}
 	if s.opening != nil {
-		return newError(http.StatusConflict, "wait for the task to finish opening before branching")
+		return newError(http.StatusConflict, "wait for the thread to finish opening before branching")
 	}
 	if s.place != nil && s.place.Worktree != "" {
 		return newError(http.StatusConflict, "a Thread in a worktree cannot be branched from a turn yet: the branch would start in the Project folder, without this worktree's files. Run again repeats the last message in the worktree")
@@ -308,7 +308,7 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 			return errors.New("the reserved task identity is already in use; its native branch result is preserved")
 		}
 		if !forkSourcePresent(cfg, fork) {
-			return newError(http.StatusConflict, "the provider created the branch, but the source task or project changed; its exact result is saved for reconciliation")
+			return newError(http.StatusConflict, "the provider created the branch, but the source thread or project changed; its exact result is saved for reconciliation")
 		}
 		pending, exists := cfg.WebForks[fork.Lineage.RequestID]
 		if !exists || pending.ID != fork.ID || pending.ProviderSessionID != fork.ProviderSessionID {

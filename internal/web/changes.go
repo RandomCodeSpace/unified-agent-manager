@@ -28,7 +28,7 @@ const (
 	workspaceLabel = "Whole working tree compared with HEAD. It may include changes that were not made by this session."
 	sessionLabel   = "File changes the provider recorded for this conversation."
 	// closedSessionLabel heads the task scope served for a closed conversation.
-	closedSessionLabel = "Git-based fallback while this Task's conversation is closed: files its agent edited, compared with HEAD. Open the conversation to read its native changes."
+	closedSessionLabel = "Git-based fallback while this Thread's conversation is closed: files its agent edited, compared with HEAD. Open the conversation to read its native changes."
 
 	gitTimeout       = 10 * time.Second
 	branchTimeout    = 2 * time.Second
@@ -162,7 +162,7 @@ func (m *Manager) sessionDiff(ctx context.Context, id string) ([]agentapi.FileDi
 		return nil, out, nil
 	}
 	if errors.Is(err, agentapi.ErrBusy) {
-		out.Reason = "native changes are available when this Task settles"
+		out.Reason = "native changes are available when this Thread settles"
 		return nil, out, nil
 	}
 	if err != nil {

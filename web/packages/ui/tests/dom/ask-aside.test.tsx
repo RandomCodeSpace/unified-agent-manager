@@ -8,7 +8,7 @@ import { composer, openTask, type User } from './render';
 
 afterEach(() => { vi.restoreAllMocks(); forgetAsides(); });
 
-const TASK = 'Asides in this Task';
+const TASK = 'Asides in this Thread';
 const TURN = 'Asides in this turn';
 const reader = (name = TASK) => screen.queryByRole('dialog', { name });
 /** t3's three kept asides (src/mock/asides.ts), oldest first. */
@@ -128,7 +128,7 @@ describe('/btw', () => {
     expect(within(dialog).queryByText(/Earlier by-the-way/)).toBeNull();
     expect(ask).toHaveBeenCalledTimes(2);
     const followUp = ask.mock.calls[1][1];
-    expect(followUp.startsWith('Earlier by-the-way questions in this Task and their answers:\nQ: Will the new row')).toBe(true);
+    expect(followUp.startsWith('Earlier by-the-way questions in this Thread and their answers:\nQ: Will the new row')).toBe(true);
     expect(followUp).toContain('Q: first question\nA: Yes. `TestDoctorDumbTerminal`');
     expect(followUp.endsWith('\n\nNew question: second question')).toBe(true);
     expect(ask.mock.calls[1][2]).toBe('second question');
@@ -194,7 +194,7 @@ describe('the /btw entry and its question', () => {
     expect(open[0].input_required).toBeFalsy();
     expect(open[0].input_hint).toBe('question');
     expect(withAside(list, true)).toBe(open);
-    expect(withAside(list, false)[0].disabled_reason).toBe("Ask aside needs the Task's conversation open. Send a prompt to open it first.");
+    expect(withAside(list, false)[0].disabled_reason).toBe("Ask aside needs the Thread's conversation open. Send a prompt to open it first.");
   });
 
   test('carries at most five earlier asides, newest kept, within the service byte limit', () => {

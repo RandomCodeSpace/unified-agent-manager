@@ -39,7 +39,7 @@ export function TurnChangesReader({ timing, anchor, phone, open, onClose, onClos
     api.turnChanges(sessionId, timing.id, controller.signal).then(rows => {
       if (controller.signal.aborted) return;
       if (rows.timing_id !== timing.id || rows.counts.event_id !== timing.changes?.event_id || rows.ended_at !== timing.ended_at) {
-        setRead({ error: 'The Task changed. Close this reader and open it again.' });
+        setRead({ error: 'The Thread changed. Close this reader and open it again.' });
       } else setRead(rows);
     }, (error: unknown) => {
       if (!controller.signal.aborted) setRead({ error: Array.from(describeError(error).slice(0, 512)).join('') });

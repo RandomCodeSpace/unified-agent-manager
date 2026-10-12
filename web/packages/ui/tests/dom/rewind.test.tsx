@@ -127,7 +127,7 @@ describe('native rewind release', () => {
     const rewind = vi.spyOn(api, 'rewind');
     const { user } = await openTask('t3');
     await screen.findByText(/may already be shortened and files may be partly restored/);
-    await user.click(screen.getByRole('button', { name: 'Release task' }));
+    await user.click(screen.getByRole('button', { name: 'Release thread' }));
     await waitFor(() => expect(release).toHaveBeenCalledWith('t3', 'held-request'));
     expect(rewind).not.toHaveBeenCalled();
   });
@@ -136,6 +136,6 @@ describe('native rewind release', () => {
     fixture(task => { task.rewind = { request_id: 'held-request', state: 'uncertain', mode: 'conversation' }; });
     await openTask('t3');
     await screen.findByRole('button', { name: 'Reread conversation' });
-    expect(screen.queryByRole('button', { name: 'Release task' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Release thread' })).toBeNull();
   });
 });

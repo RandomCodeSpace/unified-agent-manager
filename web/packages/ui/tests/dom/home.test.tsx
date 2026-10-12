@@ -14,7 +14,7 @@ describe('Home', () => {
     const sessions: SessionSummary[] = Array.from({ length: 8 }, (_, i) => ({
       ...tasks[0],
       id: `recent-${i + 1}`,
-      name: `Recent task ${i + 1}`,
+      name: `Recent thread ${i + 1}`,
       project_id: projects[i % projects.length].id,
       stage: i === 6 ? 'settled' : 'active',
       state: 'completed',
@@ -24,23 +24,23 @@ describe('Home', () => {
       updated_at: `2026-10-0${i + 1}T00:00:00Z`,
     }));
     sessions.push(
-      { ...sessions[0], id: 'archived', name: 'Archived task', stage: 'archived', updated_at: '2026-10-09T00:00:00Z' },
-      { ...sessions[0], id: 'removed-project', name: 'Removed project task', project_id: 'removed', updated_at: '2026-10-10T00:00:00Z' },
+      { ...sessions[0], id: 'archived', name: 'Archived thread', stage: 'archived', updated_at: '2026-10-09T00:00:00Z' },
+      { ...sessions[0], id: 'removed-project', name: 'Removed project thread', project_id: 'removed', updated_at: '2026-10-10T00:00:00Z' },
     );
     const onSelect = vi.fn();
     const user = userEvent.setup();
     render(<Home projects={projects} sessions={sessions} hasNews={() => false} onNewTask={() => {}} onAddProject={() => {}} onSelect={onSelect} />);
 
-    const recent = within(screen.getByRole('region', { name: 'Recent tasks' }));
+    const recent = within(screen.getByRole('region', { name: 'Recent threads' }));
     const rows = recent.getAllByRole('button');
     expect(rows).toHaveLength(6);
     for (const [index, row] of rows.entries()) {
-      expect(within(row).getByText(`Recent task ${8 - index}`)).toBeTruthy();
+      expect(within(row).getByText(`Recent thread ${8 - index}`)).toBeTruthy();
     }
     expect(within(rows[0]).getByText('dotfiles')).toBeTruthy();
     expect(within(rows[1]).getByText('Settled')).toBeTruthy();
-    expect(recent.queryByText('Archived task')).toBeNull();
-    expect(recent.queryByText('Removed project task')).toBeNull();
+    expect(recent.queryByText('Archived thread')).toBeNull();
+    expect(recent.queryByText('Removed project thread')).toBeNull();
     await user.click(rows[1]);
     expect(onSelect).toHaveBeenCalledWith('recent-7');
   });
@@ -50,19 +50,19 @@ describe('Home', () => {
     const { user } = renderApp();
     await sidebar();
     const main = within(screen.getByRole('main'));
-    await waitFor(() => expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(false));
-    await user.click(main.getByRole('button', { name: 'New task' }));
+    await waitFor(() => expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(false));
+    await user.click(main.getByRole('button', { name: 'New thread' }));
     const palette = within(await screen.findByRole('dialog'));
     await user.click(palette.getByRole('option', { name: /notes-site/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
-    expect(screen.getByText('New task in notes-site')).toBeTruthy();
+    expect(screen.getByText('New thread in notes-site')).toBeTruthy();
     expect(create).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
   });
 
   test('a recent task opens its conversation and updates the URL', async () => {
     const { user } = renderApp();
-    const recent = within(await screen.findByRole('region', { name: 'Recent tasks' }));
+    const recent = within(await screen.findByRole('region', { name: 'Recent threads' }));
     await user.click(recent.getByRole('button', { name: /Fix re-attach redraw regression/ }));
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Fix re-attach redraw regression'));
     expect(window.location.hash).toBe('#task=t1');
@@ -80,13 +80,13 @@ describe('Home', () => {
     const { user } = renderApp();
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
-    expect(main.queryByRole('region', { name: 'Recent tasks' })).toBeNull();
-    expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(true);
+    expect(main.queryByRole('region', { name: 'Recent threads' })).toBeNull();
+    expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(true);
     await act(async () => loadMeta(state.meta));
-    await waitFor(() => expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(false));
-    await user.click(main.getByRole('button', { name: 'New task' }));
+    await waitFor(() => expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(false));
+    await user.click(main.getByRole('button', { name: 'New thread' }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
-    expect(screen.getByText('New task in notes-site')).toBeTruthy();
+    expect(screen.getByText('New thread in notes-site')).toBeTruthy();
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -98,8 +98,8 @@ describe('Home', () => {
     const { user } = renderApp();
     expect(await screen.findByRole('heading', { name: 'Start with a project' })).toBeTruthy();
     const main = within(screen.getByRole('main'));
-    expect(main.queryByRole('button', { name: 'New task' })).toBeNull();
-    expect(main.queryByRole('region', { name: 'Recent tasks' })).toBeNull();
+    expect(main.queryByRole('button', { name: 'New thread' })).toBeNull();
+    expect(main.queryByRole('region', { name: 'Recent threads' })).toBeNull();
     await user.click(main.getByRole('button', { name: 'Add project' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'Choose a project folder' }));
     expect(await dialog.findByRole('textbox', { name: 'Folder path' })).toBeTruthy();

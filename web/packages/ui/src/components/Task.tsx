@@ -212,7 +212,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
       <div className="group/title flex min-w-28 flex-1 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} className="mr-0.5" />}
         {renaming ? (
-          <InlineName initial={session.name} label="Task name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
+          <InlineName initial={session.name} label="Thread name" className="h-8 max-w-md text-display-sm font-semibold" onSave={(v) => void actions.rename(session.id, v)} onCancel={actions.cancelRename} />
         ) : (
           <h1
             ref={titleText}
@@ -235,7 +235,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
         {renamable && !renaming && (
           <Tip label="Rename">
-            <Button size="icon" aria-label="Rename task" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
+            <Button size="icon" aria-label="Rename thread" className="shrink-0 text-muted opacity-0 transition-opacity duration-100 group-hover/title:opacity-100 focus-visible:opacity-100 max-sm:hidden" onClick={() => actions.startRename(session.id, 'header')}>
               <Pencil />
             </Button>
           </Tip>
@@ -254,7 +254,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
             <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
               <Popover.Title>{noGit === 'not_installed' ? 'Git is not installed' : 'Not a Git repository'}</Popover.Title>
               <Popover.Description>
-                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Task has {session.capabilities.session_diff ? 'no Files or All changes view.' : 'no Changes or Files view.'}
+                {noGit === 'not_installed' ? 'The server has no git in a standard location' : <><code className="font-mono text-code-sm break-all">{session.workdir}</code> is not in a Git repository</>}, so this Thread has {session.capabilities.session_diff ? 'no Files or All changes view.' : 'no Changes or Files view.'}
               </Popover.Description>
               {noGit === 'not_repository' && <SetUpGitButton session={session} />}
             </Popover.Content>
@@ -285,7 +285,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
       )}
       {hasSubagents && <SubagentIndex labels={labels} error={locateError} />}
       <Menu.Root modal={false}>
-        <Menu.Trigger render={<Button size="icon-md" aria-label="Task actions" className="text-muted" />}>
+        <Menu.Trigger render={<Button size="icon-md" aria-label="Thread actions" className="text-muted" />}>
           <Ellipsis />
         </Menu.Trigger>
         <Menu.Content align="end">
@@ -1010,10 +1010,10 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
           <div ref={log} className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6" role="log" aria-busy={historyLoading || undefined}>
             {!historyLoading && <HistoryStatus key={`${session.history}:${session.history_reason}`} session={session} />}
             {/* Only at the true start of what the service holds; above it, scrolling still loads more. */}
-            {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another task, ${spawnedBy}.` : 'Started by another task.'}</Note>}
+            {session.spawned_by && visibleStart === 0 && !session.history_before && <Note>{spawnedBy ? `Started by another thread, ${spawnedBy}.` : 'Started by another thread.'}</Note>}
             {session.routine_id && visibleStart === 0 && !session.history_before && <Note>Started by a routine.</Note>}
-            {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another task'}, to compare.</Note>}
-            {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source task</button>. Both tasks use the same project and current files.</Note>}
+            {session.rerun_of && visibleStart === 0 && !session.history_before && <Note>Runs again the last message of {rerunOf ? <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.rerun_of!)}>{rerunOf}</button> : 'another thread'}, to compare.</Note>}
+            {session.fork_of && visibleStart === 0 && !session.history_before && <Note>Branched from <button type="button" className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" onClick={() => actions.select(session.fork_of!)}>the source thread</button>. Both threads use the same project and current files.</Note>}
             {session.history_truncated && visibleStart === 0 && !session.history_before && <Note>Earlier history was truncated; only the most recent part is shown.</Note>}
             {(visibleStart > 0 || session.history_before) && <output className="flex items-center gap-2 text-caption text-muted">{historyRequest?.error ?? (historyRequest?.loading && historyRequest.direction !== 'newer' ? <><Spinner />Loading earlier messages…</> : 'Scroll up for earlier messages')}</output>}
             {session.items.length === 0 && session.state === 'idle' && !readOnly(session) && !historyLoading && <NewTaskIntro project={project} />}
@@ -1136,7 +1136,7 @@ function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
 function NewTaskIntro({ project }: Readonly<{ project: Project | undefined }>) {
   return (
     <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
-      <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
+      <p className="text-title text-ink">New thread in {project?.name ?? 'this project'}</p>
     </div>
   );
 }
@@ -1175,7 +1175,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
         {leading}
         <ProjectBadge badge={project.badge} className="mr-0.5" />
-        <h1 className="min-w-0 truncate text-display-sm text-ink">New task</h1>
+        <h1 className="min-w-0 truncate text-display-sm text-ink">New thread</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <div className="flex w-full flex-col gap-6 px-3 pt-6 pb-16 sm:px-4 md:px-6">

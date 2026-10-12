@@ -10,7 +10,7 @@ async function openArchived(hash = '#settings') {
   const rendered = renderApp(hash);
   await screen.findByRole('heading', { level: 1, name: 'Settings' });
   await rendered.user.click(screen.getByRole('button', { name: 'Archived', exact: true }));
-  const list = await screen.findByRole('list', { name: 'Archived tasks' });
+  const list = await screen.findByRole('list', { name: 'Archived threads' });
   return { ...rendered, list: within(list) };
 }
 
@@ -24,7 +24,7 @@ describe('Settings → Archived', () => {
     expect(rows[0]).toMatch(/Pin GitHub Actions to Node 24.*1d ago/);
     expect(rows[1]).toMatch(/Migrate the RSS template to Atom.*5d ago/);
     // Few rows: no filter box.
-    expect(screen.queryByRole('searchbox', { name: 'Filter archived tasks' })).toBeNull();
+    expect(screen.queryByRole('searchbox', { name: 'Filter archived threads' })).toBeNull();
   });
 
   test('a row opens its Task and closes Settings', async () => {
@@ -32,7 +32,7 @@ describe('Settings → Archived', () => {
     await user.click(list.getByRole('button', { name: /Node 24.*archived/ }));
     await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Pin GitHub Actions to Node 24'));
     expect(window.location.hash).toBe('#task=t12');
-    expect(await screen.findByText('Archived. This task is read-only.')).toBeTruthy();
+    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
   });
 
   test('a row\'s menu holds the Task actions; Delete confirms, then the row leaves', async () => {
@@ -42,7 +42,7 @@ describe('Settings → Archived', () => {
     expect(menu.getByRole('menuitem', { name: 'Export as Markdown' })).toBeTruthy();
     await user.click(menu.getByRole('menuitem', { name: 'Delete' }));
     const confirm = await screen.findByRole('alertdialog', { name: /Delete “Pin GitHub Actions to Node 24”\?/ });
-    await user.click(within(confirm).getByRole('button', { name: 'Delete task' }));
+    await user.click(within(confirm).getByRole('button', { name: 'Delete thread' }));
     await waitFor(() => expect(list.queryByRole('button', { name: /Node 24.*archived/ })).toBeNull());
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
   });
@@ -55,12 +55,12 @@ describe('Settings → Archived', () => {
     const side = await sidebar();
     const task = await side.findByRole('button', { name: /Finished.*Pin GitHub Actions to Node 24/ });
     expect(within(task).getByText('Finished')).toBeTruthy();
-    expect(screen.queryByText('Archived. This task is read-only.')).toBeNull();
+    expect(screen.queryByText('Archived. This thread is read-only.')).toBeNull();
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveProperty('disabled', false);
     expect(mock.received).toHaveLength(0);
     await user.click(screen.getByRole('button', { name: 'Settings', exact: true }));
     await user.click(await screen.findByRole('button', { name: 'Archived', exact: true }));
-    const list = within(await screen.findByRole('list', { name: 'Archived tasks' }));
+    const list = within(await screen.findByRole('list', { name: 'Archived threads' }));
     expect(list.queryByRole('button', { name: /Node 24.*archived/ })).toBeNull();
   });
 
@@ -71,13 +71,13 @@ describe('Settings → Archived', () => {
     vi.spyOn(data, 'seed').mockReturnValue(state);
     const { user, list } = await openArchived();
     expect(titles(list)).toHaveLength(11);
-    const filter = screen.getByRole('searchbox', { name: 'Filter archived tasks' });
+    const filter = screen.getByRole('searchbox', { name: 'Filter archived threads' });
     await user.type(filter, 'Atom');
     await waitFor(() => expect(titles(list)).toHaveLength(1));
-    expect(screen.getByText('1 of 11 tasks')).toBeTruthy();
+    expect(screen.getByText('1 of 11 threads')).toBeTruthy();
     await user.clear(filter);
     await user.type(filter, 'zzzz');
-    expect(await screen.findByText('No archived tasks match “zzzz”.')).toBeTruthy();
+    expect(await screen.findByText('No archived threads match “zzzz”.')).toBeTruthy();
   });
 
   test('the sidebar has no Archived shelf, and its search still finds an archived Task', async () => {
@@ -85,8 +85,8 @@ describe('Settings → Archived', () => {
     const side = await sidebar();
     expect(side.queryByRole('button', { name: /^Archived/ })).toBeNull();
     expect(side.queryByRole('button', { name: /Pin GitHub Actions to Node 24/ })).toBeNull();
-    await user.type(side.getByRole('searchbox', { name: 'Search tasks' }), 'Node 24');
-    expect(await side.findByText('1 matching task')).toBeTruthy();
+    await user.type(side.getByRole('searchbox', { name: 'Search threads' }), 'Node 24');
+    expect(await side.findByText('1 matching thread')).toBeTruthy();
     await user.click(side.getByRole('button', { name: /Pin GitHub Actions to Node 24/ }));
     await waitFor(() => expect(window.location.hash).toBe('#task=t12'));
   });

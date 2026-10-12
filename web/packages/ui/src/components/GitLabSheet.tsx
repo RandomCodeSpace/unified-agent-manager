@@ -27,7 +27,7 @@ export default function GitLabSheet({ session, item, onItem, inline, open, onClo
   const { label, url } = useGitLabItemHead(item?.ref);
   const close = useCallback(() => {
     onClose();
-    const opener = document.getElementById('gitlab-link') ?? document.querySelector<HTMLElement>('main button[aria-label="Task actions"]');
+    const opener = document.getElementById('gitlab-link') ?? document.querySelector<HTMLElement>('main button[aria-label="Thread actions"]');
     opener?.focus({ preventScroll: true });
   }, [onClose]);
   useEffect(() => {

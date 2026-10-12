@@ -71,7 +71,7 @@ func (m *Manager) executeCommand(s *webSession, req CommandRequest) (Submission,
 		}
 	}
 	if offered == nil {
-		return Submission{}, newError(http.StatusNotFound, "/%s is not one of this task's commands", req.Name)
+		return Submission{}, newError(http.StatusNotFound, "/%s is not one of this thread's commands", req.Name)
 	}
 	if offered.DisabledReason != "" {
 		return Submission{}, newError(http.StatusConflict, "%s", offered.DisabledReason)
@@ -192,7 +192,7 @@ func (m *Manager) taskCommand(s *webSession, name, args string) (*agentapi.Comma
 			return &agentapi.CommandResult{Kind: "action", Action: "rename"}, nil
 		}
 		_, err := m.Rename(s.id, args)
-		completed.Text = "Task renamed"
+		completed.Text = "Thread renamed"
 		return completed, err
 	}
 	return nil, agentapi.ErrUnsupported

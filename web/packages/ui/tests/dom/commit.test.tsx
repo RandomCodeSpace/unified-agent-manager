@@ -26,14 +26,14 @@ describe('commit panel', () => {
     const own = await panel.findByRole('checkbox', { name: /docs\/terminal\.md/ });
     expect((own as HTMLInputElement).checked).toBe(true);
     expect((panel.getByRole('checkbox', { name: /internal\/vterm\/redraw\.go/ }) as HTMLInputElement).checked).toBe(false);
-    expect(panel.getByText('4 files from other tasks are not included')).toBeTruthy();
+    expect(panel.getByText('4 files from other threads are not included')).toBeTruthy();
     // The commit buttons say why they are off, under them.
     expect(panel.getByText('Write or generate a message to commit.')).toBeTruthy();
 
     await user.click(panel.getByRole('button', { name: 'Generate' }));
     const message = panel.getByRole('textbox', { name: 'Commit message' }) as HTMLTextAreaElement;
     await waitFor(() => expect(message.value).toMatch(/^fix\(vterm\): replay focus events on re-attach\n/));
-    expect(panel.getByText('Generated from this task’s changes')).toBeTruthy();
+    expect(panel.getByText('Generated from this thread’s changes')).toBeTruthy();
     expect(panel.getByText(/Conventional Commits, from its last 20 commits/)).toBeTruthy();
     expect(panel.getByText('44/72 characters in the subject', { exact: false })).toBeTruthy();
     expect(panel.getByRole('button', { name: 'Regenerate' })).toBeTruthy();
@@ -41,7 +41,7 @@ describe('commit panel', () => {
     // An edit drops the "generated" label; the counter follows the subject.
     await user.clear(message);
     await user.type(message, 'docs: describe the terminal line');
-    expect(panel.queryByText('Generated from this task’s changes')).toBeNull();
+    expect(panel.queryByText('Generated from this thread’s changes')).toBeNull();
     expect(panel.getByText(/32\/72 characters in the subject/)).toBeTruthy();
     expect(panel.queryByText('Write or generate a message to commit.')).toBeNull();
     await user.click(panel.getByRole('button', { name: 'Commit 2 files' }));

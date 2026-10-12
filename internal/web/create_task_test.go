@@ -13,7 +13,36 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
+
+// A host tool call made for another Thread is refused before anything runs.
+func TestHostToolCallsOfAnotherThreadAreRefused(t *testing.T) {
+	m := &Manager{}
+	call := agentapi.HostToolCall{TaskID: "other", CallID: "c"}
+	if _, err := m.startSpawn(t.Context(), "mine", call); err == nil || err.Error() != "the call does not belong to this thread" {
+		t.Fatalf("uam_create_task: %v", err)
+	}
+	if _, err := m.drawChart(t.Context(), "mine", call); err == nil || err.Error() != "the call does not belong to this thread" {
+		t.Fatalf("uam_chart: %v", err)
+	}
+}
+
+// The stored records refuse a Thread past its creator's cap, naming both.
+func TestSpawnRoomRefusesPastTheCap(t *testing.T) {
+	cfg := &store.Config{Sessions: map[string]store.SessionRecord{}}
+	rec := store.SessionRecord{Web: &store.WebState{SpawnedBy: "parent"}}
+	for i := range maxSpawns {
+		if err := spawnRoom(cfg, rec); err != nil {
+			t.Fatalf("spawn %d refused: %v", i, err)
+		}
+		cfg.Sessions[fmt.Sprint(i)] = rec
+	}
+	want := fmt.Sprintf("thread parent has already started %d threads", maxSpawns)
+	if err := spawnRoom(cfg, rec); err == nil || err.Error() != want {
+		t.Fatalf("past the cap = %v", err)
+	}
+}
 
 // spawnCall calls uam_create_task from conv's Task as an adapter would.
 func spawnCall(t *testing.T, conv *agenttest.Conversation, call agentapi.HostToolCall) agentapi.HostToolResult {
@@ -38,7 +67,7 @@ func toolNames(tools []agentapi.HostTool) []string {
 var plainTaskTools = []string{createTaskToolName, chartToolName, uamToolName}
 
 // startedTask is the Task ID a uam_create_task result names.
-var startedTask = regexp.MustCompile(`^Started task ([0-9a-f-]{36})\b`)
+var startedTask = regexp.MustCompile(`^Started thread ([0-9a-f-]{36})\b`)
 
 // spawnOK requires a uam_create_task call to create its Task within the
 // call, and returns that Task and its conversation.
@@ -222,13 +251,13 @@ func TestCreateTaskCap(t *testing.T) {
 	if first.SpawnedBy != caller.ID {
 		t.Fatalf("first created task = %+v", first)
 	}
-	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 tasks")
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 threads")
 
 	firstConv.EmitTurn(agentapi.TurnCompleted, "")
 	if _, err := m.Archive(first.ID); err != nil {
 		t.Fatal(err)
 	}
-	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 tasks")
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 threads")
 
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -244,7 +273,7 @@ func TestCreateTaskCap(t *testing.T) {
 	if conv.Request().SessionID != caller.ID || !slices.Equal(toolNames(conv.Request().Tools), plainTaskTools) {
 		t.Fatalf("reopened caller = %+v", conv.Request())
 	}
-	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 tasks")
+	spawnRefused(t, m, prov, conv, `{"project":"Target","prompt":"p"}`, "already started 5 threads")
 	if err := m.Delete(first.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +320,7 @@ func TestCreateTaskReturnsAFailedCreate(t *testing.T) {
 		p.onOpen = func(agentapi.OpenRequest) error { return errors.New("the key variable is unset") }
 	})
 	res := spawnCall(t, conv, agentapi.HostToolCall{CallID: "call-1", Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, caller.ProjectID))})
-	if !res.Failed || !strings.Contains(res.Text, "the task was not created") || !strings.Contains(res.Text, "the key variable is unset") {
+	if !res.Failed || !strings.Contains(res.Text, "the thread was not created") || !strings.Contains(res.Text, "the key variable is unset") {
 		t.Fatalf("failed create = %+v", res)
 	}
 	m.mu.Lock()
@@ -366,7 +395,7 @@ func TestCreateTaskRefusedWhenTheCallerIsNotActive(t *testing.T) {
 	// A call the adapter still delivers after the Task was settled.
 	res := conv.Request().CallTool(context.Background(), agentapi.HostToolCall{Name: createTaskToolName, CallID: "late", TaskID: caller.ID,
 		Arguments: json.RawMessage(fmt.Sprintf(`{"project":%q,"prompt":"p"}`, caller.ProjectID))})
-	if !res.Failed || !strings.Contains(res.Text, "the task is settled") {
+	if !res.Failed || !strings.Contains(res.Text, "the thread is settled") {
 		t.Fatalf("call from a settled task = %+v", res)
 	}
 	waitSpawns(t, m)

@@ -11,7 +11,7 @@ afterEach(() => vi.restoreAllMocks());
 async function draft(project: RegExp) {
   const r = renderApp();
   const side = await sidebar();
-  await r.user.click(side.getByRole('button', { name: 'New task' }));
+  await r.user.click(side.getByRole('button', { name: 'New thread' }));
   const palette = await screen.findByRole('dialog');
   await r.user.click(within(palette).getByRole('option', { name: project }));
   await screen.findByRole('textbox', { name: 'Message' });
@@ -102,7 +102,7 @@ describe('the place picker', () => {
     await user.keyboard('{Escape}');
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Port the fix');
     await user.click(screen.getByRole('button', { name: 'Send' }));
-    expect(await screen.findByText(/Could not start the task: “Fix re-attach redraw regression” is working in this folder/)).toBeTruthy();
+    expect(await screen.findByText(/Could not start the thread: “Fix re-attach redraw regression” is working in this folder/)).toBeTruthy();
     expect((screen.getByRole('textbox', { name: 'Message' }) as HTMLTextAreaElement).value).toBe('Port the fix');
   });
 

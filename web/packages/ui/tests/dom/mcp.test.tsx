@@ -19,14 +19,14 @@ describe('MCP servers', () => {
     const fetch = vi.spyOn(window, 'fetch');
     fetch.mockImplementation((input, init) => String(input).endsWith('/sign-in') ? Promise.resolve(new Response(JSON.stringify({ url: 'https://authorize.example/login', callback: true }))) : original(input, init));
     try {
-      const menu = await openMenu(user, 'Task actions');
+      const menu = await openMenu(user, 'Thread actions');
       await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
       const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-      await dialog.findByRole('list', { name: "This task's MCP servers" });
+      await dialog.findByRole('list', { name: "This thread's MCP servers" });
       await user.click(dialog.getByRole('button', { name: action, exact: true }));
       const name = action === 'Sign in' ? 'tracker' : 'docs-search';
       const form = within(await dialog.findByRole('form', { name: `Sign in to ${name}` }));
-      expect(form.getByText(/Finish in that tab, then return to this task/)).toBeTruthy();
+      expect(form.getByText(/Finish in that tab, then return to this thread/)).toBeTruthy();
       expect(form.queryByRole('textbox', { name: 'Address the browser ended on' })).toBeNull();
       expect(form.queryByText(/server machine instead/)).toBeNull();
       const send = (seq: number, status: string) => act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name, status, remote: true, sign_in: true }] } }) })));
@@ -47,10 +47,10 @@ describe('MCP servers', () => {
     const fetch = vi.spyOn(window, 'fetch');
     fetch.mockImplementation((input, init) => String(input).endsWith('/tools') ? Promise.resolve(new Response('{"error":"not found"}', { status: 404 })) : original(input, init));
     try {
-      const menu = await openMenu(user, 'Task actions');
+      const menu = await openMenu(user, 'Thread actions');
       await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
       const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-      await dialog.findByRole('list', { name: "This task's MCP servers" });
+      await dialog.findByRole('list', { name: "This thread's MCP servers" });
       fetch.mockClear();
       await user.click(dialog.getByRole('button', { name: 'Tools', exact: true }));
       const tools = within(await dialog.findByRole('list', { name: 'docs-search tools' }));
@@ -76,10 +76,10 @@ describe('MCP servers', () => {
     };
     await screen.findByRole('region', { name: 'Conversation' });
     await waitFor(() => expect(stream).toBeDefined());
-    const menu = await openMenu(user, 'Task actions');
+    const menu = await openMenu(user, 'Thread actions');
     await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-    await dialog.findByRole('list', { name: "This task's MCP servers" });
+    await dialog.findByRole('list', { name: "This thread's MCP servers" });
     await user.click(dialog.getByRole('button', { name: 'Sign in', exact: true }));
     await dialog.findByRole('form', { name: 'Sign in to tracker' });
     const send = (seq: number, status: string) => act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name: 'tracker', status, remote: true }] } }) })));
@@ -104,10 +104,10 @@ describe('MCP servers', () => {
     };
     await screen.findByRole('region', { name: 'Conversation' });
     await waitFor(() => expect(stream).toBeDefined());
-    const menu = await openMenu(user, 'Task actions');
+    const menu = await openMenu(user, 'Thread actions');
     await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-    await dialog.findByRole('list', { name: "This task's MCP servers" });
+    await dialog.findByRole('list', { name: "This thread's MCP servers" });
     act(() => stream!.dispatchEvent(new MessageEvent('mcp_status', { data: JSON.stringify({ seq: 1_000_001, session_id: 't1', mcp_status: { supported: true, ready: true, servers: [{ name: 'plain-remote', status: 'connected', remote: true }, { name: 'oauth-remote', status: 'connected', remote: true, sign_in: true }] } }) })));
     await dialog.findByText('plain-remote');
     expect(dialog.getAllByRole('button', { name: 'Sign in again' })).toHaveLength(1);
@@ -130,10 +130,10 @@ describe('MCP servers', () => {
     await waitFor(() => expect(stream).toBeDefined());
     const fetch = vi.spyOn(window, 'fetch');
     try {
-      const menu = await openMenu(user, 'Task actions');
+      const menu = await openMenu(user, 'Thread actions');
       await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
       const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-      await dialog.findByRole('list', { name: "This task's MCP servers" });
+      await dialog.findByRole('list', { name: "This thread's MCP servers" });
       const calls = () => fetch.mock.calls.filter(([url, init]) => new URL(String(url), window.location.origin).pathname === '/api/sessions/t1/mcp' && (!init?.method || init.method === 'GET'));
       const initialReads = calls().length;
       expect(initialReads).toBeGreaterThan(0);
@@ -200,14 +200,14 @@ describe('MCP servers', () => {
     await user.click(await screen.findByRole('button', { name: 'MCP servers', exact: true }));
     const section = within(await screen.findByRole('region', { name: 'MCP servers' }));
     const list = within(await section.findByRole('group', { name: 'MCP servers' }));
-    const github = list.getByRole('switch', { name: 'Use github-mcp-server in tasks' });
+    const github = list.getByRole('switch', { name: 'Use github-mcp-server in threads' });
     const row = within(github.closest('li')!);
     expect(github.getAttribute('aria-checked')).toBe('false');
     // The switch says it is off; no chip repeats it.
     expect(row.queryByText('Off')).toBeNull();
     expect(document.getElementById(github.getAttribute('aria-describedby')!)?.textContent).toMatch(/not shared with the copilot command\. Off by default/);
     // Only the built-in GitHub server gets the setting's switch; other built-in servers stay read-only.
-    expect(list.queryAllByRole('switch', { name: /in tasks$/ })).toHaveLength(1);
+    expect(list.queryAllByRole('switch', { name: /in threads$/ })).toHaveLength(1);
     await user.click(github);
     await waitFor(() => expect(github.getAttribute('aria-checked')).toBe('true'));
     expect(row.queryByText('Off')).toBeNull();
@@ -219,11 +219,11 @@ describe('MCP servers', () => {
 
   test('a Task leaves the built-in GitHub server off until Settings turns it on, and can still turn it on for itself', async () => {
     const { user } = await openTask('t1');
-    const menu = await openMenu(user, 'Task actions');
+    const menu = await openMenu(user, 'Thread actions');
     await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-    const servers = within(await dialog.findByRole('list', { name: "This task's MCP servers" }));
-    const github = servers.getByRole('switch', { name: 'Use github-mcp-server in this task' });
+    const servers = within(await dialog.findByRole('list', { name: "This thread's MCP servers" }));
+    const github = servers.getByRole('switch', { name: 'Use github-mcp-server in this thread' });
     expect(github.getAttribute('aria-checked')).toBe('false');
     await user.click(github);
     await waitFor(() => expect(github.getAttribute('aria-checked')).toBe('true'));
@@ -273,10 +273,10 @@ describe('MCP servers', () => {
 
   test('a Task shows each server state and signs in by pasting the address the browser ended on', async () => {
     const { user } = await openTask('t1');
-    const menu = await openMenu(user, 'Task actions');
+    const menu = await openMenu(user, 'Thread actions');
     await user.click(menu.getByRole('menuitem', { name: 'MCP servers…' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
-    const servers = within(await dialog.findByRole('list', { name: "This task's MCP servers" }));
+    const servers = within(await dialog.findByRole('list', { name: "This thread's MCP servers" }));
     expect(servers.getByText(/failed to spawn MCP server process/)).toBeTruthy();
     expect(servers.getByText('Needs sign-in')).toBeTruthy();
     await user.click(servers.getByRole('button', { name: 'Restart' }));
@@ -294,8 +294,8 @@ describe('MCP servers', () => {
     await waitFor(() => expect(dialog.queryByRole('form', { name: 'Sign in to tracker' })).toBeNull());
     expect(servers.queryByText('Needs sign-in')).toBeNull();
     // Off for this task only (the built-in GitHub server is already off: Settings leaves it off).
-    const docs = servers.getByRole('switch', { name: 'Use docs-search in this task' });
+    const docs = servers.getByRole('switch', { name: 'Use docs-search in this thread' });
     await user.click(docs);
-    expect(await within(docs.closest('li')!).findByText('Off for this task')).toBeTruthy();
+    expect(await within(docs.closest('li')!).findByText('Off for this thread')).toBeTruthy();
   });
 });

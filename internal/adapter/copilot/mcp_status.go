@@ -124,7 +124,7 @@ func (c *conversation) MCPStatusSnapshot(ctx context.Context) (agentapi.MCPStatu
 	c.mu.Unlock()
 	servers, err := ms.MCPList(ctx)
 	if err != nil {
-		return agentapi.MCPStatusSnapshot{}, fmt.Errorf("list the task's MCP servers: %s", rpcText(err))
+		return agentapi.MCPStatusSnapshot{}, fmt.Errorf("list the thread's MCP servers: %s", rpcText(err))
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

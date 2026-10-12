@@ -39,7 +39,7 @@ func TestGlabShellRules(t *testing.T) {
 		{"rtk proxy glab issue list --paginate", "", "-P 10"},
 		{"glab issue list -A", "", "-p <page>"},
 		{"glab mr list --all", "", "-P 10"},
-		{"glab auth login", "", "outside the Task"},
+		{"glab auth login", "", "outside the Thread"},
 		{"glab ci view", "", "glab ci get"},
 		{"glab ci status --live", "", "without --live"},
 		{"glab ci trace -p 42", "", "<job-id>"},

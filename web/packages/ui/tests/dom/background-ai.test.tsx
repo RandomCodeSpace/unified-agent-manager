@@ -59,7 +59,7 @@ describe('Background AI', () => {
     expect(today.getAllByText('Skipped: daily limit')).toHaveLength(2);
     expect(today.getAllByRole('listitem')).toHaveLength(25);
     // A title made with the Task's own model says so; other calls name the Utility model alone.
-    expect(today.getAllByText(/^gpt-6-luna \(the task's model\) · /)).toHaveLength(1);
+    expect(today.getAllByText(/^gpt-6-luna \(the thread's model\) · /)).toHaveLength(1);
     expect(today.getAllByText(/^gpt-6-luna · /).length).toBeGreaterThan(0);
   });
 

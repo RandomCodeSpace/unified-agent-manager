@@ -460,7 +460,7 @@ func (m *Manager) ReconnectTaskMCP(id string) error {
 	m.mu.Lock()
 	err = s.settleableLocked()
 	if s.gen != gen {
-		err = newError(http.StatusConflict, "the task's conversation changed while reloading configuration; try again")
+		err = newError(http.StatusConflict, "the thread's conversation changed while reloading configuration; try again")
 	}
 	conv = nil
 	if err == nil && s.conv != nil {

@@ -47,7 +47,7 @@ func TestPreToolUseTrailContext(t *testing.T) {
 }
 
 func TestTrailNoticeReplaysFromJournal(t *testing.T) {
-	const note = `uam trail: Task "Fix login" edited auth.go 1 min ago and is still running. Re-read it first.`
+	const note = `uam trail: Thread "Fix login" edited auth.go 1 min ago and is still running. Re-read it first.`
 	event := ev("trail-notice", &rpc.SessionInfoData{InfoType: "notification", Message: note})
 	live, ok := newTranscript().item(event)
 	if !ok || live.Kind != agentapi.ItemNotice || live.Text != note {

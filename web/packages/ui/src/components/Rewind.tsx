@@ -25,7 +25,7 @@ const UNAVAILABLE: Record<string, string> = {
   'file-change-tracking-disabled': 'This conversation does not track file changes.',
   'unsupported-remote-session': 'File restore is not supported for this conversation.',
 };
-export const RELEASE_REWIND = 'The conversation could not be read back to settle this rewind. You can release the task without knowing what the rewind did: the conversation may already be shortened and files may be partly restored. Check them before you continue; uam does not rewind again.';
+export const RELEASE_REWIND = 'The conversation could not be read back to settle this rewind. You can release the thread without knowing what the rewind did: the conversation may already be shortened and files may be partly restored. Check them before you continue; uam does not rewind again.';
 export const UNCERTAIN_REWIND = 'The rewind result was lost. The conversation and files may or may not have changed, and uam will not try again. Check the files, then reread the conversation.';
 
 /** Every native outcome in words. */
@@ -176,7 +176,7 @@ export function RewindHold({ session }: Readonly<{ session: SessionSummary }>) {
       {error && <Note tone="error" role="alert" className="basis-full">{error}</Note>}
       {hold.reconcile_failed && <>
         <Note tone="warn" className="basis-full">{RELEASE_REWIND}</Note>
-        <Button size="sm" variant="danger" onClick={() => run(api.releaseRewind)} loading={busy}>Release task</Button>
+        <Button size="sm" variant="danger" onClick={() => run(api.releaseRewind)} loading={busy}>Release thread</Button>
       </>}
     </div>
   );

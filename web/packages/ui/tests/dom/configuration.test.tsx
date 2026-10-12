@@ -45,7 +45,7 @@ describe('native configuration', () => {
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
     const tip = document.querySelector<HTMLElement>('[data-popup="tooltip"]')!;
     expect(tip.textContent).toContain('Advanced documents support the full native format');
-    expect(tip.textContent).toContain('A running task keeps its current configuration.');
+    expect(tip.textContent).toContain('A running thread keeps its current configuration.');
     expect(within(tip).queryByRole('link')).toBeNull();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).toBeNull());
@@ -179,7 +179,7 @@ describe('native configuration', () => {
     await user.type(form.getByLabelText('Tools (optional, one per line)'), 'read\nsearch');
     await user.type(form.getByLabelText('Agent instructions'), 'Read the issue first.');
     await user.click(form.getByRole('button', { name: 'Add agent' }));
-    await card.findByText('scout saved. New and reopened tasks use the updated file.');
+    await card.findByText('scout saved. New and reopened threads use the updated file.');
     const created = (await api.configuration()).agents.find((entry) => entry.name === 'scout');
     expect(created?.content).toContain('tools: ["read","search"]');
     expect(created?.content).toContain('model: "gpt-5-mini"');
@@ -188,7 +188,7 @@ describe('native configuration', () => {
     expect(editor.value).toContain('custom-field: keep-this');
     await user.type(editor, '\nCheck race conditions.');
     await user.click(card.getByRole('button', { name: 'Save agent' }));
-    await card.findByText('reviewer saved. New and reopened tasks use the updated file.');
+    await card.findByText('reviewer saved. New and reopened threads use the updated file.');
     expect((await api.configuration()).agents.find((entry) => entry.name === 'reviewer')?.content).toContain('custom-field: keep-this');
   });
 
@@ -212,7 +212,7 @@ describe('native configuration', () => {
     await user.click(manual);
     expect(form.getByText(/Both automatic and manual invocation are disabled/)).toBeTruthy();
     await user.click(form.getByRole('button', { name: 'Add skill' }));
-    await card.findByText('manual-check saved. New and reopened tasks use the updated file.');
+    await card.findByText('manual-check saved. New and reopened threads use the updated file.');
     const skill = (await api.configuration()).skills.find((file) => file.name === 'manual-check');
     expect(skill?.content).toContain('disable-model-invocation: true');
     expect(skill?.content).toContain('user-invocable: false');
@@ -252,7 +252,7 @@ describe('native configuration', () => {
     await user.click(form.getByRole('checkbox', { name: 'Disable all tools' }));
     expect((form.getByLabelText('Tools (optional, one per line)') as HTMLTextAreaElement).disabled).toBe(true);
     await user.click(form.getByRole('button', { name: 'Add agent' }));
-    await card.findByText('fallback-reviewer saved. New and reopened tasks use the updated file.');
+    await card.findByText('fallback-reviewer saved. New and reopened threads use the updated file.');
     const content = (await api.configuration()).agents.find((entry) => entry.name === 'fallback-reviewer')!.content;
     expect(content).toContain('model: ["claude-haiku-4.5","gpt-5.6-luna"]');
     expect(content).not.toContain('gpt-5-mini');
@@ -267,7 +267,7 @@ describe('native configuration', () => {
     await user.click(card.getByRole('button', { name: 'Add agent' }));
     const form = within(card.getByRole('form', { name: 'Add agent' }));
     await user.type(form.getByLabelText('Name'), 'inherited-reviewer');
-    await user.type(form.getByLabelText('Description'), 'Use task preferences.');
+    await user.type(form.getByLabelText('Description'), 'Use thread preferences.');
     await user.type(form.getByLabelText('Agent instructions'), 'Read the diff.');
     await user.click(form.getByText('Advanced settings'));
     expect((form.getByRole('combobox', { name: 'Model policy' }) as HTMLButtonElement).disabled).toBe(true);
@@ -278,9 +278,9 @@ describe('native configuration', () => {
     await user.click(form.getByRole('combobox', { name: 'Reasoning effort' }));
     await user.click(await screen.findByRole('option', { name: 'low', exact: true }));
     await user.click(form.getByRole('combobox', { name: 'Model (optional)' }));
-    await user.click(await screen.findByRole('option', { name: 'Inherit task model', exact: true }));
+    await user.click(await screen.findByRole('option', { name: 'Inherit thread model', exact: true }));
     await user.click(form.getByRole('button', { name: 'Add agent' }));
-    await card.findByText('inherited-reviewer saved. New and reopened tasks use the updated file.');
+    await card.findByText('inherited-reviewer saved. New and reopened threads use the updated file.');
     const content = (await api.configuration()).agents.find((entry) => entry.name === 'inherited-reviewer')!.content;
     expect(content).not.toMatch(/model:|model-policy:|reasoning-effort:/);
   });
@@ -296,13 +296,13 @@ describe('native configuration', () => {
     await user.type(await card.findByLabelText('copilot-instructions.md (Markdown)'), 'Keep changes focused.');
     expect((card.getByRole('combobox', { name: 'Scope' }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(card.getByRole('button', { name: 'Save copilot-instructions.md' }));
-    await card.findByText('copilot-instructions.md saved. New and reopened tasks use the updated file.');
+    await card.findByText('copilot-instructions.md saved. New and reopened threads use the updated file.');
     await editCard(user, card, 'View AGENTS.md', 'Add AGENTS.md');
     const form = within(await card.findByRole('form', { name: 'Add AGENTS.md' }));
     expect(form.getByText('/projects/p1/AGENTS.md')).toBeTruthy();
     await user.type(form.getByLabelText('AGENTS.md (Markdown)'), 'Run the nearest focused tests.');
     await user.click(form.getByRole('button', { name: 'Save AGENTS.md' }));
-    await card.findByText('AGENTS.md saved. New and reopened tasks use the updated file.');
+    await card.findByText('AGENTS.md saved. New and reopened threads use the updated file.');
     expect((await api.configuration()).instructions.content).toBe('');
     const project = await api.configuration('p1');
     expect(project.instructions.content).toBe('Keep changes focused.');
@@ -343,7 +343,7 @@ describe('native configuration', () => {
       await editCard(user, card, 'View copilot-instructions.md', 'Add copilot-instructions.md');
       await user.type(await card.findByLabelText('copilot-instructions.md (Markdown)'), 'Global rules.');
       await user.click(card.getByRole('button', { name: 'Save copilot-instructions.md' }));
-      await card.findByText('copilot-instructions.md saved. New and reopened tasks use the updated file.');
+      await card.findByText('copilot-instructions.md saved. New and reopened threads use the updated file.');
       expect((await original()).instructions.content).toBe('Global rules.');
     } finally { read.mockRestore(); }
   });
@@ -359,7 +359,7 @@ describe('native configuration', () => {
     await user.click(await screen.findByRole('option', { name: 'preToolUse', exact: true }));
     await user.type(form.getByLabelText('Bash command'), 'echo ready');
     await user.click(form.getByRole('button', { name: 'Add hook file' }));
-    await card.findByText('check saved. New and reopened tasks use the updated file.');
+    await card.findByText('check saved. New and reopened threads use the updated file.');
     const hook = (await api.configuration()).hooks.find((entry) => entry.name === 'check');
     expect(JSON.parse(hook!.content).hooks.preToolUse).toEqual([{ type: 'command', bash: 'echo ready' }]);
     await user.click(screen.getByRole('button', { name: 'UAM and access', exact: true }));
@@ -402,7 +402,7 @@ describe('native configuration', () => {
       expect((form.getByLabelText('Executable') as HTMLInputElement).value).toBe('node');
     }
     await user.click(form.getByRole('button', { name: 'Add hook file' }));
-    await card.findByText(`notify-${mode} saved. New and reopened tasks use the updated file.`);
+    await card.findByText(`notify-${mode} saved. New and reopened threads use the updated file.`);
     const content = JSON.parse((await api.configuration()).hooks.find((entry) => entry.name === `notify-${mode}`)!.content);
     expect(content.disableAllHooks).toBe(true);
     expect(content.hooks.notification).toEqual([mode === 'exec'
@@ -748,7 +748,7 @@ describe('native configuration', () => {
       await waitFor(() => expect(editor.value).toBe('External shared change.'));
       await user.type(editor, '\nReviewed.');
       await user.click(card.getByRole('button', { name: 'Save skill' }));
-      await card.findByText('release-check saved. New and reopened tasks use the updated file.');
+      await card.findByText('release-check saved. New and reopened threads use the updated file.');
       expect(save).toHaveBeenLastCalledWith('skills', 'release-check', { content: 'External shared change.\nReviewed.', revision: 'shared-2', path: shared!.path }, '');
       const dialog = await confirmCard(user, sharedCard(), 'View skill release-check', 'Remove');
       expect(dialog.getByText(shared!.path)).toBeTruthy();

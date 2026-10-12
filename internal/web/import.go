@@ -23,8 +23,8 @@ const holderTimeout = 5 * time.Second
 var (
 	errHeldElsewhere   = newError(http.StatusConflict, "another client has this conversation open, for example copilot --resume in a terminal; close it there, then try again")
 	errHolderUnknown   = newError(http.StatusBadGateway, "uam could not check whether another client has this conversation open; nothing was sent or imported")
-	errAlreadyTask     = newError(http.StatusConflict, "this conversation is already a task")
-	errImportCancelled = newError(http.StatusServiceUnavailable, "import cancelled; no task was created")
+	errAlreadyTask     = newError(http.StatusConflict, "this conversation is already a thread")
+	errImportCancelled = newError(http.StatusServiceUnavailable, "import cancelled; no thread was created")
 )
 
 // checkHolder refuses a write to s's conversation while another client holds
@@ -53,7 +53,7 @@ func (m *Manager) checkHolder(s *webSession) error {
 	case removed:
 		return newError(http.StatusNotFound, msgSessionNotFound)
 	case changed:
-		return newError(http.StatusConflict, "the task changed while checking whether its conversation is in use; try again")
+		return newError(http.StatusConflict, "the thread changed while checking whether its conversation is in use; try again")
 	case err != nil:
 		return err
 	case slices.Contains(held, convID):

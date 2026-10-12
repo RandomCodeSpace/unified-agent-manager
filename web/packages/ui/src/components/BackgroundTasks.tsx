@@ -16,7 +16,7 @@ import { Tip } from './ui/tooltip';
  */
 /** Why Stop is disabled, or what it does. */
 function stopTip(locked: boolean, known: boolean): string {
-  if (locked) return 'This task is read-only.';
+  if (locked) return 'This thread is read-only.';
   if (!known) return 'Refresh the connection to check this task before stopping it.';
   return 'Stop this background shell';
 }

@@ -10,7 +10,7 @@ test('the Thread header has no GitLab button or menu item; GitLab opens from the
   const { user } = renderApp('?gitidle#task=t3');
   const header = (await screen.findByRole('heading', { level: 1 })).closest('header')!;
   expect(within(header).queryByRole('button', { name: /GitLab/ })).toBeNull();
-  const menu = await openMenu(user, 'Task actions');
+  const menu = await openMenu(user, 'Thread actions');
   expect(menu.queryByRole('menuitem', { name: /GitLab/ })).toBeNull();
   expect(read).not.toHaveBeenCalled();
 });
@@ -21,7 +21,7 @@ test('a narrow header folds no GitLab item into the menu either', async () => {
   });
   const { user } = renderApp('?gitidle#task=t3');
   await screen.findByRole('region', { name: 'Conversation' });
-  const menu = await openMenu(user, 'Task actions');
+  const menu = await openMenu(user, 'Thread actions');
   expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeTruthy();
   expect(menu.queryByRole('menuitem', { name: /GitLab/ })).toBeNull();
 });

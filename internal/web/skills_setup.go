@@ -128,7 +128,7 @@ func (m *Manager) setupSkills(ctx context.Context, projectID string, input skill
 		return result, err
 	}
 	result.Installed = slices.Clone(input.Skills)
-	result.Output = fmt.Sprintf("Installed %d skill(s). Open a new Task or reopen a closed Task to load them.", len(result.Installed))
+	result.Output = fmt.Sprintf("Installed %d skill(s). Open a new Thread or reopen a closed Thread to load them.", len(result.Installed))
 	return result, nil
 }
 

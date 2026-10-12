@@ -276,7 +276,7 @@ func (m *Manager) repoBusy(top string) string {
 	names := make([]string, 0, len(busy))
 	m.mu.Lock()
 	for _, s := range busy {
-		names = append(names, clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title, "A task")), maxNameRunes))
+		names = append(names, clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title, "A thread")), maxNameRunes))
 	}
 	m.mu.Unlock()
 	slices.Sort(names)
@@ -286,9 +286,9 @@ func (m *Manager) repoBusy(top string) string {
 	case 1:
 		return fmt.Sprintf("“%s” is still working in this repository. Wait for it to finish.", names[0])
 	case 2:
-		return fmt.Sprintf("“%s” and 1 other task are still working in this repository. Wait for them to finish.", names[0])
+		return fmt.Sprintf("“%s” and 1 other thread are still working in this repository. Wait for them to finish.", names[0])
 	default:
-		return fmt.Sprintf("“%s” and %d other tasks are still working in this repository. Wait for them to finish.", names[0], len(names)-1)
+		return fmt.Sprintf("“%s” and %d other threads are still working in this repository. Wait for them to finish.", names[0], len(names)-1)
 	}
 }
 

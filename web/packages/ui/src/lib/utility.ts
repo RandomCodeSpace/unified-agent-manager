@@ -4,7 +4,7 @@ import type { UtilityCall, UtilityDay } from '../api';
 import { compactTokens, formatCredits } from './cost.ts';
 
 const PURPOSES: Record<string, string> = {
-  title: 'Task title',
+  title: 'Thread title',
   // Made only by older versions; their calls stay in the 30-day log.
   'subagent-summary': 'Subagent summary',
   'commit-message': 'Commit message',
@@ -13,7 +13,7 @@ const PURPOSES: Record<string, string> = {
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
   // Made only by older versions; their calls stay in the 30-day log.
-  'done-check': 'Task done check',
+  'done-check': 'Thread done check',
 };
 
 /** "Task title" for `title`; an unknown purpose reads as words. */
@@ -32,7 +32,7 @@ export function outcomeLabel(call: Pick<UtilityCall, 'outcome' | 'reason'>): str
 /** The model a call used: "gpt-6-luna", or "gpt-6-luna (the task's model)" when no Utility model is set. */
 export function modelText(call: Pick<UtilityCall, 'model' | 'session_model'>): string {
   if (!call.model) return '';
-  return call.session_model ? `${call.model} (the task's model)` : call.model;
+  return call.session_model ? `${call.model} (the thread's model)` : call.model;
 }
 
 const count = (n: number) => n.toLocaleString('en-US');

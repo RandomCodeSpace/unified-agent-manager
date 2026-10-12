@@ -32,7 +32,7 @@ func (m *Manager) ItemDiff(ctx context.Context, id, agent, item, event, path str
 	reader, ok := m.providers[s.provider].(agentapi.ItemDiffReader)
 	if !ok || s.convID == "" {
 		m.mu.Unlock()
-		return itemDiffBody{}, newError(409, "this task has no recorded native edit detail")
+		return itemDiffBody{}, newError(409, "this thread has no recorded native edit detail")
 	}
 	conv, workdir, gen, historyGen := s.convID, s.workdir, s.gen, s.historyGen
 	m.mu.Unlock()

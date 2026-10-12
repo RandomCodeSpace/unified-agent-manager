@@ -42,7 +42,7 @@ const GROUP_LABEL: Record<string, string> = { user: 'Global', ...SOURCE_LABEL };
 export const STDIO_OFF = 'A server that runs a command runs it on this machine for anyone signed in, so adding or editing one needs Settings → UAM and access → Terminal on.';
 /** Copilot's built-in GitHub MCP server: UAM's own setting (`Settings.github_mcp`) turns it on or off for tasks. */
 const GITHUB_MCP = 'github-mcp-server';
-const GITHUB_MCP_HELP = "UAM's own switch, not shared with the copilot command. Off by default: starting it takes about a second each time a task opens, and a message sent meanwhile waits. A change reaches open tasks too.";
+const GITHUB_MCP_HELP = "UAM's own switch, not shared with the copilot command. Off by default: starting it takes about a second each time a thread opens, and a message sent meanwhile waits. A change reaches open threads too.";
 
 /** Settings → GitHub MCP server as saved now, and how to change it. */
 export interface GithubMcpSetting {
@@ -271,7 +271,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
     <AlertDialog
       {...removal.props}
       title={pending ? `Remove MCP server ${pending}?` : 'Remove?'}
-      description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Apply current settings in an open task to refresh its configuration for the next turn."
+      description="It leaves GitHub Copilot's MCP configuration, also for the copilot command on this machine. Apply current settings in an open thread to refresh its configuration for the next turn."
       confirmLabel="Remove server"
       busy={!!busy && busy === pending}
       onConfirm={() => {
@@ -288,7 +288,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
   return (
     <div className="flex flex-col gap-3">
       <Note className="max-w-3xl">
-        Shared with the copilot command. Open tasks pick up changes via ⋯ → MCP servers → Apply current settings.
+        Shared with the copilot command. Open threads pick up changes via ⋯ → MCP servers → Apply current settings.
       </Note>
       {!draft && (
         <SectionAction>
@@ -319,9 +319,9 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
                     </>}
                     aside={
                       s.source === 'user' ? (
-                        <Switch aria-label={`Use ${s.name} in new tasks`} checked={s.enabled} disabled={!!busy} onCheckedChange={(on) => void run(s.name, () => api.enableMcpServer(s.name, on))} />
+                        <Switch aria-label={`Use ${s.name} in new threads`} checked={s.enabled} disabled={!!busy} onCheckedChange={(on) => void run(s.name, () => api.enableMcpServer(s.name, on))} />
                       ) : (
-                        github && <Switch aria-label={`Use ${s.name} in tasks`} aria-describedby="github-mcp-help" checked={github.on} disabled={github.saving} onCheckedChange={github.onChange} />
+                        github && <Switch aria-label={`Use ${s.name} in threads`} aria-describedby="github-mcp-help" checked={github.on} disabled={github.saving} onCheckedChange={github.onChange} />
                       )
                     }
                     expanded={cards.reader?.item === s && cards.reader.open}

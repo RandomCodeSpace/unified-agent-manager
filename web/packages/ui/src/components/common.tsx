@@ -219,7 +219,7 @@ export function TaskTitle({ session, className }: Readonly<{ session: SessionSum
   const name = taskName(session);
   if (name) return <span className={className}>{name}</span>;
   const waiting = LIVE.includes(session.state);
-  return <span className={cn('text-muted', className)}>{waiting ? 'Waiting for a title…' : 'New task'}</span>;
+  return <span className={cn('text-muted', className)}>{waiting ? 'Waiting for a title…' : 'New thread'}</span>;
 }
 
 /** Visually hidden separator so adjacent labels do not run together in accessible names. */

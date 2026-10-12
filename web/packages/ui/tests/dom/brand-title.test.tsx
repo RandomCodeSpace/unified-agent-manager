@@ -42,12 +42,12 @@ describe('the tab title', () => {
   test('a Task still waiting for a title, and a new Task, read UAM - New task', async () => {
     const { user } = renderApp('#task=t7');
     const side = await sidebar();
-    await waitFor(() => expect(document.title).toBe('(7) UAM - New task'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM - New thread'));
     await user.click(side.getByRole('button', { name: /unified-agent-manager.*Doctor: add terminal line/ }));
     await waitFor(() => expect(document.title).toBe('(7) UAM - Doctor: add terminal line'));
-    await user.click(side.getByRole('button', { name: 'New task' }));
+    await user.click(side.getByRole('button', { name: 'New thread' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
-    await waitFor(() => expect(document.title).toBe('(7) UAM - New task'));
+    await waitFor(() => expect(document.title).toBe('(7) UAM - New thread'));
   });
 
   test('names Settings and Routines', async () => {

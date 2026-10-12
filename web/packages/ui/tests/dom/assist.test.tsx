@@ -119,7 +119,7 @@ describe('assist', () => {
 
   test('Run again opens a new task linked to the one it repeats', async () => {
     const { user } = await openTask('t3');
-    const menu = await openMenu(user, 'Task actions');
+    const menu = await openMenu(user, 'Thread actions');
     await user.click(menu.getByRole('menuitem', { name: 'Run again' }));
     expect(await screen.findByText(/Runs again the last message of/)).toBeTruthy();
     await waitFor(() => expect(window.location.hash).not.toBe('#task=t3'));

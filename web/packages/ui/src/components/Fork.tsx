@@ -64,7 +64,7 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
       <Popover.Content anchor={anchor} className="w-80 max-w-[calc(100vw-16px)] max-h-(--available-height) gap-3 overflow-y-auto" finalFocus={() => anchor?.isConnected ? anchor : false}>
         <Popover.Title>Branch from here</Popover.Title>
         <Popover.Description>
-          Copies the conversation through this reply into a new task. Both tasks use the same project and current files. No message is sent until you continue.
+          Copies the conversation through this reply into a new thread. Both threads use the same project and current files. No message is sent until you continue.
         </Popover.Description>
         <Select aria-label="Branch model" value={model} onValueChange={setModel} disabled={busy || attempted} items={[
           { value: '', label: 'Default' },
@@ -76,7 +76,7 @@ export function ForkPicker({ session, userItemId, anchor, onClose, onForked }: R
         <div className="flex justify-end gap-2">
           {(uncertain || saved) && <Button variant="ghost" onClick={dismiss} loading={dismissing} disabled={busy}>Dismiss</Button>}
           <Button variant="ghost" onClick={onClose} disabled={busy || dismissing}>Cancel</Button>
-          <Button variant="primary" onClick={confirm} loading={busy} disabled={uncertain || !offered}>{saved ? 'Add the existing branch' : 'Branch task'}</Button>
+          <Button variant="primary" onClick={confirm} loading={busy} disabled={uncertain || !offered}>{saved ? 'Add the existing branch' : 'Branch thread'}</Button>
         </div>
       </Popover.Content>
     </Popover.Root>

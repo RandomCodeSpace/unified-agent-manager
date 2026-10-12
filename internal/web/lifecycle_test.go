@@ -63,7 +63,7 @@ func TestSettleReopenAndArchive(t *testing.T) {
 	if rec, _ := loadRecord(t, st, "fake", sum.ID); rec.Web.Stage != StageSettled || !rec.Web.SettledAt.Equal(settledAt) || !rec.Web.UpdatedAt.Equal(settledAt) {
 		t.Fatalf("stored settle = %+v", rec.Web)
 	}
-	wantConflict(t, "settle a settled task", errOf(m.Settle(sum.ID)), "a task that is settled cannot be settled")
+	wantConflict(t, "settle a settled task", errOf(m.Settle(sum.ID)), "a thread that is settled cannot be settled")
 
 	reopenedAt := settledAt.Add(time.Hour)
 	setNow(m, reopenedAt)
@@ -80,7 +80,7 @@ func TestSettleReopenAndArchive(t *testing.T) {
 	if rec, _ := loadRecord(t, st, "fake", sum.ID); rec.Web.Stage != "" || !rec.Web.SettledAt.IsZero() {
 		t.Fatalf("stored reopen = %+v", rec.Web)
 	}
-	wantConflict(t, "reopen an active task", errOf(m.Reopen(sum.ID)), "a task that is active cannot be reopened")
+	wantConflict(t, "reopen an active task", errOf(m.Reopen(sum.ID)), "a thread that is active cannot be reopened")
 
 	// The next prompt reopens the same conversation.
 	if _, err := m.Submit(sum.ID, PromptRequest{Text: "more", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
@@ -114,7 +114,7 @@ func TestSettleReopenAndArchive(t *testing.T) {
 	for name, move := range map[string]func(string) (SessionSummary, error){
 		"settled": m.Settle, "reopened": m.Reopen, "archived": m.Archive,
 	} {
-		wantConflict(t, name+" an archived task", errOf(move(sum.ID)), "a task that is archived cannot be "+name)
+		wantConflict(t, name+" an archived task", errOf(move(sum.ID)), "a thread that is archived cannot be "+name)
 	}
 	for _, move := range []func(string) (SessionSummary, error){m.Settle, m.Reopen, m.Archive} {
 		if _, err := move("missing"); statusOf(err) != http.StatusNotFound {
@@ -336,15 +336,15 @@ func TestSettledAndArchivedTasksAreReadOnly(t *testing.T) {
 			t.Fatalf("%s task reached the provider: open %v, opens %d, sends %d", stage, d.Open, len(prov.Opens()), len(conv.Sends()))
 		}
 	}
-	checks("settled", "the task is settled; reopen it first")
+	checks("settled", "the thread is settled; reopen it first")
 	if renamed, err := m.Rename(sum.ID, "done"); err != nil || renamed.Name != "done" {
 		t.Fatalf("rename a settled task = %+v, %v", renamed, err)
 	}
 	if _, err := m.Archive(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	checks("archived", "the task is archived")
-	wantConflict(t, "rename an archived task", errOf(m.Rename(sum.ID, "again")), "the task is archived")
+	checks("archived", "the thread is archived")
+	wantConflict(t, "rename an archived task", errOf(m.Rename(sum.ID, "again")), "the thread is archived")
 }
 
 func errOf2(_ Submission, err error) error { return err }

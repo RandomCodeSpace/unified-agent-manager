@@ -96,7 +96,7 @@ export function TryModelDialog({ session, onClose, onRun }: Readonly<{ session: 
         setError('');
       }}
       title="Try with another model"
-      description="Starts a new task in the same project with this task's last message and settings, on the model you choose. Attachments are not sent again."
+      description="Starts a new thread in the same project with this thread's last message and settings, on the model you choose. Attachments are not sent again."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
@@ -110,7 +110,7 @@ export function TryModelDialog({ session, onClose, onRun }: Readonly<{ session: 
               onRun(chosen).then(onClose, (e: unknown) => setError(describeError(e))).finally(() => setBusy(false));
             }}
           >
-            Start task
+            Start thread
           </Button>
         </>
       }

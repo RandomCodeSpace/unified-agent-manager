@@ -49,7 +49,7 @@ describe('Copilot CLI version and update', () => {
     const group = await cli(user);
     await user.click(await group.findByRole('button', { name: 'Update to 1.0.92' }));
     expect(await group.findByText('Updating to 1.0.92…')).toBeTruthy();
-    expect(group.getByText('Copilot tasks keep running; new ones use the current version until it restarts.')).toBeTruthy();
+    expect(group.getByText('Copilot threads keep running; new ones use the current version until it restarts.')).toBeTruthy();
     expect(group.queryByRole('button', { name: 'Check again' })).toBeNull();
     expect(await group.findByText('Copilot CLI updated to 1.0.92.', {}, POLLED)).toBeTruthy();
     expect(group.getByText('1.0.92')).toBeTruthy();
@@ -85,7 +85,7 @@ describe('Copilot CLI version and update', () => {
     await user.click(await group.findByRole('button', { name: 'Update to 1.0.92' }));
     expect(await group.findByText('Copilot CLI updated to 1.0.92.', {}, POLLED)).toBeTruthy();
     expect(group.getByText('1.0.92')).toBeTruthy();
-    expect(group.getByText('Still running 1.0.89; restarts when no Copilot task is working or waiting.')).toBeTruthy();
+    expect(group.getByText('Still running 1.0.89; restarts when no Copilot thread is working or waiting.')).toBeTruthy();
     expect(group.queryByRole('button', { name: /^Update to/ })).toBeNull();
   });
 

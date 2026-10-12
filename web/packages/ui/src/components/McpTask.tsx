@@ -14,7 +14,7 @@ const STATE: Record<string, { label: string; tone: Tone }> = {
   failed: { label: 'Failed', tone: 'error' },
   'needs-auth': { label: 'Needs sign-in', tone: 'warning' },
   pending: { label: 'Starting…', tone: 'muted' },
-  disabled: { label: 'Off for this task', tone: 'faint' },
+  disabled: { label: 'Off for this thread', tone: 'faint' },
   stopped: { label: 'Stopped', tone: 'faint' },
   not_configured: { label: 'Not configured', tone: 'faint' },
 };
@@ -44,7 +44,7 @@ function SignInPanel({ s, onPaste, onFinish, onCancel }: Readonly<{ s: SigningIn
           and approve access.
         </li>
         {s.callback ? (
-          <li>Finish in that tab, then return to this task. Its server status updates when sign-in completes; use Refresh if needed.</li>
+          <li>Finish in that tab, then return to this thread. Its server status updates when sign-in completes; use Refresh if needed.</li>
         ) : s.relay ? (
           <li>
             The browser then goes to an address on 127.0.0.1 or localhost. From another computer that page does not load; that is expected. Copy the whole address from the address bar and paste it here. (On the server's own desktop it finishes by itself.)
@@ -124,7 +124,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
             Restart
           </Button>
         )}
-        <Switch aria-label={`Use ${s.name} in this task`} checked={on} disabled={busy} onCheckedChange={onToggle} />
+        <Switch aria-label={`Use ${s.name} in this thread`} checked={on} disabled={busy} onCheckedChange={onToggle} />
       </div>
       {s.error && <p className="text-caption break-words text-error">{s.error}</p>}
       {children}
@@ -233,7 +233,7 @@ export function McpTaskDialog({ sessionId, snapshot, onClose }: Readonly<{ sessi
       onOpenChange={setOpen}
       onClosed={onClose}
       title="MCP servers"
-      description="The tool servers this task's agent can use. Switches here last until configuration reloads or the conversation closes. Apply current settings to refresh configuration for the next turn."
+      description="The tool servers this thread's agent can use. Switches here last until configuration reloads or the conversation closes. Apply current settings to refresh configuration for the next turn."
       footer={
         <>
           <Button size="lg" loading={busy === 'refresh'} disabled={!!busy} onClick={() => void refresh()}>Refresh</Button>
@@ -243,12 +243,12 @@ export function McpTaskDialog({ sessionId, snapshot, onClose }: Readonly<{ sessi
         </>
       }
     >
-      {!status?.ready && !error && <Skeleton label="Reading this task's MCP servers…" rows={3} />}
+      {!status?.ready && !error && <Skeleton label="Reading this thread's MCP servers…" rows={3} />}
       {status?.truncated && <Note tone="warn">Some server states could not fit in this view. Refresh to read current status.</Note>}
       {status && !status.supported && <Note>Live status is unavailable from this provider. Use Refresh to read it again.</Note>}
-      {status?.ready && servers?.length === 0 && <Note>This task has no MCP servers. Add one in Settings → MCP servers, then apply current settings.</Note>}
+      {status?.ready && servers?.length === 0 && <Note>This thread has no MCP servers. Add one in Settings → MCP servers, then apply current settings.</Note>}
       {servers && servers.length > 0 && (
-        <ul aria-label="This task's MCP servers" className="flex flex-col">
+        <ul aria-label="This thread's MCP servers" className="flex flex-col">
           {servers.map((s) => (
             <ServerRow
               key={s.name}

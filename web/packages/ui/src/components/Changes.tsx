@@ -26,7 +26,7 @@ export interface ChangesTurn {
 const STATUS_TONE: Record<string, string> = { A: 'text-success', U: 'text-success', D: 'text-error', '!': 'text-error' };
 
 const EMPTY: Record<Scope, string> = {
-  task: 'No changes from this task: it has not edited a file that still differs from HEAD.',
+  task: 'No changes from this thread: it has not edited a file that still differs from HEAD.',
   turn: 'The latest turn edited no file that still differs from HEAD.',
   workspace: 'No uncommitted changes.',
   session: 'No changes.',
@@ -170,13 +170,13 @@ export function ChangesSheet({
     // Queue mode sends at once to an idle Task and waits for the end of a running turn.
     api.prompt(session.id, text, pendingSend.current.id, 'queue').then((sub) => {
       if (sub.status !== 'accepted' && sub.status !== 'queued') {
-        setSendNote({ tone: 'error', text: sub.error || 'The task did not take the comments.' });
+        setSendNote({ tone: 'error', text: sub.error || 'The thread did not take the comments.' });
         return;
       }
       pendingSend.current = null;
       const sent = new Set(batch.map((c) => c.id));
       updateReview((r) => ({ ...r, comments: r.comments.filter((c) => !sent.has(c.id)) }));
-      setSendNote({ tone: 'info', text: sub.status === 'queued' ? 'Comments queued: they go out after this turn.' : 'Comments sent to the task.' });
+      setSendNote({ tone: 'info', text: sub.status === 'queued' ? 'Comments queued: they go out after this turn.' : 'Comments sent to the thread.' });
     }).catch((e: unknown) => {
       setSendNote({ tone: 'error', text: `Could not send the comments: ${describeError(e)}` });
     }).finally(() => setSending(false));
@@ -302,10 +302,10 @@ export function ChangesSheet({
           value={scope}
           onValueChange={(s) => setScope(s as Scope)}
           items={canSession ? [
-            { value: 'session', label: 'This task' },
+            { value: 'session', label: 'This thread' },
             { value: 'workspace', label: 'All changes' },
           ] : [
-            { value: 'task', label: <span className="tabular-nums" title={scope === 'task' ? label : undefined}>This task{count('task')}</span> },
+            { value: 'task', label: <span className="tabular-nums" title={scope === 'task' ? label : undefined}>This thread{count('task')}</span> },
             { value: 'turn', label: <span className="tabular-nums">Last turn{count('turn')}</span> },
             { value: 'workspace', label: <span className="tabular-nums">All changes{count('workspace')}</span> },
           ]}
@@ -313,7 +313,7 @@ export function ChangesSheet({
       </div>
       {/* The Task scope's description is the tip of its segment. */}
       {scope !== 'task' && <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
-        {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any task or source.' : label}
+        {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any thread or source.' : label}
       </p>}
       {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
       {countsKnown && adds + dels > LARGE_CHANGE && (
@@ -337,7 +337,7 @@ export function ChangesSheet({
         )}
         {data && !data.supported && (
           <li className="px-2 py-1">
-            <Note>{data.reason || 'Not available for this task.'}</Note>
+            <Note>{data.reason || 'Not available for this thread.'}</Note>
           </li>
         )}
         {data?.supported && files.length === 0 && (
@@ -406,12 +406,12 @@ function CommentBatch({ comments, working, sending, note, onOpen, onRemove, onSe
       )}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2">
         {n > 0 && (
-          <span className="min-w-0 flex-1 text-caption text-muted">{working ? 'Goes out after this turn, as one message.' : 'Goes to the task as one message.'}</span>
+          <span className="min-w-0 flex-1 text-caption text-muted">{working ? 'Goes out after this turn, as one message.' : 'Goes to the thread as one message.'}</span>
         )}
         {note && <Note tone={note.tone} role={note.tone === 'error' ? 'alert' : 'status'} className="min-w-0 flex-1">{note.text}</Note>}
         {n > 0 && (
           <Button variant="primary" size="md" loading={sending} onClick={onSend}>
-            Send {n} {n === 1 ? 'comment' : 'comments'} to the task
+            Send {n} {n === 1 ? 'comment' : 'comments'} to the thread
           </Button>
         )}
       </div>

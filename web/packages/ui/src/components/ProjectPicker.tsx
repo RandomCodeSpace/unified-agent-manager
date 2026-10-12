@@ -338,7 +338,7 @@ export function NewTaskPalette({ open, onOpenChange, projects, sessions, selecte
       }}
       initialFocus={input}
       finalFocus={() => !leaveFocus.current}
-      label="New task"
+      label="New thread"
     >
       <PaletteBody
         entries={entries}

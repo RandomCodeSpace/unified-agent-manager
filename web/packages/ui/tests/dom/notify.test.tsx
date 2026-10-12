@@ -26,7 +26,7 @@ async function notifySwitch() {
   const { user } = renderApp('#settings');
   await user.click(await screen.findByRole('button', { name: 'Appearance & alerts', exact: true }));
   const card = within(await screen.findByRole('region', { name: 'Appearance & alerts' }));
-  return { card, toggle: card.getByRole('switch', { name: 'Notify me when a task needs me or finishes' }) };
+  return { card, toggle: card.getByRole('switch', { name: 'Notify me when a thread needs me or finishes' }) };
 }
 
 const notice = (over: Partial<Notice> = {}): Notice => {

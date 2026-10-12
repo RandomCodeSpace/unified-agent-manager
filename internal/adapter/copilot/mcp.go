@@ -419,13 +419,13 @@ func (c *conversation) ReloadCustomizations(ctx context.Context) error {
 		c.tools.invalidate()
 	}
 	if agentErr != nil {
-		return fmt.Errorf("reload task configuration (some changes may already have applied): %w", agentErr)
+		return fmt.Errorf("reload thread configuration (some changes may already have applied): %w", agentErr)
 	}
 	if err != nil {
-		return fmt.Errorf("reload task configuration (some changes may already have applied): %s", rpcText(err))
+		return fmt.Errorf("reload thread configuration (some changes may already have applied): %s", rpcText(err))
 	}
 	if res == nil {
-		return errors.New("reload task configuration returned an empty result; some changes may already have applied")
+		return errors.New("reload thread configuration returned an empty result; some changes may already have applied")
 	}
 	failures := slices.Clone(res.Errors)
 	for _, outcome := range res.Outcomes {
@@ -434,7 +434,7 @@ func (c *conversation) ReloadCustomizations(ctx context.Context) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("reload task configuration (some changes may already have applied): %s", rpcText(errors.New(strings.Join(failures, "; "))))
+		return fmt.Errorf("reload thread configuration (some changes may already have applied): %s", rpcText(errors.New(strings.Join(failures, "; "))))
 	}
 	return nil
 }
@@ -449,7 +449,7 @@ func (c *conversation) MCPStatus(ctx context.Context) ([]agentapi.MCPStatus, err
 	}
 	servers, err := ms.MCPList(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list the task's MCP servers: %s", rpcText(err))
+		return nil, fmt.Errorf("list the thread's MCP servers: %s", rpcText(err))
 	}
 	remote, oauth := map[string]bool{}, map[string]bool{}
 	if mc, ok := c.client.(mcpConfigClient); ok {

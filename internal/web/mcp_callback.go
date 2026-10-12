@@ -207,7 +207,7 @@ func (s *Server) handleMCPCallback(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	status, message := http.StatusOK, "MCP sign-in completed. Return to your Task; use Refresh if its status has not updated. You can close this tab."
+	status, message := http.StatusOK, "MCP sign-in completed. Return to your Thread; use Refresh if its status has not updated. You can close this tab."
 	if err := s.m.completeMCPCallback(r.Host, r.URL.RawQuery); err != nil {
 		status, message = errorStatus(err)
 	}

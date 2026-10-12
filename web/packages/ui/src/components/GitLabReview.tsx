@@ -139,12 +139,12 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
         return;
       }
       if (turn.timing.state !== 'completed') {
-        setNotice({ key: pending.key, text: `${actionLabel[pending.action]} ${turn.timing.state}. See the task for details.`, error: true });
+        setNotice({ key: pending.key, text: `${actionLabel[pending.action]} ${turn.timing.state}. See the thread for details.`, error: true });
         setPending(undefined);
         return;
       }
       if (pending.action !== 'draft_reply') {
-        setNotice({ key: pending.key, text: `${actionLabel[pending.action]} complete. Results are in the task.` });
+        setNotice({ key: pending.key, text: `${actionLabel[pending.action]} complete. Results are in the thread.` });
         setPending(undefined);
         return;
       }
@@ -154,12 +154,12 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
         if (controller.signal.aborted) return;
         if (item.text?.trim()) finishDraft(pending, item.text.trim());
         else {
-          setNotice({ key: pending.key, text: 'The agent returned no reply draft. See the task for details.', error: true });
+          setNotice({ key: pending.key, text: 'The agent returned no reply draft. See the thread for details.', error: true });
           setPending(undefined);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
-          setNotice({ key: pending.key, text: `Could not load the draft: ${describeError(error)}. Copy it from the task.`, error: true });
+          setNotice({ key: pending.key, text: `Could not load the draft: ${describeError(error)}. Copy it from the thread.`, error: true });
           setPending(undefined);
         }
       }
@@ -195,14 +195,14 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
         setNotice({ key, text: receipt.error || `${actionLabel[action]} ${receipt.status}.`, error: true });
       } else {
         setPending({ key, action, receipt, revision: capturedRevision });
-        setNotice({ key, text: receipt.status === 'uncertain' ? 'The request may have started. Check the task before trying again.' : `${actionLabel[action]} ${receipt.status === 'queued' ? 'queued' : 'started'}. Follow progress in the task.`, error: receipt.status === 'uncertain' });
+        setNotice({ key, text: receipt.status === 'uncertain' ? 'The request may have started. Check the thread before trying again.' : `${actionLabel[action]} ${receipt.status === 'queued' ? 'queued' : 'started'}. Follow progress in the thread.`, error: receipt.status === 'uncertain' });
       }
     } catch (error) {
       if (!live.current) return;
       const unknown = !(error instanceof ApiError) || error.status === 0 || error.status >= 500;
       if (unknown) setPending({ key, action, receipt: { request_id: requestId, status: 'uncertain', time: new Date().toISOString() }, revision: capturedRevision });
       else setPending(undefined);
-      setNotice({ key, text: unknown ? 'The request may have started. Check the task before trying again.' : describeError(error), error: true });
+      setNotice({ key, text: unknown ? 'The request may have started. Check the thread before trying again.' : describeError(error), error: true });
     } finally {
       writing.current = false;
       if (live.current) setBusy(undefined);
@@ -270,12 +270,12 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
           <Button size="sm" variant="primary" loading={busy === 'investigate'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('investigate')}><Search />Investigate</Button>
           <Button size="sm" variant="secondary" loading={busy === 'fix'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('fix')}><Wrench />Fix</Button>
         </div>}
-        {writable && session && <p className="text-caption text-muted">{locked ? 'Reopen this task to work on the review.' : `Uses ${session.model || 'the task’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
+        {writable && session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model || 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
       </section> : writable && <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
       {notice && notice.key === key && <Note role={notice.error ? 'alert' : 'status'} tone={notice.error ? 'error' : undefined}>{notice.text}</Note>}
       {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the discussion before trying again.</Note>}
-      {pending && !busy && (!notice || notice.key !== key) && <Note>{actionLabel[pending.action]} {pending.receipt.status === 'uncertain' ? 'may have started. Check the task before trying again.' : 'is pending. Follow progress in the task.'}</Note>}
-      {pending?.receipt.status === 'uncertain' && !busy && <Button size="sm" className="self-start" onClick={() => { setPending(undefined); setNotice(undefined); }}>I checked the task</Button>}
+      {pending && !busy && (!notice || notice.key !== key) && <Note>{actionLabel[pending.action]} {pending.receipt.status === 'uncertain' ? 'may have started. Check the thread before trying again.' : 'is pending. Follow progress in the thread.'}</Note>}
+      {pending?.receipt.status === 'uncertain' && !busy && <Button size="sm" className="self-start" onClick={() => { setPending(undefined); setNotice(undefined); }}>I checked the thread</Button>}
       {writable && <>
       <div className="flex items-center justify-between gap-2">
         <label htmlFor={`gitlab-reply-${iid}`} className="text-caption text-muted">{discussion && !discussion.individual_note ? `Reply on MR !${iid}` : `Comment on MR !${iid}`}</label>

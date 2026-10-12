@@ -280,7 +280,7 @@ func glabDeny(a []string) string {
 	}
 	switch a[0] + " " + a[1] {
 	case "auth login":
-		return "use an already authenticated GitLab account; sign in outside the Task instead of glab auth login."
+		return "use an already authenticated GitLab account; sign in outside the Thread instead of glab auth login."
 	case "ci view":
 		return "use glab ci get instead of the interactive glab ci view."
 	case "ci status":

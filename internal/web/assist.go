@@ -578,7 +578,7 @@ func (m *Manager) Rerun(id string, req RerunRequest) (SessionSummary, error) {
 		read.req.ItemID = w.items[0].ID
 	}
 	if strings.TrimSpace(text) == "" {
-		return SessionSummary{}, newError(http.StatusConflict, "this task has no message to run again")
+		return SessionSummary{}, newError(http.StatusConflict, "this thread has no message to run again")
 	}
 	create.Prompt = text
 	return m.Create(create)

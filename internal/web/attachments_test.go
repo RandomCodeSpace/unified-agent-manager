@@ -750,7 +750,7 @@ func TestToolImagesStopAtTheTaskCap(t *testing.T) {
 	if len(items[0].Images) != maxToolImages || items[0].ImagesNote != "" {
 		t.Fatalf("first item kept %d images, note %q", len(items[0].Images), items[0].ImagesNote)
 	}
-	if got := items[1]; len(got.Images) != 1 || got.Images[0].ID != items[0].Images[7].ID || got.ImagesNote != "1 image not kept: a task keeps at most 50 images" {
+	if got := items[1]; len(got.Images) != 1 || got.Images[0].ID != items[0].Images[7].ID || got.ImagesNote != "1 image not kept: a thread keeps at most 50 images" {
 		t.Fatalf("item past the cap = %+v", got)
 	}
 	if files, _ := os.ReadDir(dirs.task(sum.ID)); len(files) != 2*maxToolImages {

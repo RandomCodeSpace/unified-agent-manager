@@ -33,7 +33,7 @@ describe('Usage popover', () => {
     await within(await screen.findByRole('listbox', { name: 'Commands' })).findByRole('option', { name: /^\/usage/ });
     await user.keyboard('{Enter}{Enter}');
     expect(await screen.findByRole('region', { name: 'Allowance' })).toBeTruthy();
-    const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Tasks' }));
+    const nav = within(screen.getByRole('navigation', { name: collapsed ? 'Sidebar' : 'Threads' }));
     expect(nav.getByRole('button', { name: 'Usage', exact: true }).getAttribute('aria-expanded')).toBe('true');
     expect(document.getElementById('composer-usage')).toBeNull();
   });

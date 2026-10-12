@@ -489,6 +489,30 @@ func TestRoutineTaskExportNamesTheRoutine(t *testing.T) {
 	}
 }
 
+// A run whose Thread was deleted failed, and one stopped in its Thread was cancelled.
+func TestRunOutcomeNamesTheThread(t *testing.T) {
+	m := &Manager{sessions: map[string]*webSession{"stopped": {base: StateCancelled}}}
+	r := &store.WebRoutine{MaxMinutes: 30}
+	for id, want := range map[string][2]string{
+		"gone":    {RunFailed, "the thread was deleted"},
+		"stopped": {RunCancelled, "stopped in the thread"},
+	} {
+		if outcome, reason, _ := m.runOutcome(r, &activeRun{taskID: id}, time.Now()); outcome != want[0] || reason != want[1] {
+			t.Fatalf("%s: outcome %q, reason %q", id, outcome, reason)
+		}
+	}
+}
+
+// A spawned or rerun Thread's export names the Thread it came from.
+func TestExportNamesTheOriginThread(t *testing.T) {
+	body := string(renderExport(exportTask{spawnedBy: "parent", rerunOf: "earlier"}, "", time.Now()))
+	for _, want := range []string{"# New thread\n", "\n- Started by thread parent\n", "\n- Runs again the last message of thread earlier\n"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("export lacks %q:\n%s", want, body)
+		}
+	}
+}
+
 // A weekly routine on Sunday keeps its day in what the page reads: weekday 0
 // is a day, not an empty value.
 func TestWeeklyRoutineOnSundayListsItsDay(t *testing.T) {

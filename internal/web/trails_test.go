@@ -15,7 +15,7 @@ func TestTrailSiblingAndTurnScope(t *testing.T) {
 	sibling := &webSession{id: "sibling", name: "Fix login", projectID: "project", workdir: "/repo", stage: StageActive, base: StateWorking, edits: map[string]time.Time{"auth.go": now.Add(-time.Minute)}}
 	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{caller.id: caller, sibling.id: sibling}}
 	use := agentapi.ToolUse{Tool: "edit", Workdir: "/repo/sub", Args: map[string]any{"path": "../auth.go"}}
-	want := `uam trail: Task "Fix login" edited auth.go 1 min ago and is still running. Re-read it first.`
+	want := `uam trail: Thread "Fix login" edited auth.go 1 min ago and is still running. Re-read it first.`
 	if got := m.preToolUse(t.Context(), caller, use).Context; got != want {
 		t.Fatalf("trail=%q", got)
 	}
@@ -28,7 +28,7 @@ func TestTrailSiblingAndTurnScope(t *testing.T) {
 	}
 	sibling.name, sibling.title = "", "Generated title"
 	caller.trailPaths = nil
-	if got := m.preToolUse(t.Context(), caller, use).Context; !strings.Contains(got, `Task "Generated title"`) {
+	if got := m.preToolUse(t.Context(), caller, use).Context; !strings.Contains(got, `Thread "Generated title"`) {
 		t.Fatalf("automatic title=%q", got)
 	}
 	sibling.name = "Fix login"
@@ -86,7 +86,7 @@ func TestTrailFromRecordedNativePatch(t *testing.T) {
 	m := &Manager{now: func() time.Time { return now }, sessions: map[string]*webSession{source.id: source, caller.id: caller}}
 	req := m.withHostToolsLocked(agentapi.OpenRequest{SessionID: caller.id}, caller)
 	got := req.Hooks.Pre(t.Context(), agentapi.ToolUse{Tool: "apply_patch", Workdir: "/repo", Args: map[string]any{"patch": "*** Begin Patch\n*** Update File: fixture/trail.txt\n@@\n first-task-edit\n+second-task-edit\n*** End Patch\n"}})
-	if !strings.Contains(got.Context, `Task "Source" edited fixture/trail.txt`) {
+	if !strings.Contains(got.Context, `Thread "Source" edited fixture/trail.txt`) {
 		t.Fatalf("context=%q, recorded edits=%v", got.Context, source.edits)
 	}
 }

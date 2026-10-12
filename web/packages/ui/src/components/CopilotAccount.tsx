@@ -36,8 +36,8 @@ export function sourceText(a: ProviderAccount): ReactNode {
 function signedInText(a: ProviderAccount): string {
   const who = a.login ? ` as ${a.login}` : '';
   return a.stored === false
-    ? `Signed in${who} until the service restarts: Copilot could not store the sign-in on this server. Every task on this server uses this account.`
-    : `Signed in${who}. Every task on this server uses this account from its next message.`;
+    ? `Signed in${who} until the service restarts: Copilot could not store the sign-in on this server. Every thread on this server uses this account.`
+    : `Signed in${who}. Every thread on this server uses this account from its next message.`;
 }
 
 const GITHUB = 'https://github.com';
@@ -224,7 +224,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
     setDone(null);
     try {
       setAccount(await api.signOut(name));
-      setDone('Signed out. Tasks on this server cannot run until Copilot is signed in again.');
+      setDone('Signed out. Threads on this server cannot run until Copilot is signed in again.');
       refresh.current();
     } catch (e) {
       setFormError(`Could not sign out: ${describeError(e)}`);
@@ -302,7 +302,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
             {viaGh && <HelpTip label="gh sign-in">To sign this account out, run <code className="font-mono">gh auth logout</code> on the server.</HelpTip>}
           </span>
           {!viaGh && <Note>
-            {account.signed_in ? sourceText(account) : 'Tasks cannot start or run until Copilot is signed in.'}
+            {account.signed_in ? sourceText(account) : 'Threads cannot start or run until Copilot is signed in.'}
             {!account.signed_in && account.message ? <> Copilot says: {account.message}</> : null}
           </Note>}
         </div>
@@ -394,7 +394,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
                 <Button size="lg" variant="primary" loading={starting} disabled={busy} onClick={() => void startDevice()}>
                   Sign in with GitHub
                 </Button>
-                <Note className="min-w-0 flex-1 basis-60">Get a code here, enter it on GitHub and approve Copilot CLI. Every task on this server then uses that account.</Note>
+                <Note className="min-w-0 flex-1 basis-60">Get a code here, enter it on GitHub and approve Copilot CLI. Every thread on this server then uses that account.</Note>
               </div>
               {linked && <Note className="[overflow-wrap:anywhere]">Use the GitHub account {linked.login}; this server is linked to it.</Note>}
             </>
@@ -439,7 +439,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
             )}
           </div>
           <Note id={`${name}-token-scope`} tone="warn">
-            This changes the Copilot account for every task on this server, and for the copilot command run as the same user here.
+            This changes the Copilot account for every thread on this server, and for the copilot command run as the same user here.
           </Note>
         </form>
       )}
@@ -457,7 +457,7 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       <AlertDialog
         {...replace.props}
         title="Replace the Copilot sign-in?"
-        description={`Every task on this server, and the copilot command run as the same user here, will use the token's account instead of ${account.login || 'the current one'}.`}
+        description={`Every thread on this server, and the copilot command run as the same user here, will use the token's account instead of ${account.login || 'the current one'}.`}
         confirmLabel="Sign in"
         danger={false}
         onConfirm={() => void signIn()}
@@ -465,14 +465,14 @@ export function CopilotAccount({ provider }: Readonly<{ provider: ProviderInfo }
       <AlertDialog
         {...signOut.props}
         title="Sign out of GitHub Copilot?"
-        description="Every task on this server stops working until Copilot is signed in again, and the copilot command run as the same user here is signed out too."
+        description="Every thread on this server stops working until Copilot is signed in again, and the copilot command run as the same user here is signed out too."
         confirmLabel="Sign out"
         onConfirm={() => void confirmSignOut()}
       />
       <AlertDialog
         {...unlink.props}
         title={`Unlink ${unlink.target ?? 'the account'}?`}
-        description="Copilot signs out on this server, and the next sign-in links its account. Every task on this server uses that account."
+        description="Copilot signs out on this server, and the next sign-in links its account. Every thread on this server uses that account."
         confirmLabel="Unlink"
         onConfirm={() => void confirmUnlink()}
       />
