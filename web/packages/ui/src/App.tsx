@@ -973,7 +973,7 @@ export default function App() {
       try {
         const info = provider(meta, first.settings.provider);
         if (info && !info.available) throw new Error(info.signed_out && info.reason ? info.reason : `${info.display_name} is unavailable: ${info.reason || 'not installed'}`);
-        s = await api.createSession(createRequest(projectId, first.settings, entry.id));
+        s = await api.createSession({ ...createRequest(projectId, first.settings, entry.id), ...(first.place && { place: first.place }) });
       } catch (e) {
         creating.current.set(projectId, { ...entry, busy: false });
         if (errorCode(e) === SIGNED_OUT || errorCode(e) === ACCOUNT_NOT_LINKED) refreshMeta();

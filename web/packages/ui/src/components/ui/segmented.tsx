@@ -6,6 +6,8 @@ import { cn } from '../../lib/cn';
 export interface Segment {
   value: string;
   label: ReactNode;
+  /** A segment that cannot be chosen now; its label or a line beside the control says why. */
+  disabled?: boolean;
 }
 
 /**
@@ -60,6 +62,7 @@ export function Segmented({
         <Radio.Root
           key={it.value}
           value={it.value}
+          disabled={it.disabled}
           className="flex h-full cursor-pointer items-center justify-center rounded-[5px] px-2.5 text-center text-caption font-medium whitespace-nowrap text-muted transition-colors duration-100 hover:text-ink focus-visible:-outline-offset-2 data-checked:text-ink data-disabled:cursor-not-allowed data-disabled:opacity-45"
         >
           {it.label}

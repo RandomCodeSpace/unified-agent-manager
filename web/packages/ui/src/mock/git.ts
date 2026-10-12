@@ -37,6 +37,18 @@ const DRAFT = `fix(vterm): replay focus events on re-attach
 Redraw now re-emits ?1004 after the private-mode replay, so a
 re-attached client receives focus events again.`;
 
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+/** A Project's local and remote branches, newest work first within each. */
+function branchesOf(p: Project) {
+  const local = [p.branch ?? 'main', 'main', 'feat/settings-rail', 'fix/vterm-focus-replay', 'uam/receipt-stamps'];
+  const remote = ['origin/main', 'origin/release/1.4', 'origin/release/1.3', 'origin/feat/settings-rail', 'origin/renovate/vite-8.x'];
+  return [
+    ...[...new Set(local)].map((name, i) => ({ name, remote: false, updated_at: hoursAgo(i * 30) })),
+    ...remote.map((name, i) => ({ name, remote: true, updated_at: hoursAgo(2 + i * 40) })),
+  ];
+}
+
 export function gitMock(host: GitHost) {
   const ahead: Record<string, number> = { p1: 1 };
   const behind: Record<string, number> = { p1: 2 };
@@ -67,6 +79,13 @@ export function gitMock(host: GitHost) {
 
   return {
     route(method: string, url: URL, body: Record<string, unknown>): Response | null {
+      const b = url.pathname.match(/^\/api\/projects\/([^/]+)\/branches$/);
+      if (b && method === 'GET') {
+        const p = host.projects().find((x) => x.id === decodeURIComponent(b[1]));
+        if (!p) return fail(404, 'project not found');
+        if (p.no_git) return fail(409, 'this folder is not in a Git repository');
+        return json(200, { branches: branchesOf(p) });
+      }
       const r = url.pathname.match(/^\/api\/sessions\/([^/]+)\/git(\/[a-z]+)?$/);
       if (!r) return null;
       const task = host.task(decodeURIComponent(r[1]));

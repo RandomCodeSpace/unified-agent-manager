@@ -1076,9 +1076,6 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
       el.replaceChildren(copy);
     };
     copyRow();
-    // The row's time, tokens and line go on changing: the copy shows them, at the place it was opened.
-    const changes = new MutationObserver(copyRow);
-    changes.observe(row, { subtree: true, childList: true, characterData: true });
     // The copy sits in a portal, away from the row's parents: it takes the type they give the row (a turn foot's small stamp text), so it fits the row's box.
     const from = getComputedStyle(row.parentElement ?? row);
     Object.assign(el.style, { fontFamily: from.fontFamily, fontSize: from.fontSize, fontWeight: from.fontWeight, lineHeight: from.lineHeight, letterSpacing: from.letterSpacing, fontVariantNumeric: from.fontVariantNumeric, color: from.color });
@@ -1087,6 +1084,9 @@ export function LiftedRow({ row, className }: Readonly<{ row: Element; className
       Object.assign(el.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
     };
     place();
+    // The row's time, tokens and line go on changing: the copy shows them, at the row's place and size (a chip's text can change its width).
+    const changes = new MutationObserver(() => { copyRow(); place(); });
+    changes.observe(row, { subtree: true, childList: true, characterData: true });
     window.addEventListener('resize', place);
     return () => {
       changes.disconnect();

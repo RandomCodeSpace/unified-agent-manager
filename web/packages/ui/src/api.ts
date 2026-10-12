@@ -2162,6 +2162,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       /** Where the Thread runs; absent is the Project's current branch. */
       place?: ThreadPlace;
     }) => call<SessionSummary>('POST', '/api/sessions', body),
+
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
     settings: (id: string, body: { model?: string; effort?: string; context_size?: string; mode?: PermissionMode; agent?: string }) =>
@@ -2206,7 +2207,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     projectFiles: (id: string, q: string, limit = 50, base?: string) =>
       call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}${base ? `&base=${enc(base)}` : ''}`),
     /** The branches a new worktree can start from, local and remote, most recently committed first. */
-    projectBranches: (id: string) => call<BranchList>('GET', `/api/projects/${enc(id)}/branches`),
+    projectBranches: (id: string, signal?: AbortSignal) => call<BranchList>('GET', `/api/projects/${enc(id)}/branches`, undefined, false, signal),
     /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */
     tree: (id: string, dir: string, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files/tree?dir=${enc(dir)}`, undefined, false, signal),
     upload: uploadFile,
