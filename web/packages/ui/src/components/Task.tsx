@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
-import { Suspense, lazy, memo, startTransition, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
 import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../state';
@@ -27,11 +27,9 @@ import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
-import { BranchChip } from './BranchChip';
-import { lowDisk } from '../lib/worktrees';
-import { PLACE_CAPABILITY, PlaceChip } from './PlacePicker';
+import { DraftPlaceFoot, PLACE_CAPABILITY, PlaceFoot } from './PlacePicker';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
-import { canRename, TaskList, taskMenuItems, useTaskActions } from './taskActions';
+import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
 import { Transcript } from './Transcript';
 import { ForkPicker } from './Fork';
@@ -1107,7 +1105,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 </Button>
               </Tip>
             )}
-            <BranchChip session={session} project={project} size={session.worktree?.size_bytes} lowDisk={lowDisk(meta?.disk)} />
+            <PlaceFoot session={session} project={project} />
           </ComposerFoot>
         </div>
       </div>
@@ -1128,7 +1126,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   );
 }
 
-/** The strip under the composer: the Thread's branch and folder. */
+/** The strip under the composer: where the Thread runs (PlacePicker). */
 function ComposerFoot({ children }: Readonly<{ children: ReactNode }>) {
   return <div className="flex h-8 min-w-0 items-center gap-1 pt-1.5 empty:hidden">{children}</div>;
 }
@@ -1158,18 +1156,18 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
     items: [], interactions: [], subagents: [], history_truncated: false, last_submission: null,
   }));
   const onSettings = useCallback((s: SessionSummary) => setSession((d) => ({ ...d, ...s })), []);
-  // Where the Thread runs: chosen at the composer's foot, sent with the first message.
+  // Where the Thread runs: chosen at the composer's foot, applied by the first message.
   const api = useApi();
   const placeable = api.supports(PLACE_CAPABILITY) && !project.no_git;
   const [place, setPlace] = useState<ThreadPlace>({ mode: 'current' });
-  const { sessions } = useContext(TaskList);
-  const blocking = sessions.find((s) => s.project_id === project.id && s.workdir === project.dir && LIVE.includes(s.state) && (s.stage ?? 'active') === 'active');
   const placed = placeable && place.mode !== 'current';
+  // The @ picker lists the branch the Thread will run on.
+  const filesBase = !placed ? undefined : place.mode === 'worktree' ? place.base : place.mode === 'switch' ? place.branch : undefined;
   const newTask = useMemo(() => ({
     projectId: project.id,
-    ...(placed && place.mode === 'worktree' && place.base ? { filesBase: place.base } : {}),
+    ...(filesBase ? { filesBase } : {}),
     send: (first: FirstMessage) => onSend(project.id, placed ? { ...first, place } : first),
-  }), [project.id, onSend, placed, place]);
+  }), [project.id, onSend, placed, place, filesBase]);
   return (
     <div className="flex min-h-0 flex-1 flex-col animate-rise">
       <header className="pane-header flex h-header shrink-0 items-center gap-1.5 pr-2 pl-3">
@@ -1184,7 +1182,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
       </div>
       <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
-        <ComposerFoot>{placeable ? <PlaceChip project={project} place={place} onPlace={setPlace} blocking={blocking} lowDisk={lowDisk(meta?.disk)} /> : <BranchChip session={session} project={project} lowDisk={lowDisk(meta?.disk)} />}</ComposerFoot>
+        <ComposerFoot>{placeable ? <DraftPlaceFoot project={project} place={place} onPlace={setPlace} /> : <PlaceFoot session={session} project={project} />}</ComposerFoot>
       </div>
     </div>
   );

@@ -856,10 +856,16 @@ export interface SessionSummary {
   capabilities: Capabilities;
 }
 
-/** Where a new Thread runs: the Project's current branch, a new `uam/…` branch in its folder, or a new worktree from `base` (HEAD when absent). */
+/**
+ * Where a new Thread runs: the Project's current branch, a new `uam/…` branch in its folder, an existing `branch` the folder
+ * switches to (`switch`, `branch-switch-v1`; with `remote`, a remote branch a new local branch tracks), or a new worktree
+ * from `base` (HEAD when absent).
+ */
 export interface ThreadPlace {
-  mode: 'current' | 'branch' | 'worktree';
+  mode: 'current' | 'branch' | 'switch' | 'worktree';
   base?: string;
+  branch?: string;
+  remote?: boolean;
 }
 
 /** GET /api/projects/{id}/branches. */
@@ -867,6 +873,9 @@ export interface BranchList {
   branches: { name: string; remote: boolean; updated_at?: string }[];
   /** Why the list is empty or cut short. */
   reason?: string;
+  /** What keeps the Project folder on its branch now: the first Thread there that has not finished, and its changed tracked files. Absent from older servers. */
+  busy?: { id: string; name: string };
+  uncommitted?: number;
 }
 
 export type ItemKind = 'user' | 'assistant' | 'reasoning' | 'tool' | 'notice';
@@ -1930,6 +1939,7 @@ const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boo
   ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
   ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
   ['usage-v1', (path) => path.startsWith('/api/usage')],
+  ['branch-switch-v1', (path) => /^\/api\/sessions\/[^/]+\/git\/branch(?:[?]|$)/.test(path)],
   ['worktrees-v1', (path) => /^\/api\/(?:worktrees|projects\/[^/]+\/branches)(?:[/?]|$)/.test(path)],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
   ['files-v1', (path) => /^\/api\/fs(?:[/?]|$)/.test(path) || /\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path)],
@@ -2215,6 +2225,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}${base ? `&base=${enc(base)}` : ''}`),
     /** The branches a new worktree can start from, local and remote, most recently committed first. */
     projectBranches: (id: string, signal?: AbortSignal) => call<BranchList>('GET', `/api/projects/${enc(id)}/branches`, undefined, false, signal),
+    /** Switches the Project folder a started Thread runs in to a new `uam/…` branch or an existing one, at once; 409 with the reason while it cannot (`branch_busy`, `branch_dirty`). */
+    switchBranch: (id: string, place: { mode: 'branch' } | { mode: 'switch'; branch: string; remote?: boolean }) => call<SessionSummary>('POST', `/api/sessions/${enc(id)}/git/branch`, place),
     /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */
     tree: (id: string, dir: string, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files/tree?dir=${enc(dir)}`, undefined, false, signal),
     upload: uploadFile,

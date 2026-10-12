@@ -859,7 +859,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
       name: 'Remove unused exports across packages',
       title: '',
       state: 'completed',
-      // Runs in its own worktree, with work saved nowhere else (the composer's branch chip).
+      // Runs in its own worktree, with work saved nowhere else (the composer's strip).
       branch: 'uam/remove-unused-exports',
       worktree: { path: '/home/user/.uam/worktrees/unified-agent-manager/uam-remove-unused-exports', branch: 'uam/remove-unused-exports' },
       git_pending: { uncommitted: 2, unpushed: 3 },
