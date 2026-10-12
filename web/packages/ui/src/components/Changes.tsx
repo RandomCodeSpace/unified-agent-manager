@@ -477,7 +477,8 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
 /** Where a comment goes: one line on one side of the diff, with its text when the comment was started. */
 type Anchor = Pick<ReviewComment, 'line' | 'side' | 'code'>;
 
-function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment }: Readonly<{
+/** One file's diff; the file panel's Diff view shows it without review marks or comments. */
+export function FileView({ path, file, error, viewed, onViewed, comments = [], onComment, onRemoveComment }: Readonly<{
   path: string;
   file: FileDiffData | null;
   error: string | null;
