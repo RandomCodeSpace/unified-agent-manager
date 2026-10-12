@@ -24,9 +24,12 @@ const NOTICES: Record<ClipboardNotice, string> = {
 
 /** The confirmation's copy for Close and Restart; moving to another Project's folder names it. */
 const ENDINGS = {
-  close: { title: 'Close the terminal?', then: '', label: 'Close terminal' },
-  restart: { title: 'Restart the terminal?', then: ', then starts a new shell', label: 'Restart' },
+  close: { title: 'Close the terminal?', after: '', label: 'Close terminal' },
+  restart: { title: 'Restart the terminal?', after: ', then starts a new shell', label: 'Restart' },
 };
+
+/** What ends the shell: Restart, Close, or moving to another Project's folder. */
+type Ending = 'restart' | 'close' | Project;
 
 /** What the Task header's Terminal control asks of the open terminal: close it (null), or move it to another Project's folder. */
 export interface TerminalHandle { end: (to: Project | null) => void }
@@ -48,17 +51,17 @@ export default function TerminalPanel({ project, ref, onClose }: Readonly<{ proj
     setShell((n) => n + 1);
   };
   // A connected shell may be running something, and Restart, Close and moving to another Project's folder all kill it: they confirm first.
-  const ending = useConfirm<'restart' | 'close' | Project>();
-  const finish = (action: 'restart' | 'close' | Project) => {
+  const ending = useConfirm<Ending>();
+  const finish = (action: Ending) => {
     if (action === 'restart') restart();
     else onClose(action === 'close' ? null : action);
   };
-  const end = (action: 'restart' | 'close' | Project) => {
+  const end = (action: Ending) => {
     if (status === 'connected') ending.ask(action);
     else finish(action);
   };
   useImperativeHandle(ref, () => ({ end: (to) => end(to ?? 'close') }));
-  const copy = typeof ending.target === 'string' ? ENDINGS[ending.target] : { title: 'Move the terminal?', then: `, then starts a new shell in ${ending.target?.name}`, label: 'Move terminal' };
+  const copy = typeof ending.target === 'string' ? ENDINGS[ending.target] : { title: 'Move the terminal?', after: `, then starts a new shell in ${ending.target?.name}`, label: 'Move terminal' };
   const [notice, setNotice] = useState<ClipboardNotice | null>(null);
   const timer = useRef<number>(undefined);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -89,7 +92,7 @@ export default function TerminalPanel({ project, ref, onClose }: Readonly<{ proj
       <AlertDialog
         {...ending.props}
         title={copy.title}
-        description={`This ends the shell and whatever runs in it${copy.then}.`}
+        description={`This ends the shell and whatever runs in it${copy.after}.`}
         confirmLabel={copy.label}
         onConfirm={() => {
           ending.close();
