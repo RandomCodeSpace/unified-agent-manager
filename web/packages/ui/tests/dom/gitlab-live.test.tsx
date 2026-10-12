@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { api, type GitLabItemSummary } from '../../src/api';
@@ -128,4 +128,42 @@ test('the open panel reads its running pipeline again on the same cadence', asyn
   await advance(20_000);
   await advance(60_000);
   expect(detail).toHaveBeenCalledTimes(3);
+});
+
+test('a job log opens at its end, where the failure is, and follows a running job unless scrolled up', async () => {
+  let height = 1000;
+  Object.defineProperty(HTMLPreElement.prototype, 'scrollHeight', { configurable: true, get: () => height });
+  Object.defineProperty(HTMLPreElement.prototype, 'clientHeight', { configurable: true, get: () => 200 });
+  try {
+    states.set('job:7', { state: 'running', title: 'lint', pipeline_id: 91 });
+    serve();
+    vi.spyOn(api, 'gitlabPipelineDetail').mockResolvedValue({ pipeline: { id: 91, status: 'running', sha: 'a'.repeat(40), ref: 'demo', web_url: '' }, jobs: [{ id: 7, name: 'lint', stage: 'test', status: 'running', allow_failure: false, web_url: '' }] });
+    let text = 'Preparing the executor\nstep 1\n';
+    vi.spyOn(api, 'gitlabJobTrace').mockImplementation(async () => ({ text, truncated: false }));
+    const state = { supported: true, auto_investigate: false, can_investigate: false, origin: { host: 'gitlab.example.com', path: 'group/repo' } };
+    const current: GitLabRef = { kind: 'job', id: 7 };
+    render(<GitLabItemsContext.Provider value={{ sessionId: 'log', origin: state.origin, state, current, open: vi.fn() }}><GitLabItemView refs={[current]} current={current} onOpen={vi.fn()} /></GitLabItemsContext.Provider>);
+    await advance(0);
+    const log = screen.getByText('step 1').closest('pre')!;
+    expect(log.scrollTop).toBe(1000);
+    // Scrolled up: the growing log keeps the owner's place.
+    log.scrollTop = 300;
+    fireEvent.scroll(log);
+    text += 'step 2\n';
+    height = 1200;
+    await advance(20_000);
+    expect(screen.getByText('step 2')).toBeTruthy();
+    expect(log.scrollTop).toBe(300);
+    // Back at the end: it follows again.
+    log.scrollTop = 1000;
+    fireEvent.scroll(log);
+    text += 'step 3\n';
+    height = 1400;
+    await advance(20_000);
+    expect(screen.getByText('step 3')).toBeTruthy();
+    expect(log.scrollTop).toBe(1400);
+  } finally {
+    delete (HTMLPreElement.prototype as { scrollHeight?: number }).scrollHeight;
+    delete (HTMLPreElement.prototype as { clientHeight?: number }).clientHeight;
+  }
 });

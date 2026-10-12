@@ -1,5 +1,5 @@
 import { ExternalLink, Search } from 'lucide-react';
-import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type GitLabItemSummary, type GitLabPipelineDetail, type GitLabReview as Review, type GitLabWorkItem, type GitLabWorkItemLink, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
@@ -229,11 +229,18 @@ function JobLog({ sessionId, pipelineId, job, revision }: Readonly<{ sessionId: 
   const growing = job.status === 'running' ? revision : 0;
   const { value: trace, error } = useRead((signal) => api.gitlabJobTrace(sessionId, job.id, undefined, pipelineId, signal), [api, sessionId, job.id, pipelineId, job.status, growing]);
   const lines = (trace?.text ?? '').replace(/\n$/, '').split('\n').slice(-LOG_LINES);
+  // The failure is at the end: the log opens there and stays there as it grows, unless the owner scrolled up.
+  const box = useRef<HTMLPreElement>(null);
+  const pinned = useRef(true);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  }, [trace?.text]);
   return (
     <PanelSection label={`${job.name} log`} meta={trace && `last ${lines.length} lines`}
       action={job.web_url && <a href={job.web_url} target="_blank" rel="noreferrer" className="inline-flex h-6 items-center gap-1 rounded-xs px-1 text-caption text-muted hover:text-ink">Full log<ExternalLink aria-hidden="true" className="size-3" /></a>}>
       {error ? <Note tone="error" role="alert">{error}</Note> : !trace ? <Skeleton label={`Loading the ${job.name} log…`} rows={3} /> : !trace.text ? <Note>No log is available for this job yet.</Note> : (
-        <pre aria-label={`${job.name} log`} className="max-h-96 overflow-auto rounded-md bg-sunken px-3 py-2 font-mono text-code-sm leading-5 text-body">
+        <pre ref={box} aria-label={`${job.name} log`} onScroll={(e) => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }} className="max-h-96 overflow-auto rounded-md bg-sunken px-3 py-2 font-mono text-code-sm leading-5 text-body">
           {lines.map((line, i) => <div key={i} className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', ERROR_LINE.test(line) && 'text-error')}>{line || ' '}</div>)}
         </pre>
       )}
