@@ -310,18 +310,16 @@ function onListKeyDown(e: KeyboardEvent<HTMLElement>) {
 
 /* ---------- Task row ---------- */
 
-/** A shelf or Done row's tip: the full title, its Project with the directory, why it is done, and when the Task was created, judged done and settled. */
-function shelfTip(s: SessionSummary, project: Project, done = false) {
+/** A shelf row's tip: the full title, its Project with the directory, and when the Task was created and settled. */
+function shelfTip(s: SessionSummary, project: Project) {
   const at = (label: string, iso?: string) => iso && <span className="block">{label} <time dateTime={iso}>{dateTime(iso)}</time></span>;
   return (
     <>
       <span className="block font-medium">{taskName(s) || 'New task'}</span>
       <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
       <span className="block text-on-primary/70 [overflow-wrap:anywhere]">{project.dir}</span>
-      {done && <span className="mt-1 block">{taskStatus(s, false).text}</span>}
       <span className="mt-1 block text-on-primary/70">
         {at('Created', s.created_at)}
-        {done && at('Done', s.done_at)}
         {at('Settled', s.settled_at)}
         {s.stage === 'settled' && s.settled_by && <span className="block">{SETTLED_BY[s.settled_by]}</span>}
       </span>
@@ -356,7 +354,6 @@ const STATUS_MARKS = {
   Working: { icon: WorkingMark, tone: 'text-accent' },
   Compacting: { icon: Minimize2, tone: 'text-badge-violet' },
   Review: { icon: Eye, tone: 'text-badge-teal' },
-  Done: { icon: CircleCheck, tone: 'text-success' },
   Finished: { icon: CircleCheck, tone: 'text-success' },
   'Tests fail': { icon: CircleAlert, tone: 'text-warning' },
   'Command failed': { icon: CircleAlert, tone: 'text-warning' },
@@ -395,12 +392,11 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
 
 /**
  * `compact`: a Settled shelf row, the Project badge and title on one line, faded until hovered, focused or selected; the tip holds the rest.
- * `done`: a compact row in the Done section, faded less than the shelves' (it is recent news, not storage).
  * Otherwise a Task row, never more than two lines: Project badge/name and state, then Task title, muted branch and time;
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
-const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, done = false, tabStop, rowKey = s.id, machine, named = true, oneInstance = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; done?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean; /** Every row of the list is from one instance: the tip leaves out its name. */ oneInstance?: boolean }>) {
+const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, tabStop, rowKey = s.id, machine, named = true, oneInstance = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean; /** Every row of the list is from one instance: the tip leaves out its name. */ oneInstance?: boolean }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
@@ -421,7 +417,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   if (compact) {
     rowClass = cn(
       'flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui transition-[background-color,color,opacity] duration-100 focus-visible:-outline-offset-2 pointer-coarse:h-11',
-      selected ? 'bg-tint-selected' : cn(done ? 'opacity-80' : 'opacity-60', 'hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100'),
+      selected ? 'bg-tint-selected' : 'opacity-60 hover:bg-tint-hover hover:opacity-100 focus-within:opacity-100',
       weight,
     );
   } else {
@@ -446,7 +442,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
-        <Tip label={<>{machine && !unavailable && !oneInstance && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project, done) : rowTip(s, project, status.text, diff)}</>} side="right">
+        <Tip label={<>{machine && !unavailable && !oneInstance && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
           <button
             type="button"
             data-nav={rowKey}
@@ -519,9 +515,9 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
   );
 });
 
-/* ---------- Done section and the Settled shelf (archived Tasks are in Settings → Archived) ---------- */
+/* ---------- The Settled shelf (archived Tasks are in Settings → Archived) ---------- */
 
-/** Done and Settled show their latest this many rows until "Show all". */
+/** Settled shows its latest this many rows until "Show all". */
 const SHELF_CAP = 10;
 
 /** A section's rows on screen: the first `SHELF_CAP` unless `all`, plus the selected one when it is older. */
@@ -538,8 +534,8 @@ function shelfKeys(label: string, rows: ListRow[], open: boolean, selectedKey: s
   return [`shelf:${label}`, ...capRows(rows, all, selectedKey).filter((r) => open || r.key === selectedKey).map((r) => r.key), ...(open && rows.length > SHELF_CAP ? [`more:${label}`] : [])];
 }
 
-/** Done or Settled, under the Task list's scroller: an open section's rows scroll on their own within 40% of the screen, so the Task list keeps the rest. */
-function Shelf({ label, icon, rows, selectedKey, open, onToggle, tabStop, render, all, onAll }: Readonly<{ label: string; /** A glyph before the label (Done's check). */ icon?: ReactNode; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; /** Every row, not only the latest SHELF_CAP. */ all: boolean; onAll: () => void; render: (row: ListRow, compact: boolean) => ReactNode }>) {
+/** Settled, under the Task list's scroller: its open rows scroll on their own within 40% of the screen, so the Task list keeps the rest. */
+function Shelf({ label, rows, selectedKey, open, onToggle, tabStop, render, all, onAll }: Readonly<{ label: string; rows: ListRow[]; selectedKey: string | null; open: boolean; onToggle: () => void; /** The key of the row holding the list's tab stop. */ tabStop?: string; /** Every row, not only the latest SHELF_CAP. */ all: boolean; onAll: () => void; render: (row: ListRow, compact: boolean) => ReactNode }>) {
   if (rows.length === 0) return null;
   const pinned = !open ? rows.find((r) => r.key === selectedKey) : undefined;
   const shown = capRows(rows, all, selectedKey);
@@ -553,7 +549,6 @@ function Shelf({ label, icon, rows, selectedKey, open, onToggle, tabStop, render
         className="mt-1 flex h-7 w-full shrink-0 items-center gap-2 rounded-sm px-2 text-caption text-muted transition-colors hover:bg-tint-hover hover:text-body focus-visible:-outline-offset-2 pointer-coarse:h-11"
         onClick={onToggle}
       >
-        {icon}
         <span className="whitespace-nowrap">
           {label} <span className="tabular-nums text-muted">{rows.length}</span>
         </span>
@@ -599,13 +594,13 @@ function useSidebarGroups(rows: ListRow[], list: RefObject<HTMLDivElement | null
   const rowOf = new Map(rows.map((row) => [row.task, row]));
   const desired = new Map<string, Placement>();
   for (const [group, tasks] of Object.entries(groupTasks(rows.map((row) => row.task)))) {
-    for (const task of tasks) desired.set(rowOf.get(task)!.key, [group as TaskGroup, group === 'done' ? task.done_at ?? '' : task.settled_at ?? '']);
+    for (const task of tasks) desired.set(rowOf.get(task)!.key, [group as TaskGroup, task.settled_at ?? '']);
   }
   const [placements, setPlacements] = useState(desired);
   const shown = new Map<string, Placement>();
   for (const row of rows) {
     const target = desired.get(row.key)!;
-    const automatic = target[0] === 'done' || (target[0] === 'settled' && !!row.task.settled_by);
+    const automatic = target[0] === 'settled' && !!row.task.settled_by;
     shown.set(row.key, automatic ? placements.get(row.key) ?? target : target);
   }
   // New Tasks, resumed work, explicit stage changes and removed sources take effect in this render.
@@ -637,9 +632,9 @@ function useSidebarGroups(rows: ListRow[], list: RefObject<HTMLDivElement | null
       for (const event of events) node.removeEventListener(event, schedule, true);
     };
   }, [pending, list, placements]);
-  const grouped: Record<TaskGroup, ListRow[]> = { active: [], done: [], settled: [], archived: [] };
+  const grouped: Record<TaskGroup, ListRow[]> = { active: [], settled: [], archived: [] };
   for (const row of rows) grouped[shown.get(row.key)![0]].push(row);
-  for (const group of ['done', 'settled'] as const) grouped[group].sort((a, b) => shown.get(b.key)![1].localeCompare(shown.get(a.key)![1]));
+  grouped.settled.sort((a, b) => shown.get(b.key)![1].localeCompare(shown.get(a.key)![1]));
   return grouped;
 }
 
@@ -703,36 +698,32 @@ export const Sidebar = memo(function Sidebar({
       return sidebarTasks(own.projects, own.sessions, chosen ? chosen.id : null, query).map((task) => ({ key: encodeEntity(m.id || null, task.id), task, project: projectMap.get(task.project_id)!, machine: m }));
     }).sort((a, b) => b.task.created_at.localeCompare(a.task.created_at));
   }, [machines, projects, sessions, actions.filter, query, chosen, filterMachine]);
-  const { active, done, settled } = useSidebarGroups(rows, list);
+  const { active, settled } = useSidebarGroups(rows, list);
   // Newest first, whatever their state: a row never moves because its Task changed.
   const unsettled = active;
   const here = machines?.find((m) => m.active);
   const selectedKey = selectedId && here ? encodeEntity(here.id || null, selectedId) : selectedId;
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
-  // Done is open until closed; Done and Settled are never open together.
-  const doneOpen = !settledOpen && (shelves[`${shelfScope}:done`] ?? true);
-  const [doneAll, setDoneAll] = useState(false);
   const [settledAll, setSettledAll] = useState(false);
   // The row holding the list's one tab stop: the last focused while it is on screen, else the open Task's, else the first.
   const [focused, setFocused] = useState<string | null>(null);
   const searching = !!query.trim();
-  const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Done', done, doneOpen, selectedKey, doneAll), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
+  const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
   const anyProject = useAnyProject(projects);
   const oneInstance = new Set(rows.map((r) => r.machine?.id)).size < 2;
-  const renderRow = (r: ListRow, compact = false, isDone = false) => {
+  const renderRow = (r: ListRow, compact = false) => {
     // Inactive machines keep their own read marks; the active one follows App's open Task.
     const reader = r.machine && !r.machine.active ? r.machine.hasNews : hasNews;
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} oneInstance={oneInstance} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} done={isDone} tabStop={r.key === tabStop} />;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} oneInstance={oneInstance} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} tabStop={r.key === tabStop} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
   };
-  // Opening Done or Settled closes the other.
-  const openShelf = (shelf: 'done' | 'settled' | null) =>
+  const toggleSettled = () =>
     setShelves((s) => {
-      const next = { ...s, [`${shelfScope}:done`]: shelf === 'done', [`${shelfScope}:settled`]: shelf === 'settled' };
+      const next = { ...s, [`${shelfScope}:settled`]: !settledOpen };
       localStorage.setItem(SHELVES_KEY, JSON.stringify(next));
       return next;
     });
@@ -749,7 +740,7 @@ export const Sidebar = memo(function Sidebar({
 
   const conn = CONNECTION_TONE[connection];
 
-  // The list: a skeleton before the first snapshot, the invitation without a Project, the search's matches, or the Tasks with Done and Settled under them.
+  // The list: a skeleton before the first snapshot, the invitation without a Project, the search's matches, or the Tasks with Settled under them.
   let body: ReactNode;
   let shelvesBody: ReactNode = null;
   if (!loaded) {
@@ -788,11 +779,10 @@ export const Sidebar = memo(function Sidebar({
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
       </>
     );
-    // Done and Settled sit at the foot, outside the Task list's scroller, so opening one never pushes the Tasks off screen.
+    // Settled sits at the foot, outside the Task list's scroller, so opening it never pushes the Tasks off screen.
     shelvesBody = (
       <div className="flex shrink-0 flex-col px-2">
-        <Shelf label="Done" icon={<CircleCheck aria-hidden="true" className="size-3.5 shrink-0 text-success" />} rows={done} selectedKey={selectedKey} open={doneOpen} onToggle={() => openShelf(doneOpen ? null : 'done')} tabStop={tabStop} render={(r) => renderRow(r, true, true)} all={doneAll} onAll={() => setDoneAll((v) => !v)} />
-        <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={() => openShelf(settledOpen ? null : 'settled')} tabStop={tabStop} render={renderRow} all={settledAll} onAll={() => setSettledAll((v) => !v)} />
+        <Shelf label="Settled" rows={settled} selectedKey={selectedKey} open={settledOpen} onToggle={toggleSettled} tabStop={tabStop} render={renderRow} all={settledAll} onAll={() => setSettledAll((v) => !v)} />
       </div>
     );
   }

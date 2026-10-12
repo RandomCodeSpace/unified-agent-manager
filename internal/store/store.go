@@ -532,8 +532,6 @@ type WebState struct {
 	Outcome string `json:"outcome,omitempty"`
 	// Suggestions are the replies suggested after the last completed turn.
 	Suggestions *WebSuggestions `json:"suggestions,omitempty"`
-	// Done is the done check of the last completed turn.
-	Done *WebDone `json:"done,omitempty"`
 	// UnseenEnd marks a Task that failed or was interrupted while no page
 	// showed it, and that no page has opened since.
 	UnseenEnd bool `json:"unseen_end,omitempty"`
@@ -584,14 +582,14 @@ var knownWebStateFields = map[string]struct{}{
 	"rewind":              {},
 	"outcome":             {},
 	"suggestions":         {},
-	"done":                {},
 	"unseen_end":          {},
 	"stop_reason":         {},
-	// Retired: the removed planner's mark on a lane Task (ADR 0007), and the
-	// removed done-check settle's reviewed item. Known, so they drop on the
-	// next save.
+	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
+	// removed done-check settle's reviewed item and the removed done check's
+	// verdict. Known, so they drop on the next save.
 	"retired":       {},
 	"reviewed_item": {},
+	"done":          {},
 }
 
 func (w WebState) MarshalJSON() ([]byte, error) {

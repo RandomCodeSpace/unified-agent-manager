@@ -135,7 +135,6 @@ func TestUnarchiveRestoresFinishedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	setSession(m, sum.ID, func(s *webSession) {
-		s.done = &store.WebDone{ItemID: "old-reply", Verdict: doneVerdictDone, At: time.Now()}
 		s.settledBy, s.unseenEnd = settledByAuto, true
 		s.detail, s.stopCode = "old stop", "old-code"
 	})
@@ -154,7 +153,7 @@ func TestUnarchiveRestoresFinishedTask(t *testing.T) {
 		if got.ID != sum.ID || got.ConversationID != sum.ConversationID || got.ProjectID != sum.ProjectID ||
 			got.Stage != StageActive || got.State != StateCompleted || got.Open ||
 			!got.ArchivedAt.IsZero() || !got.SettledAt.IsZero() || got.SettledBy != "" ||
-			!got.DoneAt.IsZero() || got.StateDetail != "" || !got.UpdatedAt.Equal(at) {
+			got.StateDetail != "" || !got.UpdatedAt.Equal(at) {
 			t.Fatalf("restored = %+v", got)
 		}
 	}
@@ -164,7 +163,7 @@ func TestUnarchiveRestoresFinishedTask(t *testing.T) {
 		t.Fatalf("unarchive started work: opens %d, closes %d, sends %d", len(prov.Opens()), conv.Closes(), len(conv.Sends()))
 	}
 	rec, _ := loadRecord(t, st, "fake", sum.ID)
-	if rec.Web.Turn != StateCompleted || rec.Web.Stage != StageActive || rec.Web.Done != nil || rec.Web.UnseenEnd || rec.Web.StopReason != "" {
+	if rec.Web.Turn != StateCompleted || rec.Web.Stage != StageActive || rec.Web.UnseenEnd || rec.Web.StopReason != "" {
 		t.Fatalf("stored unarchive = %+v", rec.Web)
 	}
 	if _, err := m.Unarchive(sum.ID); statusOf(err) != http.StatusConflict {

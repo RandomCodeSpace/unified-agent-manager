@@ -60,3 +60,23 @@ func TestReviewedItemDropsOnSave(t *testing.T) {
 		t.Fatalf("saved = %s", encoded)
 	}
 }
+
+// A Task record with the removed done check's verdict loads, and the next
+// save drops the field.
+func TestDoneVerdictDropsOnSave(t *testing.T) {
+	var web WebState
+	old := `{"turn":"completed","stage":"active","done":{"item_id":"a1","verdict":"done","by":"model","line":"All tests pass.","at":"2026-10-10T10:00:00Z"}}`
+	if err := json.Unmarshal([]byte(old), &web); err != nil {
+		t.Fatal(err)
+	}
+	if web.Turn != "completed" || len(web.unknown) != 0 {
+		t.Fatalf("loaded = %+v", web)
+	}
+	encoded, err := json.Marshal(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"done"`) || !strings.Contains(string(encoded), `"stage":"active"`) {
+		t.Fatalf("saved = %s", encoded)
+	}
+}

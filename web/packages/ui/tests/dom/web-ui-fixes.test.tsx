@@ -16,13 +16,14 @@ afterEach(() => vi.restoreAllMocks());
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
 
 describe('sidebar shelves', () => {
-  test('Done and Settled sit under the Task list\'s scroller; an open section scrolls on its own within 40% of the screen', async () => {
+  test('Settled sits under the Task list\'s scroller and scrolls on its own within 40% of the screen; there is no Done section', async () => {
     renderApp();
     const side = await sidebar();
     const tasks = document.querySelector('ul[aria-label="Unsettled tasks"]')!.parentElement!;
     expect(tasks.className).toContain('overflow-y-auto');
-    for (const header of [side.getByRole('button', { name: /^Done/ }), side.getByRole('button', { name: /^Settled/ })]) expect(tasks.contains(header)).toBe(false);
-    const rows = document.querySelector('nav[aria-label="Tasks"] [data-task-row="d1"]')!.closest('ul')!.parentElement!;
+    expect(tasks.contains(side.getByRole('button', { name: /^Settled/ }))).toBe(false);
+    expect(side.queryByRole('button', { name: /^Done/ })).toBeNull();
+    const rows = document.querySelector('nav[aria-label="Tasks"] [data-task-row="t11"]')!.closest('ul')!.parentElement!;
     expect(rows.className).toContain('overflow-y-auto');
     expect(rows.className).toContain('max-h-[40dvh]');
   });

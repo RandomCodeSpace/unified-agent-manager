@@ -11,6 +11,7 @@ const PURPOSES: Record<string, string> = {
   'configuration-draft': 'Configuration draft',
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
+  // Made only by older versions; their calls stay in the 30-day log.
   'done-check': 'Task done check',
 };
 

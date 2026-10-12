@@ -90,15 +90,13 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Done' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /** A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished. */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
   // A turn whose own evidence failed never reads as a clean finish: no check, and the failures in words.
   const failures = outcomeFailures(s.outcome);
   if (failures) return { label: failures.startsWith('tests fail') ? 'Tests fail' : 'Command failed', text: `Finished · ${failures}`, tone: 'warning' };
-  // The service judged the finished turn done, read or not: its line from the reply says why.
-  if (s.done_at) return { label: 'Done', text: s.done_line || s.outcome || 'Done', tone: 'success' };
   if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
   return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
 }
@@ -155,19 +153,10 @@ export function tasksOf(sessions: SessionSummary[], projectId: string): SessionS
   return sessions.filter((s) => s.project_id === projectId).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 }
 
-/**
- * A Task the service judged done (`done_at`), read or not, while it is still active and finished: Working or a shelf ignores
- * the judgement. Once you have reviewed it the service settles it (`settled_by: 'reviewed'`).
- */
-function isDone(s: SessionSummary): boolean {
-  return !readOnly(s) && !!s.done_at && shownState(s) === 'completed';
-}
-
-/** Active Tasks, the Done ones (newest judgement first), then the two shelves. */
+/** Active Tasks, then the two shelves. */
 export function groupTasks(tasks: SessionSummary[]) {
   return {
-    active: tasks.filter((t) => !readOnly(t) && !isDone(t)),
-    done: tasks.filter(isDone).sort((a, b) => b.done_at!.localeCompare(a.done_at!)),
+    active: tasks.filter((t) => !readOnly(t)),
     // Newest settled first; older records without `settled_at` last, in the given order.
     settled: tasks.filter((t) => t.stage === 'settled').sort((a, b) => (b.settled_at ?? '').localeCompare(a.settled_at ?? '')),
     archived: tasks.filter((t) => t.stage === 'archived'),

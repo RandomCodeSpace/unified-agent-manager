@@ -165,9 +165,6 @@ type Manager struct {
 	// turn outcomes.
 	titles     sync.WaitGroup
 	titleSlots chan struct{}
-	// doneHold holds the done check until then, after today's Utility limit
-	// refused it (done.go).
-	doneHold time.Time
 	// reads holds a slot for each read-only transcript load in progress.
 	reads chan struct{}
 	// archive caches windows of records read past the retained transcript.
@@ -497,10 +494,6 @@ type webSession struct {
 	// suggesting is the call in flight for them.
 	suggestions *store.WebSuggestions
 	suggesting  *suggestionRun
-	// done is the done check of the transcript's last item; judging is the
-	// item a check in flight judges (done.go).
-	done    *store.WebDone
-	judging string
 
 	persisted persistKey
 }
@@ -871,7 +864,6 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
 		s.fork = web.Fork
 		s.rewind = loadedRewind(web.Rewind)
-		s.done = loadDone(web.Done)
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		s.agent = web.Agent
@@ -1112,9 +1104,6 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Diff:    s.diff,
 		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
 		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
-	}
-	if s.doneShownLocked() {
-		out.DoneAt, out.DoneItemID, out.DoneLine = s.done.At, s.done.ItemID, s.done.Line
 	}
 	return out
 }
@@ -1780,9 +1769,6 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
-	if limitChanged || next.UtilityUnlimited != current.UtilityUnlimited || !maps.Equal(next.TitleModel, current.TitleModel) {
-		m.doneHold = time.Time{}
-	}
 	if !next.Terminal {
 		m.closeTerminalsLocked(errTerminalOff)
 	}
@@ -2149,7 +2135,7 @@ func (m *Manager) flush() (err error) {
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, Done: s.done, UnseenEnd: s.unseenEnd,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
 		})
@@ -2470,7 +2456,6 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 	m.outcomeTurnLocked(s, turn.State, turn.Completion)
 	switch turn.State {
 	case agentapi.TurnWorking:
-		m.clearDoneLocked(s)
 		s.setBase(StateWorking, "")
 	case agentapi.TurnCompleted:
 		s.setBase(StateCompleted, "")
@@ -4200,7 +4185,6 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 			s.archivedAt = time.Time{}
 			s.setBase(StateCompleted, "")
 			s.stopCode, s.unseenEnd = "", false
-			m.clearDoneLocked(s)
 		}
 	}
 	s.stage = to
