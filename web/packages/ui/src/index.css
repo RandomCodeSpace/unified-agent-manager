@@ -158,7 +158,6 @@
   --spacing-picker-phone: 40dvh;
 
   --animate-spin: spin 1s linear infinite;
-  --animate-flash: flash 1.4s var(--ease-app);
   --animate-rise: rise 240ms var(--ease-app);
   --animate-fade-in: fade-in 160ms var(--ease-app);
   --animate-slide-in: slide-in 240ms var(--ease-app);
@@ -166,14 +165,6 @@
   @keyframes spin {
     to {
       transform: rotate(360deg);
-    }
-  }
-  @keyframes flash {
-    0% {
-      background-color: var(--color-accent-wash);
-    }
-    100% {
-      background-color: transparent;
     }
   }
   @keyframes rise {
@@ -543,6 +534,31 @@
     left: 0;
     height: 1px;
     background: linear-gradient(to right, transparent, var(--color-hairline) 12%, var(--color-hairline) 88%, transparent);
+  }
+  /* The locate flash (Task.tsx adds the class for 1.4s): an `accent-wash` overlay behind the row's
+     content fades out on its opacity; the row's own background never animates. */
+  .animate-flash {
+    position: relative;
+    isolation: isolate;
+  }
+  .animate-flash::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: var(--color-accent-wash);
+    opacity: 0;
+    animation: flash 1.4s var(--ease-app);
+  }
+  @keyframes flash {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
   }
   /* A collapsed long text: the last lines fade into the surface beneath (an overlay, not a mask). */
   .clamp-fade::after {

@@ -1341,13 +1341,13 @@ export default function App() {
           <div
             className={cn(
               SHELL,
-              narrow ? 'grid-cols-1' : cn('transition-[grid-template-columns] duration-240 ease-app', columns),
+              narrow ? 'grid-cols-1' : columns,
             )}
           >
-            {/* The column animates to the collapsed rail's width; the sidebar keeps its width inside so nothing reflows on the way, and is inert once collapsed, under the rail. */}
+            {/* The column steps to the collapsed rail's width at once (its width never animates); the sidebar keeps its width inside, fades in when it opens, and is inert once collapsed, under the rail that fades in. */}
             {!narrow && (
               <aside ref={aside} className="rail-edge relative min-h-0 overflow-clip">
-                <div className="h-full w-rail" inert={!sidebarOpen} aria-hidden={!sidebarOpen}>{sidebar}</div>
+                <div className={cn('h-full w-rail transition-opacity duration-240 ease-app', !sidebarOpen && 'opacity-0')} inert={!sidebarOpen} aria-hidden={!sidebarOpen}>{sidebar}</div>
                 {!sidebarOpen && (
                   <div className="absolute inset-y-0 left-0 animate-fade-in">
                     <SidebarRail projects={state.projects} actions={actions} connection={connection} count={needsYouTasks} />
