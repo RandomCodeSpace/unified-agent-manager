@@ -1,5 +1,5 @@
 import { CircleCheck, CircleDashed, CircleDot, CircleX, GitPullRequest, GitPullRequestDraft, Layers, SquareCheck } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useState, useSyncExternalStore, type MouseEvent } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type RefObject } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type GitLabItemSummary, type GitLabPipelineState, type Item } from '../api';
 import { cn } from '../lib/cn';
@@ -53,68 +53,144 @@ export function useGitLabOrigin(sessionId: string, working: boolean): GitLabPipe
   return state?.id === sessionId ? state.value : undefined;
 }
 
-/* ---------- item states, read in batches and kept for a minute ---------- */
+/* ---------- item states: read in batches, kept live while on screen ---------- */
 
-const SUMMARY_TTL = 60_000;
+// An item an on-screen strip or the open panel shows is read again while the tab is visible: a
+// running pipeline or job every 20 s, an open merge request or work item every minute. A finished
+// item is not read again. Due items go to the service together, 20 to a request; the service
+// shares one cached read per item between every viewer.
 const RUNNING = new Set(['created', 'waiting_for_resource', 'preparing', 'pending', 'running', 'scheduled']);
-type Entry = { at: number; item?: GitLabItemSummary; loading?: boolean };
+const FAST = 20_000;
+const SLOW = 60_000;
+/** A tab that comes back reads again what is older than this. */
+const FRESH = 15_000;
+type Reader = (refs: string[]) => Promise<GitLabItemSummary[]>;
+/** `rev` counts the reads since the first, so an open view knows to read its detail again. */
+type Entry = { at: number; item?: GitLabItemSummary; loading?: boolean; rev: number };
+interface Watch { scope: string; read: Reader; keys: string[]; visible: boolean }
 const summaries = new Map<string, Entry>();
-const waiting = new Map<string, { read: (refs: string[]) => Promise<GitLabItemSummary[]>; refs: Set<string> }>();
+const watches = new Set<Watch>();
 const listeners = new Set<() => void>();
 let version = 0;
 const changed = () => { version++; listeners.forEach((listener) => listener()); };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); };
 
-function flush() {
-  for (const [scope, batch] of waiting) {
-    waiting.delete(scope);
-    const refs = [...batch.refs];
-    for (let i = 0; i < refs.length; i += 20) {
-      const chunk = refs.slice(i, i + 20);
-      batch.read(chunk).then((items) => {
-        for (const item of items) summaries.set(`${scope}\n${item.ref}`, { at: Date.now(), item });
-      }, (error: unknown) => {
-        for (const ref of chunk) summaries.set(`${scope}\n${ref}`, { at: Date.now(), item: { ref, kind: '', error: describeError(error) } });
-      }).finally(changed);
+/** How long an item's state holds before it is read again; null once it no longer changes. */
+function cadence(item?: GitLabItemSummary): number | null {
+  if (!item) return 0;
+  // An item GitLab would not give while rate limiting is asked again; the service answers it without GitLab.
+  if (item.error) return item.stale ? SLOW : null;
+  if (item.kind === 'pipeline' || item.kind === 'job') return RUNNING.has(item.state ?? '') ? FAST : null;
+  return item.state === 'opened' ? SLOW : null;
+}
+
+const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+let timer: number | undefined;
+let queued = false;
+let listening = false;
+
+function schedule() {
+  if (queued) return;
+  queued = true;
+  queueMicrotask(() => { queued = false; pass(); });
+}
+
+/** Reads the on-screen items that are due; `within` reads sooner, as when the tab comes back. */
+function pass(within?: number) {
+  window.clearTimeout(timer);
+  timer = undefined;
+  if (hidden()) return;
+  const now = Date.now();
+  let next = Infinity;
+  const due = new Map<string, { read: Reader; keys: Set<string> }>();
+  for (const watch of watches) {
+    if (!watch.visible) continue;
+    for (const key of watch.keys) {
+      const entry = summaries.get(`${watch.scope}\n${key}`);
+      if (entry?.loading) continue;
+      const every = cadence(entry?.item);
+      if (every === null) continue;
+      const wait = entry?.item ? entry.at + Math.min(every, within ?? every) - now : 0;
+      if (wait > 0) { next = Math.min(next, wait); continue; }
+      const batch = due.get(watch.scope) ?? { read: watch.read, keys: new Set<string>() };
+      batch.keys.add(key);
+      due.set(watch.scope, batch);
     }
+  }
+  for (const [scope, batch] of due) read(scope, batch.read, [...batch.keys]);
+  if (next < Infinity) timer = window.setTimeout(() => pass(), next);
+}
+
+function read(scope: string, reader: Reader, keys: string[]) {
+  for (const key of keys) {
+    const entry = summaries.get(`${scope}\n${key}`);
+    summaries.set(`${scope}\n${key}`, { at: entry?.at ?? 0, item: entry?.item, rev: entry?.rev ?? 0, loading: true });
+  }
+  for (let i = 0; i < keys.length; i += 20) {
+    const chunk = keys.slice(i, i + 20);
+    const settle = (answer: (key: string, before?: GitLabItemSummary) => GitLabItemSummary) => {
+      const at = Date.now();
+      for (const key of chunk) {
+        const before = summaries.get(`${scope}\n${key}`);
+        summaries.set(`${scope}\n${key}`, { at, item: answer(key, before?.item), rev: before?.item ? before.rev + 1 : 0 });
+      }
+    };
+    reader(chunk).then((items) => {
+      const byRef = new Map(items.map((item) => [item.ref, item]));
+      settle((key, before) => {
+        const item = byRef.get(key);
+        // A stale answer the service had no state for keeps the state this page last saw.
+        if (item?.stale && item.error && before && !before.error) return { ...before, stale: true };
+        return item ?? before ?? { ref: key, kind: '', error: 'unavailable' };
+      });
+    }, (error: unknown) => {
+      // A failed read keeps the last state, marked stale, and is asked again later.
+      settle((key, before) => before && !before.error ? { ...before, stale: true } : { ref: key, kind: '', error: describeError(error), stale: true });
+    }).finally(() => { changed(); schedule(); });
   }
 }
 
-/** The references not held (or held over a minute) and not on their way, marked as on their way. */
-function claim(scope: string, keys: string[]): string[] {
-  const now = Date.now();
-  return keys.filter((key) => {
-    const entry = summaries.get(`${scope}\n${key}`);
-    if (entry?.loading || (entry && now - entry.at <= SUMMARY_TTL)) return false;
-    summaries.set(`${scope}\n${key}`, { ...entry, at: now, loading: true });
-    return true;
-  });
+function listen() {
+  if (listening || typeof document === 'undefined') return;
+  listening = true;
+  const back = () => { if (!hidden()) pass(FRESH); };
+  document.addEventListener('visibilitychange', () => (hidden() ? pass() : back()));
+  window.addEventListener('focus', back);
 }
 
-/** The state of each item, keyed by its reference; asks the service for the ones it does not hold. */
-export function useSummaries(sessionId: string, refs: GitLabRef[]): Map<string, GitLabItemSummary | undefined> {
+/**
+ * The state of each item, keyed by its reference, kept live while it is on screen: while
+ * `target`'s element is in view, or always when there is no `target` (the open panel).
+ */
+export function useSummaries(sessionId: string, refs: GitLabRef[], target?: RefObject<Element | null>): Map<string, GitLabItemSummary | undefined> {
   const api = useApi();
   const scope = api.cacheKey(sessionId);
   useSyncExternalStore(subscribe, () => version);
   const keys = refs.map(refKey);
   const joined = keys.join(' ');
-  // A pipeline or job still running is read again each minute while it is on screen.
-  const [tick, setTick] = useState(0);
-  const running = keys.some((key) => RUNNING.has(summaries.get(`${scope}\n${key}`)?.item?.state ?? ''));
   useEffect(() => {
-    if (!running) return;
-    const timer = window.setTimeout(() => setTick((n) => n + 1), SUMMARY_TTL + 1000);
-    return () => window.clearTimeout(timer);
-  }, [running, tick]);
-  useEffect(() => {
-    const missing = claim(scope, joined.split(' ').filter(Boolean));
-    if (!missing.length) return;
-    const batch = waiting.get(scope) ?? { read: async (chunk: string[]) => (await api.gitlabItems(sessionId, chunk)).items, refs: new Set<string>() };
-    missing.forEach((key) => batch.refs.add(key));
-    if (!waiting.size) queueMicrotask(flush);
-    waiting.set(scope, batch);
-  }, [api, scope, sessionId, joined, tick]);
+    if (!joined) return;
+    listen();
+    const element = target?.current;
+    const observe = !!element && typeof IntersectionObserver !== 'undefined';
+    const watch: Watch = { scope, read: async (chunk) => (await api.gitlabItems(sessionId, chunk)).items, keys: joined.split(' '), visible: !target || (!!element && !observe) };
+    watches.add(watch);
+    const observer = observe ? new IntersectionObserver(([entry]) => {
+      if (watch.visible === entry.isIntersecting) return;
+      watch.visible = entry.isIntersecting;
+      schedule();
+    }) : undefined;
+    if (element) observer?.observe(element);
+    schedule();
+    return () => { observer?.disconnect(); watches.delete(watch); schedule(); };
+  }, [api, scope, sessionId, joined, target]);
   return new Map(keys.map((key) => [key, summaries.get(`${scope}\n${key}`)?.item]));
+}
+
+/** How many times the item was read again since it was first shown: an open view reads its detail again when it changes. */
+export function useSummaryRevision(sessionId: string, ref: GitLabRef): number {
+  const scope = useApi().cacheKey(sessionId);
+  return useSyncExternalStore(subscribe, () => summaries.get(`${scope}\n${refKey(ref)}`)?.rev ?? 0);
 }
 
 /* ---------- glyphs and words ---------- */
@@ -192,10 +268,11 @@ export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
     void seen; // A body read since the last render changes what the calls show.
     return turnGitLabRefs(calls.map((call) => callBodies.get(`${sessionId}\n${call.id}\n${call.tool?.status}`) ?? call), origin, own);
   }, [calls, origin, own, sessionId, seen]);
-  const items = useSummaries(sessionId, gl ? refs : []);
+  const box = useRef<HTMLDivElement>(null);
+  const items = useSummaries(sessionId, gl ? refs : [], box);
   if (!gl || !refs.length) return null;
   return (
-    <div role="group" aria-label="GitLab items in this turn" className="mt-3 flex flex-wrap items-center gap-1.5 font-sans">
+    <div ref={box} role="group" aria-label="GitLab items in this turn" className="mt-3 flex flex-wrap items-center gap-1.5 font-sans">
       <span className="mr-1 text-eyebrow uppercase text-muted">GitLab</span>
       {refs.map((r) => {
         const item = items.get(refKey(r));
@@ -205,9 +282,12 @@ export function TurnStrip({ items: calls }: Readonly<{ items: Item[] }>) {
           <KindGlyph r={r} item={item} className="size-3" />
           <span className={cn('font-medium', r.kind === 'job' && 'font-mono')}>{itemLabel(r, item)}</span>
           {word && <span className={item?.error ? 'text-muted' : toneText(item?.draft ? 'draft' : item?.state ?? '')}>{word}</span>}
+          {item?.pipeline_state && item.state === 'opened' && <><span aria-hidden="true" className="text-muted">·</span><span className={toneText(item.pipeline_state)}>pipeline {statusLabel(item.pipeline_state).toLowerCase()}</span></>}
+          {item?.stale && !item.error && <span className="text-muted">stale</span>}
         </>;
         const className = 'inline-flex h-6 items-center gap-1.5 rounded-sm bg-raised px-2 text-caption text-ink shadow-raised transition-colors duration-100 hover:bg-tint-hover aria-[current=true]:bg-tint-selected';
-        const title = item?.title && r.kind !== 'job' ? `${itemLabel(r, item, true)} · ${item.title}` : undefined;
+        const name = item?.title && r.kind !== 'job' ? `${itemLabel(r, item, true)} · ${item.title}` : undefined;
+        const title = item?.stale && !item.error ? `${name ? `${name} · ` : ''}Last known state: GitLab is rate limiting reads` : name;
         return item?.web_url
           ? <a key={refKey(r)} href={item.web_url} target="_blank" rel="noreferrer" aria-current={on || undefined} title={title} className={className} onClick={(e) => { if (!plainClick(e)) return; e.preventDefault(); gl.open(refs, r); }}>{body}</a>
           : <button key={refKey(r)} type="button" aria-current={on || undefined} title={title} className={className} onClick={() => gl.open(refs, r)}>{body}</button>;

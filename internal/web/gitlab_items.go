@@ -21,8 +21,11 @@ import (
 
 const (
 	gitLabItemRefLimit = 20
-	gitLabItemTTL      = 30 * time.Second
-	gitLabDescLimit    = 16 << 10
+	gitLabItemTTL      = 15 * time.Second
+	// gitLabItemKeep is how long a read state stays as the last known one
+	// when GitLab rate limits the next read.
+	gitLabItemKeep  = 30 * time.Minute
+	gitLabDescLimit = 16 << 10
 )
 
 // gitLabWorkItemQuery is the one GraphQL query the server runs, read-only,
@@ -38,8 +41,12 @@ type GitLabItemSummary struct {
 	State      string `json:"state,omitempty"`
 	Draft      bool   `json:"draft,omitempty"`
 	PipelineID int64  `json:"pipeline_id,omitempty"`
-	WebURL     string `json:"web_url,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// PipelineState is a merge request's head pipeline status.
+	PipelineState string `json:"pipeline_state,omitempty"`
+	WebURL        string `json:"web_url,omitempty"`
+	Error         string `json:"error,omitempty"`
+	// Stale marks the last known state, kept while GitLab rate limits reads.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // GitLabWorkItemLink is a parent or child of a work item. Ref is set when
@@ -160,35 +167,40 @@ func (m *Manager) gitLabProjectID(ctx context.Context, gate glabGate) (int64, er
 	return project.ID, nil
 }
 
-// gitLabItems reads the state of up to 20 items, each cached briefly so every
-// strip in a long conversation costs GitLab one read per item.
-func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) (out []GitLabItemSummary, err error) {
+// gitLabItems reads the state of up to 20 items. Each read is cached briefly
+// and shared by every viewer, so open strips and panels in any number of
+// browsers cost GitLab one read per item per gitLabItemTTL. While GitLab rate
+// limits reads the last known states come back marked stale.
+func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) ([]GitLabItemSummary, error) {
 	if len(refs) == 0 || len(refs) > gitLabItemRefLimit {
 		return nil, newError(http.StatusBadRequest, "ask for 1 to %d GitLab items", gitLabItemRefLimit)
 	}
 	m.gitlab.work.Lock()
 	defer m.gitlab.work.Unlock()
 	gate, err := m.gitLabItemGate(ctx, id)
+	if err != nil && gate.Host != "" && gitLabLimited(err) {
+		return m.staleGitLabItems(gate, refs), nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		m.gitLabRememberBackoff(gate.Host, err)
-		err = gitLabReviewError(err)
-	}()
 	projectID, err := m.gitLabProjectID(ctx, gate)
+	if gitLabLimited(err) {
+		m.gitLabRememberBackoff(gate.Host, err)
+		return m.staleGitLabItems(gate, refs), nil
+	}
 	if err != nil {
-		return nil, err
+		return nil, gitLabReviewError(err)
 	}
 	now := m.now()
-	out = make([]GitLabItemSummary, 0, len(refs))
-	for _, raw := range refs {
+	out := make([]GitLabItemSummary, 0, len(refs))
+	for i, raw := range refs {
 		ref, ok := parseGitLabItemRef(raw, gate.Path)
 		if !ok {
 			out = append(out, GitLabItemSummary{Ref: raw, Error: "Not an item of this Thread's GitLab project."})
 			continue
 		}
-		key := gate.Host + "\n" + gate.Path + "\n" + ref.String()
+		key := gitLabItemKey(gate, ref)
 		if cached, found := m.gitlab.items[key]; found && now.Sub(cached.at) < gitLabItemTTL {
 			cached.summary.Ref = raw
 			out = append(out, cached.summary)
@@ -196,9 +208,9 @@ func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) (ou
 		}
 		summary, readErr := readGitLabItemSummary(ctx, gate, projectID, ref)
 		summary.Ref = raw
-		var apiErr *gitLabAPIError
-		if errors.As(readErr, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
-			return nil, readErr
+		if gitLabLimited(readErr) {
+			m.gitLabRememberBackoff(gate.Host, readErr)
+			return append(out, m.staleGitLabItems(gate, refs[i:])...), nil
 		}
 		if readErr != nil {
 			summary.Error = gitLabReviewError(readErr).Error()
@@ -210,18 +222,52 @@ func (m *Manager) gitLabItems(ctx context.Context, id string, refs []string) (ou
 	return out, nil
 }
 
+func gitLabItemKey(gate glabGate, ref gitLabItemRef) string {
+	return gate.Host + "\n" + gate.Path + "\n" + ref.String()
+}
+
+// gitLabLimited is true for GitLab's 429 and for the backoff it leaves.
+func gitLabLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *gitLabAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	status, _ := errorStatus(err)
+	return status == http.StatusTooManyRequests
+}
+
+// staleGitLabItems answers from the last known states without reading
+// GitLab. The caller holds gitlab.work.
+func (m *Manager) staleGitLabItems(gate glabGate, refs []string) []GitLabItemSummary {
+	out := make([]GitLabItemSummary, 0, len(refs))
+	for _, raw := range refs {
+		summary := GitLabItemSummary{Ref: raw, Error: "GitLab is rate limiting requests. Try again later.", Stale: true}
+		if ref, ok := parseGitLabItemRef(raw, gate.Path); !ok {
+			summary = GitLabItemSummary{Ref: raw, Error: "Not an item of this Thread's GitLab project."}
+		} else if cached, found := m.gitlab.items[gitLabItemKey(gate, ref)]; found {
+			summary = cached.summary
+			summary.Ref, summary.Stale = raw, true
+		}
+		out = append(out, summary)
+	}
+	return out
+}
+
 func (m *Manager) rememberGitLabItem(key string, now time.Time, summary GitLabItemSummary) {
 	if m.gitlab.items == nil {
 		m.gitlab.items = make(map[string]gitLabCachedItem)
 	}
 	if len(m.gitlab.items) >= 512 {
 		for k, cached := range m.gitlab.items {
-			if now.Sub(cached.at) >= gitLabItemTTL {
+			if now.Sub(cached.at) >= gitLabItemKeep {
 				delete(m.gitlab.items, k)
 			}
 		}
 	}
-	if len(m.gitlab.items) < 1024 {
+	if _, found := m.gitlab.items[key]; found || len(m.gitlab.items) < 1024 {
 		m.gitlab.items[key] = gitLabCachedItem{at: now, summary: summary}
 	}
 }
@@ -239,6 +285,9 @@ func readGitLabItemSummary(ctx context.Context, gate glabGate, projectID int64, 
 			return out, errors.New("GitLab returned a different merge request")
 		}
 		out.Title, out.State, out.Draft, out.WebURL = displaytext.Sanitize(mr.Title), displaytext.Sanitize(mr.State), mr.Draft, gitLabSafeURL(gate.Host, mr.WebURL)
+		if p := mr.HeadPipeline; p != nil && p.ID > 0 {
+			out.PipelineID, out.PipelineState = p.ID, displaytext.Sanitize(p.Status)
+		}
 	case "pipeline":
 		var p gitLabPipelineResponse
 		if _, err := gitLabGetJSON(ctx, gate, fmt.Sprintf("%s/pipelines/%d", base, ref.id), &p); err != nil {

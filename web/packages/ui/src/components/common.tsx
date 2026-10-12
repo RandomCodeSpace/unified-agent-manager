@@ -769,7 +769,8 @@ const mdComponents: Components = {
         </MermaidBlock>
       );
     }
-    return <CodeBlock language={language}>{children}</CodeBlock>;
+    // GitLab's ```suggestion:-0+0 fence: the lines a reviewer proposes.
+    return <CodeBlock language={language === 'suggestion' ? 'Suggested change' : language}>{children}</CodeBlock>;
   },
 };
 

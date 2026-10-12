@@ -10,7 +10,16 @@ import { SessionContext } from '../../src/components/common';
 import { DetailVisibility } from '../../src/components/Details';
 import type { GitLabRef } from '../../src/lib/gitlabRefs';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+// A browser reports a strip in view as soon as it is observed; happy-dom's observer never reports.
+function onScreen() {
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) { this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+    disconnect() {}
+  });
+}
 
 const at = '2026-10-12T10:00:00Z';
 const P = 'https://gitlab.example.com/group/repo/-';
@@ -29,7 +38,7 @@ function context(open = vi.fn(), current?: GitLabRef): GitLabItems {
 
 function mockItems() {
   return vi.spyOn(api, 'gitlabItems').mockImplementation(async (_id, refs) => ({ items: refs.map((ref) => ({
-    'mr:2': { ref, kind: 'mr', title: 'Draft: demo', state: 'opened', draft: true, web_url: `${P}/merge_requests/2` },
+    'mr:2': { ref, kind: 'mr', title: 'Draft: demo', state: 'opened', draft: true, pipeline_id: 91, pipeline_state: 'running', web_url: `${P}/merge_requests/2` },
     'issue:14': { ref, kind: 'issue', title: 'Health endpoint', state: 'opened', web_url: `${P}/issues/14` },
     'pipeline:91': { ref, kind: 'pipeline', title: 'demo', state: 'failed', pipeline_id: 91, web_url: `${P}/pipelines/91` },
     'job:7': { ref, kind: 'job', title: 'lint', state: 'failed', pipeline_id: 91, web_url: `${P}/jobs/7` },
@@ -37,6 +46,7 @@ function mockItems() {
 }
 
 test('a reply that ended a turn which touched GitLab ends in a strip of its items with their states; a press opens one', async () => {
+  onScreen();
   const read = mockItems();
   const open = vi.fn();
   const timing: TurnTiming = { id: 't', user_item_id: 'owner', started_at: at, ended_at: '2026-10-12T10:00:05Z', state: 'completed' };
@@ -51,7 +61,7 @@ test('a reply that ended a turn which touched GitLab ends in a strip of its item
     <Transcript sessionId="thread" provider="copilot" workdir="/work" items={items} interactions={[]} subagents={[]} live={false} working={false} turnTimings={[timing]} />
   </GitLabItemsContext.Provider></DetailVisibility></SessionContext.Provider></ApiContext.Provider>);
   const strip = await screen.findByRole('group', { name: 'GitLab items in this turn' });
-  await waitFor(() => expect(within(strip).getAllByRole('link').map((a) => a.textContent)).toEqual(['!2draft', 'Pipeline #91failed', 'lintfailed', '#14open']));
+  await waitFor(() => expect(within(strip).getAllByRole('link').map((a) => a.textContent)).toEqual(['!2draft·pipeline running', 'Pipeline #91failed', 'lintfailed', '#14open']));
   expect(read).toHaveBeenCalledExactlyOnceWith('thread', ['mr:2', 'pipeline:91', 'job:7', 'issue:14']);
   // The reply's own link stays a plain link.
   expect(screen.getByRole('link', { name: 'the issue' }).getAttribute('href')).toBe(`${P}/issues/14`);
@@ -107,4 +117,37 @@ test('a job opens its pipeline with the job selected and its log tail; a work it
   await userEvent.click(screen.getByRole('button', { name: /Health endpoint/ }));
   expect(onOpen).toHaveBeenLastCalledWith({ kind: 'issue', id: 14 });
   expect(screen.getByRole('link', { name: /Elsewhere/ }).getAttribute('href')).toBe('https://gitlab.example.com/other/repo/-/issues/9');
+});
+
+test('discussion notes render as Markdown, the list as plain text; uploads link to GitLab and never load', async () => {
+  mockItems();
+  const body = [
+    'Two things:',
+    '',
+    '- return **503**',
+    '- log it',
+    '',
+    '```go',
+    'return http.StatusServiceUnavailable',
+    '```',
+    '',
+    '```suggestion:-0+0',
+    'w.WriteHeader(503)',
+    '```',
+    '',
+    'See [the docs](https://docs.example.com/health) and ![shot](/uploads/abc/shot.png).',
+  ].join('\n');
+  const [discussion] = review.discussions;
+  vi.spyOn(api, 'gitlabReview').mockResolvedValue({ ...review, discussions: [{ ...discussion, notes: [{ ...discussion.notes[0], body }] }] });
+  const current: GitLabRef = { kind: 'mr', id: 2 };
+  render(<GitLabItemsContext.Provider value={context(vi.fn(), current)}><GitLabItemView refs={[current]} current={current} onOpen={vi.fn()} /></GitLabItemsContext.Provider>);
+  const note = await screen.findByRole('article');
+  expect(within(note).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['return 503', 'log it']);
+  expect(within(note).getByText('503').tagName).toBe('STRONG');
+  expect([...note.querySelectorAll('pre')].map((pre) => pre.textContent)).toEqual(['return http.StatusServiceUnavailable\n', 'w.WriteHeader(503)\n']);
+  expect(within(note).getByText('Suggested change')).toBeTruthy();
+  expect(within(note).getByRole('link', { name: 'the docs' }).getAttribute('href')).toBe('https://docs.example.com/health');
+  expect(note.querySelector('img')).toBeNull();
+  expect(within(note).getByRole('link', { name: /shot/ }).getAttribute('href')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
+  expect(within(screen.getAllByLabelText('Discussions').at(-1)!).getByText('Two things: return 503 log it return http.StatusServiceUnavailable w.WriteHeader(503) See the docs and shot.')).toBeTruthy();
 });

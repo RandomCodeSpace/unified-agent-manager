@@ -4,9 +4,9 @@ import { useApi } from '../ApiContext';
 import { describeError, type GitLabItemSummary, type GitLabPipelineDetail, type GitLabReview as Review, type GitLabWorkItem, type GitLabWorkItemLink, type SessionDetail } from '../api';
 import { cn } from '../lib/cn';
 import { parseRefKey, refKey, refText, sameRef, type GitLabRef } from '../lib/gitlabRefs';
-import { dateTime, Markdown, Note, Skeleton } from './common';
-import { GitLabItemsContext, KIND_WORD, KindGlyph, itemLabel, statusLabel, statusTone, toneText, useSummaries, type GitLabItems } from './GitLabStrip';
-import { GitLabReview } from './GitLabReview';
+import { dateTime, Note, Skeleton } from './common';
+import { GitLabItemsContext, KIND_WORD, KindGlyph, itemLabel, statusLabel, statusTone, toneText, useSummaries, useSummaryRevision, type GitLabItems } from './GitLabStrip';
+import { GitLabMarkdown, GitLabReview } from './GitLabReview';
 import { useTaskActions } from './taskActions';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -78,7 +78,8 @@ function useRead<T>(read: (signal: AbortSignal) => Promise<T>, deps: unknown[]):
   const [result, setResult] = useState<{ value?: T; error?: string }>({});
   useEffect(() => {
     const controller = new AbortController();
-    read(controller.signal).then((value) => { if (!controller.signal.aborted) setResult({ value }); }, (e: unknown) => { if (!controller.signal.aborted) setResult({ error: describeError(e) }); });
+    // A read again that fails keeps what was shown.
+    read(controller.signal).then((value) => { if (!controller.signal.aborted) setResult({ value }); }, (e: unknown) => { if (!controller.signal.aborted) setResult((old) => ({ value: old.value, error: describeError(e) })); });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the caller names what the read depends on.
   }, deps);
@@ -91,6 +92,7 @@ function MergeRequestView({ gl, session, r, item, onOpen }: Readonly<{ gl: GitLa
   const own = gl.state.commit && gl.state.merge_requests?.some((mr) => mr.iid === r.id) ? gl.state.commit.sha : undefined;
   const mr = review?.merge_request;
   const pipeline = mr?.head_pipeline;
+  const revision = useSummaryRevision(gl.sessionId, r);
   return (
     <>
       <Head title={(mr?.title ?? item?.title ?? `Merge request ${refText(r)}`).replace(/^Draft:\s*/, '')} state={<StateChip state={mr?.state ?? item?.state} draft={mr?.draft ?? item?.draft} />}
@@ -106,7 +108,7 @@ function MergeRequestView({ gl, session, r, item, onOpen }: Readonly<{ gl: GitLa
         </PanelSection>
       )}
       <PanelSection label="Discussions">
-        <GitLabReview key={own ?? 'read'} sessionId={gl.sessionId} session={session} iid={r.id} sha={own} onLoad={setReview} />
+        <GitLabReview key={own ?? 'read'} sessionId={gl.sessionId} session={session} iid={r.id} sha={own} onLoad={setReview} refresh={revision} />
       </PanelSection>
     </>
   );
@@ -114,7 +116,8 @@ function MergeRequestView({ gl, session, r, item, onOpen }: Readonly<{ gl: GitLa
 
 function WorkItemView({ gl, r, item, onOpen }: Readonly<{ gl: GitLabItems; r: GitLabRef; item?: GitLabItemSummary; onOpen: (ref: GitLabRef) => void }>) {
   const api = useApi();
-  const { value: w, error } = useRead((signal) => api.gitlabWorkItem(gl.sessionId, refKey(r), signal), [api, gl.sessionId, refKey(r)]);
+  const revision = useSummaryRevision(gl.sessionId, r);
+  const { value: w, error } = useRead((signal) => api.gitlabWorkItem(gl.sessionId, refKey(r), signal), [api, gl.sessionId, refKey(r), revision]);
   const parent = w?.parent?.ref ? parseRefKey(w.parent.ref) : undefined;
   return (
     <>
@@ -140,7 +143,7 @@ function WorkItemBody({ w, onOpen }: Readonly<{ w: GitLabWorkItem; onOpen: (ref:
     )}
     {w.description && (
       <PanelSection label="Description">
-        <Clamp noun="description" height={160}><Markdown text={w.description} className="text-ui text-body" /></Clamp>
+        <Clamp noun="description" height={160}><GitLabMarkdown text={w.description} /></Clamp>
       </PanelSection>
     )}
     {w.child_count > 0 && (
@@ -159,7 +162,9 @@ function PipelineView({ gl, r, item }: Readonly<{ gl: GitLabItems; r: GitLabRef;
   const api = useApi();
   const tasks = useTaskActions();
   const pipelineId = r.kind === 'pipeline' ? r.id : item?.pipeline_id;
-  const { value: detail, error } = useRead<GitLabPipelineDetail | undefined>((signal) => pipelineId ? api.gitlabPipelineDetail(gl.sessionId, pipelineId, signal) : Promise.resolve(undefined), [api, gl.sessionId, pipelineId]);
+  // The open item's state is read on the strip's cadence; each read again reads the jobs again.
+  const revision = useSummaryRevision(gl.sessionId, r);
+  const { value: detail, error } = useRead<GitLabPipelineDetail | undefined>((signal) => pipelineId ? api.gitlabPipelineDetail(gl.sessionId, pipelineId, signal) : Promise.resolve(undefined), [api, gl.sessionId, pipelineId, revision]);
   const jobs = detail?.jobs ?? [];
   const [picked, setPicked] = useState<number | undefined>(r.kind === 'job' ? r.id : undefined);
   const selected = jobs.find((job) => job.id === picked) ?? jobs.find((job) => job.status === 'failed' && !job.allow_failure);
@@ -213,14 +218,16 @@ function PipelineView({ gl, r, item }: Readonly<{ gl: GitLabItems; r: GitLabRef;
           ) : <Note>No jobs were returned for this pipeline.</Note>}
         </PanelSection>
       )}
-      {selected && <JobLog key={selected.id} sessionId={gl.sessionId} pipelineId={pipelineId} job={selected} />}
+      {selected && <JobLog key={selected.id} sessionId={gl.sessionId} pipelineId={pipelineId} job={selected} revision={revision} />}
     </>
   );
 }
 
-function JobLog({ sessionId, pipelineId, job }: Readonly<{ sessionId: string; pipelineId: number; job: GitLabPipelineDetail['jobs'][number] }>) {
+function JobLog({ sessionId, pipelineId, job, revision }: Readonly<{ sessionId: string; pipelineId: number; job: GitLabPipelineDetail['jobs'][number]; revision: number }>) {
   const api = useApi();
-  const { value: trace, error } = useRead((signal) => api.gitlabJobTrace(sessionId, job.id, undefined, pipelineId, signal), [api, sessionId, job.id, pipelineId]);
+  // A running job's log grows: it is read again with the pipeline; a finished one once more when it ends.
+  const growing = job.status === 'running' ? revision : 0;
+  const { value: trace, error } = useRead((signal) => api.gitlabJobTrace(sessionId, job.id, undefined, pipelineId, signal), [api, sessionId, job.id, pipelineId, job.status, growing]);
   const lines = (trace?.text ?? '').replace(/\n$/, '').split('\n').slice(-LOG_LINES);
   return (
     <PanelSection label={`${job.name} log`} meta={trace && `last ${lines.length} lines`}

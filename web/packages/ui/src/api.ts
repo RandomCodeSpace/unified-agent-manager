@@ -1861,10 +1861,14 @@ export interface GitLabItemSummary {
   title?: string;
   state?: string;
   draft?: boolean;
-  /** A job's pipeline. */
+  /** A job's pipeline, or a merge request's head pipeline. */
   pipeline_id?: number;
+  /** A merge request's head pipeline status. */
+  pipeline_state?: string;
   web_url?: string;
   error?: string;
+  /** The last known state, kept while GitLab rate limits reads. */
+  stale?: boolean;
 }
 export interface GitLabWorkItemLink { ref?: string; iid: number; kind: string; title: string; state: string; web_url?: string }
 export interface GitLabWorkItem {

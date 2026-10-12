@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gitLabCandidates, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
+import { gitLabCandidates, gitLabMarkdown, markdownSummary, needsBody, parseGitLabUrl, parseRefKey, refKey, turnGitLabRefs } from '../src/lib/gitlabRefs.ts';
 
 const origin = { host: 'gitlab.com', path: 'aksops/demo' };
 const P = 'https://gitlab.com/aksops/demo/-';
@@ -70,4 +70,11 @@ test('in the compact view a call shows its command; only GitLab-relevant items a
   const other = bash('glab -R x/y mr view 1', '');
   assert.deepEqual(gitLabCandidates([compact, unrelated, text, linked, push, other], origin).map((i) => i.id), ['k1', linked.id, push.id]);
   assert.equal(needsBody(push), false);
+});
+
+test('GitLab uploads link to the project; a summary drops Markdown syntax', () => {
+  const body = '![shot](/uploads/abc/shot.png) and [log](/uploads/def/log.txt)\n[ref]: /uploads/ghi/a.png\nKeep `/uploads/x` and https://gitlab.com/uploads/y';
+  assert.equal(gitLabMarkdown(body, origin), '![shot](https://gitlab.com/aksops/demo/uploads/abc/shot.png) and [log](https://gitlab.com/aksops/demo/uploads/def/log.txt)\n[ref]: https://gitlab.com/aksops/demo/uploads/ghi/a.png\nKeep `/uploads/x` and https://gitlab.com/uploads/y');
+  assert.equal(gitLabMarkdown(body), body);
+  assert.equal(markdownSummary('## Plan\n\n> quoted *note*\n1. first **bold**\n- [x] done `code`\n```go\nx := 1\n```\nsee [docs](https://x.example) for snake_case'), 'Plan quoted note first bold done code x := 1 see docs for snake_case');
 });

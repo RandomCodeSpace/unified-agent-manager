@@ -1907,8 +1907,9 @@ aliases, computed command heads and other wrappers are not interpreted.
 In a Thread whose folder has a GitLab `origin` and whose host `glab` is
 signed in to, each reply that ends a turn which touched GitLab items ends
 in a **GitLab** strip: one entry per item, in the order the turn touched
-them, each with its state word (`!2 draft`, `Pipeline #91 failed`,
-`#14 open`). Links in the reply itself stay plain links. An item counts when
+them, each with its state word (`!2 draft · pipeline running`,
+`Pipeline #91 failed`, `#14 open`); a merge request also shows its head
+pipeline's state. Links in the reply itself stay plain links. An item counts when
 the turn named it on the Thread's own project:
 
 - a GitLab link to a merge request, issue, work item, pipeline or job of the
@@ -1940,9 +1941,27 @@ GitLab**. The views:
   lines marked, and **Full log**. The pipeline of the Thread's own commit
   offers **Investigate**.
 
-Item states are read when a strip first shows and kept for a minute; a
-running pipeline or job is read again each minute while its strip is on
-screen. Nothing here writes to GitLab except the existing discussion
+Discussion notes, work item descriptions and agent reply drafts render as
+Markdown, the same safe renderer replies use (no raw HTML, no image from
+another origin); the discussion list shows each first note as plain text. A
+GitLab `suggestion` block shows as a code block labelled **Suggested
+change**. Project uploads (`/uploads/…`) become links to them in GitLab and
+are never loaded inline. `!iid`, `#iid`, `&iid` and `@user` stay text.
+
+Item states stay live while they are on screen: a strip in view, or the
+item open in the panel (and the panel's switcher). While the browser tab is
+visible, a running or pending pipeline or job is read again every 20
+seconds, an open merge request (draft included) or open work item every
+minute; a finished pipeline or job, a merged or closed merge request and a
+closed work item are not read again. Due items go to the server together, up
+to 20 per request, and a tab that comes back reads at once what is older
+than 15 seconds. The open panel reads its view (discussions, jobs, a running
+job's log) again each time its item is read again. The server keeps each
+item's state for 15 seconds, shared by every browser and connected instance,
+so viewers do not multiply `glab` calls. While GitLab rate limits reads the
+server reads nothing until its `Retry-After` passes and answers with the last
+known states marked stale; the strip keeps them and says **stale**, never
+blank. Nothing here writes to GitLab except the existing discussion
 controls. The routes are `GET /api/sessions/{id}/gitlab/items?ref=…`,
 `GET /api/sessions/{id}/gitlab/work-items?ref=…` and
 `GET /api/sessions/{id}/gitlab/pipelines/{pipeline_id}`; the merge request

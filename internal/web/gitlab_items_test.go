@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
 )
@@ -136,6 +138,75 @@ func TestGitLabItemsReadStateWordsWithinTheThreadProject(t *testing.T) {
 	}
 	if _, err := f.m.gitLabItems(t.Context(), f.id, nil); statusOf(err) != http.StatusBadRequest {
 		t.Fatalf("empty ref list = %v", err)
+	}
+}
+
+func TestGitLabItemsShareOneReadAndKeepTheLastStateWhileRateLimited(t *testing.T) {
+	responses := gitLabItemResponses()
+	f := newGitLabItemsFixture(t, 0, responses)
+	at := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	f.m.now = func() time.Time { return at }
+	refs := []string{"mr:2", "pipeline:91"}
+	read := func() []GitLabItemSummary {
+		t.Helper()
+		items, err := f.m.gitLabItems(t.Context(), f.id, refs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return items
+	}
+	items := read()
+	if items[0].PipelineID != 91 || items[0].PipelineState != "failed" || items[0].Stale {
+		t.Fatalf("merge request head pipeline = %+v", items[0])
+	}
+	base := len(f.calls(t))
+	// Several viewers inside the cache window cost GitLab nothing more.
+	at = at.Add(10 * time.Second)
+	for range 3 {
+		read()
+	}
+	if got := len(f.calls(t)); got != base {
+		t.Fatalf("viewers within %s read GitLab again: %d calls, want %d", gitLabItemTTL, got, base)
+	}
+	at = at.Add(6 * time.Second)
+	read()
+	if got := len(f.calls(t)); got != base+2 {
+		t.Fatalf("expired items: %d calls, want %d", got, base+2)
+	}
+
+	// GitLab rate limits the next read: the last states come back stale, never blank.
+	keys := make([]string, 0, len(responses))
+	for endpoint := range responses {
+		keys = append(keys, endpoint)
+	}
+	sort.Strings(keys)
+	fixture := fmt.Sprintf("%s.%d", f.bin, slices.Index(keys, "projects/42/merge_requests/2"))
+	if err := os.WriteFile(fixture, []byte("HTTP/2.0 429 Too Many Requests\r\nRetry-After: 120\r\n\r\n{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	at = at.Add(gitLabItemTTL)
+	items = read()
+	for i, want := range []string{"opened", "failed"} {
+		if !items[i].Stale || items[i].State != want || items[i].Error != "" {
+			t.Fatalf("rate limited item %d = %+v, want last state %q marked stale", i, items[i], want)
+		}
+	}
+	if items[0].PipelineState != "failed" {
+		t.Fatalf("stale merge request lost its pipeline: %+v", items[0])
+	}
+	limited := len(f.calls(t))
+	if limited != base+3 {
+		t.Fatalf("rate limited pass: %d calls, want %d (the limited read only)", limited, base+3)
+	}
+	// While GitLab asks to wait, nothing is read; an item never read says so.
+	at = at.Add(time.Minute)
+	refs = []string{"mr:2", "issue:14"}
+	items = read()
+	if !items[0].Stale || items[0].State != "opened" || !items[1].Stale || items[1].Error == "" || items[1].State != "" {
+		t.Fatalf("backing off = %+v", items)
+	}
+	if got := len(f.calls(t)); got != limited {
+		t.Fatalf("read GitLab while backing off: %d calls, want %d", got, limited)
 	}
 }
 

@@ -232,3 +232,25 @@ export function turnGitLabRefs(items: Item[], origin: GitLabOrigin, own?: GitLab
     return true;
   }).slice(0, MAX_TURN_REFS);
 }
+
+/**
+ * A GitLab Markdown body for the shared renderer. Project uploads (`/uploads/…`) are relative to
+ * the project in GitLab: they become links there, which the renderer shows as links, never loads.
+ */
+export function gitLabMarkdown(text: string, origin?: GitLabOrigin): string {
+  if (!origin) return text;
+  return text.replace(/(\]\(\s*<?|^ {0,3}\[[^\]\n]+\]:\s*<?)\/uploads\//gm, `$1https://${origin.host}/${origin.path}/uploads/`);
+}
+
+/** A Markdown body as one line of plain text, for a list that clamps it. */
+export function markdownSummary(text: string): string {
+  return text
+    .replace(/^ {0,3}(```|~~~).*$/gm, '')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^ {0,3}(#{1,6} +|> ?|[-*+] +(\[[ xX]\] +)?|\d+[.)] +)/gm, '')
+    .replace(/\*\*|__|~~|`/g, '')
+    .replace(/(^|[^\w*])\*(?=\S)|(?<=\S)\*(?=[^\w*]|$)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
