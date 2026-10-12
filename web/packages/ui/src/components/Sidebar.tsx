@@ -6,7 +6,7 @@ import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { filteredProject, groupTasks, needsYouNow, pendingWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
-import { pendingWords } from './BranchChip';
+import { pendingWords } from '../lib/worktrees';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';

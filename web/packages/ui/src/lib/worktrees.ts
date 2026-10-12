@@ -1,4 +1,4 @@
-import type { DiskInfo } from '../api';
+import type { DiskInfo, SessionSummary } from '../api';
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -15,9 +15,10 @@ export function percentFree(disk: DiskInfo): number {
   return disk.total_bytes ? Math.floor((disk.free_bytes / disk.total_bytes) * 100) : 0;
 }
 
-/** The branch chip's low-disk slot: free and total while space is low, otherwise nothing. */
-export function lowDisk(disk: DiskInfo | undefined): { free: number; total: number } | undefined {
-  return disk?.low ? { free: disk.free_bytes, total: disk.total_bytes } : undefined;
+/** "2 not committed · 3 not pushed": words and counts, never a colour alone; '' when nothing is pending. */
+export function pendingWords(pending: SessionSummary['git_pending']): string {
+  if (!pending) return '';
+  return [pending.uncommitted > 0 && `${pending.uncommitted} not committed`, pending.unpushed > 0 && `${pending.unpushed} not pushed`].filter(Boolean).join(' · ');
 }
 
 /** The low-space sentence for tips and screen readers, or '' while there is room. */

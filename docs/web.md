@@ -426,8 +426,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     Remove takes a worktree with nothing uncommitted at once and asks first
     when changes would be lost; it is refused while the Thread works.
   - Below 10% free space the Worktrees page in the Settings rail and the
-    Settings button carry a warning dot, and the branch chip under the
-    composer says how much is free (`disk` in `GET /api/meta`).
+    Settings button carry a warning dot (`disk` in `GET /api/meta`).
 - **Names and titles**: the name is optional. Without one, the Thread takes
   its first message as its title the moment it is sent: the text on one
   line, cut at a word to 60 characters with an ellipsis; a command keeps its
@@ -471,19 +470,22 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   requests. An agent's model rows are already included in the model rows,
   so do not add the By model and By agent views together.
   The changed-file count is on the Changes button in the Thread header.
-  The Thread's branch sits under the composer: the branch of the Thread's
-  folder, "worktree" when the Thread runs in its own worktree, and, when
-  the server reports them, how many files are not committed and how many
-  commits are not pushed there. Click it for the branch and the folder path
-  (with Copy), and a worktree's size once measured. A low-disk warning
-  shows at the strip's end while free space is low.
-  On a new Thread the same chip chooses where it runs (see **Branches and
-  worktrees**): **Current branch**, **New branch** (from the Project
-  folder's current branch) or **New worktree**, whose base you pick from the
-  Project's local and remote branches (type to filter, arrow keys and Enter
-  to choose). The panel shows the branch and folder the first message
-  creates. New branch is locked, naming the Thread, while another Thread is
-  working in the Project folder. When the toolbar
+  Where the Thread runs sits under the composer, and nothing else does (no
+  counts, size, path or disk warning; the sidebar row keeps its unsaved
+  marks). On a new Thread (see **Branches and worktrees**): a place menu,
+  **Current branch** or **New worktree**, then a branch menu (type to
+  filter, arrow keys and Enter to choose; Local and Remote branches with
+  their last commit's age). In Current branch it switches the Project
+  folder: **New branch from <branch>** on top, or an existing branch. In
+  New worktree it picks the worktree's source branch; the worktree's name
+  shows only once the first message made it. While a Thread in the folder
+  has not finished, the branch menu says which one ("… is working") and
+  turns every row off; while changed files are not committed it says how
+  many and turns off the existing branches only. The choice applies with
+  the first message. A started Thread in the Project folder shows **Current
+  branch** and the same branch menu, which switches the folder at once; a
+  Thread in its own worktree shows `Worktree · <branch> · <folder>` as
+  plain text, the path on hover or focus. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
   the execution word, the credits, effort and context, then permissions
   become glyphs and move into the More menu, and the model's name goes

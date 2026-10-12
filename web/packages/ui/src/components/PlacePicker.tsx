@@ -1,211 +1,271 @@
-import { Check, ChevronDown, Folder, FolderGit2, GitBranch, GitBranchPlus, Lock, Search, TriangleAlert } from 'lucide-react';
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
+import { Popover as BasePopover } from '@base-ui/react/popover';
+import { Check, ChevronDown, Folder, FolderGit2, GitBranch, GitBranchPlus, Lock, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type BranchList, type Project, type SessionSummary, type ThreadPlace } from '../api';
+import { describeError, LIVE, readOnly, type BranchList, type Project, type SessionSummary, type ThreadPlace } from '../api';
 import { cn } from '../lib/cn';
-import { FolderPath, FootHead, FootReader, lowDiskWords, Pill, type LowDisk } from './BranchChip';
 import { timeAgo } from './common';
-import { Key } from './InlinePicker';
-import { Input } from './ui/input';
-import { PanelFoot, PanelSection } from './ui/panel';
-import { Segmented } from './ui/segmented';
+import { itemClass, labelClass, Menu, popupClass, separatorClass } from './ui/menu';
+import { Tip } from './ui/tooltip';
 
 /** What a service that runs new Threads in a new branch or worktree advertises to connected instances. */
 export const PLACE_CAPABILITY = 'worktrees-v1';
+/** What a service that switches the Project folder to an existing branch advertises: the `switch` place and POST …/git/branch. */
+export const SWITCH_CAPABILITY = 'branch-switch-v1';
 
-const CHIP = 'flex h-7 min-w-0 items-center gap-1.5 rounded-sm px-2 text-caption transition-colors hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-9 [&_svg]:size-3.5 [&_svg]:shrink-0';
+const CHIP = 'flex h-7 min-w-0 items-center gap-1.5 rounded-sm px-2 text-caption text-body transition-colors hover:bg-tint-hover aria-expanded:bg-tint-hover pointer-coarse:h-9 [&_svg]:size-3.5 [&_svg]:shrink-0';
+const TEXT = 'flex h-7 min-w-0 items-center gap-1.5 px-2 text-caption text-body [&_svg]:size-3.5 [&_svg]:shrink-0';
 
-/** The folder name the service gives a Project under ~/.uam/worktrees: ASCII letters and digits, single hyphens, at most 48 bytes. */
-export function projectSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 48).replace(/-+$/, '') || 'project';
+type Branch = BranchList['branches'][number];
+/** A row of the branch menu: a new branch from the folder's branch, or an existing one. */
+type Pick = { kind: 'new' } | { kind: 'existing'; branch: Branch };
+
+/**
+ * The branch menu above its button, as light as the model picker: a search field, then (to switch the folder) a New
+ * branch row, then the Local and Remote branches with their last commit's age and a check on `value`. To switch, the
+ * folder's guard is mirrored from the service: a Thread that has not finished there turns every row off, with one line
+ * naming it; changed tracked files turn off only the existing branches, since a new branch takes the changes along.
+ */
+function BranchMenu({ anchor, open, onClose, projectId, from, switching, existing, value, self, busy, error, onPick }: Readonly<{
+  anchor: HTMLElement | null;
+  open: boolean;
+  onClose: () => void;
+  projectId: string;
+  /** The folder's branch, which a new branch starts from. */
+  from: string;
+  /** Switch the folder's branch (New branch row, guard); otherwise choose a new worktree's source branch. */
+  switching: boolean;
+  /** Existing branches can be chosen (a source branch always can; a switch needs `branch-switch-v1`). */
+  existing: boolean;
+  /** The checked row: 'new', or a branch (any branch of that name when `remote` is absent). */
+  value: { name: string; remote?: boolean } | 'new';
+  /** The started Thread that switches its own folder: it must have finished too. */
+  self?: SessionSummary;
+  /** A switch is being made. */
+  busy?: boolean;
+  error?: string;
+  onPick: (pick: Pick) => void;
+}>) {
+  const api = useApi();
+  const input = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const [list, setList] = useState<{ data?: BranchList; error?: string } | null>(null);
+  // Each opening reads the branches and the guard again; the last list stays while it does.
+  useEffect(() => {
+    if (!open) return;
+    const ctl = new AbortController();
+    api.projectBranches(projectId, ctl.signal).then(
+      (data) => setList({ data }),
+      (e) => { if (!ctl.signal.aborted) setList((l) => ({ data: l?.data, error: describeError(e) })); },
+    );
+    return () => ctl.abort();
+  }, [open, api, projectId]);
+
+  const data = list?.data;
+  const selfWorking = !!self && LIVE.includes(self.state);
+  const reason: ReactNode = !switching || !data ? null
+    : selfWorking || (data.busy && data.busy.id === self?.id) ? 'This Thread is working'
+      : data.busy ? <><span className="font-medium text-ink">{data.busy.name}</span> is working</>
+        : data.uncommitted ? `${data.uncommitted} ${data.uncommitted === 1 ? 'file' : 'files'} not committed`
+          : null;
+  const allOff = switching && (!data || busy || selfWorking || !!data.busy);
+  const existingOff = allOff || (switching && !!data?.uncommitted);
+  const q = query.trim().toLowerCase();
+  const shown = useMemo(() => {
+    const all = existing ? (data?.branches ?? []).filter((b) => b.name.toLowerCase().includes(q)) : [];
+    return [...all.filter((b) => !b.remote), ...all.filter((b) => b.remote)];
+  }, [data, q, existing]);
+  const newRow = switching && !q;
+  const rows: { key: string; off: boolean; pick: Pick }[] = [
+    ...(newRow ? [{ key: '+new', off: allOff, pick: { kind: 'new' } as Pick }] : []),
+    ...shown.map((b) => ({ key: `${b.remote ? 'r' : 'l'}:${b.name}`, off: existingOff, pick: { kind: 'existing', branch: b } as Pick })),
+  ];
+  const enabled = rows.flatMap((r, i) => (r.off ? [] : [i]));
+  const at = enabled.includes(active) ? active : enabled[0] ?? -1;
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && enabled.length) {
+      e.preventDefault();
+      const k = enabled.indexOf(at);
+      setActive(enabled[(k + (e.key === 'ArrowDown' ? 1 : enabled.length - 1)) % enabled.length]);
+    } else if (e.key === 'Enter' && at >= 0) {
+      e.preventDefault();
+      onPick(rows[at].pick);
+    }
+  };
+  const row = (r: (typeof rows)[number], i: number, content: ReactNode, on: boolean) => (
+    <button key={r.key} type="button" role="option" aria-selected={on} aria-disabled={r.off || undefined} data-highlighted={i === at ? '' : undefined} data-disabled={r.off ? '' : undefined}
+      className={cn(itemClass, 'text-left')} onMouseMove={() => !r.off && setActive(i)} onClick={() => !r.off && onPick(r.pick)}>
+      {content}
+      <Check aria-hidden="true" className={cn('!size-3.5 !text-accent', !on && 'invisible')} strokeWidth={2.5} />
+    </button>
+  );
+  const branchRow = (b: Branch) => {
+    const i = rows.findIndex((r) => r.key === `${b.remote ? 'r' : 'l'}:${b.name}`);
+    const on = value !== 'new' && value.name === b.name && (value.remote === undefined || value.remote === b.remote);
+    return row(rows[i], i, <>
+      <GitBranch aria-hidden="true" className="!size-3.5" />
+      <span className={cn('min-w-0 flex-1 truncate', on && 'font-medium text-ink')}>{b.name}</span>
+      {b.updated_at && <span className="shrink-0 text-caption text-muted">{timeAgo(b.updated_at)}</span>}
+    </>, on);
+  };
+  const local = shown.filter((b) => !b.remote);
+  const remote = shown.filter((b) => b.remote);
+  const label = switching ? 'Switch the branch' : 'Worktree from';
+  return (
+    <BasePopover.Root open={open} onOpenChange={(o, d) => {
+      // A press on the button toggles it itself.
+      if (!o && !(d.event?.target instanceof Node && anchor?.contains(d.event.target))) onClose();
+    }} onOpenChangeComplete={(o) => { if (!o) { setQuery(''); setActive(0); } }}>
+      <BasePopover.Portal>
+        <BasePopover.Positioner anchor={anchor} side="top" align="start" sideOffset={6} collisionPadding={8} className="z-50 outline-hidden">
+          <BasePopover.Popup data-popup="" initialFocus={input} aria-label={label} className={cn(popupClass, 'flex w-80 max-w-(--available-width) flex-col')}>
+            <div className="flex h-8 items-center gap-2 px-2">
+              <Search aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
+              <input ref={input} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0); }} onKeyDown={onKey} placeholder="Find a branch" aria-label="Find a branch"
+                className="min-w-0 flex-1 bg-transparent text-ui text-ink outline-hidden placeholder:text-muted" />
+            </div>
+            <div className={separatorClass} />
+            {reason && <p className="flex items-center gap-1.5 px-2 pt-1 pb-1.5 text-caption text-muted"><Lock aria-hidden="true" className="size-3 shrink-0" /><span className="min-w-0 truncate">{reason}</span></p>}
+            <div role="listbox" aria-label="Branches" className="flex max-h-72 flex-col overflow-y-auto overscroll-contain">
+              {newRow && row(rows[0], 0, <>
+                <GitBranchPlus aria-hidden="true" className="!size-3.5" />
+                <span className="min-w-0 flex-1 truncate">New branch <span className="text-muted">from {from}</span></span>
+              </>, value === 'new')}
+              {local.length > 0 && <><p className={labelClass}>Local</p>{local.map(branchRow)}</>}
+              {remote.length > 0 && <><p className={labelClass}>Remote</p>{remote.map(branchRow)}</>}
+              {existing && data && !shown.length && q && <p className="px-2 py-2 text-caption text-muted">No branch matches “{query.trim()}”.</p>}
+              {!data && !list?.error && <p className="px-2 py-2 text-caption text-muted">Reading branches…</p>}
+              {data?.reason && <p className="px-2 py-2 text-caption text-muted">{data.reason}</p>}
+            </div>
+            {(error || list?.error) && <p role="alert" className="px-2 py-2 text-caption text-warning">{error || `Could not read the branches: ${list?.error}`}</p>}
+          </BasePopover.Popup>
+        </BasePopover.Positioner>
+      </BasePopover.Portal>
+    </BasePopover.Root>
+  );
+}
+
+/** `⑂ main ▾`: opens the branch menu. */
+function BranchButton({ refFn, open, onClick, children, name }: Readonly<{ refFn: (el: HTMLButtonElement | null) => void; open: boolean; onClick: () => void; children: ReactNode; name: string }>) {
+  return (
+    <button ref={refFn} type="button" aria-haspopup="dialog" aria-expanded={open} aria-label={`Branch ${name}`} className={CHIP} onClick={onClick}>
+      {children}
+      <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+    </button>
+  );
 }
 
 /**
- * A draft Thread's place under the composer: the Project folder's current branch, a new branch
- * there, or a new worktree from a base branch. The chip opens one anchored reader with the
- * three modes, the searchable local and remote base branches, and what the first message
- * creates. New branch is locked while `blocking` (a Thread working in the Project folder) runs,
- * since both would share one working tree.
+ * A draft Thread's place under the composer (mock D): the place dropdown (Current branch | New worktree), then the
+ * branch dropdown. In Current branch it switches the Project folder (New branch from the folder's branch, or an existing
+ * branch, `branch-switch-v1`); in New worktree it picks the worktree's source branch. Nothing is made before the first
+ * message, which carries the choice; the worktree's own name shows only once it exists.
  */
-export function PlaceChip({ project, place, onPlace, blocking, lowDisk }: Readonly<{
-  project: Project;
-  place: ThreadPlace;
-  onPlace: (place: ThreadPlace) => void;
-  blocking?: SessionSummary;
-  /** Free space is low: a warning at the strip's end, as on a Thread's chip. */
-  lowDisk?: LowDisk;
-}>) {
+export function DraftPlaceFoot({ project, place, onPlace }: Readonly<{ project: Project; place: ThreadPlace; onPlace: (place: ThreadPlace) => void }>) {
   const api = useApi();
-  const listId = useId();
   const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
-  const [reader, setReader] = useState<'open' | 'closing' | null>(null);
-  const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
-  const [branches, setBranches] = useState<{ list?: BranchList['branches']; reason?: string; error?: string } | null>(null);
-  const open = reader === 'open';
-  // A new worktree starts from a chosen base; each opening in that mode reads the branches again, the last list staying while it does.
-  const listing = open && place.mode === 'worktree';
-  useEffect(() => {
-    if (!listing) return;
-    const ctl = new AbortController();
-    api.projectBranches(project.id, ctl.signal).then(
-      (r) => setBranches({ list: r.branches, reason: r.reason }),
-      (e) => { if (!ctl.signal.aborted) setBranches((b) => ({ list: b?.list, error: describeError(e) })); },
-    );
-    return () => ctl.abort();
-  }, [listing, api, project.id]);
-
-  // A new branch starts from the folder's current branch; a new worktree from its base, by default that same branch.
-  const current = project.branch ?? 'this folder';
-  const base = place.mode === 'worktree' ? place.base ?? project.branch ?? '' : current;
-  const q = query.trim().toLowerCase();
-  // Local branches first, then remote ones, each in the service's order (most recently committed first).
-  const shown = useMemo(() => {
-    const all = (branches?.list ?? []).filter((b) => b.name.toLowerCase().includes(q));
-    return [...all.filter((b) => !b.remote), ...all.filter((b) => b.remote)];
-  }, [branches, q]);
-
-  const choose = (mode: ThreadPlace['mode']) => onPlace(mode === 'worktree' ? { mode, base: place.base ?? project.branch } : { mode });
-  const pick = (b: BranchList['branches'][number]) => {
-    onPlace({ mode: 'worktree', base: b.name });
-    setReader('closing');
+  const [open, setOpen] = useState(false);
+  const worktree = place.mode === 'worktree';
+  const from = project.branch ?? 'HEAD';
+  const value: { name: string; remote?: boolean } | 'new' = place.mode === 'branch' ? 'new'
+    : place.mode === 'switch' ? { name: place.branch ?? '', remote: !!place.remote }
+      : worktree && place.base ? { name: place.base } : { name: from, remote: false };
+  const pick = (p: Pick) => {
+    setOpen(false);
+    if (worktree) {
+      if (p.kind === 'existing') onPlace({ mode: 'worktree', base: p.branch.name });
+    } else if (p.kind === 'new') onPlace({ mode: 'branch' });
+    else if (!p.branch.remote && p.branch.name === project.branch) onPlace({ mode: 'current' });
+    else onPlace({ mode: 'switch', branch: p.branch.name, ...(p.branch.remote ? { remote: true } : {}) });
   };
-  const activeIndex = Math.min(active, Math.max(0, shown.length - 1));
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (shown.length) setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length);
-    } else if (e.key === 'Enter' && shown[activeIndex]) {
-      e.preventDefault();
-      pick(shown[activeIndex]);
+  const name = value === 'new' ? 'New branch' : value.name;
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1 text-caption">
+      <Menu.Root modal={false}>
+        <Menu.Trigger render={<button type="button" aria-label={`Where this Thread runs: ${worktree ? 'New worktree' : 'Current branch'}`} className={CHIP} />}>
+          {worktree ? <FolderGit2 aria-hidden="true" className="text-muted" /> : <Folder aria-hidden="true" className="text-muted" />}
+          <span className="truncate font-medium text-ink">{worktree ? 'New worktree' : 'Current branch'}</span>
+          <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
+        </Menu.Trigger>
+        <Menu.Content side="top" align="start" sideOffset={6} className="min-w-52">
+          <Menu.RadioGroup value={worktree ? 'worktree' : 'current'} onValueChange={(v) => { if ((v === 'worktree') !== worktree) onPlace({ mode: v === 'worktree' ? 'worktree' : 'current' }); }}>
+            <Menu.RadioItem value="current"><span className="flex items-center gap-2"><Folder aria-hidden="true" />Current branch</span></Menu.RadioItem>
+            <Menu.RadioItem value="worktree"><span className="flex items-center gap-2"><FolderGit2 aria-hidden="true" />New worktree</span></Menu.RadioItem>
+          </Menu.RadioGroup>
+        </Menu.Content>
+      </Menu.Root>
+      <BranchButton refFn={setAnchor} open={open} onClick={() => setOpen((o) => !o)} name={name}>
+        {value === 'new' ? <GitBranchPlus aria-hidden="true" className="text-muted" /> : <GitBranch aria-hidden="true" className="text-muted" />}
+        <span className="truncate font-medium text-ink">{name}</span>
+      </BranchButton>
+      <BranchMenu anchor={anchor} open={open} onClose={() => setOpen(false)} projectId={project.id} from={from} switching={!worktree}
+        existing={worktree || api.supports(SWITCH_CAPABILITY)} value={value} onPick={pick} />
+    </div>
+  );
+}
+
+/**
+ * A Thread's place under the composer once it exists. In its own worktree: one read-only run, `Worktree · ⑂ branch ·
+ * folder`, the path in a tooltip. In the Project folder: `Current branch` and the branch dropdown, which switches the
+ * folder at once under the same rule as a draft (the Thread itself must have finished too); read-only text when the
+ * Thread is settled or archived, or the service cannot switch. A draft on a service without places shows its branch.
+ */
+export function PlaceFoot({ session, project }: Readonly<{ session: SessionSummary; project: Project | undefined }>) {
+  const api = useApi();
+  const [anchor, setAnchor] = useState<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const worktree = session.worktree;
+  const branch = worktree?.branch ?? session.branch ?? project?.branch;
+  if (!branch || !project || project.no_git) return null;
+  if (worktree) {
+    const folder = worktree.path.slice(worktree.path.lastIndexOf('/') + 1);
+    return (
+      <div className="flex min-w-0 flex-1 items-center">
+        {/* Read-only: it only shows the path, on hover, focus or a press. */}
+        <Tip openOnClick label={<span className="break-all">{worktree.path}</span>}>
+          <button type="button" aria-label={`Worktree, branch ${branch}, folder ${folder}`} className={cn(TEXT, 'cursor-default rounded-sm')}>
+            <FolderGit2 aria-hidden="true" className="text-muted" />
+            <span className="shrink-0">Worktree</span>
+            <span aria-hidden="true" className="text-faint">·</span>
+            <GitBranch aria-hidden="true" className="text-muted" />
+            <span className="min-w-0 truncate font-medium text-ink">{branch}</span>
+            <span aria-hidden="true" className="text-faint">·</span>
+            <span className="min-w-0 truncate text-muted">{folder}</span>
+          </button>
+        </Tip>
+      </div>
+    );
+  }
+  const branchText = <span className={TEXT}><GitBranch aria-hidden="true" className="text-muted" /><span className="truncate font-medium text-ink">{branch}</span></span>;
+  if (!session.id) return <div className="flex min-w-0 flex-1 items-center">{branchText}</div>;
+  const switchable = api.supports(SWITCH_CAPABILITY) && !readOnly(session);
+  const pick = async (p: Pick) => {
+    if (p.kind === 'existing' && !p.branch.remote && p.branch.name === branch) { setOpen(false); return; }
+    setBusy(true);
+    setError('');
+    try {
+      await api.switchBranch(session.id, p.kind === 'new' ? { mode: 'branch' } : { mode: 'switch', branch: p.branch.name, ...(p.branch.remote ? { remote: true } : {}) });
+      setOpen(false);
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setBusy(false);
     }
   };
-  const branchLocked = !!blocking;
-  const blocker = blocking ? blocking.name || blocking.title || 'A Thread' : '';
-
-  const face = place.mode === 'current'
-    ? <><GitBranch aria-hidden="true" className="text-muted" /><span className="truncate font-medium text-ink">{current}</span><span className="shrink-0 text-muted">· current branch</span></>
-    : <>{place.mode === 'worktree' ? <FolderGit2 aria-hidden="true" className="text-muted" /> : <GitBranchPlus aria-hidden="true" className="text-muted" />}<span className="shrink-0 font-medium text-ink">{place.mode === 'worktree' ? 'New worktree' : 'New branch'}</span><span className="shrink-0 text-muted">from</span><span className="truncate font-medium text-ink">{base}</span></>;
-
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1 text-caption text-muted">
-      <button
-        ref={setAnchor}
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={`Where this Thread runs: ${place.mode === 'current' ? `${current}, current branch` : `${place.mode === 'worktree' ? 'new worktree' : 'new branch'} from ${base}`}`}
-        className={CHIP}
-        onClick={() => { setQuery(''); setActive(0); setReader('open'); }}
-      >
-        {face}
-        <ChevronDown aria-hidden="true" className="!size-3 text-faint" />
-      </button>
-      <span className="flex-1" />
-      {lowDisk && <span className="flex h-7 shrink-0 items-center gap-1.5 px-2 text-caption text-warning"><TriangleAlert aria-hidden="true" className="size-3.5" />{lowDiskWords(lowDisk)}</span>}
-      {reader && (
-        <FootReader
-          open={open}
-          anchor={anchor}
-          label="Where this Thread runs"
-          width="w-[420px]"
-          onClose={() => setReader('closing')}
-          onClosed={() => setReader(null)}
-          head={(close) => <FootHead title="Where this Thread runs" description="Set by the first message" facts={<Pill><Folder aria-hidden="true" />{project.name}</Pill>} close={close} />}
-          foot={<PanelFoot>
-            {place.mode === 'worktree' && <><span className="flex items-center gap-1.5"><Key>↑</Key><Key>↓</Key>move</span><span className="flex items-center gap-1.5"><Key>Enter</Key>choose</span></>}
-            <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
-          </PanelFoot>}
-        >
-          <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 pt-1 pb-3">
-            <Segmented
-              aria-label="Where this Thread runs"
-              value={place.mode}
-              onValueChange={(v) => choose(v as ThreadPlace['mode'])}
-              items={[
-                { value: 'current', label: 'Current branch' },
-                { value: 'branch', label: <span className="flex items-center gap-1">{branchLocked && <Lock aria-hidden="true" className="size-3" />}New branch</span>, disabled: branchLocked },
-                { value: 'worktree', label: 'New worktree' },
-              ]}
-              className="h-7"
-            />
-            {blocking && (
-              <p className="flex items-start gap-1.5 text-caption text-muted">
-                <Lock aria-hidden="true" className="mt-px size-3.5 shrink-0" />
-                <span>New branch is off while <span className="font-medium text-ink">{blocker}</span> works in this folder.</span>
-              </p>
-            )}
-            {place.mode !== 'worktree' ? (
-              <PanelSection label={place.mode === 'current' ? 'Branch' : 'From'} meta={place.mode === 'current' ? 'shared with the Project folder' : 'the Project folder’s current branch'}>
-                <p className="truncate text-ui font-medium text-ink">{project.branch ?? 'No branch checked out'}</p>
-              </PanelSection>
-            ) : (
-              <PanelSection label="From">
-                <div className="relative">
-                  <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted" />
-                  <Input
-                    size="md"
-                    className="pl-7"
-                    placeholder="Find a branch"
-                    role="combobox"
-                    aria-label="Find a base branch"
-                    aria-expanded="true"
-                    aria-controls={listId}
-                    aria-activedescendant={shown[activeIndex] ? `${listId}-${activeIndex}` : undefined}
-                    value={query}
-                    onChange={(e) => { setQuery(e.target.value); setActive(0); }}
-                    onKeyDown={onKey}
-                  />
-                </div>
-                <div id={listId} role="listbox" aria-label="Base branch" className="-mx-1 flex max-h-56 flex-col gap-px overflow-y-auto overscroll-contain px-1">
-                  {shown.map((b, i) => {
-                    const on = b.name === base;
-                    const heading = i === 0 ? (b.remote ? 'Remote' : 'Local') : b.remote && !shown[i - 1].remote ? 'Remote' : '';
-                    return (
-                      <div key={`${b.remote ? 'r' : 'l'}:${b.name}`} className="contents">
-                        {heading && <h3 className="px-2 pt-1 pb-1 text-eyebrow uppercase text-muted">{heading}</h3>}
-                        <button
-                          id={`${listId}-${i}`}
-                          type="button"
-                          role="option"
-                          tabIndex={-1}
-                          aria-selected={on}
-                          className={cn('flex h-8 w-full min-w-0 shrink-0 items-center gap-2 rounded-sm px-2 text-left transition-colors pointer-coarse:h-11', i === activeIndex ? 'bg-tint-hover' : on && 'bg-tint-selected')}
-                          onMouseMove={() => i !== activeIndex && setActive(i)}
-                          onClick={() => pick(b)}
-                        >
-                          <GitBranch aria-hidden="true" className="size-3.5 shrink-0 text-muted" />
-                          <span className={cn('min-w-0 flex-1 truncate text-ui', on ? 'font-medium text-ink' : 'text-body')}>{b.name}</span>
-                          {b.updated_at && <span className="shrink-0 text-caption text-muted">{timeAgo(b.updated_at)}</span>}
-                          <Check aria-hidden="true" className={cn('size-4 shrink-0 text-ink', !on && 'invisible')} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {!branches && <p className="px-2 py-2 text-caption text-muted">Reading branches…</p>}
-                  {branches?.list && !shown.length && <p className="px-2 py-2 text-caption text-muted">{q ? `No branch matches “${query.trim()}”.` : 'No branches.'}</p>}
-                  {branches?.reason && <p className="px-2 py-2 text-caption text-muted">{branches.reason}</p>}
-                  {branches?.error && <p role="alert" className="px-2 py-2 text-caption text-warning">Could not read the branches: {branches.error}</p>}
-                </div>
-              </PanelSection>
-            )}
-            {place.mode !== 'current' && (
-              <PanelSection label="Creates" meta="renamed after the title, until pushed">
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-caption">
-                  <dt className="text-muted">Branch</dt>
-                  <dd className="min-w-0 font-mono text-code-sm text-ink">uam/<span className="text-muted">&lt;8 hex&gt;</span></dd>
-                  {place.mode === 'worktree' && (
-                    <>
-                      <dt className="text-muted">Folder</dt>
-                      <dd className="min-w-0 text-ink"><FolderPath path={`~/.uam/worktrees/${projectSlug(project.name)}/uam-<8 hex>`} /></dd>
-                    </>
-                  )}
-                </dl>
-              </PanelSection>
-            )}
-          </div>
-        </FootReader>
-      )}
+    <div className="flex min-w-0 flex-1 items-center gap-1">
+      <span className={cn(TEXT, 'shrink-0')}><Folder aria-hidden="true" className="text-muted" />Current branch</span>
+      {switchable ? <>
+        <BranchButton refFn={setAnchor} open={open} onClick={() => { setError(''); setOpen((o) => !o); }} name={branch}>
+          <GitBranch aria-hidden="true" className="text-muted" />
+          <span className="truncate font-medium text-ink">{branch}</span>
+        </BranchButton>
+        <BranchMenu anchor={anchor} open={open} onClose={() => setOpen(false)} projectId={project.id} from={branch} switching existing value={{ name: branch, remote: false }}
+          self={session} busy={busy} error={error} onPick={(p) => void pick(p)} />
+      </> : branchText}
     </div>
   );
 }

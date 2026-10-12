@@ -49,10 +49,14 @@ function branchesOf(p: Project) {
   ];
 }
 
+const slug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || '7f3a9c21';
+
 export function gitMock(host: GitHost) {
   const ahead: Record<string, number> = { p1: 1 };
   const behind: Record<string, number> = { p1: 2 };
   const committed = new Set<string>();
+  /** The changed files of a Project's folder not committed yet. */
+  const pendingIn = (projectId: string) => [...(host.changes()[projectId] ?? []), ...(OTHER[projectId] ?? [])].filter((c) => !committed.has(`${projectId}:${c.path}`)).length;
 
   // `?mock&gitidle` shows the panel as if no Task were mid-turn.
   const idle = new URLSearchParams(window.location.search).has('gitidle');
@@ -84,7 +88,8 @@ export function gitMock(host: GitHost) {
         const p = host.projects().find((x) => x.id === decodeURIComponent(b[1]));
         if (!p) return fail(404, 'project not found');
         if (p.no_git) return fail(409, 'this folder is not in a Git repository');
-        return json(200, { branches: branchesOf(p) });
+        const working = host.tasks().find((t) => t.project_id === p.id && t.workdir === p.dir && LIVE.includes(t.state) && (t.stage ?? 'active') === 'active');
+        return json(200, { branches: branchesOf(p), uncommitted: pendingIn(p.id), ...(working ? { busy: { id: working.id, name: working.name || working.title || 'A Thread' } } : {}) });
       }
       const r = url.pathname.match(/^\/api\/sessions\/([^/]+)\/git(\/[a-z]+)?$/);
       if (!r) return null;
@@ -100,8 +105,22 @@ export function gitMock(host: GitHost) {
         if (host.utilityLimit() === 0) return fail(409, 'Background AI is off: its daily limit is 0. Raise it in Settings → Background AI', 'utility_paused');
         return json(200, { message: DRAFT, conventional: true, model: 'gpt-6-luna' });
       }
-      if (st.busy) return fail(409, st.busy, 'git_busy');
       const p = host.projects().find((x) => x.id === task.project_id)!;
+      // A started Thread switches its Project folder's branch: the folder's Threads must have finished, and an
+      // existing branch needs its changes committed.
+      if (action === '/branch') {
+        if (task.worktree) return fail(409, 'a Thread in its own worktree keeps its branch');
+        const working = host.tasks().find((t) => t.project_id === p.id && t.workdir === p.dir && LIVE.includes(t.state) && (t.stage ?? 'active') === 'active');
+        if (working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder. Wait for it to finish.`, 'branch_busy');
+        const n = pendingIn(p.id);
+        if (body.mode === 'switch' && n) return fail(409, `${n} ${n === 1 ? 'file' : 'files'} not committed`, 'branch_dirty');
+        let branch = String(body.branch ?? '');
+        if (body.mode === 'branch') branch = `uam/${slug(task.name || task.title)}`;
+        else if (body.remote) branch = branch.replace(/^[^/]+\//, '');
+        host.projectChanged({ ...p, branch });
+        return json(200, task);
+      }
+      if (st.busy) return fail(409, st.busy, 'git_busy');
       switch (action) {
         case '/init': {
           if (!st.can_init) return fail(409, 'this folder is already in a Git repository');

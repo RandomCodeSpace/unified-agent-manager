@@ -922,16 +922,25 @@ export function install(): { received: Received[] } {
       const { provider, model, effort, context_size } = sel;
       const mode = assisted ? 'assisted' : sel.mode;
       const prompt = String(body.prompt ?? '').trim();
-      // Where the Thread runs: a new branch in the Project folder is refused while another Thread works there.
-      const place = (body.place ?? {}) as { mode?: string; base?: string };
+      // Where the Thread runs: switching the Project folder's branch is refused while another Thread works there.
+      const place = (body.place ?? {}) as { mode?: string; base?: string; branch?: string; remote?: boolean };
       let where: Partial<MockTask> = {};
       if (place.base && place.mode !== 'worktree') return fail(400, 'base is only for a new worktree');
-      if (place.mode === 'branch' || place.mode === 'worktree') {
+      if ((place.branch || place.remote) && place.mode !== 'switch') return fail(400, "branch is only for switching the folder's branch");
+      if (place.mode === 'branch' || place.mode === 'switch') {
+        const working = st.tasks.find((x) => x.project_id === p.id && x.workdir === p.dir && LIVE.includes(x.state) && (x.stage ?? 'active') === 'active');
+        if (working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder. Wait for it to finish.`, { code: 'branch_busy', refs: [working.id] });
+        let branch = String(place.branch ?? '');
+        if (place.mode === 'branch') branch = `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}`;
+        else if (place.remote) branch = branch.replace(/^[^/]+\//, '');
+        if (!branch) return fail(400, 'branch must be a branch name');
+        const next = { ...p, branch };
+        st.projects = st.projects.map((x) => (x.id === p.id ? next : x));
+        broadcast('project', { project: next });
+      } else if (place.mode === 'worktree') {
         const branch = `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}`;
-        const working = st.tasks.find((x) => x.project_id === p.id && x.workdir === p.dir && LIVE.includes(x.state));
-        if (place.mode === 'branch' && working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder; a new branch there would switch its branch too. Choose New worktree, or wait for it to finish.`, { code: 'branch_busy', refs: [working.id] });
         const path = `/home/user/.uam/worktrees/${p.name}/${branch.replace('/', '-')}`;
-        where = place.mode === 'branch' ? { branch } : { branch, worktree: { path, branch }, workdir: path };
+        where = { branch, worktree: { path, branch }, workdir: path };
       }
       const t: MockTask = {
         id: nextId('t'),
