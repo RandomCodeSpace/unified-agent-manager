@@ -86,4 +86,30 @@ describe('settling or archiving with unsaved git work', () => {
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     await waitFor(() => expect(sheet.getByRole('radio', { name: /^All changes/ }).getAttribute('aria-checked')).toBe('true'));
   });
+
+  test('a clean-looking Archive refused over new work replaces today\'s dialog with the confirmation beside the Thread\'s row', async () => {
+    const { user } = renderApp('#task=t10');
+    await screen.findByRole('region', { name: 'Conversation' });
+    const real = api.stage.bind(api);
+    vi.spyOn(api, 'stage').mockImplementationOnce(async () => {
+      throw new ApiError(409, 'This Thread\'s folder has unsaved git work.', { code: 'unsaved_work', git_pending: { uncommitted: 0, unpushed: 2 }, refs: [] });
+    }).mockImplementation(real);
+    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
+    await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this task?' })).getByRole('button', { name: 'Archive task' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' });
+    // The asking button was inside the closing dialog: the Thread's row stands for it.
+    expectAnchoredTo(dialog, 't10');
+    expect(within(dialog).getByText('2 not pushed')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Open Changes' })).toBeNull();
+  });
+
+  test('any other refusal is the notice line, not the confirmation', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    vi.spyOn(api, 'stage').mockRejectedValueOnce(new ApiError(409, 'stop the turn first'));
+    await user.click(side.getByRole('button', { name: 'Settle Bump dependencies' }));
+    expect(await screen.findByText(/Could not settle the task: stop the turn first/)).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
 });
