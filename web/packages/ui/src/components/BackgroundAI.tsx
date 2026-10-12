@@ -205,7 +205,7 @@ export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLi
           </Button>
           <HelpTip label="Background AI log">Newest first. Tokens marked ≈ are estimated from the characters; the others are what the provider reported.</HelpTip>
         </div>
-        <Collapse open={open} soft>
+        <Collapse open={open}>
           <div id="utility-log" className="flex flex-col gap-1">
             {!logRead && <Skeleton label="Loading the log…" rows={3} className="pt-2" />}
             {logRead && calls.length === 0 && <Note>No Background AI calls in the last 30 days.</Note>}
