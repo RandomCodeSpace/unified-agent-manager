@@ -239,6 +239,9 @@ type Meta struct {
 	// Service is the uam installed at the service's binary path and the
 	// restart onto it (GET /api/service), as last read.
 	Service *ServiceStatus `json:"service,omitempty"`
+	// Disk is the filesystem holding the Thread worktrees, low below 10%
+	// free; omitted when it cannot be read.
+	Disk *DiskInfo `json:"disk,omitempty"`
 }
 
 // SessionSummary is one web session (a Task) as listed.

@@ -48,6 +48,8 @@ type PlaceRequest struct {
 type WorktreeInfo struct {
 	Path   string `json:"path"`
 	Branch string `json:"branch"`
+	// SizeBytes is its size on disk once measured in the background.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
 }
 
 // BranchEntry is one branch a new worktree can start from: a local branch,

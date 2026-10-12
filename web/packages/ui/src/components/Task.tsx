@@ -28,6 +28,7 @@ import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
 import { CommandOutputPanel, type CommandOutput } from './CommandOutput';
 import { BranchChip } from './BranchChip';
+import { lowDisk } from '../lib/worktrees';
 import { away, ChangesButton, FinishEvidence, SinceYouLeft, useTurnEvidence } from './Finish';
 import { canRename, taskMenuItems, useTaskActions } from './taskActions';
 import { McpTaskDialog } from './McpTask';
@@ -1080,7 +1081,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
                 </Button>
               </Tip>
             )}
-            <BranchChip session={session} project={project} />
+            <BranchChip session={session} project={project} size={session.worktree?.size_bytes} lowDisk={lowDisk(meta?.disk)} />
           </ComposerFoot>
         </div>
       </div>
@@ -1145,7 +1146,7 @@ export function NewTaskPane({ project, defaults, onSend, leading }: Readonly<{ p
       </div>
       <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6">
         <Composer session={session} onRename={noRename} onSessionUpdate={onSettings} newTask={newTask} />
-        <ComposerFoot><BranchChip session={session} project={project} /></ComposerFoot>
+        <ComposerFoot><BranchChip session={session} project={project} lowDisk={lowDisk(meta?.disk)} /></ComposerFoot>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ export const SETTINGS_GROUPS = [
   { label: 'Tasks', scope: 'service', pages: [
     { id: 'new-tasks', label: 'New tasks', blurb: 'The model, effort, mode and compaction a new task starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
     { id: 'composer', label: 'Composer', blurb: 'What Enter does while a task runs, and suggested replies.', keywords: 'enter send now after this turn queue steer suggest suggested replies keyboard' },
+    { id: 'worktrees', label: 'Worktrees', blurb: 'Worktrees of Threads on their own branch, and the disk they use.', keywords: 'worktree worktrees disk space free size branch remove clean settle' },
     { id: 'archived', label: 'Archived', blurb: 'Archived tasks, read-only for good.', keywords: 'archive archived read-only delete export run again old tasks' },
   ] },
   { label: 'Models & AI', scope: 'service', pages: [

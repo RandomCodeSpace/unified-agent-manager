@@ -6,6 +6,7 @@
 import { BADGE_COLORS, LIVE, type Aside, type Ask, type Attachment, type CustomModel, type Badge, type Interaction, type Item, type Project, type QueuedPrompt, type SessionDetail, type SessionSummary, type Settings, type Subagent, type SubagentStatus, type Submission, type TaskDefaults } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { gitMock } from './git';
+import { worktreesMock } from './worktrees';
 import { chartMock } from './charts';
 import { routinesMock } from './routines';
 import { accountMock } from './account';
@@ -213,6 +214,7 @@ export function install(): { received: Received[] } {
     newest: () => st.tasks.at(-1),
     summary: (t) => summary(t),
   });
+  const worktrees = worktreesMock();
   // The commit panel's routes; a Task's files are the ones its edit tools name.
   const git = gitMock({
     projects: () => st.projects,
@@ -690,7 +692,9 @@ export function install(): { received: Received[] } {
     if (path === '/api/auth') return json(200, { authenticated: true, required: false });
     if (path === '/api/logout') return json(204);
     if (path === '/api/connections') return json(200, { instance_id: 'mock-home', connections: [] });
-    if (path === '/api/meta') return json(200, st.meta);
+    if (path === '/api/meta') return json(200, { ...st.meta, disk: worktrees.disk });
+    const worktreed = worktrees.route(method, path, body);
+    if (worktreed) return worktreed;
     if (path === '/api/glab' && method === 'GET') return json(200, {
       installed: true, checked_at: new Date().toISOString(), hostname: 'gitlab.example.com',
       authenticated: true, username: 'alex', name: 'Alex Morgan',

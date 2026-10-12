@@ -441,6 +441,49 @@ export interface Meta {
   temp_root_aliases?: string[];
   /** The UAM installed at the service's binary path and the restart onto it, as last read; absent on a service that cannot restart itself. */
   service?: ServiceStatus;
+  /** The disk holding the Thread worktrees (~/.uam/worktrees); `low` below 10% free. Absent from older servers. */
+  disk?: DiskInfo;
+}
+
+export interface DiskInfo {
+  free_bytes: number;
+  total_bytes: number;
+  low: boolean;
+}
+
+/** One folder in ~/.uam/worktrees and the Thread it was made for, while one still has it. */
+export interface WorktreeEntry {
+  path: string;
+  branch?: string;
+  project_id?: string;
+  task_id?: string;
+  thread?: string;
+  stage?: 'active' | 'settled' | 'archived';
+  /** Absent until measured in the background; `size_partial` says the walk stopped early (at least this much). */
+  size_bytes?: number;
+  size_partial?: boolean;
+  /** Changed files, untracked ones included, that removing it loses; commits on no remote. */
+  uncommitted: number;
+  unpushed: number;
+}
+
+/** A worktree removed on its own when its Thread settled, was archived or deleted. */
+export interface RemovedWorktree {
+  path: string;
+  branch: string;
+  project_id?: string;
+  task_id?: string;
+  thread?: string;
+  size_bytes?: number;
+  at: string;
+}
+
+/** GET /api/worktrees: biggest first. */
+export interface Worktrees {
+  root: string;
+  disk?: DiskInfo;
+  worktrees: WorktreeEntry[];
+  removed: RemovedWorktree[];
 }
 
 /**
@@ -732,7 +775,7 @@ export interface SessionSummary {
   /** The branch checked out in the Thread's working folder; absent on a detached head and from older servers (the Project's branch stands in). */
   branch?: string;
   /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
-  worktree?: { path: string; branch: string };
+  worktree?: { path: string; branch: string; /** Bytes on disk, once measured in the background. */ size_bytes?: number };
   /** Work in the Thread's working tree saved nowhere else, shared by every Thread in its repository: changed tracked files and commits on no remote; absent outside a repository or before the first read. */
   git_pending?: GitPending;
   conversation_id: string;
@@ -1827,6 +1870,7 @@ const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boo
   ['provider-accounts-v1', (path) => /^\/api\/providers\/[^/]+\/account/.test(path)],
   ['routines-v1', (path) => /^\/api\/(?:projects\/[^/]+\/)?routines(?:[/?]|$)/.test(path)],
   ['usage-v1', (path) => path.startsWith('/api/usage')],
+  ['worktrees-v1', (path) => /^\/api\/(?:worktrees|projects\/[^/]+\/branches)(?:[/?]|$)/.test(path)],
   ['terminal-v1', (path) => /\/terminal(?:[?]|$)/.test(path)],
   ['files-v1', (path) => /^\/api\/fs(?:[/?]|$)/.test(path) || /\/(?:files|attachments|file-grants)(?:[/?]|$)/.test(path)],
 ];
@@ -2034,6 +2078,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     tokenPrices: () => call<TokenPriceCatalog>('GET', '/api/usage/prices'),
     utility: (before?: number, limit = 25) => call<UtilityLog>('GET', `/api/utility?limit=${limit}${before ? `&before=${before}` : ''}`),
     /** Web Push: the service's public key, and this browser's subscription (lib/notify.ts). */
+    /** Settings → Worktrees: the Thread worktrees, the disk and the ones removed on settling. */
+    worktrees: () => call<Worktrees>('GET', '/api/worktrees'),
+    /** Removes a listed worktree, keeping its branch; one with changes needs `force` (409 `worktree_unsaved` without). */
+    removeWorktree: (path: string, force: boolean) => call<void>('POST', '/api/worktrees/remove', { path, force }),
     pushKey: () => call<{ public_key: string }>('GET', '/api/push'),
     pushSubscribe: (subscription: PushSubscriptionJSON) => call<void>('POST', '/api/push/subscribe', subscription),
     pushUnsubscribe: (endpoint: string) => call<void>('POST', '/api/push/unsubscribe', { endpoint }),

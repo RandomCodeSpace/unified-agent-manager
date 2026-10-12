@@ -74,6 +74,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"GET /api/usage/prices",
 		"GET /api/usage/tokens",
 		"GET /api/utility",
+		"GET /api/worktrees",
 		"PATCH /api/mcp/servers/{name}",
 		"PATCH /api/projects/{id}",
 		"PATCH /api/routines/{id}",
@@ -140,6 +141,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"POST /api/sessions/{id}/suggestions",
 		"POST /api/sessions/{id}/unarchive",
 		"POST /api/settings/custom-models/discover",
+		"POST /api/worktrees/remove",
 		"PUT /api/configuration/{kind}/{name}",
 		"PUT /api/mcp/servers/{name}",
 		grantKeyRoute:

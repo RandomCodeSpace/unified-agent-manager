@@ -3,6 +3,7 @@ import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, Circl
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
+import { diskLowText } from '../lib/worktrees';
 import { encodeEntity } from '../lib/instanceIdentity';
 import { filteredProject, groupTasks, needsYouNow, pendingWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
 import { pendingWords } from './BranchChip';
@@ -166,7 +167,7 @@ function FooterButton({ label, icon, pressed, onClick, side, notice }: Readonly<
 function SettingsButton({ actions, side }: Readonly<{ actions: WorkspaceActions; side?: TipSide }>) {
   const meta = useApp().meta;
   const cliUpdate = meta?.providers.some((p) => p.cli_update);
-  const notice = [restartNotice(meta?.service), cliUpdate && 'Copilot CLI update available'].filter(Boolean).join('; ');
+  const notice = [restartNotice(meta?.service), cliUpdate && 'Copilot CLI update available', diskLowText(meta?.disk)].filter(Boolean).join('; ');
   return <FooterButton label="Settings" icon={<SettingsIcon />} pressed={actions.settingsOpen} onClick={() => actions.onSettings()} side={side} notice={notice || undefined} />;
 }
 
