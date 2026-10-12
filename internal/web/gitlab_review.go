@@ -53,9 +53,11 @@ type GitLabDiscussion struct {
 
 type GitLabReviewMergeRequest struct {
 	GitLabMergeRequest
-	SourceBranch string `json:"source_branch"`
-	TargetBranch string `json:"target_branch"`
-	HeadSHA      string `json:"head_sha"`
+	SourceBranch string              `json:"source_branch"`
+	TargetBranch string              `json:"target_branch"`
+	HeadSHA      string              `json:"head_sha"`
+	Author       *GitLabReviewAuthor `json:"author,omitempty"`
+	HeadPipeline *GitLabPipeline     `json:"head_pipeline,omitempty"`
 }
 
 type GitLabReview struct {
@@ -155,27 +157,47 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 		return out, newError(http.StatusConflict, "the merge request changed; refresh GitLab")
 	}
 	out.headSHA = mr.SHA
-	out.MergeRequest = mr.GitLabReviewMergeRequest
-	out.MergeRequest.HeadSHA = mr.SHA
-	out.MergeRequest.Title = displaytext.Sanitize(mr.Title)
-	out.MergeRequest.WebURL = gitLabSafeURL(gate.Host, mr.WebURL)
-	out.MergeRequest.SourceBranch = displaytext.Sanitize(mr.SourceBranch)
-	out.MergeRequest.TargetBranch = displaytext.Sanitize(mr.TargetBranch)
+	out.MergeRequest = gitLabReviewMR(gate, mr)
+	if err = readGitLabDiscussions(ctx, gate, base, &out); err != nil {
+		return out, err
+	}
+	out.CheckedAt = m.now()
+	return out, nil
+}
+
+// gitLabReviewMR keeps only display-safe merge request fields.
+func gitLabReviewMR(gate glabGate, mr gitLabReviewMRResponse) GitLabReviewMergeRequest {
+	out := mr.GitLabReviewMergeRequest
+	out.HeadSHA = mr.SHA
+	out.Title = displaytext.Sanitize(mr.Title)
+	out.WebURL = gitLabSafeURL(gate.Host, mr.WebURL)
+	out.SourceBranch = displaytext.Sanitize(mr.SourceBranch)
+	out.TargetBranch = displaytext.Sanitize(mr.TargetBranch)
+	if out.Author != nil {
+		out.Author = &GitLabReviewAuthor{Name: displaytext.Sanitize(out.Author.Name), Username: displaytext.Sanitize(out.Author.Username)}
+	}
+	if p := out.HeadPipeline; p != nil {
+		out.HeadPipeline = &GitLabPipeline{ID: p.ID, Status: displaytext.Sanitize(p.Status), SHA: displaytext.Sanitize(p.SHA), Ref: displaytext.Sanitize(p.Ref), WebURL: gitLabSafeURL(gate.Host, p.WebURL), CreatedAt: displaytext.Sanitize(p.CreatedAt), UpdatedAt: displaytext.Sanitize(p.UpdatedAt)}
+	}
+	return out
+}
+
+// readGitLabDiscussions reads a merge request's bounded discussion history.
+func readGitLabDiscussions(ctx context.Context, gate glabGate, base string, out *GitLabReview) error {
 	notes := 0
 	seen := make(map[string]bool)
 	for page := 1; page <= gitLabMaxItems/gitLabPageSize; page++ {
 		var batch []GitLabDiscussion
-		var headers http.Header
-		headers, err = gitLabGetJSON(ctx, gate, fmt.Sprintf("%s/discussions?per_page=%d&page=%d", base, gitLabPageSize, page), &batch)
+		headers, err := gitLabGetJSON(ctx, gate, fmt.Sprintf("%s/discussions?per_page=%d&page=%d", base, gitLabPageSize, page), &batch)
 		if err != nil {
-			return out, err
+			return err
 		}
 		if len(batch) > gitLabPageSize {
-			return out, errors.New("GitLab returned an oversized discussion list")
+			return errors.New("GitLab returned an oversized discussion list")
 		}
 		for _, discussion := range batch {
 			if !gitLabValidDiscussionID(discussion.ID) || seen[discussion.ID] {
-				return out, errors.New("GitLab returned inconsistent discussions")
+				return errors.New("GitLab returned inconsistent discussions")
 			}
 			seen[discussion.ID] = true
 			if notes == gitLabMaxItems {
@@ -190,7 +212,7 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 			for i := range discussion.Notes {
 				note := &discussion.Notes[i]
 				if note.ID <= 0 {
-					return out, errors.New("GitLab returned an invalid discussion note")
+					return errors.New("GitLab returned an invalid discussion note")
 				}
 				out.Truncated = gitLabSanitizeReviewNote(note) || out.Truncated
 			}
@@ -204,8 +226,7 @@ func (m *Manager) gitLabReviewLocked(ctx context.Context, id, sha string, iid in
 			break
 		}
 	}
-	out.CheckedAt = m.now()
-	return out, nil
+	return nil
 }
 
 func gitLabReviewMatches(mr gitLabReviewMRResponse, projectID int64, branch string) bool {
@@ -439,7 +460,14 @@ func (s *Server) handleGitLabReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := s.m.gitLabReview(r.Context(), r.PathValue("id"), r.URL.Query().Get("commit_sha"), iid)
+	var out GitLabReview
+	var err error
+	// Without a commit: any merge request of the Thread's project, read-only.
+	if sha := r.URL.Query().Get("commit_sha"); sha == "" {
+		out, err = s.m.gitLabProjectReview(r.Context(), r.PathValue("id"), iid)
+	} else {
+		out, err = s.m.gitLabReview(r.Context(), r.PathValue("id"), sha, iid)
+	}
 	if err != nil {
 		writeGitLabReviewFailure(w, err)
 		return

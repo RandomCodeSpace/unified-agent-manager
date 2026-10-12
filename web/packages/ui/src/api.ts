@@ -1850,6 +1850,43 @@ export interface GitLabPipelineState {
   reason?: string;
   checked_at?: string;
   error?: string;
+  /** The Thread's signed-in GitLab project: its items in the conversation open in the side panel. */
+  origin?: { host: string; path: string };
+}
+
+/** One GitLab item a conversation names: `ref` is `mr:2`, `issue:14`, `epic:3[:group/path]`, `pipeline:91` or `job:7`. */
+export interface GitLabItemSummary {
+  ref: string;
+  kind: string;
+  title?: string;
+  state?: string;
+  draft?: boolean;
+  /** A job's pipeline. */
+  pipeline_id?: number;
+  web_url?: string;
+  error?: string;
+}
+export interface GitLabWorkItemLink { ref?: string; iid: number; kind: string; title: string; state: string; web_url?: string }
+export interface GitLabWorkItem {
+  ref: string;
+  iid: number;
+  kind: string;
+  title: string;
+  state: string;
+  web_url?: string;
+  author?: { name: string; username: string };
+  created_at?: string;
+  labels: string[];
+  assignees: { name: string; username: string }[];
+  milestone?: string;
+  description?: string;
+  parent?: GitLabWorkItemLink;
+  children: GitLabWorkItemLink[];
+  child_count: number;
+}
+export interface GitLabPipelineDetail {
+  pipeline: NonNullable<GitLabPipelineState['pipeline']>;
+  jobs: NonNullable<GitLabPipelineState['jobs']>;
 }
 
 export interface GitLabReviewNote {
@@ -1865,7 +1902,7 @@ export interface GitLabReviewNote {
 }
 export interface GitLabDiscussion { id: string; individual_note: boolean; notes: GitLabReviewNote[] }
 export interface GitLabReview {
-  merge_request: { iid: number; title: string; state: string; draft: boolean; web_url: string; source_branch: string; target_branch: string; head_sha?: string };
+  merge_request: { iid: number; title: string; state: string; draft: boolean; web_url: string; source_branch: string; target_branch: string; head_sha?: string; author?: { name: string; username: string }; head_pipeline?: NonNullable<GitLabPipelineState['pipeline']> };
   discussions: GitLabDiscussion[];
   truncated: boolean;
   checked_at: string;
@@ -1874,6 +1911,7 @@ export type GitLabReviewAction = 'investigate' | 'fix' | 'draft_reply';
 
 /** The capability a connected instance must have for a route family; the first match wins. */
 const CAPABILITY_FAMILIES: ReadonlyArray<readonly [string, (path: string) => boolean]> = [
+  ['gitlab-items-v1', (path) => /^\/api\/sessions\/[^/]+\/gitlab\/(?:items|work-items|pipelines)(?:[/?]|$)/.test(path)],
   ['gitlab-reviews-v1', (path) => /^\/api\/sessions\/[^/]+\/gitlab\/merge-requests(?:[/?]|$)/.test(path)],
   ['gitlab-pipelines-v1', (path) => /^\/api\/sessions\/[^/]+\/gitlab(?:[/?]|$)/.test(path)],
   ['gitlab-status-v1', (path) => /^\/api\/glab(?:[?]|$)/.test(path)],
@@ -2062,13 +2100,20 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     webSettings: () => call<Settings>('GET', '/api/settings'),
     gitlabStatus: (projectId = '') => call<GitLabStatus>('GET', `/api/glab${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
     gitlabPipeline: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('GET', `/api/sessions/${enc(id)}/gitlab`, undefined, false, signal),
-    gitlabReview: (id: string, iid: number, commitSHA: string, signal?: AbortSignal) => call<GitLabReview>('GET', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}?commit_sha=${enc(commitSHA)}`, undefined, false, signal),
+    /** The same local read as `gitlabPipeline`, for the conversation's GitLab project (`origin`); it asks GitLab nothing. */
+    gitlabOrigin: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('GET', `/api/sessions/${enc(id)}/gitlab`, undefined, false, signal),
+    /** Without a commit: any merge request of the Thread's project, read-only (`gitlab-items-v1`). */
+    gitlabReview: (id: string, iid: number, commitSHA: string | undefined, signal?: AbortSignal) => call<GitLabReview>('GET', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}${commitSHA ? `?commit_sha=${enc(commitSHA)}` : ''}`, undefined, false, signal),
+    gitlabItems: (id: string, refs: string[], signal?: AbortSignal) => call<{ items: GitLabItemSummary[] }>('GET', `/api/sessions/${enc(id)}/gitlab/items?${refs.map((ref) => `ref=${encodeURIComponent(ref)}`).join('&')}`, undefined, false, signal),
+    gitlabWorkItem: (id: string, ref: string, signal?: AbortSignal) => call<GitLabWorkItem>('GET', `/api/sessions/${enc(id)}/gitlab/work-items?ref=${encodeURIComponent(ref)}`, undefined, false, signal),
+    gitlabPipelineDetail: (id: string, pipelineId: number, signal?: AbortSignal) => call<GitLabPipelineDetail>('GET', `/api/sessions/${enc(id)}/gitlab/pipelines/${pipelineId}`, undefined, false, signal),
     postGitlabComment: (id: string, iid: number, body: { commit_sha: string; discussion_id?: string; body: string }) => call<{ discussion_id?: string; note_id?: number }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/comments`, body),
     resolveGitlabThread: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; resolved: boolean }) => call<{ resolved: boolean }>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/resolve`, body),
     gitlabReviewAction: (id: string, iid: number, body: { commit_sha: string; discussion_id: string; action: GitLabReviewAction; request_id: string; mode: 'send' | 'queue' }) => call<Submission>('POST', `/api/sessions/${enc(id)}/gitlab/merge-requests/${iid}/actions`, body),
     refreshGitlabPipeline: (id: string, signal?: AbortSignal) => call<GitLabPipelineState>('POST', `/api/sessions/${enc(id)}/gitlab/refresh`, undefined, false, signal),
     investigateGitlabPipeline: (id: string, commitSHA: string, pipelineId: number) => call<{ task_id: string }>('POST', `/api/sessions/${enc(id)}/gitlab/investigate`, { commit_sha: commitSHA, pipeline_id: pipelineId }),
-    gitlabJobTrace: (id: string, jobId: number, commitSHA: string, pipelineId: number, signal?: AbortSignal) => call<{ text: string; truncated: boolean }>('GET', `/api/sessions/${enc(id)}/gitlab/jobs/${jobId}/trace?commit_sha=${enc(commitSHA)}&pipeline_id=${pipelineId}`, undefined, false, signal),
+    /** Without a commit: a job of any pipeline of the Thread's project (`gitlab-items-v1`). */
+    gitlabJobTrace: (id: string, jobId: number, commitSHA: string | undefined, pipelineId: number, signal?: AbortSignal) => call<{ text: string; truncated: boolean }>('GET', `/api/sessions/${enc(id)}/gitlab/jobs/${jobId}/trace?${commitSHA ? `commit_sha=${enc(commitSHA)}&` : ''}pipeline_id=${pipelineId}`, undefined, false, signal),
     configuration: (projectId = '') => call<Configuration>('GET', `/api/configuration${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
     draftConfiguration: (kind: Exclude<ConfigurationKind, 'instructions'>, brief: string, projectId = '') => call<ConfigurationDraft>('POST', `/api/configuration/${kind}/draft${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { brief }),
     saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),

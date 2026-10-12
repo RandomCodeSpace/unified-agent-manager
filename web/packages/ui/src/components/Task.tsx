@@ -50,6 +50,9 @@ import { Tip } from './ui/tooltip';
 const GoToFile = lazy(() => import('./GoToFile'));
 const FilePanel = lazy(() => import('./GoToFile').then((m) => ({ default: m.FilePanel })));
 const GitLabSheet = lazy(() => import('./GitLabSheet'));
+import type { GitLabOpenItem } from './GitLabSheet';
+import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
+import type { GitLabRef } from '../lib/gitlabRefs';
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
 const ChangesSheet = lazy(() => import('./Changes').then((m) => ({ default: m.ChangesSheet })));
 /** The pinned charts load with their first opening, never with the Task. */
@@ -313,6 +316,8 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [goToFile, setGoToFile] = useState<{ open: boolean; anchor: HTMLElement | null } | null>(null);
   const phone = useMedia(PHONE);
   const [gitlabOpen, setGitlabOpen] = useState(false);
+  /** A GitLab item opened from the conversation, shown in the GitLab panel with its turn's other items. */
+  const [gitlabItem, setGitlabItem] = useState<GitLabOpenItem | null>(null);
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -699,6 +704,25 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     return () => document.removeEventListener('keydown', onKey);
   }, [active, goToFileAvailable, openGoToFile]);
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
+  const openGitlabItem = useCallback((refs: GitLabRef[], ref: GitLabRef) => {
+    closePreview(false);
+    setFilesOpen(false);
+    setChartsOpen(false);
+    setOutput(null);
+    onSheet(false);
+    setGitlabItem({ refs, ref });
+    setGitlabOpen(true);
+  }, [onSheet, closePreview]);
+  const showGitlabItem = useCallback((ref: GitLabRef) => setGitlabItem((open) => open && { ...open, ref }), []);
+  const gitlabState = useGitLabOrigin(session.id, working);
+  const gitlabCurrent = gitlabOpen ? gitlabItem?.ref : undefined;
+  const gitlabItems = useMemo<GitLabItems | null>(() => {
+    const origin = gitlabState?.origin;
+    if (!gitlabState || !origin) return null;
+    const { commit, pipeline } = gitlabState;
+    const own = commit && pipeline && pipeline.sha === commit.sha ? { sha: commit.sha, pipelineId: pipeline.id } : undefined;
+    return { sessionId: session.id, origin, own, state: gitlabState, current: gitlabCurrent, open: openGitlabItem };
+  }, [session.id, gitlabState, gitlabCurrent, openGitlabItem]);
   const toggleCharts = useCallback(() => {
     closePreview(false);
     setFilePath(null);
@@ -955,6 +979,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <PreviewContext.Provider value={preview.open}>
     <TempRootContext.Provider value={tempRoots}>
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
+    <GitLabItemsContext.Provider value={gitlabItems}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
@@ -1089,11 +1114,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
       {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
       {goToFile && <Suspense fallback={null}><GoToFile session={session} project={project} anchor={goToFile.anchor} phone={phone} open={goToFile.open} onClose={closeGoToFile} onClosed={() => setGoToFile(null)} actions={fileActions} /></Suspense>}
       {filesPresence.mounted && fileView && <Suspense fallback={null}><FilePanel session={session} project={project} path={fileView} inline={sidePanelInline} open={filesOpen} onClose={closeFile} onClosed={filesPresence.onClosed} actions={fileActions} /></Suspense>}
-      {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet sessionId={session.id} session={session} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
+      {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet sessionId={session.id} session={session} item={gitlabItem} onItem={showGitlabItem} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}
       {preview.selection && !sheetOpen && <FilePreview selection={preview.selection} sessionId={session.id} workdir={session.workdir} inline={sidePanelInline} onClose={() => closePreview()} />}
     </div>
+    </GitLabItemsContext.Provider>
     </SubagentScope>
     </TempRootContext.Provider>
     </PreviewContext.Provider>

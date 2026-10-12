@@ -1902,6 +1902,53 @@ is discarded. This does not add a new setting or guarantee pipeline success.
 The gate uses the SDK session directory, not a shell `cd` destination. Shell
 aliases, computed command heads and other wrappers are not interpreted.
 
+## GitLab from the conversation
+
+In a Thread whose folder has a GitLab `origin` and whose host `glab` is
+signed in to, each reply that ends a turn which touched GitLab items ends
+in a **GitLab** strip: one entry per item, in the order the turn touched
+them, each with its state word (`!2 draft`, `Pipeline #91 failed`,
+`#14 open`). Links in the reply itself stay plain links. An item counts when
+the turn named it on the Thread's own project:
+
+- a GitLab link to a merge request, issue, work item, pipeline or job of the
+  project, or to an epic of one of its groups, in the reply or in a
+  `git push` or `glab` call's output (the merge request link `git push`
+  prints included);
+- a `glab mr`, `glab issue`, `glab work-items` or `glab ci` call: the item it
+  names (`glab mr view 2`, `glab ci trace <job> -p <pipeline>`) and the
+  `!iid`, `#iid`, `&iid` and pipeline IDs it prints (a call with `-R` for
+  another project does not count);
+- the pipeline of the Thread's own commit, on the turn whose `git commit` or
+  `git push` made it.
+
+A strip lists at most 20 items. Pressing an entry opens the GitLab side panel
+on that item, with the turn's other items above it to step between; a
+modified click opens it in GitLab instead, and every view has **Open in
+GitLab**. The views:
+
+- **Merge request**: title, state, branches, its head pipeline (which opens
+  the pipeline view) and its discussions. The merge requests of the Thread's
+  own commit keep their reply, resolve, Investigate, Fix and Draft reply
+  controls; any other merge request of the project is read-only.
+- **Work item**: labels, assignees, milestone, description, parent and
+  child items. Issues are read through the REST API; epics and tasks through
+  one fixed, read-only GraphQL query the UAM server runs (agents cannot run
+  GraphQL: the shell rules refuse `glab api`).
+- **Pipeline** (also for a job): jobs by stage with their states, the failed
+  job (or the job opened) selected, the last 60 lines of its log with error
+  lines marked, and **Full log**. The pipeline of the Thread's own commit
+  offers **Investigate**.
+
+Item states are read when a strip first shows and kept for a minute; a
+running pipeline or job is read again each minute while its strip is on
+screen. Nothing here writes to GitLab except the existing discussion
+controls. The routes are `GET /api/sessions/{id}/gitlab/items?ref=…`,
+`GET /api/sessions/{id}/gitlab/work-items?ref=…` and
+`GET /api/sessions/{id}/gitlab/pipelines/{pipeline_id}`; the merge request
+and job log routes read any item of the project when called without
+`commit_sha`. Connected instances advertise `gitlab-items-v1`.
+
 ## MCP servers
 
 MCP servers give the agent extra tools: a command this host runs (stdio) or

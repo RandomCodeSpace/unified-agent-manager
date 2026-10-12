@@ -25,6 +25,9 @@ type gitLabMonitor struct {
 	mu      sync.Mutex
 	cache   map[string]GitLabPipelineState
 	retryAt map[string]time.Time // guarded by work; respects GitLab Retry-After
+	// Conversation item reads (gitlab_items.go), guarded by work.
+	projects map[string]int64
+	items    map[string]gitLabCachedItem
 }
 
 type GitLabCommit struct {
@@ -48,10 +51,18 @@ type GitLabPipelineState struct {
 	Reason              string               `json:"reason,omitempty"`
 	CheckedAt           *time.Time           `json:"checked_at,omitempty"`
 	Error               string               `json:"error,omitempty"`
-	projectID           int64
+	// Origin is the Thread's signed-in GitLab project; its items in the
+	// conversation open in the side panel.
+	Origin    *GitLabOrigin `json:"origin,omitempty"`
+	projectID int64
 	// pipelineID is set only when this view is a registered investigation.
 	// It pins the original event and prevents creating another investigation.
 	pipelineID int64
+}
+
+type GitLabOrigin struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
 }
 
 func gitLabCommitKey(host, path, sha string) string {
@@ -596,6 +607,9 @@ func (s *Server) registerGitLabRoutes(mux *http.ServeMux) {
 			writeFailure(w, err)
 			return
 		}
+		if gate, ok := s.m.gitLabOrigin(r.Context(), r.PathValue("id")); ok {
+			out.Origin = &GitLabOrigin{Host: gate.Host, Path: gate.Path}
+		}
 		writeJSON(w, http.StatusOK, out)
 	})
 	mux.HandleFunc("POST /api/sessions/{id}/gitlab/refresh", func(w http.ResponseWriter, r *http.Request) {
@@ -622,17 +636,29 @@ func (s *Server) registerGitLabRoutes(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]string{"task_id": id})
 	})
 	mux.HandleFunc("GET /api/sessions/{id}/gitlab/jobs/{job_id}/trace", s.handleGitLabTrace)
+	s.registerGitLabItemRoutes(mux)
 }
 
 func (s *Server) handleGitLabTrace(w http.ResponseWriter, r *http.Request) {
-	s.m.gitlab.work.Lock()
-	defer s.m.gitlab.work.Unlock()
 	jobID, jobErr := strconv.ParseInt(r.PathValue("job_id"), 10, 64)
 	pipelineID, pipelineErr := strconv.ParseInt(r.URL.Query().Get("pipeline_id"), 10, 64)
 	if jobErr != nil || pipelineErr != nil || jobID <= 0 || pipelineID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid pipeline or job ID")
 		return
 	}
+	// Without a commit, any pipeline of the Thread's project (opened from
+	// the conversation); with one, the Thread's own commit as before.
+	if r.URL.Query().Get("commit_sha") == "" {
+		trace, err := s.m.gitLabProjectTrace(r.Context(), r.PathValue("id"), pipelineID, jobID)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, trace)
+		return
+	}
+	s.m.gitlab.work.Lock()
+	defer s.m.gitlab.work.Unlock()
 	key, rec, gate, state, err := s.m.gitLabSelection(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeFailure(w, err)
