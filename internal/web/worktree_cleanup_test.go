@@ -140,6 +140,10 @@ func TestRemoveWorktreeRoute(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil || w.Code != http.StatusOK || len(list.Worktrees) != 0 {
 		t.Fatalf("list = %d %s", w.Code, w.Body)
 	}
+	// An empty log is [], never null: the Settings page reads its length.
+	if !strings.Contains(w.Body.String(), `"removed":[]`) {
+		t.Fatalf("removed not an empty array: %s", w.Body)
+	}
 }
 
 func TestMetaCarriesTheDisk(t *testing.T) {
