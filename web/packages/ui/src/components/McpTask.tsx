@@ -128,7 +128,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
       </div>
       {s.error && <p className="text-caption break-words text-error">{s.error}</p>}
       {children}
-      <Collapse open={toolsOpen && s.status === 'connected'} soft>
+      <Collapse open={toolsOpen && s.status === 'connected'}>
         {!tools && !toolsError && <Skeleton label={`Reading ${s.name} tools…`} rows={2} />}
         {toolsError && <Note tone="error" role="alert">{toolsError}</Note>}
         {tools && tools.length === 0 && <Note>This server offers no tools.</Note>}
