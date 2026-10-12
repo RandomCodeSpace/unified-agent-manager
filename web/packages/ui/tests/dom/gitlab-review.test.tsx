@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ApiError, api, type GitLabReview as Review, type SessionDetail } from '../../src/api';
-import { GitLabReview } from '../../src/components/GitLabReview';
+import { GitLabMarkdown, GitLabReview } from '../../src/components/GitLabReview';
 
 const sha = 'c'.repeat(40);
 const session = { id: 'task', model: 'selected-model', stage: 'active', state: 'completed', queued: 0, items: [], last_submission: null, turn_timings: [] } as unknown as SessionDetail;
@@ -208,4 +208,12 @@ test('settled tasks show review context but disable actions and outbound writes'
   await user.click(screen.getByRole('button', { name: 'Post reply' }));
   expect(action).not.toHaveBeenCalled();
   expect(post).not.toHaveBeenCalled();
+});
+
+test('a GitLab body keeps single newlines as line breaks, as GitLab renders them', () => {
+  const { container } = render(<GitLabMarkdown text={'First line\nSecond line\n\nNext paragraph'} />);
+  const paragraphs = container.querySelectorAll('p');
+  expect(paragraphs).toHaveLength(2);
+  expect(paragraphs[0].querySelector('br')).not.toBeNull();
+  expect(paragraphs[0].textContent).toBe('First line\nSecond line');
 });
