@@ -116,9 +116,11 @@ func slug(text string) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
-// worktreesDir is the folder holding every Thread worktree, one folder per
-// Project: ~/.uam/worktrees.
-func (m *Manager) worktreesDir() (string, error) {
+// maxWorktreeRoots caps the earlier worktrees folders kept listed.
+const maxWorktreeRoots = 20
+
+// defaultWorktreesDir is ~/.uam/worktrees, or worktreeRoot when set.
+func (m *Manager) defaultWorktreesDir() (string, error) {
 	if m.worktreeRoot != "" {
 		return m.worktreeRoot, nil
 	}
@@ -127,6 +129,114 @@ func (m *Manager) worktreesDir() (string, error) {
 		return "", newError(http.StatusConflict, "the server has no home directory for worktrees")
 	}
 	return filepath.Join(home, ".uam", "worktrees"), nil
+}
+
+// worktreesDir is the folder new Thread worktrees go in, one folder per
+// Project: Settings' worktrees_dir, else the default.
+func (m *Manager) worktreesDir() (string, error) {
+	m.mu.Lock()
+	dir := m.settings.WorktreesDir
+	m.mu.Unlock()
+	if dir != "" {
+		return dir, nil
+	}
+	return m.defaultWorktreesDir()
+}
+
+// worktreeRoots are the folders that may hold Thread worktrees: the one new
+// worktrees go in, the default, the earlier ones Settings named, and those
+// the Threads' worktrees are in.
+func (m *Manager) worktreeRoots() []string {
+	var roots []string
+	if dir, err := m.defaultWorktreesDir(); err == nil {
+		roots = append(roots, dir)
+	}
+	m.mu.Lock()
+	if m.settings.WorktreesDir != "" {
+		roots = append(roots, m.settings.WorktreesDir)
+	}
+	roots = append(roots, m.oldWorktreeRoots...)
+	for _, s := range m.sessions {
+		if !s.removed && s.place != nil && s.place.Worktree != "" {
+			roots = append(roots, filepath.Dir(filepath.Dir(s.place.Worktree)))
+		}
+	}
+	m.mu.Unlock()
+	slices.Sort(roots)
+	return slices.Compact(roots)
+}
+
+// keptWorktreeRoots is the list of earlier worktrees folders once the
+// setting moves from before to after ("" is the default, always listed):
+// before joins it as the newest, after leaves it, at most maxWorktreeRoots.
+func keptWorktreeRoots(roots []string, before, after string) []string {
+	out := slices.DeleteFunc(slices.Clone(roots), func(r string) bool { return r == before || r == after })
+	if before != "" && before != after {
+		out = append(out, before)
+	}
+	if len(out) > maxWorktreeRoots {
+		out = out[len(out)-maxWorktreeRoots:]
+	}
+	return out
+}
+
+// checkWorktreesDir cleans a worktrees folder the owner chose: ~ is the
+// home folder; it must be absolute, a folder of the user's own when it
+// exists, and in no git repository. It returns "" for the default.
+func (m *Manager) checkWorktreesDir(raw string) (string, error) {
+	const field = "worktrees_dir"
+	dir := raw
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", newError(http.StatusBadRequest, "%s cannot use ~: the server has no home directory", field)
+		}
+		dir = home + dir[1:]
+	}
+	if err := checkPathText(field, dir); err != nil {
+		return "", err
+	}
+	dir = filepath.Clean(dir)
+	info, err := os.Stat(dir) // #nosec G703 -- the owner names a folder of the server on purpose; dir is absolute and clean.
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return "", dirError(field, err)
+	case !info.IsDir():
+		return "", newError(http.StatusBadRequest, "%s is not a directory", field)
+	case !ownedByUser(info):
+		return "", newError(http.StatusBadRequest, "%s belongs to another user", field)
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, gitTimeout)
+	defer cancel()
+	if inGitRepo(ctx, dir) {
+		return "", newError(http.StatusBadRequest, "%s is inside a git repository", field)
+	}
+	if def, err := m.defaultWorktreesDir(); err == nil && def == dir {
+		return "", nil
+	}
+	return dir, nil
+}
+
+// inGitRepo reports whether dir, or its nearest existing parent, is in a
+// git repository.
+func inGitRepo(ctx context.Context, dir string) bool {
+	git, err := lookGit()
+	if err != nil {
+		return false
+	}
+	for {
+		if _, err := os.Stat(dir); err == nil { // #nosec G703 -- read-only probe of a folder the owner named.
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+	_, code, _, err := runGit(ctx, git, dir, 4096, "rev-parse", "--git-dir")
+	return err == nil && code == 0
 }
 
 // makePlace makes the branch, or the branch and the worktree, a new Thread
@@ -236,6 +346,10 @@ func (m *Manager) makeWorktree(ctx context.Context, project Project, repo *gitRe
 		return "", nil, none, err
 	}
 	parent := filepath.Join(root, cmp.Or(slug(project.Name), "project"))
+	// A folder the owner chose may hold a repository named as the Project.
+	if def, _ := m.defaultWorktreesDir(); root != def && inGitRepo(ctx, parent) {
+		return "", nil, none, newError(http.StatusConflict, "%s is inside a git repository; choose another folder for new worktrees in Settings", parent)
+	}
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", nil, none, newError(http.StatusConflict, "could not make the worktrees folder: %s", shortError(err))
 	}

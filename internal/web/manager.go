@@ -149,8 +149,12 @@ type Manager struct {
 	connectedNotices *connectedNotices
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
-	// worktreeRoot, when set, replaces ~/.uam/worktrees (worktreesDir).
+	// worktreeRoot, when set, replaces ~/.uam/worktrees as the default
+	// worktrees folder (defaultWorktreesDir).
 	worktreeRoot string
+	// oldWorktreeRoots are the folders new worktrees went in before
+	// Settings' worktrees_dir last changed (worktreeRoots); under mu.
+	oldWorktreeRoots []string
 	// worktrees is the removal, recreation and size bookkeeping of Thread
 	// worktrees (worktree_cleanup.go).
 	worktrees worktreeState
@@ -731,7 +735,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
 		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
-		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt}
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt, WorktreesDir: cfg.WebSettings.WorktreesDir}
+	m.oldWorktreeRoots = slices.Clone(cfg.WebSettings.WorktreeRoots)
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1575,6 +1580,9 @@ type SettingsPatch struct {
 	// GitLabMRPrompt sets the merge request description prompt; "" or the
 	// default itself puts the default back.
 	GitLabMRPrompt *string
+	// WorktreesDir sets the folder new worktrees go in; "" puts the
+	// default back. A leading ~ is the home folder.
+	WorktreesDir *string
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1590,6 +1598,13 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		}
 		projectDir = filepath.Clean(*p.DefaultProjectDir)
 		if err := checkDir("default_project_dir", projectDir); err != nil {
+			return Settings{}, err
+		}
+	}
+	var worktreesDir string
+	if p.WorktreesDir != nil && *p.WorktreesDir != "" {
+		var err error
+		if worktreesDir, err = m.checkWorktreesDir(*p.WorktreesDir); err != nil {
 			return Settings{}, err
 		}
 	}
@@ -1746,6 +1761,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.DefaultProjectDir != nil {
 		next.DefaultProjectDir = projectDir
 	}
+	if p.WorktreesDir != nil {
+		next.WorktreesDir = worktreesDir
+	}
 	if p.GitLabAutoInvestigate != nil {
 		next.GitLabAutoInvestigate = *p.GitLabAutoInvestigate
 	}
@@ -1789,15 +1807,19 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.WorktreesDir == current.WorktreesDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
+	var oldRoots []string
 	if err := m.store.Update(func(cfg *store.Config) error {
 		if p.TokenPrices != nil {
 			cfg.WebSettings.TokenPrices = next.TokenPrices
 		}
 		cfg.WebSettings.SendDefault = next.SendDefault
 		cfg.WebSettings.DefaultProjectDir = next.DefaultProjectDir
+		cfg.WebSettings.WorktreesDir = next.WorktreesDir
+		oldRoots = keptWorktreeRoots(cfg.WebSettings.WorktreeRoots, current.WorktreesDir, next.WorktreesDir)
+		cfg.WebSettings.WorktreeRoots = oldRoots
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
@@ -1830,6 +1852,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.settings = next
+	m.oldWorktreeRoots = oldRoots
 	if !next.Terminal {
 		m.closeTerminalsLocked(errTerminalOff)
 	}

@@ -1,5 +1,5 @@
 import { ArrowUp, Check, CircleDot, TriangleAlert } from 'lucide-react';
-import { useCallback, useContext, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { ApiError, describeError, type DiskInfo, type WorktreeEntry, type Worktrees } from '../api';
 import { cn } from '../lib/cn';
@@ -10,6 +10,8 @@ import { Button } from './ui/button';
 import { Chip } from './ui/chip';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { HelpTip } from './ui/tooltip';
+
+const FolderPicker = lazy(() => import('./FolderPicker').then((m) => ({ default: m.FolderPicker })));
 
 const RULE = 'Settling, archiving or deleting a Thread removes its worktree; the branch stays. A worktree with changes not committed is kept until you remove it here. Using the Thread again brings it back from the branch.';
 const STAGE = { active: 'Active', settled: 'Settled', archived: 'Archived' } as const;
@@ -37,6 +39,7 @@ export function WorktreesSettings() {
   const total = list.worktrees.reduce((n, w) => n + (w.size_bytes ?? 0), 0);
   return (
     <>
+      {api.supports('worktree-folder-v1') && <FolderCard list={list} onChanged={load} />}
       {list.disk && <DiskCard disk={list.disk} worktrees={total} />}
       <WorktreeList list={list} total={total} measuring={measuring} onChanged={load} />
       {list.removed.length > 0 && <RemovedCard list={list} />}
@@ -216,6 +219,55 @@ function RemovedCard({ list }: Readonly<{ list: Worktrees }>) {
           );
         })}
       </ul>
+    </section>
+  );
+}
+
+/** `path` with the home folder as ~, when the default folder (<home>/.uam/worktrees) gives it away. */
+function homePath(path: string, defaultRoot?: string): string {
+  const home = defaultRoot?.endsWith('/.uam/worktrees') ? defaultRoot.slice(0, -'/.uam/worktrees'.length) : '';
+  return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
+}
+
+/** Where new worktrees go: the folder, Change… (the folder picker) and Reset to default. */
+function FolderCard({ list, onChanged }: Readonly<{ list: Worktrees; onChanged: () => Promise<void> }>) {
+  const api = useApi();
+  const [browsing, setBrowsing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (worktrees_dir: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.updateWebSettings({ worktrees_dir });
+      setBrowsing(false);
+      await onChanged();
+    } catch (e) {
+      setError(describeError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const isDefault = !list.default_root || list.root === list.default_root;
+  return (
+    <section aria-labelledby="worktrees-folder-title" className={cn(card, 'py-4')}>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
+          <h2 id="worktrees-folder-title" className="text-ui font-medium text-ink">Folder for new worktrees</h2>
+          <p className="text-caption text-muted">Existing worktrees stay where they are.</p>
+        </div>
+        <code className="min-w-0 truncate font-mono text-code-sm text-body" title={list.root}>{homePath(list.root, list.default_root)}</code>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="secondary" disabled={saving || !api.supports('files-v1')} aria-expanded={browsing} aria-controls={browsing ? 'worktrees-folder-picker' : undefined} onClick={() => setBrowsing(!browsing)}>Change…</Button>
+          <Button disabled={saving || isDefault} onClick={() => void save('')}>Reset to default</Button>
+        </div>
+      </div>
+      {browsing && (
+        <Suspense fallback={null}>
+          <FolderPicker id="worktrees-folder-picker" start={list.root} onUse={(path) => void save(path)} onClose={() => setBrowsing(false)} />
+        </Suspense>
+      )}
+      {error && <Note tone="error" role="alert">{error}</Note>}
     </section>
   );
 }

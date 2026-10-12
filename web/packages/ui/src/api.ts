@@ -441,7 +441,7 @@ export interface Meta {
   temp_root_aliases?: string[];
   /** The UAM installed at the service's binary path and the restart onto it, as last read; absent on a service that cannot restart itself. */
   service?: ServiceStatus;
-  /** The disk holding the Thread worktrees (~/.uam/worktrees); `low` below 10% free. Absent from older servers. */
+  /** The disk holding the folder new worktrees go in; `low` below 10% free. Absent from older servers. */
   disk?: DiskInfo;
 }
 
@@ -451,7 +451,7 @@ export interface DiskInfo {
   low: boolean;
 }
 
-/** One folder in ~/.uam/worktrees and the Thread it was made for, while one still has it. */
+/** One worktree folder uam made and the Thread it was made for, while one still has it. */
 export interface WorktreeEntry {
   path: string;
   branch?: string;
@@ -478,9 +478,12 @@ export interface RemovedWorktree {
   at: string;
 }
 
-/** GET /api/worktrees: biggest first. */
+/** GET /api/worktrees: biggest first, from every folder worktrees went in. */
 export interface Worktrees {
+  /** The folder new worktrees go in. */
   root: string;
+  /** The folder used without `Settings.worktrees_dir`; absent from older servers. */
+  default_root?: string;
   disk?: DiskInfo;
   worktrees: WorktreeEntry[];
   removed: RemovedWorktree[];
@@ -569,6 +572,8 @@ export interface Settings {
   gitlab_auto_investigate?: boolean;
   /** The prompt the Utility model writes merge request descriptions with; absent for `DEFAULT_MR_PROMPT`. PATCH `''` puts the default back. */
   gitlab_mr_prompt?: string;
+  /** The absolute folder new Thread worktrees go in (`worktree-folder-v1`); absent for ~/.uam/worktrees. PATCH `''` puts the default back; a leading `~` is the home folder. */
+  worktrees_dir?: string;
 }
 
 /** The provider's own compaction threshold, in percent: where `Settings.compact_threshold` starts. */

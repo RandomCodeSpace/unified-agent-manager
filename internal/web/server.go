@@ -646,6 +646,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "default_project_dir must be a string")
 				return
 			}
+		case "worktrees_dir":
+			patch.WorktreesDir = new(string)
+			if string(raw) == "null" || json.Unmarshal(raw, patch.WorktreesDir) != nil {
+				writeError(w, http.StatusBadRequest, "worktrees_dir must be a string")
+				return
+			}
 		case "send_default":
 			patch.SendDefault = new(string)
 			if json.Unmarshal(raw, patch.SendDefault) != nil {

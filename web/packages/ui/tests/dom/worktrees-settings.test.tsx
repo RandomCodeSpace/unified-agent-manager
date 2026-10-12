@@ -48,6 +48,24 @@ describe('Settings → Worktrees', () => {
     await waitFor(() => expect(list.queryByText('Fix re-attach redraw regression')).toBeNull());
   });
 
+  test('the folder for new worktrees changes with the folder picker and resets to the default', async () => {
+    const { user } = await openWorktrees();
+    const card = within(screen.getByRole('region', { name: 'Folder for new worktrees' }));
+    expect(card.getByText('~/.uam/worktrees')).toBeTruthy();
+    expect(card.getByText('Existing worktrees stay where they are.')).toBeTruthy();
+    const reset = card.getByRole('button', { name: 'Reset to default' }) as HTMLButtonElement;
+    expect(reset.disabled).toBe(true);
+    await user.click(card.getByRole('button', { name: 'Change…' }));
+    const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
+    await user.click(await folders.findByRole('option', { name: /^projects/ }));
+    await user.click(card.getByRole('button', { name: 'Use this folder' }));
+    await card.findByText('~/projects');
+    await waitFor(() => expect(document.getElementById('worktrees-folder-picker')).toBeNull());
+    expect(reset.disabled).toBe(false);
+    await user.click(reset);
+    await card.findByText('~/.uam/worktrees');
+  });
+
   test('under 10% free, the page, its rail row and the Settings gear warn', async () => {
     await openWorktrees('?disk=low');
     expect(screen.getByText(/below 10%/)).toBeTruthy();

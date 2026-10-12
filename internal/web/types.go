@@ -190,6 +190,9 @@ type Settings struct {
 	// GitLabMRPrompt is the owner's prompt for merge request descriptions
 	// (mr_description.go); omitted while the default is used.
 	GitLabMRPrompt string `json:"gitlab_mr_prompt,omitempty"`
+	// WorktreesDir is the absolute folder new Thread worktrees go in;
+	// omitted while the default, ~/.uam/worktrees, is used.
+	WorktreesDir string `json:"worktrees_dir,omitempty"`
 }
 
 // CustomModel is one custom model in Settings. APIKeyEnv names an environment
