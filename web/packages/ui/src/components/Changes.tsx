@@ -305,15 +305,16 @@ export function ChangesSheet({
             { value: 'session', label: 'This task' },
             { value: 'workspace', label: 'All changes' },
           ] : [
-            { value: 'task', label: <span className="tabular-nums">This task{count('task')}</span> },
+            { value: 'task', label: <span className="tabular-nums" title={scope === 'task' ? label : undefined}>This task{count('task')}</span> },
             { value: 'turn', label: <span className="tabular-nums">Last turn{count('turn')}</span> },
             { value: 'workspace', label: <span className="tabular-nums">All changes{count('workspace')}</span> },
           ]}
         />
       </div>
-      <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
+      {/* The Task scope's description is the tip of its segment. */}
+      {scope !== 'task' && <p className="shrink-0 px-3 py-1 text-caption leading-relaxed text-muted" title={label}>
         {scope === 'workspace' ? 'All uncommitted project changes vs HEAD, from any task or source.' : label}
-      </p>
+      </p>}
       {data?.supported && data.reason && <Note tone="warn" className="shrink-0 px-3 pb-1">Note: {data.reason}.</Note>}
       {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>

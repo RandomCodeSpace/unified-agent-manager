@@ -99,7 +99,7 @@ describe('the Task list', () => {
     const branch = within(taskLine).getByText('feat/web-project-defaults-and-sidebar-revamp').parentElement!;
     expect(branch.classList.contains('text-muted')).toBe(true);
     expect(branch.classList.contains('font-normal')).toBe(true);
-    expect(await tipOf(user, example)).toContain('Project branch: feat/web-project-defaults-and-sidebar-revamp');
+    expect(await tipOf(user, example)).toContain('feat/web-project-defaults-and-sidebar-revamp');
     // A project without a branch omits it, without adding a placeholder or third line.
     const noBranch = row('t6').getByRole('button', { name: /Tidy zsh startup/ });
     expect(noBranch.querySelector('[title^="Project branch:"]')).toBeNull();

@@ -404,7 +404,7 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
         <span className="truncate text-ink">{e.project.name}</span>
         <span className="truncate text-meta text-muted" title={e.project.dir}>{e.project.dir}</span>
       </span>
-      {entries.indexOf(e) < 9 && <Key>Alt+{entries.indexOf(e) + 1}</Key>}
+      {entries.indexOf(e) < 9 && <span className="contents pointer-coarse:hidden"><Key>Alt+{entries.indexOf(e) + 1}</Key></span>}
     </button>
   );
   const grouped = entries.some((e) => e.group);
@@ -423,7 +423,7 @@ function PaletteBody({ entries, start, input, onClose, onPick, onAddProject }: R
           aria-expanded="true"
           aria-controls={`${id}-list`}
           aria-activedescendant={active >= 0 ? `${id}-${active}` : undefined}
-          placeholder="Choose a project for the new task…"
+          placeholder="Search projects…"
           className={inputClass}
           value={query}
           onChange={(e) => {

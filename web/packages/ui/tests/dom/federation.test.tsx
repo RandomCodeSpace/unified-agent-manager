@@ -242,7 +242,7 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   await screen.findByRole('region', { name: 'Conversation' });
   await user.click(await screen.findByRole('button', { name: 'Task actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle' }));
-  await screen.findByText('Settled. Reopen this task to continue the same conversation.');
+  await screen.findByText('Settled.');
   await user.click(screen.getByRole('button', { name: 'Task actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
   await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());

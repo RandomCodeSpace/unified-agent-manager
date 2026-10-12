@@ -5,35 +5,48 @@ import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ConfigurationDefinition, type SessionSummary } from '../api';
 
+export interface TaskAgents { agents: ConfigurationDefinition[] | null; error: string }
+
+/**
+ * The custom agents a Task of the Project can run as, read when `read` is set and again whenever
+ * `revision` changes (each time the Tools panel opens), so the Agent tab shows only when there is one.
+ */
+export function useTaskAgents(session: Pick<SessionSummary, 'project_id' | 'provider'>, read: boolean, revision: unknown): TaskAgents {
+  const api = useApi();
+  const [state, setState] = useState<TaskAgents & { key: string }>({ key: '', agents: null, error: '' });
+  const key = `${session.project_id}\u0000${session.provider}`;
+  useEffect(() => {
+    if (!read) return;
+    let current = true;
+    api.taskAgents(session.project_id, session.provider).then(
+      (r) => current && setState({ key, agents: r.agents, error: '' }),
+      (e: unknown) => current && setState({ key, agents: null, error: describeError(e) }),
+    );
+    return () => { current = false; };
+  }, [api, key, session.project_id, session.provider, read, revision]);
+  return state.key === key ? state : { agents: null, error: '' };
+}
+
 /**
  * The Task's custom agent, as the Tools panel's Agent tab: the provider's default agent unless the
- * owner picks one of the Project's agents for this Task. The list loads when the tab shows. The
- * service selects the agent between turns only, and a Task whose agent is gone fails to open rather
- * than run as another agent, so the owner picks again here.
+ * owner picks one of the Project's agents for this Task. The service selects the agent between turns
+ * only, and a Task whose agent is gone fails to open rather than run as another agent, so the owner
+ * picks again here.
  */
-export function AgentChoices({ session, reason, onChange }: Readonly<{
+export function AgentChoices({ session, agents, error, reason, onChange }: Readonly<{
   session: SessionSummary;
+  agents: ConfigurationDefinition[] | null;
+  error: string;
   /** Why the agent cannot change now; the choices are disabled while set. */
   reason?: string;
   onChange: (agent: string) => void;
 }>) {
-  const api = useApi();
-  const [agents, setAgents] = useState<ConfigurationDefinition[] | null>(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let current = true;
-    api.taskAgents(session.project_id, session.provider).then(
-      (r) => current && setAgents(r.agents),
-      (e: unknown) => current && setError(describeError(e)),
-    );
-    return () => { current = false; };
-  }, [api, session.project_id, session.provider]);
   const chosen = session.agent ?? '';
   const known = agents?.find((a) => a.id === chosen);
   // A chosen agent that discovery no longer lists stays visible, so the owner sees why the Task cannot open.
   const missing = chosen && agents && !known;
   const rows = [
-    { id: '', name: 'Default', description: "Copilot's own agent", disabled: false },
+    { id: '', name: 'Default', description: '', disabled: false },
     ...(missing ? [{ id: chosen, name: chosen, description: 'Not found in this project', disabled: true }] : []),
     ...(agents ?? []).map((a) => ({ id: a.id, name: a.display_name || a.name, description: a.description, disabled: false })),
   ];
@@ -53,7 +66,6 @@ export function AgentChoices({ session, reason, onChange }: Readonly<{
       {reason && <p className="text-caption text-muted">{reason}</p>}
       {error && <p role="status" className="text-caption text-error">{error}</p>}
       {!error && !agents && <p className="text-caption text-muted">Loading agents…</p>}
-      {!error && agents?.length === 0 && <p className="text-caption text-muted">This project has no custom agents.</p>}
     </div>
   );
 }

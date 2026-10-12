@@ -504,7 +504,7 @@ describe('composer menus and notices', () => {
 
   test('a settled task reopens from the notice in its composer', async () => {
     const { user } = renderApp('#task=t11');
-    expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
+    expect(await screen.findByText('Settled.')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Reopen' }));
     await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(composer()));

@@ -379,10 +379,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
   **Tools** (the context ring and "Tools") opens one panel with a tab for
   each tool the Task has: Context (see **Context usage**), Usage (the AI
-  units recorded for the Task and, on request, Copilot's own usage metrics
-  for the conversation) and Agent (see **Agent**). The arrow keys move
+  units recorded for the Task and Copilot's own usage metrics for the
+  conversation) and Agent (see **Agent**; shown only when the Project has a
+  custom agent or the Task names one). The open panel reads its counts again
+  whenever the Task reports new usage or context. The arrow keys move
   between tabs and Esc closes it. A Task with none of them has no Tools
   button.
+  Copilot's usage metrics accumulate over the conversation, its subagents
+  included, and are separate from account usage and from the recorded AI
+  units. Cache and reasoning counters are reported separately and are not
+  added to input or output; model API requests differ from user-initiated
+  requests. An agent's model rows are already included in the model rows,
+  so do not add the By model and By agent views together.
   The branch and changed-file count are on the branch button in the Task
   header, which opens Changes. When the toolbar
   is narrow (side panels open, or a phone), its labels give way in order:
@@ -467,7 +475,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Context usage**: the ring on the composer's Tools button shows used tokens
   as a share of the active prompt budget. Open Tools (its Context tab, or
   `/context`) for token counts, the reported cached share and, where Copilot
-  reports it, the breakdown by source. A short mark on the ring, and a line
+  reports it, the breakdown by source. The counts are for the model named
+  under them; an Auto Task uses its resolved model as an approximation.
+  Free space and the reserved buffer under Capacity are capacity, not
+  occupied tokens, and the output and compaction reservations can overlap.
+  A short mark on the ring, and a line
   on the Context tab ("Compacts at 80% (218K tokens)"), show where Copilot starts
   compacting the conversation: the threshold it opened with, reported as
   `compact_threshold` on the Task summary while it is open (a change in

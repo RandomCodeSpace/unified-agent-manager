@@ -55,7 +55,7 @@ describe('/btw', () => {
     // The wait is words here; the ring is the chip's alone.
     expect(dialog.querySelector('.animate-spin')).toBeNull();
     expect(await shown.findByText(/TestDoctorDumbTerminal/)).toBeTruthy();
-    expect(shown.getByText('Never sent to the agent')).toBeTruthy();
+    expect(shown.getByRole('button', { name: 'About Asides', description: 'Never sent to the agent.' })).toBeTruthy();
     expect(questions(dialog)).toEqual([...KEPT, 'did the tests pass?']);
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask.mock.calls[0][0]).toBe('t3');

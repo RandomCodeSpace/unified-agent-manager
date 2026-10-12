@@ -40,18 +40,16 @@ export function ContextRing({ session, className }: Readonly<{ session: SessionD
   );
 }
 
-/** The latest context report in lines; unknown values never become a zero estimate. */
+/** The latest context report's detail lines, under the Context tab's headline; unknown values never become a zero estimate. */
 export function ContextReport({ session, model }: Readonly<{ session: SessionDetail; model?: Model }>) {
   const threshold = useThreshold(session);
   const context = session.context;
   const cost = estimateTurnCost(model, context, session.context_size);
   return (
     <>
-      <p>{contextLabel(session)}</p>
       {context && context.limit > 0 && <p className="text-caption text-muted">Compacts at {Math.round(threshold * 100)}% ({compactTokens(Math.round(context.limit * threshold))} tokens)</p>}
       {context?.prompt !== undefined && <p className="text-caption text-muted">Latest prompt: {compactTokens(context.prompt)} tokens</p>}
       {context?.cached !== undefined && <p className="text-caption text-muted">Cached in latest call: {compactTokens(context.cached)} tokens</p>}
-      {session.capabilities.usage && <p className="text-caption">This task: {session.usage ? `${formatCredits(session.usage.ai_units)} AI units` : 'not reported yet'}</p>}
       {cost !== null && context && <p className="text-caption">≈ {formatCredits(cost)} credits per turn at {compactTokens(context.used)} context tokens, input only. Reported cached tokens use the cache-read price; actual usage may differ.</p>}
     </>
   );

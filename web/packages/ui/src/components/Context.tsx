@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../ApiContext';
 import { describeError, type ContextAttribution, type ContextBreakdown, type SessionDetail } from '../api';
+import { contextLabel } from './ComposerUsage';
 import { Button } from './ui/button';
 import { PanelSection } from './ui/panel';
 
@@ -35,69 +36,68 @@ function Sources({ attribution }: Readonly<{ attribution: ContextAttribution }>)
   </>;
 }
 
-/** Mounted only while the reader is open. Closing, navigating or changing selection aborts and drops the data. */
-function Breakdown({ session }: Readonly<{ session: SessionDetail }>) {
+/**
+ * Mounted only while the reader is open. Closing, navigating or changing selection aborts and drops the data.
+ * It reads again when the Task's pushed context report or state changes, so the counts stay current while open.
+ */
+function Breakdown({ session, children }: Readonly<{ session: SessionDetail; children: ReactNode }>) {
   const api = useApi();
   const [view, setView] = useState<ContextBreakdown | null>(null);
   const [error, setError] = useState('');
   const [sources, setSources] = useState(false);
-  const reading = useRef<AbortController | null>(null);
+  const live = [session.context?.used, session.context?.limit, session.state, session.compacting].join('\u0000');
   useEffect(() => {
     if (!session.open) return;
     const controller = new AbortController();
-    reading.current = controller;
-    api.contextBreakdown(session.id, false, controller.signal).then(
-      (data) => { if (!controller.signal.aborted) setView(data); },
+    api.contextBreakdown(session.id, sources, controller.signal).then(
+      (data) => { if (!controller.signal.aborted) { setView(data); setError(''); } },
       (err: unknown) => { if (!controller.signal.aborted) setError(describeError(err)); },
     );
-    return () => { controller.abort(); reading.current?.abort(); };
-  }, [api, session.id, session.open]);
-  const showSources = () => {
-    setSources(true);
-    reading.current?.abort();
-    const controller = new AbortController();
-    reading.current = controller;
-    api.contextBreakdown(session.id, true, controller.signal).then(
-      (data) => { if (!controller.signal.aborted) setView(data); },
-      (err: unknown) => { if (!controller.signal.aborted) setError(describeError(err)); },
-    );
-  };
-  if (!session.open) return <p className="text-caption text-muted">Context breakdown is unavailable for a closed Task.</p>;
-  if (error) return <p role="status" className="text-caption text-muted">{error}</p>;
-  if (!view) return <p role="status" className="text-caption text-muted">Loading context breakdown…</p>;
-  const info = view.attribution ?? view.info;
-  if (!info) return <p role="status" className="text-caption text-muted">Context breakdown has not been initialized by this conversation.</p>;
-  const attribution = view.attribution;
+    return () => controller.abort();
+  }, [api, session.id, session.open, sources, live]);
+  const info = view ? view.attribution ?? view.info : undefined;
+  let status = '';
+  if (!session.open) status = 'Context breakdown is unavailable for a closed Task.';
+  else if (error) status = error;
+  else if (!view) status = 'Loading context breakdown…';
+  else if (!info) status = 'Context breakdown has not been initialized by this conversation.';
+  const shown = !status && info;
+  const attribution = view?.attribution;
   const occupied: readonly (readonly [string, number])[] = attribution ? [
     ['System prompt', attribution.categories.system_prompt], ['Custom instructions', attribution.categories.custom_instructions], ['System tools', attribution.categories.system_tools], ['MCP tools', attribution.categories.mcp_tools], ['Messages', attribution.categories.messages],
-  ] : view.info ? [
+  ] : view?.info ? [
     ['System and instructions', view.info.system_tokens], ['Messages', view.info.conversation_tokens], ['Tool definitions', view.info.tool_definition_tokens], ['Including MCP tools', view.info.mcp_tools_tokens],
   ] : [];
   return <>
-    <PanelSection label="Current context">
-      <p className="mb-2 text-ui text-ink">{tokens(info.total_tokens)} occupied{info.limit > 0 ? ` of ${tokens(info.limit)} advertised prompt capacity` : '; prompt capacity not reported'}</p>
-      {info.model && <p className="mb-2 text-caption text-muted">Counted for {info.model}{attribution?.model_source === 'autoResolved' ? ' (Auto resolved)' : ''}. Token counts are model-specific.{attribution?.model_source === 'autoResolved' && ' Mixed-model Auto sessions use this model as an approximation.'}</p>}
-      <Counts rows={occupied} />
-      {!attribution && <p className="mt-2 text-caption text-muted">MCP tools are included in tool definitions.</p>}
+    <PanelSection label="Context">
+      <div className="space-y-1 tabular-nums">
+        <p className="text-ui text-ink">{shown ? (shown.limit > 0 ? `${number.format(shown.total_tokens)} of ${tokens(shown.limit)}` : `${tokens(shown.total_tokens)}; capacity not reported`) : contextLabel(session)}</p>
+        {status && <p role="status" className="text-caption text-muted">{status}</p>}
+        {shown && shown.model && <p className="text-caption text-muted">Counted for {shown.model}{attribution?.model_source === 'autoResolved' ? ' (Auto resolved)' : ''}</p>}
+        {children}
+      </div>
+      {shown && <div className="mt-2"><Counts rows={occupied} /></div>}
     </PanelSection>
-    <PanelSection label="Capacity">
-      <Counts rows={[
-        ['Effective prompt budget', info.prompt_token_limit], ['Compaction starts at', info.compaction_threshold], ['Output and compaction buffer', info.buffer_tokens],
-        ...(attribution ? [['Free space', attribution.categories.free_space] as const] : []),
-      ]} />
-      <p className="mt-2 text-caption text-muted">Free space and reserved buffer are capacity, not occupied tokens. Output and compaction reservations can overlap.</p>
-      {attribution && <p className="mt-1 text-caption text-muted">{number.format(attribution.compactions)} compactions reported.</p>}
-    </PanelSection>
-    <PanelSection label="Sources">
-      {attribution ? <Sources attribution={attribution} /> : sources ? <p role="status" className="text-caption text-muted">Loading context sources…</p> : <Button size="sm" variant="subtle" onClick={showSources}>Show sources</Button>}
-    </PanelSection>
+    {shown && <>
+      <PanelSection label="Capacity">
+        <Counts rows={[
+          ['Effective prompt budget', shown.prompt_token_limit], ['Compaction starts at', shown.compaction_threshold], ['Output and compaction buffer', shown.buffer_tokens],
+          ...(attribution ? [['Free space', attribution.categories.free_space] as const] : []),
+        ]} />
+        {attribution && <p className="mt-2 text-caption text-muted">{number.format(attribution.compactions)} compactions reported.</p>}
+      </PanelSection>
+      <PanelSection label="Sources">
+        {attribution ? <Sources attribution={attribution} /> : sources ? <p role="status" className="text-caption text-muted">Loading context sources…</p> : <Button size="sm" variant="subtle" onClick={() => setSources(true)}>Show sources</Button>}
+      </PanelSection>
+    </>}
   </>;
 }
 
-/** The Tools panel's Context tab: the latest report, then the native breakdown where the provider reads one. Mounted only while shown. */
+/**
+ * The Tools panel's Context tab: one Context section with the headline, the latest report's lines
+ * (`children`) and, where the provider reads one, the native breakdown. Mounted only while shown.
+ */
 export function ContextTab({ session, children }: Readonly<{ session: SessionDetail; children: ReactNode }>) {
-  return <>
-    <PanelSection label="Latest report"><div className="space-y-1 tabular-nums">{children}</div></PanelSection>
-    {session.capabilities.context_breakdown && <Breakdown session={session} />}
-  </>;
+  if (session.capabilities.context_breakdown) return <Breakdown session={session}>{children}</Breakdown>;
+  return <PanelSection label="Context"><div className="space-y-1 tabular-nums"><p className="text-ui text-ink">{contextLabel(session)}</p>{children}</div></PanelSection>;
 }

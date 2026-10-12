@@ -21,8 +21,8 @@ export function ExecutionItems({ execution, reason, busy, onChange, onRetry }: R
         if (!reason && !busy && (value === 'interactive' || value === 'autopilot')) onChange(value);
       }}>
         <Menu.Label>Execution mode</Menu.Label>
-        <Menu.RadioItem value="interactive" disabled={!!reason || busy} description="Responds to each message. Does not stop a running turn.">Interactive</Menu.RadioItem>
-        <Menu.RadioItem value="autopilot" disabled={!!reason || busy} description="Continues working automatically between turns.">Autopilot</Menu.RadioItem>
+        <Menu.RadioItem value="interactive" disabled={!!reason || busy} description="Waits for each message">Interactive</Menu.RadioItem>
+        <Menu.RadioItem value="autopilot" disabled={!!reason || busy} description="Keeps working between turns">Autopilot</Menu.RadioItem>
       </Menu.RadioGroup>
       {reason && <p className="px-2 py-1 text-caption text-muted" role="status">{reason}</p>}
       {onRetry && <Menu.Item closeOnClick={false} onClick={onRetry}>Retry commands</Menu.Item>}

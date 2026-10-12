@@ -35,9 +35,11 @@ test('one Tools button carries the context ring and opens a tab per tool, switch
   const context = panel.getByRole('tab', { name: 'Context' });
   expect(context.getAttribute('aria-selected')).toBe('true');
   await waitFor(() => expect(document.activeElement).toBe(context));
-  // Context: the latest report and the native breakdown.
-  expect(await panel.findByText('75 tokens occupied of 200 tokens advertised prompt capacity')).toBeTruthy();
-  expect(panel.getByText('This task: 9.0 AI units')).toBeTruthy();
+  // Context: one section with the breakdown's total, the latest report's lines and the native breakdown; AI units live on Usage.
+  expect(await panel.findByText('75 of 200 tokens')).toBeTruthy();
+  expect(panel.queryByText(/not reported yet/)).toBeNull();
+  expect(panel.queryByText(/AI units/)).toBeNull();
+  expect(panel.getByText('switch tab')).toBeTruthy();
   // One fixed height for every tab: the body never takes its content's height.
   const body = panel.getByRole('tabpanel');
   expect(body.className).toMatch(/\bflex-none\b/);
@@ -69,20 +71,38 @@ test('a tool the Task cannot show has no tab, and a Task with no tools has no bu
   expect(panel.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Usage']);
   expect(panel.queryByRole('radio')).toBeNull();
   // The foot names no arrow keys for a single tab.
-  expect(panel.queryByText('tool')).toBeNull();
+  expect(panel.queryByText('switch tab')).toBeNull();
   view.unmount();
   draw({ ...session, context: undefined, capabilities: {} as SessionDetail['capabilities'] });
   expect(screen.queryByRole('button', { name: /^Tools/ })).toBeNull();
 });
 
 test('the agent cannot change while a reason holds', async () => {
-  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as unknown as Awaited<ReturnType<typeof api.taskAgents>>);
+  vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [{ id: 'reviewer', name: 'reviewer', source: 'project' }] } as unknown as Awaited<ReturnType<typeof api.taskAgents>>);
   render(<ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={{ ...session, capabilities: { custom_agents: true } as SessionDetail['capabilities'], context: undefined }} agentReason="The agent changes between turns." onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>);
+  await userEvent.click(await screen.findByRole('button', { name: 'Tools' }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  expect(panel.getByText('The agent changes between turns.')).toBeTruthy();
+  expect(panel.getByRole('radio', { name: 'Default' }).getAttribute('aria-disabled')).toBe('true');
+});
+
+test('a Project without custom agents has no Agent tab, unless the Task names an agent', async () => {
+  const caps = { usage: true, custom_agents: true } as SessionDetail['capabilities'];
+  const tree = (selected: SessionDetail) => <ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={selected} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>;
+  const read = vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as unknown as Awaited<ReturnType<typeof api.taskAgents>>);
+  const view = render(tree({ ...session, context: undefined, capabilities: caps }));
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
   await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
   const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
-  expect(await panel.findByText('This project has no custom agents.')).toBeTruthy();
-  expect(panel.getByText('The agent changes between turns.')).toBeTruthy();
-  expect(panel.getByRole('radio', { name: /Default/ }).getAttribute('aria-disabled')).toBe('true');
+  expect(panel.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Usage']);
+  view.unmount();
+  // A Task whose agent is gone keeps the tab, so the owner can pick again.
+  render(tree({ ...session, context: undefined, capabilities: caps, agent: 'gone' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
+  const again = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  expect(again.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Usage', 'Agent']);
+  await userEvent.click(again.getByRole('tab', { name: 'Agent' }));
+  expect(await again.findByText('Not found in this project')).toBeTruthy();
 });
 
 test('/context opens Tools on its Context tab', async () => {

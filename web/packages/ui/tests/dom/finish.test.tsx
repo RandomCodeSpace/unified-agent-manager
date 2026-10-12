@@ -82,7 +82,7 @@ describe('evidence inside Changes', () => {
     expect(await card.findByText('2 claims not verified')).toBeTruthy();
     const tests = card.getByText('Ran the tests').closest('li')!;
     expect(tests.textContent).toContain('go test ./internal/vterm/... -run Redraw · exit 0 · 1 package ok · 1s');
-    expect(card.getByText('Ran go vet').closest('li')!.textContent).toContain('piped, so the exit status is the last command’s');
+    expect(card.getByText('Ran go vet').closest('li')!.textContent).toContain('piped');
     expect(card.getByText(/vterm tests pass/).closest('li')!.textContent).toContain('Backed by go test ./internal/vterm/... -run Redraw · exit 0');
     expect(card.getByText('“go vet is clean.”').closest('li')!.textContent).toContain('Not verified · the last run’s result is unclear');
     expect(card.getByText(/describes the new replay order/).closest('li')!.textContent).toContain('Not verified · no edit to docs/terminal.md in this turn');

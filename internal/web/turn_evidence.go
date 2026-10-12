@@ -435,7 +435,7 @@ func (a activity) result(run checkRun) (outcome, note string) {
 		if counts != nil && counts.failed > 0 {
 			return outcomeFail, ""
 		}
-		return outcomeUnclear, "piped, so the exit status is the last command’s"
+		return outcomeUnclear, "piped"
 	}
 	switch {
 	case counts != nil && counts.failed > 0:

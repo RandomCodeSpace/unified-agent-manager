@@ -215,7 +215,7 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
       if (!value) setOpened(null);
       else if (input && reviewButton.current && !blocked) setOpened({ revision: draft.revision, index: 0, anchor: reviewButton.current, selection: writingSelection(input) });
     }}>
-      {toolbarTarget && createPortal(<Tip label="Spelling and grammar">
+      {toolbarTarget && createPortal(<Tip label={<>Spelling and grammar<span className="block text-on-primary/70">English · Checked on this device</span></>}>
         <Popover.Trigger render={<Button ref={reviewButton} size="icon" variant="subtle" aria-label={`Spelling and grammar${issues.length ? `: ${issues.length} suggestions` : ''}${fallbackUndo ? '. Undo correction available' : ''}`} disabled={blocked} className="relative text-muted" />}>
           <SpellCheck />
           {issues.length > 0 && <span aria-hidden="true" className="absolute right-1 top-1 size-1 rounded-full bg-info" />}
@@ -226,8 +226,8 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
       }}>
         <Popover.Title>{issue ? issue.kind === 'grammar' ? 'Grammar' : 'Spelling' : 'Spelling and grammar'}</Popover.Title>
         {issue ? <>
-          <Popover.Description>{issue.message}</Popover.Description>
-          <p className="break-words text-ui"><span className="text-muted line-through">{issue.original}</span><span aria-hidden="true"> → </span><span className="sr-only"> becomes </span><span className="font-medium text-ink">{issue.replacements[0] || 'Remove'}</span></p>
+          {/* "Teh → The" says what the suggestion is; the checker's own message would repeat it. */}
+          <Popover.Description className="break-words text-ui text-body"><span className="text-muted line-through">{issue.original}</span><span aria-hidden="true"> → </span><span className="sr-only"> becomes </span><span className="font-medium text-ink">{issue.replacements[0] || 'Remove'}</span></Popover.Description>
           <div className="flex items-center gap-1">
             <Button size="sm" variant="primary" onClick={apply}>Apply</Button>
             <Button size="sm" variant="subtle" onClick={() => {
@@ -243,7 +243,6 @@ function WritingBuffer({ text, textareaRef, disabled, suspended, toolbarTarget, 
           </div>
         </> : <Popover.Description>{message}</Popover.Description>}
         {fallbackUndo && <Button size="sm" variant="subtle" className="self-start" onClick={undoFallback}><Undo2 />Undo correction</Button>}
-        <p className="text-caption text-muted">English · Checked on this device</p>
       </Popover.Content>}
     </Popover.Root>
   </>;

@@ -153,7 +153,7 @@ func TestCheckOutcomesFollowTheReportedStatus(t *testing.T) {
 		{"go test ./... ; echo done", goFAIL, 0, outcomeFail, ""},
 		{"go test ./... ; echo done", goOK, 0, outcomePass, "passed by its output"},
 		{"go test ./... || true", "weird", 0, outcomeUnclear, "the exit status is a later command’s"},
-		{"go test ./... 2>&1 | tail -3", goOK, 0, outcomeUnclear, "piped, so the exit status is the last command’s"},
+		{"go test ./... 2>&1 | tail -3", goOK, 0, outcomeUnclear, "piped"},
 		{"go test ./... 2>&1 | tail -3", goFAIL, 0, outcomeFail, ""},
 		{"go test -run 'TestA|TestB' ./...", goFAIL, 1, outcomeFail, ""},
 		{"go build ./... && go test ./...", goFAIL, 1, outcomeFail, ""},
