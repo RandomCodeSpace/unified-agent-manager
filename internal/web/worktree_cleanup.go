@@ -528,12 +528,13 @@ func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) e
 	return nil
 }
 
-// removedLog is the worktrees removed on settling, newest first.
+// removedLog is the worktrees removed on settling, newest first; empty, never
+// nil, so the list serves [] rather than null.
 func (m *Manager) removedLog() []RemovedWorktree {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.loadRemovedLocked()
-	return slices.Clone(m.worktrees.removed)
+	return append([]RemovedWorktree{}, m.worktrees.removed...)
 }
 
 func (m *Manager) removedLogPath() string {
