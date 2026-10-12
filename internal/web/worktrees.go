@@ -743,9 +743,8 @@ func (m *Manager) ProjectBranches(ctx context.Context, projectID string) (Branch
 	if ids, names := m.busyThreads(repo.top); len(ids) > 0 {
 		out.Busy = &ThreadRef{ID: ids[0], Name: names[0]}
 	}
-	if out.Uncommitted, err = folderUncommitted(ctx, repo); err != nil {
-		return out, err
-	}
+	// Only a hint for the menu: the switch itself checks again.
+	out.Uncommitted, _ = folderUncommitted(ctx, repo)
 	raw, code, stderr, err := runGit(ctx, repo.git, repo.top, maxStatusBytes, "for-each-ref", "--sort=-committerdate", "--format=%(refname)%00%(committerdate:iso-strict)%00%(symref)", "refs/heads", "refs/remotes")
 	if err != nil {
 		return out, err
