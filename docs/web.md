@@ -1949,7 +1949,9 @@ GitLab**. The views:
   GraphQL: the shell rules refuse `glab api`).
 - **Pipeline** (also for a job): jobs by stage with their states, the failed
   job (or the job opened) selected, the last 60 lines of its log with error
-  lines marked, and **Full log**. The pipeline of the Thread's own commit
+  lines marked, and **Full log**. The log opens scrolled to its end, where
+  the failure is, and a running job's log stays at its end as it grows
+  unless you scroll up. The pipeline of the Thread's own commit
   offers **Investigate**.
 
 Discussion notes, work item descriptions and agent reply drafts render as

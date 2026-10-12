@@ -6,7 +6,6 @@ import type { GitLabRef } from '../lib/gitlabRefs';
 import { InstanceName } from './common';
 import { GitLabItemView } from './GitLabItems';
 import { useGitLabItemHead } from './GitLabStrip';
-import { GitLabPipelinePanel } from './GitLabPipeline';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { Tip } from './ui/tooltip';
@@ -14,12 +13,11 @@ import { Tip } from './ui/tooltip';
 /** An item opened from the conversation and the turn's other items, which the panel steps between. */
 export interface GitLabOpenItem { refs: GitLabRef[]; ref: GitLabRef }
 
-export default function GitLabSheet({ sessionId, session, item, onItem, inline, open, onClose, onClosed }: Readonly<{
-  sessionId: string;
+export default function GitLabSheet({ session, item, onItem, inline, open, onClose, onClosed }: Readonly<{
   session?: SessionDetail;
-  /** The item opened from the conversation; without one, the Thread's own commit's pipeline. */
-  item?: GitLabOpenItem | null;
-  onItem?: (ref: GitLabRef) => void;
+  /** The item opened from the conversation. */
+  item: GitLabOpenItem | null;
+  onItem: (ref: GitLabRef) => void;
   inline: boolean;
   open: boolean;
   onClose: () => void;
@@ -43,7 +41,7 @@ export default function GitLabSheet({ sessionId, session, item, onItem, inline, 
     document.addEventListener('keydown', escape);
     return () => document.removeEventListener('keydown', escape);
   }, [inline, open, close]);
-  return <SidePanel id="gitlab" inline={inline} open={open} onClose={close} onClosed={onClosed} label="GitLab" defaultWidth={item ? 520 : 480}>
+  return <SidePanel id="gitlab" inline={inline} open={open} onClose={close} onClosed={onClosed} label="GitLab" defaultWidth={520}>
     <PanelHeader>
       <GitPullRequest aria-hidden="true" className="size-4 text-muted" />
       <span className="min-w-0 truncate text-title text-ink">{item && label ? label : 'GitLab'}</span>
@@ -53,7 +51,7 @@ export default function GitLabSheet({ sessionId, session, item, onItem, inline, 
       <Button ref={closeRef} size="icon-md" aria-label="Close GitLab" className="text-muted" onClick={close}><X /></Button>
     </PanelHeader>
     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
-      {item && onItem ? <GitLabItemView session={session} refs={item.refs} current={item.ref} onOpen={onItem} /> : <GitLabPipelinePanel sessionId={sessionId} session={session} refreshKey={0} />}
+      {item && <GitLabItemView session={session} refs={item.refs} current={item.ref} onOpen={onItem} />}
     </div>
   </SidePanel>;
 }
