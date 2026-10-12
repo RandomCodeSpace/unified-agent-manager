@@ -59,6 +59,8 @@ test('the merge request description prompt shows the default until one is saved,
     await user.type(prompt, '  Be brief.  ');
     await user.click(saveButton);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_mr_prompt: 'Be brief.' }));
+    // Reset is disabled while the save is in flight; a click before it lands does nothing.
+    await waitFor(() => expect(reset.hasAttribute('disabled') || reset.getAttribute('aria-disabled') === 'true').toBe(false));
     await user.click(reset);
     await waitFor(() => expect(save).toHaveBeenLastCalledWith({ gitlab_mr_prompt: '' }));
     await waitFor(() => expect(prompt.value).toBe(''));

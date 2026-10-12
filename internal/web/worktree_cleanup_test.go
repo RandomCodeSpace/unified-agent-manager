@@ -47,9 +47,11 @@ func TestSettleRemovesTheWorktreeAndReopenRecreatesIt(t *testing.T) {
 	if r := removed[0]; r.Path != path || r.Branch != branch || r.TaskID != sum.ID || r.Thread != "Fix the parser" || r.SizeBytes <= 0 {
 		t.Fatalf("removed = %+v", r)
 	}
-	if data, err := os.ReadFile(ts.m.removedLogPath()); err != nil || !strings.Contains(string(data), branch) {
-		t.Fatalf("log file = %s %v", data, err)
-	}
+	// The list is kept in memory first and written to its file after.
+	waitUntil(t, "removal log file", func() bool {
+		data, err := os.ReadFile(ts.m.removedLogPath())
+		return err == nil && strings.Contains(string(data), branch)
+	})
 
 	if _, err := ts.m.Reopen(sum.ID); err != nil {
 		t.Fatal(err)

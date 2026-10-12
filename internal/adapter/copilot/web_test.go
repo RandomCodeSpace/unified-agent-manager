@@ -784,6 +784,20 @@ func TestWebSkillLoadsOnCreateAndResume(t *testing.T) {
 			if wantLive := []agentapi.SkillLoad{want[0], again, want[1], want[2]}; !reflect.DeepEqual(loads, wantLive) {
 				t.Fatalf("live loads = %+v, want %+v", loads, wantLive)
 			}
+			if resume {
+				// Resuming reads the task and todo lists on goroutines of
+				// their own; their lists must land before History is checked
+				// for emitting none.
+				c := conv.(*conversation)
+				waitFor(t, "the list reads on resume", func() bool {
+					fs.mu.Lock()
+					read := fs.taskLists > 0 && fs.todoReads > 0
+					fs.mu.Unlock()
+					c.mu.Lock()
+					defer c.mu.Unlock()
+					return read && !c.listing && !c.todos.reading
+				})
+			}
 			before := len(sink.all())
 			recorded, err := conv.History(context.Background())
 			if err != nil {
