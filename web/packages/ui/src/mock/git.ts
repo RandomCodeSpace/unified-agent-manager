@@ -114,7 +114,9 @@ export function gitMock(host: GitHost) {
         if (working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder. Wait for it to finish.`, 'branch_busy');
         const n = pendingIn(p.id);
         if (body.mode === 'switch' && n) return fail(409, `${n} ${n === 1 ? 'file' : 'files'} not committed`, 'branch_dirty');
-        const branch = body.mode === 'branch' ? `uam/${slug(task.name || task.title)}` : String(body.branch ?? '').replace(body.remote ? /^[^/]+\// : /^$/, '');
+        let branch = String(body.branch ?? '');
+        if (body.mode === 'branch') branch = `uam/${slug(task.name || task.title)}`;
+        else if (body.remote) branch = branch.replace(/^[^/]+\//, '');
         host.projectChanged({ ...p, branch });
         return json(200, task);
       }

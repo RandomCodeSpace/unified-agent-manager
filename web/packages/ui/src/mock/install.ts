@@ -930,7 +930,9 @@ export function install(): { received: Received[] } {
       if (place.mode === 'branch' || place.mode === 'switch') {
         const working = st.tasks.find((x) => x.project_id === p.id && x.workdir === p.dir && LIVE.includes(x.state) && (x.stage ?? 'active') === 'active');
         if (working) return fail(409, `“${working.name || working.title || 'A Thread'}” is working in this folder. Wait for it to finish.`, { code: 'branch_busy', refs: [working.id] });
-        const branch = place.mode === 'branch' ? `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}` : String(place.branch ?? '').replace(place.remote ? /^[^/]+\// : /^$/, '');
+        let branch = String(place.branch ?? '');
+        if (place.mode === 'branch') branch = `uam/${(0x7f3a9c21 + st.tasks.length).toString(16)}`;
+        else if (place.remote) branch = branch.replace(/^[^/]+\//, '');
         if (!branch) return fail(400, 'branch must be a branch name');
         const next = { ...p, branch };
         st.projects = st.projects.map((x) => (x.id === p.id ? next : x));
