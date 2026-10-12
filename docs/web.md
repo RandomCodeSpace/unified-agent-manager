@@ -1077,13 +1077,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   clears it, and the check is never Task activity. When today's Background AI
   limit refuses it, nothing is kept and the check waits until midnight or a
   change of the limit or Utility model.
-  A Task checked done settles once you have seen it: when a page that shows
-  the finished Task closes or moves to another Task, the service records the
-  reply it showed. Once that reply is checked done and no page shows the
-  Task, the next minute's sweep settles it with `settled_by: "reviewed"`
-  under the same rules as the 7-day settle (see Settle, archive, and
-  delete). A new turn after you looked starts over. A Task that is not done
-  stays where it is.
+  A Task checked done stays active; only the 7-day settle (see Settle,
+  archive, and delete) settles it on its own.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
   copies the conversation through that reply into a new active Task, without
@@ -1406,8 +1401,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   request, an unreconciled rewind or an unseen failure, or that a page has
   open. This settle doesn't count as activity, so the Task keeps its last
   activity time. Its record says `settled_by: "auto"`; Reopen clears that and
-  starts the 7 days again. A Task checked done that you have seen settles
-  sooner, with `settled_by: "reviewed"` (see Done check).
+  starts the 7 days again. Tasks the removed done-check settle moved keep
+  `settled_by: "reviewed"`.
 
   A Task whose conversation is not open, such as a settled, archived or
   closed Task, or any Task after the service restarts, still shows its whole
@@ -1599,7 +1594,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   40% of the screen height, so the Task list always keeps the rest.
   Done lists the active Tasks the service judged done, read or not, newest
   first: the newest ten, then **Show all**. A new turn takes a Task back
-  to the list; once you have reviewed it the service settles it. Settled
+  to the list. Settled
   lists the newest settled first, also ten until **Show all**.
 
   "Opened since" is tracked per browser: a Task you never opened in this

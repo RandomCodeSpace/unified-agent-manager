@@ -323,8 +323,8 @@ type webSession struct {
 	stage                 string
 	settledAt, archivedAt time.Time
 	// settledBy is settledByAuto when the quiet-Task sweep settled it,
-	// settledByReviewed when the done check's sweep did, "" when the owner did
-	// or it is not settled.
+	// settledByReviewed when the former done check's sweep did, "" when the
+	// owner did or it is not settled.
 	settledBy string
 	// turnSeq increments whenever base changes, so a failed Send only
 	// restores the previous state when nothing else changed it meanwhile.
@@ -501,9 +501,6 @@ type webSession struct {
 	// item a check in flight judges (done.go).
 	done    *store.WebDone
 	judging string
-	// reviewedItem is the finished transcript's last item a page showed
-	// when it left the Task.
-	reviewedItem string
 
 	persisted persistKey
 }
@@ -875,9 +872,6 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.fork = web.Fork
 		s.rewind = loadedRewind(web.Rewind)
 		s.done = loadDone(web.Done)
-		if len(web.ReviewedItem) <= maxToolCallID {
-			s.reviewedItem = web.ReviewedItem
-		}
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
 		s.agent = web.Agent
@@ -2153,7 +2147,7 @@ func (m *Manager) flush() (err error) {
 				Turn: key.turn, TurnTimings: timings, RequestID: key.reqID, RequestStatus: key.reqStatus, CommandResult: commandResult, CommandSubmissions: json.RawMessage(key.commandLedger), UpdatedAt: s.updatedAt, Detail: s.detail,
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
-				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, Done: s.done, ReviewedItem: s.reviewedItem, UnseenEnd: s.unseenEnd,
+				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, Done: s.done, UnseenEnd: s.unseenEnd,
 				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
 			},
 		})
