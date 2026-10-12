@@ -2580,6 +2580,10 @@ type CreateRequest struct {
 	autopilot bool
 	// rerunOf is the Task Rerun runs again.
 	rerunOf string
+	// samePlace and sameWorkdir are the worktree place and folder of that
+	// Task when it has one; the new Task runs there, not in a new place.
+	samePlace   *store.WebPlace
+	sameWorkdir string
 	// gitlabRegister binds the reserved investigation atomically with its Task.
 	gitlabRegister func(*store.Config) error
 }
@@ -2686,8 +2690,16 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	}
 	m.mu.Unlock()
 	project.Dir = workdir
-	workdir, place, undoPlace, err := m.makePlace(m.ctx, project, req.Place)
-	if err != nil {
+	var place *store.WebPlace
+	undoPlace := func() {}
+	if req.samePlace != nil {
+		release, err := m.keepWorktree(m.ctx, project.Dir, req.samePlace)
+		if err != nil {
+			return SessionSummary{}, err
+		}
+		defer release()
+		workdir, place = req.sameWorkdir, req.samePlace
+	} else if workdir, place, undoPlace, err = m.makePlace(m.ctx, project, req.Place); err != nil {
 		return SessionSummary{}, err
 	}
 	registered := false

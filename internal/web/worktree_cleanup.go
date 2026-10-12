@@ -19,6 +19,7 @@ import (
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
 // Settle, Archive and Delete remove a Thread's worktree and keep its branch;
@@ -101,6 +102,9 @@ type worktreeState struct {
 	measuring bool
 	removed   []RemovedWorktree
 	loaded    bool
+	// keep counts the Threads being made in each worktree (Run again);
+	// removal on settling leaves those.
+	keep map[string]int
 }
 
 // diskInfo reads the filesystem holding dir, or its nearest existing
@@ -157,7 +161,8 @@ func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
 	var stale []string
 	for i := range out.Worktrees {
 		e := &out.Worktrees[i]
-		if s := threads[e.Path]; s != nil {
+		if users := threads[e.Path]; len(users) > 0 {
+			s := users[0]
 			e.TaskID, e.ProjectID, e.Stage = s.id, s.projectID, stageName(s.stage)
 			e.Thread = clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title)), maxNameRunes)
 		}
@@ -204,15 +209,35 @@ func worktreeDirs(root string) []string {
 	return out
 }
 
-// worktreeThreadsLocked maps each worktree path to the Thread made for it.
-func (m *Manager) worktreeThreadsLocked() map[string]*webSession {
-	out := map[string]*webSession{}
+// worktreeThreadsLocked maps each worktree path to the Threads in it: the
+// one made for it and those Run again made there, active ones first, then
+// the newest.
+func (m *Manager) worktreeThreadsLocked() map[string][]*webSession {
+	out := map[string][]*webSession{}
 	for _, s := range m.sessions {
 		if !s.removed && s.place != nil && s.place.Worktree != "" {
-			out[s.place.Worktree] = s
+			out[s.place.Worktree] = append(out[s.place.Worktree], s)
 		}
 	}
+	for _, users := range out {
+		slices.SortFunc(users, func(a, b *webSession) int {
+			if x, y := a.stage == StageActive, b.stage == StageActive; x != y {
+				if x {
+					return -1
+				}
+				return 1
+			}
+			return b.createdAt.Compare(a.createdAt)
+		})
+	}
 	return out
+}
+
+// worktreeInUseLocked says whether a Thread is active, or being made, in
+// the worktree at path.
+func (m *Manager) worktreeInUseLocked(path string) bool {
+	users := m.worktreeThreadsLocked()[path]
+	return m.worktrees.keep[path] > 0 || len(users) > 0 && users[0].stage == StageActive
 }
 
 // worktreePending reads the branch of the worktree at dir, its changed
@@ -261,15 +286,15 @@ func (m *Manager) measureLocked(paths []string) {
 			if m.worktrees.sizes == nil {
 				m.worktrees.sizes = map[string]worktreeSize{}
 			}
-			// The Thread's summary carries the size for its branch chip.
-			s := m.worktreeThreadsLocked()[p]
-			var before SessionSummary
-			if s != nil {
-				before = m.summaryLocked(s)
+			// The Threads' summaries carry the size for their branch chips.
+			users := m.worktreeThreadsLocked()[p]
+			befores := make([]SessionSummary, len(users))
+			for i, s := range users {
+				befores[i] = m.summaryLocked(s)
 			}
 			m.worktrees.sizes[p] = worktreeSize{bytes: bytes, partial: partial, at: time.Now()}
-			if s != nil {
-				m.changedLocked(s, before)
+			for i, s := range users {
+				m.changedLocked(s, befores[i])
 			}
 			m.mu.Unlock()
 		}
@@ -353,10 +378,10 @@ func (m *Manager) kickWorktreeRemoveLocked(s *webSession) {
 			return
 		}
 		m.mu.Lock()
-		active := s.stage == StageActive && !s.removed
+		inUse := m.worktreeInUseLocked(path)
 		m.mu.Unlock()
-		if active {
-			return // reopened meanwhile
+		if inUse {
+			return // reopened meanwhile, or another Thread runs there
 		}
 		if !known {
 			size.bytes, _ = measureDir(m.ctx, path)
@@ -389,22 +414,58 @@ func (m *Manager) restoreWorktree(ctx context.Context, s *webSession) {
 	if path == "" || dir == "" {
 		return
 	}
+	if err := m.recreateWorktree(ctx, dir, path, branch); err != nil {
+		log.Warn("web thread worktree not recreated", "session", s.id, "path", path, "error", err)
+	}
+}
+
+// recreateWorktree adds the worktree at path back on branch, in the
+// repository holding dir, when it was removed.
+func (m *Manager) recreateWorktree(ctx context.Context, dir, path, branch string) error {
 	m.worktrees.ops.Lock()
 	defer m.worktrees.ops.Unlock()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
-		return
+		return nil
 	}
-	repo, _, err := openRepo(ctx, dir)
-	if err != nil || repo == nil {
-		return
+	repo, reason, err := openRepo(ctx, dir)
+	if err != nil {
+		return err
+	}
+	if repo == nil {
+		return newError(http.StatusConflict, "%s", reason)
 	}
 	// A folder deleted by hand is still registered until pruned.
 	_, _ = runGitWrite(ctx, repo.top, nil, "worktree", "prune")
 	if _, err := runGitWrite(ctx, repo.top, nil, "worktree", "add", path, branch); err != nil {
-		log.Warn("web thread worktree not recreated", "session", s.id, "path", path, "error", err)
-		return
+		return gitFailed("Could not recreate the worktree", err)
 	}
-	log.Info("web thread worktree recreated", "session", s.id, "path", path)
+	log.Info("web thread worktree recreated", "path", path, "branch", branch)
+	return nil
+}
+
+// keepWorktree recreates the worktree of place, in the repository holding
+// dir, when it was removed, and keeps it from removal on settling until
+// release runs, as a Thread is made there.
+func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.WebPlace) (release func(), err error) {
+	path := place.Worktree
+	m.mu.Lock()
+	if m.worktrees.keep == nil {
+		m.worktrees.keep = map[string]int{}
+	}
+	m.worktrees.keep[path]++
+	m.mu.Unlock()
+	release = func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.worktrees.keep[path]--; m.worktrees.keep[path] <= 0 {
+			delete(m.worktrees.keep, path)
+		}
+	}
+	if err := m.recreateWorktree(ctx, dir, path, place.Branch); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
 }
 
 // RemoveWorktree removes a listed worktree on the owner's word. One with
@@ -420,23 +481,31 @@ func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) e
 		return newError(http.StatusNotFound, "worktree not found")
 	}
 	m.mu.Lock()
-	s := m.worktreeThreadsLocked()[path]
+	users := slices.Clone(m.worktreeThreadsLocked()[path])
 	m.mu.Unlock()
-	if s != nil {
+	// Held in ID order, so two removals cannot wait on each other.
+	slices.SortFunc(users, func(a, b *webSession) int { return strings.Compare(a.id, b.id) })
+	for _, s := range users {
 		s.op.Lock()
 		defer s.op.Unlock()
-		m.mu.Lock()
+	}
+	m.mu.Lock()
+	for _, s := range users {
 		if err := s.settleableLocked(); err != nil {
 			m.mu.Unlock()
 			return newError(http.StatusConflict, "“%s” is working in this worktree. Wait for it to finish.", clipRunes(displaytext.Sanitize(firstNonEmpty(s.name, s.title, "The Thread")), maxNameRunes))
 		}
-		var conv agentapi.Conversation
+	}
+	var convs []agentapi.Conversation
+	for _, s := range users {
 		if s.conv != nil {
 			before := m.summaryLocked(s)
-			conv = m.suspendLocked(s, false)
+			convs = append(convs, m.suspendLocked(s, false))
 			m.changedLocked(s, before)
 		}
-		m.mu.Unlock()
+	}
+	m.mu.Unlock()
+	for _, conv := range convs {
 		if conv != nil {
 			m.closeConversation(conv)
 		}
