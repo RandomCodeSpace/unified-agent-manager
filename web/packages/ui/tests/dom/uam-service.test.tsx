@@ -23,7 +23,6 @@ describe('UAM version and restart', () => {
     renderApp('#settings');
     const group = await card();
     expect(await group.findByText('dev-mock')).toBeTruthy();
-    expect(group.getByText('The installed version is running.')).toBeTruthy();
     expect(group.queryByRole('button', { name: 'Restart' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Settings', description: NOTICE })).toBeNull();
     expect(screen.queryByRole('button', { name: 'UAM and access', description: 'Restart available' })).toBeNull();

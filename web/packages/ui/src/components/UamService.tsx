@@ -126,7 +126,6 @@ export function UamService() {
             )}
             {status.restart === 'pending' && <Note>Restarts when no task is working or waiting.</Note>}
             {status.restart === 'restarting' && <Note className="[overflow-wrap:anywhere]">Restarting onto UAM {newer ?? status.installed}…</Note>}
-            {status.restart === 'none' && !status.error && <Note>The installed version is running.</Note>}
             {status.error && <Note className="[overflow-wrap:anywhere]">Could not read the installed UAM: {status.error}</Note>}
           </div>
         </div>

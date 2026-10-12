@@ -242,8 +242,8 @@ then restart the service.
 **One linked account.** A server uses one Copilot account. The first sign-in
 links the server to its account; a server already signed in when it is
 upgraded links to that account the first time it reads it. Settings shows
-"Linked account: <login>" and, while signed out, says which GitHub account to
-use. A sign-in as another account, by token or with GitHub, is refused ("This
+"Linked account: <login>" when it is not the account signed in, so while
+signed out it says which GitHub account to use. A sign-in as another account, by token or with GitHub, is refused ("This
 server is linked to Copilot account <login>. Sign in with that account.") and
 removed again. If Copilot is signed in as another account some other way (an
 environment token, `copilot login` or `gh` on the server), Copilot is
@@ -1224,7 +1224,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines and done checks) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
-  **Show log · N calls today** (collapsed until opened, and read only while
+  **Show log** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
   what it was for ("Task title", "Suggested replies", "Outcome line", "Task done check";
@@ -2109,7 +2109,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 
 The Usage button beside Settings opens a popover with Today,
 7 days, 30 days, and Lifetime totals. Each model shows input, output, cache,
-and estimated USD cost. Cache is read plus write tokens; each model's info
+and estimated USD cost; its bar shows that split as proportions. Cache is read plus write tokens; each model's info
 tip splits it into read and written. Input already includes cache. Totals
 preserve the harness's reported accounting; reasoning already included in
 output is counted once. The 7-day and 30-day windows include today and use

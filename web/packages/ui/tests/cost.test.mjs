@@ -145,6 +145,8 @@ test('quota pace handles empty, unlimited, stale, expired and unknown billing pe
 
 test('the model cost line names its unit and what its discount applies to', () => {
   assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }), 'High cost · 10 in, 50 out credits per 1M tokens');
+  assert.equal(modelCostLine({ cost_tier: 'high', prices: { input: 10, output: 50 } }, false), 'High cost · 10 in / 50 out');
+  assert.equal(modelCostLine({ prices: { input: 1, output: 2, batch_size: 1000 } }, false), '1 in / 2 out per 1K');
   assert.equal(modelCostLine({ discount_percent: 10 }), '10% off usage');
   assert.equal(modelCostLine({}), '');
 });

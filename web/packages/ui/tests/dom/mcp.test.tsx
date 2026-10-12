@@ -203,7 +203,8 @@ describe('MCP servers', () => {
     const github = list.getByRole('switch', { name: 'Use github-mcp-server in tasks' });
     const row = within(github.closest('li')!);
     expect(github.getAttribute('aria-checked')).toBe('false');
-    expect(row.getByText('Off')).toBeTruthy();
+    // The switch says it is off; no chip repeats it.
+    expect(row.queryByText('Off')).toBeNull();
     expect(document.getElementById(github.getAttribute('aria-describedby')!)?.textContent).toMatch(/not shared with the copilot command\. Off by default/);
     // Only the built-in GitHub server gets the setting's switch; other built-in servers stay read-only.
     expect(list.queryAllByRole('switch', { name: /in tasks$/ })).toHaveLength(1);
@@ -213,7 +214,6 @@ describe('MCP servers', () => {
     // A read-only built-in server's reader has no Edit or Remove.
     await user.click(row.getByRole('button', { name: 'View MCP server github-mcp-server' }));
     const reader = within(await screen.findByRole('dialog', { name: 'MCP server github-mcp-server' }));
-    expect(reader.getByText(/Built in: only its switch is yours to change/)).toBeTruthy();
     expect(reader.queryByRole('button', { name: /^(Edit|Remove)/ })).toBeNull();
   });
 

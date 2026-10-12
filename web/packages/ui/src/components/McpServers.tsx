@@ -288,8 +288,7 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
   return (
     <div className="flex flex-col gap-3">
       <Note className="max-w-3xl">
-        Tools the agent can call, from a command this machine runs or a remote address. This is GitHub Copilot's own MCP configuration, shared with the copilot command here. New tasks start
-        with it; choose Apply current settings in an open task's menu → MCP servers to refresh it for the next turn.
+        Shared with the copilot command. Open tasks pick up changes via ⋯ → MCP servers → Apply current settings.
       </Note>
       {!draft && (
         <SectionAction>
@@ -315,7 +314,8 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
                     detailId={github ? 'github-mcp-help' : undefined}
                     chips={<>
                       {(s.type || !github) && <Chip fill="outline">{TYPE_LABEL[s.type] ?? 'Other'}</Chip>}
-                      {!enabled && <Chip fill="outline">Off</Chip>}
+                      {/* A switch says it on its own; a read-only server has only this chip. */}
+                      {!enabled && s.source !== 'user' && !github && <Chip fill="outline">Off</Chip>}
                     </>}
                     aside={
                       s.source === 'user' ? (
@@ -360,9 +360,8 @@ export function McpServersSettings({ terminal, githubMcp }: Readonly<{ /** Setti
           onClose={() => cards.close()}
           onClosed={cards.closed}
         >
-          {opened.source !== 'user' && <Note>{SOURCE_LABEL[opened.source] ?? opened.source}: {openedGithub ? 'only its switch is yours to change.' : 'read only here.'}</Note>}
+          {opened.source !== 'user' && !openedGithub && <Note>{SOURCE_LABEL[opened.source] ?? opened.source}: read only here.</Note>}
           {opened.source === 'user' && draft && <Note>Finish or cancel the open form to change this server.</Note>}
-          {openedGithub && <p className="text-caption text-muted">{GITHUB_MCP_HELP}</p>}
           {(lineOf(opened) || opened.cwd || opened.env.length > 0 || opened.headers.length > 0) && (
             <PanelSection label={opened.type === 'stdio' ? 'Command' : 'Address'}>
               <ServerDetail s={opened} />

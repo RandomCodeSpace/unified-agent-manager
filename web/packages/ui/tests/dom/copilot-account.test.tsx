@@ -157,6 +157,15 @@ describe('GitHub Copilot sign-in', () => {
     expect(card.queryByRole('button', { name: 'Use another token' })).toBeNull();
     expect(card.queryByRole('button', { name: 'Sign in with GitHub' })).toBeNull();
   });
+
+  test('a gh sign-in says so in the headline; how to sign it out is its help', async () => {
+    renderApp('?copilot=gh#settings');
+    const card = await account();
+    expect(await card.findByText('Signed in as octocat · via gh')).toBeTruthy();
+    expect(card.queryByText(/^Through the GitHub CLI/)).toBeNull();
+    expect(card.getByRole('button', { name: 'About gh sign-in' })).toBeTruthy();
+    expect(card.queryByRole('button', { name: 'Sign out' })).toBeNull();
+  });
 });
 
 describe('one linked Copilot account', () => {
@@ -164,13 +173,13 @@ describe('one linked Copilot account', () => {
 
   const NOT_LINKED = 'This server is linked to Copilot account monalisa. Sign in with that account.';
 
-  test('the linked account shows; Unlink asks first, then clears the link and signs out', async () => {
+  test('the linked account, the one signed in, is not said again; Unlink asks first, then clears the link and signs out', async () => {
     const unlink = vi.spyOn(api, 'unlink');
     const { user } = renderApp('#settings');
     const card = await account();
-    expect(await card.findByText('Linked account: octocat')).toBeTruthy();
+    await user.click(await card.findByRole('button', { name: 'Unlink' }));
+    expect(card.queryByText(/^Linked account:/)).toBeNull();
     expect(card.queryByText(MISMATCH)).toBeNull();
-    await user.click(card.getByRole('button', { name: 'Unlink' }));
     const dialog = within(await screen.findByRole('alertdialog'));
     expect(dialog.getByText('Unlink octocat?')).toBeTruthy();
     expect(dialog.getByText('Copilot signs out on this server, and the next sign-in links its account. Every task on this server uses that account.')).toBeTruthy();

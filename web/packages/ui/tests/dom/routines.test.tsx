@@ -133,7 +133,7 @@ describe('routines', () => {
     for (const id of ['r1', 'r2', 'r3']) await fetch(`/api/routines/${id}`, { method: 'DELETE' });
     await user.click(side.getByRole('button', { name: 'Routines' }));
     expect(await screen.findByRole('heading', { name: 'No routines yet' })).toBeTruthy();
-    expect(screen.getByText(/A routine starts a task in a project on a schedule/)).toBeTruthy();
+    expect(screen.getByText(/Start a task on a schedule/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'New routine' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
     expect(dialog.getByRole('combobox', { name: 'Project' })).toBeTruthy();

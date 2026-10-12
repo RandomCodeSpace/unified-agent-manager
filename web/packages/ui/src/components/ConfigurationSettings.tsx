@@ -154,12 +154,11 @@ function DocumentBody({ file, kind, view }: Readonly<{ file: ConfigurationFile; 
   </>;
 }
 
-function ConfigurationViewer({ file, kind, draftOpen, onClose }: Readonly<{ file: ConfigurationFile; kind: ConfigurationKind; draftOpen: boolean; onClose: () => void }>) {
+function ConfigurationViewer({ file, kind, onClose }: Readonly<{ file: ConfigurationFile; kind: ConfigurationKind; onClose: () => void }>) {
   const [open, setOpen] = useState(true);
   const [view, setView] = useState('preview');
   return <Dialog open={open} onOpenChange={setOpen} onClosed={onClose} title={<span className="break-all">{kind === 'instructions' ? fileName(file) : file.name}</span>} description={<span className="break-all">{file.path}</span>} className="min-w-0 max-w-sheet-wide">
     <div className="flex min-w-0 flex-col gap-3">
-      {!missingFile(file) && <Note>Read only. This shows the saved file{draftOpen ? '; any unsaved editor changes stay in the editor' : ''}.</Note>}
       {hasViews(file, kind) && <Segmented aria-label="Show document as" className="self-start" value={view} onValueChange={setView} items={VIEWS} />}
       {file.error && <Note tone="error" role="alert">{file.error}</Note>}
       <DocumentBody file={file} kind={kind} view={view} />
@@ -599,8 +598,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
     <Field id={`${kind}-scope`} label="Scope" hint={`${heldBy ? `Save or cancel the open ${LABELS[heldBy]} form to change it. ` : ''}${projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'} Agents, skills, hooks and instructions share this scope.`}>
       <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={holding || !!heldBy} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={onScope} />
     </Field>
-    {kind === 'instructions' && !projectId && <Note>Copilot uses copilot-instructions.md for global instructions. AGENTS.md belongs to a project unless an extra instruction directory is explicitly configured with COPILOT_CUSTOM_INSTRUCTIONS_DIRS.</Note>}
-    <div className="flex items-center gap-1 text-ui"><a className="text-accent underline" href={REFERENCES[kind]} target="_blank" rel="noreferrer">Native {kind} reference</a><HelpTip label={`${label} configuration`}>Advanced documents support the full native format, including fields not shown in the form. Available options depend on the installed Copilot CLI version. Copilot reads these files when a task opens or reopens. A running task keeps its current configuration.</HelpTip></div>
+    <div className="flex items-center gap-1 text-ui"><a className="text-accent underline" href={REFERENCES[kind]} target="_blank" rel="noreferrer">Native {kind} reference</a><HelpTip label={`${label} configuration`}>Advanced documents support the full native format, including fields not shown in the form. Available options depend on the installed Copilot CLI version. Copilot reads these files when a task opens or reopens. A running task keeps its current configuration.{kind === 'instructions' && !projectId && ' Copilot uses copilot-instructions.md for global instructions. AGENTS.md belongs to a project unless an extra instruction directory is explicitly configured with COPILOT_CUSTOM_INSTRUCTIONS_DIRS.'}</HelpTip></div>
     {locked && <Note>Turn on Terminal in UAM and access to manage {kind}. These files can configure commands that run as the service user.</Note>}
     {loadError ? <Note tone="error" role="alert">{loadError} <Button size="sm" onClick={refresh}>Retry</Button></Note> : !data ? <Skeleton label={`Loading ${kind}…`} rows={3} /> : <>
       {!draft && kind !== 'instructions' && <>
@@ -689,10 +687,10 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
           />)}
         </CardGroup>)}
       </div>
-      {files.length === 0 && <Note>No {kind} in this scope. Add one to get started.</Note>}
+      {files.length === 0 && <Note>No {kind} in this scope.</Note>}
       {files.length > 0 && shown.length === 0 && <Note>No skills match “{filter.trim()}”.</Note>}
     </>}
-    {viewed && <ConfigurationViewer file={viewed.file} kind={viewed.kind} draftOpen={!!draft} onClose={() => setViewed(null)} />}
+    {viewed && <ConfigurationViewer file={viewed.file} kind={viewed.kind} onClose={() => setViewed(null)} />}
     {cards.reader && opened ? <ItemReader
       reader={cards.reader}
       id={cards.id}
@@ -715,7 +713,8 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       {opened.editable && !locked && draft && <Note>Finish or cancel the open form to change this file.</Note>}
       {opened.error && <FileError message={opened.error} />}
       {opened.native && <div className="flex min-w-0 flex-col gap-1">
-        <p className="text-caption text-muted [overflow-wrap:anywhere]">Copilot: {opened.native.display_name || opened.native.name}{opened.native.display_name && opened.native.display_name !== opened.native.name ? ` (${opened.native.name})` : ''} · {NATIVE_SOURCES[opened.native.source] ?? (opened.native.source || 'Other')}</p>
+        {/* Copilot's own name for it, only when that is not the name in the reader's head. */}
+        {(opened.native.display_name || opened.native.name) !== nameOf(opened) && <p className="text-caption text-muted [overflow-wrap:anywhere]">Copilot: {opened.native.display_name || opened.native.name}{opened.native.display_name && opened.native.display_name !== opened.native.name ? ` (${opened.native.name})` : ''} · {NATIVE_SOURCES[opened.native.source] ?? (opened.native.source || 'Other')}</p>}
         {opened.native.description && <p className="break-words text-caption text-muted">{opened.native.description}</p>}
         {opened.native.enabled === false && <Note>Disabled globally in Copilot. This is separate from the file toggle.</Note>}
         {kind === 'skills' && opened.native.enabled !== undefined && <p className="flex flex-wrap items-center gap-x-2 text-caption text-muted">

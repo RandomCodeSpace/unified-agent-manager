@@ -120,7 +120,7 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
       <section className="flex flex-col items-start gap-3 rounded-lg bg-raised p-5 shadow-raised">
         <h2 className="text-title text-ink">No routines yet</h2>
         <p className="max-w-3xl text-ui text-body">
-          A routine starts a task in {project ? 'this project' : 'a project'} on a schedule, for example every weekday at {clockText('09:00')} to check dependencies for updates, and each run shows in the task list like any task.
+          Start a task on a schedule, for example weekdays at {clockText('09:00')} to check dependencies.
         </p>
         <Button variant="primary" onClick={() => edit()}>
           <Plus />
@@ -178,7 +178,6 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain">
         <ScrollSentinel sentinelRef={sentinel} />
         <div className="flex w-full min-w-0 flex-col gap-4 px-4 py-4 md:px-6">
-          <p className="text-caption text-muted">Times follow the clock of the host uam runs on. A run is skipped while the previous one is still running.</p>
           {body}
         </div>
       </div>
@@ -435,7 +434,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
         </Field>
         <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field id="routine-when" label="When" hint="In the local time of the host uam runs on.">
+            <Field id="routine-when" label="When" hint="In the local time of the host UAM runs on. A run is skipped while the previous one is still running.">
               <Select id="routine-when" aria-describedby="routine-when-hint" value={kind} items={SCHEDULE_KINDS} onValueChange={(k) => setKind(k as ScheduleKind)} />
             </Field>
           </div>

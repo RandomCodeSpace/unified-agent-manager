@@ -12,7 +12,11 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: /^Open changes.*3 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
-    expect(sheet.getByText(/^Files this task's agent edited/)).toBeTruthy();
+    // What This task lists is its tab's tooltip, not a line under the tabs.
+    expect(sheet.queryByText(/^Files this task's agent edited/)).toBeNull();
+    await user.hover(sheet.getByText(/^This task/));
+    expect(await screen.findByText(/^Files this task's agent edited/)).toBeTruthy();
+    await user.unhover(sheet.getByText(/^This task/));
     expect(sheet.getByText('CI workflow')).toBeTruthy();
     await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
     expect(await sheet.findByText(/^All uncommitted project changes vs HEAD/)).toBeTruthy();
