@@ -234,7 +234,8 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/viewing", s.handleViewing)
 	mux.HandleFunc("GET /api/fs/dirs", s.handleListDirs)
 	mux.HandleFunc("POST /api/fs/dirs", s.handleMakeDir)
-	mux.HandleFunc("GET /api/projects/{id}/files", s.handleFileList((*Manager).ProjectFiles))
+	mux.HandleFunc("GET /api/projects/{id}/files", s.handleProjectFiles)
+	mux.HandleFunc("GET /api/projects/{id}/branches", s.handleProjectBranches)
 	mux.HandleFunc("GET /api/projects/{id}/previous", s.handlePrevious)
 	mux.HandleFunc("GET /api/projects/{id}/terminal", s.handleTerminal)
 	mux.HandleFunc("GET /api/projects/{id}/agents", s.handleTaskAgents)
@@ -1030,6 +1031,15 @@ func (s *Server) handleFileList(list func(*Manager, context.Context, string, str
 		}
 		writeJSON(w, http.StatusOK, files)
 	}
+}
+
+// handleProjectFiles is handleFileList for a new Thread of a Project; the
+// base query parameter lists a branch or commit for a new worktree from it.
+func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
+	base := r.URL.Query().Get("base")
+	s.handleFileList(func(m *Manager, ctx context.Context, id, q string, limit int) (FileList, error) {
+		return m.ProjectFiles(ctx, id, base, q, limit)
+	})(w, r)
 }
 
 // handleTree lists one folder of the Task's directory, named by the dir

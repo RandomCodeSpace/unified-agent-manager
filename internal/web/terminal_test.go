@@ -218,7 +218,7 @@ func TestTerminalRouteRefusals(t *testing.T) {
 		t.Fatalf("missing directory = %d %s", w.Code, w.Body)
 	}
 	for range maxTerminals {
-		term, err := ts.m.openTerminal(project)
+		term, err := ts.m.openTerminal(project, "")
 		if err != nil {
 			t.Fatal(err)
 		}

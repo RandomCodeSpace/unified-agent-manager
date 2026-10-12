@@ -40,7 +40,7 @@ export interface TerminalHandle { end: (to: Project | null) => void }
  * uses Button and plain markup rather than PanelHeader, Note or Tip: the bundler moves modules that
  * two lazy chunks (this and Files) share with the page out of the page's bundle into another request.
  */
-export default function TerminalPanel({ project, ref, onClose }: Readonly<{ project: Project; ref?: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
+export default function TerminalPanel({ project, thread, ref, onClose }: Readonly<{ project: Project; thread?: { id: string; dir: string }; ref?: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
   // The connected instance the shell runs on, named after the title as in the other views (plain markup: see above).
   const owner = useApi().owner;
   const [status, setStatus] = useState<Status>('connecting');
@@ -77,7 +77,7 @@ export default function TerminalPanel({ project, ref, onClose }: Readonly<{ proj
         <SquareTerminal aria-hidden="true" className="size-4 shrink-0 text-muted" />
         <span className="text-title text-ink">Terminal</span>
         {owner && <><span aria-hidden="true" className="text-muted">·</span><span className="max-w-40 shrink-0 truncate text-caption text-muted" title={owner.label}>{owner.label}</span></>}
-        <span className="min-w-0 flex-1 truncate text-meta text-muted" title={project.dir}>{project.dir}</span>
+        <span className="min-w-0 flex-1 truncate text-meta text-muted" title={thread?.dir ?? project.dir}>{thread?.dir ?? project.dir}</span>
         <span role="status" className="min-w-0 truncate text-meta text-muted">{notice && NOTICES[notice]}</span>
         <output className="shrink-0 text-meta text-muted">{typeof status === 'number' ? `Exited (code ${status})` : LABELS[status]}</output>
         <Button size="sm" className="text-muted" onClick={() => end('restart')}>
@@ -107,19 +107,19 @@ export default function TerminalPanel({ project, ref, onClose }: Readonly<{ proj
       )}
       {status === 'webgl'
         ? <p role="alert" className="mx-3 animate-fade-in text-caption text-error">The terminal needs WebGL, which this browser has turned off.</p>
-        : <Screen key={shell} projectId={project.id} onStatus={setStatus} onNotice={notify} />}
+        : <Screen key={shell} projectId={project.id} taskId={thread?.id} onStatus={setStatus} onNotice={notify} />}
     </>
   );
 }
 
 /** One shell: the terminal canvas and its socket, from mount to unmount. */
-function Screen({ projectId, onStatus, onNotice }: Readonly<{ projectId: string; onStatus: (status: Status) => void; onNotice: (notice: ClipboardNotice) => void }>) {
+function Screen({ projectId, taskId, onStatus, onNotice }: Readonly<{ projectId: string; taskId?: string; onStatus: (status: Status) => void; onNotice: (notice: ClipboardNotice) => void }>) {
   const api = useApi();
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const controller = new AbortController();
     let stop: (() => void) | undefined;
-    void openTerminal(api, host.current!, projectId, onStatus, onNotice, controller.signal).then((close) => {
+    void openTerminal(api, host.current!, projectId, taskId, onStatus, onNotice, controller.signal).then((close) => {
       if (controller.signal.aborted) close();
       else stop = close;
     }).catch(() => { if (!controller.signal.aborted) onStatus('failed'); });
@@ -127,7 +127,7 @@ function Screen({ projectId, onStatus, onNotice }: Readonly<{ projectId: string;
       controller.abort();
       stop?.();
     };
-  }, [api, projectId, onStatus, onNotice]);
+  }, [api, projectId, taskId, onStatus, onNotice]);
   return <div ref={host} className="mx-2 mb-2 min-h-0 flex-1 overflow-hidden" />;
 }
 
@@ -191,10 +191,10 @@ const LINE_HEIGHT = 1.25;
  * Opens a terminal in `host` with a shell in the Project folder, unless `signal` aborts first; the
  * returned function closes the socket, which ends the shell, and disposes the terminal.
  */
-async function openTerminal(api: ApiClient, host: HTMLElement, projectId: string, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void, signal: AbortSignal): Promise<() => void> {
+async function openTerminal(api: ApiClient, host: HTMLElement, projectId: string, taskId: string | undefined, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void, signal: AbortSignal): Promise<() => void> {
   // Cells are measured once, when the terminal opens, so the font has to be there first.
   await document.fonts.load(`${FONT_SIZE}px ${FONT}`).catch(() => undefined);
-  return signal.aborted ? () => {} : connect(api, host, projectId, onStatus, onNotice);
+  return signal.aborted ? () => {} : connect(api, host, projectId, taskId, onStatus, onNotice);
 }
 
 /**
@@ -213,7 +213,7 @@ function openWithoutStyle(term: Terminal, host: HTMLElement) {
   }
 }
 
-function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void): () => void {
+function connect(api: ApiClient, host: HTMLElement, projectId: string, taskId: string | undefined, onStatus: (status: Status) => void, onNotice: (notice: ClipboardNotice) => void): () => void {
   // WebGL only, never the DOM renderer: its <style> elements are blocked by the CSP (DESIGN.md CSP
   // constraints). The addon loads before `open`, so the DOM renderer is never created; but a WebGL
   // failure inside `open` would silently fall back to it, hence the probe first.
@@ -242,7 +242,7 @@ function connect(api: ApiClient, host: HTMLElement, projectId: string, onStatus:
   openWithoutStyle(term, host);
   fit.fit();
 
-  const path = api.url(`/api/projects/${encodeURIComponent(projectId)}/terminal?cols=${term.cols}&rows=${term.rows}`);
+  const path = api.url(`/api/projects/${encodeURIComponent(projectId)}/terminal?cols=${term.cols}&rows=${term.rows}${taskId ? `&task=${encodeURIComponent(taskId)}` : ''}`);
   const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${path}`);
   ws.binaryType = 'arraybuffer';
   let sent = { cols: term.cols, rows: term.rows };

@@ -226,6 +226,9 @@ func (m *Manager) forkAllowedLocked(s *webSession) error {
 	if s.opening != nil {
 		return newError(http.StatusConflict, "wait for the task to finish opening before branching")
 	}
+	if s.place != nil && s.place.Worktree != "" {
+		return newError(http.StatusConflict, "a Thread in a worktree cannot be branched from a turn yet; Run again repeats the last message")
+	}
 	if err := s.rewindHoldLocked(); err != nil {
 		return err
 	}

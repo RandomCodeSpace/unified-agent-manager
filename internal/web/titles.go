@@ -288,6 +288,7 @@ func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCan
 	s.title = title
 	conv := s.conv
 	m.changedLocked(s, before)
+	m.kickPlaceNameLocked(s)
 	m.mu.Unlock()
 	if conv == nil {
 		log.Info("task titled; its conversation closed before the provider could take the title", "session", s.id, "model", req.Model)

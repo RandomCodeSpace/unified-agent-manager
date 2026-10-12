@@ -795,6 +795,19 @@ export interface SessionSummary {
   capabilities: Capabilities;
 }
 
+/** Where a new Thread runs: the Project's current branch, a new `uam/…` branch in its folder, or a new worktree from `base` (HEAD when absent). */
+export interface ThreadPlace {
+  mode: 'current' | 'branch' | 'worktree';
+  base?: string;
+}
+
+/** GET /api/projects/{id}/branches. */
+export interface BranchList {
+  branches: { name: string; remote: boolean; updated_at?: string }[];
+  /** Why the list is empty or cut short. */
+  reason?: string;
+}
+
 export type ItemKind = 'user' | 'assistant' | 'reasoning' | 'tool' | 'notice';
 export type ToolStatus = 'pending' | 'running' | 'completed' | 'failed';
 
@@ -2038,6 +2051,8 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
       name?: string;
       prompt?: string;
       request_id: string;
+      /** Where the Thread runs; absent is the Project's current branch. */
+      place?: ThreadPlace;
     }) => call<SessionSummary>('POST', '/api/sessions', body),
     rename: (id: string, name: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { name }),
     setModel: (id: string, model: string) => call<SessionSummary>('PATCH', `/api/sessions/${enc(id)}`, { model }),
@@ -2080,7 +2095,10 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     commands: async (id: string) => (await call<{ commands: Command[] }>('GET', `/api/sessions/${enc(id)}/commands`)).commands,
     files: (id: string, q: string, limit = 50, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`, undefined, false, signal),
     /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
-    projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
+    projectFiles: (id: string, q: string, limit = 50, base?: string) =>
+      call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}${base ? `&base=${enc(base)}` : ''}`),
+    /** The branches a new worktree can start from, local and remote, most recently committed first. */
+    projectBranches: (id: string) => call<BranchList>('GET', `/api/projects/${enc(id)}/branches`),
     /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */
     tree: (id: string, dir: string, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files/tree?dir=${enc(dir)}`, undefined, false, signal),
     upload: uploadFile,

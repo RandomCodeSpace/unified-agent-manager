@@ -67,19 +67,86 @@ func (m *Manager) Files(ctx context.Context, id, q string, limit int) (FileList,
 }
 
 // ProjectFiles is Files for a Project's directory, for the @ picker of a new
-// Task that has no conversation yet.
-func (m *Manager) ProjectFiles(ctx context.Context, projectID, q string, limit int) (FileList, error) {
-	m.mu.Lock()
-	project := m.projects[projectID]
-	var dir string
-	if project != nil {
-		dir = project.Dir
+// Thread that has no conversation yet. With a base, it lists the files of
+// that branch or commit instead, as a new worktree from it will hold them.
+func (m *Manager) ProjectFiles(ctx context.Context, projectID, base, q string, limit int) (FileList, error) {
+	dir, err := m.projectDir(projectID)
+	if err != nil {
+		return FileList{}, err
 	}
-	m.mu.Unlock()
-	if project == nil {
-		return FileList{}, errProjectNotFound
+	if base == "" {
+		return listFiles(ctx, dir, q, limit)
 	}
-	return listFiles(ctx, dir, q, limit)
+	if !validBase(base) {
+		return FileList{}, newError(http.StatusBadRequest, "base must be a branch or commit name")
+	}
+	return listBaseFiles(ctx, dir, base, q, limit)
+}
+
+// listBaseFiles is listFiles for the files git holds in base under workdir:
+// regular files only, as on a checkout, with their parent directories.
+func listBaseFiles(ctx context.Context, workdir, base, q string, limit int) (FileList, error) {
+	out := FileList{Files: []FileEntry{}}
+	repo, reason, err := openRepo(ctx, workdir)
+	if err != nil {
+		return out, err
+	}
+	if repo == nil {
+		out.Reason = reason
+		return out, nil
+	}
+	if !refExists(ctx, repo, base+"^{commit}") {
+		return out, newError(http.StatusBadRequest, "%q is not a branch or commit of this repository", clipRunes(displaytext.Sanitize(base), maxDetailRunes))
+	}
+	// Run in the workdir: ls-tree lists only what is under it, relative to it.
+	raw, code, stderr, err := runGit(ctx, repo.git, workdir, maxListBytes+1, "ls-tree", "-r", "-z", base+"^{commit}")
+	if err != nil {
+		return out, err
+	}
+	if code != 0 {
+		return out, newError(http.StatusBadGateway, "git ls-tree failed: %s", gitMessage(stderr))
+	}
+	if len(raw) > maxListBytes {
+		raw = raw[:bytes.LastIndexByte(raw[:maxListBytes], 0)+1]
+		out.Reason = "the project has more files than uam lists; some are missing"
+	}
+	types := map[string]string{}
+	for rec := range strings.SplitSeq(string(raw), "\x00") {
+		meta, p, ok := strings.Cut(rec, "\t")
+		// Links and submodules are left out, as listFiles leaves them out.
+		if !ok || p == "" || !strings.HasPrefix(meta, "100644 blob ") && !strings.HasPrefix(meta, "100755 blob ") {
+			continue
+		}
+		types[p] = "file"
+		for dir := path.Dir(p); dir != "." && types[dir] == ""; dir = path.Dir(dir) {
+			types[dir] = "directory"
+		}
+	}
+	q = strings.ToLower(q)
+	type match struct {
+		path  string
+		score int
+	}
+	var matches []match
+	for p := range types {
+		if score, ok := matchScore(p, q); ok {
+			matches = append(matches, match{p, score})
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		a, b := matches[i], matches[j]
+		if a.score != b.score {
+			return a.score < b.score
+		}
+		if len(a.path) != len(b.path) {
+			return len(a.path) < len(b.path)
+		}
+		return a.path < b.path
+	})
+	for _, mt := range matches[:min(len(matches), limit)] {
+		out.Files = append(out.Files, FileEntry{Path: mt.path, Type: types[mt.path]})
+	}
+	return out, nil
 }
 
 func listFiles(ctx context.Context, workdir, q string, limit int) (FileList, error) {
