@@ -185,7 +185,8 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         )}
         <InstanceName />
         {readOnly(session) ? (
-          <Chip fill="outline">{stageLabel(session)}</Chip>
+          // On a phone a Settled Task says so in its composer note, so the squeezed title keeps the room.
+          <Chip fill="outline" className={session.stage === 'settled' ? 'max-sm:hidden' : undefined}>{stageLabel(session)}</Chip>
         ) : (
           <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
         )}
@@ -1030,7 +1031,6 @@ function NewTaskIntro({ project }: Readonly<{ project: Project | undefined }>) {
   return (
     <div className="flex flex-col items-center gap-1 py-10 text-center animate-rise">
       <p className="text-title text-ink">New task in {project?.name ?? 'this project'}</p>
-      <p className="text-ui text-muted">Your first message gives this task its title.</p>
     </div>
   );
 }

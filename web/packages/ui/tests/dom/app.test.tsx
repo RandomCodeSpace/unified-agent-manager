@@ -337,7 +337,7 @@ describe('task lifecycle', () => {
     const { user } = renderApp('#task=t3');
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle' }));
-    expect(await screen.findByText('Settled. Reopen this task to continue the same conversation.')).toBeTruthy();
+    expect(await screen.findByText('Settled.')).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Reopen' }));
     await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
   });

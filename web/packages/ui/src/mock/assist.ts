@@ -36,7 +36,7 @@ const EVIDENCE: Record<string, Omit<TurnEvidence, 'since'>> = {
   t20: {
     checks: [
       { item_id: 'f5', kinds: ['test'], command: 'go test ./internal/vterm/... -run Redraw', outcome: 'pass', exit: 0, counts: '1 package ok', took_ms: 1400, has_output: true },
-      { item_id: 'f6', kinds: ['vet'], command: 'go vet ./internal/vterm/... 2>&1 | tail -5', outcome: 'unclear', exit: 0, note: 'piped, so the exit status is the last command’s', has_output: true },
+      { item_id: 'f6', kinds: ['vet'], command: 'go vet ./internal/vterm/... 2>&1 | tail -5', outcome: 'unclear', exit: 0, note: 'piped', has_output: true },
     ],
     claims: [
       { text: 'TestRedrawReplaysFocusEvents covers it, and the vterm tests pass.', verified: true, detail: 'go test ./internal/vterm/... -run Redraw · exit 0' },

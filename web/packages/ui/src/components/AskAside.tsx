@@ -14,11 +14,12 @@ import { Button } from './ui/button';
 import { backdropClass } from './ui/dialog';
 import { Clamp, PanelFoot, PanelHead, PanelSection } from './ui/panel';
 import { Spinner } from './ui/spinner';
+import { HelpTip } from './ui/tooltip';
 
 /** `/btw <question>`: a question to the open conversation, answered by its current model, kept with the Task and never sent to the agent. A bare `/btw` shows the Task's asides. */
 export const ASIDE_COMMAND = 'btw';
 const CLOSED_REASON = "Ask aside needs the Task's conversation open. Send a prompt to open it first.";
-const ASIDE: Command = { name: ASIDE_COMMAND, description: 'Ask aside: a quick question about this Task, not added to it', kind: 'command', input_hint: 'question', allow_during_turn: true };
+const ASIDE: Command = { name: ASIDE_COMMAND, description: 'Ask aside, kept out of the Task', kind: 'command', input_hint: 'question', allow_during_turn: true };
 const listed = new WeakMap<readonly Command[], { open: Command[]; closed: Command[] }>();
 
 /**
@@ -207,7 +208,7 @@ export interface AsideReaderAt {
 export function AsideReader({ at, title, facts, rows, empty, newest = false, onClose, onClosed, finalFocus }: Readonly<{
   at: AsideReaderAt;
   title: string;
-  facts: ReactNode;
+  facts?: ReactNode;
   rows: readonly Row[];
   empty?: ReactNode;
   newest?: boolean;
@@ -226,6 +227,7 @@ export function AsideReader({ at, title, facts, rows, empty, newest = false, onC
     const el = scroller.current;
     if (el && newest) el.scrollTop = el.scrollHeight;
   }, [newest, at.open, rows.length, settled]);
+  const never = <HelpTip label="Asides">Never sent to the agent.</HelpTip>;
   const body = (close: ReactNode) => <div className="flex min-h-0 flex-1 flex-col">
     <PanelHead className={cn('gap-0.5 pt-2 pb-2 pl-4', sheet ? 'pr-2' : 'pr-3')}>
       <div className="flex min-h-7 min-w-0 items-center gap-2">
@@ -233,7 +235,7 @@ export function AsideReader({ at, title, facts, rows, empty, newest = false, onC
         <h2 ref={heading} tabIndex={-1} className="min-w-0 flex-1 truncate text-title text-ink outline-hidden">{title}</h2>
         {close}
       </div>
-      <p className="pl-6 text-caption text-muted">{facts}</p>
+      {facts && <p className="pl-6 text-caption text-muted">{facts}</p>}
     </PanelHead>
     <div ref={scroller} className="flex min-h-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-1 pb-4">
       {rows.length ? rows.map((row, n) => <Fragment key={row.key}>
@@ -242,12 +244,12 @@ export function AsideReader({ at, title, facts, rows, empty, newest = false, onC
       </Fragment>) : empty}
     </div>
     {sheet
-      ? <p className="flex min-h-11 shrink-0 items-center gap-1.5 px-4 pb-2 text-caption text-muted"><Key>/btw</Key>ask another · Never sent to the agent</p>
+      ? <p className="flex min-h-11 shrink-0 items-center gap-1.5 px-4 pb-2 text-caption text-muted"><Key>/btw</Key>ask another{never}</p>
       : <PanelFoot>
         <span className="flex items-center gap-1.5"><Key>Esc</Key>close</span>
         <span className="flex items-center gap-1.5"><Key>/btw</Key>ask another</span>
         <span className="flex-1" />
-        <span>Never sent to the agent</span>
+        {never}
       </PanelFoot>}
   </div>;
   if (sheet) return <BottomSheet id={id} open={at.open} onClose={onClose} onClosed={onClosed} label={title} initialFocus={heading} finalFocus={finalFocus} className="duration-160" backdropClassName="duration-160">
@@ -299,7 +301,7 @@ export function AsideChip({ task, turn }: Readonly<{ task: string; turn: string 
         <span className="font-medium max-sm:hidden">btw</span>
         <span className="tabular-nums">{n}</span>
       </button>
-      {at && <AsideReader at={at} title="Asides in this turn" facts={`${count(n)} asked while it ran or after it ended, oldest first.`} rows={rows} onClose={() => setAt((a) => a && { ...a, open: false })} onClosed={() => setAt(null)} finalFocus={() => (button.current?.isConnected ? button.current : null)} />}
+      {at && <AsideReader at={at} title="Asides in this turn" rows={rows} onClose={() => setAt((a) => a && { ...a, open: false })} onClosed={() => setAt(null)} finalFocus={() => (button.current?.isConnected ? button.current : null)} />}
     </>
   );
 }

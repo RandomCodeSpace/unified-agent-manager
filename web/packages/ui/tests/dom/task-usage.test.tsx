@@ -25,7 +25,7 @@ function draw(selected = session, client = api) {
   return { ...view, select: (current: SessionDetail) => view.rerender(tree(current)), selectOwner: (owner: typeof api) => view.rerender(tree(selected, owner)) };
 }
 
-test('native usage reads on open and explicit refresh, preserving recorded and overlapping counter scopes', async () => {
+test('native usage reads on open, on pushed usage changes and on Refresh, preserving recorded and overlapping counter scopes', async () => {
   const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   const view = draw();
   expect(read).not.toHaveBeenCalled();
@@ -35,29 +35,42 @@ test('native usage reads on open and explicit refresh, preserving recorded and o
   expect(screen.getByText('9.0 AI units')).toBeTruthy();
   expect(screen.getAllByText('2.0 AI units').length).toBe(2);
   expect(screen.getByText('User-initiated requests')).toBeTruthy();
-  expect(screen.getByText(/Do not add the two views together/)).toBeTruthy();
-  expect(screen.getByText(/not added to input or output here/)).toBeTruthy();
+  // The cost unit is the premium row's tip; the counter caveats live in docs/web.md.
+  expect(screen.getByRole('button', { name: 'About Premium request cost', description: 'A multiplier, not USD.' })).toBeTruthy();
+  expect(screen.queryByText(/Do not add the two views together|not added to input or output here/)).toBeNull();
   expect(screen.getAllByText('Not reported').length).toBe(4); // model AI units/reasoning remain unknown in both projections
   expect(read).toHaveBeenCalledTimes(1);
   expect(read.mock.calls[0][0]).toBe('task-1');
+  // A pushed usage report reads the snapshot again while the reader stays open; nothing polls.
   view.select({ ...session, usage: { ai_units: 10 }, context: { used: 60, limit: 200 } });
   expect(screen.getByText('10 AI units')).toBeTruthy();
-  expect(read).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(screen.getByText('Current model: native-current')).toBeTruthy();
   vi.useFakeTimers();
   act(() => vi.advanceTimersByTime(60_000));
-  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledTimes(2);
   vi.useRealTimers();
   await userEvent.click(screen.getByText('Main agent'));
-  expect(read).toHaveBeenCalledTimes(1);
+  expect(read).toHaveBeenCalledTimes(2);
   await userEvent.click(screen.getByRole('button', { name: 'Refresh', exact: true }));
   await screen.findByText('Current model: native-current');
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(3);
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   expect(screen.queryByText('Current model: native-current')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools/ })));
   await openUsage();
   await screen.findByText('Current model: native-current');
-  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).toHaveBeenCalledTimes(4);
+});
+
+test('a subagent row is named by what it was asked to do, with its kind, not its ID', async () => {
+  vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue({ ...metrics, agents: [{ id: 'agent-1', name: 'general-purpose', ai_units: 1, api_duration_ms: 5, models: [] }, { id: 'agent-2', name: 'explore', ai_units: 1, api_duration_ms: 5, models: [] }] });
+  draw({ ...session, subagents: [{ id: 'agent-1', name: 'general-purpose', description: 'Explore the auth flow', status: 'completed' }] } as unknown as SessionDetail);
+  await openUsage();
+  const named = await screen.findByText('Explore the auth flow');
+  expect(named.closest('summary')!.textContent).toBe('Explore the auth flow(general-purpose)');
+  // Without a recorded subagent the reported name and ID stay the only identity.
+  expect(screen.getByText('explore').closest('summary')!.textContent).toBe('explore(agent-2)');
 });
 
 test('closed and inactive Tasks never read or resume, while unsupported services keep the existing quick report', async () => {
@@ -72,10 +85,10 @@ test('closed and inactive Tasks never read or resume, while unsupported services
   await screen.findByText('Native usage metrics are unavailable for a closed or inactive Task.');
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, capabilities: { ...session.capabilities, usage_metrics: undefined } });
-  // Without native metrics there is no Usage tab; the Context tab keeps the recorded quick report.
-  await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  expect(screen.queryByRole('tab', { name: 'Usage' })).toBeNull();
-  expect(await screen.findByText('This task: 9.0 AI units')).toBeTruthy();
+  // Without native metrics the Usage tab keeps the recorded report alone.
+  await openUsage();
+  expect(await screen.findByText('9.0 AI units')).toBeTruthy();
+  expect(screen.queryByText(/Native usage metrics|Loading native/)).toBeNull();
   expect(read).not.toHaveBeenCalled();
 });
 

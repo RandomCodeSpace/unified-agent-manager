@@ -53,8 +53,8 @@ const PERMISSION_LABEL: Record<PermissionMode, string> = { safe: 'Safe', assiste
 const UNKNOWN_RISK = { Icon: ShieldAlert, tone: 'text-warning', text: 'The permission mode could not be confirmed. Nothing is allowed automatically until you choose a mode again.' } as const;
 
 export const MODE_TEXT = {
-  safe: 'Asks before allowing permission requests.',
-  yolo: 'Allows permission requests automatically. Questions and managed-policy requests still need you.',
+  safe: 'Asks first.',
+  yolo: 'Allows requests without asking; questions still ask.',
   assisted: 'gpt-6-luna reviews each permission request: the ones it approves are allowed, the rest ask you. Each review is a model call.',
 } as const;
 
@@ -66,11 +66,11 @@ export function sizeLabel(id: string): string {
 
 /** Why effort or context size cannot be chosen for this model and provider; empty when they can. */
 export function effortReason(model?: Model): string {
-  return (model?.efforts?.length ?? 0) === 0 ? 'This model uses its default effort.' : '';
+  return (model?.efforts?.length ?? 0) === 0 ? 'Model default.' : '';
 }
 export function contextReason(model: Model | undefined, supported: boolean): string {
   if (!supported) return 'Context size selection is unavailable for this provider.';
-  return model?.context_sizes?.some((s) => s.id !== 'default') ? '' : 'This model uses its default context size.';
+  return model?.context_sizes?.some((s) => s.id !== 'default') ? '' : 'Model default.';
 }
 
 /** A queued prompt's name: its text, or for one without text what it carries. */
@@ -1236,7 +1236,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   function describeTuningReason(): string {
     if (locked) return 'This task is read-only.';
     if (busy) return 'Wait for the current action to finish.';
-    return 'This model uses its default effort and context size.';
+    return 'Model default.';
   }
   const tuningReason = describeTuningReason();
   const objectiveSuffix = executionKnown && session.execution?.objective ? ` · ${session.execution.objective.status}` : '';
@@ -1420,7 +1420,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <div className="flex flex-col gap-1 px-3.5 pt-2 pb-1">
           {locked && session.stage === 'settled' && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <Note>Settled. Reopen this task to continue the same conversation.</Note>
+              <Note>Settled.</Note>
               <Button size="sm" variant="secondary" loading={!!taskActions.busy[session.id]} onClick={reopen}>
                 <ArchiveRestore />
                 Reopen
@@ -1649,7 +1649,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           display={modelLabel}
           choices={models.map((m) => {
             const estimate = estimateTurnCost(m, session.context, contextSize);
-            const prices = session.capabilities.usage ? modelCostLine(m) : '';
+            const prices = session.capabilities.usage ? modelCostLine(m, true) : '';
             const group = appSettings.custom_models?.find((c) => `${c.name}/${c.model_id}` === m.id)?.name;
             return { value: m.id, label: m.name, group, description: [prices, session.capabilities.usage && estimate !== null ? `≈ ${formatCredits(estimate)} credits / turn, input only` : ''].filter(Boolean).join(' · ') };
           })}

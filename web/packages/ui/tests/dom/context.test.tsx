@@ -28,32 +28,39 @@ test('context categories and sources read only when requested and never sum capa
   expect(read).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
-  expect(await screen.findByText('75 tokens occupied of 200 tokens advertised prompt capacity')).toBeTruthy();
+  expect(await screen.findByText('75 of 200 tokens')).toBeTruthy();
   expect(screen.getByText('Latest prompt: 60 tokens')).toBeTruthy();
   expect(screen.getByText('Cached in latest call: 20 tokens')).toBeTruthy();
-  expect(screen.getByText('MCP tools are included in tool definitions.')).toBeTruthy();
+  // One Context section: no second "Latest report" disagreeing with the breakdown.
+  expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Context', 'Capacity', 'Sources']);
+  expect(screen.queryByText(/not reported yet|occupied|MCP tools are included/)).toBeNull();
   expect(read).toHaveBeenCalledTimes(1);
   expect(read.mock.calls[0].slice(0, 2)).toEqual(['task-1', false]);
-  // Live summary/token churn does not poll or restart the open reader.
+  // Token churn without a new context report neither polls nor restarts the open reader.
   view.select({ ...session, context: { used: 50, limit: 200, prompt: 61, cached: 20 } });
   expect(screen.getByRole('dialog', { name: 'Tools' })).toBeTruthy();
   expect(read).toHaveBeenCalledTimes(1);
+  // A new context report reads the breakdown again while the reader stays open, keeping the last counts meanwhile.
+  view.select({ ...session, context: { used: 51, limit: 204, prompt: 61, cached: 20 } });
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('dialog', { name: 'Tools' })).toBeTruthy();
+  expect(screen.getByText('75 of 200 tokens')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Show sources' }));
   expect(await screen.findByText('Included in Shared tools')).toBeTruthy();
   expect(screen.getByText(/Counted for resolved-model \(Auto resolved\)/)).toBeTruthy();
   expect(screen.getByText('Free space')).toBeTruthy();
   expect(screen.getByText('85 tokens')).toBeTruthy();
   expect(screen.getByText(/Source counts can overlap/)).toBeTruthy();
-  expect(screen.queryByText(/125 tokens occupied|50 tokens occupied/)).toBeNull();
+  expect(screen.queryByText(/^125 of|^50 of/)).toBeNull();
   await userEvent.click(screen.getByText('future-kind', { exact: false }));
-  expect(read).toHaveBeenCalledTimes(2);
-  expect(read.mock.calls[1].slice(0, 2)).toEqual(['task-1', true]);
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(read.mock.calls[2].slice(0, 2)).toEqual(['task-1', true]);
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   expect(screen.queryByText('Nested tool')).toBeNull();
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Tools.*25%/ })));
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  await screen.findByText('MCP tools are included in tool definitions.');
-  expect(read).toHaveBeenCalledTimes(3);
+  await screen.findByText('Including MCP tools');
+  expect(read).toHaveBeenCalledTimes(4);
 });
 
 test('closed and unsupported providers keep quick totals without resuming or requesting metadata', async () => {
@@ -74,7 +81,7 @@ test('missing native context is unavailable and an error remains an error', asyn
   const view = draw({ ...session, context: undefined });
   await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
   expect(await screen.findByText('Context breakdown has not been initialized by this conversation.')).toBeTruthy();
-  expect(screen.queryByText(/0 tokens occupied/)).toBeNull();
+  expect(screen.queryByText(/^0 of/)).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   read.mockRejectedValue(new Error('Context service unavailable'));
   await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
@@ -95,7 +102,7 @@ test('selection changes and closing abort reads and ignore late results', async 
   expect(screen.queryByText('Shared tools')).toBeNull();
   expect(screen.queryByRole('dialog', { name: 'Tools' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  await screen.findByText('MCP tools are included in tool definitions.');
+  await screen.findByText('Including MCP tools');
   const secondSignal = read.mock.calls[1][2]!;
   await userEvent.click(screen.getByRole('button', { name: 'Close', exact: true }));
   expect(secondSignal.aborted).toBe(true);
@@ -108,7 +115,7 @@ test('a phone opens the shared sheet and reads from its owning API client', asyn
   draw(session, { ...api, contextBreakdown: remoteRead });
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
   expect(await screen.findByRole('dialog', { name: 'Tools' })).toBeTruthy();
-  await screen.findByText('75 tokens occupied of 200 tokens advertised prompt capacity');
+  await screen.findByText('75 of 200 tokens');
   expect(remoteRead).toHaveBeenCalledTimes(1);
   expect(localRead).not.toHaveBeenCalled();
   await userEvent.keyboard('{Escape}');
@@ -121,7 +128,7 @@ test('changing the owning API closes and disposes the old reader before another 
   const remote = vi.fn(async () => ({ info: { ...info, model: 'remote-model' } }));
   const view = draw();
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  await screen.findByText('MCP tools are included in tool definitions.');
+  await screen.findByText('Including MCP tools');
   const previousSignal = local.mock.calls[0][2]!;
   view.selectOwner({ ...api, contextBreakdown: remote });
   expect(previousSignal.aborted).toBe(true);

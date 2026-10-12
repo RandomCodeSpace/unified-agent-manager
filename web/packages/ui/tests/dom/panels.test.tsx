@@ -12,7 +12,9 @@ describe('changes', () => {
     await user.click(await screen.findByRole('button', { name: /^Open changes.*3 files$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
-    expect(sheet.getByText(/^Files this task's agent edited/)).toBeTruthy();
+    // The Task scope's description is its segment's tip, not a line of its own.
+    expect(sheet.getByTitle(/^Files this task's agent edited/).closest('[role="radio"]')).toBeTruthy();
+    expect(sheet.queryByText(/^Files this task's agent edited/)).toBeNull();
     expect(sheet.getByText('CI workflow')).toBeTruthy();
     await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
     expect(await sheet.findByText(/^All uncommitted project changes vs HEAD/)).toBeTruthy();

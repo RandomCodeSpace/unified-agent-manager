@@ -343,7 +343,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
       <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
       <span className="mt-1 block text-on-primary/70">
         <span className="block">{status}</span>
-        {project.branch && <span className="block">Project branch: {project.branch}</span>}
+        {project.branch && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{project.branch}</span>}
         {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
       </span>
     </>
@@ -398,7 +398,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
  * its tip holds the full detail (what a Needs you row waits on, a finished turn's outcome).
  * `tabStop`: the row holds the list's one tab stop.
  */
-const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, done = false, tabStop, rowKey = s.id, machine, named = true }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; done?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean }>) {
+const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, attention, compact = false, done = false, tabStop, rowKey = s.id, machine, named = true, oneInstance = false }: Readonly<{ session: SessionSummary; project: Project; selected: boolean; unread: boolean; attention: boolean; /** The list's shared clock refreshes relative times even when the Task has not changed. */ minute: number; compact?: boolean; done?: boolean; tabStop: boolean; /** The row's key in the list: the Task's ID, qualified by its machine under federation. */ rowKey?: string; /** The machine the Task runs on, with connected instances. */ machine?: Machine; /** Whether the row shows its machine badge: not while the list shows one instance. */ named?: boolean; /** Every row of the list is from one instance: the tip leaves out its name. */ oneInstance?: boolean }>) {
   const a = useTaskActions();
   // A touch release after opening the context menu must not select the Task and close the drawer.
   const contextOpen = useRef(false);
@@ -444,7 +444,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
           <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
         </div>
       ) : (
-        <Tip label={<>{machine && !unavailable && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project, done) : rowTip(s, project, status.text, diff)}</>} side="right">
+        <Tip label={<>{machine && !unavailable && !oneInstance && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project, done) : rowTip(s, project, status.text, diff)}</>} side="right">
           <button
             type="button"
             data-nav={rowKey}
@@ -715,10 +715,11 @@ export const Sidebar = memo(function Sidebar({
   const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Done', done, doneOpen, selectedKey, doneAll), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
   const anyProject = useAnyProject(projects);
+  const oneInstance = new Set(rows.map((r) => r.machine?.id)).size < 2;
   const renderRow = (r: ListRow, compact = false, isDone = false) => {
     // Inactive machines keep their own read marks; the active one follows App's open Task.
     const reader = r.machine && !r.machine.active ? r.machine.hasNews : hasNews;
-    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} done={isDone} tabStop={r.key === tabStop} />;
+    const row = <TaskRow project={r.project} key={r.key} rowKey={r.key} machine={r.machine} named={!filterMachine} oneInstance={oneInstance} session={r.task} selected={r.key === selectedKey} unread={reader(r.task)} attention={needsYouNow(r.task, reader)} minute={minute} compact={compact} done={isDone} tabStop={r.key === tabStop} />;
     // Another machine's row runs its menu, Settle and rename against that machine.
     const remote = r.machine && !r.machine.active ? machineActions?.get(r.machine.id) : undefined;
     return remote ? <TaskActionsContext.Provider key={r.key} value={remote}>{row}</TaskActionsContext.Provider> : row;
@@ -764,7 +765,7 @@ export const Sidebar = memo(function Sidebar({
         <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No matching tasks' : `${rows.length} matching ${rows.length === 1 ? 'task' : 'tasks'}`}</p>
         {rows.length === 0 && (
           <div className="flex flex-col items-start gap-2 px-2">
-            <p className="text-caption text-muted">{`Search looks at task names, project names, folders and branches${chosen ? ` in ${chosen.name}` : ''}.`}</p>
+            <p className="text-caption text-muted">{`Searches names, projects, folders, branches${chosen ? ` in ${chosen.name}` : ''}.`}</p>
             <Button variant="secondary" size="sm" onClick={() => { setQuery(''); search.current?.focus(); }}>
               Clear search
             </Button>

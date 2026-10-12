@@ -323,7 +323,7 @@ const TurnHead = memo(function TurnHead({ id, agentId, working, timing, summary,
               ))}
             </span>
             <ChevronRight aria-hidden="true" className={cn('size-3 shrink-0 text-faint transition-transform duration-160 ease-app', open && 'rotate-90')} />
-            <span className="sr-only">, activity of this turn</span>
+            <span className="sr-only"> activity of this turn</span>
           </button>
         ) : (
           head && <span className="animate-fade-in">{head}</span>

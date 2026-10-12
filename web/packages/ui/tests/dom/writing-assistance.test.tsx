@@ -42,7 +42,9 @@ test('checking leaves typing alone; explicit Apply changes one range and offers 
   expect(input().value).toBe(SAMPLE);
   expect(input().selectionStart).toBe(SAMPLE.length);
   await user.click(review());
-  expect(within(await screen.findByRole('dialog')).getByText(grammar.message)).toBeTruthy();
+  // The suggestion itself is the description; the checker's message would only repeat it.
+  const dialog = within(await screen.findByRole('dialog', { description: /There is becomes There are/ }));
+  expect(dialog.queryByText(grammar.message)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Apply' }));
   expect(input().value).toBe('There are two checks.');
   expect(input().selectionStart).toBe(SAMPLE.length + 1);
