@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -17,11 +18,13 @@ import (
 )
 
 // Title job bounds. A job waits for one of maxTitleJobs slots before its
-// titleTimeout starts.
+// titleTimeout starts; every model it asks shares that budget. A model's
+// title has at most maxTitleWords words.
 const (
-	titleTimeout       = 20 * time.Second
+	titleTimeout       = 45 * time.Second
 	maxTitleJobs       = 2
 	maxTitleRunes      = 60
+	maxTitleWords      = 7
 	maxTitleInputRunes = 2000
 )
 
@@ -106,9 +109,9 @@ const maxTitleImages = 3
 
 // titlePlanLocked returns how s is titled from in, or nil when it is not.
 // Only a Task's first message is titled: a prompt, not a command, with
-// text, uploads or files, sent while the Task has no name, no title, no user
-// item and no submission the provider may have taken, and while its
-// provider titles Tasks.
+// text, uploads or files, sent while the Task has no name, no title other
+// than a fallback, no user item and no submission the provider may have
+// taken, and while its provider titles Tasks.
 //
 // A Utility model set in Settings titles it. Unset, the Task's own model
 // does (not auto, which names no model; the provider asks it at its lowest
@@ -117,13 +120,7 @@ const maxTitleImages = 3
 // the job waits for the first turn to end and titles from the agent's reply.
 func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload) *titlePlan {
 	text := strings.TrimSpace(in.text)
-	if in.command != "" || text == "" && len(uploads) == 0 && len(in.files) == 0 || s.name != "" || s.title != "" || s.truncated || m.titlerLocked(s.provider) == nil {
-		return nil
-	}
-	if slices.ContainsFunc(s.items, func(it agentapi.Item) bool { return it.Kind == agentapi.ItemUser && it.AgentID == "" }) ||
-		slices.ContainsFunc(s.submissions, func(sub Submission) bool {
-			return sub.Status == SubmissionAccepted || sub.Status == SubmissionUncertain
-		}) {
+	if in.command != "" || text == "" && len(uploads) == 0 && len(in.files) == 0 || s.title != "" && !s.titleFallback || !s.untitledFirstLocked() || m.titlerLocked(s.provider) == nil {
 		return nil
 	}
 	var models []titleCandidate
@@ -159,6 +156,96 @@ func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload
 	// Without text, only a model that sees the images titles at once.
 	plan.models = slices.DeleteFunc(models, func(c titleCandidate) bool { return !c.images })
 	return plan
+}
+
+// untitledFirstLocked reports whether the next message s takes is its
+// first and s has no name: a full history, no user item and no submission
+// the provider may have taken. The caller holds mu.
+func (s *webSession) untitledFirstLocked() bool {
+	return s.name == "" && !s.truncated &&
+		!slices.ContainsFunc(s.items, func(it agentapi.Item) bool { return it.Kind == agentapi.ItemUser && it.AgentID == "" }) &&
+		!slices.ContainsFunc(s.submissions, func(sub Submission) bool {
+			return sub.Status == SubmissionAccepted || sub.Status == SubmissionUncertain
+		})
+}
+
+// sendFallbackLocked titles s from in as it is sent, when s has neither a
+// name nor a title, or only the fallback of a first message the provider
+// did not take: in's text (a command with its name), else its first
+// upload's or file's name. A model's title replaces it when one comes. It
+// reports whether it set one. The caller holds mu.
+func (s *webSession) sendFallbackLocked(in turnInput, uploads []*upload) bool {
+	if s.name != "" || s.title != "" && (!s.titleFallback || !s.untitledFirstLocked()) {
+		return false
+	}
+	text := in.text
+	if in.command != "" {
+		text = "/" + strings.TrimPrefix(in.command, "/") + " " + text
+	}
+	names := []string{text}
+	for _, u := range uploads {
+		names = append(names, u.Name)
+	}
+	for _, f := range in.files {
+		names = append(names, filepath.Base(f))
+	}
+	for _, name := range names {
+		if title := fallbackTitle(name); title != "" {
+			s.title, s.titleFallback = title, true
+			return true
+		}
+	}
+	return false
+}
+
+// replyFallbackLocked titles s once a turn ended when it still has neither
+// a name nor a title: from its first message, else from the first line of
+// the agent's last reply. The caller holds mu.
+func (m *Manager) replyFallbackLocked(s *webSession) {
+	if s.name != "" || s.title != "" {
+		return
+	}
+	title := ""
+	for _, it := range s.items {
+		if ownerMessage(it) {
+			title = fallbackTitle(it.Text)
+			break
+		}
+	}
+	for i := len(s.items) - 1; title == "" && i >= 0; i-- {
+		if it := s.items[i]; it.AgentID == "" && it.Kind == agentapi.ItemAssistant && strings.TrimSpace(it.Text) != "" {
+			for line := range strings.Lines(it.Text) {
+				if title = fallbackTitle(strings.TrimLeft(line, "#>*-` \t")); title != "" {
+					break
+				}
+			}
+			break
+		}
+	}
+	if title == "" {
+		return
+	}
+	s.title, s.titleFallback = title, true
+	m.kickPlaceNameLocked(s)
+}
+
+// fallbackTitle is text as a title until a model gives one: its words on
+// one line, sanitized, and when longer than maxTitleRunes cut at a word
+// boundary with an ellipsis, which counts toward the limit.
+func fallbackTitle(text string) string {
+	title := strings.TrimSpace(spacesRE.ReplaceAllString(displaytext.Sanitize(spacesRE.ReplaceAllString(text, " ")), " "))
+	runes := []rune(title)
+	if len(runes) <= maxTitleRunes {
+		return title
+	}
+	cut := maxTitleRunes - 1
+	for i := cut; i > 0; i-- {
+		if runes[i] == ' ' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimRight(string(runes[:cut]), " .,:;-") + "…"
 }
 
 // seesImagesLocked reports whether model accepts one of the uploads'
@@ -213,6 +300,7 @@ func (m *Manager) startTitleLocked(s *webSession, plan *titlePlan, blobs []agent
 		return
 	}
 	call := UtilityCall{Purpose: purposeTitle, Provider: s.provider, TaskID: s.id, ProjectID: s.projectID}
+	s.titling = true
 	m.titles.Add(1)
 	go m.title(s, titler, plan.models, blobs, req, call, plan.renames)
 }
@@ -236,60 +324,35 @@ func (m *Manager) titleAfterReplyLocked(s *webSession) {
 	}
 }
 
-// title runs one title job as Utility calls, asking each model in turn
-// until one gives a title: a failure, a timeout or an empty title moves on
-// to the next, today's Utility limit ends the job. When none gives one, the
-// provider's title stays. A rename made meanwhile wins.
+// title runs one title job and gives s the title it makes, over the one s
+// has. A rename made meanwhile wins; without a title the one s has stays.
 func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCandidate, blobs []agentapi.Blob, req agentapi.TitleRequest, call UtilityCall, renames uint64) {
 	defer m.titles.Done()
-	select {
-	case m.titleSlots <- struct{}{}:
-		defer func() { <-m.titleSlots }()
-	case <-m.ctx.Done():
-		return
-	}
-	title := ""
-	for _, c := range models {
-		req.Model, req.Images = c.model, nil
-		if c.images {
-			req.Images = m.titleImages(s.provider, c.model, blobs)
-		}
-		call.Model, call.SessionModel = c.model, c.session
-		ctx, cancel := context.WithTimeout(m.ctx, titleTimeout)
-		reply, err := m.runUtility(ctx, call, req.Text+req.Reply, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
-			req.OnUsage = onUsage
-			return titler.Title(ctx, req)
-		})
-		cancel()
-		if title = cleanGeneratedTitle(reply); err == nil && title == "" {
-			err = errors.New("the reply held no title")
-		}
-		if err == nil {
-			break
-		}
-		title = ""
-		log.Info("task title not generated", "session", s.id, "model", req.Model, "error", err)
-		var e *Error
-		if errors.As(err, &e) && e.Code == codeUtilityPaused || m.ctx.Err() != nil {
-			break
-		}
-	}
-	if title == "" {
-		log.Info("the provider's title stays", "session", s.id)
-		return
-	}
+	title, model := m.generateTitle(s.id, s.provider, titler, models, blobs, req, call)
+	req.Model = model
 	m.mu.Lock()
-	if s.removed || s.renames != renames {
+	if s.removed {
 		m.mu.Unlock()
-		log.Info("task renamed while its title was generated; the name stays", "session", s.id)
 		return
 	}
 	before := m.summaryLocked(s)
-	s.title = title
+	s.titling = false
+	switch {
+	case title == "":
+		log.Info("the thread keeps its title", "session", s.id)
+	case s.renames != renames:
+		log.Info("task renamed while its title was generated; the name stays", "session", s.id)
+		title = ""
+	default:
+		s.title, s.titleFallback = title, false
+	}
 	conv := s.conv
 	m.changedLocked(s, before)
 	m.kickPlaceNameLocked(s)
 	m.mu.Unlock()
+	if title == "" {
+		return
+	}
 	if conv == nil {
 		log.Info("task titled; its conversation closed before the provider could take the title", "session", s.id, "model", req.Model)
 		return
@@ -302,6 +365,54 @@ func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCan
 		return
 	}
 	log.Info("task titled", "session", s.id, "model", req.Model)
+}
+
+// generateTitle asks each model in turn, as Utility calls within one
+// titleTimeout, until one gives a title, and returns it with that model: a
+// failure, a timeout or a reply that is no title moves on to the next,
+// today's Utility limit or the spent budget ends the job. It returns ""
+// when no model gives one.
+func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, models []titleCandidate, blobs []agentapi.Blob, req agentapi.TitleRequest, call UtilityCall) (string, string) {
+	select {
+	case m.titleSlots <- struct{}{}:
+		defer func() { <-m.titleSlots }()
+	case <-m.ctx.Done():
+		return "", ""
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, titleTimeout)
+	defer cancel()
+	for _, c := range models {
+		req.Model, req.Images = c.model, nil
+		if c.images {
+			req.Images = m.titleImages(provider, c.model, blobs)
+		}
+		call.Model, call.SessionModel = c.model, c.session
+		var title string
+		var invalid error
+		_, err := m.runUtilityChecked(ctx, call, req.Text+req.Reply, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+			req.OnUsage = onUsage
+			return titler.Title(ctx, req)
+		}, func(call *UtilityCall, reply string, err error) {
+			if err != nil {
+				return
+			}
+			if title, invalid = generatedTitle(reply); invalid != nil {
+				call.Reason = "invalid_answer"
+			}
+		})
+		if err == nil {
+			err = invalid
+		}
+		if err == nil {
+			return title, c.model
+		}
+		log.Info("task title not generated", "session", id, "model", req.Model, "error", err)
+		var e *Error
+		if errors.As(err, &e) && e.Code == codeUtilityPaused || ctx.Err() != nil {
+			break
+		}
+	}
+	return "", ""
 }
 
 var (
@@ -320,6 +431,46 @@ var titleWrappers = [][2]string{{`"`, `"`}, {`'`, `'`}, {"`", "`"}, {"*", "*"}, 
 // trailing punctuation, and cut to maxTitleRunes at a word boundary. It
 // returns "" when nothing is left.
 func cleanGeneratedTitle(reply string) string {
+	title := titleLine(reply)
+	if utf8.RuneCountInString(title) > maxTitleRunes {
+		// The rune after the limit is kept to see whether the cut ends a word.
+		runes := []rune(title)[:maxTitleRunes+1]
+		cut := maxTitleRunes
+		for i := maxTitleRunes; i > 0; i-- {
+			if runes[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		title = strings.TrimRight(string(runes[:cut]), ".,:; ")
+	}
+	return title
+}
+
+// answerRE matches a reply that answers or carries out the message rather
+// than naming it: one that opens like an answer, gives a reason, or holds
+// more than one sentence.
+var answerRE = regexp.MustCompile(`(?i)^(?:sure|yes|here(?:'s|’s| is| are)|i(?:'m|’m| am| will|'ll|’ll)?\s|it(?:'s|’s| is)\s)|\bbecause\b|[.!?;]\s+\S`)
+
+// generatedTitle returns the title in a model's reply, as
+// cleanGeneratedTitle cleans it, or why the reply holds none: nothing is
+// left, it is longer than a title (cutting it would leave half a phrase),
+// or it answers the message instead of naming it.
+func generatedTitle(reply string) (string, error) {
+	title := titleLine(reply)
+	switch {
+	case title == "":
+		return "", errors.New("the reply held no title")
+	case utf8.RuneCountInString(title) > maxTitleRunes || len(strings.Fields(title)) > maxTitleWords:
+		return "", errors.New("the reply was longer than a title")
+	case answerRE.MatchString(title):
+		return "", errors.New("the reply answered the message instead of naming it")
+	}
+	return title, nil
+}
+
+// titleLine is a model's reply as a title, uncut: see cleanGeneratedTitle.
+func titleLine(reply string) string {
 	reply = thinkRE.ReplaceAllString(reply, "")
 	if m := titleTagRE.FindStringSubmatch(reply); m != nil {
 		reply = m[2]
@@ -343,18 +494,6 @@ func cleanGeneratedTitle(reply string) string {
 		if title == before {
 			break
 		}
-	}
-	if utf8.RuneCountInString(title) > maxTitleRunes {
-		// The rune after the limit is kept to see whether the cut ends a word.
-		runes := []rune(title)[:maxTitleRunes+1]
-		cut := maxTitleRunes
-		for i := maxTitleRunes; i > 0; i-- {
-			if runes[i] == ' ' {
-				cut = i
-				break
-			}
-		}
-		title = strings.TrimRight(string(runes[:cut]), ".,:; ")
 	}
 	return title
 }

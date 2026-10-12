@@ -277,6 +277,9 @@ type SessionSummary struct {
 	// Title is the provider-generated title. Name may be empty; browsers
 	// display name || title || "New task".
 	Title string `json:"title"`
+	// TitlePending is set while a title job is queued or running, or waits
+	// for the first turn's reply.
+	TitlePending bool `json:"title_pending,omitempty"`
 	// LastModel is the model the provider reported for the latest turn that
 	// reported one. It is not persisted.
 	LastModel string `json:"last_model"`

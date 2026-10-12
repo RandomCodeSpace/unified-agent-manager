@@ -84,6 +84,16 @@ func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, 
 	job := suggestionJob
 	if req.Purpose == purposeOutcome {
 		job = outcomeJob
+	} else {
+		// A Thread settled or archived meanwhile needs no replies.
+		job.wanted = func() error {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if s := m.sessions[call.TaskID]; s == nil || s.removed || s.stage != StageActive {
+				return errors.New("the thread is no longer active")
+			}
+			return nil
+		}
 	}
 	return m.runJob(ctx, job, call, runner, req)
 }

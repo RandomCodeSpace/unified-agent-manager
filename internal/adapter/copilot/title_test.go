@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"testing"
 	"time"
@@ -190,6 +191,30 @@ func TestTitleAlwaysDeletesItsSession(t *testing.T) {
 	}
 	if len(fc.deleted) != 2 {
 		t.Fatalf("a failed create deleted %v", fc.deleted)
+	}
+}
+
+// A call that runs out of time says, for the Utility log, that the model
+// did not answer, how long it waited and when its session was open.
+func TestUtilityTimeoutSaysWhichStageWaited(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	p, _ := titleProvider(func(ctx context.Context, _ copilot.MessageOptions) (string, error) {
+		<-ctx.Done()
+		return "", errors.New("waiting for session.idle: " + ctx.Err().Error())
+	})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	_, err := p.Title(ctx, agentapi.TitleRequest{Model: "gpt-5-mini", Text: "x"})
+	if !errors.Is(err, context.DeadlineExceeded) || !regexp.MustCompile(`^the Utility model did not answer within 0\.\d s \(its session was open after 0\.\d s\)`).MatchString(err.Error()) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
+func TestSecondsReadsAsTimeTaken(t *testing.T) {
+	for d, want := range map[time.Duration]string{1500 * time.Millisecond: "1.5 s", 45*time.Second + 200*time.Millisecond: "45 s"} {
+		if got := seconds(d); got != want {
+			t.Errorf("seconds(%v) = %q, want %q", d, got, want)
+		}
 	}
 }
 

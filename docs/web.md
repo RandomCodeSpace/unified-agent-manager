@@ -372,7 +372,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     worktree. Other Threads keep working in the Project's folder.
   - Neither branch tracks an upstream. Once the Thread has a name or a
     title, the branch is renamed to `uam/<title>` unless it was pushed; the
-    worktree folder keeps its name.
+    worktree folder keeps its name. While a model's title is on its way the
+    branch waits for it rather than taking the first message.
   - Everything of the Thread follows its folder: Files, `@` references,
     file links and previews, images, Changes and Commit/Push/Pull, the GitLab
     panel, receipts, and the terminal opened from the Thread. A draft
@@ -398,12 +399,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - Below 10% free space the Worktrees page in the Settings rail and the
     Settings button carry a warning dot, and the branch chip under the
     composer says how much is free (`disk` in `GET /api/meta`).
-- **Names and titles**: the name is optional. Without one, the Thread shows the
-  title the provider gives the conversation (Copilot uses the first prompt),
-  or "New thread" until there is one. A model then titles the Thread from its
-  first message a few seconds later (see **Utility model** below); a first
+- **Names and titles**: the name is optional. Without one, the Thread takes
+  its first message as its title the moment it is sent: the text on one
+  line, cut at a word to 60 characters with an ellipsis; a command keeps its
+  `/name`; a message of only images or files takes the first one's name.
+  A model then titles the Thread from its first message a few seconds later
+  (see **Utility model** below), and that title replaces it; a first
   message of only images or files is titled from its images, or once the
-  agent replied.
+  agent replied. A Thread that still has no title when a turn ends takes
+  its first message, else the first line of the agent's reply. A branch
+  (fork) starts with its source's name or title. The provider's own title
+  for the conversation also replaces it. "New thread" shows only while a
+  Thread has no title at all, and "Waiting for a title…" only while a title
+  is being made or waits for the reply and there is nothing else to show
+  (`title_pending` on the summary).
   Clearing a name shows the title again.
   Rename from the Thread's row menu (hover "…" or right-click), the header
   menu, F2 on a row, or a double-click on the name; the name is edited in
@@ -1125,7 +1134,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   result with the Thread, so opening it again, in any browser or after a
   restart, asks for nothing more. None shows while the Thread works, waits for
   you, has queued messages, or is read-only. Without a Utility model, or past
-  today's Background AI limit, there is none. Settings → Composer →
+  today's Background AI limit, there is none; a Thread settled or archived,
+  or whose folder is gone, is not asked again. Settings → Composer →
   **Suggest replies** turns it off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
@@ -1260,27 +1270,35 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   are not run. Titles are the exception: with no entry, a Thread is titled by
   its own model at the lowest reasoning effort that model offers, which
   spends that model's credits, and by the cheapest model when that call
-  fails or the Thread is on `auto`; with neither, the provider keeps its own
-  title, which for Copilot is the first prompt. A `PATCH`
+  fails or the Thread is on `auto`; with neither, the Thread keeps its first
+  message as the title. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
-  chooses that model; `"none"` opts the provider out, so it keeps its own
-  title and subagent report, and UAM makes no utility AI call; an empty ID removes the entry, back to
+  chooses that model; `"none"` opts the provider out, so a Thread keeps its
+  first message as the title, a subagent its own report, and UAM makes no utility AI call; an empty ID removes the entry, back to
   the cheapest. Only a provider with the `titles` capability can have a
   model, and the model must be in its current list.
   In Settings the **Utility model** section shows "Cheapest (currently
   GPT-6 Luna)", None, then each visible model
   with its prices. UAM asks the model in a separate short Copilot session
   with no tools and no session store, and deletes that session afterwards.
-  It then shows the title, 60 characters at most, and writes it into the
+  The model is asked for 2 to 6 words naming what the message asks, not
+  answering it. A reply longer than 60 characters or 7 words, or one that
+  reads as an answer (it opens like "Sure", "I will" or "It is", gives a
+  reason with "because", or holds two sentences), is no title: the next
+  model is asked, and without one the first message stays the title. UAM
+  then shows the title and writes it into the
   Copilot session, so `copilot --resume` shows it too. Only the first
   message counts: later messages, attachment-only ones included, commands,
   reopened Threads and a changed setting never retitle a Thread. A first
   message with no text goes with its images (at most 3) to a title model
   that accepts images; otherwise, or when it carried only files, the title
   waits for the end of the first turn that has a reply and is made from that
-  reply, over the provider's placeholder. A name you type wins, even while the title is on its way. If the
-  model fails or takes more than 20 s, the provider's title stays, and the
-  service log says why. Each title costs AI credits,
+  reply, over the provider's placeholder. A name you type wins, even while the title is on its way. The
+  models asked share 45 s; if they fail or run out of time, the Thread keeps
+  the title it has, and the service log says why. In the Background AI log
+  a call that ran out of time says how long it waited and at which step,
+  e.g. "the Utility model did not answer within 45 s (its session was open
+  after 0.1 s)". Each title costs AI credits,
   about 0.002 with gpt-6-luna.
 - **Archived**: Settings → **Archived** lists the archived Threads of the
   instance on screen, in every Project, newest archived first: the Project

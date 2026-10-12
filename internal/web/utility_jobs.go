@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -47,14 +48,29 @@ type utilityJob struct {
 	validate  func(string, string) (string, error)
 	retryHint string
 	fallback  string
+	// wanted, when set, says why the answer is no longer wanted, checked
+	// before each attempt; nil while it is.
+	wanted func() error
 }
 
 // runJob retries only an invalid answer, in a fresh provider request. Errors,
 // pauses and a second invalid answer leave the caller's deterministic fallback.
+// No attempt is made once the job's answer is no longer wanted or its
+// working folder is gone.
 func (m *Manager) runJob(ctx context.Context, job utilityJob, call UtilityCall, runner agentapi.UtilityRunner, req agentapi.UtilityRequest) (string, error) {
 	call.Purpose, call.Model = job.purpose, req.Model
 	req.Purpose, req.System = job.purpose, job.system
 	for attempt := 0; attempt < 2; attempt++ {
+		if job.wanted != nil {
+			if err := job.wanted(); err != nil {
+				return job.fallback, err
+			}
+		}
+		if req.Workdir != "" {
+			if info, err := os.Stat(req.Workdir); err != nil || !info.IsDir() {
+				return job.fallback, errors.New("the thread's folder is gone")
+			}
+		}
 		call.Retry = attempt > 0
 		if call.Retry {
 			req.System += "\nYour previous answer was not valid. " + job.retryHint
