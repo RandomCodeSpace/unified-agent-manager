@@ -98,8 +98,10 @@ export function ChangesButton({ label, compact, sheetOpen, changes, pending, evi
   evidenceAvailable: boolean;
   onOpen: () => void;
 }>) {
-  const fileCount = pending ? pending.uncommitted : changes?.supported ? changes.files.length : null;
-  const needsReview = evidenceAvailable || (fileCount ?? 0) > 0;
+  const listed = changes?.supported ? changes.files.length : null;
+  const fileCount = pending ? pending.uncommitted : listed;
+  // The dot is this Thread's own news (its default scope's files), not its folder's.
+  const needsReview = evidenceAvailable || (listed ?? 0) > 0;
   return (
     <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${fileCount === null ? '' : `, ${fileCount} ${pending ? 'not committed' : 'files'}`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} onClick={onOpen}>
       <FileDiff aria-hidden="true" />
