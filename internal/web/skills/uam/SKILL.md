@@ -35,9 +35,12 @@ When uam reports repeated permission denials or a refused fetch with a reopening
 
 In a GitLab Project with glab installed and signed in, uam bounds supported
 `glab` shell calls. Use `issue list`, `incident list`, `mr list` or `ci list`
-with `-P 10`; request another page with `-p 2`. Missing page sizes become 10,
-and explicit sizes above 20 become 20. Do not use `api`, `search`, `--paginate`
-or list `-A/--all`. Use `ci get` instead of `ci view`, a single `ci status`
+with `-P 10`; request another page with `-p 2`. `work-items list` pages by
+cursor instead: request `-F json` and pass its end cursor as `--after <cursor>`;
+`-p` does not page work items. Missing page sizes become 10, and explicit
+sizes above 20 become 20. For one issue with its discussion, use
+`glab issue view <iid> -c` instead of a list. Do not use `api`, `search`,
+`--paginate` or list `-A/--all`. Use `ci get` instead of `ci view`, a single `ci status`
 instead of `--live`, and give `ci trace`/`ci retry` a job ID. Use `mr create`
 with `-y` or `-f`; sign in outside the Task. Do not retry a refused form.
 

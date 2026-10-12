@@ -1794,8 +1794,9 @@ origins, missing glab and failed authentication leave these rules disabled.
 
 The rules recognize `glab`, `rtk glab` and `rtk proxy glab` command heads. They
 refuse raw API/search, pagination-all and interactive forms with a replacement
-in the existing refused-tool row. Supported issue, incident, MR and CI lists
-get `-P 10` by default; explicit page sizes above 20 become 20. Other tool
+in the existing refused-tool row. Supported issue, incident, MR, CI and work
+item lists get `-P 10` by default; explicit page sizes above 20 become 20.
+Work item lists page with `--after <cursor>` instead of `-p <page>`. Other tool
 arguments are preserved. Loops and subshells are not rewritten.
 
 Before a `git push`, committed CI changes relative to the push ref (or the
