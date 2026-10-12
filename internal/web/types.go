@@ -299,12 +299,6 @@ type SessionSummary struct {
 	// "reviewed" when it settled once the owner saw a reply checked done;
 	// omitted when the owner settled it.
 	SettledBy string `json:"settled_by,omitempty"`
-	// DoneAt, DoneItemID and DoneLine say the done check found the last
-	// turn's work complete, when, for which last item, and the final reply's
-	// line saying so. Set only while the Task is active and finished.
-	DoneAt     time.Time `json:"done_at,omitzero"`
-	DoneItemID string    `json:"done_item_id,omitempty"`
-	DoneLine   string    `json:"done_line,omitempty"`
 	// SpawnedBy is the ID of the Task whose uam_create_task call created
 	// this one; omitted otherwise.
 	SpawnedBy string `json:"spawned_by,omitempty"`

@@ -700,16 +700,15 @@ func TestCustomModelDirectKeyValidation(t *testing.T) {
 	}
 }
 
-// settled_by and done are modeled fields: they load, and
-// clearing them is saved rather than restored from the record read.
-func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
+// settled_by is a modeled field: it loads, and clearing it is saved rather
+// than restored from the record read.
+func TestWebStateKeepsSettledBy(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	const key = "copilot:0f0e0d0c"
-	at := time.Now().UTC().Truncate(time.Second)
-	set := func(by string, done *WebDone) {
+	set := func(by string) {
 		t.Helper()
 		if err := s.Update(func(cfg *Config) error {
 			rec := cfg.Sessions[key]
@@ -718,7 +717,7 @@ func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 					Status: StatusActive, Surface: SurfaceWeb, ProviderSessionID: "conv_1", Web: &WebState{Turn: "idle", Stage: "settled"}}
 			}
 			web := *rec.Web
-			web.SettledBy, web.Done = by, done
+			web.SettledBy = by
 			rec.Web.Update(web)
 			cfg.Sessions[key] = rec
 			return nil
@@ -726,22 +725,15 @@ func TestWebStateKeepsDoneAndSettledBy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, tc := range []struct {
-		by   string
-		done *WebDone
-	}{
-		{"auto", &WebDone{ItemID: "a1", Verdict: "done", By: "model", Line: "All tests pass.", At: at}},
-		{"", nil},
-	} {
-		set(tc.by, tc.done)
+	for _, by := range []string{"auto", ""} {
+		set(by)
 		cfg, err := s.Load()
 		if err != nil {
 			t.Fatal(err)
 		}
 		web := cfg.Sessions[key].Web
-		if web == nil || web.SettledBy != tc.by || len(web.unknown) != 0 ||
-			(web.Done == nil) != (tc.done == nil) || tc.done != nil && (*web.Done != *tc.done) {
-			t.Fatalf("stored %+v loaded as %+v", tc, web)
+		if web == nil || web.SettledBy != by || len(web.unknown) != 0 {
+			t.Fatalf("stored %q loaded as %+v", by, web)
 		}
 	}
 }

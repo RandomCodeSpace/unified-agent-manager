@@ -686,8 +686,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Reads are limited to its Project unless the Task is in Yolo. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
   Results carry compact summaries and outcomes, framed as data; a Task row
-  has `done: true` while the done check finds its last turn complete, and
-  `settled_by` `"auto"` or `"reviewed"` when the Task settled itself. They
+  has `settled_by` `"auto"` or `"reviewed"` when the Task settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
   positive. `who_touched` uses edit-tool records, includes settled and
@@ -1093,24 +1092,6 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   a warning glyph, and the header chip reads "Finished · tests fail, 1 command
   failed" in the warning tone. The header chip says "a claim contradicted"
   too when the last reply's receipts contradict one of its claims.
-- **Done check**: two minutes after a turn completes, if the Task is still
-  finished (no queue, nothing running, no question), the service checks
-  whether the final reply says the asked work is complete. Code decides
-  first: open todos, a failing last test run, or a reply ending in a question
-  are not done, with no model call. Otherwise one Utility model call reads
-  your message, one line per step the agent took, the turn's facts (files
-  changed, tests, failed commands, todos) and the final reply with numbered
-  lines. It answers done (citing the reply line that says so), not done, or
-  unsure. A cited line must be a real, non-blank line of the reply; two
-  unusable answers count as unsure. Each finished state is checked once,
-  failures included. Only done is shown: the Task summary carries `done_at`,
-  `done_item_id` and `done_line` (the cited line) while the Task stays active
-  and finished, and the `uam` task row has `done: true`. A new turn or a rewind
-  clears it, and the check is never Task activity. When today's Background AI
-  limit refuses it, nothing is kept and the check waits until midnight or a
-  change of the limit or Utility model.
-  A Task checked done stays active; only the 7-day settle (see Settle,
-  archive, and delete) settles it on its own.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
   copies the conversation through that reply into a new active Task, without
@@ -1210,8 +1191,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   installed at the binary it started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  including Task titles, completed subagent result lines, suggested replies,
-  the opening phrase of outcome lines and the done check. Pick the cheapest
+  including Task titles, completed subagent result lines, suggested replies
+  and the opening phrase of outcome lines. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
   model, worked out whenever it is needed: among the models `/api/meta`
@@ -1253,14 +1234,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   confirmation). The sidebar has no Archived shelf; its search still finds
   archived Tasks.
 - **Background AI**: every call UAM makes on the Utility model (Task
-  titles, also those made with a Task's own model, subagent result lines, suggested replies, outcome lines and done checks) counts
+  titles, also those made with a Task's own model, subagent result lines, suggested replies and outcome lines) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Suggested replies", "Outcome line", "Task done check";
-  older versions also logged "Subagent summary"), the Task (a click opens
+  what it was for ("Task title", "Suggested replies", "Outcome line";
+  older versions also logged "Subagent summary" and "Task done check"), the Task (a click opens
   it) or Project, the model
   (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
@@ -1279,8 +1260,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Once today's calls reach the limit, further calls are not made: they are
   logged as skipped (daily limit, or off when the limit is 0), new Tasks
   keep their first message as the title, completed subagents keep their own
-  report, no replies are suggested (and the next look asks again),
-  outcome lines keep the evidence alone, and the done check waits. Settings then says Background AI is
+  report, no replies are suggested (and the next look asks again)
+  and outcome lines keep the evidence alone. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
   "unlimited", "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
@@ -1662,16 +1643,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Sidebar**: all unsettled Tasks across every Project share one flat list
   without group headings. Each row's status line says whether it needs
   input, is ready for review, is running, or is idle. Tasks are listed in
-  creation order, newest first, whatever their state. Collapsible
-  "Done" and "Settled" sections sit at the foot of the sidebar, under the
-  Task list, which scrolls on its own; archived Tasks are listed in
-  Settings → Archived. One of Done and Settled is open at a time: opening
-  one closes the other. An open section's rows scroll on their own within
-  40% of the screen height, so the Task list always keeps the rest.
-  Done lists the active Tasks the service judged done, read or not, newest
-  first: the newest ten, then **Show all**. A new turn takes a Task back
-  to the list. Settled
-  lists the newest settled first, also ten until **Show all**.
+  creation order, newest first, whatever their state. A collapsible
+  "Settled" section sits at the foot of the sidebar, under the Task list,
+  which scrolls on its own; archived Tasks are listed in Settings →
+  Archived. Open, its rows scroll on their own within 40% of the screen
+  height, so the Task list always keeps the rest. Settled lists the newest
+  settled first: the newest ten, then **Show all**.
 
   "Opened since" is tracked per browser: a Task you never opened in this
   browser counts as unread once it changes after your first visit. The open
@@ -1680,9 +1657,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Tasks are dropped.
   A row first shows the Project badge, Project name, and a short status
   with an icon: "Input", "Starting", "Working", "Compacting", "Review",
-  "Done", "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
+  "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
-  Review teal; Done and Finished green; Error red; inactive states gray.
+  Review teal; Finished green; Error red; inactive states gray.
   The second line shows the Task title, the Project branch in muted text,
   and how long ago the Task changed. Hovering the row shows the full title,
   the Project, the full request or outcome, the branch, and `+N −M` line
@@ -1700,11 +1677,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
-  A Done or Settled row shows the Project badge and title, faded until hovered
-  or selected (a Done row less so); its tooltip adds the Project name and
-  directory and when the Task was created, judged done and settled.
-  A Done row's tooltip also shows the reply line that says it is done; a Task
-  the service settled says "Settled automatically after 7 quiet days" or
+  A Settled row shows the Project badge and title, faded until hovered or
+  selected; its tooltip adds the Project name and directory and when the
+  Task was created and settled. A Task the service settled says "Settled automatically after 7 quiet days" or
   "Settled after you reviewed it".
   A settled or archived Task opens read-only. Search matches Task names and
   titles, Project names and branches within the chosen Project filter,

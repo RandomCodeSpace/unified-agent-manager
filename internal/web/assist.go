@@ -82,11 +82,8 @@ func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, 
 	req.Timeout = assistTimeout
 	call.Purpose, call.Model = req.Purpose, req.Model
 	job := suggestionJob
-	switch req.Purpose {
-	case purposeOutcome:
+	if req.Purpose == purposeOutcome {
 		job = outcomeJob
-	case purposeDoneCheck:
-		job = doneJob
 	}
 	return m.runJob(ctx, job, call, runner, req)
 }

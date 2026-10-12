@@ -82,20 +82,15 @@ describe('Task list quiet regrouping', () => {
     expect(startViewTransition).not.toHaveBeenCalled();
   });
 
-  test('automatic Done and Settled moves wait for five quiet seconds while status stays live', async () => {
+  test('an automatic Settled move waits for five quiet seconds while status stays live', async () => {
     const { send, completed } = await home();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      const done = { ...completed, done_at: new Date().toISOString(), done_line: 'Finished the task' };
-      send('session', { session: done });
+      send('session', { session: { ...completed, stage: 'settled', settled_by: 'auto', settled_at: new Date().toISOString() } });
       await act(async () => {});
       expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
-      expect(row(completed.id)?.textContent).toContain('Done');
-      expect(startViewTransition).not.toHaveBeenCalled();
-      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-      send('session', { session: { ...done, stage: 'settled', settled_by: 'reviewed', settled_at: new Date().toISOString() } });
-      await act(async () => {});
       expect(row(completed.id)?.textContent).toContain('Settled');
+      expect(startViewTransition).not.toHaveBeenCalled();
       await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
       expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
@@ -111,7 +106,7 @@ describe('Task list quiet regrouping', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       row(completed.id)!.querySelector<HTMLButtonElement>('[data-nav]')!.focus();
-      send('session', { session: { ...completed, done_at: new Date().toISOString() } });
+      send('session', { session: { ...completed, stage: 'settled', settled_by: 'auto', settled_at: new Date().toISOString() } });
       await act(async () => {});
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
       expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
@@ -130,10 +125,10 @@ describe('Task list quiet regrouping', () => {
     const { send, completed } = await home();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
-      send('session', { session: { ...completed, done_at: new Date().toISOString() } });
+      send('session', { session: { ...completed, stage: 'settled', settled_by: 'auto', settled_at: new Date().toISOString() } });
       await act(async () => {});
       await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-      send('session', { session: { ...completed, state: 'working', done_at: undefined } });
+      send('session', { session: { ...completed, state: 'working' } });
       await act(async () => {});
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
       expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
