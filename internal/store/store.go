@@ -773,6 +773,12 @@ type WebSettings struct {
 	// GitLabMRPrompt is the prompt for merge request descriptions; the
 	// built-in one when empty.
 	GitLabMRPrompt string `json:"gitlab_mr_prompt,omitempty"`
+	// WorktreesDir is the absolute folder new Thread worktrees go in;
+	// ~/.uam/worktrees when empty.
+	WorktreesDir string `json:"worktrees_dir,omitempty"`
+	// WorktreeRoots are the folders new worktrees went in before
+	// WorktreesDir last changed; the worktrees left there are still listed.
+	WorktreeRoots []string `json:"worktree_roots,omitempty"`
 
 	unknown map[string]json.RawMessage
 }
@@ -1004,6 +1010,8 @@ var knownWebSettingsFields = map[string]struct{}{
 	"github_mcp":              {},
 	"gitlab_auto_investigate": {},
 	"gitlab_mr_prompt":        {},
+	"worktrees_dir":           {},
+	"worktree_roots":          {},
 	// Retired: the removed planner's switch (ADR 0007). Known, so it drops
 	// on the next save.
 	"planner": {},

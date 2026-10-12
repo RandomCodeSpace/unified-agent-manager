@@ -367,7 +367,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     refused, naming the Thread, while another Thread there is working.
   - **New worktree** runs `git worktree add -b uam/<8 hex digits>` from the
     chosen base branch, local or remote (the current `HEAD` without one), in
-    `~/.uam/worktrees/<project>/uam-<8 hex digits>`. For a Project in a
+    `<folder for new worktrees>/<project>/uam-<8 hex digits>` (by default
+    `~/.uam/worktrees`). For a Project in a
     folder of its repository, the Thread runs in the same folder of the
     worktree. Other Threads keep working in the Project's folder.
   - Neither branch tracks an upstream. Once the Thread has a name or a
@@ -390,8 +391,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     kept, and so is one another active Thread runs in. Using the Thread
     again (Reopen, then a message, or Run again) brings the worktree back
     from the branch.
-  - **Settings → Worktrees** shows the disk holding `~/.uam/worktrees` (free
-    space against a 10% line), every worktree biggest first with its Thread,
+  - **Settings → Worktrees → Folder for new worktrees** sets where new
+    worktrees go (`worktrees_dir` in `PATCH /api/settings`; `~` is the home
+    folder, `""` puts back `~/.uam/worktrees`). The folder must be absolute,
+    yours when it exists, and in no git repository; uam makes it (0700) with
+    the first worktree. Existing worktrees stay where they are and are still
+    listed, removed on settling and removable here. Connected instances
+    advertise `worktree-folder-v1`.
+  - **Settings → Worktrees** shows the disk holding the folder for new
+    worktrees (free space against a 10% line), every worktree biggest first
+    with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
     20 worktrees removed on settling. Sizes are measured in the background.
     Remove takes a worktree with nothing uncommitted at once and asks first

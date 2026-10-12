@@ -10,7 +10,8 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 const row = (project: string, slug: string, size: number, rest: Partial<WorktreeEntry>): WorktreeEntry =>
   ({ path: `${ROOT}/${project}/${slug}`, branch: `uam/${slug}`, size_bytes: size, uncommitted: 0, unpushed: 0, ...rest });
 
-export function worktreesMock() {
+/** `dir` is Settings' folder for new worktrees, absent for the default. */
+export function worktreesMock(dir: () => string | undefined = () => undefined) {
   const low = new URLSearchParams(window.location.search).get('disk') === 'low';
   const disk: DiskInfo = low ? { total_bytes: 387 * GB, free_bytes: 31 * GB, low: true } : { total_bytes: 387 * GB, free_bytes: 64 * GB, low: false };
   let rows: WorktreeEntry[] = [
@@ -27,7 +28,7 @@ export function worktreesMock() {
     disk,
     route(method: string, path: string, body: Record<string, unknown>): Response | null {
       if (path === '/api/worktrees' && method === 'GET') {
-        const list: Worktrees = { root: ROOT, disk, worktrees: rows, removed };
+        const list: Worktrees = { root: dir() ?? ROOT, default_root: ROOT, disk, worktrees: rows, removed };
         return new Response(JSON.stringify(list), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       if (path === '/api/worktrees/remove' && method === 'POST') {

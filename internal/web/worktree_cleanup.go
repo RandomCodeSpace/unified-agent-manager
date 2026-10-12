@@ -40,16 +40,16 @@ const (
 	codeWorktreeUnsaved = "worktree_unsaved"
 )
 
-// DiskInfo is the filesystem holding ~/.uam/worktrees. Low is set below
-// lowDiskShare free.
+// DiskInfo is the filesystem holding the folder new worktrees go in. Low is
+// set below lowDiskShare free.
 type DiskInfo struct {
 	FreeBytes  uint64 `json:"free_bytes"`
 	TotalBytes uint64 `json:"total_bytes"`
 	Low        bool   `json:"low"`
 }
 
-// WorktreeEntry is one folder in ~/.uam/worktrees/<project>/ and the Thread
-// it was made for, if one still has it.
+// WorktreeEntry is one folder <worktrees folder>/<project>/uam-… and the
+// Thread it was made for, if one still has it.
 type WorktreeEntry struct {
 	Path      string `json:"path"`
 	Branch    string `json:"branch,omitempty"`
@@ -79,12 +79,15 @@ type RemovedWorktree struct {
 	At        time.Time `json:"at"`
 }
 
-// Worktrees answers GET /api/worktrees, biggest first.
+// Worktrees answers GET /api/worktrees, biggest first. Root is the folder
+// new worktrees go in, DefaultRoot the one used without a setting; the list
+// covers every folder worktrees went in.
 type Worktrees struct {
-	Root      string            `json:"root"`
-	Disk      *DiskInfo         `json:"disk,omitempty"`
-	Worktrees []WorktreeEntry   `json:"worktrees"`
-	Removed   []RemovedWorktree `json:"removed"`
+	Root        string            `json:"root"`
+	DefaultRoot string            `json:"default_root,omitempty"`
+	Disk        *DiskInfo         `json:"disk,omitempty"`
+	Worktrees   []WorktreeEntry   `json:"worktrees"`
+	Removed     []RemovedWorktree `json:"removed"`
 }
 
 type worktreeSize struct {
@@ -137,16 +140,17 @@ func (m *Manager) Disk() *DiskInfo {
 	return diskInfo(root)
 }
 
-// ListWorktrees lists the worktree folders under ~/.uam/worktrees with the
-// Thread each belongs to, what is not saved in it and its size, measuring
-// unknown or old sizes in the background.
+// ListWorktrees lists the worktree folders in every worktrees folder
+// (worktreeRoots) with the Thread each belongs to, what is not saved in it
+// and its size, measuring unknown or old sizes in the background.
 func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
 	root, err := m.worktreesDir()
 	if err != nil {
 		return Worktrees{}, err
 	}
 	out := Worktrees{Root: root, Disk: diskInfo(root), Worktrees: []WorktreeEntry{}, Removed: m.removedLog()}
-	for _, dir := range worktreeDirs(root) {
+	out.DefaultRoot, _ = m.defaultWorktreesDir()
+	for _, dir := range m.allWorktreeDirs() {
 		out.Worktrees = append(out.Worktrees, WorktreeEntry{Path: dir})
 	}
 	var wg sync.WaitGroup
@@ -191,7 +195,18 @@ func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
 	return out, nil
 }
 
-// worktreeDirs are the folders two levels under root, links left out.
+// allWorktreeDirs are the worktree folders of every worktrees folder.
+func (m *Manager) allWorktreeDirs() []string {
+	var out []string
+	for _, root := range m.worktreeRoots() {
+		out = append(out, worktreeDirs(root)...)
+	}
+	return out
+}
+
+// worktreeDirs are the folders uam-… two levels under root, links left out:
+// the names uam gives worktrees (makeWorktree), so a folder the owner chose
+// for worktrees lists none of its other folders.
 func worktreeDirs(root string) []string {
 	var out []string
 	projects, _ := os.ReadDir(root)
@@ -201,7 +216,7 @@ func worktreeDirs(root string) []string {
 		}
 		trees, _ := os.ReadDir(filepath.Join(root, p.Name()))
 		for _, t := range trees {
-			if t.IsDir() {
+			if t.IsDir() && strings.HasPrefix(t.Name(), strings.ReplaceAll(branchPrefix, "/", "-")) {
 				out = append(out, filepath.Join(root, p.Name(), t.Name()))
 			}
 		}
@@ -473,11 +488,7 @@ func (m *Manager) keepWorktree(ctx context.Context, dir string, place *store.Web
 // conversation of its Thread is closed first, and its next use recreates
 // the worktree from the branch.
 func (m *Manager) RemoveWorktree(ctx context.Context, path string, force bool) error {
-	root, err := m.worktreesDir()
-	if err != nil {
-		return err
-	}
-	if !slices.Contains(worktreeDirs(root), path) {
+	if !slices.Contains(m.allWorktreeDirs(), path) {
 		return newError(http.StatusNotFound, "worktree not found")
 	}
 	m.mu.Lock()

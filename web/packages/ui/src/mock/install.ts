@@ -214,7 +214,7 @@ export function install(): { received: Received[] } {
     newest: () => st.tasks.at(-1),
     summary: (t) => summary(t),
   });
-  const worktrees = worktreesMock();
+  const worktrees = worktreesMock(() => st.settings.worktrees_dir);
   // The commit panel's routes; a Task's files are the ones its edit tools name.
   const git = gitMock({
     projects: () => st.projects,
@@ -731,13 +731,21 @@ export function install(): { received: Received[] } {
       return json(200, { models: ['deepseek-v3.1:671b', 'gemma3:27b', 'gpt-oss:120b', 'gpt-oss:20b', 'kimi-k2:1t', 'qwen3-coder:480b', 'qwen3.5:397b'], key_present: true });
     }
     if (path === '/api/settings' && method === 'PATCH') {
-      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt') return fail(400, `unknown setting "${key}"`);
+      for (const key of Object.keys(body)) if (key !== 'default_project_dir' && key !== 'token_prices' && key !== 'send_default' && key !== 'custom_models' && key !== 'task_defaults' && key !== 'terminal' && key !== 'utility_daily_limit' && key !== 'utility_unlimited' && key !== 'suggest_replies' && key !== 'compact_threshold' && key !== 'github_mcp' && key !== 'gitlab_auto_investigate' && key !== 'gitlab_mr_prompt' && key !== 'worktrees_dir') return fail(400, `unknown setting "${key}"`);
       if (body.default_project_dir !== undefined) {
         if (typeof body.default_project_dir !== 'string') return fail(400, 'default_project_dir must be a string');
         const dir = cleanPath(body.default_project_dir);
         if (dir && !dir.startsWith('/')) return fail(400, 'default_project_dir must be an absolute path');
         if (dir && !folders.has(dir)) return fail(404, 'default_project_dir does not exist');
         st.settings = { ...st.settings, default_project_dir: dir };
+        broadcast('settings', { settings: st.settings });
+      }
+      if (body.worktrees_dir !== undefined) {
+        if (typeof body.worktrees_dir !== 'string') return fail(400, 'worktrees_dir must be a string');
+        const dir = cleanPath(body.worktrees_dir.replace(/^~(?=\/|$)/, '/home/user'));
+        if (dir && !dir.startsWith('/')) return fail(400, 'worktrees_dir must be an absolute path');
+        const { worktrees_dir: _, ...rest } = st.settings;
+        st.settings = dir && dir !== '/home/user/.uam/worktrees' ? { ...rest, worktrees_dir: dir } : rest;
         broadcast('settings', { settings: st.settings });
       }
       if (body.token_prices !== undefined) st.settings = { ...st.settings, token_prices: body.token_prices as Settings['token_prices'] };
