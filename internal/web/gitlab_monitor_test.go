@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -551,5 +552,85 @@ func TestGitLabInvestigationAssociationScope(t *testing.T) {
 				t.Fatal("invalid association fetched GitLab data")
 			}
 		})
+	}
+}
+
+func TestGitLabMonitorStopsOnSettledPipelinesAndPrunesDeletedThreads(t *testing.T) {
+	f := newGitLabWorkflowFixture(t)
+	f.record(t)
+	calls := func() int {
+		data, _ := os.ReadFile(f.gate.executable + ".calls")
+		return strings.Count(string(data), "\n")
+	}
+	f.m.gitLabMonitorPass(t.Context())
+	first := calls()
+	if first == 0 {
+		t.Fatal("the first pass did not read the pipeline")
+	}
+	// The fixture pipeline failed with no update time: settled, never polled again.
+	f.m.gitLabMonitorPass(t.Context())
+	if got := calls(); got != first {
+		t.Fatalf("a settled pipeline was polled: %d calls, want %d", got, first)
+	}
+	// A pipeline that finished a moment ago may still be retried.
+	f.m.gitlab.mu.Lock()
+	for k, state := range f.m.gitlab.cache {
+		p := *state.Pipeline
+		p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		state.Pipeline = &p
+		f.m.gitlab.cache[k] = state
+	}
+	f.m.gitlab.mu.Unlock()
+	f.m.gitLabMonitorPass(t.Context())
+	if calls() == first {
+		t.Fatal("a recently finished pipeline was not polled")
+	}
+	if _, err := f.m.Archive(f.source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.m.Delete(f.source.ID); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := f.st.Load()
+	if err != nil || len(cfg.WebGitLab) != 0 {
+		t.Fatalf("deleted Thread kept its receipts: %+v, %v", cfg.WebGitLab, err)
+	}
+	// A receipt left by an older build is pruned by the next pass.
+	if err := f.st.Update(func(cfg *store.Config) error {
+		cfg.WebGitLab = map[string]store.WebGitLabCommit{"stale": {TaskID: f.source.ID, SHA: f.sha, Branch: "main"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := calls()
+	f.m.gitLabMonitorPass(t.Context())
+	if cfg, err := f.st.Load(); err != nil || len(cfg.WebGitLab) != 0 {
+		t.Fatalf("stale receipt survived a pass: %+v, %v", cfg.WebGitLab, err)
+	}
+	if calls() != before {
+		t.Fatal("a deleted Thread was polled")
+	}
+}
+
+func TestGitLabSettled(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	for _, tc := range []struct {
+		status, updated string
+		want            bool
+	}{
+		{"running", at(time.Hour), false},
+		{"manual", at(time.Hour), false},
+		{"success", at(time.Minute), false},
+		{"failed", at(gitLabSettleAfter), true},
+		{"canceled", at(time.Hour), true},
+		{"skipped", "", true},
+	} {
+		if got := gitLabSettled(&GitLabPipeline{Status: tc.status, UpdatedAt: tc.updated}, now); got != tc.want {
+			t.Errorf("%s at %q: settled=%v", tc.status, tc.updated, got)
+		}
+	}
+	if gitLabSettled(nil, now) {
+		t.Error("no pipeline settled")
 	}
 }

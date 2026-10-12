@@ -1782,7 +1782,8 @@ unavailable message. This status check does not change the governor's cache.
 For Tasks whose session directory has a GitLab `origin`, UAM enables shell
 rules after finding `glab` on PATH and verifying `glab auth status` for that
 host. The origin/auth cache refreshes in the background at Task open and after
-ten minutes. A cold or expired gate leaves the current call unchanged. GitHub
+ten minutes, or after one minute when the check failed, so signing in to glab
+takes effect quickly. A cold or expired gate leaves the current call unchanged. GitHub
 origins, missing glab and failed authentication leave these rules disabled.
 
 The rules recognize `glab`, `rtk glab` and `rtk proxy glab` command heads. They
