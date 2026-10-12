@@ -46,10 +46,13 @@ function savedReview(storageKey: string): SavedReview {
   } catch { return { replies: {}, uncertain: false }; }
 }
 
-/** A GitLab Markdown body (a note, a description, a draft) rendered as replies are; uploads link to GitLab. */
+/**
+ * A GitLab Markdown body (a note, a description, a draft) rendered as replies are; uploads link to
+ * GitLab. Single newlines are line breaks, as GitLab renders them.
+ */
 export function GitLabMarkdown({ text, className }: Readonly<{ text: string; className?: string }>) {
   const origin = useContext(GitLabItemsContext)?.origin;
-  return <Markdown text={gitLabMarkdown(text, origin)} className={cn('min-w-0 break-words text-ui text-body', className)} />;
+  return <Markdown text={gitLabMarkdown(text, origin)} breaks className={cn('min-w-0 break-words text-ui text-body', className)} />;
 }
 
 /**
