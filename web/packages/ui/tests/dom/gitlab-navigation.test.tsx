@@ -22,6 +22,6 @@ test('a narrow header folds no GitLab item into the menu either', async () => {
   const { user } = renderApp('?gitidle#task=t3');
   await screen.findByRole('region', { name: 'Conversation' });
   const menu = await openMenu(user, 'Task actions');
-  expect(menu.getByRole('menuitem', { name: 'Browse files' })).toBeTruthy();
+  expect(menu.getByRole('menuitem', { name: 'Rename' })).toBeTruthy();
   expect(menu.queryByRole('menuitem', { name: /GitLab/ })).toBeNull();
 });

@@ -159,8 +159,18 @@ func listFiles(ctx context.Context, workdir, q string, limit int) (FileList, err
 	return out, nil
 }
 
-// matchScore ranks p for the lower-case query q: a base name starting with
-// q first, then a base name containing it, then a path containing it.
+// Fuzzy matches rank after every substring match: those within the base name
+// first, then those across the path, each by how far its letters spread.
+const (
+	fuzzyInBase = 1 << 16
+	fuzzyInPath = 2 << 16
+)
+
+// matchScore ranks p for the lower-case query q, lowest first: a base name
+// starting with q, then a base name containing it, then a path containing
+// it, then q's letters in order with gaps between them (as an editor's
+// "Go to file" matches), in the base name before across the path, the
+// tighter the better.
 func matchScore(p, q string) (int, bool) {
 	if q == "" {
 		return 0, true
@@ -175,7 +185,40 @@ func matchScore(p, q string) (int, bool) {
 	case strings.Contains(lower, q):
 		return 2, true
 	}
+	query := []rune(q)
+	if gap, ok := spread([]rune(base), query); ok {
+		return fuzzyInBase + gap, true
+	}
+	if gap, ok := spread([]rune(lower), query); ok {
+		return fuzzyInPath + gap, true
+	}
 	return 0, false
+}
+
+// spread finds q's letters in order in s and reports how many other letters
+// the tightest such match spans; false when they are not all there.
+func spread(s, q []rune) (int, bool) {
+	best := -1
+	for start := range s {
+		if s[start] != q[0] {
+			continue
+		}
+		j := 1
+		end := start
+		for i := start + 1; i < len(s) && j < len(q); i++ {
+			if s[i] == q[j] {
+				j++
+				end = i
+			}
+		}
+		if j < len(q) {
+			break // no later start can find them all either
+		}
+		if gap := end - start + 1 - len(q); best < 0 || gap < best {
+			best = gap
+		}
+	}
+	return best, best >= 0
 }
 
 // maxTreeEntries caps one folder of the file tree.

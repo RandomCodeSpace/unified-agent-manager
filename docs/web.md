@@ -961,7 +961,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   A running subagent's Stop sits in its peek and its transcript.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
-  ignored, and their directories. Picking one inserts `@path` and adds a chip;
+  ignored, and their directories, matched by their letters in order as Go to
+  file matches them. Picking one inserts `@path` and adds a chip;
   removing the chip removes the token, and deleting the token drops the chip.
   A message references at most 20 paths, each a regular file or a directory
   inside the project (no symbolic links, nothing binary). Copilot receives the
@@ -1580,23 +1581,36 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   repository waits for it. So an agent's edits are never committed half
   done. After a commit or a pull, every Task's change count in that
   repository is recounted.
-- **Files**: the "Files" button beside Changes opens the project directory as
-  a read-only tree in the same place (a full-screen sheet on a narrow
-  window). Git decides what is listed, so `.gitignore` applies; symbolic
+- **Go to file**: Alt+P, or the Files button left of the branch under the
+  composer, opens Go to file over the dimmed page (a bottom sheet on a
+  phone). Its head names the branch and the folder it shows (the Thread's
+  working folder; a click on the path copies it). With nothing typed it lists
+  the folder's uncommitted files under Changed, each with its status letter
+  and word (Modified, Added, Untracked, ...), then one folder to browse: a
+  folder opens on Enter or a click, Backspace in the empty box goes up a
+  folder, and each folder counts the changed files inside it. Typing matches
+  paths by their letters in order (`dctr` finds `cmd/doctor.go`): a file name
+  starting with the text first, then one containing it, then a path
+  containing it, then the letters spread through the file name, then through
+  the path. Git decides what is listed, so `.gitignore` applies; symbolic
   links and special files are left out, and a directory outside a Git working
-  tree shows why instead. Each folder is read when you expand it, and nothing
-  refreshes on its own: use Refresh. Choosing a file shows it below the tree:
-  text highlighted and wrapped (at most its first 64 KiB), images inline, and
-  anything else with Open in new tab and Download. Only one of Changes, Files,
-  Subagents and a file preview is open at a time. On a wide window, a click in
-  the conversation or the composer closes whichever of them is open. When the
-  header runs short of room (side panels open beside the sidebar), the
-  Thread's title keeps its width (up to about 400 px) first: the buttons drop
-  their labels, then Files, Charts and Terminal move into the header's "…"
-  menu.
+  tree shows why instead. The highlighted file previews beside the list: code
+  with line numbers that scrolls sideways instead of wrapping (at most its
+  first 64 KiB), Markdown rendered (with a Source switch), images inline. Up
+  and Down move, Enter opens the file in the side panel, Alt+Enter puts
+  `@path` in the message, and Esc closes. The open file takes the whole side
+  panel, with a File | Diff switch when it has uncommitted changes, Mention,
+  and a "…" menu: Mention in the message, Open in Changes, Copy path, Open in
+  a new tab, Download. A link in a rendered Markdown file opens its target in
+  the same panel. Only one of Changes, the file, Subagents and a file preview
+  is open at a time. On a wide window, a click in the conversation or the
+  composer closes whichever of them is open. When the header runs short of
+  room (side panels open beside the sidebar), the Thread's title keeps its
+  width (up to about 400 px) first: the buttons drop their labels, then
+  Charts and Terminal move into the header's "…" menu.
 - **Terminal**: off by default. Turn on Settings → Server → UAM and access →
   Shell access → Terminal and the Task
-  header shows a "Terminal" button after Files, also when the project has no
+  header shows a "Terminal" button after Changes and Charts, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
   the bottom of the window under the conversation (drag its top edge to

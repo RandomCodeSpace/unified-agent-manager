@@ -2055,7 +2055,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     command: (id: string, name: string, args: string, request_id: string, extras: PromptExtras = {}) =>
       call<Submission>('POST', `/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),
     commands: async (id: string) => (await call<{ commands: Command[] }>('GET', `/api/sessions/${enc(id)}/commands`)).commands,
-    files: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
+    files: (id: string, q: string, limit = 50, signal?: AbortSignal) => call<FileList>('GET', `/api/sessions/${enc(id)}/files?q=${enc(q)}&limit=${limit}`, undefined, false, signal),
     /** The same listing for a Project's directory: a new Task's `@` picker, before the Task exists. */
     projectFiles: (id: string, q: string, limit = 50) => call<FileList>('GET', `/api/projects/${enc(id)}/files?q=${enc(q)}&limit=${limit}`),
     /** The entries directly inside one folder of the Task's directory ("" is the top), folders first; git decides what is listed. */

@@ -1094,7 +1094,12 @@ export function install(): { received: Received[] } {
         if (!q) return 0;
         const lower = path.toLowerCase();
         const base = lower.slice(lower.lastIndexOf('/') + 1);
-        return base.startsWith(q) ? 0 : base.includes(q) ? 1 : lower.includes(q) ? 2 : -1;
+        if (base.startsWith(q)) return 0;
+        if (base.includes(q)) return 1;
+        if (lower.includes(q)) return 2;
+        // As the service: the letters in order, in the base name first, then across the path.
+        const inOrder = (s: string) => { let j = 0; for (const ch of s) if (ch === q[j]) j++; return j === q.length; };
+        return inOrder(base) ? 3 : inOrder(lower) ? 4 : -1;
       };
       const files = [...candidates]
         .map((path) => ({ path, s: score(path) }))

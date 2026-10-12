@@ -125,6 +125,63 @@ func TestFilesListGitPathsWithParentsAndNoLinks(t *testing.T) {
 	}
 }
 
+// Go to file matches a query's letters in order, not only as one run: every
+// substring match first, then letters within the base name, then across the
+// path, each the tighter the better.
+func TestFilesMatchLettersInOrderRanked(t *testing.T) {
+	ranked := func(q string, paths ...string) []string {
+		t.Helper()
+		type hit struct {
+			path  string
+			score int
+		}
+		var hits []hit
+		for _, p := range paths {
+			if score, ok := matchScore(p, q); ok {
+				hits = append(hits, hit{p, score})
+			}
+		}
+		slices.SortStableFunc(hits, func(a, b hit) int { return a.score - b.score })
+		out := make([]string, len(hits))
+		for i, h := range hits {
+			out[i] = h.path
+		}
+		return out
+	}
+	got := ranked("redgo",
+		"rx/ex/dx/gx/ox.txt",       // letters spread across the path
+		"internal/vterm/redraw.go", // letters in the base name
+		"cmd/unrelated.txt",        // no match: no g after the d
+		"internal/red/go.mod",      // letters close together across the path
+		"redgo/main.c",             // a path containing the query
+		"web/red_go.ts",            // letters close together in the base name
+		"docs/redgo.md",            // a base name starting with it
+	)
+	want := []string{"docs/redgo.md", "redgo/main.c", "web/red_go.ts", "internal/vterm/redraw.go", "internal/red/go.mod", "rx/ex/dx/gx/ox.txt"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ranked = %v, want %v", got, want)
+	}
+	if _, ok := matchScore("internal/vterm/redraw.go", "ogder"); ok {
+		t.Fatal("letters out of order matched")
+	}
+	if a, _ := matchScore("a/b/rxexdx.go", "red"); a < fuzzyInBase || a >= fuzzyInPath {
+		t.Fatalf("letters in the base name scored %d", a)
+	}
+
+	m, _, sum, _ := composerTask(t, composerRepo(t))
+	list, err := m.Files(context.Background(), sum.ID, "sutlhpr", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filePaths(list); !slices.Equal(got, []string{"src/util/helper.go:file"}) {
+		t.Fatalf("q=sutlhpr = %v", got)
+	}
+	list, _ = m.Files(context.Background(), sum.ID, "mgo", 50)
+	if got := filePaths(list); len(got) == 0 || got[0] != "src/main.go:file" {
+		t.Fatalf("q=mgo = %v", got)
+	}
+}
+
 func TestFilesOutsideGitGiveAReason(t *testing.T) {
 	if _, err := execpath.Resolve("git"); err != nil {
 		t.Skip("git is not installed")

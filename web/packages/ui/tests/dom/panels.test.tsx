@@ -78,7 +78,8 @@ describe('changes', () => {
     try {
       const { user } = await openTask('t6');
       expect(await screen.findByRole('button', { name: /^Open changes/ })).toBeTruthy();
-      expect(screen.queryByRole('button', { name: 'Browse files' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Go to file' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Files' })).toBeNull();
       await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
       expect(await screen.findByText(/no Files or All changes view/)).toBeTruthy();
     } finally {
@@ -91,48 +92,6 @@ describe('changes', () => {
     expect(screen.queryByRole('button', { name: /^Open changes/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Not a Git repository' }));
     expect(await screen.findByText(/is not in a Git repository/)).toBeTruthy();
-  });
-});
-
-describe('files', () => {
-  test('the files sheet lists folders first, opens a folder and shows a file', async () => {
-    const { user } = await openTask('t3');
-    await user.click(screen.getByRole('button', { name: 'Browse files' }));
-    const sheet = within(await screen.findByRole('dialog', { name: 'Files' }));
-    const tree = within(await sheet.findByRole('list', { name: 'Project files' }));
-    const cmd = await tree.findByRole('button', { name: 'cmd' });
-    expect(cmd.getAttribute('aria-expanded')).toBe('false');
-    await user.click(cmd);
-    await waitFor(() => expect(cmd.getAttribute('aria-expanded')).toBe('true'));
-    await user.click(await tree.findByRole('button', { name: 'doctor.go' }));
-    const dialog = screen.getByRole('dialog', { name: 'Files' });
-    await waitFor(() => expect(dialog.textContent).toContain('const line1 = "cmd/doctor.go";'));
-    expect(sheet.getByRole('link', { name: 'Download' }).getAttribute('download')).toBe('doctor.go');
-    await user.click(sheet.getByRole('button', { name: 'Refresh files' }));
-    expect(await tree.findByRole('button', { name: 'doctor.go' })).toBeTruthy();
-    await user.click(tree.getByRole('button', { name: 'cmd' }));
-    await waitFor(() => expect(tree.queryByRole('button', { name: 'doctor.go' })).toBeNull());
-    await user.click(sheet.getByRole('button', { name: 'Close files' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Files' })).toBeNull());
-    await waitFor(() => expect(document.activeElement?.id).toBe('files-link'));
-  });
-
-  test('Esc closes the open file before the panel; an HTML page shows its source', async () => {
-    const { user } = await openTask('t8');
-    await user.click(screen.getByRole('button', { name: 'Browse files' }));
-    const sheet = within(await screen.findByRole('dialog', { name: 'Files' }));
-    const tree = within(await sheet.findByRole('list', { name: 'Project files' }));
-    await user.click(await tree.findByRole('button', { name: /^templates/ }));
-    const html = await tree.findByRole('button', { name: /^post\.html/ });
-    await user.click(html);
-    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Files' }).textContent).toContain('<!doctype html>'));
-    expect(sheet.queryByText(/This file is not shown here/)).toBeNull();
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(sheet.queryByText(/<!doctype html>/)).toBeNull());
-    expect(screen.getByRole('dialog', { name: 'Files' })).toBeTruthy();
-    expect(document.activeElement).toBe(html);
-    await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Files' })).toBeNull());
   });
 });
 
@@ -393,7 +352,7 @@ describe('one working ring per place', () => {
 });
 
 describe('the Task header', () => {
-  test('narrow, it drops the button labels, then folds Files and Terminal into the menu; the title keeps its room', async () => {
+  test('narrow, it drops the button labels, then folds Charts and Terminal into the menu; the title keeps its room', async () => {
     expect(headerRoom(0)).toBe('wide');
     expect(headerRoom(1100)).toBe('wide');
     expect(headerRoom(720)).toBe('snug');
@@ -412,10 +371,11 @@ describe('the Task header', () => {
       await screen.findByRole('region', { name: 'Conversation' });
       const header = screen.getByRole('heading', { level: 1 }).closest('header')!;
       expect(screen.getByRole('heading', { level: 1 }).parentElement!.className).toContain('min-w-28');
-      expect(within(header).queryByRole('button', { name: 'Browse files' })).toBeNull();
+      expect(within(header).queryByRole('button', { name: 'Files' })).toBeNull();
       expect(within(header).getByRole('button', { name: /^Open changes/ }).textContent).not.toContain('Changes');
+      // Go to file lives under the composer, so the header neither shows nor folds it.
       const menu = await openMenu(user, 'Task actions');
-      expect(menu.getByRole('menuitem', { name: 'Browse files' })).toBeTruthy();
+      expect(menu.queryByRole('menuitem', { name: /Go to file/ })).toBeNull();
     } finally {
       width.mockRestore();
     }

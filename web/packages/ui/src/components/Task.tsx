@@ -14,12 +14,15 @@ import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
 import { INTERRUPTED_TEXT, InlineName, InstanceName, Note, ProjectBadge, ScrollSentinel, Spinner, StateMark, TaskTitle, TranscriptSkeleton, useApp, useMedia, useScrolled, type Tone } from './common';
 import { byCodeUnit } from '../lib/order';
+import { cn } from '../lib/cn';
 import { mainCall, parentMap } from '../lib/subagents';
 import { Chip } from './ui/chip';
 import { Popover } from './ui/popover';
 import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
-import { Composer, type Answering, type FirstMessage } from './Composer';
+import { Composer, mentionFile, type Answering, type FirstMessage } from './Composer';
+import type { FileActions } from './GoToFile';
+import { popupOpen } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
@@ -42,8 +45,9 @@ import { Button } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
-/** The Files sheet loads with its first opening, never with the Task. */
-const FilesSheet = lazy(() => import('./Files'));
+/** Go to file and the file panel load with their first opening, never with the Thread. */
+const GoToFile = lazy(() => import('./GoToFile'));
+const FilePanel = lazy(() => import('./GoToFile').then((m) => ({ default: m.FilePanel })));
 const GitLabSheet = lazy(() => import('./GitLabSheet'));
 /** The Changes sheet brings the diff library: it loads with the first sheet opened, or in the idle time after a Task renders. */
 const ChangesSheet = lazy(() => import('./Changes').then((m) => ({ default: m.ChangesSheet })));
@@ -97,7 +101,7 @@ const TITLE_ROOM = { min: 112, max: 400 };
 
 /**
  * How much the header has room for, by its width and the title's own width: everything (`wide`);
- * the header buttons as icons, with no last outcome (`snug`); and, `tight`, Files, Charts and
+ * the header buttons as icons, with no last outcome (`snug`); and, `tight`, Charts and
  * Terminal folded into the actions menu as on a phone. The title comes first: its width (up to
  * 400px) is kept before any button label, so a side panel drops the labels instead of cutting the
  * title to "Fix …". 0 is unmeasured: everything.
@@ -125,8 +129,6 @@ interface HeaderProps {
   failures: string;
   sheetOpen: boolean;
   onOpenChanges: () => void;
-  filesOpen: boolean;
-  onToggleFiles: () => void;
   chartsOpen: boolean;
   onToggleCharts: () => void;
   terminal: boolean;
@@ -163,14 +165,14 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
   return <StateMark state={state} label={label} compacting={compacting} text={text} icon={icon} tone={tone} title={title} className="shrink-0" />;
 }
 
-/** The Thread's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. The branch is under the composer (BranchChip). */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
+/** The Thread's 44px header: its name and state, the Changes, Charts and Terminal controls, and its actions menu. The branch and Go to file are under the composer (BranchChip). */
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
   const name = taskName(session);
   const noGit = project?.no_git;
-  // Below `sm` the title keeps the row: the state shows its glyph alone, and Files and Terminal move into the actions menu.
+  // Below `sm` the title keeps the row: the state shows its glyph alone, and Charts and Terminal move into the actions menu.
   // A narrow header (side panels open beside the sidebar) drops the button labels first, then folds them too.
   const phone = useMedia(PHONE);
   const header = useRef<HTMLElement>(null);
@@ -189,7 +191,6 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   const labels = !phone && room === 'wide';
   const fold = phone || room === 'tight';
   const folded: ActionItem[] = [];
-  if (fold && !noGit) folded.push({ key: 'files', label: filesOpen ? 'Close files' : 'Browse files', icon: <FolderTree />, onSelect: onToggleFiles });
   const pinned = project?.charts ?? 0;
   if (fold && pinned > 0) folded.push({ key: 'charts', label: chartsOpen ? 'Close pinned charts' : `Pinned charts, ${pinned}`, icon: <ChartLine />, onSelect: onToggleCharts });
   if (fold && terminal && project) folded.push({ key: 'terminal', label: terminalOpen ? 'Close terminal' : 'Open terminal', icon: <SquareTerminal />, takesFocus: !terminalOpen, onSelect: () => onTerminal(project.id) });
@@ -254,19 +255,9 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
           {vcs}
         </>
       ) : (
-        <>
-          <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
-            {vcs}
-          </div>
-          {!fold && (
-            <Tip label={`Files in ${project?.name ?? 'the project'}`}>
-              <Button id="files-link" size="md" aria-pressed={filesOpen} aria-label="Browse files" className="px-2 text-muted" onClick={onToggleFiles}>
-                <FolderTree />
-                {labels && <span>Files</span>}
-              </Button>
-            </Tip>
-          )}
-        </>
+        <div role="group" aria-label="Version control" className="flex shrink-0 items-center">
+          {vcs}
+        </div>
       )}
       {pinned > 0 && !fold && (
         <Tip label={`Charts pinned to ${project?.name ?? 'the project'}`}>
@@ -312,7 +303,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const [changesTick, setChangesTick] = useState(0);
   /** The jump-to-bottom control shows while the reader is away from the bottom. */
   const [jump, setJump] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
+  /** The file open in the side panel (Go to file's Enter), like the other right panels it replaces them. */
+  const [filePath, setFilePath] = useState<string | null>(null);
+  const filesOpen = !!filePath;
+  /** Go to file, and what it opened from. */
+  const [goToFile, setGoToFile] = useState<{ open: boolean; anchor: HTMLElement | null } | null>(null);
+  const phone = useMedia(PHONE);
   const [gitlabOpen, setGitlabOpen] = useState(false);
   /** The Project's pinned charts beside the conversation, a right panel like Files. */
   const [chartsOpen, setChartsOpen] = useState(false);
@@ -368,12 +364,12 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     if (locateError) locateNote.current?.focus({ preventScroll: true });
   }, [locateError]);
   const scroller = useRef<HTMLElement>(null);
-  const previewOpened = useCallback(() => { setFilesOpen(false); setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
+  const previewOpened = useCallback(() => { setFilePath(null); setGitlabOpen(false); setChartsOpen(false); setOutput(null); onSheet(false); }, [onSheet]);
   const preview = useFilePreview(session.id, `${session.workdir}:${session.epoch}:${historyGeneration}`, active, previewOpened, scroller);
   const closePreview = preview.close;
   useLayoutEffect(() => { if (sheetOpen || filesOpen || gitlabOpen || chartsOpen || output) closePreview(false); }, [sheetOpen, filesOpen, gitlabOpen, chartsOpen, output, closePreview]);
   // The Changes sheet can open from outside the header (the composer's count); it replaces Files.
-  if (sheetOpen && filesOpen) setFilesOpen(false);
+  if (sheetOpen && filesOpen) setFilePath(null);
   if (sheetOpen && gitlabOpen) setGitlabOpen(false);
   if (sheetOpen && chartsOpen) setChartsOpen(false);
   if (sheetOpen && output) setOutput(null);
@@ -624,6 +620,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // A closing panel stays mounted until its exit has run.
   const sheetPresence = usePresence(sheetOpen);
   const filesPresence = usePresence(filesOpen);
+  const [lastFile, setLastFile] = useState<string | null>(null);
+  if (filePath && filePath !== lastFile) setLastFile(filePath);
+  const fileView = filePath ?? lastFile;
   const gitlabPresence = usePresence(gitlabOpen);
   const chartsPresence = usePresence(chartsOpen);
   const outputPresence = usePresence(!!output);
@@ -635,7 +634,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const openChanges = useCallback(() => {
     setChangesTurn(null);
     closePreview(false);
-    setFilesOpen(false);
+    setFilePath(null);
     setGitlabOpen(false);
     setChartsOpen(false);
     setOutput(null);
@@ -649,19 +648,50 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     openChanges();
     setChangesTurn({ ...turn, at: Date.now() });
   }, [openChanges]);
-  const toggleFiles = useCallback(() => {
+  const dock = useRef<HTMLDivElement>(null);
+  const openFile = useCallback((path: string) => {
     closePreview(false);
     setGitlabOpen(false);
     setChartsOpen(false);
     setOutput(null);
-    onSheet(false);
-    setFilesOpen((open) => !open);
+    onSheet(false, false);
+    setFilePath(path);
   }, [onSheet, closePreview]);
-  const closeFiles = useCallback(() => setFilesOpen(false), []);
+  const closeFile = useCallback(() => {
+    setFilePath(null);
+    // Focus goes back to where Go to file opens from, as Changes and Terminal do with their buttons.
+    dock.current?.querySelector<HTMLElement>('[data-go-to-file]')?.focus({ preventScroll: true });
+  }, []);
+  // It opens from the Files button beside the branch under the composer, else as a sheet.
+  const openGoToFile = useCallback(() => {
+    setGoToFile({ open: true, anchor: dock.current?.querySelector<HTMLElement>('[data-go-to-file]') ?? null });
+  }, []);
+  const closeGoToFile = useCallback(() => setGoToFile((g) => g && { ...g, open: false }), []);
+  const fileActions = useMemo<FileActions>(() => ({
+    open: openFile,
+    mention: (path) => mentionFile(session.id, path),
+    changes: (path) => {
+      openChanges();
+      setChangesTurn({ files: [path], latest: false, scope: 'workspace', at: Date.now() });
+    },
+  }), [openFile, openChanges, session.id]);
+  const goToFileAvailable = !project?.no_git;
+  // Alt+P opens Go to file from anywhere in the Thread but a popup or the terminal (Ctrl+P prints; Alt+F is the browser's menu).
+  useEffect(() => {
+    if (!active || !goToFileAvailable) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyP' || e.defaultPrevented) return;
+      if (popupOpen() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
+      e.preventDefault();
+      openGoToFile();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [active, goToFileAvailable, openGoToFile]);
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
   const toggleCharts = useCallback(() => {
     closePreview(false);
-    setFilesOpen(false);
+    setFilePath(null);
     setGitlabOpen(false);
     setOutput(null);
     onSheet(false);
@@ -672,7 +702,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     // A reply that lands after this Task was left must not close the next Task's Changes (App state).
     if (!alive.current) return;
     closePreview(false);
-    setFilesOpen(false);
+    setFilePath(null);
     setGitlabOpen(false);
     setChartsOpen(false);
     onSheet(false, false);
@@ -690,7 +720,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   // Closes every right side panel without returning focus to its opener.
   const closeSidePanels = useCallback((keepOutput = false) => {
     closePreview(false);
-    setFilesOpen(false);
+    setFilePath(null);
     setChartsOpen(false);
     if (!keepOutput) setOutput(null);
     onSheet(false, false);
@@ -917,7 +947,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
@@ -1003,7 +1033,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
         {/* The floating control plane: the dock overlaps the transcript's foot by 40px and fades it out beneath the composer. */}
         {/* A press here closes the inline panels too, but not the command output: the next command is typed here. */}
-        <div className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
+        <div ref={dock} className="transcript-dock -mt-10 w-full shrink-0 px-3 pt-10 pb-4 sm:px-4 md:px-6" onPointerDownCapture={onConversationPointerDown} onClickCapture={(e) => onConversationClick(e, true)}>
           {/* The status line sits just above the composer, in the overlap, so it moves neither; while it shows, "Jump to bottom" is an arrow beside it. */}
           <div className="pointer-events-none absolute inset-x-0 top-0 flex h-8 items-center gap-2 px-3 sm:px-4 md:px-6 pointer-coarse:-top-1 pointer-coarse:h-11 *:pointer-events-auto">
             <StatusLine line={line} session={session} since={agentsSince} hidden={!!editing || answering?.kind === 'plan'} onJump={scrollToBottom} />
@@ -1033,12 +1063,22 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
             </div>
           )}
           <Composer key={session.id} session={session} onRename={renameInHeader} onSessionUpdate={onSessionUpdate} answering={answering} onCommandOutput={showOutput} editing={editing?.sessionId === session.id ? editing : null} />
-          <ComposerFoot><BranchChip session={session} project={project} /></ComposerFoot>
+          <ComposerFoot>
+            {goToFileAvailable && (
+              <Tip label={<>Go to file<span className="block text-on-primary/70">Alt+P</span></>} disabled={!!goToFile?.open}>
+                <Button size="icon" variant="subtle" data-go-to-file="" aria-label="Go to file" aria-haspopup="dialog" aria-expanded={!!goToFile?.open} aria-keyshortcuts="Alt+P" className={cn('shrink-0 text-muted', goToFile?.open && 'bg-raised text-ink shadow-raised')} onClick={openGoToFile}>
+                  <FolderTree />
+                </Button>
+              </Tip>
+            )}
+            <BranchChip session={session} project={project} />
+          </ComposerFoot>
         </div>
       </div>
 
       {sheetPresence.mounted && <Suspense fallback={null}><ChangesSheet turn={changesTurn} evidence={<FinishEvidence evidence={turnEvidence.evidence} error={turnEvidence.error} items={liveItems} onShowOutput={showOutput} />} session={session} projectName={project?.name ?? 'Project'} changes={changes} changesError={changesError} isDefaultPending={() => fetching.current} inline={sidePanelInline} open={sheetOpen} active={active} onChanges={(next) => { setChanges(next); setChangesError(null); }} onClose={() => onSheet(false)} onClosed={sheetPresence.onClosed} /></Suspense>}
-      {filesPresence.mounted && <Suspense fallback={null}><FilesSheet session={session} inline={sidePanelInline} open={filesOpen} onClose={closeFiles} onClosed={filesPresence.onClosed} /></Suspense>}
+      {goToFile && <Suspense fallback={null}><GoToFile session={session} project={project} anchor={goToFile.anchor} phone={phone} open={goToFile.open} onClose={closeGoToFile} onClosed={() => setGoToFile(null)} actions={fileActions} /></Suspense>}
+      {filesPresence.mounted && fileView && <Suspense fallback={null}><FilePanel session={session} project={project} path={fileView} inline={sidePanelInline} open={filesOpen} onClose={closeFile} onClosed={filesPresence.onClosed} actions={fileActions} /></Suspense>}
       {gitlabPresence.mounted && <Suspense fallback={null}><GitLabSheet sessionId={session.id} session={session} inline={sidePanelInline} open={gitlabOpen} onClose={closeGitlab} onClosed={gitlabPresence.onClosed} /></Suspense>}
       {chartsPresence.mounted && project && <Suspense fallback={null}><PinnedChartsPanel project={project} inline={sidePanelInline} open={chartsOpen} onClose={closeCharts} onClosed={chartsPresence.onClosed} /></Suspense>}
       {outputPresence.mounted && outputView && <CommandOutputPanel output={outputView} inline={sidePanelInline} open={!!output} onClose={closeOutput} onClosed={outputPresence.onClosed} />}

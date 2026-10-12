@@ -175,7 +175,7 @@ describe('pickers', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
   });
 
-  test('beside the conversation, the output panel keeps composer focus on Esc and gives way to Files', async () => {
+  test('beside the conversation, the output panel keeps composer focus on Esc and gives way to a file', async () => {
     const happy = (window as unknown as { happyDOM: { setViewport: (v: { width: number; height: number }) => void } }).happyDOM;
     happy.setViewport({ width: 1440, height: 900 });
     try {
@@ -194,8 +194,12 @@ describe('pickers', () => {
       await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
       expect(document.activeElement).toBe(composer());
       await run();
-      await user.click(screen.getByRole('button', { name: 'Browse files' }));
+      await user.click(document.querySelector<HTMLElement>('[data-go-to-file]')!);
+      await user.type(await screen.findByRole('combobox', { name: 'Go to file' }), 'doctor');
+      await screen.findByRole('option', { name: /^cmd\/doctor\.go/ });
+      await user.keyboard('{Enter}');
       await waitFor(() => expect(screen.queryByRole('region', { name: 'Output of /context' })).toBeNull());
+      expect(await screen.findByRole('complementary', { name: 'File doctor.go' })).toBeTruthy();
     } finally {
       happy.setViewport({ width: 1024, height: 768 });
     }

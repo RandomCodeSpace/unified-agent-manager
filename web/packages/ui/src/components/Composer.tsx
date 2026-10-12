@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
 import { LIMITS, acceptFor, checkUpload, fileKind, kindOf, mediaNote, type Kind } from '../lib/attachments';
@@ -282,6 +282,13 @@ interface ComposerProps {
   onCommandOutput?: (output: CommandOutput) => void;
   /** Set while a past owner prompt is edited here, to rewind to before it and send the edit. */
   editing?: Editing | null;
+}
+
+const MENTION_EVENT = 'uam-mention';
+
+/** Puts `@path` into the composer of Thread `sessionId` (Go to file's Mention); Composer listens. */
+export function mentionFile(sessionId: string, path: string) {
+  window.dispatchEvent(new CustomEvent(MENTION_EVENT, { detail: { sessionId, path } }));
 }
 
 /** The composer reads everything on the Task but its transcript, so a streamed delta does not re-render it. */
@@ -568,6 +575,33 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     setHighlight(0);
     textarea.current?.focus();
   }
+
+  // Go to file's Mention: `@path` at the end of the message, as an `@` pick would put it.
+  const mention = useEffectEvent((path: string) => {
+    if (locked) return;
+    if (answering) {
+      setNotice(answerFirst);
+      return;
+    }
+    if (!files.includes(path) && files.length >= MAX_FILE_REFS) {
+      setError(`A message references at most ${MAX_FILE_REFS} files.`);
+      return;
+    }
+    const next = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@${path} `;
+    setFiles((f) => (f.includes(path) ? f : [...f, path]));
+    pendingCaret.current = next.length;
+    setText(next);
+    setCaret(next.length);
+    textarea.current?.focus();
+  });
+  useEffect(() => {
+    const onMention = (e: Event) => {
+      const { sessionId, path } = (e as CustomEvent<{ sessionId: string; path: string }>).detail;
+      if (sessionId === session.id && !newTask) mention(path);
+    };
+    window.addEventListener(MENTION_EVENT, onMention);
+    return () => window.removeEventListener(MENTION_EVENT, onMention);
+  }, [session.id, newTask]);
 
   function removeFile(path: string) {
     const next = removeToken(text, path);
