@@ -1019,6 +1019,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     Editing a recalled prompt makes it the new draft. Only the text changes;
     picked files and uploads stay. When a `/`, `$` or `@` list is open, Up
     and Down move through the list instead.
+  - **Spelling and grammar**: the composer checks English spelling and
+    grammar as you type, in a worker on this device (Harper); the draft is
+    not sent anywhere for it. Each issue gets a wavy underline (red for
+    spelling, blue for grammar). Click one, or the **Spelling and
+    grammar** button (its dot means there are suggestions), to see the
+    suggestion with **Apply** and **Keep original**, and step through the
+    rest. Drafts over 12,000 characters
+    are not checked. If the checker cannot load, you can still type and
+    send.
   Prompt requests accept optional `settings: {model, effort, context_size}`;
   omitted settings snapshot the current Task selection. The service validates
   them again before dispatch. Unsupported selections return 400; different
@@ -1173,9 +1182,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   least one model the provider lists must stay visible, and a provider can
   hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
   lists is kept. Hiding is only a display preference: a Task or Project
-  already on a hidden model keeps it. **UAM** (General) shows the version
-  the service runs and, once another version is installed at the binary it
-  started from, **Restart**; see
+  already on a hidden model keeps it. **UAM** (Server → UAM and access)
+  shows the version the service runs and, once another version is
+  installed at the binary it started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
   including Task titles, completed subagent result lines, suggested replies,
@@ -1535,7 +1544,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   header runs short of room (side panels open beside the sidebar), its buttons
   drop their labels first, then Files, Charts and Terminal move into the
   header's "…" menu, so the Task's title keeps its room.
-- **Terminal**: off by default. Turn on Settings → Terminal and the Task
+- **Terminal**: off by default. Turn on Settings → Server → UAM and access →
+  Shell access → Terminal and the Task
   header shows a "Terminal" button after Files, also when the project has no
   Git and on settled and archived Tasks. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
@@ -1587,8 +1597,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   makes the ring static when the OS requests reduced motion.
 - **Sidebar**: all unsettled Tasks across every Project share one flat list
   without group headings. Each row's status line says whether it needs
-  input, is ready for review, is running, or is idle. Tasks needing attention
-  come first, followed by review, running, and idle Tasks. Collapsible
+  input, is ready for review, is running, or is idle. Tasks are listed in
+  creation order, newest first, whatever their state. Collapsible
   "Done" and "Settled" sections sit at the foot of the sidebar, under the
   Task list, which scrolls on its own; archived Tasks are listed in
   Settings → Archived. One of Done and Settled is open at a time: opening
@@ -1610,16 +1620,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Done and Finished green; Error red; inactive states gray.
   The second line shows the Task title, the Project branch in muted text,
-  and how long ago the Task changed. Hovering the row shows the full request
-  or outcome, quiet duration, branch, and `+N −M` line counts when known. Hovering an
+  and how long ago the Task changed. Hovering the row shows the full title,
+  the Project, the full request or outcome, the branch, and `+N −M` line
+  counts when known. Hovering an
   active row that can settle shows Settle.
   - **Alt+J / Alt+K** open the next / previous Task needing attention, wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
-  - The tab title, the installed app's badge and the sidebar button on a
-    narrow window carry the Needs you count. The tab title reads "UAM" on
-    the home screen, "UAM - <Task name>" while a Task is open ("UAM - New task" for
-    a new Task or one still waiting for a title), and "UAM - Settings"
+  - The tab title, the installed app's badge, the sidebar toggle (the UAM
+    mark in the sidebar header, on the collapsed rail, and the button on a
+    narrow window) carry the Needs you count; at zero it is hidden. The tab
+    title reads "UAM" on the home screen, "UAM - <Task name>" while a Task
+    is open ("UAM - New task" for a new Task or one still waiting for a
+    title), and "UAM - Settings"
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
@@ -1633,7 +1646,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   titles, Project names and branches within the chosen Project filter,
   archived Tasks included.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
-  for Rename, Close conversation, Settle or Reopen, Archive and Delete.
+  for Rename, Close conversation (while one is open), Run again, Try with
+  another model…, Export as Markdown, Settle (or Reopen for a settled Task)
+  and Archive. Delete is offered only for archived Tasks, in Settings →
+  Archived.
   Arrow keys move between rows,
   Enter opens a Task and F2 renames it. There are no Project headings: the
   filter below shows one Project's Tasks.
@@ -1649,8 +1665,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
     the UAM mark alone (shows the sidebar again, with the Needs you count on it),
-    New task, the Project filter, Add project, and at the foot Settings and
-    the connection dot; each opens exactly what the sidebar's
+    the Project filter, Routines, Add project, New task, and at the foot
+    Settings, Usage and the connection dot; each opens exactly what the sidebar's
     own button opens. Toggling it keeps the selected Task and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
@@ -1681,7 +1697,8 @@ received a prompt, the page says so and nothing is resent.
 
 ## Terminal
 
-Settings → Terminal, off by default, adds a terminal panel that runs a login
+Settings → Server → UAM and access → Shell access → Terminal, off by
+default, adds a terminal panel that runs a login
 shell in the Project's folder: your `$SHELL` if it is an absolute path to an
 executable, otherwise `bash` or `sh`. The setting is kept in `sessions.json`
 as `terminal` and can also be changed with `PATCH /api/settings`
@@ -1776,11 +1793,11 @@ their next turn has the GitHub tools, or no longer has them. A connected
 instance has its own setting, shown when that instance offers it.
 
 **Security.** A stdio server is a command run on this host as the uam user.
-Adding or editing one is therefore allowed only while Settings → Shell
-access → Terminal is on (see Terminal), which already grants a shell to
-anyone signed in; with it off the form offers HTTP and SSE only and the
-service refuses a stdio add or edit (`403`). Turning a server on or off and
-removing it need no Terminal.
+Adding or editing one is therefore allowed only while Settings → Server →
+UAM and access → Shell access → Terminal is on (see Terminal), which
+already grants a shell to anyone signed in; with it off the form offers
+HTTP and SSE only and the service refuses a stdio add or edit (`403`).
+Turning a server on or off and removing it need no Terminal.
 
 **In a Task**, the actions menu (`…`) → **MCP servers…** shows each server
 as that Task's conversation sees it: Connected (with its tools; tap the
