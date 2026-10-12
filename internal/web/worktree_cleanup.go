@@ -109,8 +109,8 @@ func diskInfo(dir string) *DiskInfo {
 	for {
 		var st unix.Statfs_t
 		if err := unix.Statfs(dir, &st); err == nil {
-			total := uint64(st.Blocks) * uint64(st.Bsize) //nolint:unconvert // #nosec G115 -- never negative; the field types differ on darwin
-			free := uint64(st.Bavail) * uint64(st.Bsize)  //nolint:unconvert // #nosec G115 -- likewise
+			bsize := uint64(st.Bsize) // #nosec G115 -- a block size is never negative; its type differs per platform
+			total, free := st.Blocks*bsize, st.Bavail*bsize
 			if total == 0 {
 				return nil
 			}
