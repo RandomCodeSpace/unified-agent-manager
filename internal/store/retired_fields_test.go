@@ -43,3 +43,20 @@ func TestPlannerRetiredFieldDropsOnSave(t *testing.T) {
 		t.Fatalf("saved = %s", encoded)
 	}
 }
+
+// A Task record with the removed done-check settle's reviewed item loads,
+// and the next save drops the field.
+func TestReviewedItemDropsOnSave(t *testing.T) {
+	var web WebState
+	old := `{"turn":"completed","stage":"settled","settled_by":"reviewed","reviewed_item":"a1"}`
+	if err := json.Unmarshal([]byte(old), &web); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "reviewed_item") || !strings.Contains(string(encoded), `"settled_by":"reviewed"`) {
+		t.Fatalf("saved = %s", encoded)
+	}
+}
