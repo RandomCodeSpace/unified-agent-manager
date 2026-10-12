@@ -164,7 +164,9 @@ Use `uam` with `{op, args}` for Task and Project reads. Every Task has it.
   edit-tool files still changed against HEAD. A row with
   `settled_by: "auto"` settled itself after 7 days with no activity, and one
   with `settled_by: "reviewed"` was settled by an older uam after the owner
-  saw it checked done.
+  saw it checked done. A Task whose folder has uncommitted or unpushed git
+  work never settles itself, and the owner is asked before settling or
+  archiving it.
 - `who_touched {path}` lists Tasks in your Project with edits to that path,
   relative to your directory or absolute. Shell writes are not attributed;
   `partial: true` means unread history may contain more edits.

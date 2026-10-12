@@ -336,7 +336,9 @@ describe('task lifecycle', () => {
   test('settle then reopen from the header menu', async () => {
     const { user } = renderApp('#task=t3');
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
-    await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle' }));
+    // Its folder has unsaved git work: Settle asks first.
+    await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Settle…' }));
+    await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
     expect(await screen.findByText('Settled.')).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Reopen' }));
     await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
@@ -410,7 +412,7 @@ describe('task lifecycle', () => {
     const { user } = renderApp('#task=t1');
     await waitFor(() => expect(header().textContent).toBe('Fix re-attach redraw regression'));
     const menu = await openMenu(user);
-    expect(within(menu).getByRole('menuitem', { name: 'Settle' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(menu).getByRole('menuitem', { name: /^Settle/ }).getAttribute('aria-disabled')).toBe('true');
     expect(document.querySelector('[data-task-row="t1"] [data-settle]')).toBeNull();
     expect(within(menu).getAllByText(/Stop the turn, answer what is waiting/).length).toBeGreaterThan(0);
   });

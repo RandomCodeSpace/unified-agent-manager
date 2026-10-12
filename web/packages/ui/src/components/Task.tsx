@@ -72,6 +72,8 @@ interface Props {
   /** Side panels (Changes, Files) sit beside the column (wide) rather than over it. */
   sidePanelInline: boolean;
   onSheet: (open: boolean, restoreFocus?: boolean) => void;
+  /** A request from outside (the unsaved-work confirmation) to open Changes on All changes for this Thread, with when it was made. */
+  allChangesRequest?: { id: string; at: number } | null;
   /** The terminal docked under the app (App.tsx): whether it is open, and the toggle that opens it in a Project's folder or closes it. */
   terminalOpen: boolean;
   onTerminal: (projectId: string) => void;
@@ -291,7 +293,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
 
 
 /** The conversation pane: a 44px header, the transcript scrolling across the pane, the composer pinned below. */
-export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
+export function Task({ session, project, agents, agentSteps, snapshotSeq, historyGeneration, active, connected, historyRequest, historyItemSeq, onHistoryReset, sheetOpen, sidePanelInline, onSheet, allChangesRequest, terminalOpen, onTerminal, onSessionUpdate, onInteractionUpdate, leading, spawnedBy, since, rerunOf }: Readonly<Props>) {
   const api = useApi();
   const { dispatch, meta, settings } = useApp();
   const tempRoot = meta?.temp_root;
@@ -644,6 +646,13 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     openChanges();
     setChangesTurn({ files: [], latest: false, at: Date.now(), scope: 'workspace' });
   }, [openChanges]);
+  // A fresh request for this Thread opens All changes once, also when it arrives as the Thread opens.
+  const handledAllChanges = useRef(0);
+  useEffect(() => {
+    if (!allChangesRequest || allChangesRequest.id !== session.id || allChangesRequest.at === handledAllChanges.current || Date.now() - allChangesRequest.at > 5000) return;
+    handledAllChanges.current = allChangesRequest.at;
+    openAllChanges();
+  }, [allChangesRequest, session.id, openAllChanges]);
   const openTurnChanges = useCallback((turn: { files: string[]; latest: boolean }) => {
     openChanges();
     setChangesTurn({ ...turn, at: Date.now() });

@@ -560,6 +560,8 @@ type Error struct {
 	// refused over, such as the Projects that share a name.
 	Code string
 	Refs []string
+	// Pending is the unsaved git work a settle or archive was refused over.
+	Pending *GitPending
 }
 
 func (e *Error) Error() string { return e.Message }

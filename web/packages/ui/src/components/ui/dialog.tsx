@@ -129,6 +129,10 @@ export interface AlertDialogProps extends Omit<DialogProps, 'footer' | 'initialF
   disabled?: boolean;
   onConfirm: () => void;
   cancelLabel?: string;
+  /** A quieter action leading the buttons row (the unsaved-work confirmation's Open Changes). */
+  aside?: ReactNode;
+  /** Anchored under the whole sidebar row when a row's control asked, so the row stays readable. */
+  anchorRow?: boolean;
 }
 
 /**
@@ -190,7 +194,10 @@ export function AlertDialog(props: Readonly<AlertDialogProps>) {
   const [wasOpen, setWasOpen] = useState(false);
   if (props.open !== wasOpen) {
     setWasOpen(props.open);
-    if (props.open) setAnchor(confirmAnchor());
+    if (props.open) {
+      const at = confirmAnchor();
+      setAnchor(at && props.anchorRow ? at.closest('[data-task-row]') ?? at : at);
+    }
   }
   const onClosed = () => {
     setAnchor(undefined);
@@ -200,7 +207,7 @@ export function AlertDialog(props: Readonly<AlertDialogProps>) {
   return anchor ? <AnchoredAlert {...props} anchor={anchor} onClosed={onClosed} /> : <CentredAlert {...props} onClosed={onClosed} />;
 }
 
-function AnchoredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel', anchor }: Readonly<AlertDialogProps & { anchor: Element }>) {
+function AnchoredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel', aside, anchor }: Readonly<AlertDialogProps & { anchor: Element }>) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
     <BasePopover.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()} modal="trap-focus">
@@ -212,6 +219,7 @@ function AnchoredAlert({ open, onOpenChange, onClosed, title, description, child
             {children}
             <div className="fade-rule mt-2" aria-hidden="true" />
             <div className="mt-2 flex justify-end gap-2">
+              {aside}
               <BasePopover.Close render={<Button size="sm" variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BasePopover.Close>
@@ -226,7 +234,7 @@ function AnchoredAlert({ open, onOpenChange, onClosed, title, description, child
   );
 }
 
-function CentredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel' }: Readonly<AlertDialogProps>) {
+function CentredAlert({ open, onOpenChange, onClosed, title, description, children, className, confirmLabel, danger = true, busy = false, disabled = false, onConfirm, cancelLabel = 'Cancel', aside }: Readonly<AlertDialogProps>) {
   const cancel = useRef<HTMLButtonElement>(null);
   return (
     <BaseAlertDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
@@ -238,6 +246,7 @@ function CentredAlert({ open, onOpenChange, onClosed, title, description, childr
             {description && <BaseAlertDialog.Description className="mt-2 text-ui text-body">{description}</BaseAlertDialog.Description>}
             {children}
             <div className="mt-5 flex flex-wrap justify-end gap-2 max-sm:[&>button]:flex-1">
+              {aside}
               <BaseAlertDialog.Close render={<Button variant="secondary" ref={cancel} />}>
                 {cancelLabel}
               </BaseAlertDialog.Close>
