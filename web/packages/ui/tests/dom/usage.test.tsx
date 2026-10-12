@@ -157,7 +157,7 @@ describe('Usage popover', () => {
     expect(popover.getAllByText('1.6B').length).toBeGreaterThan(0);
     await user.click(popover.getByRole('button', { name: 'Close usage' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Usage' })).toBeNull());
-    await user.click(nav.getByRole('button', { name: 'Hide sidebar' }));
+    await user.click(nav.getByRole('button', { name: /^Hide sidebar/ }));
     const rail = within(screen.getByRole('navigation', { name: 'Sidebar' }));
     // The rail has room for the ring alone: the share left, without its sign.
     expect(rail.getByRole('button', { name: 'Usage' }).textContent).toBe('96%');

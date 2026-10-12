@@ -1,7 +1,8 @@
 // Unsettled Tasks share one flat list; status stays in each row.
 // Alt+J / Alt+K still visit only Tasks needing attention.
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import * as data from '../../src/mock/data';
 import { renderApp, sidebar, type User } from './render';
 
 const row = (id: string) => within(document.querySelector<HTMLElement>(`[data-task-row="${id}"]`)!);
@@ -21,6 +22,8 @@ async function tipOf(user: User, el: HTMLElement) {
 }
 const header = () => screen.getByRole('heading', { level: 1 });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe('the Task list', () => {
   test('keeps every unsettled Task in one flat list with its status', async () => {
     // Tasks never opened here and changed since the first visit are unread: t4 failed, t5 was interrupted, t3 finished.
@@ -37,6 +40,24 @@ describe('the Task list', () => {
     expect(await tipOf(user, you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
     // The title and app badge still count only Tasks needing attention.
     await waitFor(() => expect(document.title).toBe('(9) UAM'));
+  });
+
+  test('the open sidebar names the Needs you count beside its wordmark, and hides it at zero', async () => {
+    const { unmount } = renderApp();
+    const side = await sidebar();
+    // The same count as the collapsed rail's mark and the tab title.
+    await waitFor(() => expect(document.title).toBe('(7) UAM'));
+    const hide = side.getByRole('button', { name: 'Hide sidebar, 7 need you' });
+    expect(within(hide).getByText('7').getAttribute('aria-hidden')).toBe('true');
+    unmount();
+    // Only t1, which is working: nothing needs you, so no count.
+    const state = data.seed();
+    state.tasks = state.tasks.filter((t) => t.id === 't1');
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    renderApp();
+    const quiet = await sidebar();
+    const toggle = quiet.getByRole('button', { name: 'Hide sidebar' });
+    expect(toggle.textContent).toBe('UAM');
   });
 
   test('a Needs you row only says what it waits on; answering happens in the Task', async () => {
