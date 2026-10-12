@@ -147,6 +147,8 @@ type Manager struct {
 	connectedNotices *connectedNotices
 	// branchAt is when each Project's branch was last read.
 	branchAt map[string]time.Time
+	// worktreeRoot, when set, replaces ~/.uam/worktrees (worktreesDir).
+	worktreeRoot string
 	// gitWrites holds each git write action running, by the real path of its
 	// repository, closed when it ends (git_actions.go). A turn starting there
 	// waits for it.
@@ -320,6 +322,13 @@ type webSession struct {
 	updatedAt time.Time
 	base      string
 	detail    string
+	// place is the branch or worktree the Thread started in, nil on the
+	// Project's current branch; branch is the branch checked out in workdir,
+	// as last read (refreshBranches), not persisted.
+	place  *store.WebPlace
+	branch string
+	// placeNaming is set while the place's branch takes the Thread's title.
+	placeNaming bool
 	// removed is set once the session was deleted; operations waiting on op
 	// must not act on it.
 	removed bool
@@ -539,6 +548,7 @@ type persistKey struct {
 	outcome                                                                                                          string
 	stopReason                                                                                                       string
 	agent                                                                                                            string
+	place                                                                                                            store.WebPlace
 }
 
 func newSession(id, provider, name, workdir, convID string, created time.Time) *webSession {
@@ -611,6 +621,9 @@ func (s *webSession) key() persistKey {
 		k.commandResult = s.last.CommandResult
 	}
 	k.commandLedger = s.commandLedger
+	if s.place != nil {
+		k.place = *s.place
+	}
 	return k
 }
 
@@ -874,6 +887,7 @@ func sessionFromRecord(rec store.SessionRecord) *webSession {
 		s.routineID = web.RoutineID
 		s.rerunOf, s.outcome, s.suggestions = web.RerunOf, clipRunes(displaytext.Sanitize(web.Outcome), maxOutcomeRunes), loadSuggestions(web.Suggestions)
 		s.fork = web.Fork
+		s.place = loadedPlace(web.Place)
 		s.rewind = loadedRewind(web.Rewind)
 		s.unseenEnd = web.UnseenEnd
 		s.effort, s.contextSize = web.Effort, cmp.Or(web.ContextSize, "default")
@@ -1054,7 +1068,8 @@ func (m *Manager) RecentWorkdirs() []string {
 	}
 	recs := make([]store.SessionRecord, 0, len(cfg.Sessions))
 	for _, rec := range cfg.Sessions {
-		if rec.Workdir != "" {
+		// A Thread's worktree is no folder to add as a Project.
+		if rec.Workdir != "" && (rec.Web == nil || rec.Web.Place == nil || rec.Web.Place.Worktree == "") {
 			recs = append(recs, rec)
 		}
 	}
@@ -1116,6 +1131,10 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
 		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
 		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
+		Branch: s.branch,
+	}
+	if s.place != nil && s.place.Worktree != "" {
+		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch}
 	}
 	return out
 }
@@ -2040,6 +2059,7 @@ func (m *Manager) changedLocked(s *webSession, before SessionSummary) {
 	// after the turn it words.
 	worded := key
 	worded.outcome = s.persisted.outcome
+	worded.place = s.persisted.place // the branch taking the title is not activity either
 	if durable && worded != s.persisted || queue {
 		s.updatedAt = m.now()
 	}
@@ -2149,7 +2169,7 @@ func (m *Manager) flush() (err error) {
 				ProjectID: key.projectID, Model: key.model, Effort: key.effort, ContextSize: key.contextSize, Agent: key.agent, Title: key.title,
 				Stage: key.stage, SettledAt: key.settledAt, SettledBy: key.settledBy, ArchivedAt: key.archivedAt, TerminalSession: s.terminalID, Imported: s.imported,
 				SpawnedBy: s.spawnedBy, RoutineID: s.routineID, RerunOf: s.rerunOf, Fork: s.fork, Rewind: s.rewind.Clone(), Outcome: s.outcome, Suggestions: s.suggestions, UnseenEnd: s.unseenEnd,
-				StopReason: key.stopReason, NativeChanges: s.nativeChanges,
+				StopReason: key.stopReason, NativeChanges: s.nativeChanges, Place: s.clonedPlace(),
 			},
 		})
 	}
@@ -2436,6 +2456,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
 			s.title = title
+			m.kickPlaceNameLocked(s)
 		}
 	case agentapi.EventExit:
 		// The conversation is gone. Report it; never replay a prompt or open
@@ -2523,6 +2544,8 @@ type CreateRequest struct {
 	RequestID   string `json:"request_id"`
 	// Mode is safe (also when empty) or yolo.
 	Mode string `json:"mode"`
+	// Place is where the Thread runs; nil is the Project's current branch.
+	Place *PlaceRequest `json:"place,omitempty"`
 	// spawnedBy is the Task whose uam_create_task call creates this one, and
 	// id the new Task's ID that call chose. Only that call sets them.
 	id, spawnedBy string
@@ -2572,6 +2595,9 @@ func (m *Manager) checkCreate(req *CreateRequest) (agentapi.Provider, string, st
 		return nil, "", "", selectionErr
 	}
 	if req.Name, err = cleanTaskName(req.Name); err != nil {
+		return nil, "", "", err
+	}
+	if err := checkPlace(req.Place); err != nil {
 		return nil, "", "", err
 	}
 	mode := store.ModeSafe
@@ -2629,9 +2655,30 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 			return SessionSummary{}, fmt.Errorf("generate session id: %w", err)
 		}
 	}
+	m.mu.Lock()
+	var project Project
+	if p := m.projects[req.ProjectID]; p != nil {
+		project = *p
+	}
+	m.mu.Unlock()
+	project.Dir = workdir
+	workdir, place, undoPlace, err := m.makePlace(m.ctx, project, req.Place)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	registered := false
+	defer func() {
+		if !registered {
+			undoPlace()
+		}
+	}()
 	now := m.now()
 	s := newSession(id, prov.Name(), name, workdir, "", now)
 	s.projectID, s.model, s.mode = req.ProjectID, req.Model, mode
+	s.place, s.branch = place, project.Branch
+	if place != nil {
+		s.branch = place.Branch
+	}
 	s.effort, s.contextSize, s.agent = req.Effort, req.ContextSize, req.Agent
 	s.createReq = reqID
 	s.spawnedBy = req.spawnedBy
@@ -2675,7 +2722,7 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 	rec := store.SessionRecord{
 		ID: id, Agent: prov.Name(), Name: name, Mode: mode, Workdir: workdir,
 		CreatedAt: now, LastSeenAt: now, Status: store.StatusActive, Surface: store.SurfaceWeb,
-		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges},
+		ProviderSessionID: convID, Web: &store.WebState{Turn: StateIdle, UpdatedAt: now, ProjectID: req.ProjectID, Model: req.Model, Effort: req.Effort, ContextSize: req.ContextSize, Agent: req.Agent, SpawnedBy: req.spawnedBy, RoutineID: req.routineID, RerunOf: req.rerunOf, NativeChanges: s.nativeChanges, Place: s.clonedPlace()},
 	}
 	check := req.gitlabRegister
 	if req.spawnedBy != "" {
@@ -2685,7 +2732,11 @@ func (m *Manager) createChecked(req CreateRequest, prov agentapi.Provider, workd
 		m.closeConversation(conv)
 		return SessionSummary{}, err
 	}
+	registered = true
 	log.Info("web session created", "session", id, "provider", prov.Name())
+	m.mu.Lock()
+	m.kickPlaceNameLocked(s)
+	m.mu.Unlock()
 	if req.autopilot {
 		m.startAutopilot(s)
 	}
@@ -2736,6 +2787,9 @@ func (m *Manager) register(s *webSession, conv agentapi.Conversation, rec store.
 	s.convID = rec.ProviderSessionID
 	s.conv = conv
 	s.persisted = persistKey{turn: rec.Web.Turn, name: rec.Name, convID: rec.ProviderSessionID, projectID: s.projectID, model: s.model, effort: s.effort, contextSize: s.contextSize, agent: s.agent, title: rec.Web.Title, mode: s.mode}
+	if rec.Web.Place != nil {
+		s.persisted.place = *rec.Web.Place
+	}
 	m.sessions[s.id] = s
 	if s.historyRead {
 		m.enforceHistoryBudgetLocked(s)
@@ -4285,6 +4339,7 @@ func (m *Manager) Rename(id, name string) (SessionSummary, error) {
 	s.name = clean
 	s.renames++
 	m.changedLocked(s, before)
+	m.kickPlaceNameLocked(s)
 	return m.summaryLocked(s), nil
 }
 

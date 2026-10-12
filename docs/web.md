@@ -357,6 +357,30 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   size, so New task does not fail on a stale default. A provider that is not installed or
   not compatible is reported with the reason. The Task runs in the Project's
   directory.
+- **Branches and worktrees**: a new Thread runs on the Project's current
+  branch, on a new branch, or in a new git worktree. The choice is made with
+  the first message (`place` in `POST /api/sessions`:
+  `{"mode": "current" | "branch" | "worktree", "base": "<branch>"}`), so an
+  abandoned draft leaves nothing behind.
+  - **New branch** runs `git switch -c uam/<8 hex digits>` in the Project's
+    folder. Every Thread in that folder shares its working tree, so this is
+    refused, naming the Thread, while another Thread there is working.
+  - **New worktree** runs `git worktree add -b uam/<8 hex digits>` from the
+    chosen base branch, local or remote (the current `HEAD` without one), in
+    `~/.uam/worktrees/<project>/uam-<8 hex digits>`. For a Project in a
+    folder of its repository, the Thread runs in the same folder of the
+    worktree. Other Threads keep working in the Project's folder.
+  - Neither branch tracks an upstream. Once the Thread has a name or a
+    title, the branch is renamed to `uam/<title>` unless it was pushed; the
+    worktree folder keeps its name.
+  - Everything of the Thread follows its folder: Files, `@` references,
+    file links and previews, images, Changes and Commit/Push/Pull, the GitLab
+    panel, receipts, and the terminal opened from the Thread. A draft
+    Thread's `@` list shows the chosen base branch's files
+    (`GET /api/projects/{id}/files?base=<branch>`).
+    `GET /api/projects/{id}/branches` lists the local and remote branches,
+    most recently committed first.
+  - A Thread in a worktree cannot be branched from a turn yet.
 - **Names and titles**: the name is optional. Without one, the Task shows the
   title the provider gives the conversation (Copilot uses the first prompt),
   or "New task" until there is one. A model then titles the Task from its
@@ -1773,7 +1797,8 @@ received a prompt, the page says so and nothing is resent.
 
 Settings → Server → UAM and access → Shell access → Terminal, off by
 default, adds a terminal panel that runs a login
-shell in the Project's folder: your `$SHELL` if it is an absolute path to an
+shell in the Project's folder, or in the Thread's worktree when opened from a
+Thread in one: your `$SHELL` if it is an absolute path to an
 executable, otherwise `bash` or `sh`. The setting is kept in `sessions.json`
 as `terminal` and can also be changed with `PATCH /api/settings`
 `{"terminal": true}`. At most 8 terminals are open at once.

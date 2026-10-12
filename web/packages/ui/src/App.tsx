@@ -177,6 +177,9 @@ export default function App() {
   };
   // The terminal docked under the Task view (TerminalDock): the Project its shell started in, or null.
   const [terminalId, setTerminalId] = useState<string | null>(null);
+  // The worktree Thread whose folder the shell started in instead of the Project's, or null.
+  const [terminalTask, setTerminalTask] = useState<string | null>(null);
+  const nextTerminalTask = useRef<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -659,13 +662,21 @@ export default function App() {
   // The header's Terminal opens a closed terminal; an open one closes, or moves to the pressed Task's Project, through the panel, which confirms while its shell is connected.
   const terminalPanel = useRef<TerminalHandle>(null);
   const toggleTerminal = useCallback((projectId: string) => {
-    const to = terminalId === projectId ? null : state.projects.find((p) => p.id === projectId);
+    // A Thread in a worktree opens the shell in its worktree.
+    const pressed = state.sessions.find((s) => s.id === state.selectedId);
+    const task = pressed?.project_id === projectId && pressed.worktree ? pressed.id : null;
+    const to = terminalId === projectId && terminalTask === task ? null : state.projects.find((p) => p.id === projectId);
+    nextTerminalTask.current = task;
     // A panel still loading has no shell to confirm for.
     if (terminalId && terminalPanel.current && to !== undefined) terminalPanel.current.end(to);
-    else setTerminalId(to === null ? null : projectId);
-  }, [terminalId, state.projects]);
+    else {
+      setTerminalId(to === null ? null : projectId);
+      setTerminalTask(to === null ? null : task);
+    }
+  }, [terminalId, terminalTask, state.projects, state.sessions, state.selectedId]);
   const closeTerminal = useCallback((to: Project | null) => {
     setTerminalId(to?.id ?? null);
+    setTerminalTask(to ? nextTerminalTask.current : null);
     if (!to) document.getElementById('terminal-link')?.focus();
   }, []);
   const onSheet = useCallback((open: boolean, restoreFocus = true) => {
@@ -1450,7 +1461,7 @@ export default function App() {
                 {/* Settings, routines and a new Task do not wait on the stream. */}
                 <LoadingVeil show={loading && !settingsOpen && !mismatched && !routinesShown && !newTask} />
               </div>
-              {terminalProject && <TerminalDock key={terminalProject.id} project={terminalProject} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} />}
+              {terminalProject && <TerminalDock key={`${terminalProject.id}:${terminalTask ?? ''}`} project={terminalProject} thread={terminalTask ? { id: terminalTask, dir: state.sessions.find((s) => s.id === terminalTask)?.workdir ?? terminalProject.dir } : undefined} hidden={!taskPane} panel={terminalPanel} onClose={closeTerminal} />}
             </main>
 
             <NewTaskPalette
@@ -1587,7 +1598,7 @@ function EmptyPane({ leading, connection, children }: Readonly<{ leading: React.
  * the Task view gives it the height, nothing is covered. Its top edge drags that height. It stays
  * across Task switches, hides (its shell running) while another view fills the pane, and ends with Close, which ends the shell.
  */
-function TerminalDock({ project, hidden, panel, onClose }: Readonly<{ project: Project; hidden: boolean; panel: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
+function TerminalDock({ project, thread, hidden, panel, onClose }: Readonly<{ project: Project; thread?: { id: string; dir: string }; hidden: boolean; panel: Ref<TerminalHandle>; onClose: (to: Project | null) => void }>) {
   const { panelRef, handleProps } = useResizable('terminal-h', 320, 160, 'y');
   return (
     <section ref={panelRef} aria-label="Terminal" className={cn('relative flex h-[var(--panel-h,320px)] shrink-0 flex-col bg-canvas', hidden && 'hidden')}>
@@ -1595,7 +1606,7 @@ function TerminalDock({ project, hidden, panel, onClose }: Readonly<{ project: P
         <div className="fade-rule w-full" />
       </div>
       <Suspense fallback={null}>
-        <TerminalPanel ref={panel} project={project} onClose={onClose} />
+        <TerminalPanel ref={panel} project={project} thread={thread} onClose={onClose} />
       </Suspense>
     </section>
   );

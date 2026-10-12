@@ -498,9 +498,11 @@ func readBranch(ctx context.Context, dir string) (branch, noGit string) {
 
 // refreshBranches re-reads the branch of each Project in ids, or of every
 // Project when there are none, and publishes each Project whose branch, or
-// whether it has git views, changed. Unless force, a branch read within
-// branchTTL is kept. Git runs outside mu, for all Projects at once, so a
-// listing waits at most about branchTimeout however many Projects there are.
+// whether it has git views, changed; the Threads of those Projects get the
+// branch of their own folder, a worktree's included. Unless force, a branch
+// read within branchTTL is kept. Git runs outside mu, for all folders at
+// once, so a listing waits at most about branchTimeout however many there
+// are.
 func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string) {
 	m.branchMu.Lock()
 	defer m.branchMu.Unlock()
@@ -511,9 +513,16 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		}
 	}
 	dirs := map[string]string{}
+	folders := map[string]bool{}
 	for _, id := range ids {
 		if p := m.projects[id]; p != nil && (force || time.Since(m.branchAt[id]) >= branchTTL) {
 			dirs[id] = p.Dir
+			folders[p.Dir] = true
+		}
+	}
+	for _, s := range m.sessions {
+		if _, ok := dirs[s.projectID]; ok && !s.removed {
+			folders[s.workdir] = true
 		}
 	}
 	m.mu.Unlock()
@@ -521,16 +530,16 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 		branch string
 		noGit  string
 	}
-	branches := make(map[string]read, len(dirs))
+	branches := make(map[string]read, len(folders))
 	var (
 		wg sync.WaitGroup
 		mu sync.Mutex
 	)
-	for id, dir := range dirs {
+	for dir := range folders {
 		wg.Go(func() {
 			branch, noGit := readBranch(ctx, dir)
 			mu.Lock()
-			branches[id] = read{branch, noGit}
+			branches[dir] = read{branch, noGit}
 			mu.Unlock()
 		})
 	}
@@ -540,11 +549,12 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for id, r := range branches {
+	for id, dir := range dirs {
 		p := m.projects[id]
 		if p == nil {
 			continue // removed while git ran
 		}
+		r := branches[dir]
 		m.branchAt[id] = time.Now()
 		if p.Branch != r.branch || p.NoGit != r.noGit {
 			p.Branch, p.NoGit = r.branch, r.noGit
@@ -553,7 +563,16 @@ func (m *Manager) refreshBranches(ctx context.Context, force bool, ids ...string
 	}
 	// The unsaved work of the same Projects' repositories is read with
 	// their branches.
-	m.kickGitPendingLocked(m.pendingDirsLocked(slices.Collect(maps.Keys(branches))))
+	m.kickGitPendingLocked(m.pendingDirsLocked(slices.Collect(maps.Keys(dirs))))
+	for _, s := range m.sessions {
+		r, read := branches[s.workdir]
+		if _, refreshed := dirs[s.projectID]; !refreshed || !read || s.removed || s.branch == r.branch {
+			continue
+		}
+		before := m.summaryLocked(s)
+		s.branch = r.branch
+		m.changedLocked(s, before)
+	}
 }
 
 // kickBranchLocked re-reads a Project's branch in the background.

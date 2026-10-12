@@ -538,8 +538,24 @@ type WebState struct {
 	// StopReason says why the last turn was cancelled (owner, time_limit,
 	// credit_limit, remote or mcp); empty otherwise.
 	StopReason string `json:"stop_reason,omitempty"`
+	// Place is the branch or worktree the Thread was started in; nil for a
+	// Thread on its Project's current branch.
+	Place *WebPlace `json:"place,omitempty"`
 
 	unknown map[string]json.RawMessage
+}
+
+// WebPlace is where a Thread runs when it is not on its Project's current
+// branch: Mode "branch" made Branch in the Project's folder; Mode
+// "worktree" made Branch from Base in the worktree folder Worktree. Named is
+// set once the branch took the Thread's title, or was left as it was
+// because it had been pushed.
+type WebPlace struct {
+	Mode     string `json:"mode"`
+	Branch   string `json:"branch"`
+	Base     string `json:"base,omitempty"`
+	Worktree string `json:"worktree,omitempty"`
+	Named    bool   `json:"named,omitempty"`
 }
 
 // Update sets every field this version models to v's and keeps the fields a
@@ -584,6 +600,7 @@ var knownWebStateFields = map[string]struct{}{
 	"suggestions":         {},
 	"unseen_end":          {},
 	"stop_reason":         {},
+	"place":               {},
 	// Retired: the removed planner's mark on a lane Task (ADR 0007), the
 	// removed done-check settle's reviewed item and the removed done check's
 	// verdict. Known, so they drop on the next save.

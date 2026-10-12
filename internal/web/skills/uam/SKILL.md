@@ -15,7 +15,11 @@ and conventions below instead.
 - **Project**: a named working directory. A **Task** is one Copilot
   conversation running in its Project's directory. Several Tasks can work in
   the same directory at once, so the working tree can change under you: check
-  `git status` before you treat a change as yours.
+  `git status` before you treat a change as yours. The owner may instead
+  start a conversation on a new `uam/…` branch, or in its own git worktree
+  under `~/.uam/worktrees/`: then your working directory is that worktree,
+  other conversations do not share it, and uam renames the branch after the
+  conversation's title until it is pushed. Stay on that branch.
 - **Steer**: a message the owner sends while you work. It reaches you before
   your next step. A **queued** message waits until the turn ends.
 - **Safe / Assisted / Yolo**: the permission policy. In Safe each permission

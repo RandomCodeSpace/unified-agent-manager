@@ -51,14 +51,19 @@ type terminal struct {
 	cancel         context.CancelCauseFunc
 }
 
-// openTerminal reserves one of maxTerminals for a Project; closeTerminal
-// must follow.
-func (m *Manager) openTerminal(projectID string) (*terminal, error) {
+// openTerminal reserves one of maxTerminals for a Project, in the folder of
+// its Thread taskID when one is named (a worktree), else in the Project's;
+// closeTerminal must follow.
+func (m *Manager) openTerminal(projectID, taskID string) (*terminal, error) {
 	m.mu.Lock()
 	on, p := m.settings.Terminal, m.projects[projectID]
 	var dir string
 	if p != nil {
 		dir = p.Dir
+	}
+	s := m.sessions[taskID]
+	if s != nil && s.projectID == projectID {
+		dir = s.workdir
 	}
 	m.mu.Unlock()
 	switch {
@@ -66,6 +71,8 @@ func (m *Manager) openTerminal(projectID string) (*terminal, error) {
 		return nil, errTerminalOff
 	case p == nil:
 		return nil, errProjectNotFound
+	case taskID != "" && (s == nil || s.projectID != projectID):
+		return nil, newError(http.StatusNotFound, msgSessionNotFound)
 	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil, newError(http.StatusConflict, "the project directory %s no longer exists", dir)
@@ -114,7 +121,7 @@ func (s *Server) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "cross-origin request rejected")
 		return
 	}
-	t, err := s.m.openTerminal(r.PathValue("id"))
+	t, err := s.m.openTerminal(r.PathValue("id"), r.URL.Query().Get("task"))
 	if err != nil {
 		writeFailure(w, err)
 		return

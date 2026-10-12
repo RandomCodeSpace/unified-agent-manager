@@ -327,6 +327,13 @@ type SessionSummary struct {
 	ForkUserItemID string `json:"fork_user_item_id,omitempty"`
 	// Rewind is a native rewind that still holds the Task until reconciled.
 	Rewind RewindStatus `json:"rewind,omitzero"`
+	// Branch is the branch checked out in Workdir, as last read; omitted
+	// when HEAD is detached, Workdir is in no git work tree, or git cannot
+	// tell.
+	Branch string `json:"branch,omitempty"`
+	// Worktree is the git worktree the Thread was started in and the branch
+	// made for it; omitted for a Thread in its Project's folder.
+	Worktree WorktreeInfo `json:"worktree,omitzero"`
 	// Outcome is a one-line summary of the last completed turn: a short
 	// phrase from the Utility model, when one ran, then what the turn's tool
 	// calls show (files changed, tests, failed commands). Omitted while a
