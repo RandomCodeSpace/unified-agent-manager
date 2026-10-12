@@ -205,10 +205,8 @@ export function AlertDialog(props: Readonly<AlertDialogProps>) {
   const [wasOpen, setWasOpen] = useState(false);
   if (props.open !== wasOpen) {
     setWasOpen(props.open);
-    if (props.open) {
-      const phone = window.matchMedia('(width < 40rem)').matches;
-      setAnchor(props.anchor !== undefined ? (!phone && onScreen(props.anchor) ? props.anchor : null) : confirmAnchor());
-    }
+    if (props.open && props.anchor === undefined) setAnchor(confirmAnchor());
+    else if (props.open) setAnchor(!window.matchMedia('(width < 40rem)').matches && onScreen(props.anchor) ? props.anchor : null);
   }
   const onClosed = () => {
     setAnchor(undefined);

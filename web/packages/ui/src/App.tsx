@@ -1129,12 +1129,19 @@ export default function App() {
       });
     }
   }, []);
+  /** Another machine's Settle or Archive: the same confirmation, its forced request run against that machine. */
+  const remoteAway = useCallback((m: Machine, id: string, kind: UnsavedTarget['kind']) => askUnsaved(
+    id,
+    pendingWork(m.state.sessions.find((s) => s.id === id)),
+    () => m.client.stage(id, kind),
+    (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => m.client.stage(id, kind, { force: true }), `${kind} the task`) }),
+    () => m.client.changes(id, 'workspace'),
+  ), [askUnsaved, runRemote]);
   const go = federation?.go;
   /** The row actions of each machine not on screen: the same verbs, run against that machine's own client. */
   const machineActions = useMemo(() => new Map((machines ?? []).filter((m) => !m.active).map((m): [string, TaskActions] => {
     const c = m.client;
     const run = (id: string, op: () => Promise<unknown>, verb: string) => void runRemote(m, id, op, verb).catch(() => {});
-    const away = (id: string, kind: UnsavedTarget['kind']) => () => askUnsaved(id, pendingWork(m.state.sessions.find((s) => s.id === id)), () => c.stage(id, kind), (refused) => ({ kind, ...refused, force: () => runRemote(m, id, () => c.stage(id, kind, { force: true }), `${kind} the task`) }), () => c.changes(id, 'workspace'));
     const open = (id: string) => go?.(m.id, `${HASH_PREFIX}${encodeURIComponent(id)}`);
     return [m.id, {
       select: open,
@@ -1147,7 +1154,7 @@ export default function App() {
         if (!current || current.name === name) return;
         await runRemote(m, id, () => c.rename(id, name), 'rename the task').catch(() => {});
       },
-      settle: (id) => run(id, away(id, 'settle'), 'settle the task'),
+      settle: (id) => run(id, () => remoteAway(m, id, 'settle'), 'settle the task'),
       reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the task'),
       unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
         await c.stage(id, 'unarchive');
@@ -1155,7 +1162,7 @@ export default function App() {
       }, 'unarchive the task') : undefined,
       archive: (id) => {
         const s = m.state.sessions.find((x) => x.id === id);
-        if (s && pendingWork(s)) run(id, away(id, 'archive'), 'archive the task');
+        if (s && pendingWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the task');
         else openTaskDialog({ kind: 'archive', id, owner: m.id });
       },
       remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
@@ -1164,7 +1171,7 @@ export default function App() {
       runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the task again'),
       exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the task'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, askUnsaved]);
+  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, remoteAway]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1265,7 +1272,7 @@ export default function App() {
     if (dialogMachine) {
       const c = dialogMachine.client;
       try {
-        if (kind === 'archive') await runRemote(dialogMachine, id, () => askUnsaved(id, null, () => c.stage(id, 'archive'), (refused) => ({ kind, ...refused, force: () => runRemote(dialogMachine, id, () => c.stage(id, 'archive', { force: true }), 'archive the task') }), () => c.changes(id, 'workspace')), 'archive the task');
+        if (kind === 'archive') await runRemote(dialogMachine, id, () => remoteAway(dialogMachine, id, 'archive'), 'archive the task');
         else if (kind === 'close') await runRemote(dialogMachine, id, () => c.close(id), 'close the conversation');
         else {
           await runRemote(dialogMachine, id, () => c.deleteSession(id), 'delete the task');
