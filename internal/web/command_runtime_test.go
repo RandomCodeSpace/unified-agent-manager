@@ -145,6 +145,16 @@ func TestCommandRuntimeAliasesPermissionBoundaryAndBusy(t *testing.T) {
 	}
 }
 
+// /rename with a name renames the Thread through uam and says so.
+func TestCommandRuntimeRenameNamesTheThread(t *testing.T) {
+	m, prov, _, sum, _, _ := commandManager(t)
+	prov.SetCommands([]agentapi.Command{{Name: "rename"}}, nil)
+	renamed, err := m.Command(sum.ID, CommandRequest{RequestID: mustUUID(t), Name: "rename", Arguments: "Parser fix"})
+	if err != nil || renamed.CommandResult == nil || renamed.CommandResult.Text != "Thread renamed" || detail(t, m, sum.ID).Name != "Parser fix" {
+		t.Fatalf("rename=%+v %v", renamed, err)
+	}
+}
+
 func TestCommandRuntimeUncertainOutcomeIsNeverReinvoked(t *testing.T) {
 	m, _, _, sum, _, wrapped := commandManager(t)
 	var calls atomic.Int32

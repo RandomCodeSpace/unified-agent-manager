@@ -60,6 +60,18 @@ func TestItemDiffClosedTaskUsesExactOwnRecordWithoutResume(t *testing.T) {
 		t.Fatalf("invalid path=%v", err)
 	}
 }
+
+// A provider that records no native edit detail refuses the read in words.
+func TestItemDiffWithoutNativeDetail(t *testing.T) {
+	prov := agenttest.NewProvider("fake", allCaps)
+	m := startManager(t, openTestStore(t), prov)
+	sum, _ := createSession(t, m, prov)
+	_, err := m.ItemDiff(context.Background(), sum.ID, "", "tool", "event", "/work/file")
+	if statusOf(err) != 409 || !strings.Contains(err.Error(), "this thread has no recorded native edit detail") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestItemDiffDoesNotReturnAfterTaskBindingChanges(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	p := &nativeEditProvider{Provider: agenttest.NewProvider("fake", allCaps), read: func(_ context.Context, req agentapi.ItemDiffRequest) (agentapi.ItemDiff, error) {

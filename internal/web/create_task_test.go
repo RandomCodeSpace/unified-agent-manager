@@ -13,7 +13,36 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
+
+// A host tool call made for another Thread is refused before anything runs.
+func TestHostToolCallsOfAnotherThreadAreRefused(t *testing.T) {
+	m := &Manager{}
+	call := agentapi.HostToolCall{TaskID: "other", CallID: "c"}
+	if _, err := m.startSpawn(t.Context(), "mine", call); err == nil || err.Error() != "the call does not belong to this thread" {
+		t.Fatalf("uam_create_task: %v", err)
+	}
+	if _, err := m.drawChart(t.Context(), "mine", call); err == nil || err.Error() != "the call does not belong to this thread" {
+		t.Fatalf("uam_chart: %v", err)
+	}
+}
+
+// The stored records refuse a Thread past its creator's cap, naming both.
+func TestSpawnRoomRefusesPastTheCap(t *testing.T) {
+	cfg := &store.Config{Sessions: map[string]store.SessionRecord{}}
+	rec := store.SessionRecord{Web: &store.WebState{SpawnedBy: "parent"}}
+	for i := range maxSpawns {
+		if err := spawnRoom(cfg, rec); err != nil {
+			t.Fatalf("spawn %d refused: %v", i, err)
+		}
+		cfg.Sessions[fmt.Sprint(i)] = rec
+	}
+	want := fmt.Sprintf("thread parent has already started %d threads", maxSpawns)
+	if err := spawnRoom(cfg, rec); err == nil || err.Error() != want {
+		t.Fatalf("past the cap = %v", err)
+	}
+}
 
 // spawnCall calls uam_create_task from conv's Task as an adapter would.
 func spawnCall(t *testing.T, conv *agenttest.Conversation, call agentapi.HostToolCall) agentapi.HostToolResult {

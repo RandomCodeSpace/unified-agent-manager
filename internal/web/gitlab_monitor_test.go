@@ -634,3 +634,13 @@ func TestGitLabSettled(t *testing.T) {
 		t.Error("no pipeline settled")
 	}
 }
+
+// A Thread whose repository has no GitLab origin says so instead of a pipeline.
+func TestGitLabStateWithoutAGitLabOrigin(t *testing.T) {
+	f := newGitLabWorkflowFixture(t)
+	gitIn(t, f.repo, "remote", "remove", "origin")
+	state, err := f.m.gitLabState(t.Context(), f.source.ID, false)
+	if err != nil || state.Message != "This Thread has no GitLab origin." {
+		t.Fatalf("state = %+v, %v", state, err)
+	}
+}

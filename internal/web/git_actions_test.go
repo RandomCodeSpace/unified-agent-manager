@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -214,7 +215,25 @@ func TestGitWritesWaitForTasksMidTurn(t *testing.T) {
 			t.Fatalf("%s while busy = %v", route, reply)
 		}
 	}
-	setSession(g.m, other.ID, func(s *webSession) { s.base = StateIdle })
+	// More busy Threads are counted after the first name.
+	var more []string
+	for i, want := range []string{
+		"“Write docs” and 1 other thread are still working in this repository. Wait for them to finish.",
+		"“Write docs” and 2 other threads are still working in this repository. Wait for them to finish.",
+	} {
+		s, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: other.ProjectID, Name: fmt.Sprintf("Zeta %d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		more = append(more, s.ID)
+		setSession(g.m, s.ID, func(s *webSession) { s.base = StateWorking })
+		if st := g.state(); st.Busy != want {
+			t.Fatalf("busy with %d more = %q", i+1, st.Busy)
+		}
+	}
+	for _, id := range append(more, other.ID) {
+		setSession(g.m, id, func(s *webSession) { s.base = StateIdle })
+	}
 	if st := g.state(); st.Busy != "" {
 		t.Fatalf("busy after the turn = %q", st.Busy)
 	}

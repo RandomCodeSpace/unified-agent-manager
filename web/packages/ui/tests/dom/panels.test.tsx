@@ -67,6 +67,20 @@ describe('changes', () => {
     expect(stored?.comments).toEqual([]);
   });
 
+  test('comments the Thread refuses keep a note saying so', async () => {
+    localStorage.setItem('uam.review.t1', JSON.stringify({ viewed: {}, comments: [{ id: 'c1', path: '.github/workflows/ci.yml', line: 1, side: 'new', code: 'x', body: 'Please fix' }] }));
+    const prompt = vi.spyOn(api, 'prompt').mockResolvedValueOnce({ status: 'rejected' } as never);
+    try {
+      const { user } = await openTask('t1');
+      await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
+      const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+      await user.click(await sheet.findByRole('button', { name: 'Send 1 comment to the thread' }));
+      expect(await sheet.findByText('The thread did not take the comments.')).toBeTruthy();
+    } finally {
+      prompt.mockRestore();
+    }
+  });
+
   test('native Task changes remain reachable in a project without Git', async () => {
     const original = mockData.seed;
     const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
