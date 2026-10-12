@@ -60,8 +60,8 @@ export function gitMock(host: GitHost) {
     if (idle) return undefined;
     const running = host.tasks().filter((t) => t.project_id === projectId && LIVE.includes(t.state));
     if (running.length === 0) return undefined;
-    const name = running[0].name || running[0].title || 'A task';
-    return running.length === 1 ? `“${name}” is still working in this repository. Wait for it to finish.` : `“${name}” and ${running.length - 1} other ${running.length === 2 ? 'task' : 'tasks'} are still working in this repository. Wait for them to finish.`;
+    const name = running[0].name || running[0].title || 'A thread';
+    return running.length === 1 ? `“${name}” is still working in this repository. Wait for it to finish.` : `“${name}” and ${running.length - 1} other ${running.length === 2 ? 'thread' : 'threads'} are still working in this repository. Wait for them to finish.`;
   };
 
   const state = (t: SessionSummary): GitState => {

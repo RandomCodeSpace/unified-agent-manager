@@ -83,11 +83,11 @@ function NewTaskButton({ actions, id, side }: Readonly<{ actions: WorkspaceActio
       side={side}
       label={
         <>
-          New task<span className="block text-on-primary/70">Alt+N</span>
+          New thread<span className="block text-on-primary/70">Alt+N</span>
         </>
       }
     >
-      <Button id={id} size="icon" aria-label="New task" aria-keyshortcuts="Alt+N" className="text-muted" onClick={actions.onNewTask}>
+      <Button id={id} size="icon" aria-label="New thread" aria-keyshortcuts="Alt+N" className="text-muted" onClick={actions.onNewTask}>
         <SquarePen />
       </Button>
     </Tip>
@@ -317,7 +317,7 @@ function shelfTip(s: SessionSummary, project: Project) {
   const at = (label: string, iso?: string) => iso && <span className="block">{label} <time dateTime={iso}>{dateTime(iso)}</time></span>;
   return (
     <>
-      <span className="block font-medium">{taskName(s) || 'New task'}</span>
+      <span className="block font-medium">{taskName(s) || 'New thread'}</span>
       <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
       <span className="block text-on-primary/70 [overflow-wrap:anywhere]">{project.dir}</span>
       <span className="mt-1 block text-on-primary/70">
@@ -342,7 +342,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
   const quietDays = Math.floor((Date.now() - Date.parse(s.updated_at)) / 86_400_000);
   return (
     <>
-      <span className="block font-medium">{taskName(s) || 'New task'}</span>
+      <span className="block font-medium">{taskName(s) || 'New thread'}</span>
       <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
       <span className="mt-1 block text-on-primary/70">
         <span className="block">{status}</span>
@@ -456,7 +456,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
         // Not a button while the input is inside: interactive content cannot nest in one.
         <div className={rowClass}>
           {!compact && <span className="flex w-full min-w-0 items-center gap-1.5 text-meta text-muted"><ProjectBadge badge={project.badge} /><span className="truncate text-caption">{project.name}</span></span>}
-          <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Task name" />
+          <InlineName initial={s.name} onSave={(v) => void a.rename(s.id, v)} onCancel={a.cancelRename} className="h-7 w-full" label="Thread name" />
         </div>
       ) : (
         <Tip label={<>{machine && !unavailable && !oneInstance && <span className="block text-on-primary/70">{machine.label}</span>}{unavailable && <span className="block text-warning">{machine.short} is unavailable: linked to a different Copilot account.</span>}{compact ? shelfTip(s, project) : rowTip(s, project, status.text, diff)}</>} side="right">
@@ -501,7 +501,7 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
             size="sm"
             tabIndex={-1}
             data-settle=""
-            aria-label={`Settle ${taskName(s) || 'New task'}`}
+            aria-label={`Settle ${taskName(s) || 'New thread'}`}
             className={cn(
               'pointer-events-none absolute top-1.5 right-1.5 h-6 min-w-16 justify-end gap-1 px-1 text-caption font-normal text-muted opacity-0 after:inset-0 group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:after:inset-0 [&_svg]:size-3.5',
               selected ? 'bg-tint-selected' : 'bg-raised',
@@ -761,7 +761,7 @@ export const Sidebar = memo(function Sidebar({
   let body: ReactNode;
   let shelvesBody: ReactNode = null;
   if (!loaded) {
-    body = <Skeleton label="Loading tasks…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />;
+    body = <Skeleton label="Loading threads…" rows={5} className="gap-1" rowClassName="h-14 w-full rounded-md" />;
   } else if (!anyProject) {
     body = (
       <div className="flex flex-col items-start gap-3 px-2 pt-6">
@@ -775,7 +775,7 @@ export const Sidebar = memo(function Sidebar({
   } else if (searching) {
     body = (
       <>
-        <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No matching tasks' : `${rows.length} matching ${rows.length === 1 ? 'task' : 'tasks'}`}</p>
+        <p className="px-2 py-2 text-caption text-muted" role="status">{rows.length === 0 ? 'No matching threads' : `${rows.length} matching ${rows.length === 1 ? 'thread' : 'threads'}`}</p>
         {rows.length === 0 && (
           <div className="flex flex-col items-start gap-2 px-2">
             <p className="text-caption text-muted">{`Searches names, projects, folders, branches${chosen ? ` in ${chosen.name}` : ''}.`}</p>
@@ -790,10 +790,10 @@ export const Sidebar = memo(function Sidebar({
   } else {
     body = (
       <>
-        <ul aria-label="Unsettled tasks" className="flex flex-col gap-1 animate-fade-in">
+        <ul aria-label="Unsettled threads" className="flex flex-col gap-1 animate-fade-in">
           {unsettled.map((r) => renderRow(r))}
         </ul>
-        {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active tasks.</p>}
+        {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active threads.</p>}
       </>
     );
     // Settled sits at the foot, outside the Task list's scroller, so opening it never pushes the Tasks off screen.
@@ -805,13 +805,13 @@ export const Sidebar = memo(function Sidebar({
   }
 
   return (
-    <nav aria-label="Tasks" className="flex h-full min-h-0 flex-col bg-rail text-body">
+    <nav aria-label="Threads" className="flex h-full min-h-0 flex-col bg-rail text-body">
       <header className="flex h-header shrink-0 items-center gap-0.5 px-2 max-sm:h-auto max-sm:flex-wrap max-sm:py-1">
         <SidebarToggle id="sidebar-hide" wordmark open={actions.sidebarOpen} count={count} onToggle={actions.onToggleSidebar} className={machines ? "max-sm:[&>span>span]:hidden" : undefined} />
         {/* Search uses the spare header width, or its own full row on a phone. */}
         <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 text-muted max-sm:order-last max-sm:basis-full">
           <Search aria-hidden="true" className="size-3.5 shrink-0" />
-          <input ref={search} type="search" aria-label="Search tasks" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
+          <input ref={search} type="search" aria-label="Search threads" placeholder="Search" value={query} onChange={(e) => setQuery(e.target.value)} className="h-8 min-w-0 w-full bg-transparent text-ui outline-none placeholder:text-muted pointer-coarse:h-11" />
         </label>
         {machines && <InstanceSwitcher place="sidebar" live={{ sessions, hasNews }} settingsOpen={actions.settingsOpen} onConnect={() => actions.onSettings('connections')} />}
         {anyProject && <FilterButton projects={projects} actions={actions} />}

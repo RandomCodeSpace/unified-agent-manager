@@ -94,7 +94,7 @@ func (m *Manager) AskAside(ctx context.Context, id, question, typed string) (*As
 	m.mu.Lock()
 	err = s.readOnlyLocked()
 	if err == nil && (m.closed || s.removed || s.conv == nil || s.state() == StateStarting) {
-		err = newError(http.StatusConflict, "ask aside needs an already-open Task")
+		err = newError(http.StatusConflict, "ask aside needs an already-open Thread")
 	}
 	m.mu.Unlock()
 	if err == nil {
@@ -108,7 +108,7 @@ func (m *Manager) AskAside(ctx context.Context, id, question, typed string) (*As
 	asker, ok := s.conv.(agentapi.AsideAsker)
 	switch {
 	case m.closed || s.removed || m.sessions[id] != s || s.conv == nil || s.state() == StateStarting || s.stage != StageActive:
-		err = newError(http.StatusConflict, "the Task's conversation is no longer open")
+		err = newError(http.StatusConflict, "the Thread's conversation is no longer open")
 	case !ok:
 		err = newError(http.StatusConflict, "this provider does not support aside questions")
 	case s.asking:
@@ -135,7 +135,7 @@ func (m *Manager) AskAside(ctx context.Context, id, question, typed string) (*As
 	m.mu.Unlock()
 	switch {
 	case !current, errors.Is(err, agentapi.ErrClosed):
-		return nil, newError(http.StatusConflict, "the Task or its model changed while the aside was answered; ask again")
+		return nil, newError(http.StatusConflict, "the Thread or its model changed while the aside was answered; ask again")
 	case errors.Is(err, agentapi.ErrUnsupported):
 		return nil, newError(http.StatusConflict, "this runtime does not support aside questions")
 	case errors.Is(err, context.DeadlineExceeded):
@@ -191,7 +191,7 @@ func (m *Manager) keepAside(s *webSession, a *Aside) error {
 	m.mu.Unlock()
 	if removed {
 		removeUploads(dir)
-		return errors.New("the Task was deleted")
+		return errors.New("the Thread was deleted")
 	}
 	return err
 }

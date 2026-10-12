@@ -13,8 +13,8 @@ describe('changes', () => {
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
     // The Task scope's description is its segment's tip, not a line of its own.
-    expect(sheet.getByTitle(/^Files this task's agent edited/).closest('[role="radio"]')).toBeTruthy();
-    expect(sheet.queryByText(/^Files this task's agent edited/)).toBeNull();
+    expect(sheet.getByTitle(/^Files this thread's agent edited/).closest('[role="radio"]')).toBeTruthy();
+    expect(sheet.queryByText(/^Files this thread's agent edited/)).toBeNull();
     expect(sheet.getByText('CI workflow')).toBeTruthy();
     await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
     expect(await sheet.findByText(/^All uncommitted project changes vs HEAD/)).toBeTruthy();
@@ -55,7 +55,7 @@ describe('changes', () => {
     const { user } = await openTask('t1');
     await user.click(await screen.findByRole('button', { name: /^Open changes/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
-    const send = await sheet.findByRole('button', { name: 'Send 1 comment to the task' });
+    const send = await sheet.findByRole('button', { name: 'Send 1 comment to the thread' });
     const box = (await sheet.findAllByRole('checkbox', { name: /^Viewed / }))[0] as HTMLInputElement;
     fireEvent.click(send);
     fireEvent.click(box); // while the send is in flight
@@ -374,7 +374,7 @@ describe('the Task header', () => {
       expect(within(header).queryByRole('button', { name: 'Files' })).toBeNull();
       expect(within(header).getByRole('button', { name: /^Open changes/ }).textContent).not.toContain('Changes');
       // Go to file lives under the composer, so the header neither shows nor folds it.
-      const menu = await openMenu(user, 'Task actions');
+      const menu = await openMenu(user, 'Thread actions');
       expect(menu.queryByRole('menuitem', { name: /Go to file/ })).toBeNull();
     } finally {
       width.mockRestore();

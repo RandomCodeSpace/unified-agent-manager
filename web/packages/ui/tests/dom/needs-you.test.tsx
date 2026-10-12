@@ -33,8 +33,8 @@ describe('the Task list', () => {
     const { user } = renderApp();
     const side = await sidebar();
     expect(side.queryAllByRole('heading', { level: 2 })).toHaveLength(0);
-    expect(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
-    const you = within(side.getByRole('list', { name: 'Unsettled tasks' }));
+    expect(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).toHaveLength(20);
+    const you = within(side.getByRole('list', { name: 'Unsettled threads' }));
     expect(you.getByRole('button', { name: /Error.*Bump GitHub Actions pins/ })).toBeTruthy();
     expect(await tipOf(user, you.getByRole('button', { name: /Input.*Tidy zsh startup/ }))).toContain('Wants your OK to run a shell command outside the project');
     expect(await tipOf(user, you.getByRole('button', { name: /Review.*Doctor: add terminal line/ }))).toContain('Ready for review: Explained how a dumb terminal');
@@ -74,7 +74,7 @@ describe('the Task list', () => {
   test('a Task row keeps project and state above title, muted branch and time', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const rows = side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]');
+    const rows = side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]');
     expect(rows.length).toBeGreaterThan(2);
     for (const el of rows) {
       const button = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
@@ -115,7 +115,7 @@ describe('the Task list', () => {
     await user.click(row('t17').getByRole('button', { name: /Set up the dependency lockfile/ }));
     await waitFor(() => expect(header().textContent).toBe('Set up the dependency lockfile'));
     {
-      const rows = side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]');
+      const rows = side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]');
       expect(rows.length).toBeGreaterThan(0);
       for (const el of rows) {
         const card = el.querySelector<HTMLButtonElement>('button[data-nav]')!;
@@ -132,7 +132,7 @@ describe('the Task list', () => {
   test('Alt+J and Alt+K walk the Tasks that need you, in list order, and wrap; a key that types in a field is left alone', async () => {
     renderApp();
     const side = await sidebar();
-    const ids = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]'))
+    const ids = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]'))
       .filter((el) => within(el as HTMLElement).queryByText('Input'))
       .map((el) => el.getAttribute('data-task-row'));
     expect(ids.length).toBeGreaterThan(2);
@@ -145,7 +145,7 @@ describe('the Task list', () => {
     press('KeyK');
     await waitFor(() => expect(window.location.hash).toBe(`#task=${ids.at(-1)}`));
     // macOS Option+J types "∆" in a text field: that stays the field's.
-    press('KeyJ', side.getByRole('searchbox', { name: 'Search tasks' }), '∆');
+    press('KeyJ', side.getByRole('searchbox', { name: 'Search threads' }), '∆');
     await new Promise((r) => setTimeout(r, 50));
     expect(window.location.hash).toBe(`#task=${ids.at(-1)}`);
   });
@@ -153,7 +153,7 @@ describe('the Task list', () => {
   test('Alt+J, Alt+K and Alt+N still work while a tooltip is open', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const first = Array.from(side.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'))!.getAttribute('data-task-row');
+    const first = Array.from(side.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll('[data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'))!.getAttribute('data-task-row');
     // Base UI opens a tip on hover or keyboard focus; it is no menu or dialog.
     await user.hover(side.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
@@ -162,13 +162,13 @@ describe('the Task list', () => {
     await user.hover(side.getByRole('button', { name: 'Add project' }));
     await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
     fireEvent.keyDown(document.body, { code: 'KeyN', key: 'n', altKey: true });
-    expect(await screen.findByRole('dialog', { name: /New task/ })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: /New thread/ })).toBeTruthy();
   });
 
   test('Alt+J pressed the moment the Needs you rows appear opens the first of them', async () => {
     renderApp();
     // Pressed from the commit that adds the rows, before React's passive effects run.
-    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled tasks"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'));
+    const firstRow = () => Array.from(document.querySelectorAll('[aria-label="Unsettled threads"] [data-task-row]')).find((el) => within(el as HTMLElement).queryByText('Input'));
     let first: string | null = null;
     const seen = new MutationObserver(() => {
       const row = first === null && firstRow();

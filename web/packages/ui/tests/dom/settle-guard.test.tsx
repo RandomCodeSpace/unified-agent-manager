@@ -34,7 +34,7 @@ describe('settling or archiving with unsaved git work', () => {
     expect(guard.getByText('1 not pushed')).toBeTruthy();
     await waitFor(() => expect(within(guard.getByRole('list', { name: 'Not committed' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual([...files.slice(0, 3), `and ${files.length - 3} more`]));
     // Nothing moved yet.
-    expect(document.querySelector('ul[aria-label="Unsettled tasks"] [data-task-row="t3"] [data-settle]')).not.toBeNull();
+    expect(document.querySelector('ul[aria-label="Unsettled threads"] [data-task-row="t3"] [data-settle]')).not.toBeNull();
     await user.click(guard.getByRole('button', { name: 'Settle anyway' }));
     await waitFor(() => expect(side.queryByRole('button', { name: 'Settle Doctor: add terminal line' })).toBeNull());
     expect(stage.mock.calls).toEqual([['t3', 'settle', { force: true }]]);
@@ -54,7 +54,7 @@ describe('settling or archiving with unsaved git work', () => {
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     expect(stage).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('ul[aria-label="Unsettled tasks"] [data-task-row="t10"]')).not.toBeNull();
+    expect(document.querySelector('ul[aria-label="Unsettled threads"] [data-task-row="t10"]')).not.toBeNull();
   });
 
   test('Cancel keeps the Thread active; a clean Thread settles with no question', async () => {
@@ -76,12 +76,12 @@ describe('settling or archiving with unsaved git work', () => {
   test('Archive from the Thread menu asks the same way, and Open Changes shows All changes', async () => {
     const { user } = renderApp('#task=t3');
     await screen.findByRole('region', { name: 'Conversation' });
-    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
     const menu = within(await screen.findByRole('menu'));
     expect(menu.getByRole('menuitem', { name: 'Settle…' })).toBeTruthy();
     await user.click(menu.getByRole('menuitem', { name: 'Archive' }));
     const guard = within(await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' }));
-    expect(screen.queryByRole('alertdialog', { name: 'Archive this task?' })).toBeNull();
+    expect(screen.queryByRole('alertdialog', { name: 'Archive this thread?' })).toBeNull();
     await user.click(guard.getByRole('button', { name: 'Open Changes' }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     await waitFor(() => expect(sheet.getByRole('radio', { name: /^All changes/ }).getAttribute('aria-checked')).toBe('true'));
@@ -94,9 +94,9 @@ describe('settling or archiving with unsaved git work', () => {
     vi.spyOn(api, 'stage').mockImplementationOnce(async () => {
       throw new ApiError(409, 'This Thread\'s folder has unsaved git work.', { code: 'unsaved_work', git_pending: { uncommitted: 0, unpushed: 2 }, refs: [] });
     }).mockImplementation(real);
-    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
     await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
-    await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this task?' })).getByRole('button', { name: 'Archive task' }));
+    await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this thread?' })).getByRole('button', { name: 'Archive thread' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Archive with unsaved work?' });
     // The asking button was inside the closing dialog: the Thread's row stands for it.
     expectAnchoredTo(dialog, 't10');
@@ -109,7 +109,7 @@ describe('settling or archiving with unsaved git work', () => {
     const side = await sidebar();
     vi.spyOn(api, 'stage').mockRejectedValueOnce(new ApiError(409, 'stop the turn first'));
     await user.click(side.getByRole('button', { name: 'Settle Bump dependencies' }));
-    expect(await screen.findByText(/Could not settle the task: stop the turn first/)).toBeTruthy();
+    expect(await screen.findByText(/Could not settle the thread: stop the turn first/)).toBeTruthy();
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });

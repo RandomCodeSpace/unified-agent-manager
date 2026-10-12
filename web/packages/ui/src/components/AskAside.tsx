@@ -17,8 +17,8 @@ import { HelpTip } from './ui/tooltip';
 
 /** `/btw <question>`: a question to the open conversation, answered by its current model, kept with the Task and never sent to the agent. A bare `/btw` shows the Task's asides. */
 export const ASIDE_COMMAND = 'btw';
-const CLOSED_REASON = "Ask aside needs the Task's conversation open. Send a prompt to open it first.";
-const ASIDE: Command = { name: ASIDE_COMMAND, description: 'Ask aside, kept out of the Task', kind: 'command', input_hint: 'question', allow_during_turn: true };
+const CLOSED_REASON = "Ask aside needs the Thread's conversation open. Send a prompt to open it first.";
+const ASIDE: Command = { name: ASIDE_COMMAND, description: 'Ask aside, kept out of the Thread', kind: 'command', input_hint: 'question', allow_during_turn: true };
 const listed = new WeakMap<readonly Command[], { open: Command[]; closed: Command[] }>();
 
 /**
@@ -275,7 +275,7 @@ export function TaskAsideReader({ asides, at, onClose, onClosed, finalFocus }: R
   const rows = [...asides.kept.map(rowOf), ...(asides.local ? [localRow(asides.local)] : [])];
   const facts = `${count(rows.length)}, oldest first. ${asides.read === 'failed' ? NOT_READ : 'Answered from this conversation with its current model, without tools.'}`;
   const empty = <p className="py-2 text-ui text-muted">{asides.read === 'reading' || asides.read === 'no' ? 'Reading the asides…' : 'No asides yet. Type /btw and a question to ask one.'}</p>;
-  return <AsideReader at={at} title="Asides in this Task" facts={facts} rows={rows} empty={empty} newest onClose={onClose} onClosed={onClosed} finalFocus={finalFocus} />;
+  return <AsideReader at={at} title="Asides in this Thread" facts={facts} rows={rows} empty={empty} newest onClose={onClose} onClosed={onClosed} finalFocus={finalFocus} />;
 }
 
 /**

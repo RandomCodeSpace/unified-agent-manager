@@ -120,7 +120,7 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
       <section className="flex flex-col items-start gap-3 rounded-lg bg-raised p-5 shadow-raised">
         <h2 className="text-title text-ink">No routines yet</h2>
         <p className="max-w-3xl text-ui text-body">
-          Start a task on a schedule, for example weekdays at {clockText('09:00')} to check dependencies.
+          Start a thread on a schedule, for example weekdays at {clockText('09:00')} to check dependencies.
         </p>
         <Button variant="primary" onClick={() => edit()}>
           <Plus />
@@ -195,7 +195,7 @@ export function RoutinesView({ leading, projects, scope, onScope, sessions, onOp
       <AlertDialog
         {...removal.props}
         title={`Delete ${removal.target?.name ?? 'this routine'}?`}
-        description="It stops running and its run history goes with it. The tasks its runs started stay."
+        description="It stops running and its run history goes with it. The threads its runs started stay."
         confirmLabel="Delete routine"
         busy={removing}
         onConfirm={() => void remove()}
@@ -325,7 +325,7 @@ function RunLine({ run, sessions, onOpenTask, time = true }: Readonly<{ run: Rou
       {time && <span className="text-muted">{runTime(run.at)}</span>}
       {task && (
         <Button variant="subtle" size="sm" className="text-accent" onClick={() => onOpenTask(task.id)}>
-          Open task
+          Open thread
         </Button>
       )}
     </span>
@@ -398,7 +398,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
         target && !pickProject && (
           <span className="flex min-w-0 items-center gap-1.5">
             <ProjectBadge badge={target.badge} />
-            <span className="truncate">Each run starts a task in {target.name}.</span>
+            <span className="truncate">Each run starts a thread in {target.name}.</span>
           </span>
         )
       }
@@ -419,7 +419,7 @@ function RoutineDialog({ open, projects, project, routine, onClose, onClosed, on
             <Select id="routine-project" value={projectId} items={projects.map((p) => ({ value: p.id, label: p.name }))} onValueChange={setProjectId} />
           </Field>
         )}
-        <Field id="routine-name" label="Name" hint="Each run's task is named after it, with the date.">
+        <Field id="routine-name" label="Name" hint="Each run's thread is named after it, with the date.">
           <Input id="routine-name" ref={first} required aria-describedby="routine-name-hint" placeholder="Dependency check" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field id="routine-prompt" label="What the agent should do">

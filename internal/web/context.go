@@ -25,7 +25,7 @@ func (m *Manager) ContextBreakdown(ctx context.Context, id string, attribution b
 	m.mu.Lock()
 	err = s.readOnlyLocked()
 	if err == nil && (m.closed || s.removed || s.conv == nil || s.state() == StateStarting) {
-		err = newError(http.StatusConflict, "context breakdown needs an already-open Task")
+		err = newError(http.StatusConflict, "context breakdown needs an already-open Thread")
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -37,7 +37,7 @@ func (m *Manager) ContextBreakdown(ctx context.Context, id string, attribution b
 	m.mu.Lock()
 	if m.closed || s.removed || s.conv == nil || s.state() == StateStarting || s.stage != StageActive {
 		m.mu.Unlock()
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Task's context is no longer available")
+		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread's context is no longer available")
 	}
 	conv, gen, convID := s.conv, s.gen, s.convID
 	model, effort, tier := s.model, s.effort, s.contextSize
@@ -58,13 +58,13 @@ func (m *Manager) ContextBreakdown(ctx context.Context, id string, attribution b
 	current := !m.closed && !s.removed && s.conv == conv && s.gen == gen && s.convID == convID && s.model == model && s.effort == effort && s.contextSize == tier && s.stage == StageActive
 	m.mu.Unlock()
 	if !current {
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Task or model selection changed; reopen context breakdown")
+		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread or model selection changed; reopen context breakdown")
 	}
 	if errors.Is(err, agentapi.ErrUnsupported) {
 		return ContextBreakdown{}, newError(http.StatusConflict, "this runtime does not support context breakdown")
 	}
 	if errors.Is(err, agentapi.ErrClosed) {
-		return ContextBreakdown{}, newError(http.StatusConflict, "the Task's context is no longer available")
+		return ContextBreakdown{}, newError(http.StatusConflict, "the Thread's context is no longer available")
 	}
 	if err != nil {
 		return ContextBreakdown{}, newError(http.StatusBadGateway, "the provider could not read context breakdown")

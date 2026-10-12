@@ -38,8 +38,8 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
   const hasProjects = projectCount > 0;
   const hasTasks = own.some((m) => m.sessions.some((session) => m.projects.has(session.project_id)));
   let introduction = '';
-  if (!hasTasks) introduction = projectCount === 1 ? 'Start your first task in this project.' : 'Choose a project and start your first task.';
-  else if (!recent.length) introduction = 'Start a new task.';
+  if (!hasTasks) introduction = projectCount === 1 ? 'Start your first thread in this project.' : 'Choose a project and start your first thread.';
+  else if (!recent.length) introduction = 'Start a new thread.';
   // "Across all instances" only while the recent Tasks come from more than one.
   const instances = new Set(recent.map(({ machine }) => machine.id)).size;
 
@@ -53,19 +53,19 @@ export function Home({ projects, sessions, hasNews, newTaskReady = true, onNewTa
             {hasProjects ? 'What are you working on?' : 'Start with a project'}
           </h1>
           {(!hasProjects || introduction) && <p className="mt-3 text-chat leading-relaxed text-muted">
-            {hasProjects ? introduction : <>Choose a folder on the machine running UAM.<br />Then start your first task.</>}
+            {hasProjects ? introduction : <>Choose a folder on the machine running UAM.<br />Then start your first thread.</>}
           </p>}
           <Button variant="primary" size="lg" className="mt-6 h-10 gap-2 px-4" disabled={hasProjects && !newTaskReady} onClick={hasProjects ? onNewTask : onAddProject}>
             {hasProjects ? <SquarePen aria-hidden="true" /> : <FolderPlus aria-hidden="true" />}
-            {hasProjects ? 'New task' : 'Add project'}
+            {hasProjects ? 'New thread' : 'Add project'}
           </Button>
           {!hasProjects && <p className="mt-4 text-caption text-muted">Already have a repository? Choose its folder.</p>}
         </div>
 
         {recent.length > 0 && (
-          <section aria-label="Recent tasks" className="mt-11 min-[960px]:mt-14">
+          <section aria-label="Recent threads" className="mt-11 min-[960px]:mt-14">
             <div className="mb-3.5 flex items-center justify-between px-1 min-[960px]:px-2.5">
-              <h2 className="text-title font-semibold text-ink">Recent tasks</h2>
+              <h2 className="text-title font-semibold text-ink">Recent threads</h2>
               <p className="text-caption text-muted">{scope ? `On ${scope}` : machines && instances > 1 ? 'Across all instances' : 'Across all projects'}</p>
             </div>
             <ul>

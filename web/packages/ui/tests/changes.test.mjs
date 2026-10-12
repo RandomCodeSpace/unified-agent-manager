@@ -271,7 +271,7 @@ test('a pending Task listing suppresses timer, visibility and manual reads, but 
     clock.visibility('hidden'); clock.visibility('visible'); await sheet.flush();
     find(await sheet.flush(), node => node.props?.['aria-label'] === 'Refresh').props.onClick();
     await sheet.flush();
-    assert.equal(lists, 0, 'all refresh triggers wait for the pending Task default list');
+    assert.equal(lists, 0, 'all refresh triggers wait for the pending Thread default list');
     assert.equal(files, 0);
     pending = false;
     props = { ...props, changes: failed ? null : listing, changesError: failed ? 'initial read failed' : null };
@@ -314,7 +314,7 @@ test('a newer Task listing replaces a pending panel list or detail without an ol
     badge = newer; props = { ...props, changes: newer }; sheet.update(props); await sheet.flush();
     held.resolve(phase === 'list' ? first : { path: 'first.txt', before: 'base', after: 'obsolete' });
     const tree = await sheet.flush();
-    assert.equal(badge, newer, 'an obsolete panel completion must not overwrite the newer Task badge');
+    assert.equal(badge, newer, 'an obsolete panel completion must not overwrite the newer Thread badge');
     assert.equal(oldSignal.aborted, true);
     assert.ok(filePaths.includes('newer.txt'), 'the newer listing must get its selected detail');
     const child = find(tree, node => node.type === FileView);
@@ -347,7 +347,7 @@ test('accepted list counts survive a failed detail refresh while the prior diff 
   assert.match(await rendered(), /previous-content/);
   fail = true; clock.advance(5000);
   const failed = await rendered();
-  assert.equal(badge.files.length, 2, 'a successful listing updates the Task count even if detail fails');
+  assert.equal(badge.files.length, 2, 'a successful listing updates the Thread count even if detail fails');
   assert.match(failed, /previous-content/, 'a background detail error must not hide the last same-path diff');
   assert.match(failed, /detail refresh failed/);
   fail = false; content = 'replacement-content'; clock.advance(5000);
@@ -383,7 +383,7 @@ test('viewed marks clear when the file changes, and comments go out as one queue
   let tree = await sheet.flush();
   const rows = () => { const out = []; (function walk(n) { if (!n || typeof n !== 'object') return; if (Array.isArray(n)) { n.forEach(walk); return; } if (n.type?.name === 'FileRow') out.push(n); (n.props?.children ?? []).forEach?.(walk); })(tree); return out; };
   assert.deepEqual([...rows().map(r => r.props.file.path)], ['.github/workflows/ci.yml', 'a.go'], 'risky files first');
-  assert.deepEqual([...find(tree, node => node.type === 'Segmented').props.items.map(item => item.label.props.children.join(''))], ['This task · 2', 'Last turn · 1', 'All changes · 3']);
+  assert.deepEqual([...find(tree, node => node.type === 'Segmented').props.items.map(item => item.label.props.children.join(''))], ['This thread · 2', 'Last turn · 1', 'All changes · 3']);
   rows()[1].props.onViewed(true);
   tree = await sheet.flush();
   assert.equal(rows()[1].props.viewed, 'viewed');

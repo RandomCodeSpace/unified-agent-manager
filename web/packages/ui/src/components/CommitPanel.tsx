@@ -52,7 +52,7 @@ export function leftOutNote(files: GitFile[], selected: readonly string[]): stri
   if (out.length === 0) return null;
   const n = out.length;
   const files_ = n === 1 ? 'file' : 'files';
-  return out.every((f) => f.other_task) ? `${n} ${files_} from other tasks ${n === 1 ? 'is' : 'are'} not included` : `${n} other changed ${files_} ${n === 1 ? 'is' : 'are'} not included`;
+  return out.every((f) => f.other_task) ? `${n} ${files_} from other threads ${n === 1 ? 'is' : 'are'} not included` : `${n} other changed ${files_} ${n === 1 ? 'is' : 'are'} not included`;
 }
 
 /** The first line's length, in characters as people count them. */
@@ -242,7 +242,7 @@ export function CommitPanel({
             {generated && (
               <span className="inline-flex items-center gap-1 rounded-full bg-info-wash px-2 py-0.5 text-meta text-info">
                 <Sparkles aria-hidden="true" className="size-3" />
-                {mineOnly ? 'Generated from this task’s changes' : 'Generated from the chosen files'}
+                {mineOnly ? 'Generated from this thread’s changes' : 'Generated from the chosen files'}
               </span>
             )}
             <Button size="sm" variant="subtle" className="ml-auto text-accent" disabled={running !== null || selected.length === 0} loading={running === 'draft'} onClick={generate}>
@@ -276,13 +276,13 @@ export function CommitPanel({
                   onChange={(e) => setPicked(e.target.checked ? [...selected, f.path] : selected.filter((p) => p !== f.path))}
                 />
                 <span className="min-w-0 truncate font-mono text-code-sm [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
-                {f.other_task && <span className="shrink-0 text-meta text-muted">another task</span>}
+                {f.other_task && <span className="shrink-0 text-meta text-muted">another thread</span>}
                 {f.status === 'deleted' && <span className="shrink-0 text-meta text-error">deleted</span>}
               </label>
             ))}
             </div>
           </fieldset>
-          {!git.task_files_known && <p className="text-caption text-muted">This task’s earlier edits are not all known, so check the files to include yourself.</p>}
+          {!git.task_files_known && <p className="text-caption text-muted">This thread’s earlier edits are not all known, so check the files to include yourself.</p>}
           {leftOut && (
             <p className="flex items-center gap-1 text-caption text-muted">
               <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />

@@ -77,12 +77,12 @@ test('closed and inactive Tasks never read or resume, while unsupported services
   const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   const view = draw({ ...session, open: false });
   await openUsage();
-  expect(await screen.findByText('Native usage metrics are unavailable for a closed or inactive Task.')).toBeTruthy();
+  expect(await screen.findByText('Native usage metrics are unavailable for a closed or inactive Thread.')).toBeTruthy();
   expect(screen.getByText('9.0 AI units')).toBeTruthy();
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, stage: 'settled' });
   await openUsage();
-  await screen.findByText('Native usage metrics are unavailable for a closed or inactive Task.');
+  await screen.findByText('Native usage metrics are unavailable for a closed or inactive Thread.');
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, capabilities: { ...session.capabilities, usage_metrics: undefined } });
   // Without native metrics the Usage tab keeps the recorded report alone.

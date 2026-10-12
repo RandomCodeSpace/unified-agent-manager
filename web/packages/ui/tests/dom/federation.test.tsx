@@ -46,7 +46,7 @@ function federated(hash = '', records = [record('b', 'Workstation B'), record('c
 }
 
 async function taskRows() {
-  return within(await screen.findByRole('navigation', { name: 'Tasks' }));
+  return within(await screen.findByRole('navigation', { name: 'Threads' }));
 }
 
 test('combines colliding task IDs and sends a selected task reply only to its owning instance', async () => {
@@ -231,7 +231,7 @@ test('Settings of a selected peer read and write only that peer and name it in t
   await user.click(screen.getByRole('button', { name: 'Appearance & alerts', exact: true }));
   expect(screen.getByText('Saved in this browser only.')).toBeTruthy();
   // The groups saved on the instance name it once, in the rail.
-  expect(screen.getByRole('group', { name: 'Tasks · on Workstation B' })).toBeTruthy();
+  expect(screen.getByRole('group', { name: 'Threads · on Workstation B' })).toBeTruthy();
   expect(screen.queryByRole('group', { name: /^This browser · on/ })).toBeNull();
 });
 
@@ -240,11 +240,11 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
   const rows = await taskRows();
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: owner ? 'Workstation B' : 'Main Server' }));
   await screen.findByRole('region', { name: 'Conversation' });
-  await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+  await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Settle…' }));
   await user.click(within(await screen.findByRole('alertdialog', { name: 'Settle with unsaved work?' })).getByRole('button', { name: 'Settle anyway' }));
   await screen.findByText('Settled.');
-  await user.click(screen.getByRole('button', { name: 'Task actions' }));
+  await user.click(screen.getByRole('button', { name: 'Thread actions' }));
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Reopen' }));
   await waitFor(() => expect(screen.queryByText(/^Settled\. Reopen/)).toBeNull());
   // Known unsaved work asks without a request: the forced settle and the reopen.
@@ -254,7 +254,7 @@ test.each(['', 'b'])('settle and reopen remain responsive with connected navigat
 test('Unarchive from a remote search result restores only its owner and opens it as Finished', async () => {
   const { user, calls, owners } = federated();
   const rows = await taskRows();
-  await user.type(rows.getByRole('searchbox', { name: 'Search tasks' }), 'Node 24');
+  await user.type(rows.getByRole('searchbox', { name: 'Search threads' }), 'Node 24');
   const task = await rows.findByRole('button', { name: /Pin GitHub Actions to Node 24/, description: 'Workstation B' });
   fireEvent.contextMenu(task);
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Unarchive' }));
@@ -270,7 +270,7 @@ test('Unarchive is hidden for a connected instance that does not advertise it', 
   const peer = { ...record('b', 'Older server'), capabilities: capabilities.filter(c => c !== 'unarchive-v1') };
   const { user, calls } = federated('', [peer]);
   const rows = await taskRows();
-  await user.type(rows.getByRole('searchbox', { name: 'Search tasks' }), 'Node 24');
+  await user.type(rows.getByRole('searchbox', { name: 'Search threads' }), 'Node 24');
   fireEvent.contextMenu(await rows.findByRole('button', { name: /Pin GitHub Actions to Node 24/, description: 'Older server' }));
   const menu = within(await screen.findByRole('menu'));
   expect(menu.queryByRole('menuitem', { name: 'Unarchive' })).toBeNull();
@@ -288,7 +288,7 @@ test('editing an unrelated connection preserves the selected owner client and op
   const before = streams.filter(entry => entry.owner === 'b' && entry.stream.readyState !== 2);
   expect(before.length).toBeGreaterThan(0);
   replaceRegistry([records[0], { ...records[1], enabled: false, generation: 2 }]);
-  await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Tasks' })).queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation C' })).toBeNull());
+  await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Threads' })).queryByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation C' })).toBeNull());
   expect(before.every(entry => entry.stream.readyState !== 2)).toBe(true);
   expect(streams.filter(entry => entry.owner === 'b' && entry.stream.readyState !== 2)).toEqual(before);
 });
@@ -306,7 +306,7 @@ test('home auth loss clears connected sources even while an invalid route has un
   await screen.findByText('The connected instance no longer matches this link.');
   expireHome();
   await screen.findByRole('heading', { name: 'Sign in to UAM' });
-  expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
+  expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
   await waitFor(() => expect(streams.every(entry => entry.stream.readyState === 2)).toBe(true));
 });
 
@@ -344,8 +344,8 @@ test('task navigation uses machine text initials and removes disabled sources', 
   expect(badge.textContent).toBe(remoteBadge.textContent);
   await user.keyboard('{Escape}');
   expect(document.activeElement).toBe(filter);
-  expect(screen.queryByRole('combobox', { name: 'Task instance filter' })).toBeNull();
-  expect(screen.queryByRole('combobox', { name: 'Task project filter' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Thread instance filter' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Thread project filter' })).toBeNull();
   expect(screen.queryByText(/Counts may be incomplete/)).toBeNull();
   expect(screen.queryByText(/^Workstation B: /)).toBeNull();
   replaceRegistry([{ ...records[0], enabled: false, generation: 2 }]);
@@ -416,7 +416,7 @@ test('Alt+J and Alt+K walk the Tasks that need you across machines, in the list�
   federated('', [record('b', 'Workstation B')]);
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
-  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled tasks' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText('Input')).map((el) => el.dataset.taskRow!);
+  const keys = Array.from(rows.getByRole('list', { name: 'Unsettled threads' }).querySelectorAll<HTMLElement>('[data-task-row]')).filter((el) => within(el).queryByText('Input')).map((el) => el.dataset.taskRow!);
   expect(keys.length).toBeGreaterThan(2);
   // Both machines hold the same Tasks, so the list alternates: this instance's row, then Workstation B's.
   expect(keys[0]).not.toMatch(/^uam:/);
@@ -572,12 +572,12 @@ test('the New task palette lists every machine and another machine’s Project o
   const rows = await taskRows();
   await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
   await user.click(document.getElementById('new-task')!);
-  const palette = within(await screen.findByRole('dialog', { name: 'New task' }));
+  const palette = within(await screen.findByRole('dialog', { name: 'New thread' }));
   const b = within(palette.getByRole('group', { name: 'Workstation B' }));
   expect(palette.getByRole('group', { name: 'Main Server' })).toBeTruthy();
   await user.click(b.getAllByRole('option')[0]);
   await waitFor(() => expect(window.location.hash).toContain('connection=b'));
-  expect(await screen.findByRole('heading', { name: 'New task', level: 1 })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'New thread', level: 1 })).toBeTruthy();
   expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
 });
 
@@ -622,7 +622,7 @@ test('Archive and a clean Settle on another machine’s rows run on that machine
   const other = await nav.findByRole('button', { name: /Draft release notes/, description: 'Workstation B' });
   fireEvent.contextMenu(other);
   await user.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Archive' }));
-  await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this task?' })).getByRole('button', { name: 'Archive task' }));
+  await user.click(within(await screen.findByRole('alertdialog', { name: 'Archive this thread?' })).getByRole('button', { name: 'Archive thread' }));
   await waitFor(() => expect(remote()).toEqual(['b settle', 'b archive', 'b archive']));
 });
 
@@ -687,7 +687,7 @@ test('switching the instance in Settings keeps the section and shows the known s
   await chooseInstance(user, /^Workstation B/);
   await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
   expect(screen.getByRole('button', { name: 'Agents', exact: true }).getAttribute('aria-current')).toBe('page');
-  expect(screen.queryByText('Loading tasks…')).toBeNull();
+  expect(screen.queryByText('Loading threads…')).toBeNull();
   expect(screen.queryByRole('main', { busy: true })).toBeNull();
   for (const machine of ['Main Server', 'Workstation B', 'Workstation C']) expect((await taskRows()).getByRole('button', { name: /Doctor: add terminal line/, description: machine })).toBeTruthy();
 });

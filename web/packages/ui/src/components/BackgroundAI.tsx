@@ -32,11 +32,11 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
         <span className="shrink-0 text-ui font-medium text-ink">{purposeLabel(call.purpose)}</span>
         <span className="flex min-w-0 flex-1">
           {task ? (
-            <Button size="sm" variant="subtle" className="h-auto max-w-full min-w-0 px-1 py-0 text-ui text-body pointer-coarse:after:-inset-y-3.5" title="Open the task" onClick={() => openTask(task.id)}>
+            <Button size="sm" variant="subtle" className="h-auto max-w-full min-w-0 px-1 py-0 text-ui text-body pointer-coarse:after:-inset-y-3.5" title="Open the thread" onClick={() => openTask(task.id)}>
               <span className="truncate">{taskName(task)}</span>
             </Button>
           ) : (
-            <span className="min-w-0 truncate text-ui text-muted">{project?.name ?? (call.task_id ? 'A removed task' : '')}</span>
+            <span className="min-w-0 truncate text-ui text-muted">{project?.name ?? (call.task_id ? 'A removed thread' : '')}</span>
           )}
         </span>
         {outcome && (
@@ -163,8 +163,8 @@ export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLi
         {today.paused && (
           <Note tone="warn" role="status" className="max-w-3xl">
             {today.limit === 0
-              ? 'Background AI is off. New tasks keep their first message as the title, and subagent results keep their own report. Set a daily limit above 0 to turn it on.'
-              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new tasks keep their first message as the title, and subagent results keep their own report. Raise the limit to resume now.`}
+              ? 'Background AI is off. New threads keep their first message as the title, and subagent results keep their own report. Set a daily limit above 0 to turn it on.'
+              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new threads keep their first message as the title, and subagent results keep their own report. Raise the limit to resume now.`}
           </Note>
         )}
       </div>

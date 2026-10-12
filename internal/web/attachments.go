@@ -229,7 +229,7 @@ func (m *Manager) upload(id, name string, data []byte, selectedModel *string) (a
 }
 
 // errTaskRemoved reports a Task deleted while one of its files was stored.
-var errTaskRemoved = errors.New("task removed")
+var errTaskRemoved = errors.New("thread removed")
 
 // storeUpload writes an upload or tool image and records it on the Task. A
 // Task deleted meanwhile keeps nothing: the file goes with it, and the error
@@ -445,7 +445,7 @@ func (m *Manager) checkUploadsForModelLocked(s *webSession, ids []string, model 
 		}
 		u := s.uploads[id]
 		if u == nil || u.Tool {
-			return nil, newError(http.StatusBadRequest, "attachment %q is not an upload of this task", clipRunes(displaytext.Sanitize(id), maxDetailRunes))
+			return nil, newError(http.StatusBadRequest, "attachment %q is not an upload of this thread", clipRunes(displaytext.Sanitize(id), maxDetailRunes))
 		}
 		out = append(out, u)
 	}
@@ -636,13 +636,13 @@ func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string)
 	m.mu.Unlock()
 	switch {
 	case removed:
-		return nil, "the task was deleted"
+		return nil, "the thread was deleted"
 	case stored != nil:
 		return stored, ""
 	case len(img.Data) == 0:
 		return nil, "the provider did not record its bytes"
 	case count >= maxToolImages:
-		return nil, fmt.Sprintf("a task keeps at most %d images", maxToolImages)
+		return nil, fmt.Sprintf("a thread keeps at most %d images", maxToolImages)
 	}
 	id, err := newUUID()
 	if err != nil {
@@ -654,7 +654,7 @@ func (m *Manager) keepImage(s *webSession, img agentapi.Image) (*upload, string)
 	}
 	if err := m.storeUpload(s, u, img.Data); err != nil {
 		if errors.Is(err, errTaskRemoved) {
-			return nil, "the task was deleted"
+			return nil, "the thread was deleted"
 		}
 		log.Warn("store tool image failed", "session", s.id, "error", err)
 		return nil, "could not be stored"

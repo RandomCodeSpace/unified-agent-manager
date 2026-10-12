@@ -106,7 +106,7 @@ test('archive cursors are known by their prefix, and a failing cache reads from 
 
 test('a 409 under an archive cursor forgets the task; one under a retained cursor does not', async () => {
   await historyPage('t2', '', 'a.NQ', 'older', 'e1', async () => page([], 'a.NA', { archive: true }));
-  const conflict = Object.assign(new Error('history changed; reload the task'), { status: 409 });
+  const conflict = Object.assign(new Error('history changed; reload the thread'), { status: 409 });
   await assert.rejects(historyPage('t2', '', 'NQ', 'older', 'e1', async () => { throw conflict; }), conflict);
   assert.equal('t2' in marks(), true);
   await assert.rejects(historyPage('t2', '', 'a.NA', 'older', 'e1', async () => { throw conflict; }), conflict);

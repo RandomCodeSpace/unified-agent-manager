@@ -17,7 +17,7 @@ type modelSelection struct{ model, effort, contextSize string }
 // errModelNotKept marks an agent change after which the Task's model could
 // not be restored: the conversation then ends, so no turn runs on a model
 // the Task did not choose.
-var errModelNotKept = errors.New("the task's model could not be kept")
+var errModelNotKept = errors.New("the thread's model could not be kept")
 
 // selectAgent selects the custom agent id, the stable ID native discovery
 // reports. A failure is ErrAgentUnavailable: the caller never goes on with

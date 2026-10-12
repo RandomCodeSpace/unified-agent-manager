@@ -117,8 +117,8 @@ Session cookies are derived from the token, so the restart signs out every
 browser.
 
 Protected API requests need a session cookie. The signed file-view route instead
-checks a task-scoped file key. Over HTTPS the key also needs a companion cookie
-that the view route sets in the same browser (HttpOnly, limited to that Task's
+checks a thread-scoped file key. Over HTTPS the key also needs a companion cookie
+that the view route sets in the same browser (HttpOnly, limited to that Thread's
 file-key path), so a file view works only in the browser that opened it; over
 plain HTTP, where browsers refuse such a cookie, the key alone is checked. Keys
 and companion cookies last 12 hours. Cookies and file keys are bound to the `Host`
@@ -155,7 +155,7 @@ are logged only at debug level (`UAM_DEBUG=1`).
 ## GitHub Copilot sign-in
 
 Copilot has one sign-in per server: the one the `copilot` CLI uses for the
-service user. Every Task on the server, and the `copilot` command run as the
+service user. Every Thread on the server, and the `copilot` command run as the
 same user, uses it. Settings → **GitHub Copilot** shows it, read again each
 time Settings opens or **Check again** is chosen. A running Copilot reads its
 sign-in only when it starts, so while it says it is signed out and no Copilot
@@ -168,7 +168,7 @@ restarting UAM.
   or the GitHub CLI (`gh`) sign-in.
 - **Signed out**, with Copilot's own reason. While Copilot is signed out a
   banner over the main pane says "GitHub Copilot is signed out. Sign in in
-  Settings." with **Open Settings**; creating a Task or sending to one is
+  Settings." with **Open Settings**; creating a Thread or sending to one is
   refused with that sentence (code `provider_signed_out`, HTTP 409) instead of
   the runtime's error, and a turn that fails because the sign-in was lost says
   so in place of that error. `GET /api/meta` lists the provider as
@@ -184,14 +184,14 @@ Settings checks every 2 seconds and shows the sign-in once GitHub approves it;
 **Cancel** stops it. A code not approved within about 15 minutes expires and
 the sign-in fails with **Try again**. A sign-in started in another tab or
 before a reload shows its code again when Settings opens. It signs in the
-whole server: every Task uses the account. Copilot stores the sign-in in the
+whole server: every Thread uses the account. Copilot stores the sign-in in the
 system keychain. On a server with none, GitHub's first approval cannot be
 stored: UAM then turns on Copilot's `storeTokenPlaintext` setting in its
 `settings.json` (in `COPILOT_HOME`, else `~/.copilot`; its other settings are
 kept) and shows a second code with a notice. Approving it stores the sign-in
 in Copilot's own config file, which only the service user can read; later
 sign-ins need one approval. Signing in restarts Copilot, so it is refused while
-Copilot Tasks have open conversations; close them first. While signed in,
+Copilot Threads have open conversations; close them first. While signed in,
 **Use another token** replaces the sign-in.
 
 **Or sign in with a token.** Paste a fine-grained personal access token with the
@@ -225,10 +225,10 @@ release archive for this platform checked against the release's
 the SDK refuses is not installed: Settings says it needs a newer UAM and does
 not offer it again until the service restarts. Otherwise UAM runs
 `npm install -g @github/copilot@<version>` or replaces the binary in place
-while Copilot keeps running: Tasks working or waiting are not interrupted,
+while Copilot keeps running: Threads working or waiting are not interrupted,
 and new conversations keep using the running version. Only starting Copilot
-waits while the files are replaced. As soon as no Copilot Task is working or
-waiting, UAM closes the idle Copilot conversations (their Tasks keep their
+waits while the files are replaced. As soon as no Copilot Thread is working or
+waiting, UAM closes the idle Copilot conversations (their Threads keep their
 state and reopen when next viewed or sent to) and stops Copilot, and the next
 use starts the new version; until then Settings shows the version still
 running.
@@ -247,7 +247,7 @@ signed out it says which GitHub account to use. A sign-in as another account, by
 server is linked to Copilot account <login>. Sign in with that account.") and
 removed again. If Copilot is signed in as another account some other way (an
 environment token, `copilot login` or `gh` on the server), Copilot is
-unavailable and every Task, send and routine run that needs it is refused
+unavailable and every Thread, send and routine run that needs it is refused
 until that is fixed: the app shows "Copilot is signed in to another account"
 with **Open Settings** in place of every view but Settings, and lifts
 it once the account is fixed. **Unlink** in Settings, after a confirmation,
@@ -268,7 +268,7 @@ before. Each read of `GET /api/connections` reads every enabled connection's
 `/api/providers/copilot/account` and marks one linked to another account than
 this instance, or signed in as another account than its link, with `"status":
 "account_mismatch"` and a `"reason"`. Through such a connection this instance
-refuses creating, prompting or resuming Tasks, routine runs, drafts and
+refuses creating, prompting or resuming Threads, routine runs, drafts and
 the terminal with 409 `account_not_linked` and the reason (reading the
 account again at most every 15 seconds); its reads, Settings and account
 stay open so the account can be fixed there.
@@ -294,7 +294,7 @@ the page and the code, `signed_in` the account, `failed` the reason (a
 sign-in as another account than the linked one fails with the same text as the
 token refusal). `POST`
 answers 409 while an environment token takes precedence and 400 while Copilot
-Tasks have open conversations. The provider's `capabilities.device_sign_in` in
+Threads have open conversations. The provider's `capabilities.device_sign_in` in
 `GET /api/meta` says whether it is offered. `GET /api/providers/copilot/cli`
 returns `{"installed"?, "running"?, "latest"?, "update_available",
 "manual"?, "incompatible"?, "checked_at"?, "check_error"?, "state" ("idle",
@@ -335,27 +335,27 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   no other Project uses while one is left. UAM picks it when you add the
   Project and keeps it when you rename it; Projects from before badges
   existed get one when the service starts.
-- **Tasks**: "New task" (the pen in the sidebar, or Alt+N) opens a list of
+- **Threads**: "New thread" (the pen in the sidebar, or Alt+N) opens a list of
   your Projects to pick from: type to search by name or directory, use the
   arrow keys and Enter, click one, or press Alt+1 to Alt+9 for the first
   nine. The Project the sidebar is filtered to starts highlighted, otherwise
   the one you worked in last; with a single Project the pen skips the list.
-  Picking one opens a new, empty Task pane on the defaults for new tasks
-  from Settings and puts the cursor in the composer. The Task
+  Picking one opens a new, empty Thread pane on the defaults for new threads
+  from Settings and puts the cursor in the composer. The Thread
   itself, and its Copilot conversation, is created only when you send the
   first message: until then nothing appears in the sidebar, and leaving the
-  pane (another Task, Settings, a reload) discards it, keeping what you typed
-  for the next New task in that Project (attachments are not kept). The
+  pane (another Thread, Settings, a reload) discards it, keeping what you typed
+  for the next New thread in that Project (attachments are not kept). The
   pickers in the composer's toolbar change the model, effort, context size
-  and mode the Task starts with; `@` lists the Project's files, while `/`
-  commands and `$` skills are available after the first message. If the Task
-  is created but the message cannot be sent, the Task opens with the message
+  and mode the Thread starts with; `@` lists the Project's files, while `/`
+  commands and `$` skills are available after the first message. If the Thread
+  is created but the message cannot be sent, the Thread opens with the message
   back in its composer and the reason above it. Until the defaults are set
-  in Settings, a Task starts with `auto`, default effort, default context
+  in Settings, a Thread starts with `auto`, default effort, default context
   size and safe mode. A default model the provider no longer offers is
   replaced by `auto` (or the first model), with default effort and context
-  size, so New task does not fail on a stale default. A provider that is not installed or
-  not compatible is reported with the reason. The Task runs in the Project's
+  size, so New thread does not fail on a stale default. A provider that is not installed or
+  not compatible is reported with the reason. The Thread runs in the Project's
   directory.
 - **Branches and worktrees**: a new Thread runs on the Project's current
   branch, on a new branch, or in a new git worktree. The choice is made with
@@ -398,33 +398,33 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - Below 10% free space the Worktrees page in the Settings rail and the
     Settings button carry a warning dot, and the branch chip under the
     composer says how much is free (`disk` in `GET /api/meta`).
-- **Names and titles**: the name is optional. Without one, the Task shows the
+- **Names and titles**: the name is optional. Without one, the Thread shows the
   title the provider gives the conversation (Copilot uses the first prompt),
-  or "New task" until there is one. A model then titles the Task from its
+  or "New thread" until there is one. A model then titles the Thread from its
   first message a few seconds later (see **Utility model** below); a first
   message of only images or files is titled from its images, or once the
   agent replied.
   Clearing a name shows the title again.
-  Rename from the Task's row menu (hover "…" or right-click), the header
+  Rename from the Thread's row menu (hover "…" or right-click), the header
   menu, F2 on a row, or a double-click on the name; the name is edited in
-  place. Renaming a Task does not rename the conversation at the provider.
+  place. Renaming a Thread does not rename the conversation at the provider.
 - **Models**: the model list shows the models your Copilot account can
   select; the default is the provider's own choice. You can switch the model
   between turns, not while a turn runs; the new model applies from the next
   turn. The list is refreshed at most every five minutes, so a changed
   subscription shows up without restarting the service.
 - **Model visibility**: Settings → Models hides models from the composer,
-  the defaults for new tasks and title-model choices. Existing Tasks and defaults keep
+  the defaults for new threads and title-model choices. Existing Threads and defaults keep
   their current model and show "hidden in Settings". New models are visible
   automatically. Hiding is a display preference, not an access rule.
 - **Composer layout**: the toolbar groups Model, Tools, Effort/Context and Safe/Yolo.
   **Tools** (the context ring and "Tools") opens one panel with a tab for
-  each tool the Task has: Context (see **Context usage**), Usage (the AI
-  units recorded for the Task and Copilot's own usage metrics for the
+  each tool the Thread has: Context (see **Context usage**), Usage (the AI
+  units recorded for the Thread and Copilot's own usage metrics for the
   conversation) and Agent (see **Agent**; shown only when the Project has a
-  custom agent or the Task names one). The open panel reads its counts again
-  whenever the Task reports new usage or context. The arrow keys move
-  between tabs and Esc closes it. A Task with none of them has no Tools
+  custom agent or the Thread names one). The open panel reads its counts again
+  whenever the Thread reports new usage or context. The arrow keys move
+  between tabs and Esc closes it. A Thread with none of them has no Tools
   button.
   Copilot's usage metrics accumulate over the conversation, its subagents
   included, and are separate from account usage and from the recorded AI
@@ -454,12 +454,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   fit. Type `$`
   at the start of a message to pick a skill; `/` still lists commands and
   skills, and `@` references files.
-- **Copilot configuration**: Copilot Tasks load what the terminal CLI loads
+- **Copilot configuration**: Copilot Threads load what the terminal CLI loads
   for the directory: your and the project's skills, the project's custom
   agents, custom instructions, hooks in `.github/hooks/`, and your MCP
   servers; the built-in GitHub MCP server only while Settings → MCP servers
   turns it on (see MCP servers). Hooks run their commands without asking,
-  as they do in the terminal. Every Task also gets uam's built-in `uam`
+  as they do in the terminal. Every Thread also gets uam's built-in `uam`
   skill, which tells the agent what uam is and how its replies and files
   show here, and the built-in `uam-design` skill, which gives design
   defaults for web and UI work such as prototypes. `uam-design` is a fallback:
@@ -469,12 +469,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   start. uam also appends a system instruction asking
   the agent to put results in its reply, since tool calls are folded, to
   load the `uam` skill before it shows files, diagrams or charts, starts
-  another Task or starts subagents, to give a question's options as separate
+  another Thread or starts subagents, to give a question's options as separate
   choices, with the recommended option first and marked "(Recommended)", and
   to write commit
   messages and pull or merge requests without a `Co-authored-by` trailer or
   any AI attribution unless you ask for one. Copilot's own co-author trailer
-  is turned off for Tasks.
+  is turned off for Threads.
   Settings → Agents, Skills, Hooks and Instructions show each file as a card,
   grouped by source (Copilot's reported source, else the scope, or a skill's
   folder) with a count per group, and each card names the file and its
@@ -499,16 +499,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   other definitions outside the file editor show read-only metadata. Discovery
   failures or limits are reported while managed files and disabled-file recovery
   remain available. Older runtimes without discovery keep the existing file view.
-- **Agent**: a Task runs as Copilot's default agent unless you pick one of
+- **Agent**: a Thread runs as Copilot's default agent unless you pick one of
   the Project's user-invocable custom agents on the Agent tab of the
-  composer's Tools panel (new Tasks too). The choice belongs to that Task only; there is no global default.
-  It changes only while the Task is quiet (no turn, subagent, background
+  composer's Tools panel (new Threads too). The choice belongs to that Thread only; there is no global default.
+  It changes only while the Thread is quiet (no turn, subagent, background
   task, pending request or queued prompt), and uam selects it again on every
   resume and after a configuration reload before anything is sent. If the
-  agent no longer exists, the Task fails to open with that reason instead of
-  running as the default agent; pick another agent or Default. The Task's
+  agent no longer exists, the Thread fails to open with that reason instead of
+  running as the default agent; pick another agent or Default. The Thread's
   model, effort and context size are kept even when the agent names its own:
-  uam switches back after every agent selection, and a Task whose selection
+  uam switches back after every agent selection, and a Thread whose selection
   cannot be restored stops rather than run on the agent's model. An agent
   whose tool list leaves out uam's tools runs without them.
   The Agent tab also lists, under "Skills · N loaded", every skill the
@@ -528,7 +528,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 - **Context size**: choose a size offered by the model, where available.
   The sizes are Copilot's prompt budgets. Long context may cost more. A
   change applies between turns; switching to a model without the selected
-  size resets it to Default. Per-Task context size is one of the exceptions
+  size resets it to Default. Per-Thread context size is one of the exceptions
   to the shared provider feature rules (usage and credits and import also use capabilities) and
   requires the provider's capability. Copilot is still the only registered
   provider.
@@ -536,13 +536,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   as a share of the active prompt budget. Open Tools (its Context tab, or
   `/context`) for token counts, the reported cached share and, where Copilot
   reports it, the breakdown by source. The counts are for the model named
-  under them; an Auto Task uses its resolved model as an approximation.
+  under them; an Auto Thread uses its resolved model as an approximation.
   Free space and the reserved buffer under Capacity are capacity, not
   occupied tokens, and the output and compaction reservations can overlap.
   A short mark on the ring, and a line
   on the Context tab ("Compacts at 80% (218K tokens)"), show where Copilot starts
   compacting the conversation: the threshold it opened with, reported as
-  `compact_threshold` on the Task summary while it is open (a change in
+  `compact_threshold` on the Thread summary while it is open (a change in
   Settings reaches it when it reopens), else the setting. Before a report, the track is
   empty and the Context tab says usage is unavailable. Effort and context size share one menu.
   The meter is live only: reopening a conversation, restarting the service
@@ -551,13 +551,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   updates the meter.
 - **Ask aside (`/btw`)**: type `/btw` and a question (it is the first entry
   in the `/` list) to ask the open conversation something on the side. The
-  Task's current model answers from the conversation so far, without tools.
+  Thread's current model answers from the conversation so far, without tools.
   The agent never sees it: nothing goes into the transcript, no turn starts,
-  and the Task's activity time and unread mark stay as they were. The answer
-  opens in a reader over the composer that lists every aside of the Task,
+  and the Thread's activity time and unread mark stay as they were. The answer
+  opens in a reader over the composer that lists every aside of the Thread,
   oldest first; a bare `/btw` opens the same reader without asking. Each
-  answered aside is kept with the Task (beside its uploads, so deleting the
-  Task deletes them) and none is dropped: they survive a reload, a restart
+  answered aside is kept with the Thread (beside its uploads, so deleting the
+  Thread deletes them) and none is dropped: they survive a reload, a restart
   and show in every browser. Each belongs to a turn: the latest message you
   sent (not a steer) when you asked it, whether the agent was still working
   on it or had finished. That turn's reply foot shows a `btw 2` chip (on a
@@ -570,7 +570,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   leaving out the oldest first so the whole question stays within the
   service's 16 KiB limit. One aside waits at a time; its turn's chip shows
   a ring while it does, and closing the reader does not stop it. A failed
-  aside, or one whose page left the Task before the answer, is not kept.
+  aside, or one whose page left the Thread before the answer, is not kept.
   The conversation must be open to ask; until it is, the `/btw` entry says
   so. Asides count toward your account's usage.
 
@@ -581,21 +581,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `asked_at`, `answered_at`, `working` and `turn` (the message's item ID;
   absent before any). `GET /api/sessions/{id}/asides` returns
   `{"asides": [...]}`, every kept aside oldest first, also for a settled or
-  archived Task. The Task's event stream sends each newly kept one as an
+  archived Thread. The Thread's event stream sends each newly kept one as an
   `aside` event (`session_id`, `aside`).
 - **Compacting**: while Copilot compacts the conversation, whether you ran
-  `/compact` or it compacts on its own as the context fills, the Task says
+  `/compact` or it compacts on its own as the context fills, the Thread says
   so: the status line above the message box (and, during a turn, the line
   at the foot of the conversation) reads "Compacting the conversation…",
-  the header chip and the Task's row read "Compacting…", and the Task sits
+  the header chip and the Thread's row read "Compacting…", and the Thread sits
   under Working in the list (a request waiting for you still wins). When it
   ends a quiet notice stays in the conversation, "Compacted the conversation
   · freed 2,332 tokens." (the count only when Copilot reports one), or
   "Compacting the conversation failed: …" with Copilot's reason. Messages you
   send meanwhile follow the usual Send now / After this turn rules. The
-  service reports it as `compacting: true` on the Task summary, absent
+  service reports it as `compacting: true` on the Thread summary, absent
   otherwise; it is live only and never saved.
-- **Status line**: while a Task works, the line above the message box says
+- **Status line**: while a Thread works, the line above the message box says
   what the agent says it is doing (Copilot derives it from its todo list),
   else a calm verb ("Working…" for a turn without a message), and for how
   long. A model call Copilot retries adds
@@ -612,17 +612,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   starts: "Stopped" after your Stop, or "Stopped: time limit" (a routine's),
   "Stopped: credit limit" (autopilot's, with the credits used and turns),
   "Stopped: remote command" or "Stopped: MCP server". The header says the
-  same, and the Task row's tip says "You stopped it" for a Stop uam
+  same, and the Thread row's tip says "You stopped it" for a Stop uam
   recorded as yours, else plain "Stopped". The service
-  reports the reason as `stop_reason` on the Task summary (`owner`,
+  reports the reason as `stop_reason` on the Thread summary (`owner`,
   `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
   none); it is saved with the stopped state
   and cleared when the next turn starts. The running turn's intent and
-  retry come as `turn_activity`, in the Task snapshot and in `turn_activity`
+  retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
   (`turn_activity.todos`): uam asks the agents, subagents included, to keep
   one in Copilot's session `todos` table for work of more than two steps,
-  reads it when it changes and when the Task's conversation reopens, and
+  reads it when it changes and when the Thread's conversation reopens, and
   sends at most 100 rows with the counts of all: `done`, `total`,
   `in_progress`, `pending` and `blocked`, a stage with no rows left out, and
   `open`, `in_progress` plus `pending`.
@@ -633,11 +633,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   open, at most 50. The end of a turn waits up to a second for Copilot's last
   change to the list to be read. The counts are saved with the turn's timing
   (`turn_timings[].todo`, as above), the rows in `turn-todos.jsonl` beside the
-  Task's attachments, which is deleted with the Task. Counts saved before uam
+  Thread's attachments, which is deleted with the Thread. Counts saved before uam
   split `in_progress` from `pending` carry `open` alone, and the foot then
   reads "1 open".
   `GET /api/sessions/{id}/turns/{timing_id}/todos` returns them, also for a
-  settled or archived Task, or 404 when none were kept.
+  settled or archived Thread, or 404 when none were kept.
 - **Copilot notices**: Copilot's warnings ("Warning: …", with what to do in
   UAM, such as signing in again in Settings, and a link only when it is
   https) and its authentication, model, MCP and notification messages show
@@ -653,17 +653,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   event stream carries the same object in `snapshot` and sends it as a
   `usage` frame when it changes. A failed read keeps the last quotas and sets
   `stale`; `reset_at` appears only while it is in the future; an unlimited
-  quota has `entitlement` 0. A Task's `usage: {"ai_units"}` is what its
+  quota has `entitlement` 0. A Thread's `usage: {"ai_units"}` is what its
   conversation used so far, subagents included, and is absent until Copilot
   reports it. Copilot does not keep per-call costs in its history but does
   record the session total, so the figure comes back after a service restart
-  once its recorded transcript loads, including a settled or archived Task
+  once its recorded transcript loads, including a settled or archived Thread
   viewed read-only. Models in `/api/meta` carry `cost_tier` (`low`, `medium`,
   `high`, `very_high`), for `auto` `discount_percent`, and `prices`: Copilot's
   token prices in AI Credits (the unit of `ai_units`) per `batch_size`
   tokens, for `input`, `output`, `cache_read` and `cache_write`, with
   `max_prompt_tokens` and a `long_context` tier where Copilot has one. The
-  Task's `context` adds `prompt`, the input tokens of the latest main-agent
+  Thread's `context` adds `prompt`, the input tokens of the latest main-agent
   model call, and `cached`, how many of those came from the prompt cache, so
   an estimate can price the cached share at `cache_read`. The composer shows
   remaining credits in a popover chip, including stale state when a refresh
@@ -714,9 +714,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   load fetches Mermaid (3.4 MB).
 - **Images in replies**: an image the agent refers to by path, as
   `![Screenshot](/home/you/project/shot.png)` or `![](./shots/a.png)`, is
-  served from the Task's folder by the service, so it shows on any machine
+  served from the Thread's folder by the service, so it shows on any machine
   the browser runs on. A link to such a file opens it the same way. Only png,
-  jpeg, gif and webp files inside the Task's folder are served, up to 20 MiB;
+  jpeg, gif and webp files inside the Thread's folder are served, up to 20 MiB;
   a file outside it, reached directly or through a symbolic link, is not.
   An image at a web address stays a link, as the page loads nothing from
   other origins.
@@ -732,45 +732,45 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   button remains available; Escape closes the preview when focus is in the
   app, but does not cross into the app from a focused HTML frame. Closing
   returns focus to the opening control. Opening another preview or switching
-  Tasks discards the old preview and cancels its pending read.
+  Threads discards the old preview and cancels its pending read.
 - **Declared files**: `uam_show_file` records a file reference and optional
   title. Its tool call folds into the turn's activity in both layouts;
   the conversation's inline file link opens the preview without a separate
   card. Opening a file still checks current availability, and temporary
   files require an explicit grant. Declaration metadata does not grant access.
-- **Reading uam**: every Task has the `uam` tool with six read operations:
+- **Reading uam**: every Thread has the `uam` tool with six read operations:
   `sense`, `projects`, `tasks`, `task`, `changes` and `who_touched`.
-  Reads are limited to its Project unless the Task is in Yolo. `tasks`
+  Reads are limited to its Project unless the Thread is in Yolo. `tasks`
   accepts a Project ID or exact name and optional stage and state filters.
-  Results carry compact summaries and outcomes, framed as data; a Task row
-  has `settled_by` `"auto"` or `"reviewed"` when the Task settled itself. They
+  Results carry compact summaries and outcomes, framed as data; a Thread row
+  has `settled_by` `"auto"` or `"reviewed"` when the Thread settled itself. They
   contain no transcript bodies. Lists return at most 50 rows and 16 KiB;
   the agent follows `next` by passing it as `args.cursor` while `more` is
   positive. `who_touched` uses edit-tool records, includes settled and
-  archived Tasks, and marks results partial when history has not been read.
-  Shell writes are not attributed. `changes` lists the Task's edited files
-  still changed against HEAD. Settled or archived Tasks cannot call the
+  archived Threads, and marks results partial when history has not been read.
+  Shell writes are not attributed. `changes` lists the Thread's edited files
+  still changed against HEAD. Settled or archived Threads cannot call the
   tool. Calls fold into the turn's activity like other tool calls.
-- **Tasks started by an agent**: the agent can call `uam_create_task` to
-  start a new Task in an existing Project. It gives the Project's ID or
+- **Threads started by an agent**: the agent can call `uam_create_task` to
+  start a new Thread in an existing Project. It gives the Project's ID or
   exact name, the first message (up to 16 KiB, with no control characters
   other than newlines and tabs), and optionally a name (up to 120
   characters) and a model. The tool never creates a Project and takes no
   directory. A name several Projects share is refused with their IDs. A
-  model is checked as for New task; without one, the Task gets the model
-  New task would pick from the Task defaults in Settings, and effort and
-  context size stay at their defaults. The new Task always starts in safe
-  mode. The call waits up to 15 seconds for the Task to be created and
-  sent the message, then returns the new Task's ID. If the create fails in
+  model is checked as for New thread; without one, the Thread gets the model
+  New thread would pick from the Thread defaults in Settings, and effort and
+  context size stay at their defaults. The new Thread always starts in safe
+  mode. The call waits up to 15 seconds for the Thread to be created and
+  sent the message, then returns the new Thread's ID. If the create fails in
   that time, the call fails with the reason. If the conversation is still
-  opening, the call says so, and the Task appears in the sidebar once it
-  opens; a failure after that is only written to the service log. The Task
-  runs on its own: nothing from it goes back to the Task that started it. Its conversation begins with "Started by another task", and
-  the API lists that Task as `spawned_by`, which survives restarts. A Task
-  started this way does not get the tool itself. One Task can start at
-  most 5 Tasks, its subagents' calls included. Every Task it started counts
+  opening, the call says so, and the Thread appears in the sidebar once it
+  opens; a failure after that is only written to the service log. The Thread
+  runs on its own: nothing from it goes back to the Thread that started it. Its conversation begins with "Started by another thread", and
+  the API lists that Thread as `spawned_by`, which survives restarts. A Thread
+  started this way does not get the tool itself. One Thread can start at
+  most 5 Threads, its subagents' calls included. Every Thread it started counts
   while its record exists, archived ones too; deleting one frees its
-  place. Only an Active Task can call the tool.
+  place. Only an Active Thread can call the tool.
 - **Tables**: Markdown tables fill the message width. Each completed table
   has header controls for sorting and a contains filter per column. Filters
   combine; **Clear filters** restores all rows. Sorting cycles through ascending,
@@ -779,20 +779,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   filtering applied to all rows. A table still streaming stays plain until complete.
   These controls only change your view; they make no request to the agent and do
   not change the stored message or its Markdown export.
-- **Charts**: ask a Task a data question ("chart commits per day this
+- **Charts**: ask a Thread a data question ("chart commits per day this
   month") and its agent can answer with a chart through the `uam_chart`
   tool: a line or bar chart of up to 500 rows and 4 series, drawn in your
   browser with Apache ECharts. The agent either passes the rows or,
   cheaper, gives a shell command that prints them as CSV or JSON. uam runs
-  that command itself in the Task's folder (30 seconds at most, 1 MiB of
+  that command itself in the Thread's folder (30 seconds at most, 1 MiB of
   output), so the rows never pass through the model; the agent gets only a
-  summary. uam runs a chart's command only for a Task in Yolo mode: in Safe
+  summary. uam runs a chart's command only for a Thread in Yolo mode: in Safe
   mode the agent must run the command with its own shell tool, which asks
   you first, and pass the rows. The chart shows as a card in the
   conversation with **Table** (the rows), **Copy CSV** and **Pin to
   project**, and a footer saying where the rows came from and when. The rows are
-  kept with the Task, so the card survives a reload and a restart, and goes
-  when the Task is deleted. A chart fills the width of the conversation and
+  kept with the Thread, so the card survives a reload and a restart, and goes
+  when the Thread is deleted. A chart fills the width of the conversation and
   keeps its text at the same size at any width. Each series has a fixed
   colour: several series take blue, orange, green and purple in order, and a
   chart of one series takes the colour its name picks, so the same measure
@@ -809,8 +809,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   **Pin to project** shows the command that a refresh will run; pinning is
   your approval of it. A chart made from rows the agent passed pins as a
   snapshot and never refreshes. A Project keeps up to 12 pinned charts.
-  Once it has any, the Task header shows **Charts** with their count (on a
-  phone, in the task's actions menu); it opens a panel beside the
+  Once it has any, the Thread header shows **Charts** with their count (on a
+  phone, in the thread's actions menu); it opens a panel beside the
   conversation with each chart's latest value, a small chart (click it for
   a larger one), when it was refreshed, **Refresh** and unpin (×).
   Refresh runs the saved command again in the Project folder and redraws,
@@ -848,52 +848,52 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   view. The header's Project filter narrows the list to one Project,
   `#routines=<project id>`; the clock beside a Project in the sidebar's
   Project filter and Edit project → Routines open that filtered view. The
-  view replaces the Task pane like Settings, and a `#routines` link opened
+  view replaces the Thread pane like Settings, and a `#routines` link opened
   while the page is open shows it. With no routines yet it says what a
   routine is and offers New routine, which asks for the Project when there
   are several. `GET /api/routines` lists every Project's routines, oldest
   first. Each routine has a name, the first message its runs send, a
-  model (New task's model unless you choose one), a schedule, a mode, and
+  model (New thread's model unless you choose one), a schedule, a mode, and
   two limits. A schedule is every day at a time, every weekday
   (Monday to Friday) at a time, every 1 to 24 hours, or once a week on a
   day at a time, in the local time of the host the service runs on. Nobody
   watches a run, so a new routine is **Yolo with autopilot**: every
-  permission request is allowed, and the run's Task turns autopilot on
+  permission request is allowed, and the run's Thread turns autopilot on
   (as `/autopilot on` does) before its first message, so it keeps working
   until the agent calls `task_complete` or the time limit stops it.
   **Yolo** allows every request for one turn: the run ends when the agent
   first stops. **Safe** makes each permission request wait for you, and
-  the Task shows as Needs you. The form explains the chosen mode and, for
+  the Thread shows as Needs you. The form explains the chosen mode and, for
   both Yolo modes, that the agent acts without asking while nobody is
   watching. A routine saved before this choice existed keeps its mode
   (Safe or Yolo, without autopilot), and each card shows its mode. The API
   takes `mode` (`safe` or `yolo`) and `autopilot`; a create that leaves
   them out is Yolo with autopilot, and one that sets only `mode: "safe"`
   gets no autopilot. **Daily run limit** (1 to 100, default 24) counts every run
-  that started, or tried to start, a Task since local midnight, Run now
+  that started, or tried to start, a Thread since local midnight, Run now
   included; a firing past it is skipped. **Stop a run after** (1 to 720
   minutes, default 30) cancels the turn still running then, a turn waiting
   for your answer included; Stop also turns autopilot off, so an autopilot
-  run that never finishes ends there as Stopped at the time limit. Its Task
+  run that never finishes ends there as Stopped at the time limit. Its Thread
   then reads "Stopped: time limit" in its header and status line, and
   "Stopped at the routine's time limit (N min)" in the sidebar and as its
   state's detail (`state_detail`), not "You stopped it", which only a Stop
-  of yours shows. Each run starts a normal Task in the Project,
+  of yours shows. Each run starts a normal Thread in the Project,
   named "<routine name> · <date and time>", with the routine's prompt as
-  its first message. It shows in the sidebar and Needs you like any Task,
+  its first message. It shows in the sidebar and Needs you like any Thread,
   begins with "Started by a routine.", and the API lists the routine as
-  `routine_id`. Like a Task started by an agent, it does not get
+  `routine_id`. Like a Thread started by an agent, it does not get
   `uam_create_task`. A firing is skipped, with the reason "still running",
-  while the previous run's Task is still working, also on a follow-up you
+  while the previous run's Thread is still working, also on a follow-up you
   sent it. Each card shows the schedule, the next run, the last run's
-  outcome with a link to its Task, and Run now, Pause or Resume, Edit and
-  Delete (asked first; the run history goes, the Tasks stay). Run now fires
+  outcome with a link to its Thread, and Run now, Pause or Resume, Edit and
+  Delete (asked first; the run history goes, the Threads stay). Run now fires
   at once under the same rules, paused or not, and leaves the next
   scheduled run where it was. History lists the newest 100 runs: when,
   what fired it (the schedule, Run now, or a firing missed while uam was
-  stopped), the Task, and the outcome: Running (Needs you while its Task
+  stopped), the Thread, and the outcome: Running (Needs you while its Thread
   waits for you), Finished, Failed with the reason, Cancelled (stopped in
-  the Task), Stopped at the time limit, or Skipped and why. Routines are
+  the Thread), Stopped at the time limit, or Skipped and why. Routines are
   kept in `sessions.json`; the next run survives a restart. Firings missed
   while the service was down run once when it starts, not once each, and
   a run the stop interrupted is recorded as failed. Pausing clears the
@@ -923,17 +923,17 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   The transcript uses the same Compact/Detailed preference as the main
   conversation. Prose and paths wrap to fit; wide tables and code blocks
   scroll within their own regions. Subagent output never
-  appears in the Task's own conversation. Its model and effort are shown
-  when Copilot reports them; they are not guessed from the parent Task.
+  appears in the Thread's own conversation. Its model and effort are shown
+  when Copilot reports them; they are not guessed from the parent Thread.
   A finished subagent's line is the first line of its own result, as
   Copilot reported it; nothing rewrites it. A subagent is "Idle" when it has finished and the main
   agent may still resume it. The web interface sends no messages to a
   subagent.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and the Task's row moves to
+  question, a card appears in the conversation and the Thread's row moves to
   the attention items at the top of the sidebar, labelled "Input"; open the
-  Task to answer (see Sidebar). Nothing is approved
-  automatically unless you turned on yolo for that Task, and questions always
+  Thread to answer (see Sidebar). Nothing is approved
+  automatically unless you turned on yolo for that Thread, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
   card goes away: the decision shows on the tool call it was for, and a
@@ -951,39 +951,39 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   first." **Decline** (an ×)
   sits between Stop and **Answer** (an up arrow). What you had typed before the question
   arrived is kept and comes back once the question is settled.
-- **Native planning**: `/plan` in a Copilot Task uses Copilot's own plan mode.
+- **Native planning**: `/plan` in a Copilot Thread uses Copilot's own plan mode.
   When the plan is ready, **Plan ready** appears above the composer and the
-  Task moves to Needs you. **Read plan** opens that reviewed snapshot, with
+  Thread moves to Needs you. **Read plan** opens that reviewed snapshot, with
   revision numbers and **Show changes** after a revision. Pick an offered
   implementation action or **Leave planning**; the runtime's recommendation
   is staged, and Enter, **Approve plan**, or a second click sends it. Typing
   feedback clears that choice and asks Copilot to revise the plan. Feedback
-  is a review response, not a new Task message. **Stop** remains available.
+  is a review response, not a new Thread message. **Stop** remains available.
   Plan decisions appear as two-line receipts; their reader uses the recorded
-  review even after the Task closes. A supported runtime may offer autopilot,
+  review even after the Thread closes. A supported runtime may offer autopilot,
   subagents, interactive implementation, or leaving without implementation.
   Plan approval does not change Safe/Yolo permissions. During implementation,
   the status line labels current, touched SQL Todo progress **Plan**; an old
   or unavailable list is never treated as progress on the new plan. Only the
-  exact provider-reported scratch-plan file is excluded from Task changes;
+  exact provider-reported scratch-plan file is excluded from Thread changes;
   project files named `plan.md` still count. Native session changes exclude
   it only when its path matches exactly; a relative path whose workspace
   root is unknown or ambiguous stays listed.
-- **Yolo**: a Task in yolo mode does not ask for permission. As each
+- **Yolo**: a Thread in yolo mode does not ask for permission. As each
   permission request arrives, UAM allows it once, the same as clicking "Allow
   once". That includes requests from subagents. Shell commands, file writes,
   reads outside the project directory, and web fetches then run without a
   prompt. Questions from the agent still wait for you, and so does any request
-  your organization's Copilot policy says a person must approve. Tasks start
-  in safe mode. You can pick yolo when you create a Task or switch it at any
-  time, even during a turn. Switching to yolo also allows the request the Task
+  your organization's Copilot policy says a person must approve. Threads start
+  in safe mode. You can pick yolo when you create a Thread or switch it at any
+  time, even during a turn. Switching to yolo also allows the request the Thread
   is waiting on; switching back to safe makes the next request ask again. Every
   request yolo allowed stays in the conversation, marked "allowed (yolo)".
 
   > **Warning:** in yolo mode the agent can run any command and change any
   > file your Linux account can reach, with your credentials, and nobody is
   > asked first. Turn it on only for a project where you would click "Allow"
-  > on everything anyway. Sign-in is required to create or control a Task.
+  > on everything anyway. Sign-in is required to create or control a Thread.
 - **Commands**: type `/` at the start of a message to list supported provider
   commands and skills. Names and aliases are searchable. Known unsupported
   commands stay visible with their reason and cannot become ordinary prompts.
@@ -1009,7 +1009,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Stop remains available between autopilot turns, disables continuation and
   pauses queued follow-ups through the existing cancellation operation. Partial
   cancellation failures remain errors rather than a claimed stopped state.
-- **Background tasks**: a chip in the composer's toolbar counts the Task's
+- **Background tasks**: a chip in the composer's toolbar counts the Thread's
   running provider shells; click it to see each shell's status and command
   and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
@@ -1030,11 +1030,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   size and type, or why it was refused. Allowed: png, jpeg, gif and webp
   images up to 3 MiB, PDF up to 10 MiB, and UTF-8 text up to 256 KiB, at most
   5 per message; the type is taken from the file's bytes, not its name.
-  Until a file has uploaded (in a new Task, until its first Send), its chip
+  Until a file has uploaded (in a new Thread, until its first Send), its chip
   and the model's image and PDF checks go by the name. SVG, HEIC, audio, video,
   archives and everything else are refused. Images and
   PDFs need a model that accepts them: Copilot reports this per model, `auto`
-  is not checked, and the button says so when the Task's model takes text
+  is not checked, and the button says so when the Thread's model takes text
   only. Attachments go with the message, whether it is sent, queued or
   steered. A message can be only attachments (or, through the API, only
   file references), with no text; blank text beside them is not sent. A
@@ -1043,14 +1043,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   other files as chips that open the stored copy, also after a reload. UAM
   keeps the files outside the project (see Settle, archive, and delete).
 - **Images from tools**: when a tool returns an image, such as a screenshot
-  or Copilot's `view` of an image file, UAM keeps a copy with the Task and
+  or Copilot's `view` of an image file, UAM keeps a copy with the Thread and
   shows it as a thumbnail under that tool call in the turn's activity, for
   subagents too. In Compact the thumbnail also stands in the reply at the
   call's place, without the tool call's line. Click it to see it large.
-  Kept: png, jpeg, gif and webp up to 5 MiB, at most 50 per Task, one copy
+  Kept: png, jpeg, gif and webp up to 5 MiB, at most 50 per Thread, one copy
   of each distinct image; the tool call notes any it left out and why. They
   come back after a reload or a restart of UAM, because Copilot records the
-  image's bytes in its session. They are deleted with the Task, like
+  image's bytes in its session. They are deleted with the Thread, like
   attachments.
 - **Messages while a turn runs**: Send shows what it will do as an icon,
   **Send now** (steer, an up arrow) or **After this turn** (queue, the
@@ -1059,11 +1059,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   offers the other. The send buttons carry icons only; screen readers hear
   their names.
   - **After this turn** holds the message until the turn completes, then sends it as
-    the next prompt. A Task queues up to 20 messages and sends them one turn
+    the next prompt. A Thread queues up to 20 messages and sends them one turn
     at a time, oldest first. You can cancel a queued message until it is
     sent; to change one, cancel it and queue it again. Each queued message
     retains its selected model, effort and context size. Changing the next
-    draft or the Task's settings does not change messages already queued.
+    draft or the Thread's settings does not change messages already queued.
     The waiting messages are listed above the message box ("2 waiting").
   - **Send now** adds the message to the turn that is running. The agent reads
     it before its next step. Once Copilot accepts it, the conversation shows
@@ -1087,7 +1087,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     the keys. Files and attachments go with a steer as with any other
     message.
   - **History**: with the caret on the first line (or an empty message), Up
-    recalls the previous prompt from this Task, newest first, as in a shell;
+    recalls the previous prompt from this Thread, newest first, as in a shell;
     Up again goes further back. Down from the last line comes forward, and
     one step past the newest brings your unsent draft back, as does Esc.
     Editing a recalled prompt makes it the new draft. Only the text changes;
@@ -1103,7 +1103,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     are not checked. If the checker cannot load, you can still type and
     send.
   Prompt requests accept optional `settings: {model, effort, context_size}`;
-  omitted settings snapshot the current Task selection. The service validates
+  omitted settings snapshot the current Thread selection. The service validates
   them again before dispatch. Unsupported selections return 400; different
   settings on an active steer return 409. A failed settings change sends no
   prompt and pauses the remaining queue. Attachment uploads accept an optional
@@ -1122,51 +1122,51 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   said and did in reply (its messages, tool calls with their full output,
   and messages you sent while it worked), without its thoughts or its
   subagents' own steps. A long turn makes a large call. The service keeps the
-  result with the Task, so opening it again, in any browser or after a
-  restart, asks for nothing more. None shows while the Task works, waits for
+  result with the Thread, so opening it again, in any browser or after a
+  restart, asks for nothing more. None shows while the Thread works, waits for
   you, has queued messages, or is read-only. Without a Utility model, or past
   today's Background AI limit, there is none. Settings → Composer →
   **Suggest replies** turns it off.
-- **Outcome line**: when a turn completes, the Task gets a one-line summary
+- **Outcome line**: when a turn completes, the Thread gets a one-line summary
   such as "Fixed the flaky redraw test; 3 files changed; tests pass". The
-  Task's row in the sidebar keeps it in its hover text ("Review" is the
-  visible status until you open the Task, then "Finished"), and the Task header
+  Thread's row in the sidebar keeps it in its hover text ("Review" is the
+  visible status until you open the Thread, then "Finished"), and the Thread header
   beside its state (not on a phone). Everything after the opening phrase
   is the finish evidence's own reading of the turn (the service reads it
-  once, for both): the files the Task's edit tools changed in the turn (the main
+  once, for both): the files the Thread's edit tools changed in the turn (the main
   agent's and its subagents', the files Changes shows for "Last turn"),
   whether the main agent's last test run (a "Ran the tests" row in the
   evidence) passed ("tests pass") or failed ("tests fail"), saying nothing when
   that run's result is unclear, and how many of its commands failed or
   exited non-zero. The phrase arriving after the turn does not mark the
-  Task unread again. The opening phrase comes from one
+  Thread unread again. The opening phrase comes from one
   Utility model call, told to describe only what the agent's final answer
   says it did and to leave tests, files and commands to the evidence; until
   it answers, or without a Utility model, the line holds the evidence only.
   A new turn clears the line, and a turn that is stopped or fails gets none.
-  When the line says "tests fail" or that commands failed, the Task's state
+  When the line says "tests fail" or that commands failed, the Thread's state
   shows no check: the sidebar row reads "Tests fail" or "Command failed" with
   a warning glyph, and the header chip reads "Finished · tests fail, 1 command
   failed" in the warning tone. The header chip says "a claim contradicted"
   too when the last reply's receipts contradict one of its claims.
 - **Branch from here**: a finished reply's turn menu offers native recorded
   history branching when the provider supports it. Its anchored model picker
-  copies the conversation through that reply into a new active Task, without
+  copies the conversation through that reply into a new active Thread, without
   sending another message. Choose the same model, another offered model or
   Default; a changed model starts with default effort and context size. The
-  source remains intact, and the new Task links back to it. Both Tasks use the
+  source remains intact, and the new Thread links back to it. Both Threads use the
   same Project and current files. This creates no Git branch or isolated
   workspace. If the native result is uncertain, UAM keeps the request and
   refuses to create another branch automatically. The picker's **Dismiss**
   clears that one request so you can branch again; a Copilot session may still
-  exist for it. When the branch was created but could not be added as a Task
+  exist for it. When the branch was created but could not be added as a Thread
   (for example, its Project was removed), the picker offers **Add the existing
   branch**, which retries adding that saved session without branching again,
   and **Dismiss**, which clears the request without deleting the Copilot
-  session. Deleting the source Task also clears its unresolved requests.
+  session. Deleting the source Thread also clears its unresolved requests.
 - **Rewind to before this prompt**: when the provider supports it, a finished
   reply's turn menu also offers a native rewind of the open conversation. It
-  works only while the Task is idle, with nothing queued, waiting or running in
+  works only while the Thread is idle, with nothing queued, waiting or running in
   the background, and never resumes a closed conversation. Its anchored
   preview names how many prompts go and, for **Conversation and files**, which
   captured files return as they were before (a deleted file reads
@@ -1177,10 +1177,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it once, shows Copilot's outcome and per-file results, then reads the
   conversation again. Copilot restores files before it shortens the
   conversation, so a partial result can leave restored files with the
-  conversation unchanged. If the result is lost, the Task says so and refuses
+  conversation unchanged. If the result is lost, the Thread says so and refuses
   new messages, branches and rewinds until you choose **Reread conversation**;
   UAM never repeats the rewind itself. If that reread cannot settle the
-  outcome, **Release task** clears the hold without touching the history: the
+  outcome, **Release thread** clears the hold without touching the history: the
   conversation may already be shortened and files partly restored, and UAM
   records that the outcome stayed unknown. Recorded usage stays counted.
 - **Edit and resend**: the same menu puts that reply's prompt, read in full,
@@ -1195,16 +1195,16 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the message is refused, the edit stays in the composer with the reason and
   nothing is sent or retried automatically. An attachment without a stored
   copy cannot be sent again; the strip says so.
-- **Run again and Try with another model**: the Task's actions menu (the "…"
+- **Run again and Try with another model**: the Thread's actions menu (the "…"
   button in its header, or its sidebar row's context menu) has **Run
-  again**, which starts a new Task in the same Project with the same model,
-  effort, context size and Safe/Yolo mode, and this Task's last message as
+  again**, which starts a new Thread in the same Project with the same model,
+  effort, context size and Safe/Yolo mode, and this Thread's last message as
   its first, and **Try with another model…**, which does the same on a model
   you pick (effort and context size then start at their defaults). The new
-  Task opens; its transcript begins with a note naming the Task it repeats,
-  which opens that Task, so the two can be compared. Attachments of the
+  Thread opens; its transcript begins with a note naming the Thread it repeats,
+  which opens that Thread, so the two can be compared. Attachments of the
   message are not sent again.
-- **Export as Markdown**: the Task's actions menu downloads the whole
+- **Export as Markdown**: the Thread's actions menu downloads the whole
   conversation as a `.md` file: every message in order, with older history
   the service no longer holds read from Copilot's record, each tool call
   folded into a `<details>` block whose summary names the command and its
@@ -1220,21 +1220,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   settings as `{"send_default": "steer", "terminal": false}` (see
   [Terminal](#terminal)), and `PATCH /api/settings` with
   `{"send_default": "queue"}` changes them. An unknown key or value is
-  refused and changes nothing. **New tasks** holds what every new Task
+  refused and changes nothing. **New threads** holds what every new Thread
   starts with, in every Project: model, effort, context size (where the
   provider allows it) and Safe or Yolo mode, kept as `task_defaults`, e.g.
   `{"task_defaults": {"provider": "copilot", "model": "gpt-5-mini",
   "effort": "high", "context_size": "default", "mode": "safe"}}`; the
-  service checks them as it checks a Task's selection. Until they are set,
-  a new Task starts with the provider's own defaults. Defaults that older
+  service checks them as it checks a Thread's selection. Until they are set,
+  a new Thread starts with the provider's own defaults. Defaults that older
   versions kept per Project are adopted from the newest Project that had
   them the first time the service loads the store. **Compact the
   conversation when its context reaches** sets where Copilot starts
-  compacting a Task's conversation: 50% to 90% in steps of 5, 80% (Copilot's
+  compacting a Thread's conversation: 50% to 90% in steps of 5, 80% (Copilot's
   own default) unless changed. Compacting earlier keeps answers faster and
   cheaper but drops older detail sooner. It is kept as `compact_threshold`
   (a whole percent; `null` or 80 puts the default back, which is not
-  stored) and applies to new Tasks and to a Task already open the next time
+  stored) and applies to new Threads and to a Thread already open the next time
   its conversation reopens. Where a turn waits for compaction to finish
   stays Copilot's default, 95%. `hidden_models`, e.g.
   `{"hidden_models": {"copilot": ["gpt-5-mini"]}}`, lists the models not
@@ -1242,13 +1242,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   names, and an empty list shows all of that provider's models again. At
   least one model the provider lists must stay visible, and a provider can
   hide at most 200 IDs of up to 128 bytes each. An ID the provider no longer
-  lists is kept. Hiding is only a display preference: a Task or Project
+  lists is kept. Hiding is only a display preference: a Thread or Project
   already on a hidden model keeps it. **UAM** (Server → UAM and access)
   shows the version the service runs and, once another version is
   installed at the binary it started from, **Restart**; see
   [Restart onto a new version](#restart-onto-a-new-version).
   The **Utility model** is the model UAM uses for its own small AI jobs,
-  including Task titles, completed subagent result lines, suggested replies
+  including Thread titles, completed subagent result lines, suggested replies
   and the opening phrase of outcome lines. Pick the cheapest
   that does the job. It is kept per provider under `title_model` (the key keeps
   its first name). With no entry, UAM uses the provider's cheapest priced
@@ -1257,10 +1257,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in Settings, the lowest input plus output price per token wins, then the
   lower input price, then the lower ID. `/api/meta` gives it per provider
   as `cheapest_model`, omitted when no model is priced; then those jobs
-  are not run. Titles are the exception: with no entry, a Task is titled by
+  are not run. Titles are the exception: with no entry, a Thread is titled by
   its own model at the lowest reasoning effort that model offers, which
   spends that model's credits, and by the cheapest model when that call
-  fails or the Task is on `auto`; with neither, the provider keeps its own
+  fails or the Thread is on `auto`; with neither, the provider keeps its own
   title, which for Copilot is the first prompt. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so it keeps its own
@@ -1274,7 +1274,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   It then shows the title, 60 characters at most, and writes it into the
   Copilot session, so `copilot --resume` shows it too. Only the first
   message counts: later messages, attachment-only ones included, commands,
-  reopened Tasks and a changed setting never retitle a Task. A first
+  reopened Threads and a changed setting never retitle a Thread. A first
   message with no text goes with its images (at most 3) to a title model
   that accepts images; otherwise, or when it carried only files, the title
   waits for the end of the first turn that has a reply and is made from that
@@ -1282,26 +1282,26 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   model fails or takes more than 20 s, the provider's title stays, and the
   service log says why. Each title costs AI credits,
   about 0.002 with gpt-6-luna.
-- **Archived**: Settings → **Archived** lists the archived Tasks of the
+- **Archived**: Settings → **Archived** lists the archived Threads of the
   instance on screen, in every Project, newest archived first: the Project
-  badge, the Task title, the Project name and how long ago it was archived.
-  Past eight Tasks a filter box narrows them by Task, Project, folder or
-  branch. Clicking a row opens the Task, read-only; its **⋯** menu holds the
-  Task menu's actions (Run again, Export as Markdown, Delete behind its
+  badge, the Thread title, the Project name and how long ago it was archived.
+  Past eight Threads a filter box narrows them by Thread, Project, folder or
+  branch. Clicking a row opens the Thread, read-only; its **⋯** menu holds the
+  Thread menu's actions (Run again, Export as Markdown, Delete behind its
   confirmation). The sidebar has no Archived shelf; its search still finds
-  archived Tasks.
-- **Background AI**: every call UAM makes on the Utility model (Task
-  titles, also those made with a Task's own model, subagent result lines, suggested replies and outcome lines) counts
+  archived Threads.
+- **Background AI**: every call UAM makes on the Utility model (Thread
+  titles, also those made with a Thread's own model, subagent result lines, suggested replies and outcome lines) counts
   against a daily limit and is logged. Settings → **Background AI** shows
   today's calls against the limit, the limit itself, and the log behind
   **Show log** (collapsed until opened, and read only while
   open), newest first and grouped by day with each day's totals: calls, failures,
   skipped calls, tokens in and out, and AI credits. Each entry has the time,
-  what it was for ("Task title", "Suggested replies", "Outcome line",
+  what it was for ("Thread title", "Suggested replies", "Outcome line",
   "Merge request description";
-  older versions also logged "Subagent summary" and "Task done check"), the Task (a click opens
+  older versions also logged "Subagent summary" and "Thread done check"), the Thread (a click opens
   it) or Project, the model
-  (marked "the task's model" for a title made with the Task's own model, `session_model` in the log),
+  (marked "the thread's model" for a title made with the Thread's own model, `session_model` in the log),
   the characters sent and received, the tokens, how long it took and how it
   ended. Tokens and credits are what Copilot reported for the call; when it
   reports none, the tokens are estimated at 4 characters each and marked
@@ -1316,7 +1316,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   logged but never paused for the day, and the number is kept for when it
   is turned off. The day starts at midnight on the server.
   Once today's calls reach the limit, further calls are not made: they are
-  logged as skipped (daily limit, or off when the limit is 0), new Tasks
+  logged as skipped (daily limit, or off when the limit is 0), new Threads
   keep their first message as the title, completed subagents keep their own
   report, no replies are suggested (and the next look asks again)
   and outcome lines keep the evidence alone. Settings then says Background AI is
@@ -1327,7 +1327,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   page, and `?limit=` (1 to 200, default 200) to size it.
 - **Custom models (bring your own model)**: Settings → Custom providers
   adds OpenAI-compatible endpoints to Copilot's model list, next to
-  the account's own models, so a Task can switch between them mid-Task in
+  the account's own models, so a Thread can switch between them mid-Thread in
   the composer's model menu. Each entry has a provider name (letters,
   digits, `.`, `_`, `-`), a base URL (`http` or `https`, no credentials,
   query or fragment), a model ID, an optional display name, and the *name*
@@ -1364,15 +1364,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   such as `env -i HOME=$HOME bash -ic 'uam web …'`, reads only the
   interactive profile, so put `export UAM_BYOM_<NAME>=…` in `~/.bashrc`. A
   model whose variable is unset or empty fails when chosen, with the
-  variable's name in the error; Copilot's models are unaffected. A Task left
+  variable's name in the error; Copilot's models are unaffected. A Thread left
   failed that way opens again with its next message, once you switch it to
   another model or set the variable and restart the service. Custom models
   report no prices and cost no AI credits; the endpoint bills you directly.
   This uses the Copilot SDK's experimental multi-provider support.
-- **Since you left**: when you open a Task that changed since you last had it
+- **Since you left**: when you open a Thread that changed since you last had it
   on screen in this browser, a line under the header says how long ago that
   was and what happened since, counted by the service over everything the
-  Task did in between (not only the part of the conversation on screen):
+  Thread did in between (not only the part of the conversation on screen):
   whether the agent finished (or the turn failed or was stopped), whether it
   ran the tests and how many other commands, how many files it changed, and
   whether it asked you something, for example "Since you left (42 min): the
@@ -1380,8 +1380,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   you watch is not counted. **Jump to where you stopped** scrolls to the
   first thing you have not seen (once the page has stopped moving, so a
   scroll on a phone is never fought) and closes the line; × closes it too.
-  It does not come back until the Task changes again while you are away.
-  The last look is kept per browser: the moment you last had the Task on
+  It does not come back until the Thread changes again while you are away.
+  The last look is kept per browser: the moment you last had the Thread on
   screen, marked while it is open and again as you leave it, hide the page
   or close it.
 - **Receipts**: under the last reply of an ended turn, its claims are
@@ -1466,31 +1466,31 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   yet are dropped, each with a notice.
 - **Close session** disconnects UAM from the provider conversation and keeps
   the record. Sending another prompt reopens the same conversation.
-- **Settle, archive, and delete**: when a Task is done, settle it from its
+- **Settle, archive, and delete**: when a Thread is done, settle it from its
   row menu (hover "…" or right-click) or the header menu. A settled
-  Task is read-only and its conversation is closed; reopen it to continue,
-  and your next message picks up the same conversation. Archive a Task, settled
-  or not, to put it away. **Unarchive** restores the same Task as Finished,
+  Thread is read-only and its conversation is closed; reopen it to continue,
+  and your next message picks up the same conversation. Archive a Thread, settled
+  or not, to put it away. **Unarchive** restores the same Thread as Finished,
   keeps its conversation and starts no turn. Only
-  an archived Task can be deleted, and a Project can be removed only once
-  every Task in it is archived. Deleting or removing never deletes the
+  an archived Thread can be deleted, and a Project can be removed only once
+  every Thread in it is archived. Deleting or removing never deletes the
   provider's copy of the conversation and never touches the directory. It does
-  delete the files you attached to the Task's prompts and the images its
+  delete the files you attached to the Thread's prompts and the images its
   tools returned, which UAM keeps in
   `~/.config/uam/web-attachments/` (or `$UAM_CONFIG_DIR/web-attachments/`).
   An attachment you upload but never send is deleted after 24 hours.
 
   | Action | Allowed on | Also needs | Result |
   |---|---|---|---|
-  | Settle | an active Task | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
-  | Reopen | a settled Task | – | Active again; the next message reopens the same conversation |
-  | Archive | an active or settled Task | for an active Task, the same as Settle | Put away, read-only until unarchived |
-  | Unarchive | an archived Task | – | Finished and active again; the next message continues the same conversation |
-  | Delete Task | an archived Task | – | The Task is removed from UAM |
-  | Remove Project | any Project | every Task in it archived, or no Tasks | The Project, its archived Tasks, its routines and the prompts saved for it are removed from UAM |
+  | Settle | an active Thread | no turn running, nothing waiting for you, an empty queue, no subagent or background task still running | Read-only; the conversation is closed |
+  | Reopen | a settled Thread | – | Active again; the next message reopens the same conversation |
+  | Archive | an active or settled Thread | for an active Thread, the same as Settle | Put away, read-only until unarchived |
+  | Unarchive | an archived Thread | – | Finished and active again; the next message continues the same conversation |
+  | Delete Thread | an archived Thread | – | The Thread is removed from UAM |
+  | Remove Project | any Project | every Thread in it archived, or no Threads | The Project, its archived Threads, its routines and the prompts saved for it are removed from UAM |
 
-  A settled or archived Task takes no messages, queue actions, model, effort,
-  context-size or mode changes. You can still rename a settled Task. Stop a
+  A settled or archived Thread takes no messages, queue actions, model, effort,
+  context-size or mode changes. You can still rename a settled Thread. Stop a
   running turn, answer what waits for you, and send or clear the queue before
   you settle or archive.
 
@@ -1508,21 +1508,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   **Settle anyway** or **Archive anyway**. A clean Thread settles at once,
   and a clean Archive asks as before.
 
-  A Task with no activity for 7 days settles itself. The check runs every
-  hour and skips any Task that Settle would refuse, that has an unanswered
+  A Thread with no activity for 7 days settles itself. The check runs every
+  hour and skips any Thread that Settle would refuse, that has an unanswered
   request, an unreconciled rewind or an unseen failure, that a page has
   open, or whose repository has unsaved git work, read again before each
   check; that row's tip says "Quiet N days; stays active until this work is
-  saved". This settle doesn't count as activity, so the Task keeps its last
+  saved". This settle doesn't count as activity, so the Thread keeps its last
   activity time. Its record says `settled_by: "auto"`; Reopen clears that and
-  starts the 7 days again. Tasks the removed done-check settle moved keep
+  starts the 7 days again. Threads the removed done-check settle moved keep
   `settled_by: "reviewed"`.
 
-  A Task whose conversation is not open, such as a settled, archived or
-  closed Task, or any Task after the service restarts, still shows its whole
+  A Thread whose conversation is not open, such as a settled, archived or
+  closed Thread, or any Thread after the service restarts, still shows its whole
   conversation. UAM reads it from Copilot's record without opening it: it
   sends nothing and changes nothing, and Copilot records nothing. The
-  conversation appears after a moment; when it cannot be read, the Task
+  conversation appears after a moment; when it cannot be read, the Thread
   says why and stays as it was. UAM keeps a conversation read this way in
   memory for up to 10 idle minutes, with a total memory budget that can evict
   older views sooner. Large histories show their newest retained part and a
@@ -1531,36 +1531,36 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in exactly its directory outside the web interface, for example with
   `copilot` in a terminal: newest first, at
   most 100, with their title and date, leaving out the ones that are already
-  Tasks. A session appears once it has a first message. Importing one makes
-  it a Task with its whole conversation; nothing is sent. The Task keeps the
+  Threads. A session appears once it has a first message. Importing one makes
+  it a Thread with its whole conversation; nothing is sent. The Thread keeps the
   session's model when Copilot still offers it, otherwise it takes the
-  defaults for new tasks from Settings, and it takes their mode. It starts closed: your
+  defaults for new threads from Settings, and it takes their mode. It starts closed: your
   next message opens the session. Import is offered when the installed
   Copilot CLI supports both history reading and in-use detection.
 - **Another program using the session**: a session that another program has
   open, such as a terminal `copilot --resume`, is
   marked in use and cannot be imported. Before every message, command, steer,
   and queued message of an imported or terminal-linked
-  Task, UAM checks that no other program has the session open, and refuses while one does; a queued
+  Thread, UAM checks that no other program has the session open, and refuses while one does; a queued
   message then waits and the queue pauses. The check is not a lock: a
   program that opens the session after it, for example during the turn, is
   not caught, and both then write to the same session without an error.
   While UAM has a session open, `copilot --resume` in a terminal warns that
-  it is in use. Deleting a Task leaves Copilot's conversation and any saved
+  it is in use. Deleting a Thread leaves Copilot's conversation and any saved
   legacy terminal record intact. UAM no longer probes old terminal hosts or
   shows a terminal-host badge.
-- **Older history**: scrolling up in a Task, or in an open subagent, keeps
+- **Older history**: scrolling up in a Thread, or in an open subagent, keeps
   loading until its first recorded message, even when the service keeps only
   the newest part in memory. Older pages are read from Copilot's record on
-  demand. The first such read of a long Task can take a second or two; later
+  demand. The first such read of a long Thread can take a second or two; later
   pages come from the service's cache. On an iPhone or iPad a loaded page
   appears once scrolling stops, so the view never moves under your finger. These pages never change, so this
   browser also keeps the ones you have read in its own storage (IndexedDB),
   and reading them again, even after a reload or a service restart, needs no
   request. That cache holds at most 64 MiB (less when the browser gives this
-  site little space) and 16 MiB per Task, drops the least recently read Tasks
-  first, and drops a Task not read here for 14 days. Signing out, or losing
-  the sign-in, clears it; deleting a Task removes that Task's pages. Newer
+  site little space) and 16 MiB per Thread, drops the least recently read Threads
+  first, and drops a Thread not read here for 14 days. Signing out, or losing
+  the sign-in, clears it; deleting a Thread removes that Thread's pages. Newer
   messages and item details always come from the service. Long tool output
   and thinking shortened in the transcript show whole when expanded or
   copied. A message too long to keep whole shows its start and "Show full
@@ -1568,20 +1568,20 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it copies the whole text either way. "Earlier history was truncated"
   appears only when the record itself is gone or the provider cannot page
   it.
-- **Changes**: the "Changes" button in the Task header shows how many
+- **Changes**: the "Changes" button in the Thread header shows how many
   tracked files in the Thread's repository are not committed (the count on
   its sidebar row; an older service without that count makes it the
   default scope's file count) and opens the changes beside the conversation with the diff (a
   full-screen sheet on a narrow window). Three scopes sit at the top, each
-  with its file count: **This task** (the default) lists the files this
-  Task's agent or its subagents edited with an edit tool (create, write,
+  with its file count: **This thread** (the default) lists the files this
+  Thread's agent or its subagents edited with an edit tool (create, write,
   edit or a patch; one that failed is left out), compared with `HEAD`;
   **Last turn** narrows that to the files edited since the latest prompt
   you sent (a steer joins the running turn and does not start a new one); **All changes** is every uncommitted change in the working tree,
-  from any Task or source. A file this Task edited shows everything that
+  from any Thread or source. A file this Thread edited shows everything that
   differs from `HEAD`, including changes something else made to it; a file
   changed back or committed drops out. Files written by shell commands are
-  not attributed to the Task. Until a Task's history has been read, edits
+  not attributed to the Thread. Until a Thread's history has been read, edits
   from before it may be missing, and the panel says so. Each file shows its
   status and `+added −removed` lines. Files that deserve a closer look come
   first with a short reason: CI workflows, lockfiles, Dockerfiles,
@@ -1590,27 +1590,27 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   on a file (in the list or above its diff) to mark it reviewed; the mark
   clears and the row says "Changed since you viewed" when the file changes
   again. Select a diff line (or its line number) to add a comment; comments
-  collect at the bottom of the panel, and **Send N comments to the task**
-  sends them as one message, at once to an idle Task or after the running
-  turn. Viewed marks and unsent comments are kept in this browser per Task
-  and survive a reload; a settled or archived Task takes no comments. On a
+  collect at the bottom of the panel, and **Send N comments to the thread**
+  sends them as one message, at once to an idle Thread or after the running
+  turn. Viewed marks and unsent comments are kept in this browser per Thread
+  and survive a reload; a settled or archived Thread takes no comments. On a
   wide window this panel can be
   resized by dragging their inner edge (the handle also takes the arrow
   keys; double-click resets); the width is kept per browser.
-  An open panel on the active, visible Task refreshes its selected scope
+  An open panel on the active, visible Thread refreshes its selected scope
   every five seconds and when the browser tab becomes visible again. The
   previous diff remains visible while an update loads. Closing or hiding the
   panel cancels its reads; manual Refresh remains available.
 - **Commit, Push and Pull**: under the file list, the Changes panel shows the
   branch, how many commits it is ahead of or behind its upstream (as last
   fetched), and Push and Pull. "Commit" opens a message box and a checkbox for
-  every changed file. The boxes start on this Task's files only (those its
-  edit tools touched, as the Task records them; a shell command's edits are
-  not counted), never on another Task's or on a file nobody is known to have
-  edited. After a restart, edits made before the Task's history was read
+  every changed file. The boxes start on this Thread's files only (those its
+  edit tools touched, as the Thread records them; a shell command's edits are
+  not counted), never on another Thread's or on a file nobody is known to have
+  edited. After a restart, edits made before the Thread's history was read
   again may be unknown: the panel says so and you check the files yourself.
   A note says how many changed files are left out. The message and the
-  checked files are kept per Task while Changes is closed.
+  checked files are kept per Thread while Changes is closed.
   Generate (then Regenerate) asks the Utility model for a message from the
   chosen files' diff and the repository's last 20 commit subjects, so it
   follows their style, Conventional Commits included. It never commits, and
@@ -1631,12 +1631,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   fast-forwards; when both sides have new commits it says so and changes
   nothing. The service runs git without a terminal, so a remote that needs a
   password, or an SSH key the service's environment cannot use, fails with
-  git's message. While any Task in the same repository could still be
+  git's message. While any Thread in the same repository could still be
   writing there (mid-turn, starting, with prompts queued, or with subagents
   or background jobs still running), the panel names it and Commit, Push and
   Pull wait; while a commit, push or pull runs, a turn starting in that
   repository waits for it. So an agent's edits are never committed half
-  done. After a commit or a pull, every Task's change count in that
+  done. After a commit or a pull, every Thread's change count in that
   repository is recounted.
 - **Go to file**: Alt+P, or the Files button left of the branch under the
   composer, opens Go to file over the dimmed page (a bottom sheet on a
@@ -1666,19 +1666,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   width (up to about 400 px) first: the buttons drop their labels, then
   Charts and Terminal move into the header's "…" menu.
 - **Terminal**: off by default. Turn on Settings → Server → UAM and access →
-  Shell access → Terminal and the Task
+  Shell access → Terminal and the Thread
   header shows a "Terminal" button after Changes and Charts, also when the project has no
-  Git and on settled and archived Tasks. It opens a shell in the project
+  Git and on settled and archived Threads. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
   the bottom of the window under the conversation (drag its top edge to
-  resize). It stays open, with its shell, while you switch Tasks. Anyone signed in can
+  resize). It stays open, with its shell, while you switch Threads. Anyone signed in can
   then run commands on the machine without the agent's permission prompts;
   agents do not use it. The panel's header shows the folder and whether the
   shell is connecting, connected, exited (with its exit code) or
   disconnected; Restart starts a new shell and × closes the panel. The shell
   lives only as long as the panel: closing it, Restart, reloading the page or
   turning the setting off ends the shell and everything it runs, and there
-  is no reattaching. In a Task of another project, the header's Terminal
+  is no reattaching. In a Thread of another project, the header's Terminal
   button moves the panel to that project's folder with a new shell. While
   the shell is connected, closing, Restart and moving ask first. Esc goes to
   the terminal, so only × (or the header's Terminal button) closes it;
@@ -1702,7 +1702,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   terminal." with Retry. The terminal draws with WebGL; in a browser with
   WebGL turned off the panel says so instead.
 - **No Git**: when the project directory is not in a Git repository, or git
-  is not installed on the server, the Task header shows a warning in place of
+  is not installed on the server, the Thread header shows a warning in place of
   Changes and Files, and turns leave out their "Changed n files" line. Once
   a turn has finish evidence, the Changes button comes back beside the
   warning to show it. Click the warning for the reason. It clears once the
@@ -1710,27 +1710,27 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   When git is installed, the warning offers "Set up git here", which runs
   `git init` in the project folder (only when it is in no repository) and
   brings Changes and Files back.
-- **Loading indicators**: during a turn a quiet ring turns only at the Task's
+- **Loading indicators**: during a turn a quiet ring turns only at the Thread's
   state and at the step in progress; running subagents and background shells
   show a still dot and say "Running". Request loading and busy buttons share
   the same ring. Labels and skeleton bars stay still.
   Brief request waits keep the existing 300ms delay. Motion → Match system
   makes the ring static when the OS requests reduced motion.
-- **Sidebar**: all unsettled Tasks across every Project share one flat list
+- **Sidebar**: all unsettled Threads across every Project share one flat list
   without group headings. Each row's status line says whether it needs
-  input, is ready for review, is running, or is idle. Tasks are listed in
+  input, is ready for review, is running, or is idle. Threads are listed in
   creation order, newest first, whatever their state. A collapsible
-  "Settled" section sits at the foot of the sidebar, under the Task list,
-  which scrolls on its own; archived Tasks are listed in Settings →
+  "Settled" section sits at the foot of the sidebar, under the Thread list,
+  which scrolls on its own; archived Threads are listed in Settings →
   Archived. Open, its rows scroll on their own within 40% of the screen
-  height, so the Task list always keeps the rest. Settled lists the newest
+  height, so the Thread list always keeps the rest. Settled lists the newest
   settled first: the newest ten, then **Show all**.
 
-  "Opened since" is tracked per browser: a Task you never opened in this
+  "Opened since" is tracked per browser: a Thread you never opened in this
   browser counts as unread once it changes after your first visit. The open
-  Task is read only while the page is visible: what it does while the tab is
+  Thread is read only while the page is visible: what it does while the tab is
   in the background stays unread until you come back. Marks of deleted
-  Tasks are dropped.
+  Threads are dropped.
   A row first shows the Project badge, Project name, the folder's unsaved
   git work, and a short status with an icon. Unsaved work is a pen glyph
   with the number of changed tracked files not committed (untracked files
@@ -1746,58 +1746,58 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Finished green; Error red; inactive states gray.
-  The second line shows the Task title, the Project branch in muted text,
-  and how long ago the Task changed. Hovering the row shows the full title,
+  The second line shows the Thread title, the Project branch in muted text,
+  and how long ago the Thread changed. Hovering the row shows the full title,
   the Project, the full request or outcome, the branch, and `+N −M` line
   counts when known. Hovering an
   active row that can settle shows Settle.
-  - **Alt+J / Alt+K** open the next / previous Task needing attention, wrapping
+  - **Alt+J / Alt+K** open the next / previous Thread needing attention, wrapping
     round. They do nothing in the terminal, and in a text field where the
     keys type a character (Option+J on a Mac).
   - The tab title, the installed app's badge, the sidebar toggle (the UAM
     mark in the sidebar header, on the collapsed rail, and the button on a
     narrow window) carry the Needs you count; at zero it is hidden. The tab
-    title reads "UAM" on the home screen, "UAM - <Task name>" while a Task
-    is open ("UAM - New task" for a new Task or one still waiting for a
+    title reads "UAM" on the home screen, "UAM - <Thread name>" while a Thread
+    is open ("UAM - New thread" for a new Thread or one still waiting for a
     title), and "UAM - Settings"
     or "UAM - Routines" for those views; the count comes
     first, as in "(9) UAM - Fix redraw".
 
   A Settled row shows the Project badge and title, faded until hovered or
   selected; its tooltip adds the Project name and directory and when the
-  Task was created and settled. A Task the service settled says "Settled automatically after 7 quiet days" or
+  Thread was created and settled. A Thread the service settled says "Settled automatically after 7 quiet days" or
   "Settled after you reviewed it".
-  A settled or archived Task opens read-only. Search matches Task names and
+  A settled or archived Thread opens read-only. Search matches Thread names and
   titles, Project names and branches within the chosen Project filter,
-  archived Tasks included.
+  archived Threads included.
   Right-click a row, press Shift+F10 or the Menu key, or long-press on touch
   for Rename, Close conversation (while one is open), Run again, Try with
-  another model…, Export as Markdown, Settle (or Reopen for a settled Task)
-  and Archive. Delete is offered only for archived Tasks, in Settings →
+  another model…, Export as Markdown, Settle (or Reopen for a settled Thread)
+  and Archive. Delete is offered only for archived Threads, in Settings →
   Archived.
   Arrow keys move between rows,
-  Enter opens a Task and F2 renames it. There are no Project headings: the
-  filter below shows one Project's Tasks.
+  Enter opens a Thread and F2 renames it. There are no Project headings: the
+  filter below shows one Project's Threads.
   - **Filter**: the badge button beside Search shows the chosen Project's
     badge, or a stacked-layers icon for all Projects. It opens a list with a
     search box, "All projects" and every Project; choosing one shows only that
-    Project's Tasks, shelves included, and New task starts on it. The choice
+    Project's Threads, shelves included, and New thread starts on it. The choice
     is kept per browser. The gear at the right of each Project opens "Edit
     project", with its name, "Routines", "Previous sessions" and "Remove
-    project". What new Tasks start with is in Settings → New tasks, for
+    project". What new Threads start with is in Settings → New threads, for
     every Project.
   - **Collapse the sidebar**: the UAM mark and wordmark beside Search in the sidebar
     header, or Ctrl+B (⌘+B on a Mac), shrinks the sidebar to a narrow icon
     rail and the conversation takes the width. The rail keeps, top to bottom,
     the UAM mark alone (shows the sidebar again, with the Needs you count on it),
-    the Project filter, Routines, Add project, New task, and at the foot
+    the Project filter, Routines, Add project, New thread, and at the foot
     Settings, Usage and the connection dot; each opens exactly what the sidebar's
-    own button opens. Toggling it keeps the selected Task and its URL.
+    own button opens. Toggling it keeps the selected Thread and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
-  - With no Task open, the main pane shows the UAM mark, "What are you
-    working on?", a **New task** button and, once there are Tasks,
-    **Recent tasks**: up to six that are not archived, across all Projects,
+  - With no Thread open, the main pane shows the UAM mark, "What are you
+    working on?", a **New thread** button and, once there are Threads,
+    **Recent threads**: up to six that are not archived, across all Projects,
     latest update first; click one to open it. Without a Project it says
     "Start with a project" and offers **Add project**. Settings → This browser →
     Theme picks Light, Dark or Match system (the default, which follows the
@@ -1813,7 +1813,7 @@ States shown for each session:
 | cancelled | The last turn was stopped: with Stop turn, at a routine's time limit, or by Copilot (autopilot's credit limit, a remote command or an MCP server); `stop_reason` says which |
 | failed | The provider reported an error, or its process or event stream ended; the detail says which |
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
-| closed | The conversation was closed from the web interface, or the Task was imported and has not been sent a message yet |
+| closed | The conversation was closed from the web interface, or the Thread was imported and has not been sent a message yet |
 
 A prompt is sent at most once per click. Retrying after a network error reuses
 the same request ID, and the service answers a repeated request ID with the
@@ -1861,9 +1861,9 @@ The authenticated `GET /api/glab` endpoint accepts an optional `project_id`.
 Connected instances advertise `gitlab-status-v1`; older instances show an
 unavailable message. This status check does not change the governor's cache.
 
-For Tasks whose session directory has a GitLab `origin`, UAM enables shell
+For Threads whose session directory has a GitLab `origin`, UAM enables shell
 rules after finding `glab` on PATH and verifying `glab auth status` for that
-host. The origin/auth cache refreshes in the background at Task open and after
+host. The origin/auth cache refreshes in the background at Thread open and after
 ten minutes, or after one minute when the check failed, so signing in to glab
 takes effect quickly. A cold or expired gate leaves the current call unchanged. GitHub
 origins, missing glab and failed authentication leave these rules disabled.
@@ -1993,7 +1993,7 @@ only through the Copilot runtime's API; it never writes the file itself.
 
 **Settings → MCP servers** shows each configured server as a card, grouped
 by source (the servers configured here, then plugin and built-in ones), with
-its name, type, command line or address, and a switch for whether new Tasks
+its name, type, command line or address, and a switch for whether new Threads
 start it. Pressing a card opens its reader: the command line or address and
 the names of its environment variables or headers (values show as `••••`),
 with **Edit** and **Remove** (confirmed first). Servers from a plugin or
@@ -2010,10 +2010,10 @@ in, and one with a user name or password in it is refused.
 **The built-in GitHub server** has its own switch on its card, and it is
 uam's setting rather than Copilot's: the `copilot` command on this host is
 not affected. It is off by default, also on an install that never saved it.
-While it is off, every Copilot Task created or reopened leaves the server
+While it is off, every Copilot Thread created or reopened leaves the server
 off, and so do Utility calls. Starting it took over a second each time a
-Task opened (measured on Copilot CLI 1.0.93), and a message sent meanwhile
-waited for it. Turning the switch on or off also reaches open Tasks at once:
+Thread opened (measured on Copilot CLI 1.0.93), and a message sent meanwhile
+waited for it. Turning the switch on or off also reaches open Threads at once:
 their next turn has the GitHub tools, or no longer has them. A connected
 instance has its own setting, shown when that instance offers it.
 
@@ -2024,29 +2024,29 @@ already grants a shell to anyone signed in; with it off the form offers
 HTTP and SSE only and the service refuses a stdio add or edit (`403`).
 Turning a server on or off and removing it need no Terminal.
 
-**In a Task**, the actions menu (`…`) → **MCP servers…** shows each server
-as that Task's conversation sees it: Connected (with its tools; tap the
+**In a Thread**, the actions menu (`…`) → **MCP servers…** shows each server
+as that Thread's conversation sees it: Connected (with its tools; tap the
 count to list them), Failed (with the error and **Restart**), Needs
-sign-in, Starting, or Off for this task. The switch turns a server off or on
-for this Task only, until its configuration reloads, its conversation closes,
+sign-in, Starting, or Off for this thread. The switch turns a server off or on
+for this Thread only, until its configuration reloads, its conversation closes,
 or the built-in GitHub server's setting changes. Otherwise a conversation keeps the servers it
-started with: other changes in Settings reach new Tasks, and an open
-Task picks them up with **Apply current settings**, which reloads its
+started with: other changes in Settings reach new Threads, and an open
+Thread picks them up with **Apply current settings**, which reloads its
 configuration while keeping the conversation open when the runtime supports
 it. Prompt and tool changes apply on the next turn. Older runtimes close
 and reopen instead. The action is refused while a turn, queued prompt,
 subagent or background task is running, or another client holds the
 conversation. A failed reload can have applied some changes; uam reports
-the failure without closing or retrying it. Opening the dialog opens the Task's
+the failure without closing or retrying it. Opening the dialog opens the Thread's
 conversation if it was closed; nothing is sent to the agent.
 
 **Signing in to a remote server.** A server that uses OAuth shows Needs
 sign-in. **Sign in** asks Copilot for the provider's sign-in page and shows
 a link to open it in a new tab. When the browser's host matches a configured
 HTTPS `--public-origin` and the provider supports public callbacks, finish
-in that tab and return to the Task. The provider SDK handles discovery,
+in that tab and return to the Thread. The provider SDK handles discovery,
 PKCE, code exchange, credential storage and connecting the server. UAM
-accepts its callback only for that Task's current conversation, for 10
+accepts its callback only for that Thread's current conversation, for 10
 minutes and once; closing or reopening the conversation invalidates it.
 The dialog updates through live server status; use **Refresh** if needed.
 
@@ -2056,10 +2056,10 @@ address on `127.0.0.1` or `localhost`, where Copilot waits on this host. On
 the host's own desktop it finishes by itself. From another computer that
 page does not load; copy the whole address from the address bar, paste it
 into the dialog and choose **Finish sign-in**. UAM passes only the exact
-port, path and `state` of that Task/server's pending sign-in to the waiting
+port, path and `state` of that Thread/server's pending sign-in to the waiting
 listener, for 10 minutes and once, without following redirects. A supported
 public-callback failure is reported and does not start another login.
-Copilot keeps the sign-in for later Tasks and the `copilot` command. A
+Copilot keeps the sign-in for later Threads and the `copilot` command. A
 connected remote server offers **Sign in again**, which discards the kept
 sign-in first. If the provider's legacy redirect is not a loopback address,
 finish in that tab or run `copilot` on the host and use `/mcp`.
@@ -2091,25 +2091,25 @@ reachable, exactly as a browser tab does.
 
 ## Notifications
 
-Settings → This browser → **Notify me when a Task needs me or finishes**
+Settings → This browser → **Notify me when a Thread needs me or finishes**
 turns notifications on for the browser you are using. The browser asks for
 permission when you turn the switch on, and at no other time.
 
-A notification is sent once each time a Task:
+A notification is sent once each time a Thread:
 
-- asks you a question: "<Task name> needs you: <question>"
-- needs your permission: "<Task name> needs you: <request>"
-- fails: "<Task name> failed"
+- asks you a question: "<Thread name> needs you: <question>"
+- needs your permission: "<Thread name> needs you: <request>"
+- fails: "<Thread name> failed"
 - finishes a turn, with no subagent or background shell still running:
-  "<Task name> finished"
+  "<Thread name> finished"
 
-The Task you are looking at on a visible page is never announced, on any of
-your devices: each tab tells the service which Task it shows while it is
-visible (`POST /api/viewing`), and the service sends no push for that Task.
-A Task you open while its notification waits for the push is not announced
+The Thread you are looking at on a visible page is never announced, on any of
+your devices: each tab tells the service which Thread it shows while it is
+visible (`POST /api/viewing`), and the service sends no push for that Thread.
+A Thread you open while its notification waits for the push is not announced
 either. With several tabs open you still get one notification. Clicking it brings UAM to
-the front and opens that Task. A newer notification for the same Task
-replaces the older one. A notification holds the Task's name and the
+the front and opens that Thread. A newer notification for the same Thread
+replaces the older one. A notification holds the Thread's name and the
 question or request title, and nothing else from the conversation.
 
 **Delivery.** Where the browser supports Web Push (desktop Chrome, Edge and
@@ -2128,17 +2128,17 @@ in the Home Screen app, not in a Safari tab.
 
 1. In Safari, open UAM, tap *Share*, then *Add to Home Screen*.
 2. Open UAM from the Home Screen and sign in.
-3. Settings → This browser → turn on **Notify me when a Task needs me or
+3. Settings → This browser → turn on **Notify me when a Thread needs me or
    finishes**, then tap *Allow*.
 
 iOS notifications have no action buttons and no reply field. Tap one to open
-the Task. Browsers expect every push to show a notification (Safari revokes
+the Thread. Browsers expect every push to show a notification (Safari revokes
 the subscription otherwise, Chrome shows its own notice), so every push is
-shown; the service simply sends none for the Task you have open. While no
-UAM page is visible, each push also sets the app icon's badge to the Task
-list's **Needs you** count. Failed or interrupted Tasks count until any
+shown; the service simply sends none for the Thread you have open. While no
+UAM page is visible, each push also sets the app icon's badge to the Thread
+list's **Needs you** count. Failed or interrupted Threads count until any
 browser opens them, because the service does not know which browser has
-read them; that mark survives a restart, and a Task whose turn a restart
+read them; that mark survives a restart, and a Thread whose turn a restart
 interrupted counts too. A visible page keeps the badge at its own count,
 with this browser's read marks.
 
@@ -2168,7 +2168,7 @@ This ends running turns, stops the provider processes the service started,
 and marks those sessions interrupted. Queued messages are dropped without
 being sent; queues are kept in memory only. Session records and the exact
 provider conversation IDs are kept. After `uam web` starts again, sending a prompt to a
-session reopens the same provider conversation. The Task's selected model,
+session reopens the same provider conversation. The Thread's selected model,
 effort and context size are restored before the prompt is sent. If Copilot
 cannot apply them, UAM reports the failure without sending the prompt.
 
@@ -2187,9 +2187,9 @@ page carry an amber dot. A binary that is missing or whose `version` fails
 shows the reason instead, and offers no restart. Nothing restarts until
 **Restart** is chosen.
 
-Restart waits until no Task works or waits for anything (a turn, an answer,
+Restart waits until no Thread works or waits for anything (a turn, an answer,
 queued prompts, subagents or background tasks); meanwhile Settings says
-"Restarts when no task is working or waiting." Then the service stops the
+"Restarts when no thread is working or waiting." Then the service stops the
 way `uam web stop` does, with nothing running, and runs the installed binary
 in the same process: the PID, the flags (`--listen`, `--public-origin`,
 `--log-headers`), the environment and the access token stay, and signed-in
@@ -2299,7 +2299,7 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
 - **Retired UAM terminal sessions.** Saved terminal records and profiles stay
   on disk but have no controls in current UAM. Use the older binary to stop
   existing terminal hosts before replacing it. Copilot conversations can
-  still be imported as Tasks after the in-use check.
+  still be imported as Threads after the in-use check.
 - **Removed planner.** The planner was removed
   ([ADR 0007](adr/0007-remove-the-planner.md)). At startup uam deletes its
   `board.db` (with `board.db-wal` and `board.db-shm`) and the lane worktrees
@@ -2321,23 +2321,23 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   just after the turn ended starts a new turn.
 - **Selection changes (Copilot).** UAM does not force compaction to make a
   smaller context size fit. If Copilot requires consent or cancels a switch,
-  the change fails and the Task keeps its recorded selection. Returning
+  the change fails and the Thread keeps its recorded selection. Returning
   effort to Default uses an experimental Copilot SDK operation, separate
   from the model switch. If that reset fails after the switch, or Copilot
-  cannot confirm which settings applied, UAM marks the Task failed and closes
+  cannot confirm which settings applied, UAM marks the Thread failed and closes
   the conversation. The provider may have partly changed; UAM does not claim
   the selection succeeded or try to roll it back. The next explicit send
   must first restore the recorded settings successfully.
 - **Detached shells (Copilot).** While a shell Copilot started detached
   is running, Copilot CLI 1.0.92 and 1.0.93 report it in a form the
-  Copilot SDK cannot read (still so in SDK 1.0.17), so the Task's
+  Copilot SDK cannot read (still so in SDK 1.0.17), so the Thread's
   background tasks cannot be read either. The chip says Status unavailable
   and lists the shells reported before, or does not appear when none were;
   nothing can be stopped from it. The shell shows once it ends. Until
   then, a subagent's follow-up and an autopilot turn waiting on an
   attached shell may also stay running.
 - **Copilot session diffs.** Copilot does not report per-conversation file
-  changes, so UAM attributes files to a Task from its edit tool calls (see
+  changes, so UAM attributes files to a Thread from its edit tool calls (see
   Changes); files written by shell commands show only under All changes.
 - **Opening a web conversation elsewhere at the same time.** Do not
   continue a web session's conversation in Copilot's own terminal UI while
@@ -2359,7 +2359,7 @@ preserve the harness's reported accounting; reasoning already included in
 output is counted once. The 7-day and 30-day windows include today and use
 the service's local dates.
 
-UAM records SDK-reported Copilot task, subagent, and Background AI usage.
+UAM records SDK-reported Copilot thread, subagent, and Background AI usage.
 The embedded `aiusage-core` library also reads local harness records,
 including Claude Code, Codex, OpenCode, and external Copilot sessions: every
 15 minutes, and when the Usage popover or token costs are read, at most once a
@@ -2372,9 +2372,9 @@ intervals are saved before inference and closed on disconnect, so replayed
 OTEL does not count the same call twice and later terminal usage can count.
 Existing daily totals remain in `web-token-usage.json`; local harness records
 and collection checkpoints live in `web-token-usage.db` beside it. Both survive
-task removal and have no retention cutoff. A model call's counts, in these
+thread removal and have no retention cutoff. A model call's counts, in these
 totals and on the turn's timing in `sessions.json`, are saved with the turn's
-end or the Task's next change, at the latest 30 seconds after the call, so a
+end or the Thread's next change, at the latest 30 seconds after the call, so a
 crash loses at most that much. Since older daily totals lack call
 identities, external Copilot history is imported only after a saved one-time
 cutover. Other harnesses can contribute older local history. After an unclean

@@ -32,9 +32,9 @@ import (
 // shell, a script) are not edit tools and are not attributed.
 
 const (
-	taskLabel    = "Files this task's agent edited, compared with HEAD. Changes made to them by anything else show too."
+	taskLabel    = "Files this thread's agent edited, compared with HEAD. Changes made to them by anything else show too."
 	turnLabel    = "Files the agent edited in its latest turn, compared with HEAD."
-	partialEdits = "edits from before this task's history was read may be missing"
+	partialEdits = "edits from before this thread's history was read may be missing"
 )
 
 var errScope = newError(http.StatusBadRequest, "scope must be %q, %q, %q or %q", ScopeTask, ScopeTurn, ScopeWorkspace, ScopeSession)
@@ -269,7 +269,7 @@ func (m *Manager) taskFileDiff(ctx context.Context, id, scope, path string) (age
 			return workspaceFileDiff(ctx, workdir, path)
 		}
 	}
-	return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not among the files this task edited")
+	return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not among the files this thread edited")
 }
 
 // digestFiles sets each file's Digest from its size and modification time,

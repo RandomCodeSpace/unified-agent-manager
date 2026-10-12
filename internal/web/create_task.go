@@ -36,14 +36,14 @@ const (
 
 var createTaskTool = agentapi.HostTool{
 	Name: createTaskToolName,
-	Description: fmt.Sprintf("Start a new uam task in an existing project, with prompt as its first message. "+
-		"The task starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
-		"You can start at most %d tasks.", maxSpawns),
+	Description: fmt.Sprintf("Start a new uam thread in an existing project, with prompt as its first message. "+
+		"The thread starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and nothing from it comes back to you. "+
+		"You can start at most %d threads.", maxSpawns),
 	Parameters: toolSchema([]string{"project", "prompt"}, map[string]any{
 		"project": stringProp("An existing project: its ID, or its exact name."),
-		"prompt":  stringProp(fmt.Sprintf("The new task's first message, up to %d bytes.", maxSpawnPrompt)),
-		"name":    stringProp(fmt.Sprintf("The new task's name, up to %d characters. Without one, the task is titled from its prompt.", maxNameRunes)),
-		"model":   stringProp("A model ID the provider offers. Without one, the owner's default for new tasks."),
+		"prompt":  stringProp(fmt.Sprintf("The new thread's first message, up to %d bytes.", maxSpawnPrompt)),
+		"name":    stringProp(fmt.Sprintf("The new thread's name, up to %d characters. Without one, the thread is titled from its prompt.", maxNameRunes)),
+		"model":   stringProp("A model ID the provider offers. Without one, the owner's default for new threads."),
 	}),
 }
 
@@ -78,7 +78,7 @@ func (m *Manager) taskToolsLocked(taskID string, spawned bool) ([]agentapi.HostT
 
 // errTaskEnded ends a host tool call whose Task was settled or archived
 // while it ran.
-var errTaskEnded = errors.New("the task was settled or archived, so this call was discarded")
+var errTaskEnded = errors.New("the thread was settled or archived, so this call was discarded")
 
 // decodeToolArgs decodes a call's JSON object into v, refusing unknown
 // arguments as the schemas do.
@@ -135,7 +135,7 @@ func (m *Manager) startCall(ctx context.Context, id string) (context.Context, fu
 	case s == nil:
 		return nil, nil, newError(http.StatusNotFound, msgSessionNotFound)
 	case s.stage != StageActive:
-		return nil, nil, newError(http.StatusConflict, "the task is %s, so it can no longer use uam tools", stageName(s.stage))
+		return nil, nil, newError(http.StatusConflict, "the thread is %s, so it can no longer use uam tools", stageName(s.stage))
 	}
 	ctx, cancel := context.WithCancelCause(ctx)
 	call := &taskCall{cancel: cancel, done: make(chan struct{})}
@@ -190,7 +190,7 @@ func (m *Manager) createTask(ctx context.Context, taskID string, call agentapi.H
 // that is only logged.
 func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.HostToolCall) (string, error) {
 	if call.TaskID != taskID {
-		return "", errors.New("the call does not belong to this task")
+		return "", errors.New("the call does not belong to this thread")
 	}
 	var in createTaskArgs
 	if err := decodeToolArgs(call.Arguments, &in); err != nil {
@@ -232,7 +232,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		return "", errShuttingDown
 	case n >= maxSpawns:
 		m.mu.Unlock()
-		return "", newError(http.StatusConflict, "this task has already started %d tasks, the most one task may start", n)
+		return "", newError(http.StatusConflict, "this thread has already started %d threads, the most one thread may start", n)
 	}
 	if m.spawns == nil {
 		m.spawns = map[string]string{}
@@ -252,9 +252,9 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 		}
 		done <- err
 	}()
-	task := fmt.Sprintf("task %s", req.id)
+	task := fmt.Sprintf("thread %s", req.id)
 	if req.Name != "" {
-		task = fmt.Sprintf("task %s %q", req.id, req.Name)
+		task = fmt.Sprintf("thread %s %q", req.id, req.Name)
 	}
 	tail := fmt.Sprintf("It starts in safe mode and runs on its own: the owner sees it in the uam sidebar, and no reply comes back to you. "+
 		"You can start %d more.", maxSpawns-n-1)
@@ -263,7 +263,7 @@ func (m *Manager) startSpawn(ctx context.Context, taskID string, call agentapi.H
 	select {
 	case err := <-done:
 		if err != nil {
-			return "", fmt.Errorf("the task was not created: %w", err)
+			return "", fmt.Errorf("the thread was not created: %w", err)
 		}
 		return fmt.Sprintf("Started %s in project %q (%s), with your prompt as its first message. %s", task, projectName, req.ProjectID, tail), nil
 	case <-timer.C:
@@ -307,7 +307,7 @@ func (m *Manager) spawnProjectLocked(ref string) (id, name string, err error) {
 	slices.Sort(ids)
 	switch len(ids) {
 	case 0:
-		return "", "", fmt.Errorf("no project has the ID or name %q; a task can be started only in an existing project", ref)
+		return "", "", fmt.Errorf("no project has the ID or name %q; a thread can be started only in an existing project", ref)
 	case 1:
 		return ids[0], ref, nil
 	}
@@ -376,7 +376,7 @@ func spawnRoom(cfg *store.Config, rec store.SessionRecord) error {
 		}
 	}
 	if n >= maxSpawns {
-		return fmt.Errorf("task %s has already started %d tasks", rec.Web.SpawnedBy, n)
+		return fmt.Errorf("thread %s has already started %d threads", rec.Web.SpawnedBy, n)
 	}
 	return nil
 }

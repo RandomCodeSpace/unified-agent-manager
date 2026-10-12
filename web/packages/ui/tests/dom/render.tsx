@@ -23,7 +23,7 @@ export type User = ReturnType<typeof renderApp>['user'];
 
 /** The sidebar landmark once the first snapshot has listed the Projects. */
 export async function sidebar() {
-  const aside = within(await screen.findByRole('navigation', { name: 'Tasks' }));
+  const aside = within(await screen.findByRole('navigation', { name: 'Threads' }));
   await aside.findByRole('button', { name: /Fix re-attach redraw regression/ });
   return aside;
 }

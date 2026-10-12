@@ -283,13 +283,13 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
           <Field id={`${prefix}-bash`} label="Bash command" hint="Runs on Linux and macOS as the service user."><TextArea id={`${prefix}-bash`} rows={3} disabled={busy || locked} value={draft.bash} required={!draft.powershell.trim() && !draft.command.trim()} onChange={(e) => change({ bash: e.target.value })} /></Field>}
       </> : <>
         <Field id={`${prefix}-description`} label="Description" hint={kind === 'skills' ? 'Describe when the agent should use this skill.' : 'Describe the work this agent should handle.'}><Input id={`${prefix}-description`} required maxLength={kind === 'skills' ? 1024 : undefined} value={draft.description} disabled={busy || locked} onChange={(e) => change({ description: e.target.value })} /></Field>
-        {kind === 'agents' && <Field id={`${prefix}-model`} label="Model (optional)" hintVisible={!!modelStatus || draft.modelOrder.length > 0} hint={draft.modelOrder.length ? 'The priority list in Advanced settings replaces this single-model choice.' : modelStatus || 'Choose an available Copilot model, or inherit the task model.'}>
+        {kind === 'agents' && <Field id={`${prefix}-model`} label="Model (optional)" hintVisible={!!modelStatus || draft.modelOrder.length > 0} hint={draft.modelOrder.length ? 'The priority list in Advanced settings replaces this single-model choice.' : modelStatus || 'Choose an available Copilot model, or inherit the thread model.'}>
           <Select id={`${prefix}-model`} value={selectedModel} disabled={busy || locked || draft.modelOrder.length > 0} items={[
-            { value: '', label: 'Inherit task model' },
+            { value: '', label: 'Inherit thread model' },
             ...(selectedModel && !models.some((model) => model.id === selectedModel) ? [{ value: selectedModel, label: `${selectedModel} (unavailable)`, hidden: true }] : []),
             ...models.map((model) => ({ value: model.id, label: model.name })),
           ]} onValueChange={(model) => change({ model })} />
-          {invalidModel && <Note tone="error" role="alert">A selected model is no longer available. Choose available models or inherit the task model before adding this agent.</Note>}
+          {invalidModel && <Note tone="error" role="alert">A selected model is no longer available. Choose available models or inherit the thread model before adding this agent.</Note>}
         </Field>}
         <Field id={`${prefix}-prompt`} label={kind === 'agents' ? 'Agent instructions' : 'Skill instructions'}><TextArea id={`${prefix}-prompt`} rows={10} required value={draft.prompt} disabled={busy || locked} onChange={(e) => change({ prompt: e.target.value })} /></Field>
       </>}
@@ -324,7 +324,7 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
               <Button size="sm" aria-label={`Remove model ${index + 1} from priority list`} disabled={busy || locked} onClick={() => change({ modelOrder: draft.modelOrder.filter((_, at) => at !== index) })}>Remove</Button>
             </div>)}
             <Field id={`${prefix}-model-policy`} label="Model policy" hintVisible={!hasModel} hint={hasModel ? 'Required refuses dispatch when the configured models cannot be used.' : 'Choose a model to set a policy. No policy override is saved while inheriting.'}><Select id={`${prefix}-model-policy`} value={hasModel ? draft.modelPolicy : ''} disabled={busy || locked || !hasModel} items={[{ value: '', label: 'Preferred (default)' }, { value: 'required', label: 'Required' }]} onValueChange={(modelPolicy) => change({ modelPolicy })} /></Field>
-            <Field id={`${prefix}-effort`} label="Reasoning effort" hintVisible={!hasModel} hint={hasModel ? 'Only effort levels supported by every selected model are offered.' : 'Choose a model to override effort. Otherwise the task effort is inherited.'}><Select id={`${prefix}-effort`} value={hasModel ? draft.reasoningEffort : ''} disabled={busy || locked || !hasModel} items={[{ value: '', label: 'Inherit task effort' }, ...effortOptions.map((effort) => ({ value: effort, label: supportedEfforts.includes(effort) ? effort : `${effort} (unavailable)`, hidden: !supportedEfforts.includes(effort) }))]} onValueChange={(reasoningEffort) => change({ reasoningEffort })} /></Field>
+            <Field id={`${prefix}-effort`} label="Reasoning effort" hintVisible={!hasModel} hint={hasModel ? 'Only effort levels supported by every selected model are offered.' : 'Choose a model to override effort. Otherwise the thread effort is inherited.'}><Select id={`${prefix}-effort`} value={hasModel ? draft.reasoningEffort : ''} disabled={busy || locked || !hasModel} items={[{ value: '', label: 'Inherit thread effort' }, ...effortOptions.map((effort) => ({ value: effort, label: supportedEfforts.includes(effort) ? effort : `${effort} (unavailable)`, hidden: !supportedEfforts.includes(effort) }))]} onValueChange={(reasoningEffort) => change({ reasoningEffort })} /></Field>
             <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.includeInstructions} disabled={busy || locked} onChange={(e) => change({ includeInstructions: e.target.checked })} />Include repository instructions when used as a subagent</label>
             <Field id={`${prefix}-target`} label="Target (other environments)" hint="Used by other Copilot environments; the current CLI ignores this field."><Select id={`${prefix}-target`} value={draft.target} disabled={busy || locked} items={[{ value: '', label: 'All environments' }, { value: 'github-copilot', label: 'GitHub Copilot' }, { value: 'vscode', label: 'VS Code' }]} onValueChange={(target) => change({ target })} /></Field>
             <label className="flex items-center gap-2 text-ui"><input type="checkbox" checked={draft.noTools} disabled={busy || locked} onChange={(e) => change({ noTools: e.target.checked })} />Disable all tools</label>
@@ -446,10 +446,10 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   const invalidModel = kind === 'agents' && draft?.raw === null && authoredModels(draft).some((id) => !models.some((model) => model.id === id));
   const invalidEffort = kind === 'agents' && draft?.raw === null && authoredModels(draft).length > 0 && !!draft.reasoningEffort && !agentEfforts(draft, models).includes(draft.reasoningEffort);
   let modelStatus = '';
-  if (!loaded || (!meta && !metaError)) modelStatus = 'Loading available models. You can still inherit the task model.';
-  else if (metaError) modelStatus = 'The model catalog could not be loaded. Retry below, or inherit the task model.';
-  else if (!copilot?.available) modelStatus = 'Copilot is unavailable. You can still inherit the task model.';
-  else if (models.length === 0) modelStatus = 'No visible Copilot models are available. You can still inherit the task model.';
+  if (!loaded || (!meta && !metaError)) modelStatus = 'Loading available models. You can still inherit the thread model.';
+  else if (metaError) modelStatus = 'The model catalog could not be loaded. Retry below, or inherit the thread model.';
+  else if (!copilot?.available) modelStatus = 'Copilot is unavailable. You can still inherit the thread model.';
+  else if (models.length === 0) modelStatus = 'No visible Copilot models are available. You can still inherit the thread model.';
   const utilityProviders = meta?.providers.filter((provider) => provider.available && provider.capabilities.host_tools) ?? [];
   const utilityProvider = utilityProviders.find((provider) => {
     const model = settings.title_model?.[provider.name] || provider.cheapest_model;
@@ -534,7 +534,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
         if (kind === 'instructions') return { ...current, instructions: current.instructions.path === saved.path ? saved : current.instructions, instruction_files: current.instruction_files?.map((file) => file.path === saved.path ? saved : file) };
         return { ...current, [kind]: current[kind].map((file) => file.path === saved.path ? saved : file) };
       });
-      clearSuggestions(); setDraft(null); setSuccess(`${kind === 'instructions' ? fileName(draft) : draft.name} saved. New and reopened tasks use the updated file.`); refresh();
+      clearSuggestions(); setDraft(null); setSuccess(`${kind === 'instructions' ? fileName(draft) : draft.name} saved. New and reopened threads use the updated file.`); refresh();
     } catch (e) { setError(describeError(e)); setConflict(isStatus(e, 409)); }
     finally { setBusy(false); }
   }
@@ -556,7 +556,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
     setBusy(true); setError(null); setSuccess(null);
     try {
       await api.setConfigurationDisabled(kind, file.name, { path: file.path, revision: file.revision, disabled: !file.disabled }, scope);
-      activation.close(); cards.close(); setSuccess(`${file.name} ${file.disabled ? 'enabled' : 'disabled'}. New and reopened tasks use the updated configuration.`); refresh();
+      activation.close(); cards.close(); setSuccess(`${file.name} ${file.disabled ? 'enabled' : 'disabled'}. New and reopened threads use the updated configuration.`); refresh();
     } catch (e) { setError(describeError(e)); activation.close(); }
     finally { setBusy(false); }
   }
@@ -566,7 +566,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
     setBusy(true); setError(null); setSuccess(null);
     try {
       await api.setSkillGloballyDisabled(target.name, target.enabled, projectId);
-      globalSkill.close(); cards.close(); setSuccess(`${target.name} turned ${target.enabled ? 'off' : 'on'} in Copilot's global setting. New and reopened tasks use it.`); refresh();
+      globalSkill.close(); cards.close(); setSuccess(`${target.name} turned ${target.enabled ? 'off' : 'on'} in Copilot's global setting. New and reopened threads use it.`); refresh();
     } catch (e) { setError(describeError(e)); globalSkill.close(); }
     finally { setBusy(false); }
   }
@@ -587,18 +587,18 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   const actionsOff = locked || busy || installing || generating || !!draft;
   const opened = cards.reader?.item;
   const confirms = <>
-    <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running tasks keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
-    <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running tasks keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
-    <AlertDialog {...globalSkill.props} title={`Turn ${globalSkill.target?.enabled ? 'off' : 'on'} ${globalSkill.target?.name ?? 'skill'} in Copilot globally?`} description={`Copilot global setting. ${globalSkill.target?.enabled ? 'Adds this name to' : 'Removes this name from'} Copilot's disabled skills list for every project and task on this server. It applies to every skill named ${globalSkill.target?.name ?? ''}, including these listed here:`} confirmLabel={globalSkill.target?.enabled ? 'Turn off globally' : 'Turn on globally'} busy={busy} onConfirm={() => void setGlobalSkill()}>
+    <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running threads keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
+    <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running threads keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
+    <AlertDialog {...globalSkill.props} title={`Turn ${globalSkill.target?.enabled ? 'off' : 'on'} ${globalSkill.target?.name ?? 'skill'} in Copilot globally?`} description={`Copilot global setting. ${globalSkill.target?.enabled ? 'Adds this name to' : 'Removes this name from'} Copilot's disabled skills list for every project and thread on this server. It applies to every skill named ${globalSkill.target?.name ?? ''}, including these listed here:`} confirmLabel={globalSkill.target?.enabled ? 'Turn off globally' : 'Turn on globally'} busy={busy} onConfirm={() => void setGlobalSkill()}>
       <ul className="my-1 flex flex-col gap-1 text-caption">{files.filter((file) => file.native?.name === globalSkill.target?.name).map((file) => <li key={`${file.native?.source}:${file.path}`} className="break-all"><span className="font-medium">{NATIVE_SOURCES[file.native?.source ?? ''] ?? (file.native?.source || 'Other')}</span>{file.path && <span className="font-mono text-meta text-muted"> {file.path}</span>}</li>)}</ul>
-      <p className="text-caption text-muted">No file is renamed or changed; each file's Disable/Enable stays separate. Running tasks keep their current configuration.</p>
+      <p className="text-caption text-muted">No file is renamed or changed; each file's Disable/Enable stays separate. Running threads keep their current configuration.</p>
     </AlertDialog>
   </>;
   return <div className="flex min-w-0 flex-col gap-4">
-    <Field id={`${kind}-scope`} label="Scope" hint={`${heldBy ? `Save or cancel the open ${LABELS[heldBy]} form to change it. ` : ''}${projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot tasks across projects on this server.'} Agents, skills, hooks and instructions share this scope.`}>
+    <Field id={`${kind}-scope`} label="Scope" hint={`${heldBy ? `Save or cancel the open ${LABELS[heldBy]} form to change it. ` : ''}${projectId ? 'Project files are shared with Copilot CLI in this project.' : 'Global files apply to Copilot threads across projects on this server.'} Agents, skills, hooks and instructions share this scope.`}>
       <Select id={`${kind}-scope`} className="max-w-xl" value={projectId} disabled={holding || !!heldBy} items={[{ value: '', label: 'Global (all projects)' }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} onValueChange={onScope} />
     </Field>
-    <div className="flex items-center gap-1 text-ui"><a className="text-accent underline" href={REFERENCES[kind]} target="_blank" rel="noreferrer">Native {kind} reference</a><HelpTip label={`${label} configuration`}>Advanced documents support the full native format, including fields not shown in the form. Available options depend on the installed Copilot CLI version. Copilot reads these files when a task opens or reopens. A running task keeps its current configuration.{kind === 'instructions' && !projectId && ' Copilot uses copilot-instructions.md for global instructions. AGENTS.md belongs to a project unless an extra instruction directory is explicitly configured with COPILOT_CUSTOM_INSTRUCTIONS_DIRS.'}</HelpTip></div>
+    <div className="flex items-center gap-1 text-ui"><a className="text-accent underline" href={REFERENCES[kind]} target="_blank" rel="noreferrer">Native {kind} reference</a><HelpTip label={`${label} configuration`}>Advanced documents support the full native format, including fields not shown in the form. Available options depend on the installed Copilot CLI version. Copilot reads these files when a thread opens or reopens. A running thread keeps its current configuration.{kind === 'instructions' && !projectId && ' Copilot uses copilot-instructions.md for global instructions. AGENTS.md belongs to a project unless an extra instruction directory is explicitly configured with COPILOT_CUSTOM_INSTRUCTIONS_DIRS.'}</HelpTip></div>
     {locked && <Note>Turn on Terminal in UAM and access to manage {kind}. These files can configure commands that run as the service user.</Note>}
     {loadError ? <Note tone="error" role="alert">{loadError} <Button size="sm" onClick={refresh}>Retry</Button></Note> : !data ? <Skeleton label={`Loading ${kind}…`} rows={3} /> : <>
       {!draft && kind !== 'instructions' && <>
@@ -707,7 +707,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       onClose={() => cards.close()}
       onClosed={cards.closed}
     >
-      {opened.disabled && <Note>Disabled — enable to make this file available to new and reopened tasks.</Note>}
+      {opened.disabled && <Note>Disabled — enable to make this file available to new and reopened threads.</Note>}
       {!opened.editable && <Note>{opened.read_only_reason || 'Discovered from another source. Read only here; manage this file at the path shown below.'}</Note>}
       {opened.editable && locked && <Note>Turn on Terminal in UAM and access to manage {kind}.</Note>}
       {opened.editable && !locked && draft && <Note>Finish or cancel the open form to change this file.</Note>}

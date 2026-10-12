@@ -244,7 +244,7 @@ func (m *Manager) needsYouLocked() int {
 // "<Task> failed" or "<Task> finished". The request is the summary's Ask,
 // as the Task list shows it.
 func noticeTitle(s *webSession, kind string, ask *Ask) string {
-	name := clipNotice(cmp.Or(s.name, s.title, "New task"))
+	name := clipNotice(cmp.Or(s.name, s.title, "New thread"))
 	switch kind {
 	case noticeFailed:
 		return name + " failed"

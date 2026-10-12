@@ -64,7 +64,7 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
     );
     return () => controller.abort();
   }, [api, session.id, session.open, inactive, attempt, live]);
-  if (!session.open || inactive) return <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Task.</p>;
+  if (!session.open || inactive) return <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread.</p>;
   const refresh = () => { setSnapshot(null); setError(''); setAttempt((n) => n + 1); };
   return <>
     {error ? <p role="status" className="text-caption text-muted">{error}</p> : !snapshot ? <p role="status" className="text-caption text-muted">Loading native usage metrics…</p> : <>
@@ -101,7 +101,7 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
 /** The Tools panel's Usage tab: the recorded Task report, then the native metrics where the provider reads them. Mounted only while shown. */
 export function UsageTab({ session }: Readonly<{ session: SessionDetail }>) {
   return <>
-    <PanelSection label="Recorded Task report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI units not reported yet'}</p></PanelSection>
+    <PanelSection label="Recorded Thread report"><p className="text-ui tabular-nums">{session.usage ? units(session.usage.ai_units) : 'AI units not reported yet'}</p></PanelSection>
     {session.capabilities.usage_metrics && <Metrics session={session} />}
   </>;
 }

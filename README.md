@@ -4,7 +4,7 @@
 
 **A browser workspace for GitHub Copilot.**
 
-Run tasks, follow tool calls and subagents, and return after closing the browser.
+Run threads, follow tool calls and subagents, and return after closing the browser.
 
 <p>
   <a href="https://github.com/RandomCodeSpace/unified-agent-manager/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/RandomCodeSpace/unified-agent-manager/ci.yml?branch=main&label=ci&style=for-the-badge&logo=githubactions&logoColor=white"></a>
@@ -18,7 +18,7 @@ Run tasks, follow tool calls and subagents, and return after closing the browser
 </div>
 
 UAM runs Copilot through its SDK and serves an authenticated web interface.
-Projects group tasks by working directory. Tasks keep their conversations,
+Projects group threads by working directory. Threads keep their conversations,
 model choices, history, and lifecycle state across browser reconnects.
 Custom models, including Ollama endpoints, use the same Copilot SDK integration.
 
@@ -46,7 +46,7 @@ include terminal features that have since been retired.
    ```
 
 3. Open the printed URL and sign in with the access token. Add a Project,
-   create a Task, choose a model, and send a message.
+   create a Thread, choose a model, and send a message.
 
 The service keeps working after its launching terminal or browser closes.
 For a remote host, use the printed SSH forwarding command or configure an
@@ -79,20 +79,20 @@ required by the SDK.
 
 The former `new`, `dispatch`, `attach`, `last`, `ls`, `stop`, `restart`, `rm`,
 `kill-all`, `profile`, and `doctor` commands return a retirement error. Use the
-web interface for task controls and `uam web status` for service status.
+web interface for thread controls and `uam web status` for service status.
 
 Existing terminal records and profiles remain on disk and are not converted
-into web tasks or deleted. Previous Copilot conversations can still be imported
+into web threads or deleted. Previous Copilot conversations can still be imported
 through the web interface after its in-use check. Other providers' history is
 not imported. This source change does not stop existing processes or uninstall
 provider binaries. Stop any old UAM terminal sessions with the older binary
 before replacing it; the new binary cannot attach to or stop those hosts.
 
-## Task permissions
+## Thread permissions
 
-Tasks use the permission mode selected in the web interface. This is not an
-operating-system sandbox. Multiple tasks can edit the same directory, so use
-separate worktrees or checkouts when tasks need filesystem isolation. UAM does
+Threads use the permission mode selected in the web interface. This is not an
+operating-system sandbox. Multiple threads can edit the same directory, so use
+separate worktrees or checkouts when threads need filesystem isolation. UAM does
 not create that isolation automatically.
 
 ## Build and test

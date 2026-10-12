@@ -46,7 +46,7 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 		m.historyUnavailableLocked(s, "this provider cannot show the transcript without opening the conversation")
 		return
 	case s.convID == "":
-		m.historyUnavailableLocked(s, "this task has no provider conversation")
+		m.historyUnavailableLocked(s, "this thread has no provider conversation")
 		return
 	}
 	s.history, s.historyReason = HistoryLoading, ""

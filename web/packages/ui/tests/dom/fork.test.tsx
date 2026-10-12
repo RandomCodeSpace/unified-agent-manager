@@ -45,7 +45,7 @@ describe('native task branching', () => {
     await user.click(trigger);
     await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
     const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await screen.findByRole('heading', { level: 1, name: 'Native branch' });
     expect(fork).toHaveBeenCalledTimes(1);
     const [sourceId, request] = fork.mock.calls[0];
@@ -54,7 +54,7 @@ describe('native task branching', () => {
     expect(request.model).toBe(source.model);
     expect(request.request_id).toMatch(/^[0-9a-f-]{36}$/);
     expect(mock.received.filter(r => r.route === 'prompt')).toHaveLength(0);
-    await user.click(await screen.findByRole('button', { name: 'the source task' }));
+    await user.click(await screen.findByRole('button', { name: 'the source thread' }));
     await waitFor(() => expect(composer().value).toBe('Draft stays on the source'));
   });
 
@@ -67,10 +67,10 @@ describe('native task branching', () => {
     let picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
     await user.click(picker.getByRole('combobox', { name: 'Branch model' }));
     await user.click(await screen.findByRole('option', { name: 'Default', exact: true }));
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await picker.findByRole('alert');
     picker = within(screen.getByRole('dialog', { name: 'Branch from here' }));
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await screen.findByRole('heading', { level: 1, name: 'Native branch' });
     expect(fork).toHaveBeenCalledTimes(2);
     expect(fork.mock.calls[0][1]).toEqual(fork.mock.calls[1][1]);
@@ -84,9 +84,9 @@ describe('native task branching', () => {
     await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[0]);
     await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
     const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await picker.findByText('Branch outcome is unknown');
-    const confirm = picker.getByRole('button', { name: 'Branch task' }) as HTMLButtonElement;
+    const confirm = picker.getByRole('button', { name: 'Branch thread' }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     await user.click(confirm);
     expect(fork).toHaveBeenCalledTimes(1);
@@ -103,7 +103,7 @@ describe('native task branching', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
     const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
     expect(picker.queryByRole('button', { name: 'Dismiss' })).toBeNull();
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await picker.findByText(/A Copilot session may still exist/);
     await user.click(picker.getByRole('button', { name: 'Dismiss' }));
     await picker.findByText('Connection lost');
@@ -124,7 +124,7 @@ describe('native task branching', () => {
     await user.click(screen.getAllByRole('button', { name: 'Turn actions' })[0]);
     await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
     const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
-    await user.click(picker.getByRole('button', { name: 'Branch task' }));
+    await user.click(picker.getByRole('button', { name: 'Branch thread' }));
     await picker.findByText(/The Copilot session for this branch exists/);
     expect(picker.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
     await user.click(picker.getByRole('button', { name: 'Add the existing branch' }));

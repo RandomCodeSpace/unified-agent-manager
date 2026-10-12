@@ -87,7 +87,7 @@ func TestSettledTaskRefusesCommandsCancelAndModeChanges(t *testing.T) {
 	if _, err := m.Settle(sum.ID); err != nil {
 		t.Fatal(err)
 	}
-	const settled = "the task is settled; reopen it first"
+	const settled = "the thread is settled; reopen it first"
 	_, err := m.Commands(context.Background(), sum.ID)
 	wantConflict(t, "commands of a settled task", err, settled)
 	wantConflict(t, "cancel a settled task", errOf(m.Cancel(sum.ID)), settled)

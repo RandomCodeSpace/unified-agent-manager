@@ -20,7 +20,7 @@ func (m *Manager) TaskUsageMetrics(ctx context.Context, id string) (*agentapi.Ta
 	m.mu.Lock()
 	err = s.readOnlyLocked()
 	if err == nil && (m.closed || s.removed || s.conv == nil || s.state() == StateStarting) {
-		err = newError(http.StatusConflict, "usage metrics need an already-open Task")
+		err = newError(http.StatusConflict, "usage metrics need an already-open Thread")
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -32,7 +32,7 @@ func (m *Manager) TaskUsageMetrics(ctx context.Context, id string) (*agentapi.Ta
 	m.mu.Lock()
 	if m.closed || s.removed || m.sessions[id] != s || s.conv == nil || s.state() == StateStarting || s.stage != StageActive {
 		m.mu.Unlock()
-		return nil, newError(http.StatusConflict, "the Task's native usage is no longer available")
+		return nil, newError(http.StatusConflict, "the Thread's native usage is no longer available")
 	}
 	conv, convID, gen := s.conv, s.convID, s.gen
 	model, effort, tier := s.model, s.effort, s.contextSize
@@ -48,13 +48,13 @@ func (m *Manager) TaskUsageMetrics(ctx context.Context, id string) (*agentapi.Ta
 	current := !m.closed && !s.removed && m.sessions[id] == s && s.conv == conv && s.convID == convID && s.gen == gen && s.stage == StageActive && s.model == model && s.effort == effort && s.contextSize == tier
 	m.mu.Unlock()
 	if !current {
-		return nil, newError(http.StatusConflict, "the Task or selection changed; reopen usage metrics")
+		return nil, newError(http.StatusConflict, "the Thread or selection changed; reopen usage metrics")
 	}
 	if errors.Is(err, agentapi.ErrUnsupported) {
 		return nil, newError(http.StatusConflict, "this runtime does not support native usage metrics")
 	}
 	if errors.Is(err, agentapi.ErrClosed) {
-		return nil, newError(http.StatusConflict, "the Task's native usage is no longer available")
+		return nil, newError(http.StatusConflict, "the Thread's native usage is no longer available")
 	}
 	if err != nil || out == nil {
 		return nil, newError(http.StatusBadGateway, "the provider could not read native usage metrics")

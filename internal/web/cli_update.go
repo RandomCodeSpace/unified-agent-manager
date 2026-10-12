@@ -342,7 +342,7 @@ func (m *Manager) cliBusyTasks(name string) int {
 
 // busyTasksError says how many of p's Tasks hold its CLI restart back.
 func busyTasksError(p agentapi.Provider, n int) error {
-	return fmt.Errorf("%d %s %s working or waiting for an answer", n, p.DisplayName(), plural(n, "task is", "tasks are"))
+	return fmt.Errorf("%d %s %s working or waiting for an answer", n, p.DisplayName(), plural(n, "thread is", "threads are"))
 }
 
 // quiesceCLI closes the open conversations of p's Tasks for its CLI to be

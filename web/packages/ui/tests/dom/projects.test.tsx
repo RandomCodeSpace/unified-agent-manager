@@ -198,7 +198,7 @@ describe('edit project', () => {
     const dialog = await editProjectDialog(user, 'notes-site');
     await user.click(dialog.getByRole('button', { name: 'Remove project' }));
     const confirm = within(await screen.findByRole('alertdialog', { name: 'Remove notes-site?' }));
-    expect(confirm.getByText(/tasks are not archived\. Archive every task before removing this project\./)).toBeTruthy();
+    expect(confirm.getByText(/threads are not archived\. Archive every thread before removing this project\./)).toBeTruthy();
     expect(confirm.getByRole('button', { name: 'Remove project' })).toHaveProperty('disabled', true);
   });
 
@@ -250,7 +250,7 @@ describe('project filter', () => {
   test('the task search narrows the list', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    await user.type(side.getByRole('searchbox', { name: 'Search tasks' }), 'zsh');
+    await user.type(side.getByRole('searchbox', { name: 'Search threads' }), 'zsh');
     await waitFor(() => expect(side.queryByRole('button', { name: /Fix re-attach redraw regression/ })).toBeNull());
     expect(side.getByRole('button', { name: /Tidy zsh startup/ })).toBeTruthy();
   });

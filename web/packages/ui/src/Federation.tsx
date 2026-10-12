@@ -77,7 +77,7 @@ function SourceStream({ source, initial, onState }: { source: Source; initial: S
       stream.onerror = () => {
         if (!alive || es !== stream) return;
         stream.close();
-        publish({ status: 'offline', error: 'Connection lost. Showing the last received task list.' });
+        publish({ status: 'offline', error: 'Connection lost. Showing the last received thread list.' });
         void client.meta().then(() => {
           if (alive && es === stream) retry = window.setTimeout(connect, 3000);
         }, error => {
@@ -374,6 +374,6 @@ export default function Federation() {
       <ApiContext.Provider value={client}><FederationContext.Provider value={view}>
         <App key={`${active?.id ?? HOME}:${active?.generation ?? 0}`} />
       </FederationContext.Provider></ApiContext.Provider>}
-    <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent tasks keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
+    <AlertDialog open={leavingOpen} onOpenChange={open => { if (!open) setLeavingOpen(false); }} onClosed={() => setLeaving(null)} title="Switch instances?" description={`This closes the terminal on ${active?.label ?? 'this instance'}, ending its shell and whatever runs in it. Agent threads keep running.`} confirmLabel="Switch and close terminal" onConfirm={() => { setLeavingOpen(false); if (leaving) show(leaving.connection, leaving.path); }} />
   </>;
 }

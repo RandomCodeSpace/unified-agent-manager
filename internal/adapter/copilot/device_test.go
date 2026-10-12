@@ -128,7 +128,7 @@ func TestDeviceSignInIsRefusedBeforeTheCLIRuns(t *testing.T) {
 	p.mu.Lock()
 	p.convs[&conversation{}] = struct{}{}
 	p.mu.Unlock()
-	if _, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) {}); !errors.Is(err, agentapi.ErrSignInRejected) || !strings.Contains(err.Error(), "close the open Copilot tasks") {
+	if _, err := p.DeviceSignIn(context.Background(), func(agentapi.DeviceCode) {}); !errors.Is(err, agentapi.ErrSignInRejected) || !strings.Contains(err.Error(), "close the open Copilot threads") {
 		t.Fatalf("with an open conversation: %v", err)
 	}
 	p.mu.Lock()

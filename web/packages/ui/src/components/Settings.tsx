@@ -96,7 +96,7 @@ function Unsupported({ what }: Readonly<{ what: string }>) {
   return <Note role="status">{name} does not offer {what} to connected instances. Update UAM on {name} to manage it here.</Note>;
 }
 
-const UTILITY_HELP = "The model UAM uses to title new tasks, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new task is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.";
+const UTILITY_HELP = "The model UAM uses to title new threads, summarize completed subagent results, suggest replies, phrase turn outcomes and draft agents, skills and hooks. Utility calls use the lowest supported reasoning effort. Left as Cheapest, a new thread is titled by its own model at its lowest effort, which spends that model's credits. None keeps provider titles and result excerpts without utility AI calls.";
 
 /** The Utility model menu of one provider: Cheapest (the default), None, then its visible models with their prices. */
 function UtilitySelect({ provider: p, settings, saving, describedBy, onSave }: Readonly<{ provider: ProviderInfo; settings: Settings; saving: boolean; describedBy: string; onSave: (patch: Partial<Settings>) => void }>) {
@@ -111,7 +111,7 @@ function UtilitySelect({ provider: p, settings, saving, describedBy, onSave }: R
   ]} onValueChange={(id) => onSave({ title_model: { ...settings.title_model, [p.name]: id } })} />;
 }
 
-const SUBAGENT_HELP = "Subagents run only on the models listed. The first is the fallback, used when neither the requested model nor the task's model is listed. An empty list allows any model.";
+const SUBAGENT_HELP = "Subagents run only on the models listed. The first is the fallback, used when neither the requested model nor the thread's model is listed. An empty list allows any model.";
 
 /**
  * The models one provider's subagents may use, the fallback first, and a menu adding its visible models not listed yet.
@@ -177,10 +177,10 @@ function removalTitle(pending: Removal | null): string {
 
 function removalDescription(pending: Removal | null): string | undefined {
   if (!pending) return undefined;
-  if (pending.model) return 'It leaves the model menus. Tasks already using it keep it until their model is changed.';
+  if (pending.model) return 'It leaves the model menus. Threads already using it keep it until their model is changed.';
   const count = pending.provider.models.length;
   const leave = count === 1 ? 'Its one model leaves' : `Its ${count} models leave`;
-  return `${leave} the model menus. Tasks already using one keep it until their model is changed.`;
+  return `${leave} the model menus. Threads already using one keep it until their model is changed.`;
 }
 
 /**
@@ -302,7 +302,7 @@ function CustomModels({ models, disabled, onSave }: Readonly<{ models: CustomMod
         confirmLabel={pending?.model ? 'Remove model' : 'Remove provider'}
         onConfirm={remove}
       />
-      <AlertDialog {...replacement.props} title="Remove models from this provider?" description={<>Saving these changes removes the following model IDs from the selection menus. Tasks already using them keep their current model.<span className="mt-2 block">{replacement.target?.removed.map((id) => <span key={id} className="block break-all font-mono text-meta">{id}</span>)}</span></>} confirmLabel="Save and remove models" busy={busy} onConfirm={() => {
+      <AlertDialog {...replacement.props} title="Remove models from this provider?" description={<>Saving these changes removes the following model IDs from the selection menus. Threads already using them keep their current model.<span className="mt-2 block">{replacement.target?.removed.map((id) => <span key={id} className="block break-all font-mono text-meta">{id}</span>)}</span></>} confirmLabel="Save and remove models" busy={busy} onConfirm={() => {
         const next = replacement.target?.next;
         if (next) void onSave(next).then((saved) => { if (saved) setDraft(null); replacement.close(); });
       }} />
@@ -439,15 +439,15 @@ function NotifyRow() {
       setBusy(false);
     }
   }
-  let help = 'When a task asks you something, needs your permission, fails or finishes, unless you are looking at it.';
+  let help = 'When a thread asks you something, needs your permission, fails or finishes, unless you are looking at it.';
   if (support === 'home-screen') help = 'On iPhone and iPad this works in the Home Screen app only: tap Share, then Add to Home Screen, open UAM from there and turn this on.';
   else if (support === 'none') help = 'This browser cannot show notifications.';
   else if (mode === 'push') help += ' They arrive even with UAM closed.';
   else if (mode === 'page') help += ' This browser shows them only while UAM is open in a tab.';
   return (
     <>
-      <Row id="notify" label="Notify me when a task needs me or finishes" help={help} helpVisible={support !== 'ok'}>
-        <Switch aria-label="Notify me when a task needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
+      <Row id="notify" label="Notify me when a thread needs me or finishes" help={help} helpVisible={support !== 'ok'}>
+        <Switch aria-label="Notify me when a thread needs me or finishes" aria-describedby="notify-help" checked={mode !== null} disabled={busy || support !== 'ok'} onCheckedChange={(on) => void toggle(on)} />
       </Row>
       {problem && (
         <Note tone="error" role="alert">
@@ -670,12 +670,12 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
   const cards: Record<SettingsPage, ReactNode> = {
     gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} mrPrompt={api.supports('gitlab-mr-prompt-v1') && loaded ? { saved: settings.gitlab_mr_prompt ?? '', saving, onSave: (gitlab_mr_prompt) => void save({ gitlab_mr_prompt }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
-    'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New tasks" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
-      <Section id="new-tasks" title="New tasks" help="What a new task starts with, in every project. The composer can still change each one before the first message.">
+    'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New threads" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
+      <Section id="new-tasks" title="New threads" help="What a new thread starts with, in every project. The composer can still change each one before the first message.">
         {/* One stacked column of fields, the compaction threshold with them rather than out at the card's edge. */}
         <div className="flex max-w-xl flex-col gap-3">
           <TaskDefaultsFields prefix="new-tasks" value={taskDefaults} disabled={saving} onChange={(next) => void save({ task_defaults: next })} />
-          <Field id="compact-threshold" label="Compact the conversation when its context reaches" hint="Compacting earlier keeps answers faster and cheaper but drops older detail sooner. A task already open picks up a change the next time it reopens.">
+          <Field id="compact-threshold" label="Compact the conversation when its context reaches" hint="Compacting earlier keeps answers faster and cheaper but drops older detail sooner. A thread already open picks up a change the next time it reopens.">
             <Select id="compact-threshold" aria-describedby="compact-threshold-hint" value={String(settings.compact_threshold ?? DEFAULT_COMPACT_THRESHOLD)} disabled={saving} items={COMPACT_THRESHOLDS.map((n) => ({ value: String(n), label: n === DEFAULT_COMPACT_THRESHOLD ? `${n}% (default)` : `${n}%` }))} onValueChange={(v) => void save({ compact_threshold: Number(v) === DEFAULT_COMPACT_THRESHOLD ? null : Number(v) })} />
           </Field>
         </div>
@@ -684,7 +684,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     composer: loaded ? <Section id="composer" title="Composer">
       <Row
         id="send-default"
-        label="Enter while a task is running"
+        label="Enter while a thread is running"
         help={
           <>
             Send now adds the message to the running turn; After this turn holds it until the turn ends. {other} stays on Ctrl+Enter (⌘+Enter on a Mac) and in the menu beside the send button.
@@ -708,11 +708,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       </Row>
     </Section> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
     worktrees: api.supports('worktrees-v1') ? <WorktreesSettings /> : <Section id="worktrees" title="Worktrees"><Unsupported what="worktrees" /></Section>,
-    archived: loaded ? <Section id="archived" title="Archived" help="Open an archived task to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived tasks too.">
+    archived: loaded ? <Section id="archived" title="Archived" help="Open an archived thread to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived threads too.">
       <ArchivedTasks />
-    </Section> : <PendingSection id="archived" title="Archived" label="Loading tasks…" />,
+    </Section> : <PendingSection id="archived" title="Archived" label="Loading threads…" />,
     models: <>
-      {!loaded || catalogPending ? <PendingSection id="models" title="Models" label="" /> : <Section id="models" title="Models" help="Hidden models leave the selection menus. Tasks already using one keep it. New models appear automatically.">
+      {!loaded || catalogPending ? <PendingSection id="models" title="Models" label="" /> : <Section id="models" title="Models" help="Hidden models leave the selection menus. Threads already using one keep it. New models appear automatically.">
         {metaError && (
           <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">Could not load the model catalog: {metaError}</span>
@@ -766,7 +766,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
           </Row>
         ))}
       </Section>}
-      <Section id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: task titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
+      <Section id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: thread titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
         <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} />
       </Section>
     </>,
@@ -829,7 +829,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </form>
       </Section>}
       {loaded && <Section id="shell" title="Shell access">
-        {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Task's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
+        {api.supports('terminal-v1') ? <Row id="terminal" label="Terminal" help={`Open a shell in the project folder from a Thread's header. Anyone signed in can then run commands on ${api.owner ? api.owner.label : 'this machine'} as the uam user, without the agent's permission prompts.`}>
           <Switch aria-label="Terminal" aria-describedby="terminal-help" checked={!!settings.terminal} disabled={saving} onCheckedChange={(terminal) => void save({ terminal })} />
         </Row> : <Unsupported what="the terminal" />}
       </Section>}

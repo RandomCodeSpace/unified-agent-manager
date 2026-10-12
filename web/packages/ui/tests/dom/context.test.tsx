@@ -67,7 +67,7 @@ test('closed and unsupported providers keep quick totals without resuming or req
   const read = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
   const view = draw({ ...session, open: false });
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));
-  expect(await screen.findByText('Context breakdown is unavailable for a closed Task.')).toBeTruthy();
+  expect(await screen.findByText('Context breakdown is unavailable for a closed Thread.')).toBeTruthy();
   expect(read).not.toHaveBeenCalled();
   view.select({ ...session, capabilities: {} as SessionDetail['capabilities'] });
   await userEvent.click(screen.getByRole('button', { name: /^Tools.*25%/ }));

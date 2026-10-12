@@ -92,7 +92,7 @@ func TestWebTaskSystemMessageOnCreateAndResume(t *testing.T) {
 func TestTaskSystemCarriesTheAlwaysNeededRules(t *testing.T) {
 	for _, rule := range []string{
 		"folded away. Put what the owner needs in your reply",
-		"Load the uam skill before you show the owner a file, image, diagram or chart, start another Task, or start subagents.",
+		"Load the uam skill before you show the owner a file, image, diagram or chart, start another Thread, or start subagents.",
 		"as its own entry in choices",
 		` (Recommended)"`,
 		"no Co-authored-by trailer",

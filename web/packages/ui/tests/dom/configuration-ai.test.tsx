@@ -59,7 +59,7 @@ describe('AI configuration creator', () => {
     expect(draftCalls).toHaveLength(1);
     expect((await api.configuration())[kind]).toHaveLength(before);
     await user.click(form.getByRole('button', { name: `Add ${label}` }));
-    await screen.findByText(`${name} saved. New and reopened tasks use the updated file.`);
+    await screen.findByText(`${name} saved. New and reopened threads use the updated file.`);
     expect(screen.queryByRole('region', { name: 'Similar installed skills' })).toBeNull();
     const saved = (await api.configuration())[kind].find((file) => file.name === name)!;
     expect(saved.content).toContain('Reviewed by the user');
@@ -190,7 +190,7 @@ describe('AI configuration creator', () => {
     expect((form.getByRole('checkbox', { name: manual }) as HTMLInputElement).checked).toBe(true);
     await user.click(form.getByRole('checkbox', { name: manual }));
     await user.click(form.getByRole('button', { name: `Add ${label}` }));
-    await screen.findByText(/saved\. New and reopened tasks use the updated file/);
+    await screen.findByText(/saved\. New and reopened threads use the updated file/);
     const saved = (await api.configuration())[kind].at(-1)!;
     expect(saved.content).toContain('disable-model-invocation: true');
     expect(saved.content).toContain('user-invocable: false');
@@ -231,7 +231,7 @@ describe('AI configuration creator', () => {
     expect(screen.queryByRole('option', { name: 'Auto', exact: true })).toBeNull();
     expect(screen.queryByRole('option', { name: 'GPT-5 mini', exact: true })).toBeNull();
     expect(screen.queryByRole('option', { name: 'Qwen3 Coder', exact: true })).toBeNull();
-    expect(screen.getByRole('option', { name: 'Inherit task model' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Inherit thread model' })).toBeTruthy();
     await user.click(screen.getByRole('option', { name: 'GPT-5.6 Luna', exact: true }));
     context.meta!.providers[0].models = [];
     update();
@@ -240,7 +240,7 @@ describe('AI configuration creator', () => {
     await user.click(form.getByText('Advanced settings'));
     expect((form.getByRole('button', { name: 'Edit full document for advanced options' }) as HTMLButtonElement).disabled).toBe(true);
     await user.click(form.getByRole('combobox', { name: 'Model (optional)' }));
-    await user.click(screen.getByRole('option', { name: 'Inherit task model' }));
+    await user.click(screen.getByRole('option', { name: 'Inherit thread model' }));
     await waitFor(() => expect(form.queryByRole('alert')).toBeNull());
     expect((form.getByRole('button', { name: 'Add agent' }) as HTMLButtonElement).disabled).toBe(false);
   });

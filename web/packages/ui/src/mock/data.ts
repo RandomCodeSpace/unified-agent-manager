@@ -209,7 +209,7 @@ export function seed(): MockState {
     time: ago(3),
     options: [
       { id: 'once', label: 'Allow once' },
-      { id: 'session', label: 'Allow for this task' },
+      { id: 'session', label: 'Allow for this thread' },
       { id: 'deny', label: 'Deny', reject: true },
     ],
   };
@@ -381,7 +381,7 @@ export function seed(): MockState {
           time: ago(5),
           text: 'Confirmed: `focusEvents` is recorded in `modes.go` but `Redraw` never replays it. Adding `replayFocusEvents` after the private-mode replay so the order matches the attach client.',
         },
-        { id: 'trail-i6', kind: 'notice', time: ago(4), text: 'uam trail: Task "Fix terminal modes" edited internal/vterm/redraw.go 3 min ago and is still running. Re-read it first.' },
+        { id: 'trail-i6', kind: 'notice', time: ago(4), text: 'uam trail: Thread "Fix terminal modes" edited internal/vterm/redraw.go 3 min ago and is still running. Re-read it first.' },
         tool('i6', 4, { name: 'edit', title: 'Edit internal/vterm/redraw.go', status: 'completed', input: '{"path":"internal/vterm/redraw.go"}', output: EDIT_DIFF }),
         {
           id: 'i6b',
@@ -842,7 +842,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
           tool_call_id: 'c14',
           options: [
             { id: 'once', label: 'Allow once' },
-            { id: 'session', label: 'Allow for this task' },
+            { id: 'session', label: 'Allow for this thread' },
             { id: 'deny', label: 'Deny', reject: true },
           ],
         },
@@ -1225,7 +1225,7 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
   const commands: Command[] = [
     { name: 'init', description: 'Create a copilot-instructions.md for this project', kind: 'command', input_hint: '' },
     { name: 'review', description: 'Review the uncommitted changes and report problems', kind: 'command', input_hint: '' },
-    { name: 'autopilot', description: 'Keep working between turns until the task is done', kind: 'command', input_hint: '[on|off]', aliases: ['goal'], allow_during_turn: true },
+    { name: 'autopilot', description: 'Keep working between turns until the thread is done', kind: 'command', input_hint: '[on|off]', aliases: ['goal'], allow_during_turn: true },
     { name: 'allow-all', description: 'Allow every permission request without asking', kind: 'command', input_hint: '[on|off]', aliases: ['yolo'], allow_during_turn: true },
     { name: 'context', description: 'Show context window token usage', kind: 'command', input_hint: '' },
     { name: 'compact', description: 'Summarize conversation history to reduce context', kind: 'command', input_hint: '', disabled_reason: 'This native command has no supported web handler yet' },

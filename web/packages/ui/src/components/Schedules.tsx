@@ -43,12 +43,12 @@ export function Schedules({ snapshot, open }: Readonly<{ snapshot: ScheduleSnaps
   const count = snapshot.known ? String(entries.length) : `${entries.length}+`;
   return (
     <Popover.Root open={popover} onOpenChange={setPopover}>
-      <Popover.Trigger render={<Button size="sm" variant="subtle" aria-label={`Scheduled in this Task: ${count}`} className="shrink-0 bg-canvas px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" />}>
+      <Popover.Trigger render={<Button size="sm" variant="subtle" aria-label={`Scheduled in this Thread: ${count}`} className="shrink-0 bg-canvas px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" />}>
         <CalendarClock aria-hidden="true" className="text-faint" />
-        <span className="max-sm:hidden">Scheduled in this Task ·</span> {count}
+        <span className="max-sm:hidden">Scheduled in this Thread ·</span> {count}
       </Popover.Trigger>
       <Popover.Content className="w-80 max-w-[calc(100vw-16px)] gap-2">
-        <Popover.Title>Scheduled in this Task</Popover.Title>
+        <Popover.Title>Scheduled in this Thread</Popover.Title>
         <Popover.Description>
           {snapshot.known ? 'The provider runs these while this conversation is open.' : `Showing the first ${entries.length}; this list is incomplete.`}
         </Popover.Description>

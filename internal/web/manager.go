@@ -1474,7 +1474,7 @@ func (m *Manager) removeProject(id string) error {
 	case closed:
 		return errShuttingDown
 	case unarchived:
-		return newError(http.StatusConflict, "archive every task in this project first")
+		return newError(http.StatusConflict, "archive every thread in this project first")
 	}
 	// The Project's routines go with it, in the same write.
 	m.routines.mu.Lock()
@@ -1709,7 +1709,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		case model == "", model == store.WebTitleModelNone:
 		case m.titlerLocked(provider) == nil:
 			m.mu.Unlock()
-			return Settings{}, newError(http.StatusBadRequest, "%s cannot title tasks with a model", m.providers[provider].DisplayName())
+			return Settings{}, newError(http.StatusBadRequest, "%s cannot title threads with a model", m.providers[provider].DisplayName())
 		case !slices.ContainsFunc(info.Models, func(mo agentapi.Model) bool { return mo.ID == model }):
 			m.mu.Unlock()
 			return Settings{}, newError(http.StatusBadRequest, "%s does not offer model %q", info.DisplayName, clipRunes(displaytext.Sanitize(model), maxDetailRunes))
@@ -1998,7 +1998,7 @@ func (m *Manager) deleteTask(id string) error {
 	case closed:
 		return errShuttingDown
 	case !archived:
-		return newError(http.StatusConflict, "only an archived task can be deleted; archive it first")
+		return newError(http.StatusConflict, "only an archived thread can be deleted; archive it first")
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
 		key := store.Key(s.provider, s.id)
@@ -3152,7 +3152,7 @@ func openFailureDetail(err error, convID string) string {
 		return fmt.Sprintf("provider conversation %s no longer exists; uam did not create a replacement", convID)
 	}
 	if errors.Is(err, agentapi.ErrAgentUnavailable) {
-		return shortError(err) + "; choose another agent or the default agent for this Task"
+		return shortError(err) + "; choose another agent or the default agent for this Thread"
 	}
 	return "could not open the provider conversation: " + shortError(err)
 }
@@ -3326,7 +3326,7 @@ func (m *Manager) commandOffered(conv agentapi.Conversation, name string) error 
 	case err != nil:
 		return err
 	case !slices.ContainsFunc(commands, func(c agentapi.Command) bool { return c.Name == name }):
-		return newError(http.StatusNotFound, "/%s is not one of this task's commands", name)
+		return newError(http.StatusNotFound, "/%s is not one of this thread's commands", name)
 	}
 	return nil
 }
@@ -4022,7 +4022,7 @@ func (m *Manager) PromptSubagent(id, agentID, text, requestID string) (Submissio
 	case s.conv == nil:
 		err = newError(http.StatusConflict, msgConversationNotOpen)
 	case busy(s.state()):
-		err = newError(http.StatusConflict, "the task is running or waiting for input; a subagent takes a follow-up only while the task is idle")
+		err = newError(http.StatusConflict, "the thread is running or waiting for input; a subagent takes a follow-up only while the thread is idle")
 	case sa.Status == agentapi.SubagentRunning:
 		err = newError(http.StatusConflict, "the subagent is still running; it takes a follow-up once it is idle")
 	case sa.Status != agentapi.SubagentIdle:
@@ -4248,7 +4248,7 @@ func (m *Manager) moveStage(id, to string, from ...string) (SessionSummary, erro
 		return SessionSummary{}, errShuttingDown
 	case !slices.Contains(from, s.stage):
 		m.mu.Unlock()
-		return SessionSummary{}, newError(http.StatusConflict, "a task that is %s cannot be %s", stageName(s.stage), stageVerb(to))
+		return SessionSummary{}, newError(http.StatusConflict, "a thread that is %s cannot be %s", stageName(s.stage), stageVerb(to))
 	}
 	conv, err := m.restageLocked(s, to, "")
 	if err != nil {
@@ -4315,11 +4315,11 @@ func (m *Manager) restageLocked(s *webSession, to, by string) (agentapi.Conversa
 func (s *webSession) settleableLocked() error {
 	switch {
 	case busy(s.state()):
-		return newError(http.StatusConflict, "the task is running or waiting for input; stop the turn first")
+		return newError(http.StatusConflict, "the thread is running or waiting for input; stop the turn first")
 	case slices.ContainsFunc(s.interactions, func(ix *interaction) bool { return ix.State == agentapi.InteractionPending }):
 		return newError(http.StatusConflict, "a permission request is still being answered; try again")
 	case len(s.queue) > 0 || s.queueSending != "":
-		return newError(http.StatusConflict, "the task has queued prompts; send or clear them first")
+		return newError(http.StatusConflict, "the thread has queued prompts; send or clear them first")
 	case s.runningSubagents() > 0:
 		return newError(http.StatusConflict, "subagents are still running; wait for them or stop them first")
 	case s.runningBackgroundTasks() > 0:
@@ -4332,9 +4332,9 @@ func (s *webSession) settleableLocked() error {
 func (s *webSession) readOnlyLocked() error {
 	switch s.stage {
 	case StageSettled:
-		return newError(http.StatusConflict, "the task is settled; reopen it first")
+		return newError(http.StatusConflict, "the thread is settled; reopen it first")
 	case StageArchived:
-		return newError(http.StatusConflict, "the task is archived")
+		return newError(http.StatusConflict, "the thread is archived")
 	}
 	return nil
 }

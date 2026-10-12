@@ -144,8 +144,8 @@ export function CopilotCli({ provider }: Readonly<{ provider: ProviderInfo }>) {
           </div>
           <div role="status" className="flex flex-col gap-1">
             {status && <Note>{status}</Note>}
-            {updating && <Note>Copilot tasks keep running; new ones use the current version until it restarts.</Note>}
-            {restarting && <Note>Still running {cli.running}; restarts when no Copilot task is working or waiting.</Note>}
+            {updating && <Note>Copilot threads keep running; new ones use the current version until it restarts.</Note>}
+            {restarting && <Note>Still running {cli.running}; restarts when no Copilot thread is working or waiting.</Note>}
             {!updating && cli.check_error && <Note className="[overflow-wrap:anywhere]">Could not check for a newer release: {cli.check_error}</Note>}
             {cli.manual && <Note className="[overflow-wrap:anywhere]">UAM cannot update it here: {cli.manual}</Note>}
           </div>

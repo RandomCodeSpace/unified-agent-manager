@@ -24,17 +24,17 @@ export function ArchivedTasks() {
   const archivedAt = (s: SessionSummary) => s.archived_at ?? s.updated_at;
   const archived = sessions.filter((s) => s.stage === 'archived' && projectOf.has(s.project_id)).sort((x, y) => archivedAt(y).localeCompare(archivedAt(x)));
   const shown = filter.trim() ? archived.filter((s) => matchesTask(s, projectOf.get(s.project_id)!, filter)) : archived;
-  if (archived.length === 0) return <Note>No archived tasks. A task you archive is listed here, read-only.</Note>;
+  if (archived.length === 0) return <Note>No archived threads. A thread you archive is listed here, read-only.</Note>;
   return (
     <>
       {archived.length > FILTER_FROM && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Input type="search" size="md" aria-label="Filter archived tasks" placeholder="Filter by task, project or branch" className="w-64 max-w-full" value={filter} onChange={(e) => setFilter(e.target.value)} />
-          <span aria-live="polite" className="text-caption text-muted tabular-nums">{shown.length === archived.length ? `${archived.length} tasks` : `${shown.length} of ${archived.length} tasks`}</span>
+          <Input type="search" size="md" aria-label="Filter archived threads" placeholder="Filter by thread, project or branch" className="w-64 max-w-full" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <span aria-live="polite" className="text-caption text-muted tabular-nums">{shown.length === archived.length ? `${archived.length} threads` : `${shown.length} of ${archived.length} threads`}</span>
         </div>
       )}
       {shown.length > 0 ? (
-        <ul aria-label="Archived tasks" className="-mx-2 flex flex-col gap-px">
+        <ul aria-label="Archived threads" className="-mx-2 flex flex-col gap-px">
           {shown.map((s) => {
             const project = projectOf.get(s.project_id)!;
             const at = archivedAt(s);
@@ -49,7 +49,7 @@ export function ArchivedTasks() {
                   <time dateTime={at} title={dateTime(at)} className="shrink-0 text-meta text-muted tabular-nums">{timeAgo(at)}</time>
                 </button>
                 <Menu.Root modal={false}>
-                  <Menu.Trigger render={<Button size="icon" aria-label={`Actions for ${taskName(s) || 'New task'}`} className="shrink-0 text-muted" />}>
+                  <Menu.Trigger render={<Button size="icon" aria-label={`Actions for ${taskName(s) || 'New thread'}`} className="shrink-0 text-muted" />}>
                     <Ellipsis />
                   </Menu.Trigger>
                   <Menu.Content align="end">
@@ -61,7 +61,7 @@ export function ArchivedTasks() {
           })}
         </ul>
       ) : (
-        <Note>No archived tasks match “{filter.trim()}”.</Note>
+        <Note>No archived threads match “{filter.trim()}”.</Note>
       )}
     </>
   );

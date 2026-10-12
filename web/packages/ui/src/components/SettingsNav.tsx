@@ -12,16 +12,16 @@ export type SettingsScope = 'service' | 'browser' | 'copilot';
  * say, for Find a setting.
  */
 export const SETTINGS_GROUPS = [
-  { label: 'Tasks', scope: 'service', pages: [
-    { id: 'new-tasks', label: 'New tasks', blurb: 'The model, effort, mode and compaction a new task starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
-    { id: 'composer', label: 'Composer', blurb: 'What Enter does while a task runs, and suggested replies.', keywords: 'enter send now after this turn queue steer suggest suggested replies keyboard' },
+  { label: 'Threads', scope: 'service', pages: [
+    { id: 'new-tasks', label: 'New threads', blurb: 'The model, effort, mode and compaction a new thread starts with.', keywords: 'model effort reasoning context size long mode safe autopilot compact compaction threshold default start' },
+    { id: 'composer', label: 'Composer', blurb: 'What Enter does while a thread runs, and suggested replies.', keywords: 'enter send now after this turn queue steer suggest suggested replies keyboard' },
     { id: 'worktrees', label: 'Worktrees', blurb: 'Worktrees of Threads on their own branch, and the disk they use.', keywords: 'worktree worktrees disk space free size branch remove clean settle' },
-    { id: 'archived', label: 'Archived', blurb: 'Archived tasks, read-only for good.', keywords: 'archive archived read-only delete export run again old tasks' },
+    { id: 'archived', label: 'Archived', blurb: 'Archived threads, read-only for good.', keywords: 'archive archived read-only delete export run again old threads' },
   ] },
   { label: 'Models & AI', scope: 'service', pages: [
     { id: 'models', label: 'Models', blurb: 'The models the menus offer, and the ones subagents may use.', keywords: 'hide show hidden visible menu subagent subagents fallback allow list' },
     { id: 'background-ai', label: 'Background AI', blurb: "UAM's own AI calls: titles, suggested replies, outcome lines and drafts.", keywords: 'utility model cheapest none titles title daily limit calls budget paused credits log' },
-    { id: 'token-costs', label: 'Token costs', blurb: 'The prices used to estimate what tasks cost.', keywords: 'price prices usd dollars tokens cost costs cache input output estimate' },
+    { id: 'token-costs', label: 'Token costs', blurb: 'The prices used to estimate what threads cost.', keywords: 'price prices usd dollars tokens cost costs cache input output estimate' },
   ] },
   { label: 'Accounts', scope: 'service', pages: [
     { id: 'copilot', label: 'GitHub Copilot', blurb: 'Sign-in and the Copilot CLI on the server.', keywords: 'sign in sign out login token account link unlink cli update version' },
@@ -29,7 +29,7 @@ export const SETTINGS_GROUPS = [
     { id: 'providers', label: 'Custom providers', blurb: 'Your own OpenAI-compatible endpoints and keys.', keywords: 'byom api key keys endpoint openai compatible base url provider ollama environment variable custom models' },
   ] },
   { label: 'Agent toolkit', scope: 'copilot', pages: [
-    { id: 'agents', label: 'Agents', blurb: 'Named agents a task can switch to.', keywords: 'custom agent persona' },
+    { id: 'agents', label: 'Agents', blurb: 'Named agents a thread can switch to.', keywords: 'custom agent persona' },
     { id: 'skills', label: 'Skills', blurb: 'Know-how and scripts agents load when they need them.', keywords: 'skill npx install SKILL.md' },
     { id: 'hooks', label: 'Hooks', blurb: 'Commands that run on agent events.', keywords: 'hook event pre tool post command' },
     { id: 'instructions', label: 'Instructions', blurb: 'AGENTS.md and copilot-instructions.md.', keywords: 'agents.md copilot-instructions system prompt rules' },

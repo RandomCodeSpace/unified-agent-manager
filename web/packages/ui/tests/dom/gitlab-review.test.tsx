@@ -62,7 +62,7 @@ test('busy tasks queue review work using the same action endpoint', async () => 
   const { user, action } = draw({ ...session, state: 'working' });
   await user.click(await screen.findByRole('button', { name: 'Fix', exact: true }));
   expect(action.mock.calls[0][2].mode).toBe('queue');
-  expect(await screen.findByText('Fix queued. Follow progress in the task.')).toBeTruthy();
+  expect(await screen.findByText('Fix queued. Follow progress in the thread.')).toBeTruthy();
 });
 
 test('an agent draft uses only its exact completed turn, then waits for explicit posting', async () => {
@@ -202,7 +202,7 @@ test('changing tasks cancels an old read and does not leak its discussion', asyn
 
 test('settled tasks show review context but disable actions and outbound writes', async () => {
   const { user, action, post } = draw({ ...session, stage: 'settled' });
-  expect(await screen.findByText('Reopen this task to work on the review.')).toBeTruthy();
+  expect(await screen.findByText('Reopen this thread to work on the review.')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Fix', exact: true }));
   await user.type(screen.getByRole('textbox'), 'Draft');
   await user.click(screen.getByRole('button', { name: 'Post reply' }));

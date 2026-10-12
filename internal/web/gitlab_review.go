@@ -333,7 +333,7 @@ func (m *Manager) gitLabReviewWriteLock(ctx context.Context, id string, review G
 	m.mu.Lock()
 	err = s.readOnlyLocked()
 	if err == nil && (s.removed || m.closed) {
-		err = newError(http.StatusConflict, "the Task is no longer available")
+		err = newError(http.StatusConflict, "the Thread is no longer available")
 	}
 	m.mu.Unlock()
 	if err == nil {

@@ -96,7 +96,7 @@ func TestUAMReadStrictArguments(t *testing.T) {
 		{`{"op":"tasks","args":{"projet":"elsewhere"}}`, `"project"?`},
 		{`{"op":"tasks","args":{"stage":"deleted"}}`, "stage must be"},
 		{`{"op":"tasks","args":{"state":"finished"}}`, "state must be"},
-		{`{"op":"task","args":{"id":"a","cursor":"b"}}`, `args: {"id": "task ID"}`},
+		{`{"op":"task","args":{"id":"a","cursor":"b"}}`, `args: {"id": "thread ID"}`},
 		{`{"op":"changes","args":{}}`, "id is required"},
 		{`{"op":"who_touched","args":{}}`, "path is required"},
 		{`{"op":"sense","args":null}`, "JSON object"},

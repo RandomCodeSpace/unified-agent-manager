@@ -229,7 +229,7 @@ function PinnedCard({ chart, busy, notice, onRefresh, onUnpin }: Readonly<{ char
           </Popover.Trigger>
           <Popover.Content side="bottom" align="end" className="gap-2">
             <Popover.Title>Unpin this chart?</Popover.Title>
-            <Popover.Description>{chart.command ? 'Its saved command and rows are removed. The chart stays in its task.' : 'Its rows are removed. The chart stays in its task.'}</Popover.Description>
+            <Popover.Description>{chart.command ? 'Its saved command and rows are removed. The chart stays in its thread.' : 'Its rows are removed. The chart stays in its thread.'}</Popover.Description>
             <div className="flex justify-end gap-1.5 pt-1">
               <Button size="md" onClick={() => setConfirm(false)}>Cancel</Button>
               <Button size="md" variant="danger" onClick={() => { setConfirm(false); onUnpin(); }}>Unpin</Button>
@@ -343,11 +343,11 @@ export function PinnedChartsPanel({ project, inline, open, onClose, onClosed }: 
       <div role="region" aria-label={`Charts pinned to ${project.name}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pt-1 pb-4">
         {error && <Note tone="error" role="alert">Could not load the pinned charts: {error}</Note>}
         {!charts && !error && <Skeleton label="Loading the pinned charts…" rows={4} />}
-        {charts?.length === 0 && <Note>No charts are pinned to {project.name}. Pin one from a chart an agent drew in a task.</Note>}
+        {charts?.length === 0 && <Note>No charts are pinned to {project.name}. Pin one from a chart an agent drew in a thread.</Note>}
         {charts?.map((c) => <PinnedCard key={c.id} chart={c} busy={busy.has(c.id)} notice={notices[c.id]} onRefresh={() => void refresh(c, false)} onUnpin={() => void unpin(c)} />)}
         <div className="rounded-md bg-sunken p-3 text-caption text-body">
           <p className="font-medium text-ink">What refreshing costs</p>
-          <p className="mt-1">Refresh re-runs the saved command in the project folder and redraws. <b>No model call.</b> Only asking a task a new question uses the agent.</p>
+          <p className="mt-1">Refresh re-runs the saved command in the project folder and redraws. <b>No model call.</b> Only asking a thread a new question uses the agent.</p>
           <p className="mt-2 text-muted">Charts refresh when you open this panel, at most once an hour.</p>
         </div>
       </div>

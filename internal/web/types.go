@@ -590,7 +590,7 @@ func newError(status int, format string, args ...any) *Error {
 const (
 	msgSessionNotFound     = "session not found"
 	msgSubagentNotFound    = "subagent not found"
-	msgHistoryChanged      = "history changed; reload the task"
+	msgHistoryChanged      = "history changed; reload the thread"
 	msgConversationNotOpen = "the provider conversation is not open"
 	msgConversationClosed  = "the provider conversation is closed"
 	msgUnknownProvider     = "unknown provider %q"

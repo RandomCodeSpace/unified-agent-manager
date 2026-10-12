@@ -9,7 +9,7 @@ import { install } from '../../src/mock/install';
 import { renderApp, type User } from './render';
 
 /** Opens Settings on a page of its rail and waits for one of the page's cards (the page's namesake by default). */
-async function openSettings(page = 'New tasks', card = page, user?: User) {
+async function openSettings(page = 'New threads', card = page, user?: User) {
   const rendered = renderApp('#settings');
   await screen.findByRole('heading', { level: 1, name: 'Settings' });
   await rendered.user.click(page_(page));
@@ -110,7 +110,7 @@ describe('settings', () => {
     const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined);
     try {
       const { user } = await openSettings('UAM and access', 'Shell access');
-      expect(within(screen.getByRole('navigation', { name: 'Tasks' })).queryByRole('button', { name: 'Log out' })).toBeNull();
+      expect(within(screen.getByRole('navigation', { name: 'Threads' })).queryByRole('button', { name: 'Log out' })).toBeNull();
       expect((await section('Session')).getByRole('button', { name: 'Log out' })).toBeTruthy();
       await user.click(page_('Custom providers'));
       expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
@@ -253,9 +253,9 @@ describe('settings', () => {
     const { user } = await openSettings();
     const rail = within(screen.getByRole('navigation', { name: 'Settings sections' }));
     await user.type(rail.getByRole('searchbox', { name: 'Find a setting' }), 'api key');
-    expect(rail.queryByRole('button', { name: 'New tasks', exact: true })).toBeNull();
+    expect(rail.queryByRole('button', { name: 'New threads', exact: true })).toBeNull();
     expect((await section('Custom providers')).getByRole('button', { name: 'Add provider' })).toBeTruthy();
-    expect(screen.queryByRole('region', { name: 'New tasks' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'New threads' })).toBeNull();
     await user.clear(rail.getByRole('searchbox', { name: 'Find a setting' }));
     await user.type(rail.getByRole('searchbox', { name: 'Find a setting' }), 'dark theme');
     expect(await section('Appearance & alerts')).toBeTruthy();
@@ -327,7 +327,7 @@ describe('settings', () => {
 
   test('new tasks start on the defaults shown, and a change is saved', async () => {
     const { user } = await openSettings();
-    const tasks = await section('New tasks');
+    const tasks = await section('New threads');
     const model = await tasks.findByRole('combobox', { name: 'Model' });
     expect(model.textContent).toContain('Claude Haiku 4.5');
     expect(tasks.getByText('Long context may cost more.')).toBeTruthy();
@@ -339,7 +339,7 @@ describe('settings', () => {
   test('the compaction threshold is saved, and the default is stored as unset', async () => {
     const { user } = await openSettings();
     const stored = async () => (await (await fetch('/api/settings')).json()).compact_threshold;
-    const tasks = await section('New tasks');
+    const tasks = await section('New threads');
     const threshold = tasks.getByRole('combobox', { name: 'Compact the conversation when its context reaches' });
     expect(threshold.textContent).toContain('80% (default)');
     await user.click(threshold);

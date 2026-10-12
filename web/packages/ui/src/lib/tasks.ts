@@ -145,7 +145,7 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
 /** The document title: the needs-you count first, then the app, then what the pane shows (a Task's name, '' for an untitled one, or a view). */
 export function pageTitle(needsYou: number, shown: string | null): string {
   const count = needsYou > 0 ? `(${needsYou}) ` : '';
-  return shown === null ? `${count}UAM` : `${count}UAM - ${shown || 'New task'}`;
+  return shown === null ? `${count}UAM` : `${count}UAM - ${shown || 'New thread'}`;
 }
 
 /** A project's Tasks, newest first. */

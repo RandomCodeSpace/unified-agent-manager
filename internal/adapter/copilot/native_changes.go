@@ -104,7 +104,7 @@ func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, err
 		if result.UnavailableReason != nil {
 			switch *result.UnavailableReason {
 			case rpc.HistoryRewindUnavailableReasonSessionBusy:
-				return nil, fmt.Errorf("%w: native changes are available when the Task settles", agentapi.ErrBusy)
+				return nil, fmt.Errorf("%w: native changes are available when the Thread settles", agentapi.ErrBusy)
 			case rpc.HistoryRewindUnavailableReasonFileChangeTrackingDisabled:
 				return nil, fmt.Errorf("%w: this conversation did not capture file changes from its first turn; use All changes", agentapi.ErrUnsupported)
 			case rpc.HistoryRewindUnavailableReasonUnsupportedRemoteSession:

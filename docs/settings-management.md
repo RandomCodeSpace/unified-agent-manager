@@ -6,7 +6,7 @@ Field and setting descriptions are available from the info icon beside their
 labels. Hover, focus, or tap the icon to read the help. Errors and reasons an
 action is unavailable stay visible.
 
-The pages are grouped. **Tasks** holds New tasks (task defaults), Composer
+The pages are grouped. **Threads** holds New threads (thread defaults), Composer
 and Archived. **Models & AI** holds Models (visibility and subagent models),
 Background AI (the Utility model and its daily limit) and Token costs.
 **Accounts** holds GitHub Copilot (sign-in and CLI updates) and Custom
@@ -27,8 +27,8 @@ It cannot change while one of them has an unsaved form open.
 Global changes can also affect Copilot sessions started outside UAM under
 the same user account.
 
-Copilot discovers these files when a task's conversation opens or reopens.
-Saving a file does not restart a running task. Agents, skills, hooks, and
+Copilot discovers these files when a thread's conversation opens or reopens.
+Saving a file does not restart a running thread. Agents, skills, hooks, and
 Copilot instructions are kept in the project's `.github` directory;
 `AGENTS.md` belongs at the project root. Global configuration is kept
 under `COPILOT_HOME`, or `~/.copilot` when that variable is unset.
@@ -40,7 +40,7 @@ under `COPILOT_HOME`, or `~/.copilot` when that variable is unset.
   document with YAML frontmatter. Agent definitions can configure command
   execution, so editing them also requires Terminal to be enabled.
   The guided model picker offers currently available, visible models or
-  **Inherit task model**. Hidden models, unavailable providers, custom models with missing credentials,
+  **Inherit thread model**. Hidden models, unavailable providers, custom models with missing credentials,
   and the automatic-routing model are excluded.
 - **Skills:** create a skill with a name, description, and instructions.
   Its `SKILL.md` lives in a directory that can also contain scripts and
@@ -112,8 +112,8 @@ to its filename, which excludes it from Copilot discovery. Disabled files stay
 visible in Settings with **View**, **Enable**, and **Remove**. Enable restores
 the original filename and refuses to overwrite an existing file. Disabling a
 resolved skill also affects its symlink aliases. Contents, file permissions,
-and supporting files are preserved. Running tasks keep their loaded configuration;
-new and reopened tasks use the change. Disabled files do not participate in
+and supporting files are preserved. Running threads keep their loaded configuration;
+new and reopened threads use the change. Disabled files do not participate in
 duplicate checks or installed-skill suggestions.
 
 Removing a skill removes its definition file, including a disabled definition. Supporting files stay

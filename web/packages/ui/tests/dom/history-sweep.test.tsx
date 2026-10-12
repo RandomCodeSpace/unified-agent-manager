@@ -87,8 +87,8 @@ test('first snapshot and Task or Project membership changes still prune only sta
   const original = app.snapshot();
   const task = original.sessions.find((s) => s.id === 't3')!;
   const project = original.projects[0];
-  localStorage.setItem('uam.draft.t3', 'task draft');
-  localStorage.setItem('uam.review.t3', 'task review');
+  localStorage.setItem('uam.draft.t3', 'thread draft');
+  localStorage.setItem('uam.review.t3', 'thread review');
   localStorage.setItem(`uam.draft.new.${project.id}`, 'project draft');
   app.send({ ...original, sessions: original.sessions.filter((s) => s.id !== task.id) });
   expect(localStorage.getItem('uam.draft.t3')).toBeNull();
@@ -98,7 +98,7 @@ test('first snapshot and Task or Project membership changes still prune only sta
   app.send({ ...app.snapshot(), projects: original.projects.filter((p) => p.id !== project.id) });
   expect(localStorage.getItem(`uam.draft.new.${project.id}`)).toBeNull();
 
-  localStorage.setItem('uam.draft.t-added', 'new task');
+  localStorage.setItem('uam.draft.t-added', 'new thread');
   localStorage.setItem('uam.draft.new.p-added', 'new project');
   localStorage.setItem('uam.draft.stale-after-addition', 'stale');
   app.send({ ...app.snapshot(),
@@ -106,7 +106,7 @@ test('first snapshot and Task or Project membership changes still prune only sta
     projects: [...app.snapshot().projects, { ...project, id: 'p-added' }],
   });
   expect(localStorage.getItem('uam.draft.stale-after-addition')).toBeNull();
-  expect(localStorage.getItem('uam.draft.t-added')).toBe('new task');
+  expect(localStorage.getItem('uam.draft.t-added')).toBe('new thread');
   expect(localStorage.getItem('uam.draft.new.p-added')).toBe('new project');
 });
 
@@ -170,7 +170,7 @@ test('removals between equal-membership snapshots still sweep Task and Project d
   const app = await home();
   const snapshot = app.snapshot();
   // Another tab can create and remove a Task between snapshots seen by this tab.
-  localStorage.setItem('uam.draft.between-snapshots', 'removed Task');
+  localStorage.setItem('uam.draft.between-snapshots', 'removed Thread');
   localStorage.setItem('uam.draft.new.between-snapshots', 'removed Project');
   app.remove('between-snapshots');
   app.removeProject('between-snapshots');

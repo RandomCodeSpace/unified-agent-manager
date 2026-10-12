@@ -85,7 +85,7 @@ describe('Connected instances settings', () => {
     await user.click(screen.getByRole('button', { name: 'Remove connection' }));
     const dialog = within(await screen.findByRole('alertdialog'));
     expect(dialog.getByText('Remove Work server?')).toBeTruthy();
-    expect(dialog.getByText(/Tasks and files on the other instance are not deleted/)).toBeTruthy();
+    expect(dialog.getByText(/Threads and files on the other instance are not deleted/)).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Remove connection' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('Connection changed');

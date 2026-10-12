@@ -64,7 +64,7 @@ func (p *webProvider) DeviceSignIn(ctx context.Context, show func(agentapi.Devic
 		return agentapi.Account{}, fmt.Errorf("%w: %s", agentapi.ErrEnvAccount, name)
 	}
 	if p.openConversations() > 0 {
-		return agentapi.Account{}, fmt.Errorf("%w: close the open Copilot tasks first; signing in restarts Copilot", agentapi.ErrSignInRejected)
+		return agentapi.Account{}, fmt.Errorf("%w: close the open Copilot threads first; signing in restarts Copilot", agentapi.ErrSignInRejected)
 	}
 	err := deviceLogin(ctx, show)
 	if errors.Is(err, errTokenNotSaved) {

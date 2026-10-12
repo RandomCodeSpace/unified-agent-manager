@@ -137,7 +137,7 @@ func (m *Manager) gitLabSelection(ctx context.Context, id string) (string, store
 	}
 	gate, ok := glabOrigin(ctx, t.workdir)
 	if !ok {
-		out.Message = "This Task has no GitLab origin."
+		out.Message = "This Thread has no GitLab origin."
 		return "", store.WebGitLabCommit{}, gate, out, nil
 	}
 	out.Supported = true
@@ -175,11 +175,11 @@ func (m *Manager) gitLabSelection(ctx context.Context, id string) (string, store
 			}
 		}
 	} else if selected.ProjectID != t.projectID || selected.Host != gate.Host || selected.Path != gate.Path || selected.Branch != branch || !validGitLabSHA(selected.SHA) || key != gitLabCommitKey(selected.Host, selected.Path, selected.SHA) {
-		out.Message = "The investigation's commit is outside this Task's current branch or origin."
+		out.Message = "The investigation's commit is outside this Thread's current branch or origin."
 		return "", store.WebGitLabCommit{}, gate, out, nil
 	}
 	if key == "" {
-		out.Message = "Pipelines appear after this Task makes a commit on the current branch."
+		out.Message = "Pipelines appear after this Thread makes a commit on the current branch."
 		return key, selected, gate, out, nil
 	}
 	if _, err := glabGit(ctx, t.workdir, "merge-base", "--is-ancestor", selected.SHA, "HEAD"); err != nil {
@@ -196,7 +196,7 @@ func (m *Manager) gitLabSelection(ctx context.Context, id string) (string, store
 	}
 	m.mu.Unlock()
 	if !sourceValid {
-		out.Message = "The source Task is no longer available."
+		out.Message = "The source Thread is no longer available."
 		return "", store.WebGitLabCommit{}, gate, out, nil
 	}
 	out.Commit = &GitLabCommit{SHA: selected.SHA, Branch: branch, TaskID: selected.TaskID, TaskName: name, CreatedAt: selected.CreatedAt}
@@ -301,7 +301,7 @@ func gitLabEventKey(projectID, pipelineID int64) string {
 
 func (m *Manager) gitLabEligibility(rec store.WebGitLabCommit, out *GitLabPipelineState) {
 	if out.pipelineID > 0 {
-		out.CanInvestigate, out.Reason = false, "This Task is the investigation for this pipeline."
+		out.CanInvestigate, out.Reason = false, "This Thread is the investigation for this pipeline."
 		return
 	}
 	out.CanInvestigate, out.InvestigationTaskID, out.Reason = false, "", ""
@@ -322,7 +322,7 @@ func (m *Manager) gitLabEligibility(rec store.WebGitLabCommit, out *GitLabPipeli
 		if exists {
 			out.InvestigationTaskID = receipt.TaskID
 		} else {
-			out.Reason = "This pipeline was already investigated. Its Task was removed."
+			out.Reason = "This pipeline was already investigated. Its Thread was removed."
 		}
 		return
 	}
@@ -734,11 +734,11 @@ func (m *Manager) gitLabRegistrationScope(ctx context.Context, cfg *store.Config
 	gate, ok := glabOrigin(ctx, dir)
 	branch, err := glabGit(ctx, dir, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if !valid || !ok || err != nil || gate.Host != rec.Host || gate.Path != rec.Path || strings.TrimSpace(branch) != rec.Branch {
-		return newError(http.StatusConflict, "the GitLab investigation scope changed while opening the Task; refresh first")
+		return newError(http.StatusConflict, "the GitLab investigation scope changed while opening the Thread; refresh first")
 	}
 	for otherKey, other := range cfg.WebGitLab {
 		if otherKey != key && other.TaskID == rec.TaskID && other.Branch == rec.Branch && other.Host == rec.Host && other.Path == rec.Path && other.CreatedAt.After(rec.CreatedAt) {
-			return newError(http.StatusConflict, "a newer UAM commit was recorded while opening the Task; refresh first")
+			return newError(http.StatusConflict, "a newer UAM commit was recorded while opening the Thread; refresh first")
 		}
 	}
 	if _, err := glabGit(ctx, dir, "merge-base", "--is-ancestor", rec.SHA, "HEAD"); err != nil {

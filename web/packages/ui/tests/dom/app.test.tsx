@@ -127,14 +127,14 @@ describe('app shell', () => {
 });
 
 describe('sidebar list keyboard', () => {
-  const navRows = () => Array.from(document.querySelectorAll<HTMLElement>('nav[aria-label="Tasks"] [data-nav]'));
+  const navRows = () => Array.from(document.querySelectorAll<HTMLElement>('nav[aria-label="Threads"] [data-nav]'));
 
   test('the list is one tab stop; End reaches the Settled shelf and arrows move from it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
     const stops = () => navRows().filter((el) => el.tabIndex === 0);
     expect(stops()).toHaveLength(1);
-    const settles = document.querySelectorAll<HTMLElement>('nav[aria-label="Tasks"] [data-settle]');
+    const settles = document.querySelectorAll<HTMLElement>('nav[aria-label="Threads"] [data-settle]');
     expect(settles.length).toBeGreaterThan(0);
     for (const settle of settles) expect(settle.tabIndex).toBe(-1);
     stops()[0].focus();
@@ -152,7 +152,7 @@ describe('sidebar list keyboard', () => {
   test('a row\'s Settle is reached with Right and left with Left', async () => {
     const { user } = renderApp();
     await sidebar();
-    const settle = document.querySelector<HTMLElement>('nav[aria-label="Tasks"] [data-settle]')!;
+    const settle = document.querySelector<HTMLElement>('nav[aria-label="Threads"] [data-settle]')!;
     const row = settle.closest('[data-task-row]')!.querySelector<HTMLElement>('[data-nav]')!;
     row.focus();
     await user.keyboard('{ArrowRight}');
@@ -178,12 +178,12 @@ describe('sidebar list keyboard', () => {
   test('search counts its matches in words, and a search with none offers to clear it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    const box = side.getByRole('searchbox', { name: 'Search tasks' });
+    const box = side.getByRole('searchbox', { name: 'Search threads' });
     await user.type(box, 'Doctor: add terminal');
-    expect(await side.findByText('1 matching task')).toBeTruthy();
+    expect(await side.findByText('1 matching thread')).toBeTruthy();
     await user.clear(box);
     await user.type(box, 'zzzz-no-such-task');
-    expect(side.getByText('No matching tasks')).toBeTruthy();
+    expect(side.getByText('No matching threads')).toBeTruthy();
     await user.click(side.getByRole('button', { name: 'Clear search' }));
     expect((box as HTMLInputElement).value).toBe('');
     expect(document.activeElement).toBe(box);
@@ -196,13 +196,13 @@ describe('collapsed sidebar rail', () => {
     localStorage.setItem('uam.sidebar', 'false');
     const rendered = renderApp();
     const nav = within(await screen.findByRole('navigation', { name: 'Sidebar' }));
-    await nav.findByRole('button', { name: 'New task' });
+    await nav.findByRole('button', { name: 'New thread' });
     return { ...rendered, nav };
   }
 
   test('its mark shows the sidebar, carries the Needs you count, and focus follows the toggle', async () => {
     const { user, nav } = await rail();
-    expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
     await user.click(nav.getByRole('button', { name: 'Show sidebar, 7 need you' }));
     const side = await sidebar();
     await waitFor(() => expect(document.activeElement?.id).toBe('sidebar-hide'));
@@ -213,11 +213,11 @@ describe('collapsed sidebar rail', () => {
 
   test('New task opens the palette and the chosen project\'s draft', async () => {
     const { user, nav } = await rail();
-    await user.click(nav.getByRole('button', { name: 'New task' }));
+    await user.click(nav.getByRole('button', { name: 'New thread' }));
     const palette = await screen.findByRole('dialog');
     await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
-    await waitFor(() => expect(header().textContent).toBe('New task'));
-    expect(screen.getByText('New task in notes-site')).toBeTruthy();
+    await waitFor(() => expect(header().textContent).toBe('New thread'));
+    expect(screen.getByText('New thread in notes-site')).toBeTruthy();
   });
 
   test('Projects opens the project filter, and the choice is the sidebar\'s', async () => {
@@ -251,11 +251,11 @@ describe('new task', () => {
   test('New task picks a project, and the first Send creates the task and opens it', async () => {
     const { user } = renderApp();
     const side = await sidebar();
-    await user.click(side.getByRole('button', { name: 'New task' }));
+    await user.click(side.getByRole('button', { name: 'New thread' }));
     const palette = await screen.findByRole('dialog');
     await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
-    await waitFor(() => expect(header().textContent).toBe('New task'));
-    expect(screen.getByText('New task in notes-site')).toBeTruthy();
+    await waitFor(() => expect(header().textContent).toBe('New thread'));
+    expect(screen.getByText('New thread in notes-site')).toBeTruthy();
     const box = screen.getByRole('textbox', { name: 'Message' });
     await waitFor(() => expect(document.activeElement).toBe(box));
     await user.type(box, 'Add a sitemap');
@@ -268,10 +268,10 @@ describe('new task', () => {
   test('a first message of only an attachment creates the task and sends it without text', async () => {
     const { user, mock } = renderApp();
     const side = await sidebar();
-    await user.click(side.getByRole('button', { name: 'New task' }));
+    await user.click(side.getByRole('button', { name: 'New thread' }));
     const palette = await screen.findByRole('dialog');
     await user.click(within(palette).getByRole('option', { name: /notes-site/ }));
-    await waitFor(() => expect(header().textContent).toBe('New task'));
+    await waitFor(() => expect(header().textContent).toBe('New thread'));
     expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBe('true');
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['hello from a log\n'], 'build.log', { type: 'text/plain' }));
@@ -329,7 +329,7 @@ describe('new task', () => {
 
 describe('task lifecycle', () => {
   async function openMenu(user: ReturnType<typeof renderApp>['user']) {
-    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
     return screen.findByRole('menu');
   }
 
@@ -348,12 +348,12 @@ describe('task lifecycle', () => {
     const { user } = renderApp('#task=t10');
     await waitFor(() => expect(header().textContent).toBe('Bump dependencies'));
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Archive' }));
-    const confirm = await screen.findByRole('alertdialog', { name: 'Archive this task?' });
-    await user.click(within(confirm).getByRole('button', { name: 'Archive task' }));
-    expect(await screen.findByText('Archived. This task is read-only.')).toBeTruthy();
+    const confirm = await screen.findByRole('alertdialog', { name: 'Archive this thread?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Archive thread' }));
+    expect(await screen.findByText('Archived. This thread is read-only.')).toBeTruthy();
     await user.click(within(await openMenu(user)).getByRole('menuitem', { name: 'Delete' }));
     const del = await screen.findByRole('alertdialog', { name: /Delete “Bump dependencies”\?/ });
-    await user.click(within(del).getByRole('button', { name: 'Delete task' }));
+    await user.click(within(del).getByRole('button', { name: 'Delete thread' }));
     expect(await screen.findByRole('heading', { name: 'What are you working on?' })).toBeTruthy();
     expect(window.location.hash).toBe('');
     expect(screen.queryByRole('button', { name: /Bump dependencies/ })).toBeNull();
@@ -366,7 +366,7 @@ describe('task lifecycle', () => {
     const confirm = await screen.findByRole('alertdialog', { name: 'Close this conversation?' });
     await user.click(within(confirm).getByRole('button', { name: 'Close conversation' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
-    await user.click(await screen.findByRole('button', { name: 'Task actions' }));
+    await user.click(await screen.findByRole('button', { name: 'Thread actions' }));
     const menu = await screen.findByRole('menu');
     expect(within(menu).queryByRole('menuitem', { name: 'Close conversation' })).toBeNull();
   });
@@ -374,8 +374,8 @@ describe('task lifecycle', () => {
   test('rename in the header saves the new name', async () => {
     const { user } = renderApp('#task=t3');
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
-    await user.click(screen.getByRole('button', { name: 'Rename task' }));
-    const input = await screen.findByRole('textbox', { name: 'Task name' });
+    await user.click(screen.getByRole('button', { name: 'Rename thread' }));
+    const input = await screen.findByRole('textbox', { name: 'Thread name' });
     await user.clear(input);
     await user.type(input, 'Doctor terminal row{Enter}');
     await waitFor(() => expect(header().textContent).toBe('Doctor terminal row'));
@@ -387,8 +387,8 @@ describe('task lifecycle', () => {
   ])('rename uses the latest session when the open editor saves $name', async ({ saved, requests }) => {
     const { user } = renderApp('#task=t3');
     await waitFor(() => expect(header().textContent).toBe('Doctor: add terminal line'));
-    await user.click(screen.getByRole('button', { name: 'Rename task' }));
-    const input = await screen.findByRole('textbox', { name: 'Task name' });
+    await user.click(screen.getByRole('button', { name: 'Rename thread' }));
+    const input = await screen.findByRole('textbox', { name: 'Thread name' });
     const fetch = vi.spyOn(window, 'fetch');
     try {
       // Another client updates the summary while this editor keeps its original text.

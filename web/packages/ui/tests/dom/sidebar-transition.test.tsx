@@ -47,7 +47,7 @@ async function home() {
   return { send, active, completed: sessions.find((s) => s.id === 't3')! };
 }
 
-const row = (id: string) => document.querySelector(`nav[aria-label="Tasks"] [data-task-row="${id}"]`);
+const row = (id: string) => document.querySelector(`nav[aria-label="Threads"] [data-task-row="${id}"]`);
 
 describe('Task list quiet regrouping', () => {
   test('a minute refreshes an unchanged Task time without a view transition', async () => {
@@ -88,13 +88,13 @@ describe('Task list quiet regrouping', () => {
     try {
       send('session', { session: { ...completed, stage: 'settled', settled_by: 'auto', settled_at: new Date().toISOString() } });
       await act(async () => {});
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).not.toBeNull();
       expect(row(completed.id)?.textContent).toContain('Settled');
       expect(startViewTransition).not.toHaveBeenCalled();
       await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).not.toBeNull();
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).toBeNull();
       expect(startViewTransition).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -109,12 +109,12 @@ describe('Task list quiet regrouping', () => {
       send('session', { session: { ...completed, stage: 'settled', settled_by: 'auto', settled_at: new Date().toISOString() } });
       await act(async () => {});
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
-      document.querySelector<HTMLInputElement>('input[aria-label="Search tasks"]')!.focus();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      document.querySelector<HTMLInputElement>('input[aria-label="Search threads"]')!.focus();
       await act(async () => { await vi.advanceTimersByTimeAsync(4999); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).not.toBeNull();
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).toBeNull();
       expect(startViewTransition).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -131,7 +131,7 @@ describe('Task list quiet regrouping', () => {
       send('session', { session: { ...completed, state: 'working' } });
       await act(async () => {});
       await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
-      expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${completed.id}"]`)).not.toBeNull();
+      expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${completed.id}"]`)).not.toBeNull();
       expect(row(completed.id)?.textContent).toContain('Working');
       expect(startViewTransition).not.toHaveBeenCalled();
     } finally {
@@ -156,7 +156,7 @@ describe('Task list quiet regrouping', () => {
   test('a manually settled Task moves immediately without a view transition', async () => {
     const { send, active } = await home();
     send('session', { session: { ...active, stage: 'settled', settled_at: new Date().toISOString() } });
-    await waitFor(() => expect(document.querySelector(`ul[aria-label="Unsettled tasks"] [data-task-row="${active.id}"]`)).toBeNull());
+    await waitFor(() => expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${active.id}"]`)).toBeNull());
     expect(startViewTransition).not.toHaveBeenCalled();
   });
 });

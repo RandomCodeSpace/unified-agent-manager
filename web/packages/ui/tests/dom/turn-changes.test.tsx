@@ -113,7 +113,7 @@ test.each(['inactive', 'generation', 'fold', 'unmount'])('a %s reader drops its 
 test('wrong immutable timing identity is rejected and legacy replies stay unchanged', async () => {
   const f = fixture(vi.fn().mockResolvedValue({ ...record, timing_id: 'wrong' }));
   await userEvent.setup().click(screen.getByRole('button', { name: '1 file +2 −1' }));
-  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The Task changed. Close this reader and open it again.');
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The Thread changed. Close this reader and open it again.');
   f.rerender(f.view(true, 'two', true, [{ ...timing, changes: undefined }]));
   expect(screen.queryByRole('button', { name: /Changes unavailable|1 file/ })).toBeNull();
   expect(screen.getByText('First reply.')).toBeTruthy();

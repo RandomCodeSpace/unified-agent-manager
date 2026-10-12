@@ -13,7 +13,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const SIGNED_IN = 'Signed in as octocat. Every task on this server uses this account from its next message.';
+const SIGNED_IN = 'Signed in as octocat. Every thread on this server uses this account from its next message.';
 
 describe('GitHub Copilot sign-in', () => {
   test('signed out: a banner says so; a refused token says why and the field is cleared; a good one signs in', async () => {
@@ -26,7 +26,7 @@ describe('GitHub Copilot sign-in', () => {
     const field = card.getByLabelText('Sign in with a token') as HTMLInputElement;
     expect(field.type).toBe('password');
     expect(card.getByRole('link', { name: 'Create one on GitHub' }).getAttribute('href')).toBe('https://github.com/settings/personal-access-tokens/new');
-    expect(card.getByText(/every task on this server/)).toBeTruthy();
+    expect(card.getByText(/every thread on this server/)).toBeTruthy();
     expect(card.getByText(/not supported here/)).toBeTruthy();
 
     await user.type(field, 'not-a-token');
@@ -141,7 +141,7 @@ describe('GitHub Copilot sign-in', () => {
     expect(card.queryByRole('button', { name: 'Sign in with GitHub' })).toBeNull();
     await user.click(card.getByRole('button', { name: 'Sign out' }));
     const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText(/Every task on this server stops working/)).toBeTruthy();
+    expect(dialog.getByText(/Every thread on this server stops working/)).toBeTruthy();
     await user.click(dialog.getByRole('button', { name: 'Sign out' }));
     expect(await card.findByText('Signed out')).toBeTruthy();
     expect(await screen.findByText('GitHub Copilot is signed out. Sign in in Settings.')).toBeTruthy();
@@ -182,7 +182,7 @@ describe('one linked Copilot account', () => {
     expect(card.queryByText(MISMATCH)).toBeNull();
     const dialog = within(await screen.findByRole('alertdialog'));
     expect(dialog.getByText('Unlink octocat?')).toBeTruthy();
-    expect(dialog.getByText('Copilot signs out on this server, and the next sign-in links its account. Every task on this server uses that account.')).toBeTruthy();
+    expect(dialog.getByText('Copilot signs out on this server, and the next sign-in links its account. Every thread on this server uses that account.')).toBeTruthy();
     expect(unlink).not.toHaveBeenCalled();
     await user.click(dialog.getByRole('button', { name: 'Unlink' }));
     expect(unlink).toHaveBeenCalledWith('copilot');
@@ -230,7 +230,7 @@ describe('the app while Copilot is signed in to another account', () => {
     await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
     expect(await blocked()).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Conversation' })).toBeNull();
-    await user.click(aside.getByRole('button', { name: 'New task' }));
+    await user.click(aside.getByRole('button', { name: 'New thread' }));
     await user.keyboard('{Alt>}n{/Alt}');
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();

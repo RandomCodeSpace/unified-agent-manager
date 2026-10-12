@@ -206,7 +206,7 @@ func (m *Manager) loadRoutines(cfg store.Config) {
 				continue
 			}
 			if run.TaskID == "" || i != latest {
-				run.Outcome, run.Reason, run.EndedAt = RunFailed, "the uam web service stopped before the task started", now
+				run.Outcome, run.Reason, run.EndedAt = RunFailed, "the uam web service stopped before the thread started", now
 				dirty = true
 				continue
 			}
@@ -365,7 +365,7 @@ func (m *Manager) runOutcome(r *store.WebRoutine, run *activeRun, now time.Time)
 	defer m.mu.Unlock()
 	s := m.sessions[run.taskID]
 	if s == nil {
-		return RunFailed, "the task was deleted", false
+		return RunFailed, "the thread was deleted", false
 	}
 	switch state := s.state(); state {
 	case StateCompleted:
@@ -374,7 +374,7 @@ func (m *Manager) runOutcome(r *store.WebRoutine, run *activeRun, now time.Time)
 		if run.limited {
 			return RunTimeLimit, limitReason, false
 		}
-		return RunCancelled, "stopped in the task", false
+		return RunCancelled, "stopped in the thread", false
 	case StateFailed, StateInterrupted:
 		return RunFailed, cmp.Or(s.detail, "the turn failed"), false
 	case StateIdle:

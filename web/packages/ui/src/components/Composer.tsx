@@ -454,8 +454,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   const autopilotCommand = commands?.find((c) => c.kind === 'command' && (c.name === 'autopilot' || c.aliases?.includes('autopilot')));
   /** Why the execution mode cannot change now; empty when it can. */
   function describeExecutionReason(): string {
-    if (locked) return 'This task is read-only.';
-    if (session.state === 'starting') return 'Wait for this task to start.';
+    if (locked) return 'This thread is read-only.';
+    if (session.state === 'starting') return 'Wait for this thread to start.';
     if (commandsError) return commandsError;
     if (!commands) return 'Loading execution controls…';
     if (!autopilotCommand) return 'Autopilot is unavailable for this provider.';
@@ -1192,7 +1192,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     if (trigger?.kind === '/' || trigger?.kind === '$') {
       if (argument) return 'Type arguments, then press Enter to run.';
       if (newTask) return null;
-      if (commands?.length === 0) return 'This task has no commands.';
+      if (commands?.length === 0) return 'This thread has no commands.';
       return trigger.query ? `No command matches “/${trigger.query}”. Enter closes the list; Enter again sends it as text.` : null;
     }
     if (trigger?.kind === '@') return trigger.query ? `No file matches “${trigger.query}”.` : 'No files to reference.';
@@ -1273,7 +1273,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   );
   /** Why effort and context cannot change now, or that this model has nothing to change. */
   function describeTuningReason(): string {
-    if (locked) return 'This task is read-only.';
+    if (locked) return 'This thread is read-only.';
     if (busy) return 'Wait for the current action to finish.';
     return 'Model default.';
   }
@@ -1290,7 +1290,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
   /** The send button's tip: why it is blocked, or what Enter and Ctrl+Enter do. */
   function describeSendTip(): ReactNode {
     if (blocked) return blocked;
-    if (session.state === 'starting') return 'Wait for this task to start.';
+    if (session.state === 'starting') return 'Wait for this thread to start.';
     if (empty) return answering ? 'Choose an option or type an answer first.' : 'Type a message or attach a file first.';
     if (sendOff && settingsSteerReason) return settingsSteerReason;
     if (answering) {
@@ -1303,7 +1303,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
     }
     return (
       <>
-        {cmd?.name === ASIDE_COMMAND ? (cmd.args ? 'Ask aside (Enter): never sent to the agent' : 'Show this Task’s asides (Enter)') : cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
+        {cmd?.name === ASIDE_COMMAND ? (cmd.args ? 'Ask aside (Enter): never sent to the agent' : 'Show this Thread’s asides (Enter)') : cmd ? `Run /${cmd.name} (Enter)` : 'Send (Enter)'}
         <span className="block text-on-primary/70">Shift+Enter adds a line</span>
       </>
     );
@@ -1466,7 +1466,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
               </Button>
             </div>
           )}
-          {locked && session.stage !== 'settled' && <Note>Archived. This task is read-only.</Note>}
+          {locked && session.stage !== 'settled' && <Note>Archived. This thread is read-only.</Note>}
           {last?.status === 'uncertain' && (
             <Note tone="warn" role="alert">
               Your last submission may have changed the provider state. Check the conversation and settings before retrying; it will not be resent automatically.
@@ -1652,7 +1652,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
                     Attach files
                     {gateNote && <span className="block text-on-primary/70">{gateNote}</span>}
                     <span className="block text-on-primary/70">{LIMITS_TEXT}. Paste or drop works too.</span>
-                    {newTask && <span className="block text-on-primary/70">Kept until you leave this new task.</span>}
+                    {newTask && <span className="block text-on-primary/70">Kept until you leave this new thread.</span>}
                   </>
                 )
               }
@@ -1695,7 +1695,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           disabled={settingsLocked}
           // On a phone it wraps the row by its 44px target, not its label, and grows back to the label where there is room.
           className="pointer-coarse:min-w-11 max-sm:max-w-max max-sm:grow max-sm:basis-11"
-          reason={locked ? 'This task is read-only.' : undefined}
+          reason={locked ? 'This thread is read-only.' : undefined}
           hint={routed ? `Latest turn ran on ${routed}` : undefined}
           onChange={(v) => void settings({ model: v })}
         />
@@ -1704,7 +1704,7 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
           ref={tools}
           session={session}
           model={catalog.find((m) => m.id === session.model)}
-          agentReason={locked ? 'This task is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
+          agentReason={locked ? 'This thread is read-only.' : live || busy ? 'The agent changes between turns.' : undefined}
           onAgent={(agent) => void chooseAgent(agent)}
         />
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
@@ -1731,8 +1731,8 @@ function ComposerView({ session, onRename, onSessionUpdate, newTask, answering =
         <span aria-hidden="true" className={cn('mx-1 h-4 w-px bg-hairline-strong max-sm:hidden', !locked && 'in-data-[fold~=more]:hidden')} />
         {/* Permissions and execution: one menu, since both say how freely the agent acts; its glyph follows both. */}
         {locked ? (
-          <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">This task is read-only.</span></>}>
-            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This task is read-only.`} className="text-muted max-sm:hidden">
+          <Tip label={<>{`Permissions and execution: ${runLabel}`}<span className="block text-on-primary/70">This thread is read-only.</span></>}>
+            <Button id="composer-mode" size="sm" variant="subtle" aria-disabled="true" aria-label={`Permissions and execution: ${runLabel}. This thread is read-only.`} className="text-muted max-sm:hidden">
               {runIcon}
               {runFace}
               <ChevronDown aria-hidden="true" className="!size-3 text-faint" />

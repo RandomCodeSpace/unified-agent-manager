@@ -24,7 +24,7 @@ export function asideQuestion(prior: readonly PriorAside[], question: string): s
   const recent = prior.slice(-ASIDE_FOLLOW_UPS);
   for (let from = 0; from < recent.length; from++) {
     const earlier = recent.slice(from).map((p) => `Q: ${p.question}\nA: ${p.answer}`).join('\n\n');
-    const text = `Earlier by-the-way questions in this Task and their answers:\n${earlier}\n\nNew question: ${question}`;
+    const text = `Earlier by-the-way questions in this Thread and their answers:\n${earlier}\n\nNew question: ${question}`;
     if (bytes(text) <= ASIDE_QUESTION_BYTES) return text;
   }
   return question;

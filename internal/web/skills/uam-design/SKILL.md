@@ -76,7 +76,7 @@ your reply which defaults you used, so the owner can overrule them.
   action that fills it), and error (what happened, plus the next step).
 
 **Copy**
-- Labels are verbs that name the result ("Save changes", "Start task"), in
+- Labels are verbs that name the result ("Save changes", "Start thread"), in
   sentence case. Status reads as a plain sentence.
 
 **Motion and performance**

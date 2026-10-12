@@ -210,7 +210,7 @@ func oneLine(text string, n int) string {
 
 func renderExport(t exportTask, note string, now time.Time) []byte {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# %s\n\n", oneLine(cmpOr(t.name, "New task"), 200))
+	fmt.Fprintf(&b, "# %s\n\n", oneLine(cmpOr(t.name, "New thread"), 200))
 	if t.project != "" {
 		fmt.Fprintf(&b, "- Project: %s (`%s`)\n", oneLine(t.project, 200), t.dir)
 	}
@@ -221,10 +221,10 @@ func renderExport(t exportTask, note string, now time.Time) []byte {
 	fmt.Fprintf(&b, "- Started: %s\n", t.created.Local().Format(time.DateTime))
 	fmt.Fprintf(&b, "- Exported: %s\n", now.Local().Format(time.DateTime))
 	if t.spawnedBy != "" {
-		fmt.Fprintf(&b, "- Started by task %s\n", t.spawnedBy)
+		fmt.Fprintf(&b, "- Started by thread %s\n", t.spawnedBy)
 	}
 	if t.rerunOf != "" {
-		fmt.Fprintf(&b, "- Runs again the last message of task %s\n", t.rerunOf)
+		fmt.Fprintf(&b, "- Runs again the last message of thread %s\n", t.rerunOf)
 	}
 	if t.routineID != "" {
 		fmt.Fprintf(&b, "- Started by routine %s\n", t.routineID)

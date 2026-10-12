@@ -25,8 +25,8 @@ describe('custom agent', () => {
     const { user } = renderApp();
     await sidebar();
     const main = within(screen.getByRole('main'));
-    await waitFor(() => expect(main.getByRole('button', { name: 'New task' }).hasAttribute('disabled')).toBe(false));
-    await user.click(main.getByRole('button', { name: 'New task' }));
+    await waitFor(() => expect(main.getByRole('button', { name: 'New thread' }).hasAttribute('disabled')).toBe(false));
+    await user.click(main.getByRole('button', { name: 'New thread' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
 

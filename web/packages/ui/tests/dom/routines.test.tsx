@@ -41,7 +41,7 @@ describe('routines', () => {
     await user.click(screen.getByRole('button', { name: 'New routine' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
     expect((dialog.getByRole('radio', { name: 'Yolo with autopilot' }) as HTMLElement).getAttribute('aria-checked')).toBe('true');
-    expect(dialog.getByText(/keeps working until the task is done or the time limit stops it/)).toBeTruthy();
+    expect(dialog.getByText(/keeps working until the thread is done or the time limit stops it/)).toBeTruthy();
     expect(dialog.getByText(/acts without asking while nobody is watching/)).toBeTruthy();
     await user.click(dialog.getByRole('radio', { name: 'Safe' }));
     expect(dialog.getByText(/waits for you/)).toBeTruthy();
@@ -118,7 +118,7 @@ describe('routines', () => {
     await screen.findByRole('region', { name: 'notes-site' });
     await user.click(screen.getByRole('button', { name: 'New routine in notes-site' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
-    expect(dialog.getByText('Each run starts a task in notes-site.')).toBeTruthy();
+    expect(dialog.getByText('Each run starts a thread in notes-site.')).toBeTruthy();
     expect(dialog.queryByRole('combobox', { name: 'Project' })).toBeNull();
     await user.type(dialog.getByRole('textbox', { name: 'Name' }), 'Spell check');
     await user.type(dialog.getByRole('textbox', { name: 'What the agent should do' }), 'Check the spelling of every page.');
@@ -133,12 +133,12 @@ describe('routines', () => {
     for (const id of ['r1', 'r2', 'r3']) await fetch(`/api/routines/${id}`, { method: 'DELETE' });
     await user.click(side.getByRole('button', { name: 'Routines' }));
     expect(await screen.findByRole('heading', { name: 'No routines yet' })).toBeTruthy();
-    expect(screen.getByText(/Start a task on a schedule/)).toBeTruthy();
+    expect(screen.getByText(/Start a thread on a schedule/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'New routine' }));
     const dialog = within(await screen.findByRole('dialog', { name: 'New routine' }));
     expect(dialog.getByRole('combobox', { name: 'Project' })).toBeTruthy();
     // The Project field names where runs start; the subtitle does not repeat it.
-    expect(dialog.queryByText(/^Each run starts a task in/)).toBeNull();
+    expect(dialog.queryByText(/^Each run starts a thread in/)).toBeNull();
   });
 
   test('a #routines link opened while the page is open shows the routines', async () => {

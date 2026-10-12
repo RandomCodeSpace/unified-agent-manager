@@ -26,7 +26,7 @@ function workspace(projects = true, tasks = false, url = '') {
 }
 
 const rail = () => screen.findByRole('navigation', { name: 'Sidebar' });
-const taskList = () => screen.findByRole('navigation', { name: 'Tasks' });
+const taskList = () => screen.findByRole('navigation', { name: 'Threads' });
 
 describe('empty-workspace sidebar', () => {
   test.each([false, true])('starts collapsed when projects exist: %s, without overwriting the preference', async (projects) => {
@@ -34,7 +34,7 @@ describe('empty-workspace sidebar', () => {
     workspace(projects);
     const nav = within(await rail());
     expect(nav.getByRole('status').textContent).toContain('Connected');
-    expect(screen.queryByRole('navigation', { name: 'Tasks' })).toBeNull();
+    expect(screen.queryByRole('navigation', { name: 'Threads' })).toBeNull();
     expect(localStorage.getItem('uam.sidebar')).toBe('true');
   });
 
@@ -64,15 +64,15 @@ describe('empty-workspace sidebar', () => {
     const nav = within(await (open ? taskList() : rail()));
     await waitFor(() => expect(nav.getByRole('status').textContent).toContain('Connected'));
     expect(window.location.hash).toBe('');
-    expect(!!screen.queryByRole('navigation', { name: 'Tasks' })).toBe(open);
+    expect(!!screen.queryByRole('navigation', { name: 'Threads' })).toBe(open);
   });
 
   test('the rail opens a draft while empty, then creating the first task restores the saved preference', async () => {
     localStorage.setItem('uam.sidebar', 'true');
     const { user } = workspace();
-    await user.click(within(await rail()).getByRole('button', { name: 'New task' }));
+    await user.click(within(await rail()).getByRole('button', { name: 'New thread' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
-    expect(await screen.findByRole('heading', { name: 'New task' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'New thread' })).toBeTruthy();
     expect(await rail()).toBeTruthy();
     await act(async () => { await api.createSession({ project_id: 'p3', provider: 'copilot', request_id: 'empty-sidebar-first-task' }); });
     expect(await taskList()).toBeTruthy();

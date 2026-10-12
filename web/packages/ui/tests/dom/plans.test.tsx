@@ -30,13 +30,13 @@ describe('native plan review', () => {
     const reader = within(await screen.findByRole('dialog', { name: 'Plan' }));
     expect(reader.getByText('Reviewed')).toBeTruthy();
     await user.click(reader.getByRole('button', { name: 'Current draft' }));
-    expect(reader.getByText('The current draft is unavailable while this Task is closed.')).toBeTruthy();
+    expect(reader.getByText('The current draft is unavailable while this Thread is closed.')).toBeTruthy();
     expect(draft).not.toHaveBeenCalled();
     view.rerender(<ReadPlan plan={plan} sessionId="task" draftAvailable />);
     await reader.findByRole('heading', { name: 'Reopened draft' });
     expect(draft).toHaveBeenCalledTimes(1);
     view.rerender(<ReadPlan plan={plan} sessionId="task" draftAvailable={false} />);
-    expect(reader.getByText('The current draft is unavailable while this Task is closed.')).toBeTruthy();
+    expect(reader.getByText('The current draft is unavailable while this Thread is closed.')).toBeTruthy();
     await user.click(reader.getByRole('button', { name: 'Reviewed snapshot' }));
     expect(reader.getByText('Reviewed')).toBeTruthy();
   });
@@ -126,14 +126,14 @@ describe('native plan review', () => {
 
   test('feedback clears approval and preserves the parked Task draft', async () => {
     fixture();
-    localStorage.setItem('uam.draft.t16', JSON.stringify({ text: 'next task message', files: [], attachments: [] }));
+    localStorage.setItem('uam.draft.t16', JSON.stringify({ text: 'next thread message', files: [], attachments: [] }));
     const { user, mock } = await openTask('t16');
     await user.type(composer(), 'Add a rollback check');
     expect(box().getAllByRole('radio').some((r) => (r as HTMLInputElement).checked)).toBe(false);
     await user.keyboard('{Enter}');
     await waitFor(() => expect(box().queryByText('Plan ready')).toBeNull());
     expect(mock.received[0].body).toEqual({ plan: { feedback: 'Add a rollback check' } });
-    await waitFor(() => expect(composer().value).toBe('next task message'));
+    await waitFor(() => expect(composer().value).toBe('next thread message'));
   });
 
   test('an unoffered recommendation selects nothing; choosing an action clears feedback', async () => {

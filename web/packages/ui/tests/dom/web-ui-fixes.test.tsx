@@ -19,11 +19,11 @@ describe('sidebar shelves', () => {
   test('Settled sits under the Task list\'s scroller and scrolls on its own within 40% of the screen; there is no Done section', async () => {
     renderApp();
     const side = await sidebar();
-    const tasks = document.querySelector('ul[aria-label="Unsettled tasks"]')!.parentElement!;
+    const tasks = document.querySelector('ul[aria-label="Unsettled threads"]')!.parentElement!;
     expect(tasks.className).toContain('overflow-y-auto');
     expect(tasks.contains(side.getByRole('button', { name: /^Settled/ }))).toBe(false);
     expect(side.queryByRole('button', { name: /^Done/ })).toBeNull();
-    const rows = document.querySelector('nav[aria-label="Tasks"] [data-task-row="t11"]')!.closest('ul')!.parentElement!;
+    const rows = document.querySelector('nav[aria-label="Threads"] [data-task-row="t11"]')!.closest('ul')!.parentElement!;
     expect(rows.className).toContain('overflow-y-auto');
     expect(rows.className).toContain('max-h-[40dvh]');
   });
@@ -92,9 +92,9 @@ describe('composer attachments', () => {
     vi.spyOn(api, 'prompt').mockRejectedValue(new Error('the service is busy'));
     const { user } = renderApp();
     const side = await sidebar();
-    await user.click(side.getByRole('button', { name: 'New task' }));
+    await user.click(side.getByRole('button', { name: 'New thread' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('option', { name: /notes-site/ }));
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('New task'));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('New thread'));
     const input = document.querySelector<HTMLInputElement>('form input[type="file"]')!;
     await user.upload(input, new File(['not really a png\n'], 'fake.png', { type: 'image/png' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBeNull());

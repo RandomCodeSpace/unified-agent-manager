@@ -133,7 +133,7 @@ func (m *Manager) rewindTargetLocked(s *webSession) (agentapi.HistoryRewinder, u
 		return nil, 0, err
 	}
 	if s.conv == nil || s.opening != nil {
-		return nil, 0, newError(http.StatusConflict, "rewind needs the task's open conversation; open the task first")
+		return nil, 0, newError(http.StatusConflict, "rewind needs the thread's open conversation; open the thread first")
 	}
 	rewinder, ok := s.conv.(agentapi.HistoryRewinder)
 	if !ok || !m.infos[s.provider].Capabilities.Rewind {
@@ -157,7 +157,7 @@ func rewindReadError(err error) error {
 	case errors.Is(err, agentapi.ErrUnsupported):
 		return newError(http.StatusConflict, "this conversation cannot rewind its recorded history")
 	case errors.Is(err, agentapi.ErrClosed):
-		return newError(http.StatusConflict, "the conversation closed; open the task again")
+		return newError(http.StatusConflict, "the conversation closed; open the thread again")
 	default:
 		return newError(http.StatusBadGateway, "could not read the rewind preview: %s", shortError(err))
 	}
@@ -495,7 +495,7 @@ func (m *Manager) ReconcileRewind(id, requestID string) (RewindReceipt, error) {
 	return out, err
 }
 
-var errNoRewindRequest = newError(http.StatusNotFound, "no such rewind request on this task")
+var errNoRewindRequest = newError(http.StatusNotFound, "no such rewind request on this thread")
 
 // reconcileFailed records that the record could not establish the outcome,
 // which offers the owner's explicit release.

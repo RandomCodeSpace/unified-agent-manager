@@ -185,7 +185,7 @@ func (m *Manager) PlanDraft(ctx context.Context, id string) (agentapi.PlanDraft,
 	gen := s.gen
 	m.mu.Unlock()
 	if conv == nil {
-		return agentapi.PlanDraft{}, newError(http.StatusConflict, "the current draft is unavailable while this Task is closed")
+		return agentapi.PlanDraft{}, newError(http.StatusConflict, "the current draft is unavailable while this Thread is closed")
 	}
 	if !ok {
 		return agentapi.PlanDraft{}, newError(http.StatusConflict, "this provider cannot read the current plan draft")

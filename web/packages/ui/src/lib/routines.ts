@@ -46,7 +46,7 @@ export type RoutineMode = 'autopilot' | 'yolo' | 'safe';
 
 /** The modes the form offers, Yolo with autopilot first (a new routine's), each with a line on how a run then goes. */
 export const ROUTINE_MODES: { value: RoutineMode; label: string; hint: string }[] = [
-  { value: 'autopilot', label: 'Yolo with autopilot', hint: 'Allows every permission request and keeps working until the task is done or the time limit stops it.' },
+  { value: 'autopilot', label: 'Yolo with autopilot', hint: 'Allows every permission request and keeps working until the thread is done or the time limit stops it.' },
   { value: 'yolo', label: 'Yolo', hint: 'Allows every permission request for one turn: the run ends when the agent first stops.' },
   { value: 'safe', label: 'Safe', hint: 'Each permission request waits for you, and the run shows as Needs you until you answer.' },
 ];

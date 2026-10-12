@@ -33,7 +33,7 @@ export function GitLabSettings({ automatic, mrPrompt }: Readonly<{ automatic?: {
     {automatic && <div className="flex items-start justify-between gap-4">
       <div className="flex min-w-0 flex-col gap-1">
         <h3 className="text-ui font-medium text-ink">Automatic investigation</h3>
-        <Note id="gitlab-auto-description">Start a Utility-model task when a pipeline fails for a UAM commit. Off: choose Investigate in the task's GitLab panel.</Note>
+        <Note id="gitlab-auto-description">Start a Utility-model thread when a pipeline fails for a UAM commit. Off: choose Investigate in the thread's GitLab panel.</Note>
       </div>
       <Switch aria-label="Automatic investigation" aria-describedby="gitlab-auto-description" checked={automatic.on} disabled={automatic.saving} onCheckedChange={automatic.onChange} className="mt-0.5" />
     </div>}

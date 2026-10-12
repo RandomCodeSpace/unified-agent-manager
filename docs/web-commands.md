@@ -3,9 +3,9 @@
 The command menu reads the current provider catalogue. A command is executable
 only when UAM has a handler for its effects and result. Unsupported commands stay
 visible with a reason and are rejected before the native invocation. Discovery
-can reopen an active Task's exact conversation, but first checks whether another
+can reopen an active Thread's exact conversation, but first checks whether another
 client holds an imported or terminal-linked conversation. Settled and archived
-Tasks remain read-only.
+Threads remain read-only.
 
 ## Copilot support
 
@@ -15,17 +15,17 @@ aliases are accepted, including `goal`, `yolo`, and `models`.
 
 | Commands | Web behavior |
 | --- | --- |
-| Discovered skills; `init`, `review`, `blame`, `fleet`, `research`, `security-review` | Resolve the native prompt and submit it with the selected Task model. Referenced files and attachments are supported. |
+| Discovered skills; `init`, `review`, `blame`, `fleet`, `research`, `security-review` | Resolve the native prompt and submit it with the selected Thread model. Referenced files and attachments are supported. |
 | `autopilot` / `goal` | Invoke native autopilot, including its on/off, objective, and credit-limit arguments. Reconcile execution mode and report the native objective state. Autopilot does not change permissions. |
-| `allow-all` / `yolo` | Change the Task's existing permission policy: `on` means Yolo, `off` means Safe, `show` reports it, and no argument toggles it. |
+| `allow-all` / `yolo` | Change the Thread's existing permission policy: `on` means Yolo, `off` means Safe, `show` reports it, and no argument toggles it. |
 | `permissions` | Open permission settings; `default`, `allow-all`, and `show` select Safe, select Yolo, or report the policy. |
-| `model` / `models` | Open model settings, or select one offered Task model ID. Native global/repository and plan-model options are not accepted. |
-| `rename` | Open rename, or rename this web Task. |
+| `model` / `models` | Open model settings, or select one offered Thread model ID. Native global/repository and plan-model options are not accepted. |
+| `rename` | Open rename, or rename this web Thread. |
 | `context`, `usage`, `list-dirs`, `env`, `skills` | Display native read-only output. Arguments are rejected before invocation. |
-| `compact` | Invoke native compaction, with optional focus instructions. The Task shows Compacting while it runs; the outcome is a transcript notice, and the command result only says it completed. |
+| `compact` | Invoke native compaction, with optional focus instructions. The Thread shows Compacting while it runs; the outcome is a transcript notice, and the command result only says it completed. |
 | `plan` | Disabled until the web client supports plan-exit approval. The SDK callback explicitly refuses automatic plan exit. |
 | `every`, `after` | Disabled: web scheduling is not supported. |
-| `cwd`, `add-dir` | Disabled: these change directories outside Task project settings. |
+| `cwd`, `add-dir` | Disabled: these change directories outside Thread project settings. |
 | `share`, `remote` | Disabled: publishing and remote-session handlers are not implemented. |
 | Other native/client commands | Disabled until their effects and required web handlers are supported. |
 
@@ -35,7 +35,7 @@ Control and read-only commands refuse attachments before invocation; the browser
 can preserve the draft. Text, completion, timeline-entry and subcommand-selection
 results do not mark the foreground Working. Selecting a subcommand prefills the
 composer for explicit submission. Native model/dialog results cannot be invoked
-through an unsupported command to bypass Task model settings.
+through an unsupported command to bypass Thread model settings.
 
 ## Autopilot and Stop
 
@@ -48,7 +48,7 @@ disables future continuation; use Stop to abort current work as well. Objective
 details appear inside the dropdown, without a separate execution banner.
 
 Execution mode (`interactive`, `plan`, or `autopilot`) is separate from the
-Task's permission policy (`safe` or `yolo`). Runtime mode and objective state come
+Thread's permission policy (`safe` or `yolo`). Runtime mode and objective state come
 from `session.mode.get` and `session.autopilotObjective.getState`, refreshed on
 provider events and exact reopen. Objective state is `active`, `paused`, or
 `completed`; credits are the provider's current credit-window usage and limit.
@@ -82,14 +82,14 @@ behavior of approving pending permission requests.
 
 `POST /api/sessions/{id}/background-tasks/{task_id}/cancel` accepts no body and
 returns `{accepted: true, background_tasks: ...}` after a fresh native task read.
-The selected record must be a known, running shell belonging to the Task. The
+The selected record must be a known, running shell belonging to the Thread. The
 adapter checks the fresh native record's type before calling `session.tasks.cancel`.
 Subagent IDs are refused by this route. Foreground cancellation and other shell
 processes are unaffected.
 
 An accepted request may still have `status: running`: the UI reports Stop
 requested until the provider reports a terminal state. Missing/non-shell IDs
-return 404; unknown, closed, read-only or inactive Tasks and refused cancellation
+return 404; unknown, closed, read-only or inactive Threads and refused cancellation
 return 409. A failed refresh retains the last snapshot with `known: false` and
 returns an error. Subagents keep their separate cancellation endpoint.
 

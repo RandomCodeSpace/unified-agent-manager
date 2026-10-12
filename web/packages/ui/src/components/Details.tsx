@@ -157,7 +157,7 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
           if (data.session_id !== session.id) return;
           if (data.epoch && data.epoch !== session.epoch) {
             current.close();
-            store.action({ type: 'failed', terminal: true, error: 'The service restarted. Waiting for the task to reconnect.' });
+            store.action({ type: 'failed', terminal: true, error: 'The service restarted. Waiting for the thread to reconnect.' });
             return;
           }
           if (name === 'detail_ready') attempts = 0;
@@ -178,7 +178,7 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
         const later = () => {
           if (!alive || es !== current) return;
           const exhausted = attempts >= 4;
-          store.action({ type: 'failed', terminal: exhausted, error: exhausted ? 'Details are unavailable. Retry after checking the task.' : 'Reconnecting details…' });
+          store.action({ type: 'failed', terminal: exhausted, error: exhausted ? 'Details are unavailable. Retry after checking the thread.' : 'Reconnecting details…' });
           if (!exhausted) retryTimer = window.setTimeout(open, [1000, 2000, 5000, 10000][attempts++]);
         };
         if (terminal) {
@@ -205,7 +205,7 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
     const identity = lifetime.current;
     const timer = window.setTimeout(() => controller.abort(new Error('Loading details timed out. Try again.')), 10000);
     const promise = api.itemBody(session.id, item.id, ref.agentId, controller.signal).then(data => {
-      if (!mounted.current || identity !== lifetime.current || controller.signal.aborted || data.session_id !== session.id || data.epoch !== session.epoch) throw new DOMException('The task changed.', 'AbortError');
+      if (!mounted.current || identity !== lifetime.current || controller.signal.aborted || data.session_id !== session.id || data.epoch !== session.epoch) throw new DOMException('The thread changed.', 'AbortError');
       return data.item; // one-off copy does not populate the live body map
     }).finally(() => { window.clearTimeout(timer); if (reads.current.get(key)?.controller === controller) reads.current.delete(key); });
     reads.current.set(key, { controller, promise });

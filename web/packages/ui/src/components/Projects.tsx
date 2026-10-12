@@ -105,7 +105,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
       onClosed={onClosed}
       initialFocus={first}
       title={review ? 'Add a project' : 'Choose a project folder'}
-      description="Tasks will run inside the folder you choose."
+      description="Threads will run inside the folder you choose."
       className="max-w-sheet-wide"
       footer={
         <>
@@ -210,7 +210,7 @@ export function AddProjectDialog({ open, onClose, onClosed, onAdded, onExisting,
             <FolderOpen aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted" />
             <div className="min-w-0">
               <h3 className="break-words text-title text-ink">Ready to add {name.trim() || folderName}?</h3>
-              <Note>Review where your tasks will run.</Note>
+              <Note>Review where your threads will run.</Note>
             </div>
           </div>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-3 rounded-sm bg-canvas p-3 text-ui">
@@ -354,7 +354,7 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
       try {
         await api.deleteProject(project.id);
       } catch (e) {
-        if (isStatus(e, 409)) throw new Error('Archive every task in this project before removing it.', { cause: e });
+        if (isStatus(e, 409)) throw new Error('Archive every thread in this project before removing it.', { cause: e });
         throw e;
       }
       onRemoved(project.id);
@@ -374,7 +374,7 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
       title={`Remove ${project.name}?`}
       description={
         <>
-          This removes the project and its {tasks.length === 1 ? 'one task' : `${tasks.length} tasks`} from UAM. The directory <code className="rounded-xs bg-sunken px-1 font-sans text-caption">{project.dir}</code> and the
+          This removes the project and its {tasks.length === 1 ? 'one thread' : `${tasks.length} threads`} from UAM. The directory <code className="rounded-xs bg-sunken px-1 font-sans text-caption">{project.dir}</code> and the
           provider conversations in it are untouched.
         </>
       }
@@ -389,7 +389,7 @@ export function RemoveProjectDialog({ open, onClose, onClosed, project, tasks, o
       </div>
       {unarchived > 0 && (
         <Note tone="warn" className="mt-3">
-          {unarchived === 1 ? 'One task is' : `${unarchived} tasks are`} not archived. Archive every task before removing this project.
+          {unarchived === 1 ? 'One thread is' : `${unarchived} threads are`} not archived. Archive every thread before removing this project.
         </Note>
       )}
       {error && (

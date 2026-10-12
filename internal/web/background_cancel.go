@@ -23,7 +23,7 @@ func (m *Manager) CancelBackgroundTask(id, taskID string) (BackgroundTaskCancell
 	defer s.op.Unlock()
 	m.mu.Lock()
 	if err = s.readOnlyLocked(); err == nil && (s.removed || m.closed || s.conv == nil || s.state() == StateStarting) {
-		err = newError(http.StatusConflict, "the Task has no active provider conversation")
+		err = newError(http.StatusConflict, "the Thread has no active provider conversation")
 	}
 	if err == nil && (s.backgroundTasks == nil || !s.backgroundTasks.Known) {
 		err = newError(http.StatusConflict, "background shell state is unknown; refresh before stopping")
