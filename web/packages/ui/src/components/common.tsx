@@ -4,7 +4,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
-import { LIVE, taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
+import { taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { DEFAULT_SETTINGS, type Action } from '../state';
@@ -214,12 +214,11 @@ export function SubagentIdleIcon({ className }: Readonly<{ className?: string }>
   return <CornerDownLeft aria-hidden="true" className={cn('size-3.5', className)} />;
 }
 
-/** Display name: name, else provider title, else a placeholder that says whether a title is on its way. */
+/** Display name: name, else title, else a placeholder that says whether the server is making a title. */
 export function TaskTitle({ session, className }: Readonly<{ session: SessionSummary; className?: string }>) {
   const name = taskName(session);
   if (name) return <span className={className}>{name}</span>;
-  const waiting = LIVE.includes(session.state);
-  return <span className={cn('text-muted', className)}>{waiting ? 'Waiting for a title…' : 'New thread'}</span>;
+  return <span className={cn('text-muted', className)}>{session.title_pending ? 'Waiting for a title…' : 'New thread'}</span>;
 }
 
 /** Visually hidden separator so adjacent labels do not run together in accessible names. */

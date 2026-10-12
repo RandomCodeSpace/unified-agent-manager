@@ -722,7 +722,7 @@ func TestSessionModelTitlesWithoutAUtilityModel(t *testing.T) {
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(prov.TitleRequests()); n != before || len(m.UtilityLog(0, utilityPage).Calls) != 5 || summaryOf(t, m, capped.ID).Title != "" {
+	if n := len(prov.TitleRequests()); n != before || len(m.UtilityLog(0, utilityPage).Calls) != 5 || summaryOf(t, m, capped.ID).Title != "Add a dark mode toggle" || summaryOf(t, m, capped.ID).TitlePending {
 		t.Fatalf("past the limit: %d new requests, %d calls", n-before, len(m.UtilityLog(0, utilityPage).Calls))
 	}
 }

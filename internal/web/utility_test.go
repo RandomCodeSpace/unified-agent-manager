@@ -69,7 +69,9 @@ func TestUtilityCallsAreLoggedAndCapped(t *testing.T) {
 	if c := l.Calls[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.TaskID != second.ID || c.PromptChars != 0 || c.InputTokens != 0 {
 		t.Fatalf("skipped call = %+v", c)
 	}
-	if n := len(prov.TitleRequests()); n != 1 || summaryOf(t, m, second.ID).Title != "" {
+	// The Thread keeps its first message as the title, and waits for none.
+	waitUntil(t, "the title job to end", func() bool { return !summaryOf(t, m, second.ID).TitlePending })
+	if n := len(prov.TitleRequests()); n != 1 || summaryOf(t, m, second.ID).Title != "Fix the login form" {
 		t.Fatalf("a call past the limit ran: %d requests, title %q", n, summaryOf(t, m, second.ID).Title)
 	}
 

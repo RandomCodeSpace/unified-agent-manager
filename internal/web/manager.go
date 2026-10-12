@@ -302,6 +302,12 @@ type webSession struct {
 	// titleWait is the title the first message waits for while its turn
 	// runs, to be made from the agent's reply; not persisted.
 	titleWait *titlePlan
+	// titling is set while a title job is queued or running; not persisted.
+	titling bool
+	// titleFallback is set while title is the deterministic fallback, made
+	// from the first message or reply, which a model's title replaces; not
+	// persisted.
+	titleFallback bool
 	// compacting is set while the open conversation compacts; not persisted.
 	compacting bool
 	// asking is set while an aside question waits for its answer (aside.go);
@@ -1137,7 +1143,8 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
 		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
 		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
-		Branch: s.branch,
+		Branch:       s.branch,
+		TitlePending: s.titling || s.titleWait != nil,
 	}
 	if s.place != nil && s.place.Worktree != "" {
 		out.Worktree = WorktreeInfo{Path: s.place.Worktree, Branch: s.place.Branch, SizeBytes: m.worktrees.sizes[s.place.Worktree].bytes}
@@ -2478,7 +2485,7 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		}
 	case agentapi.EventTitle:
 		if title := cleanTitle(ev.Title); title != "" {
-			s.title = title
+			s.title, s.titleFallback = title, false
 			m.kickPlaceNameLocked(s)
 		}
 	case agentapi.EventExit:
@@ -2550,7 +2557,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickQuotaLocked(s.provider)
 		if s.titleWait != nil {
 			m.titleAfterReplyLocked(s)
+			m.kickPlaceNameLocked(s) // when the wait ended without a job
 		}
+		m.replyFallbackLocked(s)
 	}
 }
 
@@ -3516,6 +3525,10 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		// Set before the send, so a turn that ends at once still finds it.
 		s.titleWait = plan
 	}
+	fallback := ""
+	if s.sendFallbackLocked(in, uploads) {
+		fallback = s.title
+	}
 	s.setBase(StateWorking, "")
 	mark := s.turnSeq
 	m.changedLocked(s, before)
@@ -3533,18 +3546,28 @@ func (m *Manager) send(s *webSession, in turnInput, reqID string) (Submission, e
 		m.markUsed(s, uploads)
 	}
 	if err == nil {
-		if plan != nil && !plan.afterReply {
+		if plan != nil && !plan.afterReply || fallback != "" {
 			m.mu.Lock()
-			m.startTitleLocked(s, plan, blobs, "")
+			before := m.summaryLocked(s)
+			if plan != nil && !plan.afterReply {
+				m.startTitleLocked(s, plan, blobs, "")
+			}
+			// The branch waits for a title on its way.
+			m.kickPlaceNameLocked(s)
+			m.changedLocked(s, before)
 			m.mu.Unlock()
 		}
 		return m.recordSubmission(s, reqID, SubmissionAccepted, "", false), nil
 	}
 	m.mu.Lock()
+	before = m.summaryLocked(s)
 	if plan != nil && s.titleWait == plan {
 		s.titleWait = nil
 	}
-	before = m.summaryLocked(s)
+	// A message the provider surely did not take leaves no title behind.
+	if fallback != "" && !errors.Is(err, agentapi.ErrSubmissionUncertain) && s.titleFallback && s.title == fallback {
+		s.title, s.titleFallback = "", false
+	}
 	if s.turnSeq == mark {
 		s.base, s.detail = prevBase, prevDetail
 	}

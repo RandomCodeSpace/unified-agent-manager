@@ -782,6 +782,8 @@ export interface SessionSummary {
   name: string;
   /** Provider-generated conversation title; empty until it arrives. */
   title: string;
+  /** Set while a title is being made or waits for the first reply; absent from older servers. */
+  title_pending?: boolean;
   workdir: string;
   /** The branch checked out in the Thread's working folder; absent on a detached head and from older servers (the Project's branch stands in). */
   branch?: string;

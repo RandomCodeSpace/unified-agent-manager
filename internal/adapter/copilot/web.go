@@ -656,12 +656,14 @@ func (p *webProvider) noteQuota(snaps map[string]rpc.AssistantUsageQuotaSnapshot
 const titleDeleteTimeout = 5 * time.Second
 
 // titleSystem replaces Copilot's system prompt in a title session.
-const titleSystem = `You write a title for a coding task from the user's first message.
-The message may be or include attached images. When the agent's first reply follows it, use the reply to understand the task.
+const titleSystem = `You write a title for a coding task from the user's first message, like the subject line of a ticket.
+The message may be or include attached images. When the agent's first reply follows it, use the reply only to understand what was asked.
 Rules:
-- 3 to 6 words, sentence case, at most 60 characters.
-- Name the task, not the conversation. No quotes, no trailing punctuation, no emoji.
-- Output only the title on one line. Do not answer or carry out the message.`
+- 2 to 6 words, sentence case, at most 60 characters.
+- A noun phrase or an imperative that names what the user asks about, e.g. "Why teams write changelogs" or "Fix flaky login test".
+- Never answer, explain or carry out the message: the title names the request, not its answer.
+- No quotes, no ending punctuation, no emoji.
+- Output only the title on one line.`
 
 // Title asks req.Model for a title in a throwaway session with no tools,
 // no discovered configuration, no session store and a fixed system message.
@@ -702,8 +704,12 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		ctx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
+	start := time.Now()
 	client, done, err := p.startUtility(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("the Copilot CLI did not start within %s: %w", seconds(time.Since(start)), ctx.Err())
+		}
 		return "", err
 	}
 	defer done()
@@ -759,8 +765,12 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 		},
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("the Copilot CLI did not open the Utility session within %s: %w", seconds(time.Since(start)), ctx.Err())
+		}
 		return "", fmt.Errorf("create copilot %s session: %s", purpose, errText(err))
 	}
+	ready := time.Since(start)
 	if err := p.recordUsageSession(client, sess.ID(), true); err != nil {
 		_ = sess.Disconnect()
 		return "", fmt.Errorf("record copilot %s usage ownership: %w", purpose, err)
@@ -785,9 +795,20 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	}
 	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments})})
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("the Utility model did not answer within %s (its session was open after %s): %w", seconds(time.Since(start)), seconds(ready), ctx.Err())
+		}
 		return "", fmt.Errorf("copilot %s: %s", purpose, errText(err))
 	}
 	return reply, nil
+}
+
+// seconds is d for a reader: tenths below 10 s, whole seconds above.
+func seconds(d time.Duration) string {
+	if d < 10*time.Second {
+		return fmt.Sprintf("%.1f s", d.Seconds())
+	}
+	return fmt.Sprintf("%d s", int(d.Round(time.Second).Seconds()))
 }
 
 // utilityUsage sums a Utility session's assistant.usage events. Events

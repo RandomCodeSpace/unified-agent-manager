@@ -3,12 +3,53 @@ package web
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 )
+
+// A suggestion's retry is not made once its Thread settled or its folder
+// went away during the first attempt, as a worktree Thread's does.
+func TestSuggestionRetryStopsForASettledThreadOrAMissingFolder(t *testing.T) {
+	for name, gone := range map[string]func(m *Manager, id, workdir string){
+		"settled": func(m *Manager, id, _ string) {
+			if _, err := m.Settle(id); err != nil {
+				t.Error(err)
+			}
+		},
+		"folder removed": func(_ *Manager, _, workdir string) {
+			if err := os.RemoveAll(workdir); err != nil {
+				t.Error(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prov := newAssistProvider()
+			m, project := assistManager(t, openTestStore(t), prov)
+			sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finishTurn(prov.Last(), "make the test pass", "Fixed it.")
+			prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
+				if req.Purpose != purposeSuggestReplies {
+					return "", errors.New("not here")
+				}
+				gone(m, sum.ID, sum.Workdir)
+				return "not\na valid answer", nil
+			})
+			if got, err := m.SuggestReplies(context.Background(), sum.ID); err != nil || len(got.Replies) != 0 {
+				t.Fatalf("suggestions = %+v, %v", got, err)
+			}
+			if n := utilityCalls(prov, purposeSuggestReplies); n != 1 {
+				t.Fatalf("%d suggestion calls, want the first only", n)
+			}
+		})
+	}
+}
 
 func TestUtilityAnswerShapes(t *testing.T) {
 	for _, tc := range []struct {

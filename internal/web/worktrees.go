@@ -295,9 +295,10 @@ func (s *webSession) clonedPlace() *store.WebPlace {
 // kickPlaceNameLocked renames the branch uam made for the Thread to
 // uam/<title> once the Thread has a name or a title, unless the branch was
 // pushed. It runs once per Thread: a rename that fails is not retried.
+// Without a name it waits while a title is on its way.
 func (m *Manager) kickPlaceNameLocked(s *webSession) {
 	// Not before the Thread is listed: a create that fails takes the branch back.
-	if m.closed || s.place == nil || s.place.Named || s.placeNaming || m.sessions[s.id] != s {
+	if m.closed || s.place == nil || s.place.Named || s.placeNaming || m.sessions[s.id] != s || s.name == "" && (s.titling || s.titleWait != nil) {
 		return
 	}
 	want := slug(firstNonEmpty(s.name, s.title))

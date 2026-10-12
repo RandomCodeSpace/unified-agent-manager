@@ -298,8 +298,14 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	s := newSession(fork.ID, fork.Provider, "", fork.Workdir, fork.ProviderSessionID, fork.CreatedAt)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
 	s.base, s.fork = StateClosed, &fork.Lineage
+	// The branch starts with its source's name or title as its title.
+	m.mu.Lock()
+	if source := m.sessions[fork.Lineage.SourceTaskID]; source != nil {
+		s.title = cleanTitle(firstNonEmpty(source.name, source.title))
+	}
+	m.mu.Unlock()
 	rec := store.SessionRecord{ID: s.id, Agent: s.provider, Workdir: s.workdir, Mode: s.mode, CreatedAt: s.createdAt, LastSeenAt: s.createdAt, Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: s.convID,
-		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork}}
+		Web: &store.WebState{Turn: StateClosed, UpdatedAt: s.updatedAt, ProjectID: s.projectID, Model: s.model, Effort: s.effort, ContextSize: s.contextSize, Agent: s.agent, Fork: s.fork, Title: s.title}}
 	check := func(cfg *store.Config) error {
 		if existing, exists := cfg.Sessions[store.Key(fork.Provider, fork.ID)]; exists {
 			if existing.ID == fork.ID && existing.ProviderSessionID == fork.ProviderSessionID && existing.Web != nil && existing.Web.Fork != nil && existing.Web.Fork.RequestID == fork.Lineage.RequestID {
