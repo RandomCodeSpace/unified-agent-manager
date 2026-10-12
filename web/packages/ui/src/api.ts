@@ -1249,6 +1249,14 @@ export type DetailFrame =
   | { name: 'body_delta' | 'body_output'; seq: number; epoch: string; session_id: string; agent_id?: string; item_id: string; kind?: ItemKind; text: string }
   | (Extract<UpdateData, { name: 'item' | 'delta' | 'items_trimmed' }> & { epoch?: string });
 
+/** A skill the Thread's agents loaded: its SKILL.md description, never its body. */
+export interface LoadedSkill {
+  name: string;
+  description?: string;
+  first_at: string;
+  count: number;
+}
+
 export interface SessionDetail extends SessionSummary, Representation {
   turn_timings?: TurnTiming[];
   seq?: number;
@@ -1279,6 +1287,8 @@ export interface SessionDetail extends SessionSummary, Representation {
   schedules?: ScheduleSnapshot | null;
   /** Live MCP state only; descriptions are fetched for an expanded server. */
   mcp_status?: McpStatusSnapshot;
+  /** The skills the Thread's agents loaded, first loaded first; skill loads are not transcript items. Absent from older services. */
+  skills_loaded?: LoadedSkill[];
   history_truncated: boolean;
   last_submission: Submission | null;
 }
@@ -1471,7 +1481,8 @@ export type UpdateData =
   | { name: 'turn_activity'; seq: number; session_id: string; turn_activity: TurnActivity }
   | { name: 'plan_version'; seq: number; session_id: string; plan_version: number; plan_path?: string }
   | { name: 'schedules'; seq: number; session_id: string; schedules: ScheduleSnapshot | null }
-  | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot };
+  | { name: 'mcp_status'; seq: number; session_id: string; mcp_status: McpStatusSnapshot }
+  | { name: 'skills_loaded'; seq: number; session_id: string; skills_loaded: LoadedSkill[] };
 
 export const UPDATE_EVENTS = [
   'session',
@@ -1495,6 +1506,7 @@ export const UPDATE_EVENTS = [
   'plan_version',
   'schedules',
   'mcp_status',
+  'skills_loaded',
 ] as const;
 
 export class ApiError extends Error {

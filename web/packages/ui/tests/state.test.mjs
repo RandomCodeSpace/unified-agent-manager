@@ -22,6 +22,17 @@ test('MCP status follows the selected stream, rejects older frames, and releases
   assert.deepEqual(state.detail.mcp_status, { supported: true, ready: false, servers: [] });
 });
 
+test('skills loaded replace the selected Thread\'s list and ignore older frames', () => {
+  const skills = [{ name: 'tdd', first_at: '2026-10-12T03:28:00Z', count: 2 }];
+  let state = { ...initialState, selectedId: 'task', snapshotSeq: 10, detailSeq: 10, detail: { id: 'task', open: true, items: [] } };
+  const event = { name: 'skills_loaded', seq: 11, session_id: 'task', skills_loaded: skills };
+  assert.equal(update(state, { ...event, session_id: 'other' }), state);
+  state = update(state, event);
+  assert.deepEqual(state.detail.skills_loaded, skills);
+  assert.deepEqual(state.detail.items, []);
+  assert.equal(update(state, { ...event, seq: 10, skills_loaded: [] }), state);
+});
+
 test('leaving a subagent releases its buffer and ignores late output and fetch replies', () => {
   let state = update(loading(), delta(11, 'buffered'));
   state = reducer(state, { type: 'agent_unloaded', sessionId: 'task', agentId: 'helper' });

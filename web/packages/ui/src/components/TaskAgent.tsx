@@ -1,9 +1,10 @@
 import { Radio } from '@base-ui/react/radio';
 import { RadioGroup } from '@base-ui/react/radio-group';
-import { Check } from 'lucide-react';
+import { Check, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type ConfigurationDefinition, type SessionSummary } from '../api';
+import { describeError, type ConfigurationDefinition, type LoadedSkill, type SessionSummary } from '../api';
+import { clockTime, dateTime } from './common';
 
 export interface TaskAgents { agents: ConfigurationDefinition[] | null; error: string }
 
@@ -67,5 +68,30 @@ export function AgentChoices({ session, agents, error, reason, onChange }: Reado
       {error && <p role="status" className="text-caption text-error">{error}</p>}
       {!error && !agents && <p className="text-caption text-muted">Loading agents…</p>}
     </div>
+  );
+}
+
+/**
+ * The skills the Thread's agents loaded, first loaded first. Skill loads stay out of the conversation;
+ * this list keeps their names reachable, with each SKILL.md description, the first load time and how
+ * often it loaded.
+ */
+export function LoadedSkills({ skills }: Readonly<{ skills: readonly LoadedSkill[] }>) {
+  return (
+    <ul aria-label="Skills loaded" className="-mx-2 flex flex-col">
+      {skills.map((s) => (
+        <li key={s.name} className="flex min-h-8 items-start gap-2 rounded-sm px-2 py-1.5">
+          <Sparkles aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-faint" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="font-mono text-code-sm text-ink [overflow-wrap:anywhere]">{s.name}</span>
+            {s.description && <span className="line-clamp-2 text-caption text-muted [overflow-wrap:anywhere]" title={s.description}>{s.description}</span>}
+          </span>
+          <span className="flex shrink-0 flex-col items-end text-meta text-muted tabular-nums">
+            <time dateTime={s.first_at} title={`First loaded ${dateTime(s.first_at)}`}>{clockTime(s.first_at)}</time>
+            {s.count > 1 && <span>{s.count} loads</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

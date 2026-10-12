@@ -105,6 +105,39 @@ test('a Project without custom agents has no Agent tab, unless the Task names an
   expect(await again.findByText('Not found in this project')).toBeTruthy();
 });
 
+test('skills the Thread loaded show on the Agent tab, even without custom agents', async () => {
+  const skills_loaded = [
+    { name: 'tdd', description: 'Build the next change test-first', first_at: '2026-10-12T03:28:00Z', count: 1 },
+    { name: 'unslop', first_at: '2026-10-12T03:41:00Z', count: 2 },
+  ];
+  const tree = (selected: SessionDetail) => <ApiContext.Provider value={api}><AppContext.Provider value={app}><ComposerTools session={selected} onAgent={() => {}} /></AppContext.Provider></ApiContext.Provider>;
+  const read = vi.spyOn(api, 'taskAgents').mockResolvedValue({ agents: [] } as unknown as Awaited<ReturnType<typeof api.taskAgents>>);
+  const view = render(tree({ ...session, context: undefined, capabilities: { usage: true, custom_agents: true } as SessionDetail['capabilities'], skills_loaded }));
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+  await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
+  const panel = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  expect(panel.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Usage', 'Agent']);
+  await userEvent.click(panel.getByRole('tab', { name: 'Agent' }));
+  // No custom agents: no agent choices, only the skills, first loaded first, with how often each loaded.
+  expect(panel.queryByRole('radio')).toBeNull();
+  expect(panel.queryByRole('region', { name: 'Agent' })).toBeNull();
+  const section = within(panel.getByRole('region', { name: 'Skills' }));
+  expect(section.getByText('2 loaded')).toBeTruthy();
+  const rows = within(section.getByRole('list', { name: 'Skills loaded' })).getAllByRole('listitem');
+  expect(rows.map((r) => r.querySelector('.font-mono')?.textContent)).toEqual(['tdd', 'unslop']);
+  expect(within(rows[0]).getByText('Build the next change test-first')).toBeTruthy();
+  expect(within(rows[0]).queryByText(/loads$/)).toBeNull();
+  expect(within(rows[1]).getByText('2 loads')).toBeTruthy();
+  view.unmount();
+  // With custom agents, the agent choices come first under their own label.
+  draw({ ...session, skills_loaded });
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  const both = within(await screen.findByRole('dialog', { name: 'Tools' }));
+  await userEvent.click(both.getByRole('tab', { name: 'Agent' }));
+  expect(await within(both.getByRole('region', { name: 'Agent' })).findByRole('radio', { name: /Reviewer/ })).toBeTruthy();
+  expect(both.getAllByRole('region').map((r) => r.getAttribute('aria-label'))).toEqual(['Agent', 'Skills']);
+});
+
 test('/context opens Tools on its Context tab', async () => {
   vi.spyOn(api, 'commands').mockResolvedValue([{ name: 'context', description: 'Show context', kind: 'command', input_hint: '' }]);
   vi.spyOn(api, 'command').mockResolvedValue({ request_id: 'ctx', status: 'accepted', time: new Date().toISOString(), command_result: { kind: 'action', action: 'context' } });

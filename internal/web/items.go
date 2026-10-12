@@ -531,6 +531,7 @@ func (m *Manager) applyDeltaLocked(s *webSession, d agentapi.Delta) {
 func (m *Manager) applyHistoryLocked(s *webSession, history agentapi.History, publish bool) {
 	s.subagentsArchived, s.subagentTails = false, nil
 	m.applyUsageLocked(s, history.Usage)
+	m.noteSkillsLocked(s, history.Skills)
 	for _, sa := range history.Subagents {
 		if sa.ID != "" {
 			m.upsertSubagentLocked(s, sa, publish)

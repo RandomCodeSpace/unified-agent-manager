@@ -463,6 +463,13 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   uam switches back after every agent selection, and a Task whose selection
   cannot be restored stops rather than run on the agent's model. An agent
   whose tool list leaves out uam's tools runs without them.
+  The Agent tab also lists, under "Skills · N loaded", every skill the
+  Thread's agents and subagents loaded, first loaded first: its name, the
+  description from its `SKILL.md`, when it first loaded and, after repeat
+  loads, how many times. The tab shows for a Thread that loaded skills even
+  when the Project has no custom agents. uam keeps only the name,
+  description, first time and count, never the skill's body. A Thread whose
+  record is too large to read whole lists only the loads in the part read.
 - **Effort**: choose Default or one of the selected model's reported levels.
   Default leaves the choice to Copilot; it does not mean a known level such
   as medium. Effort requires an explicit model with listed levels, so it is
@@ -621,12 +628,14 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   reasoning, when the provider reports it, shows inline in grey, three lines
   at a time with "Show more"; while it streams you see the latest lines, and
   "Thought for 12s" once done. Every tool call is its own line: what ran
-  (the shell command, URL, file path, search pattern, query or skill), a
+  (the shell command, URL, file path, search pattern or query), a
   mark for running, done or failed, and, in yolo mode, "auto" where UAM
   allowed it; a call you allowed or denied yourself says so on the same
   line. Click a line for the full input and output. A run of more than eight
   calls keeps the first two and the last three and folds the rest behind
-  "Show N more". When the agent asks you a question, the conversation shows
+  "Show N more". Skill loads are not shown or counted in the conversation,
+  a subagent's included; Tools → Agent lists them (see Agent). When the
+  agent asks you a question, the conversation shows
   it in full while it waits. Once answered it shrinks to one small card: the
   question, then "You chose" and the option you picked or "You wrote" and
   your text ("Declined" if you declined, "Not answered" if the turn ended

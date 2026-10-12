@@ -390,6 +390,10 @@ type webSession struct {
 	schedules   *agentapi.ScheduleSnapshot
 	mcpStatus   *agentapi.MCPStatusSnapshot
 	mcpRevision uint64
+	// skills lists the skills the Task's agents loaded, first loaded first;
+	// skillLoads holds the loads counted, by agent and provider event ID.
+	skills     []LoadedSkill
+	skillLoads map[[2]string]struct{}
 
 	commandSubmissions []Submission
 	commandLedger      string
@@ -1155,6 +1159,7 @@ func (m *Manager) detailLocked(s *webSession) SessionDetail {
 		snapshot.Servers = slices.Clone(snapshot.Servers)
 		d.MCPStatus = &snapshot
 	}
+	d.SkillsLoaded = slices.Clone(s.skills)
 	activity := s.turnActivity
 	d.TurnActivity = &activity
 	if s.last != nil {
@@ -2380,6 +2385,10 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 	case agentapi.EventMCPStatus:
 		if ev.MCPStatus != nil {
 			m.mcpStatusLocked(s, *ev.MCPStatus)
+		}
+	case agentapi.EventSkill:
+		if ev.Skill != nil {
+			m.noteSkillsLocked(s, []agentapi.SkillLoad{*ev.Skill})
 		}
 	case agentapi.EventContext:
 		if ev.Context != nil && ev.Context.Used >= 0 && ev.Context.Limit > 0 {

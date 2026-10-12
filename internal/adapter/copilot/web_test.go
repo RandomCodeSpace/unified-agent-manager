@@ -741,7 +741,7 @@ func TestWebDeltasAndFinalMessageShareOneItem(t *testing.T) {
 	}
 }
 
-func TestWebSkillInvocationsOnCreateAndResume(t *testing.T) {
+func TestWebSkillLoadsOnCreateAndResume(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(fmt.Sprintf("resume=%v", resume), func(t *testing.T) {
 			fc := &fakeClient{}
@@ -762,58 +762,62 @@ func TestWebSkillInvocationsOnCreateAndResume(t *testing.T) {
 			for _, e := range journal {
 				fs.onEvent(e)
 			}
-			var got []agentapi.Item
+			var items []agentapi.Item
+			var loads []agentapi.SkillLoad
 			for _, e := range sink.all() {
-				if e.Kind == agentapi.EventItem {
-					got = append(got, *e.Item)
+				switch e.Kind {
+				case agentapi.EventItem:
+					items = append(items, *e.Item)
+				case agentapi.EventSkill:
+					loads = append(loads, *e.Skill)
 				}
 			}
-			want := []agentapi.Item{
-				{ID: "skill-1", Kind: agentapi.ItemNotice, Time: journal[0].Timestamp, Text: "Skill: ` uam `"},
-				{ID: "skill-1", Kind: agentapi.ItemNotice, Time: journal[1].Timestamp, Text: "Skill: ` uam `"},
-				{ID: "skill-2", Kind: agentapi.ItemNotice, Time: journal[2].Timestamp, Text: "Skill: ` uam `"},
-				{ID: "skill-1", Kind: agentapi.ItemNotice, AgentID: "child", Time: journal[3].Timestamp, Text: "Skill: ` review `"},
+			// Neither the skill tool call nor the loads are transcript items;
+			// each load is reported as one, a repeated event again (the
+			// service counts it once).
+			if got := itemIDs(items); !reflect.DeepEqual(got, []string{"u1", "a1"}) {
+				t.Fatalf("live items = %v", got)
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("live items = %+v, want %+v", got, want)
+			want := wantSkillLoads(journal)
+			again := want[0]
+			again.At = journal[3].Timestamp
+			if wantLive := []agentapi.SkillLoad{want[0], again, want[1], want[2]}; !reflect.DeepEqual(loads, wantLive) {
+				t.Fatalf("live loads = %+v, want %+v", loads, wantLive)
 			}
 			before := len(sink.all())
 			recorded, err := conv.History(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
-			want = []agentapi.Item{want[0], want[2], want[3]}
-			if !reflect.DeepEqual(recorded.Items, want) {
-				t.Fatalf("recorded items = %+v, want %+v", recorded.Items, want)
+			if got := itemIDs(recorded.Items); !reflect.DeepEqual(got, []string{"u1", "a1"}) || !reflect.DeepEqual(recorded.Skills, want) {
+				t.Fatalf("recorded items %v, skills %+v", got, recorded.Skills)
 			}
-			for _, e := range sink.all()[before:] {
-				if e.Kind == agentapi.EventItem {
-					t.Fatal("History emitted another copy of the skill notices")
-				}
+			if after := sink.all()[before:]; len(after) != 0 {
+				t.Fatalf("History emitted %+v", after)
 			}
 		})
 	}
 }
 
-func TestWebSkillNamesAreBoundedDisplayText(t *testing.T) {
-	for _, tc := range []struct{ name, text string }{
-		{"\x1b[31m uam\x1b[0m\nreview\x00\t", "Skill: ` uam review `"},
+func TestWebSkillLoadsAreBoundedDisplayText(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"\x1b[31m uam\x1b[0m\nreview\x00\t", "uam review"},
 		{"  \n\t\x00", ""},
-		{strings.Repeat("界", 100), "Skill: ` " + strings.Repeat("界", 85) + " `"},
-		{"my_skill*[docs](https://example.test)<b>`", "Skill: `` my_skill*[docs](https://example.test)<b>` ``"},
+		{strings.Repeat("界", 100), strings.Repeat("界", 85)},
+		{"my_skill*[docs](https://example.test)<b>`", "my_skill*[docs](https://example.test)<b>`"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := openWeb(t)
-			h.fs.onEvent(ev("skill", &rpc.SkillInvokedData{Name: tc.name, Path: "/private/SKILL.md", Content: strings.Repeat("private body", 1000)}))
-			items := h.sink.all()
-			if tc.text == "" {
-				if len(items) != 0 {
-					t.Fatalf("empty name emitted %+v", items)
+			h.fs.onEvent(ev("skill", &rpc.SkillInvokedData{Name: tc.name, Description: copilot.String("Checks\nthe \x1b[1mbuild\x1b[0m"), Path: "/private/SKILL.md", Content: strings.Repeat("private body", 1000)}))
+			evs := h.sink.all()
+			if tc.want == "" {
+				if len(evs) != 0 {
+					t.Fatalf("empty name emitted %+v", evs)
 				}
 				return
 			}
-			if len(items) != 1 || items[0].Kind != agentapi.EventItem || items[0].Item.Text != tc.text || items[0].Item.Clipped || !utf8.ValidString(items[0].Item.Text) {
-				t.Fatalf("name item = %+v", items)
+			if len(evs) != 1 || evs[0].Kind != agentapi.EventSkill || evs[0].Skill.Name != tc.want || evs[0].Skill.Description != "Checks the build" || !utf8.ValidString(evs[0].Skill.Name) {
+				t.Fatalf("load = %+v", evs)
 			}
 		})
 	}

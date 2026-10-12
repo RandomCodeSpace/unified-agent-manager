@@ -51,14 +51,20 @@ func readerProvider(fc *fakeClient) *webProvider {
 }
 
 // Round-trip the native payloads through the SDK's recorded-event decoder,
-// including the durable reference form, which needs no skill-body read.
+// including the durable reference form, which needs no skill-body read. The
+// skill tool call and the skill.invoked events around a user message and a
+// reply are bookkeeping, not transcript items.
 func skillJournal(t *testing.T) []copilot.SessionEvent {
 	t.Helper()
 	journal := []copilot.SessionEvent{
-		ev("skill-1", &rpc.SkillInvokedData{Name: "uam", Path: "/private/SKILL.md", Content: "private skill body"}),
-		ev("skill-1", &rpc.SkillInvokedData{Name: "uam", Path: "/private/SKILL.md", Content: "private skill body"}),
+		ev("u1", &rpc.UserMessageData{Content: "check the build"}),
+		ev("call-start", &rpc.ToolExecutionStartData{ToolCallID: "call-skill", ToolName: "skill", Arguments: map[string]any{"skill": "uam"}}),
+		ev("skill-1", &rpc.SkillInvokedData{Name: "uam", Description: copilot.String("Use uam"), Path: "/private/SKILL.md", Content: "private skill body"}),
+		ev("skill-1", &rpc.SkillInvokedData{Name: "uam", Description: copilot.String("Use uam"), Path: "/private/SKILL.md", Content: "private skill body"}),
+		ev("call-done", &rpc.ToolExecutionCompleteData{ToolCallID: "call-skill", Success: true, Result: &rpc.ToolExecutionCompleteResult{Content: "Skill \"uam\" loaded"}}),
 		ev("skill-2", &rpc.SkillInvokedRefData{Name: "uam", Path: "/private/SKILL.md", ContentID: "sha256:unresolved", ContentLength: 18}),
 		agentEv("skill-1", "child", &rpc.SkillInvokedRefData{Name: "review", ContentID: "sha256:unresolved", ContentLength: 4}),
+		ev("a1", &rpc.AssistantMessageData{MessageID: "a1", Content: "The build passes."}),
 	}
 	for i := range journal {
 		journal[i].Timestamp = journal[i].Timestamp.Add(time.Duration(i) * time.Second)
@@ -73,7 +79,17 @@ func skillJournal(t *testing.T) []copilot.SessionEvent {
 	return journal
 }
 
-func TestReadHistoryKeepsSkillInvocationsAcrossPages(t *testing.T) {
+// wantSkillLoads is what skillJournal records: each load once, the body
+// never.
+func wantSkillLoads(journal []copilot.SessionEvent) []agentapi.SkillLoad {
+	return []agentapi.SkillLoad{
+		{ID: "skill-1", Name: "uam", Description: "Use uam", At: journal[2].Timestamp},
+		{ID: "skill-2", Name: "uam", At: journal[5].Timestamp},
+		{ID: "skill-1", AgentID: "child", Name: "review", At: journal[6].Timestamp},
+	}
+}
+
+func TestReadHistoryKeepsSkillLoadsOutOfTheTranscript(t *testing.T) {
 	fc := &fakeClient{journal: skillJournal(t), pageSize: 1}
 	p := readerProvider(fc)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
@@ -81,26 +97,31 @@ func TestReadHistoryKeepsSkillInvocationsAcrossPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []agentapi.Item{
-		{ID: "skill-1", Kind: agentapi.ItemNotice, Time: fc.journal[0].Timestamp, Text: "Skill: ` uam `"},
-		{ID: "skill-2", Kind: agentapi.ItemNotice, Time: fc.journal[2].Timestamp, Text: "Skill: ` uam `"},
-		{ID: "skill-1", Kind: agentapi.ItemNotice, AgentID: "child", Time: fc.journal[3].Timestamp, Text: "Skill: ` review `"},
+	if got := itemIDs(h.Items); !reflect.DeepEqual(got, []string{"u1", "a1"}) || h.Truncated || len(fc.reads) != len(fc.journal) || len(fc.resume) != 0 || len(fc.create) != 0 {
+		t.Fatalf("history items %v, truncated %v, reads %d, resume %d, create %d", got, h.Truncated, len(fc.reads), len(fc.resume), len(fc.create))
 	}
-	if !reflect.DeepEqual(h.Items, want) || h.Truncated || len(fc.reads) != 4 || len(fc.resume) != 0 || len(fc.create) != 0 {
-		t.Fatalf("history = %+v, reads %d, resume %d, create %d", h, len(fc.reads), len(fc.resume), len(fc.create))
+	if !reflect.DeepEqual(h.Skills, wantSkillLoads(fc.journal)) {
+		t.Fatalf("skills = %+v, want %+v", h.Skills, wantSkillLoads(fc.journal))
 	}
-	w, err := p.ReadHistoryWindow(context.Background(), agentapi.WindowRequest{ReadRequest: agentapi.ReadRequest{ConversationID: "skills"}, ItemID: "skill-2", Before: 1})
+	w, err := p.ReadHistoryWindow(context.Background(), agentapi.WindowRequest{ReadRequest: agentapi.ReadRequest{ConversationID: "skills"}, ItemID: "a1", Before: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(w.Items, want[:2]) {
-		t.Fatalf("main-agent window = %+v, want %+v", w.Items, want[:2])
+	if got := itemIDs(w.Items); !reflect.DeepEqual(got, []string{"u1", "a1"}) {
+		t.Fatalf("main-agent window = %v", got)
+	}
+	w, err = p.ReadHistoryWindow(context.Background(), agentapi.WindowRequest{ReadRequest: agentapi.ReadRequest{ConversationID: "skills"}, AgentID: "child", Before: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Items) != 0 {
+		t.Fatalf("subagent window = %+v", w.Items)
 	}
 }
 
-func TestReadHistorySkillNameStaysBoundedInWholeWindow(t *testing.T) {
+func TestReadHistorySkillTextStaysBounded(t *testing.T) {
 	fc := &fakeClient{journal: []copilot.SessionEvent{
-		ev("skill", &rpc.SkillInvokedRefData{Name: strings.Repeat("界", 100), ContentID: "sha256:unresolved", ContentLength: 1 << 20}),
+		ev("skill", &rpc.SkillInvokedRefData{Name: strings.Repeat("界", 100), Description: copilot.String(strings.Repeat("d", 2000)), ContentID: "sha256:unresolved", ContentLength: 1 << 20}),
 	}}
 	p := readerProvider(fc)
 	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
@@ -108,12 +129,8 @@ func TestReadHistorySkillNameStaysBoundedInWholeWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := p.ReadHistoryWindow(context.Background(), agentapi.WindowRequest{ReadRequest: agentapi.ReadRequest{ConversationID: "skills"}, ItemID: "skill"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(h.Items) != 1 || !reflect.DeepEqual(w.Items, h.Items) || h.Items[0].Text != "Skill: ` "+strings.Repeat("界", 85)+" `" || h.Items[0].Clipped {
-		t.Fatalf("history = %+v, whole window = %+v", h.Items, w.Items)
+	if len(h.Items) != 0 || len(h.Skills) != 1 || h.Skills[0].Name != strings.Repeat("界", 85) || h.Skills[0].Description != strings.Repeat("d", maxSkillDescription) {
+		t.Fatalf("history = %+v", h)
 	}
 }
 
