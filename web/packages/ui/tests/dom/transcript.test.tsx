@@ -109,9 +109,9 @@ describe('messages', () => {
     expect(bubble.querySelector('.bg-bubble')!.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Hover only, out of the flow: the row sits on the gap under the block and fades in with the pointer over the block.
     expect(foot.className).toContain('absolute');
-    // The stamp keeps its size through the class merge, in the faint tone.
+    // The stamp keeps its size through the class merge, in the muted tone (faint is under AA for words).
     expect(foot.className).toContain('text-stamp');
-    expect(foot.className).toContain('text-faint');
+    expect(foot.className).toContain('text-muted');
     expect(foot.className).toContain('opacity-0');
     expect(foot.className).toContain('group-hover/copy:opacity-100');
   });

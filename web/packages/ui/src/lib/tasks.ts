@@ -83,10 +83,18 @@ function span(ms: number): string {
 export const QUIET_MS = 3 * 60_000;
 
 /**
+ * The failures a finished turn's outcome line reports, in words ("tests fail, 1 command failed"); '' when none.
+ * The service appends them from the turn's own evidence as "; "-separated parts, after any verb phrase.
+ */
+export function outcomeFailures(outcome?: string): string {
+  return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
+}
+
+/**
  * A compact row label plus the full detail for its hover text and the Home view.
  * Working detail reports quiet time from the provider's last event, never invented activity.
  */
-export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Done' | 'Finished' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' } {
+export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Done' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' } {
   if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
   if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
   const ask = s.ask;
@@ -108,11 +116,15 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
       return { label: 'Working', text: quiet >= QUIET_MS ? `Working · quiet ${span(quiet)}` : 'Working', tone: 'accent' };
     }
     // The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished.
-    case 'completed':
+    case 'completed': {
+      // A turn whose own evidence failed never reads as a clean finish: no check, and the failures in words.
+      const failures = outcomeFailures(s.outcome);
+      if (failures) return { label: failures.startsWith('tests fail') ? 'Tests fail' : 'Command failed', text: `Finished · ${failures}`, tone: 'warning' };
       // The service judged the finished turn done, read or not: its line from the reply says why.
       if (s.done_at) return { label: 'Done', text: s.done_line || s.outcome || 'Done', tone: 'success' };
       if (unread) return { label: 'Review', text: s.outcome ? `Ready for review: ${s.outcome}` : 'Finished, ready for your review', tone: 'success' };
       return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
+    }
     case 'failed':
       return { label: 'Error', text: 'Stopped with an error', tone: 'error' };
     case 'interrupted':

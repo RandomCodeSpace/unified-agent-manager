@@ -185,3 +185,12 @@ export const allVerified = (stamps: readonly Stamp[]) => stamps.length > 0 && st
 
 /** Every claim is unseen with no evidence either way (a turn whose work subagents did): one line says so instead of a stamp each. */
 export const allUnseen = (stamps: readonly Stamp[]) => stamps.length > 0 && stamps.every((s) => s.verdict === 'unseen' && !s.itemId);
+
+/** Whether the last turn's reply makes a claim the turn's own record contradicts, as its receipts would stamp it. */
+export function lastTurnContradicted(items: readonly Item[]): boolean {
+  let start = items.length;
+  while (start > 0 && !(items[start - 1].kind === 'user' && !items[start - 1].agent_id && !items[start - 1].delivery)) start--;
+  const turn = items.slice(start);
+  const reply = turn.filter((i) => i.kind === 'assistant' && !i.agent_id).at(-1);
+  return !!reply?.text && receipts(reply.text, turn).some((stamp) => stamp.verdict === 'contradicted');
+}

@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, CircleStop, Ellipsis, FolderTree, GitPullRequest, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, GitPullRequest, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults } from '../api';
@@ -7,7 +7,8 @@ import { SUMMARY_KEYS, type AgentTranscript, type HistoryRequest } from '../stat
 import { historyPage } from '../lib/historyArchive';
 import { PreviewContext, TempRootContext } from '../lib/previewContext';
 import { awaitsUser, completedChanges, foregroundItems, transcriptWindowStart, windowInteractions } from '../lib/transcript';
-import { showsFinish, shownState } from '../lib/tasks';
+import { outcomeFailures, showsFinish, shownState } from '../lib/tasks';
+import { lastTurnContradicted } from '../lib/receipts';
 import { stopWords } from '../lib/stop';
 import type { ChangesTurn } from './Changes';
 import { SetUpGitButton } from './SetUpGitButton';
@@ -113,6 +114,8 @@ interface HeaderProps {
   changes: ChangesData | null;
   evidenceAvailable: boolean;
   evidenceError: string;
+  /** What the finished turn's own record shows failed ("tests fail, 1 command failed"); '' when nothing did. */
+  failures: string;
   sheetOpen: boolean;
   onOpenChanges: () => void;
   filesOpen: boolean;
@@ -130,7 +133,7 @@ interface HeaderProps {
 }
 
 /** The Task's 44px header: its name and state, the Changes, Files, Charts and Terminal controls, and its actions menu. */
-const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, gitlabAvailable, gitlabOpen, onToggleGitlab, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
+const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSubagents, project, state, compacting, changes, evidenceAvailable, evidenceError, failures, sheetOpen, onOpenChanges, filesOpen, onToggleFiles, gitlabAvailable, gitlabOpen, onToggleGitlab, chartsOpen, onToggleCharts, terminal, terminalOpen, onTerminal, locateError, onMcp }: Readonly<HeaderProps>) {
   const actions = useTaskActions();
   const renaming = actions.renaming?.id === session.id && actions.renaming.place === 'header';
   const busy = !!actions.busy[session.id];
@@ -165,6 +168,8 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
   const runningTitle = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
   // "Stopped", with what stopped it when it was not you (lib/stop).
   const stop = state === 'cancelled' ? stopWords(session) : null;
+  // A finished turn whose own record failed has no check: a warning glyph and the failures in words.
+  const failed = state === 'completed' && !!failures;
   const vcs = (!noGit || session.capabilities.session_diff || evidenceAvailable || evidenceError) && <ChangesButton changes={changes} branch={project?.branch} label={!phone} compact={!labels} sheetOpen={sheetOpen} evidenceAvailable={evidenceAvailable} onOpen={onOpenChanges} />;
 
   return (
@@ -187,7 +192,7 @@ const TaskHeader = memo(function TaskHeader({ scrolled, leading, session, hasSub
         {readOnly(session) ? (
           <Chip fill="outline">{stageLabel(session)}</Chip>
         ) : (
-          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
+          <StateMark state={state} label={!phone} compacting={compacting} text={compacting ? 'Compacting…' : failed ? `Finished · ${failures}` : stop?.short} icon={stop?.notYours ? <CircleStop aria-hidden="true" className="size-3.5 text-warning" /> : failed ? <CircleAlert aria-hidden="true" className="size-3.5 text-warning" /> : undefined} tone={failed ? 'warning' : undefined} title={compacting ? 'Compacting the conversation' : stop ? stop.title : state !== session.state ? runningTitle : detail} className="shrink-0" />
         )}
         {busy && <Spinner className="shrink-0" />}
         {/* The pencil keeps its slot after the state chip and only fades in when the title is hovered or it is focused: nothing beside it moves. */}
@@ -876,6 +881,9 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   const compacting = !!session.compacting && state === 'working';
   const finished = !historyLoading && showsFinish(session, liveItems, live);
   const turnEvidence = useTurnEvidence(session, changes, finished);
+  // The outcome line's failures, and a reply claim the turn's record contradicts (its receipts), for the header's state.
+  const contradicted = useMemo(() => state === 'completed' && lastTurnContradicted(liveItems), [state, liveItems]);
+  const failures = [outcomeFailures(session.outcome), contradicted ? 'a claim contradicted' : ''].filter(Boolean).join(', ');
   // Then the status line stays up too, timed from the first of them to start.
   const labelled = working || state === 'working';
   const agentsSince = working ? undefined : session.subagents.filter((s) => s.status === 'running').map((s) => s.started_at ?? '').filter(Boolean).sort(byCodeUnit)[0];
@@ -893,7 +901,7 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
     <SubagentScope session={session} agents={agents} agentSteps={agentSteps} snapshotSeq={Math.max(snapshotSeq, session.seq ?? -1)} reveal={reveal} onLocate={(id, expand) => void locate(id, expand)} onJumpToReply={(key) => void jumpToReply(key)} onHold={hold}>
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} gitlabAvailable={api.supports('gitlab-pipelines-v1')} gitlabOpen={gitlabOpen} onToggleGitlab={toggleGitlab} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
+        <TaskHeader scrolled={scrolled} leading={leading} session={session} hasSubagents={session.subagents.length > 0} project={project} state={state} compacting={compacting} changes={changes} evidenceAvailable={turnEvidence.available} evidenceError={turnEvidence.error} failures={failures} sheetOpen={sheetOpen} onOpenChanges={openChanges} filesOpen={filesOpen} onToggleFiles={toggleFiles} gitlabAvailable={api.supports('gitlab-pipelines-v1')} gitlabOpen={gitlabOpen} onToggleGitlab={toggleGitlab} chartsOpen={chartsOpen} onToggleCharts={toggleCharts} terminal={settings.terminal} terminalOpen={terminalOpen} onTerminal={onTerminal} locateError={locateError} onMcp={setMcpOpen} />
         {mcpOpen && <McpTaskDialog sessionId={session.id} snapshot={session.mcp_status} onClose={() => setMcpOpen(false)} />}
 
         {sinceMark && sinceSummary && !historyLoading && (
