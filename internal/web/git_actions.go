@@ -909,11 +909,27 @@ var (
 // credit line, and without trailing blank lines. It returns "" when nothing
 // is left.
 func cleanCommitMessage(reply string) string {
+	out := draftLines(labelRE.ReplaceAllString(unwrapDraft(reply), ""))
+	if len(out) > 0 {
+		out[0] = strings.Trim(strings.TrimSpace(out[0]), "\"'`")
+	}
+	return strings.Join(out, "\n")
+}
+
+// unwrapDraft is a drafted reply without reasoning blocks or an enclosing
+// code fence.
+func unwrapDraft(reply string) string {
 	reply = strings.TrimSpace(thinkRE.ReplaceAllString(strings.ReplaceAll(reply, "\r\n", "\n"), ""))
 	if m := fenceRE.FindStringSubmatch(reply); m != nil {
 		reply = strings.TrimSpace(m[1])
 	}
-	reply = labelRE.ReplaceAllString(reply, "")
+	return reply
+}
+
+// draftLines are a drafted text's lines made safe, without any trailer or
+// AI credit line, and with no more than one blank line in a row and none at
+// either end.
+func draftLines(reply string) []string {
 	var lines []string
 	for line := range strings.Lines(reply) {
 		line = strings.TrimRight(displaytext.SanitizeText(line), " \t\n")
@@ -922,7 +938,6 @@ func cleanCommitMessage(reply string) string {
 		}
 		lines = append(lines, line)
 	}
-	// No more than one blank line in a row, and none at either end.
 	var out []string
 	for _, line := range lines {
 		if line == "" && (len(out) == 0 || out[len(out)-1] == "") {
@@ -933,10 +948,7 @@ func cleanCommitMessage(reply string) string {
 	for len(out) > 0 && out[len(out)-1] == "" {
 		out = out[:len(out)-1]
 	}
-	if len(out) > 0 {
-		out[0] = strings.Trim(strings.TrimSpace(out[0]), "\"'`")
-	}
-	return strings.Join(out, "\n")
+	return out
 }
 
 // lookGit is the resolved git binary.

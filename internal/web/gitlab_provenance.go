@@ -209,6 +209,7 @@ func (m *Manager) succeededToolUse(ctx context.Context, s *webSession, use agent
 	if use.Tool != "bash" && use.Tool != "shell" && use.Tool != "read_bash" {
 		return
 	}
+	m.mrFiles.done(use)
 	m.mu.Lock()
 	dir, id := s.workdir, s.id
 	active := !m.closed && !s.removed && m.sessions[id] == s

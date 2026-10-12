@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/displaytext"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -25,9 +26,25 @@ type glabShell struct {
 	push  bool
 	// workItems marks a capped work-items list, which pages by cursor.
 	workItems bool
+	// capped marks a list whose page size uam set or lowered.
+	capped bool
+	// mr is the first statement-head glab mr create without a description.
+	mr *glabMRCreate
 }
 
-func (m *Manager) glabPre(ctx context.Context, use agentapi.ToolUse) agentapi.ToolVerdict {
+// glabMRCreate is where a description file goes: end is the offset after its
+// last word, target the -b value ("" for the project default) and swaps the
+// edits that keep --fill working beside --title.
+type glabMRCreate struct {
+	end    int
+	target string
+	swaps  []glabEdit
+}
+
+// mrDescriber writes a merge request description for target and returns its file.
+type mrDescriber func(ctx context.Context, target string) (string, error)
+
+func (m *Manager) glabPre(ctx context.Context, s *webSession, use agentapi.ToolUse) agentapi.ToolVerdict {
 	if use.Tool != "bash" && use.Tool != "shell" {
 		return agentapi.ToolVerdict{}
 	}
@@ -39,10 +56,20 @@ func (m *Manager) glabPre(ctx context.Context, use agentapi.ToolUse) agentapi.To
 	if !ok {
 		return agentapi.ToolVerdict{}
 	}
-	return glabCommand(ctx, gate, command, use.Args)
+	var file string
+	out := glabCommand(ctx, gate, command, use.Args, func(ctx context.Context, target string) (string, error) {
+		path, err := m.writeMRDescription(ctx, s, gate, target)
+		file = path
+		return path, err
+	})
+	if file != "" {
+		rewritten, _ := out.Args["command"].(string)
+		m.mrFiles.add(file, command, rewritten)
+	}
+	return out
 }
 
-func glabCommand(ctx context.Context, gate glabGate, command string, args map[string]any) agentapi.ToolVerdict {
+func glabCommand(ctx context.Context, gate glabGate, command string, args map[string]any, describe mrDescriber) agentapi.ToolVerdict {
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
 	if err != nil {
 		return agentapi.ToolVerdict{}
@@ -61,6 +88,19 @@ func glabCommand(ctx context.Context, gate glabGate, command string, args map[st
 			return out
 		}
 	}
+	if w.mr != nil && describe != nil {
+		path, err := describe(ctx, w.mr.target)
+		quoted := ""
+		if err == nil {
+			quoted, err = quoteShellWord(path)
+		}
+		if err != nil {
+			out.Context = strings.TrimSpace(out.Context + "\nuam could not write this merge request's description with the Utility model (" + clipRunes(displaytext.Sanitize(err.Error()), maxDetailRunes) + "); the command runs unchanged.")
+		} else {
+			w.edits = append(append(w.edits, w.mr.swaps...), glabEdit{w.mr.end, w.mr.end, " --description-file " + quoted})
+			out.Context = strings.TrimSpace(out.Context + "\nuam wrote this merge request's description with the Utility model.")
+		}
+	}
 	if len(w.edits) != 0 {
 		slices.SortFunc(w.edits, func(a, b glabEdit) int { return b.start - a.start })
 		for _, e := range w.edits {
@@ -68,6 +108,8 @@ func glabCommand(ctx context.Context, gate glabGate, command string, args map[st
 		}
 		out.Args = maps.Clone(args)
 		out.Args["command"] = command
+	}
+	if w.capped {
 		next := "use -p 2 for the next page"
 		if w.workItems {
 			next = "page work items with --after <cursor> from -F json output"
@@ -143,6 +185,9 @@ func (w *glabShell) call(c *syntax.CallExpr, rewrite bool) {
 	if deny := glabDeny(a); deny != "" && w.deny == "" {
 		w.deny = "uam glab: " + deny
 	}
+	if rewrite && w.mr == nil && base == start+1 && len(a) >= 2 && a[0] == "mr" && a[1] == "create" {
+		w.mr = glabMRCreateAt(c, words, base)
+	}
 	if !rewrite || !glabList(a) {
 		return
 	}
@@ -173,6 +218,7 @@ func (w *glabShell) call(c *syntax.CallExpr, rewrite bool) {
 	}
 	pos := int(c.Args[len(c.Args)-1].End().Offset())
 	w.edits = append(w.edits, glabEdit{pos, pos, " -P 10"})
+	w.capped = true
 }
 
 // Only static shell words are interpreted; expansions stay with the shell.
@@ -203,6 +249,7 @@ func glabLiteral(parts []syntax.WordPart) string {
 func (w *glabShell) capWord(word *syntax.Word, value, prefix string) {
 	if n, err := strconv.Atoi(value); err == nil && n > 20 {
 		w.edits = append(w.edits, glabEdit{int(word.Pos().Offset()), int(word.End().Offset()), prefix + "20"})
+		w.capped = true
 	}
 }
 

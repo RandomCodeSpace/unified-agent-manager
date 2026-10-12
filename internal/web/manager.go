@@ -116,6 +116,8 @@ type Manager struct {
 	// glab owns background origin/auth refreshes outside the Manager lock.
 	glab   glabGovernor
 	gitlab gitLabMonitor
+	// mrFiles are the merge request descriptions written for glab (mr_description.go).
+	mrFiles mrDescriptionFiles
 
 	mu       sync.Mutex
 	infos    map[string]ProviderInfo
@@ -722,7 +724,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 	m.settings = Settings{TokenPrices: cfg.WebSettings.TokenPrices, SendDefault: cmp.Or(cfg.WebSettings.SendDefault, store.WebSendSteer), Terminal: cfg.WebSettings.Terminal, DefaultProjectDir: cfg.WebSettings.DefaultProjectDir, HiddenModels: cfg.WebSettings.HiddenModels, SubagentModels: cfg.WebSettings.SubagentModels, TitleModel: cfg.WebSettings.TitleModel,
 		CustomModels: customModelsView(cfg.WebSettings.CustomModels), TaskDefaults: TaskDefaults(cfg.WebSettings.TaskDefaults), UtilityDailyLimit: cfg.WebSettings.UtilityDailyLimit, UtilityUnlimited: cfg.WebSettings.UtilityUnlimited,
-		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate}
+		SuggestReplies: suggestSetting(cfg.WebSettings.SuggestReplies == nil || *cfg.WebSettings.SuggestReplies), CompactionThreshold: cfg.WebSettings.CompactionThreshold, GitHubMCP: cfg.WebSettings.GitHubMCP, GitLabAutoInvestigate: cfg.WebSettings.GitLabAutoInvestigate,
+		GitLabMRPrompt: cfg.WebSettings.GitLabMRPrompt}
 	if m.settings.SendDefault != store.WebSendQueue {
 		m.settings.SendDefault = store.WebSendSteer
 	}
@@ -1562,6 +1565,9 @@ type SettingsPatch struct {
 	CompactionThreshold   **int
 	GitHubMCP             *bool
 	GitLabAutoInvestigate *bool
+	// GitLabMRPrompt sets the merge request description prompt; "" or the
+	// default itself puts the default back.
+	GitLabMRPrompt *string
 }
 
 // UpdateSettings applies p. An invalid value is refused with 400 and changes
@@ -1641,6 +1647,15 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	}
 	if t := p.CompactionThreshold; t != nil && *t != nil && (**t < store.MinCompactionThreshold || **t > store.MaxCompactionThreshold) {
 		return Settings{}, newError(http.StatusBadRequest, "compact_threshold must be %d to %d", store.MinCompactionThreshold, store.MaxCompactionThreshold)
+	}
+	var mrPrompt string
+	if p.GitLabMRPrompt != nil {
+		if mrPrompt = strings.TrimSpace(*p.GitLabMRPrompt); utf8.RuneCountInString(mrPrompt) > maxMRPromptRunes {
+			return Settings{}, newError(http.StatusBadRequest, "gitlab_mr_prompt must be at most %d characters", maxMRPromptRunes)
+		}
+		if mrPrompt == defaultMRPrompt {
+			mrPrompt = ""
+		}
 	}
 	var defaults TaskDefaults
 	if p.TaskDefaults != nil {
@@ -1727,6 +1742,9 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	if p.GitLabAutoInvestigate != nil {
 		next.GitLabAutoInvestigate = *p.GitLabAutoInvestigate
 	}
+	if p.GitLabMRPrompt != nil {
+		next.GitLabMRPrompt = mrPrompt
+	}
 	if p.GitHubMCP != nil {
 		next.GitHubMCP = *p.GitHubMCP
 	}
@@ -1764,7 +1782,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 	limitChanged := (next.UtilityDailyLimit == nil) != (current.UtilityDailyLimit == nil) || next.UtilityDailyLimit != nil && *next.UtilityDailyLimit != *current.UtilityDailyLimit
 	thresholdChanged := next.compactionThreshold() != current.compactionThreshold()
 	subagentsChanged := !maps.EqualFunc(next.SubagentModels, current.SubagentModels, slices.Equal)
-	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
+	if p.TokenPrices == nil && next.SendDefault == current.SendDefault && next.DefaultProjectDir == current.DefaultProjectDir && next.Terminal == current.Terminal && next.GitHubMCP == current.GitHubMCP && next.GitLabAutoInvestigate == current.GitLabAutoInvestigate && next.GitLabMRPrompt == current.GitLabMRPrompt && maps.EqualFunc(next.HiddenModels, current.HiddenModels, slices.Equal) && !subagentsChanged && maps.Equal(next.TitleModel, current.TitleModel) && !customChanged && next.TaskDefaults == current.TaskDefaults && !limitChanged && next.UtilityUnlimited == current.UtilityUnlimited && next.suggestReplies() == current.suggestReplies() && !thresholdChanged {
 		return current, nil
 	}
 	if err := m.store.Update(func(cfg *store.Config) error {
@@ -1776,6 +1794,7 @@ func (m *Manager) UpdateSettings(p SettingsPatch) (Settings, error) {
 		cfg.WebSettings.Terminal = next.Terminal
 		cfg.WebSettings.GitHubMCP = next.GitHubMCP
 		cfg.WebSettings.GitLabAutoInvestigate = next.GitLabAutoInvestigate
+		cfg.WebSettings.GitLabMRPrompt = next.GitLabMRPrompt
 		cfg.WebSettings.TaskDefaults = store.WebTaskDefaults(next.TaskDefaults)
 		cfg.WebSettings.UtilityDailyLimit = next.UtilityDailyLimit
 		cfg.WebSettings.UtilityUnlimited = next.UtilityUnlimited

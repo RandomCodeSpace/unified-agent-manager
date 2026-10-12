@@ -29,7 +29,7 @@ func (m *Manager) preToolUse(ctx context.Context, s *webSession, use agentapi.To
 	out := m.localPreToolUseLocked(s, use)
 	m.mu.Unlock()
 	if out.Deny == "" {
-		glab := m.glabPre(ctx, use)
+		glab := m.glabPre(ctx, s, use)
 		out.Context = strings.TrimSpace(out.Context + "\n" + glab.Context)
 		out.Deny, out.Args = glab.Deny, glab.Args
 	}

@@ -687,6 +687,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "gitlab_auto_investigate must be true or false")
 				return
 			}
+		case "gitlab_mr_prompt":
+			patch.GitLabMRPrompt = new(string)
+			if json.Unmarshal(raw, patch.GitLabMRPrompt) != nil || string(raw) == "null" {
+				writeError(w, http.StatusBadRequest, "gitlab_mr_prompt must be a string")
+				return
+			}
 		case "github_mcp":
 			patch.GitHubMCP = new(bool)
 			if json.Unmarshal(raw, patch.GitHubMCP) != nil || string(raw) == "null" {

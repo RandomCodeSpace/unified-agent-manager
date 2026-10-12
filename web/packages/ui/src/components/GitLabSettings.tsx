@@ -1,7 +1,7 @@
 import { Check, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApi } from '../ApiContext';
-import { describeError, type GitLabStatus } from '../api';
+import { DEFAULT_MR_PROMPT, describeError, type GitLabStatus } from '../api';
 import { dateTime, Note, Skeleton } from './common';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
@@ -9,7 +9,10 @@ import { Switch } from './ui/switch';
 
 const ROLES: Record<number, string> = { 5: 'Minimal access', 10: 'Guest', 15: 'Planner', 20: 'Reporter', 25: 'Security Manager', 30: 'Developer', 40: 'Maintainer', 50: 'Owner' };
 
-export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boolean; saving: boolean; onChange: (on: boolean) => void } }>) {
+/** What the merge request description prompt needs: the saved prompt ('' for the default) and how to save one. */
+export interface MrPromptSetting { saved: string; saving: boolean; onSave: (prompt: string) => void }
+
+export function GitLabSettings({ automatic, mrPrompt }: Readonly<{ automatic?: { on: boolean; saving: boolean; onChange: (on: boolean) => void }; mrPrompt?: MrPromptSetting }>) {
   const api = useApi();
   const [check, setCheck] = useState(0);
   const [result, setResult] = useState<{ client: typeof api; check: number; status?: GitLabStatus; error?: string }>();
@@ -34,6 +37,7 @@ export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boole
       </div>
       <Switch aria-label="Automatic investigation" aria-describedby="gitlab-auto-description" checked={automatic.on} disabled={automatic.saving} onCheckedChange={automatic.onChange} className="mt-0.5" />
     </div>}
+    {mrPrompt && <MrPrompt {...mrPrompt} />}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h3 className="text-ui font-medium text-ink">Connection</h3>
       <Button variant="secondary" size="lg" loading={busy} onClick={() => setCheck((n) => n + 1)}><RefreshCw aria-hidden="true" />Check access</Button>
@@ -66,4 +70,24 @@ export function GitLabSettings({ automatic }: Readonly<{ automatic?: { on: boole
       <Note>Checked <time dateTime={status.checked_at}>{dateTime(status.checked_at)}</time>{busy && ' · Checking again…'}</Note>
     </div>}
   </div>;
+}
+
+/** The prompt the Utility model writes merge request descriptions with; empty means the default, shown as the placeholder. */
+function MrPrompt({ saved, saving, onSave }: Readonly<MrPromptSetting>) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? saved;
+  return <form className="flex min-w-0 flex-col gap-2" onSubmit={(e) => {
+    e.preventDefault();
+    if (!saving && value.trim() !== saved) onSave(value.trim());
+  }}>
+    <div className="flex min-w-0 flex-col gap-1">
+      <h3 className="text-ui font-medium text-ink"><label htmlFor="gitlab-mr-prompt">Merge request description</label></h3>
+      <Note id="gitlab-mr-prompt-help">The Utility model writes it when an agent runs glab mr create without one. Empty uses the default.</Note>
+    </div>
+    <textarea id="gitlab-mr-prompt" rows={8} maxLength={4000} spellCheck={false} aria-describedby="gitlab-mr-prompt-help" placeholder={DEFAULT_MR_PROMPT} value={value} readOnly={saving} onChange={(e) => setDraft(e.target.value)} className="w-full min-w-0 resize-y rounded-sm bg-sunken px-2.5 py-2 text-ui text-ink shadow-well placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+    <div className="flex flex-wrap gap-2">
+      <Button type="submit" variant="secondary" disabled={saving || value.trim() === saved}>Save</Button>
+      <Button type="button" disabled={saving || (!saved && !value)} onClick={() => { setDraft(''); if (saved) onSave(''); }}>Reset to default</Button>
+    </div>
+  </form>;
 }

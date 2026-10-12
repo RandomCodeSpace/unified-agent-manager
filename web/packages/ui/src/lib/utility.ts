@@ -9,6 +9,7 @@ const PURPOSES: Record<string, string> = {
   'subagent-summary': 'Subagent summary',
   'commit-message': 'Commit message',
   'configuration-draft': 'Configuration draft',
+  'mr-description': 'Merge request description',
   'suggest-replies': 'Suggested replies',
   outcome: 'Outcome line',
   // Made only by older versions; their calls stay in the 30-day log.

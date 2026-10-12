@@ -43,6 +43,7 @@ const (
 	purposeTitle              = "title"
 	purposeCommitMessage      = "commit-message"
 	purposeConfigurationDraft = "configuration-draft"
+	purposeMRDescription      = "mr-description"
 )
 
 // The outcomes of Utility calls, and why one was skipped.

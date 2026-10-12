@@ -76,7 +76,7 @@ func TestGlabShellRules(t *testing.T) {
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			args := map[string]any{"command": tc.command, "description": "kept", "timeout": 1000}
-			got := glabCommand(t.Context(), glabGate{}, tc.command, args)
+			got := glabCommand(t.Context(), glabGate{}, tc.command, args, nil)
 			if (got.Deny == "") != (tc.deny == "") || !strings.Contains(got.Deny, tc.deny) {
 				t.Fatalf("deny=%q want=%q", got.Deny, tc.deny)
 			}
@@ -144,7 +144,7 @@ func TestGlabLintPush(t *testing.T) {
 				checkCtx, cancel = context.WithTimeout(checkCtx, 300*time.Millisecond)
 				defer cancel()
 			}
-			got := glabCommand(checkCtx, gate, "git push --dry-run", map[string]any{"command": "git push --dry-run"})
+			got := glabCommand(checkCtx, gate, "git push --dry-run", map[string]any{"command": "git push --dry-run"}, nil)
 			if (got.Deny != "") != tc.deny {
 				t.Fatalf("verdict=%+v", got)
 			}

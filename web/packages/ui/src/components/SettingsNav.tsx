@@ -25,7 +25,7 @@ export const SETTINGS_GROUPS = [
   ] },
   { label: 'Accounts', scope: 'service', pages: [
     { id: 'copilot', label: 'GitHub Copilot', blurb: 'Sign-in and the Copilot CLI on the server.', keywords: 'sign in sign out login token account link unlink cli update version' },
-    { id: 'gitlab', label: 'GitLab', blurb: 'Automatic pipeline investigation and glab access.', keywords: 'glab gitlab pipeline commit investigate automatic utility account host instance token scopes permissions expiry expires access authentication' },
+    { id: 'gitlab', label: 'GitLab', blurb: 'Pipeline investigation, merge request descriptions and glab access.', keywords: 'glab gitlab pipeline commit investigate automatic utility merge request mr description prompt account host instance token scopes permissions expiry expires access authentication' },
     { id: 'providers', label: 'Custom providers', blurb: 'Your own OpenAI-compatible endpoints and keys.', keywords: 'byom api key keys endpoint openai compatible base url provider ollama environment variable custom models' },
   ] },
   { label: 'Agent toolkit', scope: 'copilot', pages: [
