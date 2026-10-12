@@ -565,6 +565,9 @@ func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
 		args = []string{"push", "--set-upstream", "--", remote, "HEAD:" + merge}
 	}
 	out, err := runGitWrite(ctx, repo.top, nil, args...)
+	m.mu.Lock()
+	m.kickGitPendingLocked([]string{repo.top})
+	m.mu.Unlock()
 	if err != nil {
 		var gerr *gitError
 		if errors.As(err, &gerr) {

@@ -1494,8 +1494,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it copies the whole text either way. "Earlier history was truncated"
   appears only when the record itself is gone or the provider cannot page
   it.
-- **Changes**: the "Changes" button in the Task header shows how many files
-  this Task changed and opens them beside the conversation with the diff (a
+- **Changes**: the "Changes" button in the Task header shows how many
+  tracked files in the Thread's repository are not committed (the count on
+  its sidebar row; an older service without that count makes it the
+  default scope's file count) and opens the changes beside the conversation with the diff (a
   full-screen sheet on a narrow window). Three scopes sit at the top, each
   with its file count: **This task** (the default) lists the files this
   Task's agent or its subagents edited with an edit tool (create, write,
@@ -1655,8 +1657,18 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Task is read only while the page is visible: what it does while the tab is
   in the background stays unread until you come back. Marks of deleted
   Tasks are dropped.
-  A row first shows the Project badge, Project name, and a short status
-  with an icon: "Input", "Starting", "Working", "Compacting", "Review",
+  A row first shows the Project badge, Project name, the folder's unsaved
+  git work, and a short status with an icon. Unsaved work is a pen glyph
+  with the number of changed tracked files not committed (untracked files
+  left out) and an up-arrow with the number of commits on no remote
+  ("✎4 ↑3"); a kind at zero is left out, and a repository without a remote
+  counts no unpushed commits. It belongs to the repository holding the
+  Thread's directory, so every Thread there shows the same counts; the tip
+  and screen readers say it in words ("4 not committed · 3 not pushed").
+  The service reads it once per repository along with the Projects'
+  branches (when a turn ends, after Commit, Pull and Set up git, and when a
+  page loads), and after Push; the summary carries it as
+  `git_pending {uncommitted, unpushed}`. The status is one of "Input", "Starting", "Working", "Compacting", "Review",
   "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Finished green; Error red; inactive states gray.

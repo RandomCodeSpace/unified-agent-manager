@@ -163,7 +163,7 @@ describe('evidence inside Changes', () => {
     install();
     // Without StrictMode's development double mount: the reads a production page makes.
     render(<UamApp />);
-    await screen.findByRole('button', { name: /files, evidence available/ });
+    await screen.findByRole('button', { name: /not committed, evidence available/ });
     await new Promise((r) => setTimeout(r, 300));
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
     evidence.mockRestore();
@@ -191,7 +191,7 @@ describe('evidence inside Changes', () => {
     const { user } = await openTask('t1');
     expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
-    const trigger = await screen.findByRole('button', { name: /^Open changes.*3 files$/ });
+    const trigger = await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ });
     expect(trigger.querySelector('.bg-warning')).not.toBeNull();
     expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
     await user.click(trigger);

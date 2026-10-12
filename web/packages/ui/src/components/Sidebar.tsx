@@ -1,10 +1,11 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
-import { Archive, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
+import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { encodeEntity } from '../lib/instanceIdentity';
-import { filteredProject, groupTasks, needsYouNow, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
+import { filteredProject, groupTasks, needsYouNow, pendingWork, sidebarTasks, taskStatus, type Unread } from '../lib/tasks';
+import { pendingWords } from './BranchChip';
 import type { Connection } from '../state';
 import { Dot, InlineName, ProjectBadge, Skeleton, TaskTitle, WorkingMark, dateTime, relTime, useApp, useMinuteTick } from './common';
 import { ProjectFilterPicker, type ProjectGroup } from './ProjectPicker';
@@ -333,8 +334,9 @@ const SETTLED_BY = { auto: 'Settled automatically after 7 quiet days', reviewed:
 /** This Task's own changes (contract C1), when the service reports them. */
 type DiffStat = { files: number; additions: number; deletions: number };
 
-/** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Project branch and the Task's changes. */
+/** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Project branch, the Task's changes and its folder's unsaved git work. */
 function rowTip(s: SessionSummary, project: Project, status: string, diff?: DiffStat) {
+  const pending = readOnly(s) ? null : pendingWork(s);
   return (
     <>
       <span className="block font-medium">{taskName(s) || 'New task'}</span>
@@ -343,6 +345,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
         <span className="block">{status}</span>
         {project.branch && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{project.branch}</span>}
         {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
+        {pending && <span className="block">{pendingWords(pending)}</span>}
       </span>
     </>
   );
@@ -370,11 +373,21 @@ const STATUS_MARKS = {
 export function TaskRowContent({ session, project, selected, unread, machine, settleable = false }: Readonly<{ session: SessionSummary; project?: Project; selected: boolean; unread: boolean; machine?: Pick<Machine, 'id' | 'label'>; settleable?: boolean }>) {
   const status = taskStatus(session, unread);
   const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
+  const pending = readOnly(session) ? null : pendingWork(session);
   return (
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
         {project && <ProjectBadge badge={project.badge} />}
-        <span className="min-w-0 flex-1 truncate font-normal text-muted">{project?.name ?? 'Project'}</span>
+        <span className="min-w-0 truncate font-normal text-muted">{project?.name ?? 'Project'}</span>
+        {/* The folder's unsaved git work, after its name: shared by every Thread there. Glyph and count, the words for screen readers. */}
+        {pending && (
+          <span className="flex shrink-0 items-center gap-1.5 text-meta font-normal text-warning tabular-nums">
+            {pending.uncommitted > 0 && <span className="flex items-center gap-0.5"><FilePen aria-hidden="true" className="size-3" />{pending.uncommitted}</span>}
+            {pending.unpushed > 0 && <span className="flex items-center gap-0.5"><ArrowUpFromLine aria-hidden="true" className="size-3" />{pending.unpushed}</span>}
+            <span className="sr-only">{pendingWords(pending)}</span>
+          </span>
+        )}
+        <span className="flex-1" />
         <span className={cn('flex shrink-0 items-center justify-end gap-1 font-normal', statusTone, settleable && 'min-w-14 group-hover/row:opacity-0 group-focus-within/row:opacity-0')}>
           <StatusIcon aria-hidden="true" className="size-3.5 shrink-0" />
           {status.label}

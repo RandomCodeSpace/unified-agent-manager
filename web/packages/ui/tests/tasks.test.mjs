@@ -259,3 +259,10 @@ test('the finish card follows a completed turn, not while a subagent or compacti
   assert.equal(showsFinish({ ...done, turn_timings: [{ id: 'tt', started_at: 't', state: 'failed' }] }, items, false), false);
   assert.equal(showsFinish(done, items.slice(0, 1), false), false);
 });
+
+test('unsaved git work at zero is no marker', async () => {
+  const { pendingWork } = await import('../src/lib/tasks.ts');
+  assert.equal(pendingWork(s('a', 'p1', '1', { git_pending: { uncommitted: 0, unpushed: 0 } })), null);
+  assert.equal(pendingWork(s('a', 'p1', '1')), null);
+  assert.deepEqual(pendingWork(s('a', 'p1', '1', { git_pending: { uncommitted: 1, unpushed: 0 } })), { uncommitted: 1, unpushed: 0 });
+});

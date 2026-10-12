@@ -733,8 +733,8 @@ export interface SessionSummary {
   branch?: string;
   /** The Thread's own worktree when it runs in one; absent when it runs in the Project folder. */
   worktree?: { path: string; branch: string };
-  /** Work in the Thread's working tree saved nowhere else: changed tracked files and commits on no remote; absent when unknown. */
-  git_pending?: { uncommitted: number; unpushed: number };
+  /** Work in the Thread's working tree saved nowhere else, shared by every Thread in its repository: changed tracked files and commits on no remote; absent outside a repository or before the first read. */
+  git_pending?: GitPending;
   conversation_id: string;
   /** Selected model; empty means the provider default (and cannot be set back to empty). */
   model: string;
@@ -1298,6 +1298,12 @@ export type Scope = 'task' | 'turn' | 'workspace' | 'session';
 /** Scope the header counts and the Changes sheet open on: the provider's own diff when it has one, else the files this Task's agent edited. */
 export function defaultScope(s: SessionSummary): Scope {
   return s.capabilities.session_diff ? 'session' : 'task';
+}
+
+/** A repository's unsaved git work: changed tracked files (untracked left out), and commits on no remote. */
+export interface GitPending {
+  uncommitted: number;
+  unpushed: number;
 }
 
 export interface DiffStat {

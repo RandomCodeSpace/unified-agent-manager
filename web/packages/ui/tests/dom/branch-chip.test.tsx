@@ -35,9 +35,9 @@ describe('the branch chip', () => {
     await waitFor(() => expect(document.activeElement).toBe(chip));
   });
 
-  test('a Thread in the Project folder shows the Project branch and nothing pending', async () => {
+  test('a Thread in the Project folder shows the Project branch and the folder\'s unsaved work', async () => {
     await openTask('t1');
-    const chip = await screen.findByRole('button', { name: 'Branch feat/web-project-defaults-and-sidebar-revamp' });
+    const chip = await screen.findByRole('button', { name: 'Branch feat/web-project-defaults-and-sidebar-revamp, 4 not committed · 1 not pushed' });
     expect(chip.textContent).not.toContain('worktree');
   });
 

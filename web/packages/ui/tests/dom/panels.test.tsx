@@ -9,7 +9,7 @@ import { log, openMenu, openTask, renderApp } from './render';
 describe('changes', () => {
   test('the header count opens the changes sheet; a file shows its diff', async () => {
     const { user } = await openTask('t1');
-    await user.click(await screen.findByRole('button', { name: /^Open changes.*3 files$/ }));
+    await user.click(await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ }));
     const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
     expect(await sheet.findByText(/^3 files/)).toBeTruthy();
     // The Task scope's description is its segment's tip, not a line of its own.

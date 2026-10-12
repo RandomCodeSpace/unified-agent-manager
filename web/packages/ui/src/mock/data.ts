@@ -1277,6 +1277,8 @@ The full-size capture is in [attach-flow.png](docs/assets/attach-flow.png); the 
     const mine = (changes[t.project_id] ?? []).filter((f) => f.by?.includes(t.id));
     if (mine.length) t.diff = { files: mine.length, additions: mine.reduce((n, f) => n + f.additions, 0), deletions: mine.reduce((n, f) => n + f.deletions, 0) };
   }
+  // The repository's unsaved git work, shared by its Tasks (SessionSummary.git_pending): p1's changed files and the commit mock/git.ts has it ahead by.
+  for (const t of tasks) if (t.project_id === 'p1' && !t.worktree) t.git_pending = { uncommitted: changes.p1.length, unpushed: 1 };
 
   return { meta, projects, previous, settings: {
       send_default: 'steer',

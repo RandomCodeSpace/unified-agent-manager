@@ -93,6 +93,8 @@ type Manager struct {
 	// branchMu orders Project branch reads, so an older read never replaces
 	// a newer one. It is never taken while holding mu.
 	branchMu sync.Mutex
+	// pendingMu orders unsaved git work reads the same way (git_pending.go).
+	pendingMu sync.Mutex
 	// settingsMu orders settings changes, so the stored and published
 	// settings match. It is never taken while holding mu.
 	settingsMu sync.Mutex
@@ -149,6 +151,11 @@ type Manager struct {
 	// repository, closed when it ends (git_actions.go). A turn starting there
 	// waits for it.
 	gitWrites map[string]chan struct{}
+	// pendingTop is the real path of the repository holding each Task
+	// directory read, "" outside one; gitPending is each repository's
+	// unsaved work as last read (git_pending.go).
+	pendingTop map[string]string
+	gitPending map[string]*GitPending
 	// quota is each usage provider's quota cache; quotaPolled is when the
 	// latest read began.
 	quota       map[string]*quotaCache
@@ -1101,8 +1108,9 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		CreatedAt: s.createdAt, UpdatedAt: s.updatedAt, Capabilities: capabilities, Queued: len(s.queue),
 		Mode: string(s.mode), ModeUnknown: s.modeUnknown, Stage: s.stage, SettledAt: s.settledAt, SettledBy: s.settledBy, ArchivedAt: s.archivedAt, SpawnedBy: s.spawnedBy, RoutineID: s.routineID,
 		Ask: s.pendingAsk(), EventAt: s.eventAt, Compacting: s.compacting && s.conv != nil, CompactThreshold: s.openCompactAt(),
-		Diff:    s.diff,
-		RerunOf: s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
+		Diff:       s.diff,
+		GitPending: m.gitPending[m.pendingTop[s.workdir]],
+		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
 		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
 	}
 	return out
