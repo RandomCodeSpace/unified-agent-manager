@@ -109,6 +109,17 @@ describe('the Task list', () => {
     expect(await tipOf(user, row('t19').getByRole('button', { name: /Cross-compile the release binaries/ }))).toMatch(/Asks: Pick every platform the release should ship\. Each one is a CI job/);
   });
 
+  test('a Thread in its own worktree shows its branch, not the Project folder’s', async () => {
+    const { user } = renderApp();
+    await sidebar();
+    const worktree = document.querySelector<HTMLElement>('[data-task-row="t15"] button[data-nav]')!;
+    expect(within(worktree).getByText('uam/remove-unused-exports')).toBeTruthy();
+    expect(within(worktree).queryByText('feat/web-project-defaults-and-sidebar-revamp')).toBeNull();
+    const tip = await tipOf(user, worktree);
+    expect(tip).toContain('uam/remove-unused-exports');
+    expect(tip).not.toContain('feat/web-project-defaults-and-sidebar-revamp');
+  });
+
   test('every Task row in every group is a card; the open one is tinted instead', async () => {
     const { user } = renderApp();
     const side = await sidebar();

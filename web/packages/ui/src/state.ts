@@ -146,8 +146,9 @@ export function reducer(state: State, action: Action): State {
       return {
         ...state,
         loaded: true,
-        projects: projects ?? [],
-        sessions,
+        // Every new stream (each Thread opened) starts with a snapshot; unchanged rows keep their objects, so they do not re-render.
+        projects: keepSame(state.projects, projects ?? []),
+        sessions: keepSame(state.sessions, sessions),
         detail,
         previous: null,
         previousCached: false,
@@ -442,6 +443,25 @@ function applyFrame(items: Item[], frame: Buffered, agentId: string): Item[] {
 function trimItems(items: Item[], removed: { id: string; agent_id?: string }[], agentId: string): Item[] {
   const ids = new Set(removed.filter((it) => (it.agent_id ?? '') === agentId).map((it) => it.id));
   return ids.size ? items.filter((it) => !ids.has(it.id)) : items;
+}
+
+/** `next`, with each entry equal to the one of the same ID in `prev` replaced by that one; `prev` itself when nothing changed. */
+function keepSame<T extends { id: string }>(prev: T[], next: T[]): T[] {
+  const old = new Map(prev.map((v) => [v.id, v]));
+  const out = next.map((v) => {
+    const o = old.get(v.id);
+    return o && sameJSON(o, v) ? o : v;
+  });
+  return out.length === prev.length && out.every((v, i) => v === prev[i]) ? prev : out;
+}
+
+/** Deep equality of JSON values: what the stream sends. */
+function sameJSON(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => Object.hasOwn(b, k) && sameJSON((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
 function upsert<T extends { id: string }>(list: T[], v: T): T[] {

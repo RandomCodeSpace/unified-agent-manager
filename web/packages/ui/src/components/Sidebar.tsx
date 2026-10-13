@@ -335,7 +335,10 @@ const SETTLED_BY = { auto: 'Settled automatically after 7 quiet days', reviewed:
 /** This Task's own changes (contract C1), when the service reports them. */
 type DiffStat = { files: number; additions: number; deletions: number };
 
-/** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Project branch, the Task's changes and its folder's unsaved git work. */
+/** The branch the Thread works on: its worktree's or its folder's, else (older servers, a detached head) the Project's. */
+const taskBranch = (s: SessionSummary, project?: Project) => s.worktree?.branch ?? s.branch ?? project?.branch;
+
+/** A Task row's tip, styled like a shelf row's: the full title, its Project, the state in words, the Thread's branch, the Task's changes and its folder's unsaved git work. */
 function rowTip(s: SessionSummary, project: Project, status: string, diff?: DiffStat) {
   const pending = readOnly(s) ? null : pendingWork(s);
   // The 7-day settle skips a Thread with unsaved work: the tip says why it is still here.
@@ -346,7 +349,7 @@ function rowTip(s: SessionSummary, project: Project, status: string, diff?: Diff
       <span className="mt-1 flex items-center gap-1.5"><ProjectBadge badge={project.badge} />{project.name}</span>
       <span className="mt-1 block text-on-primary/70">
         <span className="block">{status}</span>
-        {project.branch && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{project.branch}</span>}
+        {taskBranch(s, project) && <span className="flex items-center gap-1"><GitBranch aria-hidden="true" className="size-3 shrink-0" />{taskBranch(s, project)}</span>}
         {diff && diff.additions + diff.deletions > 0 && <span className="block">+{diff.additions} −{diff.deletions} lines</span>}
         {pending && <span className="block">{pendingWords(pending)}</span>}
         {pending && quietDays >= 7 && <span className="block">{`Quiet ${quietDays} days; stays active until this work is saved`}</span>}
@@ -378,6 +381,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
   const status = taskStatus(session, unread);
   const { icon: StatusIcon, tone: statusTone } = STATUS_MARKS[status.label];
   const pending = readOnly(session) ? null : pendingWork(session);
+  const branch = taskBranch(session, project);
   return (
     <>
       <span className="flex w-full min-w-0 items-center gap-1.5">
@@ -399,7 +403,7 @@ export function TaskRowContent({ session, project, selected, unread, machine, se
       </span>
       <span className="flex w-full min-w-0 items-baseline gap-1.5">
         <TaskTitle session={session} className={cn('min-w-0 flex-1 truncate text-ui', selected && 'font-semibold')} />
-        {project?.branch && <span className="min-w-0 max-w-20 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{project.branch}</span></span>}
+        {branch && <span className="min-w-0 max-w-20 truncate text-meta font-normal text-muted"><GitBranch aria-hidden="true" className="mr-1 inline-block size-3 align-text-bottom" /><span>{branch}</span></span>}
         <time dateTime={session.updated_at} className="shrink-0 text-meta font-normal text-muted tabular-nums">{relTime(session.updated_at)}</time>
         {machine && <InstanceBadge id={machine.id} label={machine.label} />}
       </span>
@@ -530,7 +534,22 @@ const TaskRow = memo(function TaskRow({ session: s, project, selected, unread, a
       </ContextMenu.Root>
     </li>
   );
-});
+}, sameRowProps);
+
+/**
+ * Under federation every streamed frame rebuilds each Machine (the one on screen carries its state), and reopening the
+ * stream turns its status offline and back, so a row compares its machine by what it shows: otherwise one Task's
+ * update re-renders every row of the list.
+ */
+function sameRowProps<P extends { machine?: Machine }>(a: Readonly<P>, b: Readonly<P>): boolean {
+  const keys = Object.keys(b) as (keyof P)[];
+  if (keys.length !== Object.keys(a).length) return false;
+  return keys.every((key) => {
+    if (key !== 'machine') return Object.is(a[key], b[key]);
+    const [x, y] = [a.machine, b.machine];
+    return x === y || (!!x && !!y && x.id === y.id && x.label === y.label && x.short === y.short && (x.status.status === 'account-mismatch') === (y.status.status === 'account-mismatch'));
+  });
+}
 
 /* ---------- The Settled shelf (archived Tasks are in Settings → Archived) ---------- */
 

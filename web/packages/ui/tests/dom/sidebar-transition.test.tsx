@@ -3,6 +3,16 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { SessionSummary } from '../../src/api';
 import { renderApp, sidebar } from './render';
 
+// Which Tasks' sidebar rows rendered: each row builds its menu items once per render.
+const rowRenders = vi.hoisted(() => [] as string[]);
+vi.mock('../../src/components/taskActions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/components/taskActions')>();
+  return { ...actual, taskMenuItems: (...args: Parameters<typeof actual.taskMenuItems>) => {
+    if (args[2] === 'row') rowRenders.push(args[0].id);
+    return actual.taskMenuItems(...args);
+  } };
+});
+
 // happy-dom has no View Transitions API: this stand-in counts the transitions React starts and runs their update.
 const startViewTransition = vi.fn(({ update }: { update: () => void }) => {
   const done = Promise.resolve().then(update);
@@ -158,5 +168,21 @@ describe('Task list quiet regrouping', () => {
     send('session', { session: { ...active, stage: 'settled', settled_at: new Date().toISOString() } });
     await waitFor(() => expect(document.querySelector(`ul[aria-label="Unsettled threads"] [data-task-row="${active.id}"]`)).toBeNull());
     expect(startViewTransition).not.toHaveBeenCalled();
+  });
+});
+
+describe('Task list rendering', () => {
+  test('opening a Thread re-renders only the rows it selects and unselects, though its stream starts with a new snapshot', async () => {
+    const { user } = renderApp();
+    const side = await sidebar();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    const first = document.querySelector('nav[aria-label="Threads"] [data-task-row]')!.getAttribute('data-task-row')!;
+    rowRenders.length = 0;
+    await user.click(side.getByRole('button', { name: /Set up the dependency lockfile/ }));
+    await waitFor(() => expect(document.querySelector('main section[aria-label="Conversation"]')).not.toBeNull());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+    expect(rowRenders.length).toBeGreaterThan(0);
+    // The opened row, and the first row, which held the list's one tab stop.
+    expect(new Set(rowRenders).difference(new Set(['t17', first]))).toEqual(new Set());
   });
 });

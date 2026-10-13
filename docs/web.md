@@ -1845,8 +1845,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   "Finished", "Error", "Interrupted", "Stopped", "Closed", or "Idle".
   Input and Interrupted are amber; Working/Starting blue; Compacting violet;
   Review teal; Finished green; Error red; inactive states gray.
-  The second line shows the Thread title, the Project branch in muted text,
-  and how long ago the Thread changed. Hovering the row shows the full title,
+  The second line shows the Thread title, its branch in muted text (a
+  Thread in its own worktree shows the worktree's branch, not the Project
+  folder's), and how long ago the Thread changed. Hovering the row shows the full title,
   the Project, the full request or outcome, the branch, and `+N −M` line
   counts when known. Hovering an
   active row that can settle shows Settle.

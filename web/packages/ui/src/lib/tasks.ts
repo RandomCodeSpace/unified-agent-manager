@@ -218,6 +218,8 @@ export function mostRecentProject(projects: Project[], sessions: SessionSummary[
 /** Local sidebar search. Every word may match the title, project, directory or branch. */
 export function matchesTask(task: SessionSummary, project: Project, query: string): boolean {
   const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  // No query matches everything: the list recomputes on every streamed update, so skip building the text.
+  if (!words.length) return true;
   const text = [task.name, task.title, project.name, project.dir, project.branch].filter(Boolean).join(' ').toLocaleLowerCase();
   return words.every((word) => text.includes(word));
 }
