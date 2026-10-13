@@ -2,6 +2,7 @@ package copilot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -43,6 +44,38 @@ func TestNativeChangesReadExactSessionPatches(t *testing.T) {
 	}
 	if req := rt.last("session.workspaces.diff"); req["sessionId"] != "s-1" || req["mode"] != "session" {
 		t.Fatalf("native diff request = %v", req)
+	}
+}
+
+// The CLI trims a patch's end: a hunk that ended in two blank context lines
+// comes three lines long under "@@ -1,4 +1,5 @@" and without its final
+// newline, and a patch parser refuses it. The read puts the blank context back.
+func TestNativeChangesRestoreTrimmedTrailingContext(t *testing.T) {
+	rt := startFakeRuntime(t)
+	s := openFakeSDKSession(t, rt)
+	c := &conversation{sess: s}
+	trimmed := "diff --git a/src/inventory.py b/src/inventory.py\n--- a/src/inventory.py\n+++ b/src/inventory.py\n@@ -1,4 +1,5 @@\n+# e2e-1013\n \"\"\"A tiny inventory model used by the playground tests.\"\"\"\n from dataclasses import dataclass, field"
+	encoded, err := json.Marshal(trimmed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.set("session.workspaces.diff", `{"requestedMode":"session","mode":"session","isFallback":false,"changes":[{"path":"src/inventory.py","changeType":"modified","diff":`+string(encoded)+`}]}`)
+	files, err := c.Diff(context.Background())
+	if err != nil || len(files) != 1 || files[0].Patch != trimmed+"\n \n \n" || files[0].CountsUnknown {
+		t.Fatalf("native diff = %+v, %v", files, err)
+	}
+	for _, tc := range []struct{ name, patch, want string }{
+		{"complete", "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n+a\n b\n \n", "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n+a\n b\n \n"},
+		{"two blank lines", "--- a/x\n+++ b/x\n@@ -1,3 +1,4 @@\n+a\n b", "--- a/x\n+++ b/x\n@@ -1,3 +1,4 @@\n+a\n b\n \n \n"},
+		{"only the last hunk", "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n+a\n b\n \n@@ -9,2 +10,3 @@\n+c\n d", "--- a/x\n+++ b/x\n@@ -1,2 +1,3 @@\n+a\n b\n \n@@ -9,2 +10,3 @@\n+c\n d\n \n"},
+		{"complete without a final newline", "--- a/x\n+++ b/x\n@@ -9 +10,2 @@\n+c\n d", "--- a/x\n+++ b/x\n@@ -9 +10,2 @@\n+c\n d"},
+		{"no newline marker", "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file", "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n\\ No newline at end of file"},
+		{"uneven shortfall", "--- a/x\n+++ b/x\n@@ -1,4 +1,6 @@\n+a\n b", "--- a/x\n+++ b/x\n@@ -1,4 +1,6 @@\n+a\n b"},
+		{"no hunk", "Binary files differ", "Binary files differ"},
+	} {
+		if got := withTrailingContext(tc.patch); got != tc.want {
+			t.Errorf("%s: withTrailingContext(%q) = %q, want %q", tc.name, tc.patch, got, tc.want)
+		}
 	}
 }
 

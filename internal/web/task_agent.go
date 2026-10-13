@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"slices"
 	"time"
 
@@ -40,6 +41,10 @@ func (m *Manager) offeredAgents(provider, workdir string) ([]agentapi.Configurat
 	discoverer, ok := prov.(agentapi.ConfigurationDiscoverer)
 	if !supported || !ok {
 		return nil, newError(http.StatusConflict, "this provider cannot select custom agents")
+	}
+	// A folder that is gone offers nothing; native discovery would only fail on it.
+	if info, err := os.Stat(workdir); err != nil || !info.IsDir() {
+		return []agentapi.ConfigurationDefinition{}, nil
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, 15*time.Second)
 	defer cancel()

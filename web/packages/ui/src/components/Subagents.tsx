@@ -1533,7 +1533,8 @@ function AgentTranscriptView({
   // One another subagent spawned has its call in that subagent's transcript.
   const parentItem: Item = parent ?? { id: subagent.parent_tool_call_id ?? '', agent_id: subagent.parent_agent_id, kind: 'tool', time: '', compact: { has_text: false, has_reasoning: false } };
   // A background launch's call only acknowledges the launch, so its body is not read.
-  const { item: parentFullItem, body: parentBody, attach: parentAttach, retry: parentRetry } = useItemBody(parentItem, open && !!subagent.parent_tool_call_id && finished && !subagent.background);
+  const readsParent = open && !!subagent.parent_tool_call_id && finished && !subagent.background;
+  const { item: parentFullItem, body: parentBody, attach: parentAttach, retry: parentRetry } = useItemBody(parentItem, readsParent);
   const pageRead = useRef<{ token: number; controller: AbortController } | null>(null);
   const pageToken = useRef(0);
   const retryAfter = useRef(0);
@@ -1724,7 +1725,8 @@ function AgentTranscriptView({
   if (subagent.status === 'failed') outcome = <Note tone="error">Failed{subagent.error ? `: ${subagent.error}` : '.'}</Note>;
   else if (subagent.status === 'cancelled') outcome = <Note>Stopped before it finished.</Note>;
   else if (result) outcome = <div className="text-ui text-body"><Markdown text={result} /></div>;
-  const parentNotice = detail.compact && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>;
+  // The notice belongs to a body on its way: a call never read (a background launch, a run not finished) has none.
+  const parentNotice = detail.compact && readsParent && parentBody && <div ref={parentAttach}><BodyNotice body={parentBody} retry={parentRetry} /></div>;
   const ended = clock(subagent.ended_at);
   const asked = prompt && (
     <PanelSection label="Asked" meta={[`by ${spawner}`, clock(prompt.time)].filter(Boolean).join(' · ')}>

@@ -518,6 +518,9 @@ type webSession struct {
 	// the now-unknown total after that activity invalidates it.
 	nativeDiffRevision     uint64
 	diffRunning, diffDirty bool
+	// idleToolEdits counts tool results that landed while no turn ran: a
+	// turn's native capture still in flight ends on them (turn_changes.go).
+	idleToolEdits uint64
 
 	// rerunOf is the Task whose last message this one ran again (assist.go).
 	rerunOf string
@@ -2401,6 +2404,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			it := clampItem(*ev.Item, m.now())
 			if startsTurn(it) || it.Tool != nil && (it.Tool.Status == agentapi.ToolCompleted || it.Tool.Status == agentapi.ToolFailed) {
 				s.invalidateNativeDiff()
+				if s.activeTiming < 0 {
+					s.idleToolEdits++
+				}
 			}
 			s.linkUploadsLocked(&it)
 			m.notePlanAliasLocked(s, it)

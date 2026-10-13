@@ -828,7 +828,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   most 5 Threads, its subagents' calls included. Every Thread it started counts
   while its record exists, archived ones too; deleting one frees its
   place. Only an Active Thread can call the tool.
-- **Tables**: Markdown tables fill the message width. Each completed table
+- **Tables**: Markdown tables fill the message width. Long cells wrap; a
+  table wider than the message (its headings never break inside a word)
+  scrolls sideways within its own box, never the page. Each completed table
   has header controls for sorting and a contains filter per column. Filters
   combine; **Clear filters** restores all rows. Sorting cycles through ascending,
   descending and original order. Plain numbers sort numerically; IDs, dates and

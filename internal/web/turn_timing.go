@@ -42,7 +42,9 @@ func (m *Manager) observeTurnTimingLocked(s *webSession, state agentapi.TurnStat
 	// The todo list as the turn left it: its counts are written with this
 	// timing, its rows by the same flush (turn_todos.go).
 	timing.Todo = m.snapshotTodosLocked(s, timing)
-	if s.nativeChanges {
+	// Only a turn with an owner prompt has native changes to read; one the
+	// provider began on its own (a background subagent's result) has none.
+	if s.nativeChanges && timing.UserItemID != "" {
 		timing.Changes = &store.TurnChangeCounts{Status: "unknown"}
 	}
 	s.turnTimings[s.activeTiming] = timing

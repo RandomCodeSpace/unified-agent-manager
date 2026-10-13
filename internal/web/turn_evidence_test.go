@@ -437,6 +437,25 @@ func TestSinceYouLeftCountsWhatHappenedAfterTheMark(t *testing.T) {
 	}
 }
 
+// A background subagent's result comes in a turn the provider begins on its
+// own: one prompt stays one turn.
+func TestSinceYouLeftCountsPromptTurnsOnly(t *testing.T) {
+	e := newEvidenceTurn()
+	mark := e.at
+	e.reply("done")
+	e.s.turnTimings = []TurnTiming{
+		{ID: "tt", UserItemID: "u1", StartedAt: mark, EndedAt: e.at, State: StateCompleted},
+		{ID: "tt2", StartedAt: e.at, EndedAt: e.at.Add(time.Second), State: StateCompleted},
+	}
+	if since := e.s.sinceYouLeft(mark, e.at.Add(time.Hour)); since == nil || since.Text != "the agent finished" {
+		t.Fatalf("one prompt = %+v", since)
+	}
+	e.s.turnTimings[1].UserItemID = "u2"
+	if since := e.s.sinceYouLeft(mark, e.at.Add(time.Hour)); since == nil || since.Text != "the agent finished 2 turns" {
+		t.Fatalf("two prompts = %+v", since)
+	}
+}
+
 func TestTurnEvidenceRoute(t *testing.T) {
 	ts := newTestServer(t, ServerConfig{})
 	sum, conv := createSession(t, ts.m, ts.prov)

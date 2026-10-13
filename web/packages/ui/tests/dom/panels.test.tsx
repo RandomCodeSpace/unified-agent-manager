@@ -233,6 +233,29 @@ describe('subagents', () => {
     expect(await open.findByRole('region', { name: 'Transcript of Check contrast of the theme tokens' })).toBeTruthy();
   });
 
+  // A background launch's call is never read, so its transcript must not wait for that body.
+  test('a background subagent\'s transcript does not wait for a call body it never reads', async () => {
+    const original = mockData.seed;
+    const seed = vi.spyOn(mockData, 'seed').mockImplementation(() => {
+      const state = original();
+      const task = state.tasks.find((t) => t.id === 't15')!;
+      task.subagents = (task.subagents ?? []).map((s) => (s.id === 'a5' ? { ...s, background: true } : s));
+      return state;
+    });
+    try {
+      const { user } = await openTask('t15');
+      await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
+      const index = within(await screen.findByRole('dialog', { name: 'Subagents' }));
+      await user.click(index.getByRole('button', { name: /^Audit the remaining packages/ }));
+      const open = await panel();
+      expect(await open.findByRole('region', { name: 'Transcript of Audit the remaining packages' })).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(open.queryByText('Details load as you scroll here…')).toBeNull();
+    } finally {
+      seed.mockRestore();
+    }
+  });
+
   test('older subagents load from the record on request and open by the header; where they were spawned is gone, and it says so', async () => {
     const { user } = await openTask('t15');
     await user.click(screen.getByRole('button', { name: 'Subagents, 1 or more' }));
