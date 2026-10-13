@@ -26,6 +26,9 @@ async function components(api, environment = {}) {
       owner.effects.push(() => { old?.cleanup?.(); owner.slots[index] = { deps, cleanup: effect() }; });
     },
     useMemo(fn) { return fn(); },
+    useCallback(fn) { return fn; },
+    useId() { return 'glyph'; },
+    memo(component) { return component; },
     useEffectEvent(fn) {
       const [holder] = hooks.useState(() => ({ fn, event: (...args) => holder.fn(...args) }));
       holder.fn = fn;

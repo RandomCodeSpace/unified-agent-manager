@@ -280,17 +280,64 @@ func (r *gitRepo) listing(ctx context.Context) (Changes, error) {
 	}
 	defer func() { _ = root.Close() }()
 	stats := r.numstat(ctx)
+	renames := r.renameStats(ctx, entries)
 	budget := untrackedBudget
 	for _, e := range entries {
-		file := ChangedFile{Path: e.path, Status: e.status}
+		file := ChangedFile{Path: e.path, Status: e.status, OldPath: e.orig}
 		if e.untracked || !r.hasHead {
 			file.Additions, budget = countLines(root, e.path, budget)
+		} else if st, ok := renames[e.path]; ok && st.orig == e.orig {
+			file.Additions, file.Deletions = st.additions, st.deletions
 		} else if st, ok := stats[e.path]; ok {
 			file.Additions, file.Deletions = st[0], st[1]
 		}
 		out.Files = append(out.Files, file)
 	}
 	return out, nil
+}
+
+// renameStat is a renamed path's line counts against the path it came from.
+type renameStat struct {
+	orig                 string
+	additions, deletions int
+}
+
+// renameStats returns the line counts of the renames staged in entries
+// compared with their old paths. git pairs the paths on their content, so a
+// rename whose content changed almost wholly is left out and counts as a
+// new file, as numstat has it.
+func (r *gitRepo) renameStats(ctx context.Context, entries []statusEntry) map[string]renameStat {
+	stats := map[string]renameStat{}
+	var paths []string
+	for _, e := range entries {
+		if e.orig != "" {
+			paths = append(paths, e.path, e.orig)
+		}
+	}
+	if len(paths) == 0 || !r.hasHead {
+		return stats
+	}
+	args := append([]string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames", "--numstat", "-z", "HEAD", "--"}, paths...)
+	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, args...)
+	if err != nil || code != 0 {
+		return stats
+	}
+	// A rename record is "added\tdeleted\t" followed by the old and the new
+	// path as fields of their own.
+	fields := strings.Split(string(out), "\x00")
+	for i := 0; i+2 < len(fields); i++ {
+		parts := strings.SplitN(fields[i], "\t", 3)
+		if len(parts) != 3 || parts[2] != "" {
+			continue
+		}
+		add, errA := strconv.Atoi(parts[0])
+		del, errD := strconv.Atoi(parts[1])
+		if errA == nil && errD == nil {
+			stats[fields[i+2]] = renameStat{orig: fields[i+1], additions: add, deletions: del}
+		}
+		i += 2
+	}
+	return stats
 }
 
 func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.FileDiff, error) {
@@ -324,6 +371,14 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 		args = append(args, "HEAD", "--", entry.path)
 	}
 	patch, code, stderr, err := runGit(ctx, repo.git, repo.top, maxDiffBytes+1, args...)
+	// A staged rename is diffed against the path it came from, as the
+	// listing counts it; without the pair, git shows a whole new file.
+	if err == nil && entry.orig != "" {
+		args = []string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames", "HEAD", "--", entry.path, entry.orig}
+		if paired, pairedCode, _, pairedErr := runGit(ctx, repo.git, repo.top, maxDiffBytes+1, args...); pairedErr == nil && pairedCode == 0 && strings.Contains(string(paired), "\nrename from ") {
+			patch, code = paired, pairedCode
+		}
+	}
 	if err != nil {
 		return agentapi.FileDiff{}, err
 	}
@@ -331,7 +386,7 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	if code != 0 && code != 1 {
 		return agentapi.FileDiff{}, newError(http.StatusBadGateway, "git diff failed: %s", gitMessage(stderr))
 	}
-	diff := agentapi.FileDiff{Path: entry.path, Status: entry.status, Patch: clampText(string(patch), maxDiffBytes)}
+	diff := agentapi.FileDiff{Path: entry.path, Status: entry.status, OldPath: entry.orig, Patch: clampText(string(patch), maxDiffBytes)}
 	diff.Additions, diff.Deletions = countPatch(diff.Patch)
 	return diff, nil
 }
@@ -680,17 +735,19 @@ func (r *gitRepo) head(ctx context.Context) (string, error) {
 // reach the work tree through a symbolic link, as a Task's tools see it.
 func repoPaths(top, dir string) func(string) (string, bool) {
 	dir = filepath.Clean(dir)
-	prefix := ""
+	// Relative paths count only from a dir inside the work tree: another
+	// repository's README.md is not this one's.
+	roots := []struct{ dir, prefix string }{{top, ""}}
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		if rel, err := filepath.Rel(top, real); err == nil && filepath.IsLocal(rel) {
-			prefix = rel
+			roots = append([]struct{ dir, prefix string }{{dir, rel}}, roots...)
 		}
 	}
 	return func(p string) (string, bool) {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(dir, p)
 		}
-		for _, root := range []struct{ dir, prefix string }{{dir, prefix}, {top, ""}} {
+		for _, root := range roots {
 			if rel, err := filepath.Rel(root.dir, p); err == nil && filepath.IsLocal(rel) && rel != "." {
 				return filepath.ToSlash(filepath.Join(root.prefix, rel)), true
 			}

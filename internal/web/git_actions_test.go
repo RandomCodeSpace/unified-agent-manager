@@ -559,6 +559,68 @@ func TestGitCommitRecountsOtherTasksDiffs(t *testing.T) {
 	}
 }
 
+// A Thread in another repository that edited files of the same names is no
+// evidence about this repository's files.
+func TestGitStateIgnoresEditsInOtherRepositories(t *testing.T) {
+	gitIdentity(t)
+	repo := gitRepoFixture(t)
+	g := newGitTask(t, repo)
+	elsewhere := gitRepoFixture(t)
+	other, err := g.m.Create(CreateRequest{Provider: "fake", ProjectID: addProject(t, g.m, elsewhere)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setEdits(g.m, g.id, true)
+	setEdits(g.m, other.ID, true, "tracked.txt", filepath.Join(elsewhere, "sub/new file.txt"))
+	for _, f := range g.state().Files {
+		if f.OtherTask || f.Mine {
+			t.Fatalf("file attributed from another repository: %+v", f)
+		}
+	}
+}
+
+// A commit a hook refuses leaves the index as it was: what uam staged is
+// unstaged again, and what was staged by hand stays, partial stagings included.
+func TestGitCommitRefusedLeavesIndexAsItWas(t *testing.T) {
+	gitIdentity(t)
+	repo := branchRepo(t)
+	writeRepoFile(t, repo, "keep.txt", "keep\n")
+	writeRepoFile(t, repo, "partial.txt", "p\n")
+	writeRepoFile(t, repo, "gone.txt", "gone\n")
+	writeRepoFile(t, repo, "hand.txt", "hand\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "feat: seed")
+	writeRepoFile(t, repo, "keep.txt", "kept\n")
+	writeRepoFile(t, repo, "partial.txt", "p1\n")
+	gitIn(t, repo, "add", "partial.txt")
+	writeRepoFile(t, repo, "partial.txt", "p2\n")
+	writeRepoFile(t, repo, "hand.txt", "by hand\n")
+	gitIn(t, repo, "add", "hand.txt")
+	if err := os.Remove(filepath.Join(repo, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	writeRepoFile(t, repo, "new.txt", "new\n")
+	hook := filepath.Join(repo, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'hook says no' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := gitOutput(t, repo, "status", "--porcelain")
+	if before != "D gone.txt\nM  hand.txt\n M keep.txt\nMM partial.txt\n?? new.txt" {
+		t.Fatalf("status before = %q", before)
+	}
+	g := newGitTask(t, repo)
+	reply := g.call(http.MethodPost, "/commit", `{"paths":["keep.txt","partial.txt","gone.txt","new.txt"],"message":"fix: x"}`, http.StatusConflict, nil)
+	if msg := reply["error"].(string); !strings.Contains(msg, "hook says no") {
+		t.Fatalf("hook refusal = %q", msg)
+	}
+	if after := gitOutput(t, repo, "status", "--porcelain"); after != before {
+		t.Fatalf("status after the refusal = %q, want %q", after, before)
+	}
+	if staged := gitOutput(t, repo, "show", ":partial.txt"); staged != "p1" {
+		t.Fatalf("partial staging after the refusal = %q", staged)
+	}
+}
+
 // A file added to the index and then deleted has nothing to commit; choosing
 // it with others commits the others and leaves it out of the index.
 func TestGitCommitAddedThenDeletedFile(t *testing.T) {

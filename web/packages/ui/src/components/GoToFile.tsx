@@ -151,15 +151,33 @@ function useFile(sessionId: string, path: string | null, version = 0): Opened | 
 
 /* ---------- The file itself ---------- */
 
-/** Code with a line-number gutter that stays put while long lines scroll sideways; nothing wraps. */
-function CodeView({ path, text }: Readonly<{ path: string; text: string }>) {
-  const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+/** Lines highlighted per frame: a few KiB of code, so a 64 KiB preview never holds the page in one task. */
+const CODE_SLICE = 150;
+
+/**
+ * Code with a line-number gutter that stays put while long lines scroll sideways; nothing wraps. The
+ * whole text shows at once, plain; highlighting follows a slice per frame from the top.
+ */
+export function CodeView({ path, text }: Readonly<{ path: string; text: string }>) {
+  const slices = useMemo(() => {
+    const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+    const out: string[] = [];
+    for (let i = 0; i < lines.length; i += CODE_SLICE) out.push(lines.slice(i, i + CODE_SLICE).join('\n') + (i + CODE_SLICE < lines.length ? '\n' : ''));
+    return { lines: lines.length, parts: out };
+  }, [text]);
+  const [lit, setLit] = useState({ text, count: 1 });
+  const count = lit.text === text ? lit.count : 1;
+  useEffect(() => {
+    if (count >= slices.parts.length) return;
+    const frame = requestAnimationFrame(() => setLit({ text, count: count + 1 }));
+    return () => cancelAnimationFrame(frame);
+  }, [count, slices.parts.length, text]);
   return (
     <div className="grid w-max min-w-full grid-cols-[auto_minmax(0,1fr)] py-2 font-mono text-code">
       <ol aria-hidden="true" className="sticky left-0 z-10 bg-canvas pr-3 pl-3 text-right text-faint tabular-nums select-none">
-        {lines.map((_, i) => <li key={i}>{i + 1}</li>)}
+        {Array.from({ length: slices.lines }, (_, i) => <li key={i}>{i + 1}</li>)}
       </ol>
-      <pre translate="no" className="pr-6 whitespace-pre text-ink"><code><Highlighted language={language(path)} code={lines.join('\n')} /></code></pre>
+      <pre translate="no" className="pr-6 whitespace-pre text-ink"><code>{slices.parts.map((part, i) => (i < count ? <Highlighted key={i} language={language(path)} code={part} /> : part))}</code></pre>
     </div>
   );
 }

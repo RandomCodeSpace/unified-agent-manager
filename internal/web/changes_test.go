@@ -623,22 +623,41 @@ func TestWorkspaceChangesBeforeFirstCommit(t *testing.T) {
 func TestWorkspaceChangesRenamesDeletionsAndBinaries(t *testing.T) {
 	dir := branchRepo(t)
 	writeRepoFile(t, dir, "from.txt", "a\n")
+	writeRepoFile(t, dir, "moved.txt", "l1\nl2\nl3\nl4\n")
 	writeRepoFile(t, dir, "doomed.txt", "b\nc\n")
 	writeRepoFile(t, dir, "data.bin", "\x00\x01")
 	gitIn(t, dir, "add", ".")
 	gitIn(t, dir, "commit", "-q", "-m", "files")
 	gitIn(t, dir, "mv", "from.txt", "to.txt")
+	gitIn(t, dir, "mv", "moved.txt", "moved2.txt")
+	writeRepoFile(t, dir, "moved2.txt", "l1\nl2\nl3\nl4\nl5\n")
 	if err := os.Remove(filepath.Join(dir, "doomed.txt")); err != nil {
 		t.Fatal(err)
 	}
 	writeRepoFile(t, dir, "data.bin", "\x00\x02")
 	m, id := taskInDir(t, dir)
 	out, files := listWorkspace(t, m, id)
-	if len(out.Files) != 3 {
+	if len(out.Files) != 4 {
 		t.Fatalf("changes = %+v", out.Files)
 	}
-	if f := files["to.txt"]; f.Status != "renamed" {
+	// A rename is counted against the path it came from, not as a new file.
+	if f := files["to.txt"]; f.Status != "renamed" || f.OldPath != "from.txt" || f.Additions != 0 || f.Deletions != 0 {
 		t.Fatalf("renamed file = %+v", f)
+	}
+	if f := files["moved2.txt"]; f.Status != "renamed" || f.OldPath != "moved.txt" || f.Additions != 1 || f.Deletions != 0 {
+		t.Fatalf("renamed and edited file = %+v", f)
+	}
+	for path, want := range map[string]string{"to.txt": "similarity index 100%\nrename from from.txt\nrename to to.txt\n", "moved2.txt": "rename from moved.txt\nrename to moved2.txt\n"} {
+		diff, err := m.FileChange(t.Context(), id, ScopeWorkspace, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff.OldPath != files[path].OldPath || !strings.Contains(diff.Patch, want) || strings.Contains(diff.Patch, "new file mode") {
+			t.Fatalf("diff of %s = %+v", path, diff)
+		}
+	}
+	if diff, _ := m.FileChange(t.Context(), id, ScopeWorkspace, "moved2.txt"); diff.Additions != 1 || diff.Deletions != 0 {
+		t.Fatalf("renamed and edited diff = %+v", diff)
 	}
 	if f := files["doomed.txt"]; f.Status != "deleted" || f.Deletions != 2 || f.Additions != 0 {
 		t.Fatalf("deleted file = %+v", f)
@@ -725,6 +744,29 @@ func TestRunGitReportsUnrunnableBinary(t *testing.T) {
 }
 
 // firstNonEmpty picks the first set value, or none.
+// A Thread's relative paths name files of this repository only when its
+// folder is inside it; absolute paths inside it count from anywhere.
+func TestRepoPathsOutsideRepository(t *testing.T) {
+	top, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(top, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := repoPaths(top, t.TempDir())
+	if rel, ok := elsewhere("README.md"); ok {
+		t.Fatalf("relative path from another folder mapped to %q", rel)
+	}
+	if rel, ok := elsewhere(filepath.Join(top, "README.md")); !ok || rel != "README.md" {
+		t.Fatalf("absolute path in the repository = %q, %v", rel, ok)
+	}
+	inside := repoPaths(top, filepath.Join(top, "sub"))
+	if rel, ok := inside("README.md"); !ok || rel != "sub/README.md" {
+		t.Fatalf("relative path from a folder inside = %q, %v", rel, ok)
+	}
+}
+
 func TestFirstNonEmpty(t *testing.T) {
 	for _, tc := range []struct {
 		in   []string

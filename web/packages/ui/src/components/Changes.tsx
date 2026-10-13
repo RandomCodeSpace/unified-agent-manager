@@ -1,6 +1,6 @@
 import { useApi } from '../ApiContext';
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, defaultScope, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
@@ -140,13 +140,14 @@ export function ChangesSheet({
   const review = stored.id === session.id ? stored.review : readReview(api.cacheKey(session.id));
   // The latest review, for a change that lands later (a comment send resolving): it must not undo marks made meanwhile.
   const latest = useRef(stored);
-  const updateReview = (change: (r: Review) => Review) => {
+  // Stable per Thread, as are the comment handlers built on it: a refresh then leaves the diff's mounted slices alone.
+  const updateReview = useCallback((change: (r: Review) => Review) => {
     const id = session.id;
     const next = change(latest.current.id === id ? latest.current.review : readReview(api.cacheKey(id)));
     writeReview(api.cacheKey(id), next);
     latest.current = { id, review: next };
     setStored(latest.current);
-  };
+  }, [api, session.id]);
   const viewedCount = files.filter((f) => viewState(review, f) === 'viewed').length;
   const toggleViewed = (f: ChangeFile, viewed: boolean) => updateReview((r) => {
     const marks = { ...r.viewed };
@@ -181,12 +182,14 @@ export function ChangesSheet({
       setSendNote({ tone: 'error', text: `Could not send the comments: ${describeError(e)}` });
     }).finally(() => setSending(false));
   };
-  const addComment = (c: Omit<ReviewComment, 'id'>) => {
+  const addComment = useCallback((c: Omit<ReviewComment, 'id'>) => {
     setSendNote(null);
     updateReview((r) => ({ ...r, comments: [...r.comments, { ...c, id: newRequestId() }] }));
-  };
-  const removeComment = (id: string) => updateReview((r) => ({ ...r, comments: r.comments.filter((c) => c.id !== id) }));
+  }, [updateReview]);
+  const removeComment = useCallback((id: string) => updateReview((r) => ({ ...r, comments: r.comments.filter((c) => c.id !== id) })), [updateReview]);
   const shownFile = files.find((f) => f.path === shownPath);
+  // Stable while nothing changed, so the diff's mounted slices stay as they are across refreshes.
+  const shownComments = useMemo(() => comments.filter((c) => c.path === shownPath), [comments, shownPath]);
 
   const stop = useEffectEvent(() => {
     request.current?.abort();
@@ -360,7 +363,7 @@ export function ChangesSheet({
             error={current?.path === shownPath ? current.fileError : null}
             viewed={shownFile ? viewState(review, shownFile) === 'viewed' : undefined}
             onViewed={shownFile ? (v: boolean) => toggleViewed(shownFile, v) : undefined}
-            comments={comments.filter((c) => c.path === shownPath)}
+            comments={shownComments}
             onComment={commentable ? addComment : undefined}
             onRemoveComment={removeComment}
           />
@@ -444,8 +447,9 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
             <span className={cn('w-3 text-center font-mono font-semibold', STATUS_TONE[letter] ?? 'text-muted')} title={f.status}>{letter}</span>
             <span className="min-w-0">
               <span className="block truncate [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
-              {(risk || viewed === 'changed') && (
+              {(risk || viewed === 'changed' || f.old_path) && (
                 <span className="flex flex-wrap items-center gap-x-2 text-meta">
+                  {f.old_path && <span className="min-w-0 truncate text-muted" title={f.old_path}>from {f.old_path}</span>}
                   {risk && <span className="inline-flex items-center gap-1 text-error" title={risk.detail}><ShieldAlert aria-hidden="true" className="size-3" />{risk.label}</span>}
                   {viewed === 'changed' && <span className="text-warning">Changed since you viewed</span>}
                 </span>
@@ -499,16 +503,11 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
     }
   }, [file]);
   const [draft, setDraft] = useState<Anchor | null>(null);
-
-  const warning = error ? <Note tone="error" role="alert" className="p-3">{error}</Note> : null;
-  if (!file) return warning ?? <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
-  if (file.truncated) return <>{warning}<Note className="p-3">The diff exceeded its size limit and is unavailable.</Note></>;
-  if (file.binary) return <>{warning}<Note className="p-3">Binary file: no textual diff is available.</Note></>;
-  if (file.counts_unknown) return <>{warning}<Note className="p-3">Line counts and a textual diff are unavailable for this change.</Note></>;
-  if (patch instanceof Error) return <>{warning}<Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note></>;
-  if (!patch || patch.hunks.length === 0) return <>{warning}<Note className="p-3">No textual changes in {path}.</Note></>;
-
-  const lines: LineNotes = {
+  // The comment glyph is drawn once (below) and referenced from every line: thousands of inline icons are what makes a long diff slow to mount.
+  const glyph = useId();
+  // One object per change, so the mounted slices of a long diff are left alone until a comment moves.
+  const lines = useMemo<LineNotes>(() => ({
+    glyph,
     comments,
     draft,
     open: onComment ? (anchor) => {
@@ -522,16 +521,27 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
     },
     cancel: () => setDraft(null),
     remove: onRemoveComment,
-  };
+  }), [comments, draft, glyph, onComment, onRemoveComment, path]);
+
+  const warning = error ? <Note tone="error" role="alert" className="p-3">{error}</Note> : null;
+  if (!file) return warning ?? <Skeleton label="Loading the diff…" rows={6} className="gap-2 p-3" />;
+  if (file.truncated) return <>{warning}<Note className="p-3">The diff exceeded its size limit and is unavailable.</Note></>;
+  if (file.binary) return <>{warning}<Note className="p-3">Binary file: no textual diff is available.</Note></>;
+  if (file.counts_unknown) return <>{warning}<Note className="p-3">Line counts and a textual diff are unavailable for this change.</Note></>;
+  if (patch instanceof Error) return <>{warning}<Note tone="error" className="p-3">Could not parse diff: {patch.message}</Note></>;
+  if (!patch || patch.hunks.length === 0) {
+    return <>{warning}<Note className="p-3">{file.old_path ? `Renamed from ${file.old_path}: no textual changes.` : `No textual changes in ${path}.`}</Note></>;
+  }
+
   // The gutter is as wide as the longest line number, so its columns can stay put while a long line scrolls (index.css .diff).
   const digits = Math.max(2, ...patch.hunks.map((h) => String(Math.max(h.oldStart + h.oldLines, h.newStart + h.newLines)).length));
   return (
     <>
       {warning}
-      <table className="diff animate-fade-in" translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
-        <caption>
+      <div className="diff animate-fade-in" translate="no" style={{ '--num': `${digits}ch` } as CSSProperties}>
+        <div className="head">
           <span className="flex items-center gap-2">
-            <span className="min-w-0 flex-1 truncate">{file.path}</span>
+            <span className="min-w-0 flex-1 truncate">{file.old_path ? `${file.old_path} → ${file.path}` : file.path}</span>
             {onViewed && (
               <label className="flex shrink-0 cursor-pointer items-center gap-1.5 font-sans text-caption pointer-coarse:min-h-11">
                 <input type="checkbox" className="size-3.5 cursor-pointer accent-success" checked={!!viewed} onChange={(e) => onViewed(e.target.checked)} />
@@ -540,12 +550,59 @@ export function FileView({ path, file, error, viewed, onViewed, comments = [], o
             )}
           </span>
           {onComment && <span className="block font-sans text-meta">Select a line to comment on it.</span>}
-        </caption>
-        <tbody>{patch.hunks.flatMap((h, hi) => renderHunk(h, hi, lines))}</tbody>
-      </table>
+        </div>
+        {onComment && (
+          <svg width="0" height="0" aria-hidden="true" className="absolute">
+            <symbol id={glyph} viewBox="0 0 24 24"><MessageSquarePlus /></symbol>
+          </svg>
+        )}
+        <DiffRows hunks={patch.hunks} notes={lines} />
+      </div>
     </>
   );
 }
+
+/** Lines per slice: a table of its own, so the browser lays out and paints only the slices in view. */
+const SLICE = 200;
+/** A slice's height before it is laid out (its line height), so the scrollbar is right from the start. */
+const LINE_PX = 18;
+
+/**
+ * The rows of a diff as slices, each a table in a box the browser skips while off screen, mounted one
+ * slice per frame: the top shows at once and the rest follows without a long task, and growing the diff
+ * never lays out the whole of it again. A slice already on screen is not rebuilt when the next arrives.
+ */
+function DiffRows({ hunks, notes }: Readonly<{ hunks: StructuredPatch['hunks']; notes: LineNotes }>) {
+  const total = hunks.reduce((n, h) => n + h.lines.length, 0);
+  const [shown, setShown] = useState(SLICE);
+  useEffect(() => {
+    if (shown >= total) return;
+    const frame = requestAnimationFrame(() => setShown((n) => Math.min(total, n + SLICE)));
+    return () => cancelAnimationFrame(frame);
+  }, [shown, total]);
+  const slices: ReactNode[] = [];
+  for (let from = 0; from < Math.min(shown, total); from += SLICE) {
+    slices.push(<DiffSlice key={from} hunks={hunks} from={from} to={Math.min(from + SLICE, total)} notes={notes} />);
+  }
+  return <>{slices}</>;
+}
+
+/** The rows of lines [from, to) of the diff, counting across its hunks; a hunk's header comes with its first line. */
+const DiffSlice = memo(function DiffSlice({ hunks, from, to, notes }: Readonly<{ hunks: StructuredPatch['hunks']; from: number; to: number; notes: LineNotes }>) {
+  const rows: ReactNode[] = [];
+  let start = 0;
+  for (const [hi, h] of hunks.entries()) {
+    const end = start + h.lines.length;
+    if (end > from && start < to) rows.push(...renderHunk(h, hi, notes, Math.max(from, start) - start, Math.min(to, end) - start));
+    start = end;
+    if (start >= to) break;
+  }
+  return (
+    <div className="slice" style={{ containIntrinsicSize: `auto ${(to - from) * LINE_PX}px` }}>
+      <table><tbody>{rows}</tbody></table>
+    </div>
+  );
+});
 
 /** The same diff renderer as Changes, mounted only for an open native edit. */
 export function InlinePatch({ path, text }: Readonly<{ path: string; text: string }>) {
@@ -561,7 +618,7 @@ export function InlinePatch({ path, text }: Readonly<{ path: string; text: strin
     if (remaining <= 0) break;
     const shown = Math.max(0, Math.min(h.lines.length, remaining - 1));
     remaining -= shown + 1;
-    rows.push(...renderHunk(h, index, undefined, shown, true));
+    rows.push(...renderHunk(h, index, undefined, 0, shown, true));
   }
   const digits = Math.max(2, ...patch.hunks.map(h => String(Math.max(h.oldStart + h.oldLines, h.newStart + h.newLines)).length));
   return <div style={{ contentVisibility: 'auto' }}>
@@ -573,6 +630,8 @@ export function InlinePatch({ path, text }: Readonly<{ path: string; text: strin
 }
 
 interface LineNotes {
+  /** The id of the comment glyph drawn once above the rows. */
+  glyph: string;
   comments: ReviewComment[];
   draft: Anchor | null;
   open?: (anchor: Anchor) => void;
@@ -581,16 +640,27 @@ interface LineNotes {
   remove?: (id: string) => void;
 }
 
-function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: LineNotes, limit = Infinity, highlight = false) {
+/** The rows of hunk h's lines [from, to), with the hunk's header when from is 0. */
+function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: LineNotes, from = 0, to = h.lines.length, highlight = false) {
   let oldNo = h.oldStart;
   let newNo = h.newStart;
-  const rows = [
-    <tr key={`h${hi}`} className="hunk">
-      <td colSpan={3}><span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span></td>
-    </tr>,
-  ];
-  const shown = limit === Infinity ? h.lines : h.lines.slice(0, limit);
-  shown.forEach((line, li) => {
+  // The numbers the first shown line has, counted over the lines before it.
+  for (const line of h.lines.slice(0, from)) {
+    const sign = line[0] ?? ' ';
+    if (sign === '+') newNo++;
+    else if (sign === '-') oldNo++;
+    else if (sign !== '\\') { oldNo++; newNo++; }
+  }
+  const rows: ReactNode[] = [];
+  if (from === 0) {
+    rows.push(
+      <tr key={`h${hi}`} className="hunk">
+        <td colSpan={3}><span className="sticky left-3 inline-block">{`@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`}</span></td>
+      </tr>,
+    );
+  }
+  h.lines.slice(from, to).forEach((line, offset) => {
+    const li = from + offset;
     const sign = line[0] ?? ' ';
     const text = line.slice(1);
     let cls = 'ctx';
@@ -617,7 +687,7 @@ function renderHunk(h: StructuredPatch['hunks'][number], hi: number, notes?: Lin
         <td className="num">
           {open ? (
             <button type="button" aria-label={label ?? undefined} className="group/line inline-flex w-full items-center justify-end gap-1.5 text-inherit focus-visible:-outline-offset-2" onClick={(e) => { e.stopPropagation(); open(anchor); }}>
-              <MessageSquarePlus aria-hidden="true" className="size-3 text-accent opacity-0 group-hover/row:opacity-100 group-focus-visible/line:opacity-100" />
+              <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3 text-accent opacity-0 group-hover/row:opacity-100 group-focus-visible/line:opacity-100"><use href={`#${notes.glyph}`} /></svg>
               {right}
             </button>
           ) : right}

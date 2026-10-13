@@ -795,17 +795,26 @@
     font-weight: 600;
   }
 
-  /* Unified diff table (Changes sheet). */
+  /* Unified diff (Changes sheet): one table, or a head over a stack of slices, each a table in a box the
+     browser skips while it is off screen (components/Changes.tsx DiffRows). */
   .diff {
     width: 100%;
-    border-collapse: collapse;
     background: var(--color-code-bg);
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.5;
     font-variant-ligatures: none;
   }
-  .diff caption {
+  table.diff,
+  .diff table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .diff .slice {
+    content-visibility: auto;
+  }
+  .diff caption,
+  .diff .head {
     padding: 6px 12px;
     background: linear-gradient(to right, transparent, var(--color-hairline-strong) 18%, var(--color-hairline-strong) 82%, transparent) bottom / 100% 1px no-repeat;
     color: var(--color-muted);
