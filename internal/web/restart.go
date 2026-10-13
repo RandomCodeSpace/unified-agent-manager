@@ -304,6 +304,19 @@ func (m *Manager) busyTasksLocked() int {
 	return n
 }
 
+// updatingCLI reports whether a provider's CLI update is installing: a
+// restart would end the install halfway.
+func (m *Manager) updatingCLI() bool {
+	m.cli.mu.Lock()
+	defer m.cli.mu.Unlock()
+	for _, st := range m.cli.by {
+		if st.State == cliUpdating {
+			return true
+		}
+	}
+	return false
+}
+
 // binaryLoop looks at the binary every binaryPoll and, while a restart is
 // pending, begins it once no Task works or waits: on each Task change and
 // every restartTick.
@@ -337,7 +350,7 @@ func (m *Manager) tryRestart() {
 	m.mu.Lock()
 	busy := m.busyTasksLocked()
 	m.mu.Unlock()
-	if busy > 0 {
+	if busy > 0 || m.updatingCLI() {
 		return
 	}
 	// The file may have changed again since its version was read.

@@ -366,6 +366,9 @@ type webProvider struct {
 	// the utility prompts running, which it waits for too.
 	outdated  bool
 	utilities int
+	// swept: CLIs a uam that is gone left running were looked for, once,
+	// before this provider's first CLI.
+	swept bool
 	// signInChecked is when a signed-out CLI was last restarted to look
 	// for a sign-in made outside UAM (Account).
 	signInChecked time.Time
@@ -415,6 +418,9 @@ func newSDKClient() (sdkClient, error) {
 // export file.
 func sdkClientAt(path string, export bool) sdkClient {
 	env := append(withAutoApproval(os.Environ()), "HISTFILE="+os.DevNull, "HISTSIZE=0")
+	if owner := cliOwner(); owner != "" {
+		env = append(env, cliOwnerEnv+"="+owner)
+	}
 	var telemetry *copilot.TelemetryConfig
 	if export {
 		var err error
@@ -869,10 +875,19 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	}
 	defer func() {
 		id := sess.ID()
-		if err := sess.Disconnect(); err != nil {
-			log.Info("disconnect copilot utility session failed", "purpose", purpose, "conversation", id, "error", err)
-		} else if err := p.recordUsageSession(client, id, false); err != nil {
-			log.Warn("release copilot utility usage ownership failed", "purpose", purpose, "conversation", id, "error", err)
+		// The SDK's detach has no deadline: a CLI that never answers it must
+		// not hold the call, its slot and the CLI restart forever.
+		detached := make(chan error, 1)
+		go func() { detached <- sess.Disconnect() }()
+		select {
+		case err := <-detached:
+			if err != nil {
+				log.Info("disconnect copilot utility session failed", "purpose", purpose, "conversation", id, "error", err)
+			} else if err := p.recordUsageSession(client, id, false); err != nil {
+				log.Warn("release copilot utility usage ownership failed", "purpose", purpose, "conversation", id, "error", err)
+			}
+		case <-time.After(titleDeleteTimeout):
+			log.Info("disconnect copilot utility session timed out", "purpose", purpose, "conversation", id)
 		}
 		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleDeleteTimeout)
 		defer cancel()
@@ -1737,6 +1752,12 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 	}
 	if p.client != nil {
 		return p.client, nil
+	}
+	if !p.swept {
+		p.swept = true
+		if n := sweepOrphanCLIs(); n > 0 {
+			log.Warn("stopped copilot CLIs left running by a uam that is gone", "count", n)
+		}
 	}
 	c, err := p.newClient()
 	if err != nil {

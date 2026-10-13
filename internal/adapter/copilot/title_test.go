@@ -218,6 +218,42 @@ func TestUtilityTimeoutSaysWhichStageWaited(t *testing.T) {
 	}
 }
 
+// A Utility session whose detach the CLI never answers is still deleted,
+// and the call ends without holding the CLI busy.
+func TestUtilityCleanupDoesNotWaitOnAHungDetach(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	var fc *fakeClient
+	var p *webProvider
+	p, fc = titleProvider(func(context.Context, copilot.MessageOptions) (string, error) {
+		fc.mu.Lock()
+		s := fc.sessions[len(fc.sessions)-1]
+		fc.mu.Unlock()
+		s.mu.Lock()
+		s.disconnectHook = func() error { <-block; return nil }
+		s.mu.Unlock()
+		return "Fix the build", nil
+	})
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	start := time.Now()
+	title, err := p.Title(context.Background(), agentapi.TitleRequest{Model: "gpt-5-mini", Text: "x"})
+	if err != nil || title != "Fix the build" {
+		t.Fatalf("Title = %q, %v", title, err)
+	}
+	if d := time.Since(start); d > titleDeleteTimeout+2*time.Second {
+		t.Fatalf("Title took %s", d)
+	}
+	fc.mu.Lock()
+	deleted := len(fc.deleted)
+	fc.mu.Unlock()
+	p.mu.Lock()
+	running := p.utilities
+	p.mu.Unlock()
+	if deleted != 1 || running != 0 {
+		t.Fatalf("deleted %d, utilities running %d", deleted, running)
+	}
+}
+
 func TestSecondsReadsAsTimeTaken(t *testing.T) {
 	for d, want := range map[time.Duration]string{1500 * time.Millisecond: "1.5 s", 45*time.Second + 200*time.Millisecond: "45 s"} {
 		if got := seconds(d); got != want {

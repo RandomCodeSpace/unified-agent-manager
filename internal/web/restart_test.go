@@ -242,6 +242,55 @@ func TestRestartWaitsForBusyTasks(t *testing.T) {
 	}
 }
 
+// A Task whose conversation closed while idle holds no restart back: the
+// background-task snapshot its conversation reported is stale once closed.
+func TestRestartIgnoresAnIdleClosedTask(t *testing.T) {
+	path, w, _ := fakeBinary(t, "v1.0.0")
+	m, prov, ts, auth := restartManager(t, w)
+	_, conv := createSession(t, m, prov)
+	conv.Emit(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &agentapi.BackgroundTasks{Known: true}})
+	start := time.Now()
+	setNow(m, start)
+	setNow(m, start.Add(idleClose))
+	m.closeIdleConversations()
+	if conv.Closes() != 1 {
+		t.Fatalf("closes = %d", conv.Closes())
+	}
+	installBinary(t, path, "echo v1.1.0")
+	code, st, body := serviceCall(t, ts, auth, http.MethodPost, "/api/service/restart")
+	if code != http.StatusOK || st.Restart != restartRestarting {
+		t.Fatalf("POST after an idle close = %d %s", code, body)
+	}
+	if stopped, err := m.shutdownIfIdle(context.Background()); !stopped || err != nil {
+		t.Fatalf("shutdownIfIdle = %v, %v", stopped, err)
+	}
+}
+
+// A restart waits while a provider CLI update installs, which it would
+// end halfway.
+func TestRestartWaitsForACLIUpdate(t *testing.T) {
+	path, w, _ := fakeBinary(t, "v1.0.0")
+	m, _, ts, auth := restartManager(t, w)
+	m.cli.mu.Lock()
+	m.cliStatusLocked("fake").State = cliUpdating
+	m.cli.mu.Unlock()
+	installBinary(t, path, "echo v1.1.0")
+	code, st, body := serviceCall(t, ts, auth, http.MethodPost, "/api/service/restart")
+	if code != http.StatusOK || st.Restart != restartPending {
+		t.Fatalf("POST during a CLI update = %d %s", code, body)
+	}
+	if stopped, _ := m.shutdownIfIdle(context.Background()); stopped {
+		t.Fatal("shutdownIfIdle shut down during a CLI update")
+	}
+	m.cli.mu.Lock()
+	m.cliStatusLocked("fake").State = cliUpdated
+	m.cli.mu.Unlock()
+	m.tryRestart()
+	if !restartBegun(w) {
+		t.Fatal("the restart did not begin once the update ended")
+	}
+}
+
 // A requested restart is dropped when the binary is replaced by the running
 // version again before it begins.
 func TestRestartDroppedWhenTheRunningVersionReturns(t *testing.T) {

@@ -349,17 +349,23 @@ func busyTasksError(p agentapi.Provider, n int) error {
 // restarted. The Tasks keep their state and reopen on their next view or
 // prompt, as after an idle close. A Task that works or waits, or that an
 // operation holds, keeps its conversation and fails the restart; the idle
-// ones are closed all the same.
+// ones are closed all the same. A Task still opening fails it too: its
+// conversation may be resuming on the running CLI. Starts are held by now,
+// so no later open reaches that CLI.
 func (m *Manager) quiesceCLI(p agentapi.Provider) error {
 	m.mu.Lock()
 	var open []*webSession
+	busy := 0
 	for _, s := range m.sessions {
-		if s.provider == p.Name() && s.conv != nil {
+		switch {
+		case s.provider != p.Name():
+		case s.opening != nil:
+			busy++
+		case s.conv != nil:
 			open = append(open, s)
 		}
 	}
 	m.mu.Unlock()
-	busy := 0
 	for _, s := range open {
 		if !m.suspendForCLI(s) {
 			busy++

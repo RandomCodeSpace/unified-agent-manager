@@ -65,7 +65,7 @@ directly, see [Listen beyond loopback](#listen-beyond-loopback).
 |---|---|
 | `uam web` | Start the service, or show how to reach the running one |
 | `uam web status [--json]` | Show whether it is running, its PID, address, and version (not the token) |
-| `uam web stop` | Stop the service and the provider processes it started |
+| `uam web stop` | Stop the service and the provider processes it started; waits up to 30 seconds for it to exit |
 | `uam web token set` | Replace the access token with one read from stdin (see [Sign in](#sign-in)) |
 
 ## Connect from Windows
@@ -227,11 +227,15 @@ not offer it again until the service restarts. Otherwise UAM runs
 `npm install -g @github/copilot@<version>` or replaces the binary in place
 while Copilot keeps running: Threads working or waiting are not interrupted,
 and new conversations keep using the running version. Only starting Copilot
-waits while the files are replaced. As soon as no Copilot Thread is working or
-waiting, UAM closes the idle Copilot conversations (their Threads keep their
+waits while the files are replaced. As soon as no Copilot Thread is working,
+waiting or opening, UAM closes the idle Copilot conversations (their Threads keep their
 state and reopen when next viewed or sent to) and stops Copilot, and the next
 use starts the new version; until then Settings shows the version still
-running.
+running. An install whose version cannot be read back still counts as
+installed, so the restart onto it still comes. Before UAM first starts
+Copilot, it stops any Copilot CLI that a UAM no longer running left behind
+(one that hung when that UAM was killed); it never touches the CLI of a UAM
+that still runs.
 
 **Environment tokens win.** A token in `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or
 `GITHUB_TOKEN` (in that order) in the service's environment takes precedence
@@ -2238,7 +2242,9 @@ shows the reason instead, and offers no restart. Nothing restarts until
 **Restart** is chosen.
 
 Restart waits until no Thread works or waits for anything (a turn, an answer,
-queued prompts, subagents or background tasks); meanwhile Settings says
+queued prompts, subagents or background tasks) and no Copilot CLI update is
+installing; a Thread whose conversation closed while idle holds nothing back.
+Meanwhile Settings says
 "Restarts when no thread is working or waiting." Then the service stops the
 way `uam web stop` does, with nothing running, and runs the installed binary
 in the same process: the PID, the flags (`--listen`, `--public-origin`,

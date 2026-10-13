@@ -56,7 +56,7 @@ var (
 // probeClient builds the SDK client an update starts on a staged release,
 // the way the runtime's is built: the SDK's protocol handshake is what says
 // whether it can drive that release. Tests replace it.
-var probeClient = func(path string) sdkClient { return sdkClientAt(path, false) }
+var probeClient = func(path string) sdkClient { return sdkClientAt(nativeCopilot(path), false) }
 
 // cliInstall is how the copilot on PATH was put there, which decides how
 // it is updated: with the npm that installed it, or by replacing the
@@ -210,10 +210,13 @@ func (p *webProvider) UpdateCLI(ctx context.Context, version string) error {
 	p.mu.Unlock()
 	release()
 	installed, err := cliVersion(ctx, inst.path)
-	if err != nil {
-		return err
-	}
-	if installed != version {
+	switch {
+	case err != nil:
+		// The release is in place, so the update stands: the restart starts
+		// it and the next check reads its version. Failing here would leave
+		// the replaced CLI running with no restart to come.
+		log.Warn("read the copilot CLI version after the update failed", "version", version, "error", err)
+	case installed != version:
 		return fmt.Errorf("copilot reports %s after installing %s", installed, version)
 	}
 	return nil

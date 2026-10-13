@@ -860,3 +860,29 @@ func TestOpensPassHostToolsBoundToTheTask(t *testing.T) {
 		t.Fatalf("calls = %+v", calls)
 	}
 }
+
+// Shutdown closes the open conversations together, within its own time,
+// however long a runtime takes to close one.
+func TestShutdownClosesConversationsWithinItsTime(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	var convs []*agenttest.Conversation
+	for range 3 {
+		_, conv := createSession(t, m, prov)
+		conv.SetCloseHook(func(ctx context.Context) { <-ctx.Done() })
+		convs = append(convs, conv)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- m.Shutdown(ctx) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown outlasted its context")
+	}
+	for _, conv := range convs {
+		if conv.Closes() != 1 {
+			t.Fatalf("closes = %d", conv.Closes())
+		}
+	}
+}
