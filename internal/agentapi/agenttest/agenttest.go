@@ -545,6 +545,7 @@ type Conversation struct {
 	steerHook     func(ctx context.Context, prompt string) error
 	respondHook   func(ctx context.Context, id string, answer agentapi.Answer) error
 	cancelHook    func(ctx context.Context) error
+	closeHook     func(ctx context.Context)
 	subCancelHook func(ctx context.Context, agentID string) error
 	subCancels    []string
 	subPromptHook func(ctx context.Context, agentID, text string) error
@@ -885,12 +886,26 @@ func (c *Conversation) Diff(context.Context) ([]agentapi.FileDiff, error) {
 	return append([]agentapi.FileDiff(nil), c.diff...), c.diffErr
 }
 
-func (c *Conversation) Close(context.Context) error {
+func (c *Conversation) Close(ctx context.Context) error {
+	c.mu.Lock()
+	hook := c.closeHook
+	c.mu.Unlock()
+	if hook != nil {
+		hook(ctx)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closes++
 	c.closed = true
 	return nil
+}
+
+// SetCloseHook runs hook at the start of each Close, as a runtime that is
+// slow to close would; nil removes it.
+func (c *Conversation) SetCloseHook(hook func(ctx context.Context)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closeHook = hook
 }
 
 func (c *Conversation) markClosed() {

@@ -4239,7 +4239,8 @@ func (s *webSession) runsOrWaitsLocked() bool {
 	if s.asking || s.settleableLocked() != nil || s.runningSubagents() > 0 {
 		return true
 	}
-	if t := s.backgroundTasks; t != nil && (!t.Known || slices.ContainsFunc(t.Tasks, func(task agentapi.BackgroundTask) bool {
+	// Without an open conversation the snapshot is stale: nothing of it runs.
+	if t := s.backgroundTasks; t != nil && s.conv != nil && (!t.Known || slices.ContainsFunc(t.Tasks, func(task agentapi.BackgroundTask) bool {
 		return task.Status != "completed" && task.Status != "failed" && task.Status != "cancelled"
 	})) {
 		return true
@@ -4942,8 +4943,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// shutdownIfIdle is Shutdown unless a Task works or waits, decided under mu,
-// so no turn starts in between. It reports whether the manager is shut down.
+// shutdownIfIdle is Shutdown unless a Task works or waits or a CLI update
+// installs, decided under mu, so no turn starts in between. It reports
+// whether the manager is shut down.
 func (m *Manager) shutdownIfIdle(ctx context.Context) (bool, error) {
 	return m.shutdown(ctx, true)
 }
@@ -4954,7 +4956,7 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 		m.mu.Unlock()
 		return true, nil
 	}
-	if idleOnly && m.busyTasksLocked() > 0 {
+	if idleOnly && (m.busyTasksLocked() > 0 || m.updatingCLI()) {
 		m.mu.Unlock()
 		return false, nil
 	}
@@ -4991,9 +4993,17 @@ func (m *Manager) shutdown(ctx context.Context, idleOnly bool) (bool, error) {
 	m.cancel()
 	wait(ctx, &m.terminalWG)
 	wait(ctx, &m.titles)
+	// The conversations close together, within the shutdown's time: one
+	// after another, a hung runtime would take each one's whole timeout.
+	var closing sync.WaitGroup
 	for _, conv := range convs {
-		m.closeConversation(conv)
+		closing.Go(func() {
+			if err := conv.Close(ctx); err != nil && !errors.Is(err, agentapi.ErrClosed) {
+				log.Warn("close web conversation failed", "error", err)
+			}
+		})
 	}
+	closing.Wait()
 	var firstErr error
 	for _, name := range m.order {
 		if err := m.providers[name].Shutdown(ctx); err != nil {

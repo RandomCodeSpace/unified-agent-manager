@@ -309,6 +309,35 @@ func TestUpdateCLIInstallsUnderTheRunningCLIAndRestartsItWhenIdle(t *testing.T) 
 
 // With no CLI running, a start waits while the files are replaced and then
 // runs the new CLI; nothing is left to restart.
+// An install whose version cannot be read afterwards still stands: the
+// running CLI is outdated, so the restart onto the release still comes.
+func TestUpdateCLIKeepsAnInstallWhoseVersionCannotBeRead(t *testing.T) {
+	ctx := context.Background()
+	f := fakeNPMInstall(t, "1.0.80", "1.0.92")
+	fakeProbe(t, &fakeClient{})
+	p, fc := cliProvider(t)
+	if _, err := p.ensureStarted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(f.dir, "hold"), "", 0o644)
+	done := make(chan error, 1)
+	go func() { done <- p.UpdateCLI(ctx, "1.0.92") }()
+	f.waitFile(t, "installing")
+	writeFile(t, filepath.Join(f.root, "@github", "copilot", "npm-loader.js"), "#!/bin/sh\nexit 1\n", 0o755)
+	if err := os.Remove(filepath.Join(f.dir, "hold")); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("UpdateCLI = %v", err)
+	}
+	if err := p.RestartCLI(ctx, func() error { return nil }); err != nil {
+		t.Fatalf("RestartCLI = %v", err)
+	}
+	if _, stopped, _ := fc.lifecycle(); stopped != 1 {
+		t.Fatalf("outdated CLI stopped %d times", stopped)
+	}
+}
+
 func TestUpdateCLIHoldsStartsDuringTheInstall(t *testing.T) {
 	ctx := context.Background()
 	f := fakeNPMInstall(t, "1.0.80", "1.0.92")

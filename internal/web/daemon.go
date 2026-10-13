@@ -35,8 +35,10 @@ const (
 	readyEnv      = "UAM_WEB_READY_FD"
 
 	readyTimeout    = 45 * time.Second
-	stopWait        = 15 * time.Second
 	shutdownTimeout = 15 * time.Second
+	// stopWait outlasts shutdownTimeout, after which the service still stops
+	// its runtimes and writes its state.
+	stopWait = shutdownTimeout + 15*time.Second
 )
 
 // DaemonState is web.json: how to find and verify the running service. It

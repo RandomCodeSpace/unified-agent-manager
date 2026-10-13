@@ -305,6 +305,40 @@ func TestCLIRestartWaitsForATaskThatStartsWorking(t *testing.T) {
 	}
 }
 
+// A Task still opening holds the CLI restart back, since its conversation
+// may be resuming on the running CLI; the restart runs once it has opened.
+func TestCLIRestartWaitsForAnOpeningTask(t *testing.T) {
+	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.92", Newer: true})
+	m, ts, auth := cliServer(t, prov)
+	sum, _ := createSession(t, m, prov.Provider)
+	// Closed as an idle close does, it opens again as the restart runs.
+	m.mu.Lock()
+	s := m.sessions[sum.ID]
+	conv := m.suspendLocked(s, false)
+	m.mu.Unlock()
+	m.closeConversation(conv)
+	var once sync.Once
+	prov.beforeQuiesce = func() {
+		once.Do(func() {
+			m.mu.Lock()
+			s.opening = make(chan struct{})
+			m.mu.Unlock()
+		})
+	}
+	if code, _, body := cliCall(t, ts, auth, http.MethodPost, "/api/providers/fake/cli/update"); code != http.StatusOK {
+		t.Fatalf("POST = %d %s", code, body)
+	}
+	if cli := waitCLI(t, m, cliUpdated); cli.Running != "1.0.80" || prov.restarted() != 0 {
+		t.Fatalf("restart while a Task opens: %+v, %d restarts", cli, prov.restarted())
+	}
+	m.mu.Lock()
+	before := m.summaryLocked(s)
+	m.finishOpeningLocked(s)
+	m.changedLocked(s, before)
+	m.mu.Unlock()
+	waitUntil(t, "the restart", func() bool { return prov.restarted() == 1 })
+}
+
 // A release the SDK refuses fails the update with the SDK's reason and is
 // not offered again; a newer one is.
 func TestCLIUpdateRemembersAnIncompatibleRelease(t *testing.T) {
