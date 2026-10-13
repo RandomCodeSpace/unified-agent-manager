@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { ApiError, api, type GitLabReview as Review, type SessionDetail } from '../../src/api';
 import { GitLabMarkdown, GitLabReview } from '../../src/components/GitLabReview';
+import { Markdown } from '../../src/components/common';
 
 const sha = 'c'.repeat(40);
 const session = { id: 'task', model: 'selected-model', stage: 'active', state: 'completed', queued: 0, items: [], last_submission: null, turn_timings: [] } as unknown as SessionDetail;
@@ -16,8 +17,8 @@ const data: Review = {
 };
 
 afterEach(() => vi.restoreAllMocks());
-function draw(selected = session) {
-  const read = vi.spyOn(api, 'gitlabReview').mockResolvedValue(structuredClone(data));
+function draw(selected = session, review = data) {
+  const read = vi.spyOn(api, 'gitlabReview').mockResolvedValue(structuredClone(review));
   const action = vi.spyOn(api, 'gitlabReviewAction').mockImplementation(async (_id, _iid, body) => ({ request_id: body.request_id, status: body.mode === 'queue' ? 'queued' : 'accepted', time: '2026-10-11T17:00:00Z' }));
   const post = vi.spyOn(api, 'postGitlabComment').mockResolvedValue({ note_id: 3, discussion_id: 'thread' });
   const resolve = vi.spyOn(api, 'resolveGitlabThread').mockResolvedValue({ resolved: true });
@@ -42,6 +43,8 @@ test('review shows anchored thread context, comments, and useful filters', async
   const filters = within(screen.getByRole('group', { name: 'Filter discussions' }));
   await user.click(filters.getByRole('button', { name: 'Resolved' }));
   expect(screen.getByText('No resolved discussions.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Fix' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Resolve discussion' })).toBeNull();
   await user.click(filters.getByRole('button', { name: 'All' }));
   await user.click(screen.getByRole('button', { name: /Luca Comment/ }));
   expect(screen.queryByRole('button', { name: 'Resolve discussion' })).toBeNull();
@@ -216,4 +219,81 @@ test('a GitLab body keeps single newlines as line breaks, as GitLab renders them
   expect(paragraphs).toHaveLength(2);
   expect(paragraphs[0].querySelector('br')).not.toBeNull();
   expect(paragraphs[0].textContent).toBe('First line\nSecond line');
+});
+
+test('all comments and replies show their full Markdown without selecting a discussion', async () => {
+  const review = structuredClone(data);
+  const body = `${'A long comment. '.repeat(80)}\n\n**Final paragraph.**`;
+  review.discussions[1].notes[0].body = body;
+  review.discussions[1].notes.push({ ...review.discussions[1].notes[0], id: 3, body: 'A reply with *context*.' });
+  const { user } = draw(session, review);
+  const ending = await screen.findByText('Final paragraph.');
+  expect(ending.tagName).toBe('STRONG');
+  expect(ending.closest('article')?.querySelector('p')?.textContent).toBe('A long comment. '.repeat(80).trim());
+  expect(ending.closest('button')).toBeNull();
+  expect(screen.getByText('context').tagName).toBe('EM');
+  expect(screen.getAllByRole('article')).toHaveLength(3);
+  expect(screen.getByRole('button', { name: /Maya/ }).getAttribute('aria-pressed')).toBe('true');
+  await user.click(screen.getByRole('button', { name: /Luca Comment/ }));
+  expect(screen.getByRole('button', { name: /Luca Comment/ }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getAllByRole('article')).toHaveLength(3);
+});
+
+test('GitLab HTML hides comments and renders superscripts and nested collapsible Markdown', () => {
+  const { container } = render(<GitLabMarkdown text={[
+    'Before <!-- hidden marker --> after <sup>2</sup> and <sub>3</sub>.',
+    '',
+    '<details><summary>Review details</summary>',
+    '',
+    '**First paragraph**',
+    '',
+    '<details open><summary>Nested details</summary>',
+    '',
+    '- Nested item',
+    '',
+    '</details>',
+    '',
+    'Last paragraph',
+    '',
+    '</details>',
+    '',
+    '`<sup>literal</sup>`',
+    '',
+    '```html',
+    '<!-- literal comment -->',
+    '```',
+  ].join('\n')} />);
+  expect(container.textContent).not.toContain('hidden marker');
+  expect(container.querySelector('sup')?.textContent).toBe('2');
+  expect(container.querySelector('sub')?.textContent).toBe('3');
+  const details = container.querySelector('details')!;
+  expect(details).not.toBeNull();
+  expect(details.open).toBe(false);
+  expect(details.querySelector('summary')?.textContent).toBe('Review details');
+  expect(details.querySelector('strong')?.textContent).toBe('First paragraph');
+  expect(details.querySelector('details')?.open).toBe(true);
+  expect(details.querySelector('li')?.textContent).toBe('Nested item');
+  expect(details.textContent).toContain('Last paragraph');
+  expect(container.querySelector('p > code')?.textContent).toBe('<sup>literal</sup>');
+  expect(container.querySelector('pre code')?.textContent).toBe('<!-- literal comment -->\n');
+});
+
+test('GitLab HTML is sanitized and regular Markdown still escapes raw HTML', () => {
+  const { container, unmount } = render(<GitLabMarkdown text={[
+    '<script>alert(1)</script>',
+    '<iframe src="https://evil.example"></iframe>',
+    '<style>body { display: none }</style>',
+    '<details ontoggle="alert(1)"><summary onclick="alert(1)">Safe summary</summary>',
+    '<sup style="position:fixed" id="location">Safe superscript</sup>',
+    '<a href="javascript:alert(1)">Bad link</a>',
+    '<img src="https://evil.example/track.png" onerror="alert(1)" />',
+    '</details>',
+  ].join('\n')} />);
+  expect(container.querySelector('details summary')?.textContent).toBe('Safe summary');
+  expect(container.querySelector('sup')?.textContent).toBe('Safe superscript');
+  expect(container.querySelector('script, iframe, style, img, [onclick], [ontoggle], [onerror], [style], [id="location"], [href^="javascript:"]')).toBeNull();
+  unmount();
+  const plain = render(<Markdown text="Text <sup>2</sup> <!-- visible source -->" />);
+  expect(plain.container.querySelector('sup')).toBeNull();
+  expect(plain.container.textContent).toContain('<sup>2</sup> <!-- visible source -->');
 });
