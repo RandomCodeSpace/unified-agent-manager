@@ -47,9 +47,10 @@ type DirList struct {
 
 // listDirs lists the folders in p, the service user's home when p is empty:
 // directories and links to them, never files. Dot-folders are left out unless
-// showHidden. At most limit entries are returned, counted after that filter,
-// sorted by name without regard to case.
-func listDirs(p string, showHidden bool, limit int) (DirList, error) {
+// showHidden, and names without filter in them, ignoring case, when it is set.
+// At most limit entries are returned, counted after those filters, sorted by
+// name without regard to case.
+func listDirs(p string, showHidden bool, filter string, limit int) (DirList, error) {
 	if p == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -65,6 +66,7 @@ func listDirs(p string, showHidden bool, limit int) (DirList, error) {
 		return DirList{}, dirError("path", err)
 	}
 	out := DirList{Path: p, Entries: []DirEntry{}}
+	filter = strings.ToLower(filter)
 	if p != filepath.Dir(p) {
 		out.Parent = filepath.Dir(p)
 	}
@@ -76,7 +78,7 @@ func listDirs(p string, showHidden bool, limit int) (DirList, error) {
 			continue
 		}
 		hidden := strings.HasPrefix(name, ".")
-		if hidden && !showHidden {
+		if hidden && !showHidden || !strings.Contains(strings.ToLower(name), filter) {
 			continue
 		}
 		full := filepath.Join(p, name)

@@ -787,6 +787,9 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return ConfigurationFile{}, newError(http.StatusConflict, "configuration file is unavailable: %s", shortError(err))
 	}
+	if !remove && in.Disabled == nil && in.Path == "" && in.Revision == "" && revision != "" && kind != "instructions" {
+		return ConfigurationFile{}, newError(http.StatusConflict, "another %s is already named %q; choose another name", strings.TrimSuffix(kind, "s"), name)
+	}
 	if revision != in.Revision || remove && revision == "" {
 		return ConfigurationFile{}, newError(http.StatusConflict, "configuration changed; reload before saving or removing it")
 	}

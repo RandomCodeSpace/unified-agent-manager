@@ -192,6 +192,33 @@ describe('native configuration', () => {
     expect((await api.configuration()).agents.find((entry) => entry.name === 'reviewer')?.content).toContain('custom-field: keep-this');
   });
 
+  test.each([['Agents', 'Add agent'], ['Skills', 'Add skill'], ['Hooks', 'Add hook file']])('the %s Name pattern is valid where browsers check it with the v flag', async (kind, add) => {
+    const { user, card } = await open(kind);
+    await user.click(card.getByRole('button', { name: add }));
+    const pattern = (card.getByLabelText('Name') as HTMLInputElement).pattern;
+    const valid = new RegExp(`^(?:${pattern})$`, 'v');
+    expect(valid.test('bad name!')).toBe(false);
+    expect(valid.test('good-name-2')).toBe(true);
+  });
+
+  test('a new agent whose name is taken says so without offering to reload a saved version', async () => {
+    const { user, card } = await open('Agents');
+    const save = vi.spyOn(api, 'saveConfiguration').mockRejectedValueOnce(new ApiError(409, 'another agent is already named "reviewer"; choose another name'));
+    try {
+      await user.click(card.getByRole('button', { name: 'Add agent' }));
+      const form = within(card.getByRole('form', { name: 'Add agent' }));
+      await user.type(form.getByLabelText('Name'), 'reviewer');
+      await user.type(form.getByLabelText('Description'), 'Review changes');
+      await user.type(form.getByLabelText('Agent instructions'), 'Review the diff.');
+      await user.click(form.getByRole('button', { name: 'Add agent' }));
+      expect(await card.findByText(/another agent is already named "reviewer"/)).toBeTruthy();
+      expect(card.queryByRole('button', { name: 'Reload saved version' })).toBeNull();
+      expect((form.getByLabelText('Name') as HTMLInputElement).value).toBe('reviewer');
+    } finally {
+      save.mockRestore();
+    }
+  });
+
   test('guided skills serialize invocation, argument hint and preapproved tools from Advanced settings', async () => {
     const { user, card } = await open('Skills');
     await user.click(card.getByRole('button', { name: 'Add skill' }));

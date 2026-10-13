@@ -638,8 +638,9 @@ export interface UtilityDay {
 
 /** GET /api/utility: today against the daily limit, every day kept with its totals, and a page of calls, newest first. */
 export interface UtilityLog {
-  /** `unlimited` is set while the limit is lifted; the day never pauses for it then. */
-  today: { day: string; calls: number; limit: number; unlimited?: boolean; paused: boolean; resets_at: string };
+  /** `unlimited` is set while the limit is lifted; the day never pauses for it then. `paused_purposes` are paused until
+   * `resets_at` after repeated unusable answers. */
+  today: { day: string; calls: number; limit: number; unlimited?: boolean; paused: boolean; paused_purposes?: string[]; resets_at: string };
   days: UtilityDay[];
   calls: UtilityCall[];
   /** Pass as `before` for the next page; absent on the last. */
@@ -1661,9 +1662,10 @@ async function errorBody(res: Response): Promise<{ message: string; body: Record
 const enc = encodeURIComponent;
 
 /** The query of a directory listing: the path and the hidden flag, each only when given. */
-function dirsQuery(path: string | undefined, hidden: boolean): string {
-  if (path) return `?path=${enc(path)}${hidden ? '&hidden=1' : ''}`;
-  return hidden ? '?hidden=1' : '';
+/** `filter` keeps the names holding it, ignoring case, before the server's cap. */
+function dirsQuery(path: string | undefined, hidden: boolean, filter = ''): string {
+  const query = [path && `path=${enc(path)}`, hidden && 'hidden=1', filter && `filter=${enc(filter)}`].filter(Boolean);
+  return query.length ? `?${query.join('&')}` : '';
 }
 
 /** The detail stream's query: the agent window's cursors only when given, then one `item` per body. */
@@ -2118,7 +2120,7 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     updateProject: (id: string, body: { name: string }) => call<Project>('PATCH', `/api/projects/${enc(id)}`, body),
     deleteProject: (id: string) => call<void>('DELETE', `/api/projects/${enc(id)}`),
     /** Subdirectories of an absolute directory; the service user's home without `path`. Dot-folders only with `hidden`; the 1,000 cap counts what is listed. */
-    listDirs: (path?: string, hidden = false) => call<DirList>('GET', `/api/fs/dirs${dirsQuery(path, hidden)}`),
+    listDirs: (path?: string, hidden = false, filter = '') => call<DirList>('GET', `/api/fs/dirs${dirsQuery(path, hidden, filter)}`),
     makeDir: (parent: string, name: string) => call<{ path: string }>('POST', '/api/fs/dirs', { parent, name }),
 
     webSettings: () => call<Settings>('GET', '/api/settings'),

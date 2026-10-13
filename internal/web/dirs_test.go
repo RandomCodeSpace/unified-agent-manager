@@ -74,7 +74,7 @@ func TestListDirsPathRules(t *testing.T) {
 		{"file", root + "/file", http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := listDirs(tc.path, false, maxDirEntries)
+			_, err := listDirs(tc.path, false, "", maxDirEntries)
 			got := http.StatusOK
 			if err != nil {
 				got = statusOf(err)
@@ -95,7 +95,7 @@ func TestListDirsEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	list, err := listDirs(root, false, maxDirEntries)
+	list, err := listDirs(root, false, "", maxDirEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestListDirsEntries(t *testing.T) {
 			t.Fatalf("entry %+v is not displayable as it is", e)
 		}
 	}
-	withHidden, err := listDirs(root, true, maxDirEntries)
+	withHidden, err := listDirs(root, true, "", maxDirEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestListDirsEntries(t *testing.T) {
 func TestListDirsCap(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "c", "a", "b", ".h1", ".h2")
-	list, err := listDirs(root, false, 2)
+	list, err := listDirs(root, false, "", 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,11 +140,30 @@ func TestListDirsCap(t *testing.T) {
 		t.Fatalf("capped list = %+v", list)
 	}
 	// The cap counts what is listed: without hidden folders, three visible ones fit.
-	if list, _ := listDirs(root, false, 3); len(list.Entries) != 3 || list.Truncated {
+	if list, _ := listDirs(root, false, "", 3); len(list.Entries) != 3 || list.Truncated {
 		t.Fatalf("list at the cap = %+v", list)
 	}
-	if list, _ := listDirs(root, true, 2); len(list.Entries) != 2 || list.Entries[0].Name != ".h1" || list.Entries[1].Name != ".h2" || !list.Truncated {
+	if list, _ := listDirs(root, true, "", 2); len(list.Entries) != 2 || list.Entries[0].Name != ".h1" || list.Entries[1].Name != ".h2" || !list.Truncated {
 		t.Fatalf("capped list with hidden = %+v", list)
+	}
+}
+
+// The filter is applied before the cap, so a folder past it is still found.
+func TestListDirsFilterSearchesPastTheCap(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "a1", "a2", "a3", "Zeta-Target", "zz-target-2", ".target-hidden")
+	list, err := listDirs(root, false, "TARGET", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Entries) != 2 || list.Entries[0].Name != "Zeta-Target" || list.Entries[1].Name != "zz-target-2" || list.Truncated {
+		t.Fatalf("filtered list = %+v", list)
+	}
+	if list, _ := listDirs(root, false, "target", 1); len(list.Entries) != 1 || !list.Truncated {
+		t.Fatalf("filtered list past the cap = %+v", list)
+	}
+	if list, _ := listDirs(root, true, "target", 5); len(list.Entries) != 3 {
+		t.Fatalf("filtered list with hidden = %+v", list)
 	}
 }
 
@@ -186,7 +205,7 @@ func TestCheckPathText(t *testing.T) {
 }
 
 func TestListDirsRootHasNoParent(t *testing.T) {
-	list, err := listDirs("/", false, maxDirEntries)
+	list, err := listDirs("/", false, "", maxDirEntries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +220,7 @@ func TestListDirsPermissionDenied(t *testing.T) {
 	mkdirs(t, root, "locked/inner")
 	lockDir(t, filepath.Join(root, "locked"), 0)
 	for _, p := range []string{filepath.Join(root, "locked"), filepath.Join(root, "locked", "inner")} {
-		if _, err := listDirs(p, false, maxDirEntries); statusOf(err) != http.StatusForbidden {
+		if _, err := listDirs(p, false, "", maxDirEntries); statusOf(err) != http.StatusForbidden {
 			t.Fatalf("listDirs(%q) = %v, want 403", p, err)
 		}
 	}
@@ -314,6 +333,13 @@ func TestFolderRoutes(t *testing.T) {
 	if w := ts.do(http.MethodGet, list+"&hidden=1", "", withCookie(ts)); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil ||
 		len(got.Entries) != 2 || got.Entries[0].Name != ".dot" || !got.Entries[0].Hidden {
 		t.Fatalf("list with hidden=1 = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, list+"&hidden=1&filter=DO", "", withCookie(ts)); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil ||
+		len(got.Entries) != 1 || got.Entries[0].Name != ".dot" {
+		t.Fatalf("list with filter = %d %s", w.Code, w.Body)
+	}
+	if w := ts.do(http.MethodGet, list+"&filter="+strings.Repeat("x", maxDirNameBytes+1), "", withCookie(ts)); w.Code != http.StatusBadRequest {
+		t.Fatalf("list with an overlong filter = %d %s, want 400", w.Code, w.Body)
 	}
 	t.Setenv("HOME", root)
 	if w := ts.do(http.MethodGet, "/api/fs/dirs", "", withCookie(ts)); w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Path != root {

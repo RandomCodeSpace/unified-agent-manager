@@ -21,6 +21,11 @@ export function purposeLabel(purpose: string): string {
   return PURPOSES[purpose] ?? purpose.replaceAll('-', ' ');
 }
 
+/** When a pause ends: "midnight on the server, Wed 00:00 here". */
+export function resumeText(resetsAt: string): string {
+  return `midnight on the server, ${new Date(resetsAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here`;
+}
+
 const SKIPPED: Record<string, string> = { off: 'Skipped: Background AI off', invalid_streak: 'Skipped: repeated unusable answers' };
 
 /** What became of a call that did not run cleanly: "Skipped: daily limit", "Skipped: Background AI off", "Skipped: repeated unusable answers", "Failed"; "" when it ran. */
