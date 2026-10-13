@@ -94,7 +94,7 @@ const increment = (n: number) => n + 1;
 /** True while a Base UI popup (menu, dialog, tooltip) is open; app-level Esc handlers stand back. */
 export const popupOpen = () => !!document.querySelector('[data-popup]');
 /** A menu, dialog or other popup owns the keyboard; an open tooltip (Base UI marks it `data-popup="tooltip"`, with no role) does not. */
-const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
+export const keysTaken = () => !!document.querySelector('[data-popup]:not([data-popup="tooltip"])');
 
 /** Task streams render concurrently, without snapshot animations. Open overlays keep their immediate updates. */
 export function sessionsUpdate(update: () => void) {

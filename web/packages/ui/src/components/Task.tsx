@@ -22,7 +22,7 @@ import { Appear } from './ui/appear';
 import { Collapse, EXIT_MS, usePresence } from './ui/collapse';
 import { Composer, mentionFile, type Answering, type FirstMessage } from './Composer';
 import type { FileActions } from './GoToFile';
-import { popupOpen } from '../App';
+import { keysTaken } from '../App';
 import { HistoryStatus } from './PreviousSessions';
 import { InteractionCard } from './Interactions';
 import { SubagentIndex, SubagentScope, type Reveal } from './Subagents';
@@ -45,9 +45,13 @@ import { Button } from './ui/button';
 import { Menu, type ActionItem } from './ui/menu';
 import { Tip } from './ui/tooltip';
 
-/** Go to file and the file panel load with their first opening, never with the Thread. */
-const GoToFile = lazy(() => import('./GoToFile'));
-const FilePanel = lazy(() => import('./GoToFile').then((m) => ({ default: m.FilePanel })));
+// Go to file and the file panel load apart from the Thread: with their first opening, or once an open
+// Thread is idle. The module, once here, is rendered directly: it never suspends, so an open never
+// waits for React's fallback throttle (about 300 ms) the lazy wrappers incur on their first render.
+let goToFileModule: typeof import('./GoToFile') | null = null;
+const loadGoToFile = () => import('./GoToFile').then((m) => { goToFileModule = m; return m; });
+const GoToFileLazy = lazy(loadGoToFile);
+const FilePanelLazy = lazy(() => loadGoToFile().then((m) => ({ default: m.FilePanel })));
 const GitLabSheet = lazy(() => import('./GitLabSheet'));
 import type { GitLabOpenItem } from './GitLabSheet';
 import { GitLabItemsContext, useGitLabOrigin, type GitLabItems } from './GitLabStrip';
@@ -691,17 +695,28 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
   }), [openFile, openChanges, session.id]);
   const goToFileAvailable = !project?.no_git;
   // Alt+P opens Go to file from anywhere in the Thread but a popup or the terminal (Ctrl+P prints; Alt+F is the browser's menu).
+  // An open tooltip (the Files button's, once focus returns to it) does not take the key.
   useEffect(() => {
     if (!active || !goToFileAvailable) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.code !== 'KeyP' || e.defaultPrevented) return;
-      if (popupOpen() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
+      if (keysTaken() || (e.target instanceof Element && e.target.closest('.xterm'))) return;
       e.preventDefault();
       openGoToFile();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [active, goToFileAvailable, openGoToFile]);
+  // Go to file's code loads on demand; it is fetched once the open Thread is idle, so the first Alt+P opens as fast as the next.
+  useEffect(() => {
+    if (!active || !goToFileAvailable) return;
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1000));
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+    const handle = idle(() => { void loadGoToFile(); });
+    return () => cancel(handle);
+  }, [active, goToFileAvailable]);
+  const GoToFile = goToFileModule?.default ?? GoToFileLazy;
+  const FilePanel = goToFileModule?.FilePanel ?? FilePanelLazy;
   const closeGitlab = useCallback(() => setGitlabOpen(false), []);
   const openGitlabItem = useCallback((refs: GitLabRef[], ref: GitLabRef) => {
     closePreview(false);

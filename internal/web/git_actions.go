@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -451,8 +452,15 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 	if len(commit) == 0 {
 		return GitResult{}, errNothingToCommit
 	}
+	// What the chosen files' index entries were, so a refused commit can put
+	// them back; what was staged by hand is not touched either way.
+	snapshot, err := repo.indexSnapshot(ctx, add)
+	if err != nil {
+		return GitResult{}, err
+	}
 	if len(add) > 0 {
 		if out, err := runGitWrite(ctx, repo.top, nil, append([]string{"add", "-A", "--"}, add...)...); err != nil {
+			repo.restoreIndex(ctx, snapshot, add)
 			return GitResult{Output: out}, gitFailed("git could not stage the files", err)
 		}
 	}
@@ -465,6 +473,7 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 	// monitor also recovers it if the service stops before this write.
 	m.succeededToolUse(ctx, t.session, agentapi.ToolUse{Tool: "shell"})
 	if err != nil {
+		repo.restoreIndex(ctx, snapshot, add)
 		var gerr *gitError
 		if errors.As(err, &gerr) {
 			switch {
@@ -485,6 +494,41 @@ func (m *Manager) GitCommit(ctx context.Context, id string, paths []string, mess
 }
 
 var errNothingToCommit = newError(http.StatusConflict, "Nothing to commit: the chosen files have no changes.")
+
+// indexSnapshot is the index entries of paths as `git update-index
+// --index-info` reads them: a path not in the index has none.
+func (r *gitRepo) indexSnapshot(ctx context.Context, paths []string) ([]byte, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	out, code, stderr, err := runGit(ctx, r.git, r.top, maxStatusBytes, append([]string{"--literal-pathspecs", "ls-files", "--stage", "-z", "--"}, paths...)...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		return nil, newError(http.StatusBadGateway, "git ls-files failed: %s", gitMessage(stderr))
+	}
+	return out, nil
+}
+
+// restoreIndex puts the index entries of paths back as snapshot had them;
+// a path the snapshot lacks leaves the index again. A failure here is logged:
+// the commit's own error is what the caller reports.
+func (r *gitRepo) restoreIndex(ctx context.Context, snapshot []byte, paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	var info bytes.Buffer
+	info.Write(snapshot)
+	for _, p := range paths {
+		if !bytes.Contains(snapshot, []byte("\t"+p+"\x00")) {
+			fmt.Fprintf(&info, "0 %040d\t%s\x00", 0, p)
+		}
+	}
+	if out, err := runGitWrite(ctx, r.top, &info, "update-index", "-z", "--index-info"); err != nil {
+		log.Warn("the index could not be restored after a refused commit", "dir", r.top, "err", err, "output", out)
+	}
+}
 
 func plural(n int, one, many string) string {
 	if n == 1 {

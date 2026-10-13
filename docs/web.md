@@ -1660,18 +1660,28 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   tracked files in the Thread's repository are not committed (the count on
   its sidebar row; an older service without that count makes it the
   default scope's file count) and opens the changes beside the conversation with the diff (a
-  full-screen sheet on a narrow window). Three scopes sit at the top, each
-  with its file count: **This thread** (the default) lists the files this
-  Thread's agent or its subagents edited with an edit tool (create, write,
-  edit or a patch; one that failed is left out), compared with `HEAD`;
-  **Last turn** narrows that to the files edited since the latest prompt
-  you sent (a steer joins the running turn and does not start a new one); **All changes** is every uncommitted change in the working tree,
-  from any Thread or source. A file this Thread edited shows everything that
-  differs from `HEAD`, including changes something else made to it; a file
-  changed back or committed drops out. Files written by shell commands are
-  not attributed to the Thread. Until a Thread's history has been read, edits
-  from before it may be missing, and the panel says so. Each file shows its
-  status and `+added −removed` lines. Files that deserve a closer look come
+  full-screen sheet on a narrow window). The scopes at the top depend on
+  the Thread. A Copilot Thread whose conversation records its own file
+  changes (every Thread created since that record exists) has two:
+  **This thread** (the default) is Copilot's record of the files this
+  conversation changed, over its whole life, so a file stays listed after
+  it is committed; while the conversation is closed, a Git-based list of
+  the files its agent edited, compared with `HEAD`, stands in. **All
+  changes** is every uncommitted change in the working tree, from any
+  Thread or source: what is left to commit. Other Threads have three
+  scopes, each with its file count: **This thread** (the default) lists the
+  files this Thread's agent or its subagents edited with an edit tool
+  (create, write, edit or a patch; one that failed is left out), compared
+  with `HEAD`; **Last turn** narrows that to the files edited since the
+  latest prompt you sent (a steer joins the running turn and does not start
+  a new one); **All changes** as above. A file this Thread edited shows
+  everything that differs from `HEAD`, including changes something else
+  made to it; a file changed back or committed drops out. Files written by
+  shell commands are not attributed to the Thread. Until a Thread's history
+  has been read, edits from before it may be missing, and the panel says
+  so. Each file shows its status and `+added −removed` lines; a file
+  renamed in the index (`git mv`) names the path it came from and counts
+  only the lines that changed, not a whole new file. Files that deserve a closer look come
   first with a short reason: CI workflows, lockfiles, Dockerfiles,
   migrations, deploy files, and sign-in, security or secrets code. A note
   appears when the scope changes more than about 400 lines. Tick **Viewed**
@@ -1709,7 +1719,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   shows the subject's length against 72 characters. "Commit n files" stages
   exactly those files, deletions included, and commits them; files you
   staged yourself stay staged and out of the commit. The repository's hooks
-  run, and a hook's refusal shows its output. A file that was staged as new
+  run, and a hook's refusal shows its output and leaves the index as it
+  was: the files staged for that commit are unstaged again. A file that was staged as new
   and then deleted has nothing to commit and is left out of the commit, and
   out of the index. "Commit and push" also pushes.
   Push never forces: it pushes to the branch's upstream, or, without one, to
