@@ -318,17 +318,19 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
 
 ## Use it
 
-- **Projects**: add a directory on the Linux host as a Project. Type its
-  path, or press **Browse** next to the field to pick it: the picker opens in
-  the dialog at the folder in the field (your home when the field is empty
-  or not a folder) and lists the folders there, with git repositories and
-  symbolic links marked. Click a segment of the path at the top or **Up** to
-  go back, double-click a folder or its arrow to open it, and turn on **Show
-  hidden** for dot-folders. **New folder** adds a row where you type a name;
-  Enter creates the folder and selects it. **Use this folder** puts the
-  selected folder, or the one being shown, into the field. With the
-  keyboard: arrows move, Enter opens, Backspace goes up, typing jumps to a
-  name, and Ctrl+Enter (Cmd+Enter on a Mac) uses the folder. A directory
+- **Projects**: add a directory on the Linux host as a Project. **Add
+  project** opens a two-step dialog, Choose folder then Review project. The
+  folder picker opens at your home, or at a folder you pick from **Recent
+  folders**, and lists the folders there, with git repositories and
+  symbolic links marked; type a path in **Folder path** and press **Open**
+  (or Enter) to jump to it. Click a segment of the path at the top or **Up**
+  to go back, double-click a folder or its arrow to open it, and turn on
+  **Show hidden** for dot-folders. **New folder** adds a row where you type
+  a name; Enter creates the folder and selects it. **Continue** takes the
+  selected folder, or the one being shown, to the review step, where you
+  name the Project and press **Add project**. With the keyboard: arrows
+  move, Enter opens, Backspace goes up, typing jumps to a name, and
+  Ctrl+Enter (Cmd+Enter on a Mac) continues with the folder. A directory
   has one Project; adding it again points you to the existing one. "Edit
   project" (the gear beside the Project in the sidebar's filter list) renames
   it and offers "Previous sessions" and "Remove project". Editing a Project
@@ -740,8 +742,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   If you scroll up while text arrives, the view stays put
   and offers "Jump to bottom". While the agent works, a label above the
   composer shows that it is working and for how long, and stays in view as
-  you scroll; what it is doing shows at the end of the conversation. With
-  the Compact activity setting (the default), the step in progress stays
+  you scroll; what it is doing shows at the end of the conversation. The
+  step in progress stays
   open there: the thought being streamed, its newest lines in a short box,
   or the call that is running, as its line with the newest lines of its
   output. When the step finishes it leaves that spot and joins the counts on
@@ -966,8 +968,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   list holds the newest 200 subagents; when Copilot's record has older ones,
   the count reads "200+" and the list ends with "Show older subagents", which
   loads the next 100 from the record. Nothing older is read until you click.
-  The transcript uses the same Compact/Detailed preference as the main
-  conversation. Prose and paths wrap to fit; wide tables and code blocks
+  Prose and paths wrap to fit; wide tables and code blocks
   scroll within their own regions. Subagent output never
   appears in the Thread's own conversation. Its model and effort are shown
   when Copilot reports them; they are not guessed from the parent Thread.
@@ -976,22 +977,25 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   agent may still resume it. The web interface sends no messages to a
   subagent.
 - **Approvals and questions**: when the provider asks for permission or asks a
-  question, a card appears in the conversation and the Thread's row moves to
-  the attention items at the top of the sidebar, labelled "Input"; open the
-  Thread to answer (see Sidebar). Nothing is approved
+  question, a card appears in the conversation and the Thread's row in the
+  sidebar says it needs input; the row stays where it is (see Sidebar).
+  Open the Thread to answer. Nothing is approved
   automatically unless you turned on yolo for that Thread, and questions always
   wait for you. If no browser is connected, the request waits; the first
   answer from any tab wins and later answers are refused. Once decided, the
   card goes away: the decision shows on the tool call it was for, and a
   request UAM could not tie to a call shows as one grey line where it
   happened. A question with one question is not a card: it appears at the
-  top of the message box, with its options. Pick an option there (pick the
-  same one again to clear it) or type your own answer, then press Enter or
-  Answer. You can always type your own answer, even when the agent offered
+  top of the message box, with its options. One option is already picked
+  when the question appears: the one the agent marks "(Recommended)", else
+  the first. It is sent when you press Enter or Answer, or click the picked
+  option again. Pick another option to change it, or type your own answer.
+  You can always type your own answer, even when the agent offered
   options. The answer is either the picked option(s) or the typed text,
   never both: typing clears the picked option, and picking an option clears
-  the typed text. An option the agent marks "(Recommended)" is already picked
-  when the question appears; it is sent only when you press Enter or Answer.
+  the typed text. A question marked "Choose any that apply" starts with
+  nothing picked unless an option is recommended; clicks tick and untick
+  options, and Enter or Answer sends the ticked ones.
   Nothing else goes with an answer: Attach is unavailable while a question
   waits, and a dropped or pasted file is refused with "Answer the question
   first." **Decline** (an ×)
@@ -1388,36 +1392,43 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   the account's own models, so a Thread can switch between them mid-Thread in
   the composer's model menu. Each entry has a provider name (letters,
   digits, `.`, `_`, `-`), a base URL (`http` or `https`, no credentials,
-  query or fragment), a model ID, an optional display name, and the *name*
-  of the environment variable that holds the API key. That name must start
-  with `UAM_BYOM_` (e.g. `UAM_BYOM_OPENROUTER`), so a custom model can never
-  send any other variable of the service's environment to its endpoint. The
+  query or fragment), a model ID, an optional display name, and the API key
+  from one of two sources. **API key** (the default) is a key you type in
+  Settings: the service saves it in `sessions.json` (mode 0600, beside the
+  token) and never shows it again; Settings only says that a key is saved.
+  **Environment variable** is the *name* of a variable of the service's
+  environment that holds the key. That name must start with `UAM_BYOM_`
+  (e.g. `UAM_BYOM_OPENROUTER`), so a custom model can never send any other
+  variable of the service's environment to its endpoint. The
   model's ID in UAM is `provider/model_id`, e.g.
   `openrouter/qwen/qwen3-coder`. Models that share a provider name share its
-  base URL and key variable; at most 100 are kept. `PATCH /api/settings` with
+  base URL and key; at most 100 are kept. `PATCH /api/settings` with
   `{"custom_models": [...]}` replaces the whole list (fields `name`,
   `display_name`, `base_url`, `model_id`, `wire_api` (`completions`, the
-  default, or `responses`) and `api_key_env`); `[]` removes them all.
+  default, or `responses`) and `api_key` or `api_key_env`); `[]` removes
+  them all. An entry with neither key field keeps the key saved for the same
+  provider name, base URL and wire API; changing any of those means entering
+  the key again. Settings report `key_present` for each model, never a key.
   Removing a model also takes it out of `hidden_models` and clears a
   `title_model` set to it, so that provider uses its cheapest model again. In Settings a provider is added or edited as
-  a whole: name, base URL and key variable, then **Load models** lists what
+  a whole: name, base URL and key, then **Load models** lists what
   the endpoint serves as a searchable checklist (select all or none), and a
   model ID the endpoint does not list can be typed in. Saving writes one
   entry per checked model, named by its ID. The composer's model menu lists
   custom models under their provider name. **Load models** is
   `POST /api/settings/custom-models/discover` with
-  `{"base_url", "api_key_env", "wire_api"}` (validated like a custom model);
+  `{"base_url", "api_key" or "api_key_env", "wire_api"}` (validated like a
+  custom model);
   the service sends one `GET {base_url}/models` with the key, follows no
   redirect, stops after 10 s or 1 MiB, and answers
   `{"models": [sorted IDs, at most 500], "truncated": true|omitted,
   "key_present": true}`, or an error with only the upstream status line.
   This is an authenticated request from the service to a URL the browser chose.
-  A signed-in owner can make the service send this GET, with a `UAM_BYOM_` key,
+  A signed-in owner can make the service send this GET, with the key,
   to any host it can reach, including loopback and private addresses.
-  The key itself never passes through the browser,
-  the API, `sessions.json` or the service log: the service reads the
-  variable from its own environment when it opens a Copilot session, and
-  settings only report `key_present`. Export the variable where the service
+  An environment key never passes through the browser or the API: the
+  service reads the variable from its own environment when it opens a
+  Copilot session. Export the variable where the service
   starts, then restart the service. A service started from a clean shell,
   such as `env -i HOME=$HOME bash -ic 'uam web …'`, reads only the
   interactive profile, so put `export UAM_BYOM_<NAME>=…` in `~/.bashrc`. A

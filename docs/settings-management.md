@@ -6,11 +6,13 @@ Field and setting descriptions are available from the info icon beside their
 labels. Hover, focus, or tap the icon to read the help. Errors and reasons an
 action is unavailable stay visible.
 
-The pages are grouped. **Threads** holds New threads (thread defaults), Composer
-and Archived. **Models & AI** holds Models (visibility and subagent models),
-Background AI (the Utility model and its daily limit) and Token costs.
-**Accounts** holds GitHub Copilot (sign-in and CLI updates) and Custom
-providers (your own endpoints). **Agent toolkit** holds Agents, Skills,
+The pages are grouped. **Threads** holds New threads (thread defaults), Composer,
+Worktrees (Threads' worktrees and the disk they use) and Archived. **Models &
+AI** holds Models (visibility and subagent models), Background AI (the
+Utility model and its daily limit) and Token costs. **Accounts** holds GitHub
+Copilot (sign-in and CLI updates), GitLab (pipeline investigation, merge
+request descriptions and `glab` access) and Custom providers (your own
+endpoints). **Agent toolkit** holds Agents, Skills,
 Hooks, Instructions and MCP servers. **Server** holds UAM and access (the
 version, Terminal and Log out) and Connected instances. **This browser**
 holds Appearance & alerts. A dot on a page means something there needs you,
