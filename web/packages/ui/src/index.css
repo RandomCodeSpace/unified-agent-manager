@@ -718,12 +718,15 @@
     vertical-align: top;
     overflow-wrap: anywhere;
   }
-  .data-table thead th {
+  .data-table thead th,
+  .md .data-table thead th {
     position: sticky;
     top: 0;
     z-index: 1;
     background: var(--color-canvas);
     font-weight: 500;
+    /* A heading never breaks inside a word: a wide table scrolls in its box instead. */
+    overflow-wrap: normal;
   }
   .data-table tbody th { font-weight: 400; }
   .data-table tbody tr:last-child > * { border-bottom: 0; }

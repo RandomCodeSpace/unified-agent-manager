@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -76,6 +78,60 @@ func withoutScratchPlan(ctx context.Context, sess any, planPath string, changes 
 	return kept
 }
 
+var hunkHeader = regexp.MustCompile(`^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@`)
+
+// withTrailingContext puts back the blank context lines the CLI trims from
+// the end of a patch, with its final newline: a last hunk whose header
+// promises more lines than its body holds, the same number short on both
+// sides, ended in blank context. A patch parser refuses the short hunk.
+func withTrailingContext(patch string) string {
+	start := strings.LastIndex(patch, "\n@@ ") + 1
+	if start == 0 && !strings.HasPrefix(patch, "@@ ") {
+		return patch
+	}
+	header, body, _ := strings.Cut(patch[start:], "\n")
+	m := hunkHeader.FindStringSubmatch(header)
+	if m == nil {
+		return patch
+	}
+	oldWant, newWant := hunkCount(m[1]), hunkCount(m[2])
+	oldHave, newHave := 0, 0
+	if body != "" {
+		for line := range strings.SplitSeq(strings.TrimSuffix(body, "\n"), "\n") {
+			switch {
+			case strings.HasPrefix(line, "\\"): // "\ No newline at end of file"
+			case strings.HasPrefix(line, "+"):
+				newHave++
+			case strings.HasPrefix(line, "-"):
+				oldHave++
+			default:
+				oldHave++
+				newHave++
+			}
+		}
+	}
+	missing := oldWant - oldHave
+	if missing <= 0 || missing != newWant-newHave {
+		return patch
+	}
+	if !strings.HasSuffix(patch, "\n") {
+		patch += "\n"
+	}
+	return patch + strings.Repeat(" \n", missing)
+}
+
+// hunkCount is a hunk header's line count; an absent one means 1.
+func hunkCount(s string) int {
+	if s == "" {
+		return 1
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
 func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, error) {
 	c.mu.Lock()
 	if c.closed {
@@ -119,12 +175,16 @@ func (c *conversation) nativeDiff(ctx context.Context) ([]agentapi.FileDiff, err
 		binary := strings.HasPrefix(change.Diff, "Binary files ") || strings.Contains(change.Diff, "\nBinary files ") || strings.Contains(change.Diff, "\nGIT binary patch\n")
 		truncated := change.IsTruncated != nil && *change.IsTruncated
 		recognized := strings.HasPrefix(change.Diff, "diff --git ") || strings.HasPrefix(change.Diff, "--- ")
+		patch := change.Diff
+		if recognized && !binary && !truncated {
+			patch = withTrailingContext(patch)
+		}
 		oldPath := ""
 		if change.OldPath != nil {
 			oldPath = *change.OldPath
 		}
 		files = append(files, agentapi.FileDiff{
-			Path: change.Path, Status: string(change.ChangeType), OldPath: oldPath, Patch: change.Diff,
+			Path: change.Path, Status: string(change.ChangeType), OldPath: oldPath, Patch: patch,
 			Binary: binary, Truncated: truncated,
 			CountsUnknown: binary || truncated || !recognized && (change.Diff != "" || change.ChangeType != rpc.WorkspaceDiffFileChangeTypeRenamed),
 		})

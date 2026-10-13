@@ -899,7 +899,9 @@ func (s *webSession) sinceYouLeft(mark, until time.Time) *SinceSummary {
 	for _, t := range s.turnTimings {
 		if !t.EndedAt.IsZero() && after(t.EndedAt) {
 			last = t.State
-			if t.State == StateCompleted {
+			// A turn the provider began on its own (a background subagent's
+			// result) is its prompt's work, not a turn of its own.
+			if t.State == StateCompleted && t.UserItemID != "" {
 				completed++
 			}
 		}

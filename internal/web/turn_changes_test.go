@@ -324,6 +324,57 @@ func TestTurnChangesBoundsUnknownAndHTTPBinding(t *testing.T) {
 	}
 }
 
+// A background subagent still running when the owner's turn ends leaves the
+// provider busy, and its result comes in a turn the provider begins on its own.
+// The capture reads again once that settled; the provider's own turn, with no
+// prompt, has no changes of its own.
+func TestTurnChangesReadAgainAfterBusyThroughAProviderTurn(t *testing.T) {
+	saved := turnChangeRetryWaits
+	turnChangeRetryWaits = make([]time.Duration, 200)
+	for i := range turnChangeRetryWaits {
+		turnChangeRetryWaits[i] = 5 * time.Millisecond
+	}
+	t.Cleanup(func() { turnChangeRetryWaits = saved })
+	m, p, _ := newTestManager(t)
+	sum, c := createSession(t, m, p)
+	var settled atomic.Bool
+	var reads atomic.Int64
+	ownTurnChangeReader(m, sum.ID, c, func(_ context.Context, user string) (agentapi.NativeTurnChanges, error) {
+		// The first read is always busy: the background subagent is still running.
+		if reads.Add(1) == 1 || !settled.Load() {
+			return agentapi.NativeTurnChanges{Status: "busy"}, nil
+		}
+		return nativeTurnFacts("native-first", 2), nil
+	})
+	c.EmitTurn(agentapi.TurnWorking, "")
+	c.EmitItem(agentapi.Item{ID: "first", Kind: agentapi.ItemUser})
+	c.EmitTurn(agentapi.TurnCompleted, "")
+	c.EmitTurn(agentapi.TurnWorking, "")
+	c.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the provider's own turn", func() bool {
+		timings := detail(t, m, sum.ID).TurnTimings
+		return len(timings) == 2 && !timings[1].EndedAt.IsZero()
+	})
+	if timings := detail(t, m, sum.ID).TurnTimings; timings[0].UserItemID != "first" || timings[0].Changes == nil || timings[0].Changes.Status == "available" || timings[1].UserItemID != "" || timings[1].Changes != nil {
+		t.Fatalf("timings before settling = %+v", timings)
+	}
+	settled.Store(true)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		timings := detail(t, m, sum.ID).TurnTimings
+		if timings[0].Changes != nil && timings[0].Changes.Status == "available" {
+			if timings[0].Changes.Additions != 2 || timings[1].Changes != nil || reads.Load() < 2 {
+				t.Fatalf("settled timings = %+v; reads %d", timings, reads.Load())
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the owner turn's changes did not settle: %+v %+v; reads %d", timings[0].Changes, timings[1], reads.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestTurnChangesEmptyDetailPreservesTimingArray(t *testing.T) {
 	m, p, _ := newTestManager(t)
 	sum, _ := createSession(t, m, p)

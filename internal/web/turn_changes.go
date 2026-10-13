@@ -35,48 +35,90 @@ func cloneTurnChanges(records []TurnChanges) []TurnChanges {
 	return out
 }
 
+// A read the provider answers busy, or that lands while it runs a turn of its
+// own (a background subagent still working when the owner's turn ended, then
+// the turn delivering its result), is repeated after these waits. After the
+// last, what the read says is kept.
+var turnChangeRetryWaits = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, time.Minute, time.Minute, time.Minute}
+
+// turnChangeScope is the conversation a capture belongs to: any change ends it.
+type turnChangeScope struct {
+	conv      agentapi.Conversation
+	convID    string
+	gen       uint64
+	history   uint64
+	idleEdits uint64
+}
+
 func (m *Manager) kickTurnChangesLocked(s *webSession, timing TurnTiming) {
 	reader, ok := s.conv.(agentapi.TurnChangeReader)
 	if !ok || !s.nativeChanges || m.closed || s.removed || timing.UserItemID == "" || timing.EndedAt.IsZero() {
 		return
 	}
-	conv, convID, gen, history, revision, turnSeq := s.conv, s.convID, s.gen, s.historyGen, s.nativeDiffRevision, s.turnSeq
+	scope := turnChangeScope{conv: s.conv, convID: s.convID, gen: s.gen, history: s.historyGen, idleEdits: s.idleToolEdits}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
-		defer cancel()
-		release, err := m.readSlot(ctx)
-		if err != nil {
-			return
+		for attempt := 0; ; attempt++ {
+			if !m.captureTurnChanges(s, reader, timing, scope, attempt < len(turnChangeRetryWaits)) {
+				return
+			}
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-time.After(turnChangeRetryWaits[attempt]):
+			}
 		}
-		defer release()
-		facts, err := reader.TurnChanges(ctx, timing.UserItemID)
-		if err != nil {
-			facts = agentapi.NativeTurnChanges{Status: "unknown"}
-		}
-		rec := checkedTurnChanges(timing, facts)
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		i := slices.IndexFunc(s.turnTimings, func(t TurnTiming) bool {
-			return t.ID == timing.ID && t.UserItemID == timing.UserItemID && t.EndedAt.Equal(timing.EndedAt)
-		})
-		// Even a native result that raced a later turn is never recomputed for this
-		// older timing. A submission changes turnSeq before its SDK events arrive;
-		// its initial unknown remains the honest immutable result.
-		if m.closed || s.removed || m.sessions[s.id] != s || s.conv != conv || s.convID != convID || s.gen != gen || s.historyGen != history || s.nativeDiffRevision != revision || s.turnSeq != turnSeq || s.activeTiming >= 0 || i < 0 || i != len(s.turnTimings)-1 {
-			return
-		}
-		before := m.summaryLocked(s)
-		current := s.turnTimings[i]
-		current.Changes = &rec.Counts
-		s.turnTimings[i] = current
-		if rec.Counts.Status == "available" {
-			s.turnChanges = append(s.turnChanges, rec)
-		}
-		m.publishTurnTimingLocked(s, current)
-		m.changedLocked(s, before)
 	}()
+}
+
+// captureTurnChanges reads the turn's native changes once and keeps them on
+// its timing. True asks for another read later: the provider was busy, or
+// a turn it began on its own was running (`retry` permitting).
+func (m *Manager) captureTurnChanges(s *webSession, reader agentapi.TurnChangeReader, timing TurnTiming, scope turnChangeScope, retry bool) bool {
+	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
+	defer cancel()
+	release, err := m.readSlot(ctx)
+	if err != nil {
+		return false
+	}
+	defer release()
+	facts, err := reader.TurnChanges(ctx, timing.UserItemID)
+	if err != nil {
+		facts = agentapi.NativeTurnChanges{Status: "unknown"}
+	}
+	rec := checkedTurnChanges(timing, facts)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i := slices.IndexFunc(s.turnTimings, func(t TurnTiming) bool {
+		return t.ID == timing.ID && t.UserItemID == timing.UserItemID && t.EndedAt.Equal(timing.EndedAt)
+	})
+	// Even a native result that raced a later turn is never recomputed for this
+	// older timing. A submission marks the session working before its SDK
+	// events start a timing; its initial unknown remains the honest immutable
+	// result. Later turns the provider began on its own (no owner prompt) are
+	// this prompt's work: the provider's own proof decides whether the counts
+	// are still this turn's.
+	if m.closed || s.removed || m.sessions[s.id] != s || s.conv != scope.conv || s.convID != scope.convID || s.gen != scope.gen || s.historyGen != scope.history || s.idleToolEdits != scope.idleEdits || i < 0 {
+		return false
+	}
+	submitted := s.activeTiming < 0 && (s.base == StateWorking || s.base == StateStarting)
+	if submitted || s.pendingTimingUser != "" || slices.ContainsFunc(s.turnTimings[i+1:], func(t TurnTiming) bool { return t.UserItemID != "" }) {
+		return false
+	}
+	if retry && (s.activeTiming >= 0 || rec.Counts.Status == "busy") {
+		return true
+	}
+	before := m.summaryLocked(s)
+	current := s.turnTimings[i]
+	current.Changes = &rec.Counts
+	s.turnTimings[i] = current
+	if rec.Counts.Status == "available" {
+		s.turnChanges = append(s.turnChanges, rec)
+	}
+	m.publishTurnTimingLocked(s, current)
+	m.changedLocked(s, before)
+	return false
 }
 
 // Check the optional provider seam before storing it. Counts are authoritative

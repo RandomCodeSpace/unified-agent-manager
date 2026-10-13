@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -44,6 +45,16 @@ func TestTaskAgentsListsUserInvocableAgents(t *testing.T) {
 	prov.agentsErr = errors.New("discovery broke")
 	if _, err := m.TaskAgents(project, "fake"); statusOf(err) != http.StatusBadGateway {
 		t.Fatalf("failed discovery = %v", err)
+	}
+	// A Project whose folder is gone offers nothing, without asking discovery.
+	dir := t.TempDir()
+	gone := addProject(t, m, dir)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	asked := len(prov.projects)
+	if agents, err := m.TaskAgents(gone, "fake"); err != nil || agents == nil || len(agents) != 0 || len(prov.projects) != asked {
+		t.Fatalf("gone folder = %+v, %v; discoveries %d", agents, err, len(prov.projects)-asked)
 	}
 	plain := startManager(t, openTestStore(t), agenttest.NewProvider("plain", allCaps))
 	if _, err := plain.TaskAgents(addProject(t, plain, t.TempDir()), "plain"); statusOf(err) != http.StatusConflict {
