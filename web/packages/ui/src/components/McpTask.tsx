@@ -103,7 +103,8 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
               <>
                 <span aria-hidden="true">·</span>
                 <button type="button" className="rounded-xs text-meta text-muted underline-offset-2 hover:text-ink hover:underline pointer-coarse:min-h-11" aria-expanded={toolsOpen} onClick={() => { if (!toolsOpen) { setTools(null); setToolsError(null); } setToolsOpen(!toolsOpen); }}>
-                  {tools === null ? 'Tools' : tools.length === 1 ? '1 tool' : `${tools.length} tools`}
+                  {/* The count is known once listed: reading a server's tools is left to this button. */}
+                  {tools === null ? 'Show tools' : tools.length === 1 ? '1 tool' : `${tools.length} tools`}
                 </button>
               </>
             )}

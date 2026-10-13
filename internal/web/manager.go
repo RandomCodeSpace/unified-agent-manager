@@ -2614,6 +2614,9 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickBranchLocked(s.projectID)
 		m.kickWorktreeSizeLocked(s)
 		m.kickQuotaLocked(s.provider)
+		if s.routineID != "" {
+			m.kickRoutines() // its run ends now, not at the next tick
+		}
 		if s.titleWait != nil {
 			m.titleAfterReplyLocked(s)
 			m.kickPlaceNameLocked(s) // when the wait ended without a job

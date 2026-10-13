@@ -76,6 +76,15 @@ test('closed and unsupported providers keep quick totals without resuming or req
   expect(read).not.toHaveBeenCalled();
 });
 
+test('a draft Thread is not closed: its context waits for the Thread to start', async () => {
+  const read = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({ info });
+  draw({ ...session, id: '', conversation_id: '', open: false, context: undefined });
+  await userEvent.click(screen.getByRole('button', { name: /^Tools/ }));
+  expect(await screen.findByText('Context breakdown is reported once the Thread starts.')).toBeTruthy();
+  expect(screen.queryByText(/closed Thread/)).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+});
+
 test('missing native context is unavailable and an error remains an error', async () => {
   const read = vi.spyOn(api, 'contextBreakdown').mockResolvedValue({});
   const view = draw({ ...session, context: undefined });

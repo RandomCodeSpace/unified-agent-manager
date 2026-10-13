@@ -73,6 +73,15 @@ test('a subagent row is named by what it was asked to do, with its kind, not its
   expect(screen.getByText('explore').closest('summary')!.textContent).toBe('explore(agent-2)');
 });
 
+test('a draft Thread is not closed: its native metrics wait for the Thread to start', async () => {
+  const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
+  draw({ ...session, id: '', conversation_id: '', open: false, usage: undefined });
+  await openUsage();
+  expect(await screen.findByText('Native usage metrics are reported once the Thread starts.')).toBeTruthy();
+  expect(screen.queryByText(/closed or inactive/)).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+});
+
 test('closed and inactive Tasks never read or resume, while unsupported services keep the existing quick report', async () => {
   const read = vi.spyOn(api, 'taskUsageMetrics').mockResolvedValue(metrics);
   const view = draw({ ...session, open: false });

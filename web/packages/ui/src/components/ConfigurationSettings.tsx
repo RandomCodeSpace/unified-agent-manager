@@ -271,8 +271,9 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
   </Field>;
   const formRef = useInlineForm<HTMLFormElement>(() => { if (!busy) onCancel(); });
   return <form ref={formRef} aria-label={`${editing ? 'Edit' : 'Add'} ${label}`} className="flex min-w-0 flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={onSave}>
-    {kind !== 'instructions' && <Field id={`${prefix}-name`} label="Name" hint="Lowercase letters, numbers and hyphens. The service chooses the file path.">
-      <Input id={`${prefix}-name`} required pattern={kind === 'skills' ? '[a-z0-9]+(-[a-z0-9]+)*' : '[a-z0-9][a-z0-9\\-]*'} maxLength={kind === 'skills' ? 64 : undefined} value={draft.name} disabled={busy || locked || editing} onChange={(e) => change({ name: e.target.value })} />
+    {kind !== 'instructions' && <Field id={`${prefix}-name`} label="Name" hint={kind === 'skills' ? 'Lowercase letters, numbers and hyphens. The service chooses the file path.' : 'Letters, digits, dots, underscores and hyphens, starting with a letter or digit. The service chooses the file path.'}>
+      {/* Agents and hooks follow the service's rule (configuration.go): no ".." anywhere. */}
+      <Input id={`${prefix}-name`} required pattern={kind === 'skills' ? '[a-z0-9]+(-[a-z0-9]+)*' : '(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9_.\\-]*'} maxLength={kind === 'skills' ? 64 : 128} value={draft.name} disabled={busy || locked || editing} onChange={(e) => change({ name: e.target.value })} />
     </Field>}
     {draft.path && <Note className="break-all">{draft.path}{kind === 'skills' && <span className="mt-1 block">Saving changes this resolved file and any aliases that link to it.</span>}</Note>}
     {draft.raw !== null ? kind === 'instructions' ? nativeEditor : <details open className="group"><Summary>Advanced settings</Summary><div className="mt-3">{nativeEditor}</div></details> : <>
