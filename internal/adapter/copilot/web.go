@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 const (
 	webPingInterval = 10 * time.Second
 	webPingTimeout  = 10 * time.Second
+	webPingMisses   = 3
 	webStartTimeout = 30 * time.Second
 	webStopTimeout  = 15 * time.Second
 	webCheckTimeout = 10 * time.Second
@@ -402,7 +404,7 @@ func newSDKClient() (sdkClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sdkClientAt(path, true), nil
+	return sdkClientAt(nativeCopilot(path), true), nil
 }
 
 // sdkClientAt points the SDK at the CLI at path, retaining the user's login
@@ -469,6 +471,96 @@ func nodeScript(path string) bool {
 	defer func() { _ = f.Close() }()
 	line, _ := bufio.NewReader(io.LimitReader(f, 256)).ReadString('\n')
 	return strings.HasPrefix(line, "#!") && strings.Contains(line, "node")
+}
+
+// nativeCopilot returns the platform binary the npm loader at path runs,
+// found the way Node resolves it from the loader, so the process the SDK
+// starts, pings and kills is the CLI itself. Through the loader the CLI is
+// the loader's child, and killing the loader leaves a hung CLI running. It
+// returns path when path is not the npm loader, this Linux's C library
+// cannot be told, or no platform package is installed.
+func nativeCopilot(path string) string {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil || !nodeScript(target) {
+		return path
+	}
+	platforms := []string{runtime.GOOS}
+	if runtime.GOOS == "linux" {
+		switch lddLibc(lddPath) {
+		case "glibc":
+		case "musl":
+			platforms = []string{"linuxmusl", "linux"}
+		default:
+			return path
+		}
+	}
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "x64"
+	}
+	for _, platform := range platforms {
+		pkg := filepath.Join("node_modules", copilotPackage+"-"+platform+"-"+arch)
+		for dir := filepath.Dir(target); ; dir = filepath.Dir(dir) {
+			if filepath.Base(dir) != "node_modules" {
+				if bin := packageBinary(filepath.Join(dir, pkg)); bin != "" {
+					return bin
+				}
+			}
+			if dir == filepath.Dir(dir) {
+				break
+			}
+		}
+	}
+	return path
+}
+
+// lddPath is the ldd nativeCopilot reads the C library from. Tests replace
+// it.
+var lddPath = "/usr/bin/ldd"
+
+// lddLibc names the C library ldd at path belongs to, as the npm loader's
+// detect-libc reads it: "musl", "glibc", or "" when it does not tell.
+func lddLibc(path string) string {
+	b, err := os.ReadFile(path) // #nosec G304 -- the system ldd, or a test fixture.
+	switch {
+	case err != nil:
+		return ""
+	case strings.Contains(string(b), "musl"):
+		return "musl"
+	case strings.Contains(string(b), "GNU C Library"):
+		return "glibc"
+	}
+	return ""
+}
+
+// packageBinary returns the executable the npm package in dir exports as
+// its main entry, or "" when there is none.
+func packageBinary(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "package.json")) // #nosec G304 -- inside the service owner's copilot install found from PATH.
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Exports json.RawMessage `json:"exports"`
+	}
+	if json.Unmarshal(b, &pkg) != nil {
+		return ""
+	}
+	var entry string
+	if json.Unmarshal(pkg.Exports, &entry) != nil {
+		var entries map[string]json.RawMessage
+		if json.Unmarshal(pkg.Exports, &entries) != nil || json.Unmarshal(entries["."], &entry) != nil {
+			return ""
+		}
+	}
+	bin := filepath.Join(dir, filepath.FromSlash(entry))
+	if !strings.HasPrefix(bin, dir+string(filepath.Separator)) {
+		return ""
+	}
+	if info, err := os.Stat(bin); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return ""
+	}
+	return bin
 }
 
 func (p *webProvider) Name() string        { return agentapi.ProviderCopilot }
@@ -1692,9 +1784,12 @@ func (p *webProvider) startUtility(ctx context.Context) (client sdkClient, done 
 
 // watch pings the CLI until stop closes. The SDK reports neither a CLI exit
 // nor a hang, so a failed ping is the only signal that the runtime is gone.
+// A ping that fails ends it at once; one that times out does only after
+// webPingMisses in a row, since a busy CLI can miss one and recover.
 func (p *webProvider) watch(c sdkClient, stop <-chan struct{}) {
 	t := time.NewTicker(p.pingEvery)
 	defer t.Stop()
+	misses := 0
 	for {
 		select {
 		case <-stop:
@@ -1705,7 +1800,12 @@ func (p *webProvider) watch(c sdkClient, stop <-chan struct{}) {
 		ctx, cancel := context.WithTimeout(context.Background(), webPingTimeout)
 		err := c.Ping(ctx)
 		cancel()
-		if err != nil {
+		switch {
+		case err == nil:
+			misses = 0
+		case errors.Is(err, context.DeadlineExceeded) && misses+1 < webPingMisses:
+			misses++
+		default:
 			p.fail(c, "Copilot CLI stopped: "+exitText(err))
 			return
 		}

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -38,14 +39,18 @@ type fakeClient struct {
 	startErr  error
 	createErr error
 	pingErr   error
-	resumeErr error
-	models    []rpc.Model
-	modelsErr error
-	quota     map[string]rpc.AccountQuotaSnapshot
-	quotaErr  error
-	sessions  []*fakeSession
-	create    []*copilot.SessionConfig
-	resume    []*copilot.ResumeSessionConfig
+	// pingScript answers the next pings in order, before pingErr does;
+	// pings counts every ping.
+	pingScript []error
+	pings      int
+	resumeErr  error
+	models     []rpc.Model
+	modelsErr  error
+	quota      map[string]rpc.AccountQuotaSnapshot
+	quotaErr   error
+	sessions   []*fakeSession
+	create     []*copilot.SessionConfig
+	resume     []*copilot.ResumeSessionConfig
 	// reply answers SendAndWait on the sessions created afterwards.
 	reply     func(context.Context, copilot.MessageOptions) (string, error)
 	deleted   []string
@@ -171,6 +176,12 @@ func (f *fakeClient) ForceStop()  { f.mu.Lock(); f.forced++; f.mu.Unlock() }
 func (f *fakeClient) Ping(context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.pings++
+	if len(f.pingScript) > 0 {
+		err := f.pingScript[0]
+		f.pingScript = f.pingScript[1:]
+		return err
+	}
 	return f.pingErr
 }
 
@@ -1566,6 +1577,145 @@ func TestWebWatchdogFailureEndsConversationsAndResetsClient(t *testing.T) {
 			t.Fatalf("prompt resent: %v", s.sent)
 		}
 	}
+}
+
+func TestWebWatchdogToleratesPingTimeoutsBelowTheLimit(t *testing.T) {
+	timeout := context.DeadlineExceeded
+	fc := &fakeClient{pingScript: []error{timeout, timeout, nil, timeout, timeout, nil}}
+	p := newWebProvider(func() (sdkClient, error) { return fc, nil }, time.Millisecond)
+	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	sink := &recSink{}
+	if _, err := p.Open(context.Background(), agentapi.OpenRequest{SessionID: "a", Events: sink}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "scripted pings", func() bool { fc.mu.Lock(); defer fc.mu.Unlock(); return fc.pings > 6 })
+	if _, forced := fc.counts(); forced != 0 || sink.last().Kind == agentapi.EventExit {
+		t.Fatalf("CLI stopped after %d timeouts in a row: forced %d, last event %+v", webPingMisses-1, forced, sink.last())
+	}
+
+	fc.mu.Lock()
+	fc.pingScript = slices.Repeat([]error{timeout}, webPingMisses)
+	fc.mu.Unlock()
+	waitFor(t, "exit event", func() bool { return sink.last().Kind == agentapi.EventExit })
+	if msg := sink.last().Error; !strings.Contains(msg, "Copilot CLI stopped") {
+		t.Fatalf("exit reason = %q", msg)
+	}
+	waitFor(t, "force stop", func() bool { _, forced := fc.counts(); return forced == 1 })
+}
+
+// npmCopilot lays out an npm global install of copilot under a temporary
+// prefix: the loader in its package folder and the command linking to it.
+// It returns the command and the global node_modules folder.
+func npmCopilot(t *testing.T) (cmd, root string) {
+	t.Helper()
+	prefix := t.TempDir()
+	root = filepath.Join(prefix, "lib", "node_modules")
+	for _, d := range []string{filepath.Join(root, "@github", "copilot"), filepath.Join(prefix, "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(root, "@github", "copilot", "npm-loader.js"), "#!/usr/bin/env node\n", 0o755)
+	cmd = filepath.Join(prefix, "bin", "copilot")
+	if err := os.Symlink("../lib/node_modules/@github/copilot/npm-loader.js", cmd); err != nil {
+		t.Fatal(err)
+	}
+	return cmd, root
+}
+
+// platformPackage installs the platform package named by platform under
+// modules with exports as its exports field, and returns its binary.
+func platformPackage(t *testing.T, modules, platform, exports string, mode os.FileMode) string {
+	t.Helper()
+	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[runtime.GOARCH]
+	dir := filepath.Join(modules, "@github", "copilot-"+platform+"-"+arch)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, "package.json"), `{"name":"@github/copilot-`+platform+`-`+arch+`","exports":`+exports+`}`, 0o644)
+	bin := filepath.Join(dir, "copilot")
+	writeFile(t, bin, "\x7fELF", mode)
+	real, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func TestNativeCopilotRunsThePlatformBinary(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" || runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("no Copilot CLI platform package for this platform")
+	}
+	ldd := func(body string) {
+		path := filepath.Join(t.TempDir(), "ldd")
+		writeFile(t, path, body, 0o755)
+		old := lddPath
+		lddPath = path
+		t.Cleanup(func() { lddPath = old })
+	}
+	ldd("#!/bin/bash\n# This file is part of the GNU C Library.\n")
+	nested := func(root string) string { return filepath.Join(root, "@github", "copilot", "node_modules") }
+
+	t.Run("nested package", func(t *testing.T) {
+		cmd, root := npmCopilot(t)
+		want := platformPackage(t, nested(root), runtime.GOOS, `{".":"./copilot"}`, 0o755)
+		if got := nativeCopilot(cmd); got != want {
+			t.Fatalf("nativeCopilot = %q, want %q", got, want)
+		}
+	})
+	t.Run("hoisted package", func(t *testing.T) {
+		cmd, root := npmCopilot(t)
+		want := platformPackage(t, root, runtime.GOOS, `"./copilot"`, 0o755)
+		if got := nativeCopilot(cmd); got != want {
+			t.Fatalf("nativeCopilot = %q, want %q", got, want)
+		}
+	})
+	t.Run("no usable package keeps the loader", func(t *testing.T) {
+		for name, exports := range map[string]string{"none": "", "escaping": `"../../../../bin/sh"`, "no main": `{"./x":"./copilot"}`} {
+			cmd, root := npmCopilot(t)
+			if exports != "" {
+				platformPackage(t, nested(root), runtime.GOOS, exports, 0o755)
+			}
+			if got := nativeCopilot(cmd); got != cmd {
+				t.Fatalf("%s: nativeCopilot = %q, want the loader", name, got)
+			}
+		}
+		cmd, root := npmCopilot(t)
+		platformPackage(t, nested(root), runtime.GOOS, `"./copilot"`, 0o644)
+		if got := nativeCopilot(cmd); got != cmd {
+			t.Fatalf("not executable: nativeCopilot = %q, want the loader", got)
+		}
+	})
+	t.Run("a binary on PATH is kept", func(t *testing.T) {
+		cmd := filepath.Join(t.TempDir(), "copilot")
+		writeFile(t, cmd, "#!/bin/sh\n", 0o755)
+		if got := nativeCopilot(cmd); got != cmd {
+			t.Fatalf("nativeCopilot = %q, want %q", got, cmd)
+		}
+	})
+	if runtime.GOOS != "linux" {
+		return
+	}
+	t.Run("musl prefers the musl build", func(t *testing.T) {
+		ldd("#!/bin/sh\nexec /lib/ld-musl-x86_64.so.1 --list \"$@\"\n")
+		cmd, root := npmCopilot(t)
+		glibcBuild := platformPackage(t, nested(root), "linux", `"./copilot"`, 0o755)
+		if got := nativeCopilot(cmd); got != glibcBuild {
+			t.Fatalf("only the glibc build: nativeCopilot = %q, want %q", got, glibcBuild)
+		}
+		want := platformPackage(t, nested(root), "linuxmusl", `"./copilot"`, 0o755)
+		if got := nativeCopilot(cmd); got != want {
+			t.Fatalf("nativeCopilot = %q, want %q", got, want)
+		}
+	})
+	t.Run("an unknown C library keeps the loader", func(t *testing.T) {
+		ldd("#!/bin/sh\n")
+		cmd, root := npmCopilot(t)
+		platformPackage(t, nested(root), "linux", `"./copilot"`, 0o755)
+		if got := nativeCopilot(cmd); got != cmd {
+			t.Fatalf("nativeCopilot = %q, want the loader", got)
+		}
+	})
 }
 
 func TestWebReopen(t *testing.T) {
