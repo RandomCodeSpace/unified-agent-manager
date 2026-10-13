@@ -23,7 +23,7 @@ aliases are accepted, including `goal`, `yolo`, and `models`.
 | `rename` | Open rename, or rename this web Thread. |
 | `context`, `usage`, `list-dirs`, `env`, `skills` | Display native read-only output. Arguments are rejected before invocation. |
 | `compact` | Invoke native compaction, with optional focus instructions. The Thread shows Compacting while it runs; the outcome is a transcript notice, and the command result only says it completed. |
-| `plan` | Disabled until the web client supports plan-exit approval. The SDK callback explicitly refuses automatic plan exit. |
+| `plan` | Start Copilot's native plan mode. The plan is reviewed above the composer (see Native planning in `web.md`); nothing leaves plan mode without your decision. |
 | `every`, `after` | Disabled: web scheduling is not supported. |
 | `cwd`, `add-dir` | Disabled: these change directories outside Thread project settings. |
 | `share`, `remote` | Disabled: publishing and remote-session handlers are not implemented. |
