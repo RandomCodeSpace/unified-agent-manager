@@ -1,7 +1,7 @@
 import { useApi } from '../ApiContext';
 import { Check, CircleDashed, Copy, CornerDownLeft, ExternalLink, File, FileArchive, FileBraces, FileCode, FileImage, FileMusic, FileSpreadsheet, FileText, FileType, FileVideoCamera, ImageOff, MessageCircleQuestion, Minimize2, Minus, Pause, X } from 'lucide-react';
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import { taskName, type AccountUsage, type Badge, type BadgeColor, type Meta, type SessionState, type SessionSummary, type Settings } from '../api';
@@ -774,13 +774,13 @@ const mdComponents: Components = {
 };
 
 /**
- * Markdown for untrusted provider text: no raw HTML, safe links only, images by path served
+ * Markdown for untrusted provider text: no raw HTML by default, safe links only, images by path served
  * from the Task's directory (`SessionContext`) and no image from another origin. Completed
  * messages mount as one document. Streaming text uses top-level blocks so only the last block
  * is parsed again per delta; it keeps those boundaries after completion to retain DOM state.
  * `breaks` keeps single newlines as line breaks, for text the owner typed; provider text stays CommonMark.
  */
-export function Markdown({ text, streaming = false, breaks = false, className }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; className?: string }>) {
+export function Markdown({ text, streaming = false, breaks = false, rehypePlugins, className }: Readonly<{ text: string; streaming?: boolean; breaks?: boolean; rehypePlugins?: Options['rehypePlugins']; className?: string }>) {
   const [hasStreamed, setHasStreamed] = useState(streaming);
   if (streaming && !hasStreamed) setHasStreamed(true);
   const blocks = useMemo(() => hasStreamed ? splitBlocks(text) : [text], [text, hasStreamed]);
@@ -788,17 +788,17 @@ export function Markdown({ text, streaming = false, breaks = false, className }:
   return (
     <div ref={fileDemand} className={cn('md', className)}>
       {blocks.map((block, i) => (
-        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} breaks={breaks} />
+        <MarkdownBlock key={i} text={block} streaming={streaming && i === blocks.length - 1} breaks={breaks} rehypePlugins={rehypePlugins} />
       ))}
     </div>
   );
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks }: { text: string; streaming: boolean; breaks: boolean }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text, streaming, breaks, rehypePlugins }: { text: string; streaming: boolean; breaks: boolean; rehypePlugins?: Options['rehypePlugins'] }) {
   const source = useMemo(() => ({ text, streaming }), [text, streaming]);
   return (
     <MdContext.Provider value={source}>
-      <ReactMarkdown remarkPlugins={breaks ? remarkBreakPlugins : remarkPlugins} components={mdComponents} urlTransform={mdUrl}>
+      <ReactMarkdown remarkPlugins={breaks ? remarkBreakPlugins : remarkPlugins} rehypePlugins={rehypePlugins} components={mdComponents} urlTransform={mdUrl}>
         {text}
       </ReactMarkdown>
     </MdContext.Provider>

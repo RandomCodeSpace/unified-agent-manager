@@ -119,7 +119,7 @@ test('a job opens its pipeline with the job selected and its log tail; a work it
   expect(screen.getByRole('link', { name: /Elsewhere/ }).getAttribute('href')).toBe('https://gitlab.example.com/other/repo/-/issues/9');
 });
 
-test('discussion notes render as Markdown, the list as plain text; uploads link to GitLab and never load', async () => {
+test('discussion notes render as full Markdown in the list; uploads link to GitLab and never load', async () => {
   mockItems();
   const body = [
     'Two things:',
@@ -149,5 +149,6 @@ test('discussion notes render as Markdown, the list as plain text; uploads link 
   expect(within(note).getByRole('link', { name: 'the docs' }).getAttribute('href')).toBe('https://docs.example.com/health');
   expect(note.querySelector('img')).toBeNull();
   expect(within(note).getByRole('link', { name: /shot/ }).getAttribute('href')).toBe('https://gitlab.example.com/group/repo/uploads/abc/shot.png');
-  expect(within(screen.getAllByLabelText('Discussions').at(-1)!).getByText('Two things: return 503 log it return http.StatusServiceUnavailable w.WriteHeader(503) See the docs and shot.')).toBeTruthy();
+  expect(within(screen.getAllByLabelText('Discussions').at(-1)!).getByRole('article')).toBe(note);
+  expect(note.closest('button')).toBeNull();
 });

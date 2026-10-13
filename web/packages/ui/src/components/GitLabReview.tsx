@@ -1,9 +1,11 @@
 import { ArrowLeft, Check, FileCode2, MessageSquare, RefreshCw, Search, WandSparkles, Wrench } from 'lucide-react';
 import { useCallback, useContext, useEffect, useEffectEvent, useRef, useState } from 'react';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import { useApi } from '../ApiContext';
 import { ApiError, LIVE, describeError, newRequestId, readOnly, type GitLabDiscussion, type GitLabReview as Review, type GitLabReviewAction, type Item, type SessionDetail, type Submission } from '../api';
 import { cn } from '../lib/cn';
-import { gitLabMarkdown, markdownSummary } from '../lib/gitlabRefs';
+import { gitLabMarkdown } from '../lib/gitlabRefs';
 import { dateTime, Markdown, Note, Skeleton } from './common';
 import { GitLabItemsContext } from './GitLabStrip';
 import { Button } from './ui/button';
@@ -46,13 +48,16 @@ function savedReview(storageKey: string): SavedReview {
   } catch { return { replies: {}, uncertain: false }; }
 }
 
+// Parse HTML before sanitizing it; reuse the shared renderer's link and image policies.
+const gitLabRehypePlugins = [rehypeRaw, rehypeSanitize];
+
 /**
  * A GitLab Markdown body (a note, a description, a draft) rendered as replies are; uploads link to
- * GitLab. Single newlines are line breaks, as GitLab renders them.
+ * GitLab. Single newlines are line breaks, and safe HTML renders as markup.
  */
 export function GitLabMarkdown({ text, className }: Readonly<{ text: string; className?: string }>) {
   const origin = useContext(GitLabItemsContext)?.origin;
-  return <Markdown text={gitLabMarkdown(text, origin)} breaks className={cn('min-w-0 break-words text-ui text-body', className)} />;
+  return <Markdown text={gitLabMarkdown(text, origin)} breaks rehypePlugins={gitLabRehypePlugins} className={cn('min-w-0 break-words text-ui text-body', className)} />;
 }
 
 /**
@@ -171,8 +176,10 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
   }, [api, sessionId, session, pending]);
 
   const discussions = review?.discussions.filter((discussion) => discussion.notes.some((note) => !note.system)) ?? [];
-  const currentId = selected === undefined ? discussions[0]?.id : selected;
-  const discussion = discussions.find((entry) => entry.id === currentId);
+  const visibleDiscussions = discussions.filter((entry) => filter === 'all' || (filter === 'unresolved' ? unresolved(entry) : canResolve(entry) && !unresolved(entry)));
+  const currentId = selected === null ? null : visibleDiscussions.find((entry) => entry.id === selected)?.id ?? visibleDiscussions[0]?.id;
+  const discussion = visibleDiscussions.find((entry) => entry.id === currentId);
+  const firstNote = discussion?.notes.find((note) => !note.system);
   const key = discussion?.id ?? 'comment';
   const reply = replies[key] ?? '';
   const stale = !!readError || loading;
@@ -250,30 +257,32 @@ export function GitLabReview({ sessionId, session, iid, sha, onLoad, refresh = 0
       <div className="flex flex-wrap gap-1" role="group" aria-label="Filter discussions">
         {(['all', 'unresolved', 'resolved'] as const).map((value) => <Button key={value} size="sm" aria-pressed={filter === value} onClick={() => setFilter(value)}>{value === 'all' ? 'All' : value === 'unresolved' ? 'Unresolved' : 'Resolved'}</Button>)}
       </div>
-      <div className="flex max-h-48 flex-col gap-1 overflow-y-auto" aria-label="Discussions">
-        {discussions.filter((entry) => filter === 'all' || (filter === 'unresolved' ? unresolved(entry) : canResolve(entry) && !unresolved(entry))).map((entry) => {
+      <div className="flex min-w-0 flex-col gap-3" aria-label="Discussions">
+        {visibleDiscussions.map((entry) => {
           const first = entry.notes.find((note) => !note.system)!;
           const replies = entry.notes.filter((note) => !note.system).length - 1;
-          return <button key={entry.id} type="button" aria-pressed={entry.id === currentId} className="flex min-w-0 flex-col gap-1 rounded-sm px-2 py-2 text-left text-ui hover:bg-tint-hover aria-pressed:bg-sunken" onClick={() => setSelected(entry.id)}>
-            <span className="flex flex-wrap items-center gap-2"><span className="font-medium text-ink">{first.author.name || first.author.username}</span><span className="text-caption text-muted">{entry.individual_note ? 'Comment' : `${replies} ${replies === 1 ? 'reply' : 'replies'}`}</span>{canResolve(entry) && <Chip tone={unresolved(entry) ? 'warning' : 'success'}>{unresolved(entry) ? 'Unresolved' : 'Resolved'}</Chip>}</span>
-            <span className="line-clamp-2 break-words text-body">{markdownSummary(first.body)}</span>
-          </button>;
+          return <div key={entry.id} className="flex min-w-0 flex-col gap-2 border-t border-hairline pt-3">
+            <button type="button" aria-pressed={entry.id === currentId} className="flex flex-wrap items-center gap-2 rounded-sm px-2 py-2 text-left text-ui hover:bg-tint-hover aria-pressed:bg-sunken" onClick={() => setSelected(entry.id)}>
+              <span className="font-medium text-ink">{first.author.name || first.author.username}</span><span className="text-caption text-muted">{entry.individual_note ? 'Comment' : `${replies} ${replies === 1 ? 'reply' : 'replies'}`}</span>{canResolve(entry) && <Chip tone={unresolved(entry) ? 'warning' : 'success'}>{unresolved(entry) ? 'Unresolved' : 'Resolved'}</Chip>}
+            </button>
+            {entry.notes.filter((note) => !note.system).map((note) => <article key={note.id} className="flex min-w-0 flex-col gap-2 px-2">
+              <div className="flex flex-wrap items-baseline gap-x-2"><span className="text-ui font-medium text-ink">{note.author.name || note.author.username}</span><time dateTime={note.created_at} className="text-meta text-muted">{dateTime(note.created_at)}</time></div>
+              {note.position && <div className="flex items-start gap-1.5 text-caption text-muted"><FileCode2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><code className="min-w-0 break-all font-mono">{note.position.new_path || note.position.old_path}:{note.position.new_line ?? note.position.old_line}</code>{note.position.head_sha !== (review.merge_request.head_sha || sha) && <Chip fill="outline">Earlier commit</Chip>}</div>}
+              <GitLabMarkdown text={note.body} />
+            </article>)}
+          </div>;
         })}
         {!discussions.length && <Note>No comments yet.</Note>}
-        {!!discussions.length && !discussions.some((entry) => filter === 'all' || (filter === 'unresolved' ? unresolved(entry) : canResolve(entry) && !unresolved(entry))) && <Note>No {filter} discussions.</Note>}
+        {!!discussions.length && !visibleDiscussions.length && <Note>No {filter} discussions.</Note>}
       </div>
       {writable && <Button size="sm" variant="subtle" className="self-start" onClick={() => setSelected(null)}><MessageSquare />Add comment</Button>}
-      {discussion ? <section aria-label="Selected discussion" className="flex min-w-0 flex-col gap-3 border-t border-hairline pt-3">
-        {discussion.notes.filter((note) => !note.system).map((note) => <article key={note.id} className="flex min-w-0 flex-col gap-2">
-          <div className="flex flex-wrap items-baseline gap-x-2"><span className="text-ui font-medium text-ink">{note.author.name || note.author.username}</span><time dateTime={note.created_at} className="text-meta text-muted">{dateTime(note.created_at)}</time></div>
-          {note.position && <div className="flex items-start gap-1.5 text-caption text-muted"><FileCode2 aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" /><code className="min-w-0 break-all font-mono">{note.position.new_path || note.position.old_path}:{note.position.new_line ?? note.position.old_line}</code>{note.position.head_sha !== (review.merge_request.head_sha || sha) && <Chip fill="outline">Earlier commit</Chip>}</div>}
-          <GitLabMarkdown text={note.body} />
-        </article>)}
-        {writable && <div className="flex flex-wrap gap-2">
+      {discussion ? writable && <section aria-label="Selected discussion" className="flex min-w-0 flex-col gap-3 border-t border-hairline pt-3">
+        <p className="text-caption text-muted">Selected discussion: {firstNote?.author.name || firstNote?.author.username} · {firstNote && dateTime(firstNote.created_at)}</p>
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="primary" loading={busy === 'investigate'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('investigate')}><Search />Investigate</Button>
           <Button size="sm" variant="secondary" loading={busy === 'fix'} disabled={actionBlocked || stale || !!busy || !!pending} onClick={() => void startAction('fix')}><Wrench />Fix</Button>
-        </div>}
-        {writable && session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model || 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
+        </div>
+        {session && <p className="text-caption text-muted">{locked ? 'Reopen this thread to work on the review.' : `Uses ${session.model || 'the thread’s selected model'}${LIVE.includes(session.state) || session.queued ? ' · Queues after the current work' : ''}`}</p>}
       </section> : writable && <h4 className="text-ui font-medium text-ink">New comment on MR !{iid}</h4>}
       {notice && notice.key === key && <Note role={notice.error ? 'alert' : 'status'} tone={notice.error ? 'error' : undefined}>{notice.text}</Note>}
       {uncertain && !busy && (!notice || notice.key !== key) && <Note role="alert" tone="error">GitLab may have saved the last change. Refresh and check the discussion before trying again.</Note>}
