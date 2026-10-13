@@ -1158,10 +1158,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   ghost text does the same. Typing replaces it, and clearing the box brings
   it back. Screen readers hear it as the box's description. It comes from
   one Utility model call, made the first time a composer shows that turn,
-  with the whole turn unshortened: your message, then everything the agent
-  said and did in reply (its messages, tool calls with their full output,
-  and messages you sent while it worked), without its thoughts or its
-  subagents' own steps. A long turn makes a large call. The service keeps the
+  with your last message and the agent's final reply. Messages longer than
+  2,000 characters are shortened to their first and last 1,000 characters,
+  with an ellipsis between them. Tool calls and earlier agent messages are
+  excluded. The service keeps the
   result with the Thread, so opening it again, in any browser or after a
   restart, asks for nothing more. None shows while the Thread works, waits for
   you, has queued messages, or is read-only. Without a Utility model, or past

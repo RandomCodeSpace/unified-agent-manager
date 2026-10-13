@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
@@ -141,15 +142,14 @@ func TestSuggestedRepliesAreAskedForOncePerState(t *testing.T) {
 	}
 }
 
-func TestSuggestionPromptQuotesTheWholeTurn(t *testing.T) {
+func TestSuggestionPromptQuotesOnlyLastUserAndFinalReply(t *testing.T) {
 	prov := newAssistProvider()
 	m, project := assistManager(t, openTestStore(t), prov)
-	prompts := make(chan string, 1)
 	prov.SetUtilityHook(func(_ context.Context, req agentapi.UtilityRequest) (string, error) {
-		if req.Purpose == "suggest-replies" {
-			prompts <- req.Prompt
+		if req.Purpose == purposeSuggestReplies {
+			return "Run the full test suite", nil
 		}
-		return "Commit this", nil
+		return `{"verb":"Answered","object":""}`, nil
 	})
 	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
 	if err != nil {
@@ -157,24 +157,53 @@ func TestSuggestionPromptQuotesTheWholeTurn(t *testing.T) {
 	}
 	conv := prov.Last()
 	finishTurn(conv, "earlier", "Done earlier.")
-	long := strings.Repeat("x", 3000) + "END"
 	conv.EmitTurn(agentapi.TurnWorking, "")
-	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "fix the build " + long})
+	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "fix the build"})
 	conv.EmitItem(agentapi.Item{ID: "r1", Kind: agentapi.ItemReasoning, Text: "secret thought"})
 	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Running the tests."})
-	conv.EmitItem(agentapi.Item{ID: "t1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./..."}`, Output: "FAIL pkg " + long, ExitCode: codeOf(1)}})
-	conv.EmitItem(agentapi.Item{ID: "s1", Kind: agentapi.ItemTool, AgentID: "agent-1", Tool: &agentapi.ToolCall{Name: "view", Status: agentapi.ToolCompleted, Output: "subagent output"}})
+	conv.EmitItem(agentapi.Item{ID: "t1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted, Input: `{"command":"go test ./..."}`, Output: strings.Repeat("x", 15000) + "Run the full test suite", ExitCode: codeOf(1)}})
 	conv.EmitItem(agentapi.Item{ID: "u2", Kind: agentapi.ItemUser, Text: "also lint", Delivery: agentapi.DeliverySteer})
+	conv.EmitItem(agentapi.Item{ID: "s1", Kind: agentapi.ItemUser, AgentID: "agent-1", Text: "subagent request"})
 	conv.EmitItem(agentapi.Item{ID: "a2", Kind: agentapi.ItemAssistant, Text: "Fixed and linted."})
 	conv.EmitTurn(agentapi.TurnCompleted, "")
 
-	if _, err := m.SuggestReplies(context.Background(), sum.ID); err != nil {
-		t.Fatal(err)
+	got, err := m.SuggestReplies(context.Background(), sum.ID)
+	if err != nil || !slices.Equal(got.Replies, []string{"Run the full test suite"}) {
+		t.Fatalf("suggestion appearing only in tool output was rejected: %+v, %v", got, err)
 	}
-	got := <-prompts
-	want := "<user_message>\nfix the build " + long + "\n</user_message>\n<agent_reply>\nRunning the tests.\n[tool bash] exit 1\ninput:\n{\"command\":\"go test ./...\"}\noutput:\nFAIL pkg " + long + "\n[user, while the agent worked]\nalso lint\nFixed and linted.\n</agent_reply>"
-	if got != want {
-		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+	want := "<user_message>\nalso lint\n</user_message>\n<agent_reply>\nFixed and linted.\n</agent_reply>"
+	for _, req := range prov.UtilityRequests() {
+		if req.Purpose == purposeSuggestReplies && req.Prompt != want {
+			t.Errorf("prompt included more than the last user message and final reply: got %d characters, want %d", len(req.Prompt), len(want))
+		}
+	}
+	if n := utilityCalls(prov, purposeSuggestReplies); n != 1 {
+		t.Errorf("suggestion calls = %d, want 1", n)
+	}
+}
+
+func TestSuggestionPromptBoundsEachMessage(t *testing.T) {
+	for _, fill := range []string{"x", "界"} {
+		for _, size := range []int{2000, 2001, 15000} {
+			t.Run(fmt.Sprintf("%s/%d", fill, size), func(t *testing.T) {
+				user := "REQUEST" + strings.Repeat(fill, size-14) + "REQUEST"
+				reply := "REPLY" + strings.Repeat(fill, size-10) + "REPLY"
+				wantUser, wantReply := user, reply
+				if size > 2000 {
+					wantUser = "REQUEST" + strings.Repeat(fill, 993) + "\n…\n" + strings.Repeat(fill, 993) + "REQUEST"
+					wantReply = "REPLY" + strings.Repeat(fill, 995) + "\n…\n" + strings.Repeat(fill, 995) + "REPLY"
+				}
+				s := &webSession{items: []agentapi.Item{
+					{Kind: agentapi.ItemUser, Text: user},
+					{Kind: agentapi.ItemAssistant, Text: reply},
+				}}
+				got := s.suggestionPrompt(1)
+				want := "<user_message>\n" + wantUser + "\n</user_message>\n<agent_reply>\n" + wantReply + "\n</agent_reply>"
+				if got != want {
+					t.Fatalf("prompt did not preserve the first and last 1000 characters of each oversized message: got %d runes, want %d", utf8.RuneCountInString(got), utf8.RuneCountInString(want))
+				}
+			})
+		}
 	}
 }
 
