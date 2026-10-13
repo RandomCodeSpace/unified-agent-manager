@@ -115,6 +115,8 @@ type Server struct {
 	mux           *http.ServeMux
 	heartbeat     time.Duration
 	grants        *tempGrants
+	// revoked is the set of session cookies Log out ended before their expiry.
+	revoked *revokedSessions
 	// terminalOrigins are the public origins as WebSocket origin patterns.
 	terminalOrigins []string
 	// mcpCallbackOrigins are configured HTTPS origins indexed by exact Host.
@@ -171,6 +173,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s.connections, err = openConnectionRegistry(s.m.ctx, filepath.Dir(s.m.store.Path()), s.token)
 	if err != nil {
 		return nil, fmt.Errorf("connection state: %w", err)
+	}
+	s.revoked, err = openRevokedSessions(filepath.Join(filepath.Dir(s.m.store.Path()), signedOutFileName))
+	if err != nil {
+		return nil, err
 	}
 	s.grants = newTempGrants(s.m)
 	s.routes()
@@ -559,6 +565,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	// The route is behind authentication, so the cookie verified: end its
+	// session on the server too, or a copy of it would work until it expires.
+	// Other browsers' cookies have their own MAC and stay signed in.
+	if mac, exp, ok := s.sessionMAC(r); ok {
+		if err := s.revoked.revoke(mac, exp, time.Now().Unix()); err != nil {
+			log.Warn("web logout: the signed-out session may come back after a restart", "err", err)
+		}
+	}
 	s.setCookie(w, r, "", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
