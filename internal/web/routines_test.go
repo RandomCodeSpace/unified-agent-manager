@@ -320,9 +320,10 @@ func TestRoutineTimeLimitCancelsTheTurn(t *testing.T) {
 	m.routines.active[r.ID].started = m.now().Add(-6 * time.Minute)
 	m.routines.mu.Unlock()
 	m.checkRoutines()
-	if conv.Cancels() != 1 {
-		t.Fatalf("cancels = %d, want 1", conv.Cancels())
-	}
+	// The scheduler's own pass, kicked when the run's Task was recorded, may
+	// have armed the limit first and still be sending its cancel: the two
+	// passes send one between them.
+	waitUntil(t, "the cancel", func() bool { return conv.Cancels() == 1 })
 	conv.EmitTurn(agentapi.TurnCancelled, "")
 	m.checkRoutines()
 	got := routine(t, m, project, r.ID).Runs[0]
