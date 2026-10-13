@@ -105,8 +105,11 @@ func (m *Manager) runJob(ctx context.Context, job utilityJob, call UtilityCall, 
 	return job.fallback, nil
 }
 
+// recordAnswerLocked counts the job's answer toward the purpose's pause: a
+// valid one, or an invalid one that ended the job. An invalid first answer
+// is left to the retry, so a turn counts once.
 func (l *utilityLog) recordAnswerLocked(call UtilityCall) {
-	if call.Valid == nil || dayOf(call.At) != l.day {
+	if call.Valid == nil || !*call.Valid && !call.Fallback || dayOf(call.At) != l.day {
 		return
 	}
 	answers := append(l.answers[call.Purpose], *call.Valid)
@@ -126,7 +129,18 @@ func (l *utilityLog) recordAnswerLocked(call UtilityCall) {
 }
 
 var outcomeVerbs = []string{"Added", "Updated", "Fixed", "Removed", "Refactored", "Reviewed", "Explained", "Investigated", "Configured", "Implemented", "Documented", "Tested", "Verified", "Compared", "Identified", "Prepared", "Simplified", "Restored", "Answered", "Summarized"}
-var suggestionURL = regexp.MustCompile(`(?i)(?:[a-z][a-z0-9+.-]*:|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\b|/))`)
+
+// suggestionURL matches a link: a scheme with //, one a browser follows
+// without (mailto:, javascript:, data:, file:), www., or a host under a
+// common web domain. File names such as README.md or main.go do not match.
+var suggestionURL = regexp.MustCompile(`(?i)(?:\b[a-z][a-z0-9+.-]*://|\b(?:mailto|javascript|data|file):|\bwww\.|\b(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|ai|co|info|gov|edu)\b)`)
+
+// sentenceBreak is the end of one sentence followed by another;
+// sentenceEnds splits text into its sentences and lines.
+var (
+	sentenceBreak = regexp.MustCompile(`[.!?]+\s+\S`)
+	sentenceEnds  = regexp.MustCompile(`[.!?]+(?:\s+|$)|\n`)
+)
 
 var fileLineAnswer = regexp.MustCompile(`:\d+`)
 
@@ -150,7 +164,7 @@ func validateOutcome(reply, input string) (string, error) {
 		return "", errors.New("outcome requires an object")
 	}
 	object := *answer.Object
-	if !slices.Contains(outcomeVerbs, answer.Verb) || len(strings.Fields(object)) > 6 || strings.ContainsAny(object, "`\r\n") || fileLineAnswer.MatchString(object) || displaytext.Sanitize(object) != object || !strings.Contains(input, object) {
+	if !slices.Contains(outcomeVerbs, answer.Verb) || len(strings.Fields(object)) > 6 || strings.ContainsAny(object, "`\r\n") || fileLineAnswer.MatchString(object) || displaytext.Sanitize(object) != object || !strings.Contains(strings.ToLower(input), strings.ToLower(object)) {
 		return "", errors.New("outcome requires an allowed verb and a copied object of at most six words")
 	}
 	return strings.TrimSpace(answer.Verb + " " + object), nil
@@ -165,10 +179,23 @@ func validateSuggestion(reply, input string) (string, error) {
 	}
 	reply = strings.TrimSpace(thinkRE.ReplaceAllString(reply, ""))
 	lower := strings.ToLower(reply)
-	if reply == "" || utf8.RuneCountInString(reply) > 80 || strings.ContainsAny(reply, "\r\n|`") || suggestionURL.MatchString(reply) || strings.Contains(lower, "i cannot") || strings.Contains(lower, "as an ai") || displaytext.Sanitize(reply) != reply || strings.Contains(strings.ToLower(input), lower) || len(strings.FieldsFunc(reply, func(r rune) bool { return r == '.' || r == '!' || r == '?' })) > 1 {
+	if reply == "" || utf8.RuneCountInString(reply) > 80 || strings.ContainsAny(reply, "\r\n|`") || suggestionURL.MatchString(reply) || strings.Contains(lower, "i cannot") || strings.Contains(lower, "as an ai") || displaytext.Sanitize(reply) != reply || repeatsSentence(input, reply) || sentenceBreak.MatchString(reply) {
 		return "", errors.New("suggestion must be one new sentence of at most 80 characters without a URL or pipe")
 	}
 	return reply, nil
+}
+
+// repeatsSentence reports whether reply is one of text's sentences or
+// lines, ignoring case and ending punctuation. Words the reply only shares,
+// such as "Commit this" after "Want me to commit this?", do not count.
+func repeatsSentence(text, reply string) bool {
+	want := strings.ToLower(strings.TrimRight(reply, ".!? "))
+	for _, sentence := range sentenceEnds.Split(text, -1) {
+		if strings.ToLower(strings.TrimSpace(sentence)) == want {
+			return true
+		}
+	}
+	return false
 }
 
 var outcomeJob = utilityJob{purpose: purposeOutcome, system: outcomeJobSystem, validate: validateOutcome, retryHint: `Reply with exactly {"verb":"Answered","object":""}, or another allowed verb and copied object.`}

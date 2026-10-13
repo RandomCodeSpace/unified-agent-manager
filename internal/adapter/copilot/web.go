@@ -888,6 +888,13 @@ func (p *webProvider) RunUtility(ctx context.Context, req agentapi.UtilityReques
 	reply, err := sess.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt, Attachments: attachments(agentapi.Prompt{Attachments: req.Attachments})})
 	if err != nil {
 		if ctx.Err() != nil {
+			// Stop the model request before the session goes, so it does
+			// not run on in the CLI beside the conversations.
+			actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), titleDeleteTimeout)
+			if aerr := sess.Abort(actx); aerr != nil {
+				log.Info("abort copilot utility session failed", "purpose", purpose, "conversation", sess.ID(), "error", aerr)
+			}
+			cancel()
 			return "", fmt.Errorf("the Utility model did not answer within %s (its session was open after %s): %w", seconds(time.Since(start)), seconds(ready), ctx.Err())
 		}
 		return "", fmt.Errorf("copilot %s: %s", purpose, errText(err))
