@@ -205,7 +205,7 @@ func (m *Manager) writeMRDescription(ctx context.Context, s *webSession, gate gl
 	if strings.TrimSpace(commits) == "" {
 		return "", fmt.Errorf("no commits ahead of %s", target)
 	}
-	stat := repo.mrRead(ctx, maxMRStatBytes, "diff", "--stat=100", "--no-color", "--no-ext-diff", base+"...HEAD")
+	stat := repo.mrRead(ctx, maxMRStatBytes, "diff", "--stat=100", noColor, noExtDiff, base+"...HEAD")
 	m.mu.Lock()
 	title, id, projectID, system := firstNonEmpty(s.name, s.title), s.id, s.projectID, m.settings.mrPrompt()+"\n"+mrDescriptionRules
 	runner, model, err := m.startUtilityLocked()

@@ -82,6 +82,77 @@ func TestConfigurationNativeFilesAndRevisions(t *testing.T) {
 	}
 }
 
+func TestFrontmatterDescription(t *testing.T) {
+	for _, tc := range []struct{ content, want string }{
+		{testSkillDefinition, "An example skill"},
+		{"---\nname: x\ndescription: \"Quoted \\\"text\\\"\"\n---\nBody\n", `Quoted "text"`},
+		{"---\ndescription: 'It''s plain'\n---\n", "It's plain"},
+		{"---\ndescription: >\n  folded\n---\n", ""},
+		{"---\nname: x\n---\ndescription: outside\n", ""},
+		{"No frontmatter\n", ""},
+	} {
+		if got := frontmatterDescription(tc.content); got != tc.want {
+			t.Errorf("frontmatterDescription(%q) = %q, want %q", tc.content, got, tc.want)
+		}
+	}
+}
+
+// A listing without bodies keeps every field but agents' and skills' content;
+// one file is read by name, and by path when the name is shared.
+func TestConfigurationListingWithoutBodiesAndFileRead(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := filepath.Join(t.TempDir(), ".copilot")
+	t.Setenv("COPILOT_HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, "skills", "example"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "skills", "example", "SKILL.md"), []byte(testSkillDefinition), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ts := newTestServer(t, ServerConfig{Assets: frameAssets()})
+	get := func(url string) map[string]any {
+		t.Helper()
+		w := ts.do(http.MethodGet, url, "", withCookie(ts))
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", url, w.Code, w.Body)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	full := get("/api/configuration")["skills"].([]any)[0].(map[string]any)
+	if full["content"] != testSkillDefinition || full["description"] != "An example skill" {
+		t.Fatalf("full listing = %v", full)
+	}
+	listing := get("/api/configuration?content=0")
+	skill := listing["skills"].([]any)[0].(map[string]any)
+	if _, ok := skill["content"]; ok || skill["description"] != "An example skill" || skill["revision"] != full["revision"] || skill["path"] != full["path"] {
+		t.Fatalf("listing without bodies = %v", skill)
+	}
+	if _, ok := listing["instructions"].(map[string]any)["content"]; !ok {
+		t.Fatal("instruction files lost their content")
+	}
+	path := full["path"].(string)
+	for _, url := range []string{"/api/configuration/skills/example", "/api/configuration/skills/example?path=" + path} {
+		if file := get(url); file["content"] != testSkillDefinition || file["revision"] != full["revision"] {
+			t.Fatalf("GET %s = %v", url, file)
+		}
+	}
+	for url, want := range map[string]int{
+		"/api/configuration/skills/example?path=/elsewhere/SKILL.md": http.StatusNotFound,
+		"/api/configuration/skills/missing":                          http.StatusNotFound,
+		"/api/configuration/agents/example":                          http.StatusNotFound,
+		"/api/configuration/plugins/example":                         http.StatusBadRequest,
+		"/api/configuration/skills/bad%20name":                       http.StatusBadRequest,
+	} {
+		if w := ts.do(http.MethodGet, url, "", withCookie(ts)); w.Code != want {
+			t.Errorf("GET %s = %d, want %d: %s", url, w.Code, want, w.Body)
+		}
+	}
+}
+
 func TestConfigurationSkillRemovalPreservesSupportFiles(t *testing.T) {
 	m := configurationManager(t)
 	file, err := m.SaveConfiguration("project", "skills", "example", configurationInput{Content: testSkillDefinition}, false)

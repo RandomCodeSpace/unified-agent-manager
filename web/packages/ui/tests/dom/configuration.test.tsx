@@ -1054,3 +1054,30 @@ describe('native discovery metadata', () => {
     } finally { read.mockRestore(); global.mockRestore(); toggle.mockRestore(); }
   });
 });
+
+describe('listing without bodies', () => {
+  test('skills are listed without their bodies; a card reader loads one and Edit opens on the loaded document', async () => {
+    const read = vi.spyOn(api, 'configuration');
+    let original: typeof window.fetch | undefined;
+    try {
+      const { user, card } = await open('Skills');
+      // Every listing is read without bodies.
+      expect(read).toHaveBeenCalledWith('', false);
+      expect(read.mock.calls.every(([, bodies]) => bodies === false)).toBe(true);
+      // The card's detail comes from the listed description.
+      expect(card.getByText('Check a release')).toBeTruthy();
+      original = window.fetch;
+      const reads: string[] = [];
+      window.fetch = (input, init) => { if (String(input).startsWith('/api/configuration') && (init?.method ?? 'GET') === 'GET') reads.push(String(input)); return original!(input, init); };
+      const reader = await openCard(user, card, 'View skill release-check');
+      expect(await reader.findByText('Inspect the release checklist.')).toBeTruthy();
+      expect(reads).toContain('/api/configuration/skills/release-check?path=%2Fhome%2Fdemo%2F.copilot%2Fskills%2Frelease-check%2FSKILL.md');
+      await user.click(reader.getByRole('button', { name: 'Edit', exact: true }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      const document = await screen.findByLabelText('Full native document') as HTMLTextAreaElement;
+      expect(document.value).toContain('Inspect the release checklist.');
+      // The body was read once; editing did not read it again.
+      expect(reads.filter((url) => url.startsWith('/api/configuration/skills/release-check'))).toHaveLength(1);
+    } finally { if (original) window.fetch = original; read.mockRestore(); }
+  });
+});

@@ -330,7 +330,7 @@ func listDir(ctx context.Context, workdir, dir string) (FileList, error) {
 			return out, newError(http.StatusNotFound, "folder not found")
 		}
 	}
-	args := []string{"--literal-pathspecs", "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
+	args := []string{literalPathspecs, "ls-files", "--cached", "--others", "--exclude-standard", "-z"}
 	prefix := ""
 	if dir != "" {
 		prefix = dir + "/"
@@ -404,7 +404,7 @@ func childStatus(ctx context.Context, repo *gitRepo, workdir, dir string) map[st
 	if dir != "" {
 		spec = dir
 	}
-	raw, code, _, err := runGit(ctx, repo.git, workdir, maxStatusBytes+1, "--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", spec)
+	raw, code, _, err := runGit(ctx, repo.git, workdir, maxStatusBytes+1, literalPathspecs, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", spec)
 	if err != nil || code != 0 || len(raw) > maxStatusBytes {
 		return nil
 	}

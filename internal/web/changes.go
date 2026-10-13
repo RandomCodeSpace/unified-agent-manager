@@ -38,6 +38,13 @@ const (
 	maxChangedFiles  = 1000
 	maxUntrackedRead = 256 << 10
 	untrackedBudget  = 8 << 20
+
+	// Git flags shared by the package's diffs and pathspec commands: exact
+	// paths, no external diff or textconv programs, no colour.
+	literalPathspecs = "--literal-pathspecs"
+	noExtDiff        = "--no-ext-diff"
+	noTextconv       = "--no-textconv"
+	noColor          = "--no-color"
 )
 
 // gitBase is prepended to every git invocation: read-only, no fsmonitor, no
@@ -317,7 +324,7 @@ func (r *gitRepo) renameStats(ctx context.Context, entries []statusEntry) map[st
 	if len(paths) == 0 || !r.hasHead {
 		return stats
 	}
-	args := append([]string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames", "--numstat", "-z", "HEAD", "--"}, paths...)
+	args := append([]string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "--find-renames", "--numstat", "-z", "HEAD", "--"}, paths...)
 	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, args...)
 	if err != nil || code != 0 {
 		return stats
@@ -364,7 +371,7 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	if entry == nil {
 		return agentapi.FileDiff{}, newError(http.StatusBadRequest, "path is not a changed file in this working tree")
 	}
-	args := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color"}
+	args := []string{"diff", noExtDiff, noTextconv, noColor}
 	if entry.untracked || !repo.hasHead {
 		args = append(args, "--no-index", "--", "/dev/null", entry.path)
 	} else {
@@ -374,7 +381,7 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	// A staged rename is diffed against the path it came from, as the
 	// listing counts it; without the pair, git shows a whole new file.
 	if err == nil && entry.orig != "" {
-		args = []string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames", "HEAD", "--", entry.path, entry.orig}
+		args = []string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "--find-renames", "HEAD", "--", entry.path, entry.orig}
 		if paired, pairedCode, _, pairedErr := runGit(ctx, repo.git, repo.top, maxDiffBytes+1, args...); pairedErr == nil && pairedCode == 0 && strings.Contains(string(paired), "\nrename from ") {
 			patch, code = paired, pairedCode
 		}
@@ -456,7 +463,7 @@ func (r *gitRepo) numstat(ctx context.Context) map[string][2]int {
 	if !r.hasHead {
 		return stats
 	}
-	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--numstat", "-z", "HEAD", "--")
+	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, "diff", noExtDiff, noTextconv, noColor, "--no-renames", "--numstat", "-z", "HEAD", "--")
 	if err != nil || code != 0 {
 		return stats
 	}

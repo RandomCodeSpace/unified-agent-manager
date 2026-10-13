@@ -710,7 +710,10 @@ export interface ConfigurationDefinition {
 export interface ConfigurationFile {
   name: string;
   path: string;
-  content: string;
+  /** Absent for an agent or skill listed without bodies (`configuration(id, false)`); `configurationFile` loads it. */
+  content?: string;
+  /** The frontmatter description of a listed agent or skill. */
+  description?: string;
   revision: string;
   editable: boolean;
   disabled?: boolean;
@@ -2140,7 +2143,16 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     investigateGitlabPipeline: (id: string, commitSHA: string, pipelineId: number) => call<{ task_id: string }>('POST', `/api/sessions/${enc(id)}/gitlab/investigate`, { commit_sha: commitSHA, pipeline_id: pipelineId }),
     /** Without a commit: a job of any pipeline of the Thread's project (`gitlab-items-v1`). */
     gitlabJobTrace: (id: string, jobId: number, commitSHA: string | undefined, pipelineId: number, signal?: AbortSignal) => call<{ text: string; truncated: boolean }>('GET', `/api/sessions/${enc(id)}/gitlab/jobs/${jobId}/trace?${commitSHA ? `commit_sha=${enc(commitSHA)}&` : ''}pipeline_id=${pipelineId}`, undefined, false, signal),
-    configuration: (projectId = '') => call<Configuration>('GET', `/api/configuration${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
+    /** Without `bodies`, agents and skills are listed without `content` (hook and instruction files keep theirs). */
+    configuration: (projectId = '', bodies = true) => {
+      const query = [projectId ? `project_id=${encodeURIComponent(projectId)}` : '', bodies ? '' : 'content=0'].filter(Boolean).join('&');
+      return call<Configuration>('GET', `/api/configuration${query ? `?${query}` : ''}`);
+    },
+    /** One listed file with its content; `path` selects it when several in the scope share the name. */
+    configurationFile: (kind: ConfigurationKind, name: string, projectId = '', path?: string) => {
+      const query = [projectId ? `project_id=${encodeURIComponent(projectId)}` : '', path ? `path=${encodeURIComponent(path)}` : ''].filter(Boolean).join('&');
+      return call<ConfigurationFile>('GET', `/api/configuration/${kind}/${encodeURIComponent(name)}${query ? `?${query}` : ''}`);
+    },
     draftConfiguration: (kind: Exclude<ConfigurationKind, 'instructions'>, brief: string, projectId = '') => call<ConfigurationDraft>('POST', `/api/configuration/${kind}/draft${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, { brief }),
     saveConfiguration: (kind: ConfigurationKind, name: string, body: { content: string; revision: string; path?: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),
     setConfigurationDisabled: (kind: ConfigurationKind, name: string, body: { disabled: boolean; revision: string; path: string }, projectId = '') => call<ConfigurationFile>('PUT', `/api/configuration/${kind}/${encodeURIComponent(name)}${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`, body),

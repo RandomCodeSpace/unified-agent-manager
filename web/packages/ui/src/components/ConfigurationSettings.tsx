@@ -134,16 +134,17 @@ function hasViews(file: ConfigurationFile, kind: ConfigurationKind): boolean { r
 
 /** The saved document, as a preview (frontmatter, then Markdown) or its exact source; hooks are always source. Shared by the file viewer and a card's reader, each of which shows the file's error itself. */
 function DocumentBody({ file, kind, view }: Readonly<{ file: ConfigurationFile; kind: ConfigurationKind; view: string }>) {
-  const frontmatter = FRONTMATTER.exec(file.content);
-  const body = frontmatter ? file.content.slice(frontmatter[0].length) : file.content;
+  const content = file.content ?? '';
+  const frontmatter = FRONTMATTER.exec(content);
+  const body = frontmatter ? content.slice(frontmatter[0].length) : content;
   let emptyText = 'This file is empty.';
   if (file.error) emptyText = 'No document content is available.';
   else if (missingFile(file)) emptyText = 'No saved file at this path.';
   return <>
-    {!file.content && <Note>{emptyText}</Note>}
+    {!content && <Note>{emptyText}</Note>}
     {view === 'source' || kind === 'hooks' ?
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling.
-      <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{file.content}</pre> : <>
+      <pre role="region" aria-label={`${file.name} source`} tabIndex={0} className="max-h-[55dvh] max-w-full overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all rounded-sm bg-sunken p-3 font-mono text-code-sm">{content}</pre> : <>
         {frontmatter && <div className="min-w-0">
           <p className="mb-1 text-ui font-medium">Configuration</p>
           {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- A labelled scroll region must accept keyboard scrolling. */}
@@ -171,18 +172,20 @@ function summaryOf(file: ConfigurationFile, kind: ConfigurationKind): string {
   if (file.metadata_only) return file.native?.description ?? '';
   if (kind === 'hooks') {
     try {
-      const hooks = (JSON.parse(file.content) as { hooks?: unknown }).hooks;
+      const hooks = (JSON.parse(file.content ?? '') as { hooks?: unknown }).hooks;
       if (hooks && typeof hooks === 'object' && Object.keys(hooks).length) return Object.keys(hooks).join(' · ');
     } catch { /* An unreadable hook file shows its description, if any, and its error in the reader. */ }
     return file.native?.description ?? '';
   }
   if (kind === 'instructions') {
     if (missingFile(file)) return 'No saved file at this path.';
-    return file.content.split('\n').map((line) => line.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean) ?? '';
+    return (file.content ?? '').split('\n').map((line) => line.replace(/^[#>*\-\s]+/, '').trim()).find(Boolean) ?? '';
   }
   if (file.native?.description) return file.native.description;
+  // The service reads the frontmatter description of a listed agent or skill; a saved file's is read here.
+  if (file.description) return file.description;
   // The frontmatter's description line: a JSON-quoted value as UAM writes it, or a plain one; a block scalar shows nothing here.
-  const line = /^description:[ \t]*(.+)$/m.exec(FRONTMATTER.exec(file.content)?.[1] ?? '')?.[1].trim();
+  const line = /^description:[ \t]*(.+)$/m.exec(FRONTMATTER.exec(file.content ?? '')?.[1] ?? '')?.[1].trim();
   if (!line || /^[>|]/.test(line)) return '';
   if (line.startsWith('"')) {
     try { return String(JSON.parse(line)); } catch { return line.slice(1, -1); }
@@ -389,6 +392,12 @@ function SkillInstaller({ projectId, allowed, locked, onInstalled, onBusy }: Rea
   </details>;
 }
 
+/** The listing with `file` in place of its entry at the same path. */
+function withFile(current: Configuration, kind: ConfigurationKind, file: ConfigurationFile): Configuration {
+  if (kind === 'instructions') return { ...current, instructions: current.instructions.path === file.path ? file : current.instructions, instruction_files: current.instruction_files?.map((entry) => entry.path === file.path ? file : entry) };
+  return { ...current, [kind]: current[kind].map((entry) => entry.path === file.path ? file : entry) };
+}
+
 /**
  * One kind's files in Settings. Agents, Skills, Hooks and Instructions share one scope (`scope`, changed through
  * `onScope`); a kind with a form open or a write in flight holds it (`onHold`), and the others' Scope waits (`heldBy`).
@@ -404,6 +413,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [viewed, setViewed] = useState<{ file: ConfigurationFile; kind: ConfigurationKind } | null>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [brief, setBrief] = useState('');
@@ -467,11 +477,11 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   const briefTooLong = new TextEncoder().encode(brief.trim()).length > 8192;
   useEffect(() => {
     let current = true;
-    api.configuration(projectId).then((next) => {
+    api.configuration(projectId, false).then((next) => {
       if (!current) return;
       setData(next); setLoadError(null); setGlobalData(null); setGlobalError(null);
       if (projectId && kind !== 'instructions' && next.conflicts?.some((conflict) => conflict.kind === kind && conflict.paths.some((path) => !next[kind].some((file) => file.path === path)))) {
-        api.configuration().then((global) => { if (current) setGlobalData(global); }, (e: unknown) => { if (current) setGlobalError(describeError(e)); });
+        api.configuration('', false).then((global) => { if (current) setGlobalData(global); }, (e: unknown) => { if (current) setGlobalError(describeError(e)); });
       }
     }, (e: unknown) => {
       if (current) setLoadError(routeMissing(e) ? 'This service does not support configuration management yet. Update the service and retry.' : describeError(e));
@@ -480,19 +490,35 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   }, [projectId, reload, kind, api]);
   function refresh() { setGlobalData(null); setGlobalError(null); setReload((value) => value + 1); }
   function clearSuggestions() { skillViewRequest.current++; setSimilarSkills([]); setOpeningSkill(null); setSkillViewError(null); }
-  function viewFile(file: ConfigurationFile, fileKind: ConfigurationKind) { skillViewRequest.current++; setOpeningSkill(null); setSkillViewError(null); setViewed({ file, kind: fileKind }); }
+  /** The listed file with its body: agents and skills are listed without one, and a loaded body joins this scope's listing. */
+  async function loadBody(file: ConfigurationFile, fileKind: ConfigurationKind, scope: string): Promise<ConfigurationFile> {
+    if (file.content !== undefined || file.metadata_only) return file;
+    const loaded = await api.configurationFile(fileKind, file.name, scope, file.path);
+    const merged = { ...file, content: loaded.content ?? '', revision: loaded.revision };
+    if (fileKind === kind && scope === projectId) setData((current) => current && withFile(current, kind, merged));
+    return merged;
+  }
+  function openBody(file: ConfigurationFile) { setBodyError(null); loadBody(file, kind, projectId).catch((e: unknown) => setBodyError(describeError(e))); }
+  async function viewFile(file: ConfigurationFile, fileKind: ConfigurationKind, scope: string) {
+    skillViewRequest.current++; setOpeningSkill(null); setSkillViewError(null);
+    try { setViewed({ file: await loadBody(file, fileKind, scope), kind: fileKind }); } catch (e) { setError(describeError(e)); }
+  }
   async function viewSimilarSkill(skill: NonNullable<ConfigurationDraft['similar_skills']>[number]) {
     if (openingSkill) return;
     const request = ++skillViewRequest.current;
     setOpeningSkill(skill.path); setSkillViewError(null);
     try {
-      const file = data?.skills.find((entry) => entry.path === skill.path) ?? (await api.configuration(skill.project_id ?? '')).skills.find((entry) => entry.path === skill.path);
+      const file = data?.skills.find((entry) => entry.path === skill.path && entry.content !== undefined) ?? (await api.configuration(skill.project_id ?? '')).skills.find((entry) => entry.path === skill.path);
       if (!file) throw new Error(`${skill.name} is no longer available at the suggested path.`);
       if (request === skillViewRequest.current) setViewed({ file, kind: 'skills' });
     } catch (e) { if (request === skillViewRequest.current) setSkillViewError(`Could not open ${skill.name}: ${describeError(e)}`); }
     finally { if (request === skillViewRequest.current) setOpeningSkill(null); }
   }
-  function edit(file?: ConfigurationFile) { clearSuggestions(); setError(null); setSuccess(null); setConflict(false); setGeneratedBy(''); setDraft(createDraft(file)); }
+  /** Opens the form: empty, or on a listed file whose body is loaded first when the listing left it out. */
+  async function edit(file?: ConfigurationFile) {
+    clearSuggestions(); setError(null); setSuccess(null); setConflict(false); setGeneratedBy('');
+    try { setDraft(createDraft(file && await loadBody(file, kind, projectId))); } catch (e) { setError(describeError(e)); }
+  }
   async function generate(event: SubmitEvent) {
     event.preventDefault();
     if (kind === 'instructions' || draft || generating || busy || installing || generationUnavailable || !brief.trim() || briefTooLong) return;
@@ -530,11 +556,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       const content = documentOf(kind, draft);
       setBusy(true);
       const saved = await api.saveConfiguration(kind, draft.name.trim(), { content, revision: draft.revision, ...(draft.revision && draft.path ? { path: draft.path } : {}) }, projectId);
-      setData((current) => {
-        if (!current) return current;
-        if (kind === 'instructions') return { ...current, instructions: current.instructions.path === saved.path ? saved : current.instructions, instruction_files: current.instruction_files?.map((file) => file.path === saved.path ? saved : file) };
-        return { ...current, [kind]: current[kind].map((file) => file.path === saved.path ? saved : file) };
-      });
+      setData((current) => current && withFile(current, kind, saved));
       clearSuggestions(); setDraft(null); setSuccess(`${kind === 'instructions' ? fileName(draft) : draft.name} saved. New and reopened threads use the updated file.`); refresh();
     } catch (e) {
       setError(describeError(e));
@@ -590,7 +612,15 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
   const duplicated = (file: ConfigurationFile) => kind === 'skills' && files.some((other) => other !== file && other.name === file.name);
   const nameOf = (file: ConfigurationFile) => kind === 'instructions' ? fileName(file) : file.name;
   const actionsOff = locked || busy || installing || generating || !!draft;
-  const opened = cards.reader?.item;
+  // The listing's entry for the open card, so a body loaded after opening shows in its reader.
+  const openedItem = cards.reader?.item;
+  const opened = openedItem && (discoveredFiles.find((file) => file.path === openedItem.path && file.name === openedItem.name && !!file.metadata_only === !!openedItem.metadata_only) ?? openedItem);
+  let documentBody: ReactNode = null;
+  if (opened && !opened.metadata_only) {
+    if (opened.content !== undefined) documentBody = <DocumentBody file={opened} kind={kind} view={view} />;
+    else if (bodyError) documentBody = <Note tone="error" role="alert">{bodyError} <Button size="sm" onClick={() => openBody(opened)}>Retry</Button></Note>;
+    else documentBody = <Skeleton label="Loading document…" rows={3} />;
+  }
   const confirms = <>
     <AlertDialog {...removal.props} title={`Remove ${removal.target?.file.name ?? label}?`} description={<>{kind === 'skills' ? 'Removes the skill definition while keeping supporting files.' : `Deletes this ${label} file.`}<span className="mt-2 block">Scope: {removal.target?.projectId ? projects.find((project) => project.id === removal.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{removal.target?.file.path}</span>If other paths link to this resolved file, removing it affects those aliases too. This cannot be undone here. Running threads keep their current configuration.</>} confirmLabel="Remove" busy={busy} onConfirm={() => void remove()} />
     <AlertDialog {...activation.props} title={`${activation.target?.file.disabled ? 'Enable' : 'Disable'} ${activation.target?.file.name ?? label}?`} description={<>{activation.target?.file.disabled ? 'Restores the saved file to its discovery name. Any same-name definitions will be checked again.' : 'Keeps the file with a disabled filename so Copilot does not load it. You can enable it again here.'}<span className="mt-2 block">Scope: {activation.target?.projectId ? projects.find((project) => project.id === activation.target?.projectId)?.name ?? 'Project' : 'Global (all projects)'}</span><span className="mb-2 block break-all font-mono text-meta">{activation.target?.file.path}</span>This also affects aliases of the resolved file. Running threads keep their current configuration.</>} confirmLabel={activation.target?.file.disabled ? 'Enable' : 'Disable'} busy={busy} onConfirm={() => void setDisabled()} />
@@ -607,7 +637,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
     {locked && <Note>Turn on Terminal in UAM and access to manage {kind}. These files can configure commands that run as the service user.</Note>}
     {loadError ? <Note tone="error" role="alert">{loadError} <Button size="sm" onClick={refresh}>Retry</Button></Note> : !data ? <Skeleton label={`Loading ${kind}…`} rows={3} /> : <>
       {!draft && kind !== 'instructions' && <>
-        <SectionAction><Button size="sm" variant="secondary" data-section-add="" disabled={locked || busy || installing || generating} onClick={() => edit()}>Add {label}</Button></SectionAction>
+        <SectionAction><Button size="sm" variant="secondary" data-section-add="" disabled={locked || busy || installing || generating} onClick={() => void edit()}>Add {label}</Button></SectionAction>
         <details className="group rounded-md bg-tint-well p-3">
           <Summary>Create with AI</Summary>
           <form aria-label={`Create ${label} with AI`} className="mt-3 flex flex-col gap-3" aria-busy={generating || undefined} onSubmit={(event) => void generate(event)}>
@@ -661,7 +691,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
             const unavailable = !file ? globalError ? 'Global definition unavailable. Retry above.' : globalData || !projectId ? 'This file is no longer in the listing. Reload before changing it.' : 'Loading Global definition…' : !file.editable || file.error || !file.revision ? file.read_only_reason || file.error || 'Read only here; manage this file at its source.' : '';
             return <li key={path} className="flex min-w-0 flex-wrap items-start gap-2">
               <div className="min-w-0 flex-1 max-sm:basis-full"><PathText path={path} className="text-muted" /><span className="text-meta text-muted">{local && projectId ? 'Project' : 'Global'}</span>{unavailable && <Note>{unavailable}</Note>}</div>
-              <Button size="sm" disabled={!file} onClick={() => file && viewFile(file, kind)}>View</Button>
+              <Button size="sm" disabled={!file} onClick={() => { if (file) void viewFile(file, kind, local ? projectId : ''); }}>View</Button>
               <Button size="sm" disabled={!!unavailable || locked || busy || installing || generating || !!draft} onClick={() => target && activation.ask(target)}>Disable</Button>
               <Button size="sm" variant="danger" disabled={!!unavailable || locked || busy || installing || generating || !!draft} onClick={() => target && removal.ask(target)}>Remove</Button>
             </li>;
@@ -688,7 +718,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
             </>}
             expanded={opened === file && !!cards.reader?.open}
             controls={cards.id}
-            onOpen={(button) => { setView('preview'); if (!draft) setError(null); cards.show(file, button); }}
+            onOpen={(button) => { setView('preview'); if (!draft) setError(null); cards.show(file, button); openBody(file); }}
           />)}
         </CardGroup>)}
       </div>
@@ -703,7 +733,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       title={nameOf(opened)}
       facts={[sourceOf(opened, kind, scopeLabel), opened.disabled && 'Disabled', !opened.editable && 'Read only'].filter(Boolean).join(' · ')}
       actions={opened.editable && <>
-        {!opened.disabled && <Button size="sm" variant="secondary" disabled={actionsOff} onClick={() => cards.close(() => edit(opened))}>{kind === 'instructions' ? `${opened.revision ? 'Edit' : 'Add'} ${fileName(opened)}` : 'Edit'}</Button>}
+        {!opened.disabled && <Button size="sm" variant="secondary" disabled={actionsOff} onClick={() => cards.close(() => void edit(opened))}>{kind === 'instructions' ? `${opened.revision ? 'Edit' : 'Add'} ${fileName(opened)}` : 'Edit'}</Button>}
         {opened.revision && kind !== 'instructions' && <>
           <Button size="sm" disabled={actionsOff} onClick={() => activation.ask({ file: opened, projectId })}>{opened.disabled ? 'Enable' : 'Disable'}</Button>
           <Button size="sm" variant="danger" disabled={actionsOff} onClick={() => removal.ask({ file: opened, projectId })}>Remove</Button>
@@ -730,7 +760,7 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
       {opened.path && <PanelSection label="Path"><PathText path={opened.path} className="text-body" /></PanelSection>}
       {!opened.metadata_only && <PanelSection label="Document" action={hasViews(opened, kind) && <Segmented aria-label="Show document as" value={view} onValueChange={setView} items={VIEWS} />}>
         {draft && !missingFile(opened) && <Note>This shows the saved file; any unsaved editor changes stay in the editor.</Note>}
-        <DocumentBody file={opened} kind={kind} view={view} />
+        {documentBody}
       </PanelSection>}
       {/* A refused Disable, Enable or Remove keeps the reader open and says why here. */}
       {!draft && error && <Note tone="error" role="alert">{error}</Note>}

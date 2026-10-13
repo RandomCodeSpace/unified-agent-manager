@@ -170,7 +170,8 @@ checks, and JSON error responses. Responses are not cached.
 
 | Method and path | Behavior |
 | --- | --- |
-| `GET /api/configuration` | Lists agents, skills, hooks, and instruction files with their paths, contents, editability, and revisions. |
+| `GET /api/configuration` | Lists agents, skills, hooks, and instruction files with their paths, contents, editability, and revisions. Listed agents and skills also carry `description` from their frontmatter. With `content=0`, agents and skills are listed without `content` (hook and instruction files keep theirs); the web UI lists this way and reads a body when its reader opens. |
+| `GET /api/configuration/{kind}/{name}` | Returns one listed file with its content. `path` selects the file when several in the scope share the name; without it, a shared name returns `409`. |
 | `PUT /api/configuration/{kind}/{name}` | Saves `{content, revision, path?}`, or toggles an existing agent, skill, or hook with `{disabled, revision, path}`. An empty revision creates a managed file; an existing file requires its current revision. `path` selects an exact discovered file. |
 | `DELETE /api/configuration/{kind}/{name}` | Removes the definition matching `{revision, path?}`. A supplied path must identify an editable file in the selected scope. |
 | `POST /api/configuration/{kind}/draft` | Generates an editable draft from `{brief}` for `agents`, `skills`, or `hooks`, without saving it. |

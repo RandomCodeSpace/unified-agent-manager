@@ -25,13 +25,56 @@ const disabledConfigurationSuffix = ".uam-disabled"
 
 var configurationName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
+// The Markdown frontmatter delimiters and its description line, as the web
+// UI reads them: a JSON-quoted value as UAM writes it, a single-quoted or a
+// plain one; a block scalar gives nothing.
+var (
+	configurationFrontmatter = regexp.MustCompile(`^\x{FEFF}?---[ \t]*\r?\n((?s:.*?))\r?\n---[ \t]*(?:\r?\n|$)`)
+	configurationDescription = regexp.MustCompile(`(?m)^description:[ \t]*(.+)$`)
+)
+
+func frontmatterDescription(content string) string {
+	frontmatter := configurationFrontmatter.FindStringSubmatch(content)
+	if frontmatter == nil {
+		return ""
+	}
+	match := configurationDescription.FindStringSubmatch(frontmatter[1])
+	if match == nil {
+		return ""
+	}
+	line := strings.TrimSpace(match[1])
+	switch {
+	case line == "", line[0] == '>', line[0] == '|':
+		return ""
+	case line[0] == '"':
+		var value string
+		if json.Unmarshal([]byte(line), &value) == nil {
+			return value
+		}
+		return strings.TrimSuffix(line[1:], `"`)
+	case line[0] == '\'':
+		return strings.ReplaceAll(strings.TrimSuffix(line[1:], `'`), "''", "'")
+	}
+	return line
+}
+
+// withDescription gives an agent or skill file its frontmatter description.
+func withDescription(kind string, file ConfigurationFile) ConfigurationFile {
+	if kind == "agents" || kind == "skills" {
+		file.Description = frontmatterDescription(file.Content)
+	}
+	return file
+}
+
 // ConfigurationFile keeps an exact managed file and optional native metadata.
 // MetadataOnly rows describe runtime definitions without granting file access.
 // Keeping file contents intact preserves options the guided form cannot expose.
 type ConfigurationFile struct {
-	Name           string                            `json:"name"`
-	Path           string                            `json:"path"`
-	Content        string                            `json:"content"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	// Description is the frontmatter description of a listed agent or skill.
+	Description    string                            `json:"description,omitempty"`
 	Revision       string                            `json:"revision"`
 	Editable       bool                              `json:"editable"`
 	Disabled       bool                              `json:"disabled,omitempty"`
@@ -258,7 +301,7 @@ func configurationFileAtPath(scope configurationScope, kind, name, path string, 
 		entry.Error = "File cannot be edited: " + shortError(err)
 		entry.Editable = false
 	}
-	return entry
+	return withDescription(kind, entry)
 }
 
 func listConfiguration(scope configurationScope, kind string, editable bool) ([]ConfigurationFile, error) {
@@ -398,7 +441,7 @@ func listConfigurationSkills(dir string, scope configurationScope, editable bool
 			if bytes > 4<<20 {
 				return nil, errors.New("configuration contents exceed the 4 MiB listing limit")
 			}
-			out = append(out, file)
+			out = append(out, withDescription("skills", file))
 		}
 	}
 	return out, nil
@@ -744,16 +787,8 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 			return ConfigurationFile{}, newError(http.StatusConflict, "an existing file revision is required; reload before saving or removing it")
 		}
 		var files []ConfigurationFile
-		switch kind {
-		case "instructions":
-			files = []ConfigurationFile{configurationFile(scope, kind, name, true)}
-		case "skills":
-			files, err = m.configurationSkillsForScope(scope)
-		default:
-			files, err = listConfiguration(scope, kind, true)
-		}
-		if err != nil {
-			return ConfigurationFile{}, newError(http.StatusConflict, "configuration listing is unavailable: %s", shortError(err))
+		if files, err = m.configurationFiles(scope, kind, name); err != nil {
+			return ConfigurationFile{}, err
 		}
 		i := slices.IndexFunc(files, func(file ConfigurationFile) bool { return file.Name == name && file.Path == in.Path })
 		if i < 0 || !files[i].Editable || files[i].Error != "" || files[i].Revision == "" {
@@ -864,7 +899,7 @@ func (m *Manager) SaveConfiguration(projectID, kind, name string, in configurati
 		if err != nil {
 			return ConfigurationFile{}, newError(http.StatusConflict, "saved configuration is unavailable: %s", shortError(err))
 		}
-		return ConfigurationFile{Name: name, Path: in.Path, Content: content, Revision: revision, Editable: true, Disabled: disabled}, nil
+		return withDescription(kind, ConfigurationFile{Name: name, Path: in.Path, Content: content, Revision: revision, Editable: true, Disabled: disabled}), nil
 	}
 	return configurationFile(scope, kind, name, true), nil
 }
@@ -926,13 +961,96 @@ func publishConfiguration(root *os.Root, tmp, path, revision string) error {
 	return root.Rename(tmp, path)
 }
 
+// configurationFiles lists one kind of the scope the way its mutations and
+// single-file reads select a file: the managed and shared files, without
+// native discovery.
+func (m *Manager) configurationFiles(scope configurationScope, kind, name string) ([]ConfigurationFile, error) {
+	var files []ConfigurationFile
+	var err error
+	switch kind {
+	case "instructions":
+		files = []ConfigurationFile{configurationFile(scope, kind, name, true)}
+	case "skills":
+		files, err = m.configurationSkillsForScope(scope)
+	default:
+		files, err = listConfiguration(scope, kind, true)
+	}
+	if err != nil {
+		return nil, newError(http.StatusConflict, "configuration listing is unavailable: %s", shortError(err))
+	}
+	return files, nil
+}
+
+// ConfigurationFile is one listed file with its content. path selects the
+// file when several in the scope share the name.
+func (m *Manager) ConfigurationFile(projectID, kind, name, path string) (ConfigurationFile, error) {
+	scope, err := m.configurationScope(projectID)
+	if err != nil {
+		return ConfigurationFile{}, err
+	}
+	if _, err = configurationRelative(scope, kind, name); err != nil {
+		return ConfigurationFile{}, err
+	}
+	files, err := m.configurationFiles(scope, kind, name)
+	if err != nil {
+		return ConfigurationFile{}, err
+	}
+	files = slices.DeleteFunc(files, func(file ConfigurationFile) bool { return file.Name != name || path != "" && file.Path != path })
+	switch len(files) {
+	case 0:
+		return ConfigurationFile{}, newError(http.StatusNotFound, "configuration file not found")
+	case 1:
+		return files[0], nil
+	}
+	return ConfigurationFile{}, newError(http.StatusConflict, "several files share this name; select one by path")
+}
+
+// configurationListing is a Configuration whose agents and skills are
+// serialised without content (GET /api/configuration?content=0). Hook and
+// instruction files keep theirs: the cards summarise them from it, and a
+// scope has few of them.
+type configurationListing struct {
+	Configuration
+	Agents []configurationSummary `json:"agents"`
+	Skills []configurationSummary `json:"skills"`
+}
+
+// configurationSummary hides the embedded file's content: the shallower
+// field with the same JSON name wins, and it is empty.
+type configurationSummary struct {
+	ConfigurationFile
+	Content string `json:"content,omitempty"`
+}
+
+func configurationSummaries(files []ConfigurationFile) []configurationSummary {
+	out := make([]configurationSummary, len(files))
+	for i, file := range files {
+		out[i] = configurationSummary{ConfigurationFile: file}
+	}
+	return out
+}
+
 func (s *Server) handleConfiguration(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.m.Configuration(r.URL.Query().Get("project_id"))
 	if err != nil {
 		writeFailure(w, err)
 		return
 	}
+	if r.URL.Query().Get("content") == "0" {
+		writeJSON(w, http.StatusOK, configurationListing{Configuration: cfg, Agents: configurationSummaries(cfg.Agents), Skills: configurationSummaries(cfg.Skills)})
+		return
+	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (s *Server) handleConfigurationFile(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	file, err := s.m.ConfigurationFile(q.Get("project_id"), r.PathValue("kind"), r.PathValue("name"), q.Get("path"))
+	if err != nil {
+		writeFailure(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, file)
 }
 
 func (s *Server) handleSaveConfiguration(w http.ResponseWriter, r *http.Request) {
