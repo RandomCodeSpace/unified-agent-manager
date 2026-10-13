@@ -1298,11 +1298,11 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   in Settings, the lowest input plus output price per token wins, then the
   lower input price, then the lower ID. `/api/meta` gives it per provider
   as `cheapest_model`, omitted when no model is priced; then those jobs
-  are not run. Titles are the exception: with no entry, a Thread is titled by
-  its own model at the lowest reasoning effort that model offers, which
-  spends that model's credits, and by the cheapest model when that call
-  fails or the Thread is on `auto`; with neither, the Thread keeps its first
-  message as the title. A `PATCH`
+  are not run. Titles have a fallback: with no entry, when the cheapest
+  model's call fails, the Thread's own model is asked at the lowest
+  reasoning effort that model offers, which spends that model's credits
+  (not on `auto`); with neither, the Thread keeps its first message as the
+  title. A `PATCH`
   with a model ID, e.g. `{"title_model": {"copilot": "gpt-5-mini"}}`,
   chooses that model; `"none"` opts the provider out, so a Thread keeps its
   first message as the title, a subagent its own report, and UAM makes no utility AI call; an empty ID removes the entry, back to
@@ -1325,8 +1325,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   that accepts images; otherwise, or when it carried only files, the title
   waits for the end of the first turn that has a reply and is made from that
   reply, over the provider's placeholder. A name you type wins, even while the title is on its way. The
-  models asked share 45 s; if they fail or run out of time, the Thread keeps
-  the title it has, and the service log says why. In the Background AI log
+  models asked share 45 s, each getting an equal part of the time left, so
+  one that does not answer leaves time for the next; if they fail or run out
+  of time, the Thread keeps the title it has, and the service log says why. In the Background AI log
   a call that ran out of time says how long it waited and at which step,
   e.g. "the Utility model did not answer within 45 s (its session was open
   after 0.1 s)". Each title costs AI credits,

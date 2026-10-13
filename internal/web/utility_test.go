@@ -307,7 +307,7 @@ func TestUtilityInvalidPauseRebuilt(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 4; i++ {
 		m.utility.reserve(now, purposeOutcome, 400, false)
-		m.utility.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false)})
+		m.utility.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	if err := m.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)

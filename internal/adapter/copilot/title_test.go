@@ -195,11 +195,12 @@ func TestTitleAlwaysDeletesItsSession(t *testing.T) {
 }
 
 // A call that runs out of time says, for the Utility log, that the model
-// did not answer, how long it waited and when its session was open.
+// did not answer, how long it waited and when its session was open, and
+// aborts the model request before its session goes.
 func TestUtilityTimeoutSaysWhichStageWaited(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	p, _ := titleProvider(func(ctx context.Context, _ copilot.MessageOptions) (string, error) {
+	p, fc := titleProvider(func(ctx context.Context, _ copilot.MessageOptions) (string, error) {
 		<-ctx.Done()
 		return "", errors.New("waiting for session.idle: " + ctx.Err().Error())
 	})
@@ -207,6 +208,13 @@ func TestUtilityTimeoutSaysWhichStageWaited(t *testing.T) {
 	_, err := p.Title(ctx, agentapi.TitleRequest{Model: "gpt-5-mini", Text: "x"})
 	if !errors.Is(err, context.DeadlineExceeded) || !regexp.MustCompile(`^the Utility model did not answer within 0\.\d s \(its session was open after 0\.\d s\)`).MatchString(err.Error()) {
 		t.Fatalf("timeout error = %v", err)
+	}
+	fs := fc.sessions[0]
+	fs.mu.Lock()
+	aborts := fs.aborts
+	fs.mu.Unlock()
+	if aborts != 1 || len(fc.deleted) != 1 {
+		t.Fatalf("timed-out call: %d aborts, deleted %v", aborts, fc.deleted)
 	}
 }
 

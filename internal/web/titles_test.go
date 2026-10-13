@@ -661,7 +661,38 @@ func TestImageOnlyFirstMessageIsTitledFromTheReply(t *testing.T) {
 // the call; when that model fails the cheapest priced model is asked; a
 // Task on auto uses the cheapest at once; past the daily limit nothing more
 // is asked.
-func TestSessionModelTitlesWithoutAUtilityModel(t *testing.T) {
+func TestTitleModelsShareTheBudget(t *testing.T) {
+	m, prov, project := mediaTitleManager(t, []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6)})
+	var mu sync.Mutex
+	left := map[string]time.Duration{}
+	prov.SetTitleHook(func(ctx context.Context, req agentapi.TitleRequest) (string, error) {
+		deadline, _ := ctx.Deadline()
+		mu.Lock()
+		left[req.Model] = time.Until(deadline)
+		mu.Unlock()
+		if req.Model == "cheap" {
+			return "", context.DeadlineExceeded
+		}
+		return "Title by " + req.Model, nil
+	})
+	sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Model: "dear"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustSubmit(t, m, sum.ID, "Fix the login form", mustUUID(t), ModeSend, SubmissionAccepted)
+	waitUntil(t, "the second model's title", func() bool { return summaryOf(t, m, sum.ID).Title == "Title by dear" })
+	mu.Lock()
+	defer mu.Unlock()
+	// The first model gets half the budget, leaving the rest for the next.
+	if first := left["cheap"]; first <= 0 || first > titleTimeout/2 {
+		t.Fatalf("first model had %s of %s", first, titleTimeout)
+	}
+	if second := left["dear"]; second <= titleTimeout/2 {
+		t.Fatalf("second model had %s of %s", second, titleTimeout)
+	}
+}
+
+func TestCheapestModelTitlesWithoutAUtilityModel(t *testing.T) {
 	m, prov, project := mediaTitleManager(t, []agentapi.Model{pricedModel("dear", 100, 500, 1e6), pricedModel("cheap", 10, 50, 1e6), {ID: "auto"}})
 	var mu sync.Mutex
 	failing := ""
@@ -689,23 +720,26 @@ func TestSessionModelTitlesWithoutAUtilityModel(t *testing.T) {
 	}
 
 	own := titled("dear", "Fix the login form")
-	waitUntil(t, "the session-model title", func() bool { return summaryOf(t, m, own.ID).Title == "Title by dear" })
-	if c := calls(1)[0]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityOK || c.TaskID != own.ID {
+	waitUntil(t, "the cheapest model's title", func() bool { return summaryOf(t, m, own.ID).Title == "Title by cheap" })
+	if c := calls(1)[0]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityOK || c.TaskID != own.ID {
 		t.Fatalf("logged call = %+v", c)
 	}
 
 	mu.Lock()
-	failing = "dear"
+	failing = "cheap"
 	mu.Unlock()
 	fallback := titled("dear", "Write the release notes")
-	waitUntil(t, "the fallback title", func() bool { return summaryOf(t, m, fallback.ID).Title == "Title by cheap" })
+	waitUntil(t, "the fallback title", func() bool { return summaryOf(t, m, fallback.ID).Title == "Title by dear" })
 	got := calls(3)
-	if c := got[1]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityError {
-		t.Fatalf("failed session-model call = %+v", c)
+	if c := got[1]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityError {
+		t.Fatalf("failed cheapest-model call = %+v", c)
 	}
-	if c := got[0]; c.Model != "cheap" || c.SessionModel || c.Outcome != utilityOK {
+	if c := got[0]; c.Model != "dear" || !c.SessionModel || c.Outcome != utilityOK {
 		t.Fatalf("fallback call = %+v", c)
 	}
+	mu.Lock()
+	failing = ""
+	mu.Unlock()
 
 	auto := titled("auto", "Tidy the README")
 	waitUntil(t, "the auto Task's title", func() bool { return summaryOf(t, m, auto.ID).Title == "Title by cheap" })
@@ -716,7 +750,7 @@ func TestSessionModelTitlesWithoutAUtilityModel(t *testing.T) {
 	setUtilityLimit(t, m, new(4))
 	before := len(prov.TitleRequests())
 	capped := titled("dear", "Add a dark mode toggle")
-	if c := calls(5)[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.Model != "dear" || !c.SessionModel {
+	if c := calls(5)[0]; c.Outcome != utilitySkipped || c.Reason != skippedLimit || c.Model != "cheap" || c.SessionModel {
 		t.Fatalf("capped call = %+v", c)
 	}
 	if err := m.Shutdown(context.Background()); err != nil {

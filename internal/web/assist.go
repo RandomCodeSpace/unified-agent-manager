@@ -68,16 +68,19 @@ func (m *Manager) assistRunnerLocked(s *webSession) (agentapi.UtilityRunner, str
 
 // runAssist makes the Utility call assistRunnerLocked claimed for Task s, in
 // one of the title slots, through runUtility, so it is logged and refused
-// past today's limit, and returns the model's reply.
+// past today's limit, and returns the model's reply. A call that gets no
+// slot within assistTimeout is dropped: its answer would come too late.
 func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, call UtilityCall, req agentapi.UtilityRequest) (string, error) {
 	defer m.titles.Done()
 	ctx, cancel := m.bound(ctx)
 	defer cancel()
+	wait, stop := context.WithTimeout(ctx, assistTimeout)
+	defer stop()
 	select {
 	case m.titleSlots <- struct{}{}:
 		defer func() { <-m.titleSlots }()
-	case <-ctx.Done():
-		return "", ctx.Err()
+	case <-wait.Done():
+		return "", fmt.Errorf("no Utility slot came free within %s: %w", assistTimeout, wait.Err())
 	}
 	req.Timeout = assistTimeout
 	call.Purpose, call.Model = req.Purpose, req.Model

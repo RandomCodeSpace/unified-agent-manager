@@ -113,9 +113,9 @@ const maxTitleImages = 3
 // than a fallback, no user item and no submission the provider may have
 // taken, and while its provider titles Tasks.
 //
-// A Utility model set in Settings titles it. Unset, the Task's own model
-// does (not auto, which names no model; the provider asks it at its lowest
-// effort), then the cheapest priced model when that one fails. A message
+// A Utility model set in Settings titles it. Unset, the cheapest priced
+// model does, then the Task's own model when that one fails (not auto,
+// which names no model; the provider asks it at its lowest effort). A message
 // with no text goes with its images to a model that accepts them; otherwise
 // the job waits for the first turn to end and titles from the agent's reply.
 func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload) *titlePlan {
@@ -128,11 +128,12 @@ func (m *Manager) titlePlanLocked(s *webSession, in turnInput, uploads []*upload
 	case store.WebTitleModelNone:
 		return nil
 	case "":
-		if s.model != "" && s.model != "auto" && m.modelLocked(s.provider, s.model).ID != "" {
-			models = append(models, titleCandidate{model: s.model, session: true})
-		}
-		if cheapest := m.cheapestModelLocked(s.provider); cheapest != "" && cheapest != s.model {
+		cheapest := m.cheapestModelLocked(s.provider)
+		if cheapest != "" {
 			models = append(models, titleCandidate{model: cheapest})
+		}
+		if s.model != "" && s.model != "auto" && s.model != cheapest && m.modelLocked(s.provider, s.model).ID != "" {
+			models = append(models, titleCandidate{model: s.model, session: true})
 		}
 	default:
 		models = append(models, titleCandidate{model: setting})
@@ -370,8 +371,9 @@ func (m *Manager) title(s *webSession, titler agentapi.Titler, models []titleCan
 // generateTitle asks each model in turn, as Utility calls within one
 // titleTimeout, until one gives a title, and returns it with that model: a
 // failure, a timeout or a reply that is no title moves on to the next,
-// today's Utility limit or the spent budget ends the job. It returns ""
-// when no model gives one.
+// today's Utility limit or the spent budget ends the job. Each model gets
+// an equal share of the time left, so one that does not answer leaves time
+// for the next. It returns "" when no model gives one.
 func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, models []titleCandidate, blobs []agentapi.Blob, req agentapi.TitleRequest, call UtilityCall) (string, string) {
 	select {
 	case m.titleSlots <- struct{}{}:
@@ -381,7 +383,8 @@ func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, mod
 	}
 	ctx, cancel := context.WithTimeout(m.ctx, titleTimeout)
 	defer cancel()
-	for _, c := range models {
+	deadline, _ := ctx.Deadline()
+	for i, c := range models {
 		req.Model, req.Images = c.model, nil
 		if c.images {
 			req.Images = m.titleImages(provider, c.model, blobs)
@@ -389,7 +392,8 @@ func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, mod
 		call.Model, call.SessionModel = c.model, c.session
 		var title string
 		var invalid error
-		_, err := m.runUtilityChecked(ctx, call, req.Text+req.Reply, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
+		attempt, stop := context.WithTimeout(ctx, time.Until(deadline)/time.Duration(len(models)-i))
+		_, err := m.runUtilityChecked(attempt, call, req.Text+req.Reply, func(ctx context.Context, onUsage func(agentapi.UtilityUsage)) (string, error) {
 			req.OnUsage = onUsage
 			return titler.Title(ctx, req)
 		}, func(call *UtilityCall, reply string, err error) {
@@ -400,6 +404,7 @@ func (m *Manager) generateTitle(id, provider string, titler agentapi.Titler, mod
 				call.Reason = "invalid_answer"
 			}
 		})
+		stop()
 		if err == nil {
 			err = invalid
 		}

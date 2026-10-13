@@ -86,6 +86,20 @@ func TestUtilityAnswerShapes(t *testing.T) {
 	if got, err := validateSuggestion("Commit this", "I fixed the test."); err != nil || got != "Commit this" {
 		t.Fatalf("valid suggestion = %q, %v", got, err)
 	}
+	prompt := "<user_message>\nfix the login test\n</user_message>\n<agent_reply>\nFixed the flaky test in auth_test.go. Want me to commit this?\n</agent_reply>"
+	for _, reply := range []string{"Commit this", "Yes, commit this", "Update README.md too", "Run go test ./...", "Bump to v1.2", "Note: also check logout", "Now fix the signup test"} {
+		if got, err := validateSuggestion(reply, prompt); err != nil || got != reply {
+			t.Errorf("refused %q: %v", reply, err)
+		}
+	}
+	for _, reply := range []string{"Fixed the flaky test in auth_test.go", "want me to commit this", "See github.com/x/y", "Open file:///etc/passwd", "Run javascript:alert(1)"} {
+		if _, err := validateSuggestion(reply, prompt); err == nil {
+			t.Errorf("accepted %q", reply)
+		}
+	}
+	if got, err := validateOutcome(`{"verb":"Fixed","object":"The flaky test"}`, prompt); err != nil || got != "Fixed The flaky test" {
+		t.Fatalf("outcome in another case = %q, %v", got, err)
+	}
 }
 
 func TestUtilityJobRetryAndFallback(t *testing.T) {
@@ -136,7 +150,7 @@ func TestUtilityInvalidStreakPausesUntilMidnight(t *testing.T) {
 		if reason := l.reserve(now, purposeOutcome, 400, false); reason != "" {
 			t.Fatal(reason)
 		}
-		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false)})
+		l.add(UtilityCall{At: now, Purpose: purposeOutcome, Outcome: utilityOK, Valid: new(false), Fallback: true})
 	}
 	if reason := l.reserve(now, purposeOutcome, 400, false); reason != skippedInvalid {
 		t.Fatalf("reason=%q", reason)
@@ -146,6 +160,36 @@ func TestUtilityInvalidStreakPausesUntilMidnight(t *testing.T) {
 	}
 	if reason := l.reserve(midnightAfter(now), purposeOutcome, 400, false); reason != "" {
 		t.Fatal(reason)
+	}
+}
+
+func TestUtilityInvalidStreakCountsTurnsNotAttempts(t *testing.T) {
+	now := time.Now()
+	l := utilityLog{}
+	answer := func(valid, final bool) {
+		t.Helper()
+		if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != "" {
+			t.Fatal(reason)
+		}
+		l.add(UtilityCall{At: now, Purpose: purposeSuggestReplies, Outcome: utilityOK, Valid: new(valid), Fallback: final && !valid})
+	}
+	// Four turns whose first answer was invalid and whose retry was valid.
+	for range 4 {
+		answer(false, false)
+		answer(true, true)
+	}
+	// Three turns with two invalid answers each.
+	for range 3 {
+		answer(false, false)
+		answer(false, true)
+	}
+	if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != "" {
+		t.Fatalf("paused after 3 failed turns: %q", reason)
+	}
+	answer(false, false)
+	answer(false, true)
+	if reason := l.reserve(now, purposeSuggestReplies, 400, false); reason != skippedInvalid {
+		t.Fatalf("4 failed turns: reason=%q", reason)
 	}
 }
 
