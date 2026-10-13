@@ -272,7 +272,7 @@ function ConfigurationForm({ kind, draft, busy, locked, error, models, modelStat
   const formRef = useInlineForm<HTMLFormElement>(() => { if (!busy) onCancel(); });
   return <form ref={formRef} aria-label={`${editing ? 'Edit' : 'Add'} ${label}`} className="flex min-w-0 flex-col gap-3 rounded-md bg-tint-well p-3" onSubmit={onSave}>
     {kind !== 'instructions' && <Field id={`${prefix}-name`} label="Name" hint="Lowercase letters, numbers and hyphens. The service chooses the file path.">
-      <Input id={`${prefix}-name`} required pattern={kind === 'skills' ? '[a-z0-9]+(-[a-z0-9]+)*' : '[a-z0-9][a-z0-9-]*'} maxLength={kind === 'skills' ? 64 : undefined} value={draft.name} disabled={busy || locked || editing} onChange={(e) => change({ name: e.target.value })} />
+      <Input id={`${prefix}-name`} required pattern={kind === 'skills' ? '[a-z0-9]+(-[a-z0-9]+)*' : '[a-z0-9][a-z0-9\\-]*'} maxLength={kind === 'skills' ? 64 : undefined} value={draft.name} disabled={busy || locked || editing} onChange={(e) => change({ name: e.target.value })} />
     </Field>}
     {draft.path && <Note className="break-all">{draft.path}{kind === 'skills' && <span className="mt-1 block">Saving changes this resolved file and any aliases that link to it.</span>}</Note>}
     {draft.raw !== null ? kind === 'instructions' ? nativeEditor : <details open className="group"><Summary>Advanced settings</Summary><div className="mt-3">{nativeEditor}</div></details> : <>
@@ -535,7 +535,11 @@ export function ConfigurationSettings({ kind, projects, terminal, scope, onScope
         return { ...current, [kind]: current[kind].map((file) => file.path === saved.path ? saved : file) };
       });
       clearSuggestions(); setDraft(null); setSuccess(`${kind === 'instructions' ? fileName(draft) : draft.name} saved. New and reopened threads use the updated file.`); refresh();
-    } catch (e) { setError(describeError(e)); setConflict(isStatus(e, 409)); }
+    } catch (e) {
+      setError(describeError(e));
+      // A new agent, skill or hook has no saved version to reload: its 409 is a taken name, which the error says.
+      setConflict(isStatus(e, 409) && (kind === 'instructions' || !!draft.revision));
+    }
     finally { setBusy(false); }
   }
   async function remove() {

@@ -16,6 +16,8 @@ interface Want {
   hidden: boolean;
   /** Fall back to the instance default when this path cannot be listed (the field held something that is not a folder). */
   fallback?: boolean;
+  /** The folder filter, sent once the folder holds more than one listing shows: the server filters before its cap. */
+  filter?: string;
 }
 
 interface Listing extends DirList {
@@ -25,6 +27,8 @@ interface Listing extends DirList {
 }
 
 const TYPEAHEAD_MS = 700;
+/** How long typing in the filter rests before a capped folder is listed again, filtered by the server. */
+const FILTER_MS = 250;
 
 /** The row an arrow or Home/End moves the selection to. */
 function nextIndex(key: string, current: number, last: number): number {
@@ -88,7 +92,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
     latest.current = want;
     let live = true;
     api
-      .listDirs(want.path, want.hidden)
+      .listDirs(want.path, want.hidden, want.filter)
       .then((l) => live && setListing({ ...l, for: want }))
       .catch((e: unknown) => {
         if (!live) return;
@@ -105,6 +109,14 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
       live = false;
     };
   }, [api, want]);
+
+  // A folder past the listing's cap is found by the server: the filter goes to it once typing rests.
+  const serverFilter = listing?.truncated || want.filter ? filter.trim() : '';
+  useEffect(() => {
+    if ((want.filter ?? '') === serverFilter) return;
+    const timer = window.setTimeout(() => setWant((w) => ({ path: w.path, hidden: w.hidden, ...(serverFilter && { filter: serverFilter }) })), FILTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [serverFilter, want.filter]);
 
   // The listbox takes focus so the arrow keys work at once; on a phone the picker scrolls into view.
   useEffect(() => {
@@ -232,6 +244,11 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
       typed.current.text,
     );
     if (hit >= 0) select(entries[hit].path);
+    // Past the listing's cap the name may still be there: the filter asks the server.
+    else if (variant === 'project' && listing?.truncated) {
+      setFilter(typed.current.text);
+      setSelected(null);
+    }
   }
 
   /** The option is one button. Its chevron is a hit region, not a control: a press there opens the folder, anywhere else selects it. */
@@ -431,7 +448,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
             );
           })}
         </div>
-        {listing?.truncated && <p className={cn(statusClass, 'py-1.5')}>Showing the first 1,000</p>}
+        {listing?.truncated && <p className={cn(statusClass, 'py-1.5')}>{want.filter ? 'Showing the first 1,000 matches' : variant === 'project' ? 'Showing the first 1,000. Filter folders to search them all.' : 'Showing the first 1,000'}</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">

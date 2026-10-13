@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';
+import type { UtilityLog } from '../../src/api';
 import { renderApp } from './render';
 
 async function backgroundAI() {
@@ -107,5 +108,22 @@ describe('Background AI', () => {
     await user.click(card.getByRole('switch', { name: 'No daily limit' }));
     await waitFor(() => expect(card.getByText('40 of 40')).toBeTruthy());
     expect(card.getByRole('status').textContent).toMatch(/^Background AI is paused until tomorrow/);
+  });
+
+  test('a purpose paused after unusable answers says so and when it resumes, here and on Composer', async () => {
+    const { card, user } = await backgroundAI();
+    const mocked = window.fetch;
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await mocked(input, init);
+      if (new URL(String(input instanceof Request ? input.url : input), location.href).pathname !== '/api/utility') return res;
+      const page = (await res.json()) as UtilityLog;
+      return new Response(JSON.stringify({ ...page, today: { ...page.today, paused_purposes: ['suggest-replies'] } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    await openLog(card, user);
+    expect(card.getByText(/^Paused until tomorrow \(midnight on the server, .+ here\) after repeated unusable answers: Suggested replies\./)).toBeTruthy();
+    const rail = within(screen.getByRole('navigation', { name: 'Settings sections' }));
+    await user.click(await rail.findByRole('button', { name: 'Composer', description: 'Suggested replies are paused for today' }));
+    const composer = within(await screen.findByRole('region', { name: 'Composer' }));
+    expect(composer.getByText(/^Paused until tomorrow \(midnight on the server, .+ here\) after repeated unusable answers from the Utility model\./)).toBeTruthy();
   });
 });

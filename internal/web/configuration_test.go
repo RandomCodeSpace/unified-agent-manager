@@ -48,8 +48,13 @@ func TestConfigurationNativeFilesAndRevisions(t *testing.T) {
 			if err != nil || string(data) != content || file.Content != content || file.Revision == "" {
 				t.Fatalf("native file was not preserved for %s/%s", project, kind)
 			}
-			if _, err = m.SaveConfiguration(project, kind, name, configurationInput{Content: content}, false); configurationStatus(err) != http.StatusConflict {
+			_, err = m.SaveConfiguration(project, kind, name, configurationInput{Content: content}, false)
+			if configurationStatus(err) != http.StatusConflict {
 				t.Fatalf("duplicate create = %v", err)
+			}
+			// A new agent, skill or hook whose name is taken says so; there is no draft of it to reload.
+			if want := `another ` + strings.TrimSuffix(kind, "s") + ` is already named "example"`; kind != "instructions" && !strings.Contains(err.Error(), want) {
+				t.Fatalf("duplicate create = %v, want %q", err, want)
 			}
 			changed := content + "\n"
 			updated, err := m.SaveConfiguration(project, kind, name, configurationInput{Content: changed, Revision: file.Revision}, false)

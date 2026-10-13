@@ -2,7 +2,7 @@ import { useApi } from '../ApiContext';
 import { ChevronRight } from 'lucide-react';
 import { useCallback, useContext, useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { describeError, taskName, type UtilityCall, type UtilityLog } from '../api';
-import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, modelText, outcomeLabel, purposeLabel, sizeText, tokenText } from '../lib/utility';
+import { byDay, clockText, dayLabel, dayText, durationText, mergeCalls, modelText, outcomeLabel, purposeLabel, resumeText, sizeText, tokenText } from '../lib/utility';
 import { cn } from '../lib/cn';
 import { formatCredits } from '../lib/cost';
 import { Note, Skeleton } from './common';
@@ -57,11 +57,14 @@ function CallRow({ call }: Readonly<{ call: UtilityCall }>) {
  * starts collapsed and is read only while open (closed, a one-call page keeps today's count current). Older calls
  * load page by page, so every call kept stays reachable.
  */
-export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLimit, onSaveUnlimited, onPaused }: Readonly<{ limitSetting?: number; unlimited?: boolean; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSaveUnlimited: (on: boolean) => Promise<void>; /** Today's calls are paused at the limit, as last read (Settings marks the page). */ onPaused?: (paused: boolean) => void }>) {
+export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLimit, onSaveUnlimited, onPaused, onPausedPurposes }: Readonly<{ limitSetting?: number; unlimited?: boolean; saving: boolean; onSaveLimit: (limit: number) => Promise<void>; onSaveUnlimited: (on: boolean) => Promise<void>; /** Today's calls are paused at the limit, as last read (Settings marks the page). */ onPaused?: (paused: boolean) => void; /** The purposes paused after unusable answers and when they resume, as last read. */ onPausedPurposes?: (purposes: string[], resetsAt: string) => void }>) {
   const api = useApi();
   const [log, setLog] = useState<UtilityLog | null>(null);
   const paused = !!log?.today.paused;
   useEffect(() => onPaused?.(paused), [paused, onPaused]);
+  const pausedPurposes = log?.today.paused_purposes?.join(',') ?? '';
+  const resetsAt = log?.today.resets_at ?? '';
+  useEffect(() => onPausedPurposes?.(pausedPurposes ? pausedPurposes.split(',') : [], resetsAt), [pausedPurposes, resetsAt, onPausedPurposes]);
   const [calls, setCalls] = useState<UtilityCall[]>([]);
   const [next, setNext] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +167,12 @@ export function BackgroundAI({ limitSetting, unlimited = false, saving, onSaveLi
           <Note tone="warn" role="status" className="max-w-3xl">
             {today.limit === 0
               ? 'Background AI is off. New threads keep their first message as the title, and subagent results keep their own report. Set a daily limit above 0 to turn it on.'
-              : `Background AI is paused until tomorrow (midnight on the server, ${new Date(today.resets_at).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })} here). Until then new threads keep their first message as the title, and subagent results keep their own report. Raise the limit to resume now.`}
+              : `Background AI is paused until tomorrow (${resumeText(today.resets_at)}). Until then new threads keep their first message as the title, and subagent results keep their own report. Raise the limit to resume now.`}
+          </Note>
+        )}
+        {!!today.paused_purposes?.length && (
+          <Note tone="warn" role="status" className="max-w-3xl">
+            {`Paused until tomorrow (${resumeText(today.resets_at)}) after repeated unusable answers: ${today.paused_purposes.map(purposeLabel).join(', ')}.`}
           </Note>
         )}
       </div>

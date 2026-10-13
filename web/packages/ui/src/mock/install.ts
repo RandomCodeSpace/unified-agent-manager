@@ -661,10 +661,11 @@ export function install(): { received: Received[] } {
     if (p === '/root' || p.startsWith('/root/')) return fail(403, 'permission denied');
     if (!folders.has(p)) return fail(404, 'path does not exist');
     const hidden = url.searchParams.get('hidden') === '1';
+    const filter = (url.searchParams.get('filter') ?? '').toLowerCase();
     const entries = [...folders]
       .filter((d) => d !== '/' && parentDir(d) === p)
       .map((d) => ({ name: d.slice(d.lastIndexOf('/') + 1), path: d }))
-      .filter((e) => hidden || !e.name.startsWith('.'))
+      .filter((e) => (hidden || !e.name.startsWith('.')) && e.name.toLowerCase().includes(filter))
       .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.name.localeCompare(b.name))
       .map((e) => ({ ...e, git: gitFolders.has(e.path), hidden: e.name.startsWith('.'), link: e.name === 'archive' }));
     return json(200, { path: p, ...(parentDir(p) ? { parent: parentDir(p) } : {}), entries, truncated: false });

@@ -317,3 +317,56 @@ func TestUtilityInvalidPauseRebuilt(t *testing.T) {
 		t.Fatalf("reason=%q", reason)
 	}
 }
+
+// A purpose paused after repeated invalid answers is named in today's use,
+// and its skipped calls are logged once per pause, not once per ask, also
+// after a restart.
+func TestUtilityInvalidPauseShownAndLoggedOnce(t *testing.T) {
+	st := openTestStore(t)
+	m := startManager(t, st)
+	now := time.Now()
+	for i := 0; i < 4; i++ {
+		m.utility.reserve(now, purposeSuggestReplies, 400, false)
+		m.utility.add(UtilityCall{At: now, Purpose: purposeSuggestReplies, Outcome: utilityOK, Valid: new(false), Fallback: true})
+	}
+	run := func(m *Manager) {
+		t.Helper()
+		_, err := m.runUtility(context.Background(), UtilityCall{Purpose: purposeSuggestReplies}, "p", func(context.Context, func(agentapi.UtilityUsage)) (string, error) {
+			t.Fatal("a paused purpose ran")
+			return "", nil
+		})
+		if e, ok := errors.AsType[*Error](err); !ok || e.Code != codeUtilityPaused {
+			t.Fatalf("err=%v", err)
+		}
+	}
+	skipped := func(m *Manager) int {
+		n := 0
+		for _, c := range m.UtilityLog(0, utilityPage).Calls {
+			if c.Outcome == utilitySkipped {
+				n++
+			}
+		}
+		return n
+	}
+	for range 3 {
+		run(m)
+	}
+	log := m.UtilityLog(0, utilityPage)
+	if n := skipped(m); n != 1 {
+		t.Fatalf("skipped entries = %d, want 1", n)
+	}
+	if got := log.Today.PausedPurposes; len(got) != 1 || got[0] != purposeSuggestReplies || log.Today.Paused {
+		t.Fatalf("today=%+v", log.Today)
+	}
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	again := startManager(t, st)
+	run(again)
+	if n := skipped(again); n != 1 {
+		t.Fatalf("after a restart skipped entries = %d, want 1", n)
+	}
+	if got := again.UtilityLog(0, 1).Today.PausedPurposes; len(got) != 1 {
+		t.Fatalf("after a restart paused=%v", got)
+	}
+}

@@ -24,6 +24,7 @@ import { MODEL_PRICE_UNIT, modelCostLine } from '../lib/cost';
 import { TokenPricing } from './TokenPricing';
 import { WorktreesSettings } from './WorktreesSettings';
 import { diskLowText, percentFree, sizeText } from '../lib/worktrees';
+import { purposeLabel, resumeText } from '../lib/utility';
 import { byModelName, cheapestLabel, effortLabel, modelChoices, UTILITY_NONE, visibleModels } from '../lib/models';
 import { loadMotion, saveMotion, type Motion } from '../lib/motion';
 import { loadTheme, saveTheme, type Theme } from '../lib/theme';
@@ -535,6 +536,10 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const cliUpdate = meta?.providers.find((p) => p.cli_update)?.cli_update;
   const restart = restartOffered(meta?.service);
   const [utilityPaused, setUtilityPaused] = useState(false);
+  // Background AI purposes paused after unusable answers, and when they resume.
+  const [pausedPurposes, setPausedPurposes] = useState<{ purposes: string[]; resetsAt: string }>({ purposes: [], resetsAt: '' });
+  const onPausedPurposes = useCallback((purposes: string[], resetsAt: string) => setPausedPurposes({ purposes, resetsAt }), []);
+  const repliesPaused = settings.suggest_replies !== false && pausedPurposes.purposes.includes('suggest-replies');
   // Agents, Skills, Hooks and Instructions share one scope; a kind with a form open holds it.
   const [toolkitScope, setToolkitScope] = useState('');
   const [held, setHeld] = useState<readonly ConfigurationKind[]>([]);
@@ -625,6 +630,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   // What needs the user, marked on its page in the rail.
   const attention: Partial<Record<SettingsPage, PageAttention>> = {};
   if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
+  else if (pausedPurposes.purposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.purposes.map(purposeLabel).join(', ')}` };
+  if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
   if (missingKeys.length) attention.providers = { tone: 'error', text: `API key missing: ${missingKeys.map((p) => p.name).join(', ')}` };
   if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
   else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
@@ -706,6 +713,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
       <Row id="suggest-replies" label="Suggest replies" help="After a turn, a reply you might send next shows as faint text in the empty composer. Right Arrow or End fills it in; nothing is sent, and typing replaces it. It takes one Utility model call per finished turn you open.">
         <Switch aria-label="Suggest replies" aria-describedby="suggest-replies-help" checked={settings.suggest_replies !== false} disabled={saving} onCheckedChange={(suggest_replies) => void save({ suggest_replies })} />
       </Row>
+      {repliesPaused && (
+        <Note tone="warn" role="status" className="max-w-3xl">
+          {`Paused until tomorrow (${resumeText(pausedPurposes.resetsAt)}) after repeated unusable answers from the Utility model. Settings → Background AI lists them in its log.`}
+        </Note>
+      )}
     </Section> : <PendingSection id="composer" title="Composer" label="Loading settings…" />,
     worktrees: api.supports('worktrees-v1') ? <WorktreesSettings /> : <Section id="worktrees" title="Worktrees"><Unsupported what="worktrees" /></Section>,
     archived: loaded ? <Section id="archived" title="Archived" help="Open an archived thread to read its conversation. Choose Unarchive from its menu to return it to Finished. Search in the sidebar finds archived threads too.">
@@ -767,7 +779,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         ))}
       </Section>}
       <Section id="background-ai" title="Background AI" help="UAM's own AI calls on the Utility model: thread titles, suggested replies, outcome lines, and agent, skill and hook drafts. Each one costs AI credits. Every call is kept here for 30 days.">
-        <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} />
+        <BackgroundAI limitSetting={settings.utility_daily_limit} unlimited={!!settings.utility_unlimited} saving={saving} onSaveLimit={(utility_daily_limit) => save({ utility_daily_limit })} onSaveUnlimited={(utility_unlimited) => save({ utility_unlimited })} onPaused={setUtilityPaused} onPausedPurposes={onPausedPurposes} />
       </Section>
     </>,
     'token-costs': loaded && <Section id="token-prices" title="Token costs" help="Usage estimates use these current base rates for every period, not provider bills or Copilot credits.">{api.supports('usage-v1') ? <TokenPricing /> : <Unsupported what="token costs" />}</Section>,

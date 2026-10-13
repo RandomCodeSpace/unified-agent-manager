@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { expect, test } from 'vitest';
-import { openTask } from './render';
+import { composer, openTask } from './render';
 
 test('without WebGL the terminal dock says why instead of a shell', async () => {
   const { user } = await openTask('t3');
@@ -48,6 +48,23 @@ test('the dock keeps its height across tasks and resizes from the keyboard', asy
   window.dispatchEvent(new HashChangeEvent('hashchange'));
   await waitFor(() => expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Bump GitHub Actions pins'));
   expect(screen.getByRole('region', { name: 'Terminal' })).toBeTruthy();
+});
+
+test('a drag on the dock edge hands focus back, and typing on the edge never reaches the composer', async () => {
+  const { user } = await openTask('t3');
+  await user.click(screen.getByRole('button', { name: 'Terminal' }));
+  const dock = within(await screen.findByRole('region', { name: 'Terminal' }));
+  await dock.findByRole('alert');
+  // The Restart button stands in for the shell, which needs WebGL.
+  const restart = dock.getByRole('button', { name: 'Restart' });
+  restart.focus();
+  const handle = dock.getByRole('separator');
+  await user.pointer([{ keys: '[MouseLeft>]', target: handle, coords: { clientY: 400 } }, { target: handle, coords: { clientY: 340 } }, { keys: '[/MouseLeft]', target: handle, coords: { clientY: 340 } }]);
+  expect(document.activeElement).toBe(restart);
+  handle.focus();
+  await user.keyboard('zz');
+  expect(composer().value).toBe('');
+  expect(document.activeElement).toBe(handle);
 });
 
 test('the dock shows with the Task only: Settings hides it and keeps its shell', async () => {

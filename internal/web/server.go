@@ -810,7 +810,12 @@ func (s *Server) handleListDirs(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = s.m.Settings().DefaultProjectDir
 	}
-	list, err := listDirs(path, q.Get("hidden") == "1", maxDirEntries)
+	filter := q.Get("filter")
+	if len(filter) > maxDirNameBytes {
+		writeError(w, http.StatusBadRequest, "filter is longer than a folder name")
+		return
+	}
+	list, err := listDirs(path, q.Get("hidden") == "1", filter, maxDirEntries)
 	if err != nil {
 		writeFailure(w, err)
 		return

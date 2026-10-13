@@ -159,14 +159,16 @@ type UtilityCall struct {
 
 // UtilityToday is today's use against the limit. ResetsAt is local midnight.
 // Unlimited means the limit is lifted: Limit is then the one kept for when it
-// is turned off, and the day never pauses for it.
+// is turned off, and the day never pauses for it. PausedPurposes are the
+// purposes paused until ResetsAt after repeated invalid answers.
 type UtilityToday struct {
-	Day       string    `json:"day"`
-	Calls     int       `json:"calls"`
-	Limit     int       `json:"limit"`
-	Unlimited bool      `json:"unlimited,omitempty"`
-	Paused    bool      `json:"paused"`
-	ResetsAt  time.Time `json:"resets_at"`
+	Day            string    `json:"day"`
+	Calls          int       `json:"calls"`
+	Limit          int       `json:"limit"`
+	Unlimited      bool      `json:"unlimited,omitempty"`
+	Paused         bool      `json:"paused"`
+	PausedPurposes []string  `json:"paused_purposes,omitempty"`
+	ResetsAt       time.Time `json:"resets_at"`
 }
 
 // UtilityDay totals one day of the log. Estimated is set when some of its
@@ -196,16 +198,18 @@ type UtilityLog struct {
 
 // utilityLog is the Utility log and today's count. Calls are in the order
 // they ended, which is ID order. started counts the calls begun on day,
-// running ones included.
+// running ones included. pauseLogged holds the paused purposes whose
+// skipped call is logged today: a pause is logged once.
 type utilityLog struct {
-	mu      sync.Mutex
-	path    string
-	calls   []UtilityCall
-	nextID  int64
-	day     string
-	started int
-	answers map[string][]bool
-	paused  map[string]bool
+	mu          sync.Mutex
+	path        string
+	calls       []UtilityCall
+	nextID      int64
+	day         string
+	started     int
+	answers     map[string][]bool
+	paused      map[string]bool
+	pauseLogged map[string]bool
 }
 
 func dayOf(t time.Time) string { return t.Local().Format(time.DateOnly) }
@@ -335,14 +339,22 @@ func (l *utilityLog) rollLocked(now time.Time) {
 		l.day, l.started = day, 0
 		l.answers = map[string][]bool{}
 		l.paused = map[string]bool{}
+		l.pauseLogged = map[string]bool{}
 	}
 }
 
 // add logs call, appending it to the file, and drops the days past
-// retention once a day.
+// retention once a day. Of the calls skipped for a paused purpose, only the
+// pause's first is logged.
 func (l *utilityLog) add(call UtilityCall) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if call.Outcome == utilitySkipped && call.Reason == skippedInvalid && dayOf(call.At) == l.day {
+		if l.pauseLogged[call.Purpose] {
+			return
+		}
+		l.pauseLogged[call.Purpose] = true
+	}
 	l.recordAnswerLocked(call)
 	l.nextID++
 	call.ID, call.Day = l.nextID, ""
@@ -436,9 +448,13 @@ func (m *Manager) loadUtilityLog() {
 	}
 	l.rollLocked(now)
 	for _, c := range l.calls {
-		if c.Outcome != utilitySkipped && dayOf(c.At) == l.day {
+		switch {
+		case dayOf(c.At) != l.day:
+		case c.Outcome != utilitySkipped:
 			l.started++
 			l.recordAnswerLocked(c)
+		case c.Reason == skippedInvalid:
+			l.pauseLogged[c.Purpose] = true
 		}
 	}
 }
@@ -459,6 +475,12 @@ func (m *Manager) UtilityLog(before int64, limit int) UtilityLog {
 		Days:  []UtilityDay{},
 		Calls: []UtilityCall{},
 	}
+	for purpose, paused := range l.paused {
+		if paused {
+			out.Today.PausedPurposes = append(out.Today.PausedPurposes, purpose)
+		}
+	}
+	slices.Sort(out.Today.PausedPurposes)
 	byDay := map[string]*UtilityDay{}
 	for i := len(l.calls) - 1; i >= 0; i-- {
 		c := l.calls[i]

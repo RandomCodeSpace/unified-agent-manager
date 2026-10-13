@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
+import { api } from '../../src/api';
 import { renderApp, sidebar, type User } from './render';
 
 async function addProjectDialog(user: User) {
@@ -72,6 +73,28 @@ describe('add project', () => {
     expect(dialog.getByRole('textbox', { name: 'Folder path', description: 'Enter an absolute folder path.' }).getAttribute('aria-invalid')).toBe('true');
     await user.click(dialog.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Choose a project folder' })).toBeNull());
+  });
+
+  test('in a folder past the listing cap, the filter asks the server and finds a folder the listing left out', async () => {
+    const original = api.listDirs;
+    // The cap left archive out of the projects folder's listing.
+    const list = vi.spyOn(api, 'listDirs').mockImplementation(async (path, hidden, filter) => {
+      const listing = await original(path, hidden, filter);
+      return filter || !path?.endsWith('/projects') ? listing : { ...listing, entries: listing.entries.filter((e) => e.name !== 'archive'), truncated: true };
+    });
+    try {
+      const { user } = renderApp();
+      const dialog = await addProjectDialog(user);
+      const folders = within(await dialog.findByRole('listbox', { name: 'Folders' }));
+      await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
+      expect(await dialog.findByText('Showing the first 1,000. Filter folders to search them all.')).toBeTruthy();
+      expect(folders.queryByRole('option', { name: /^archive/ })).toBeNull();
+      await user.type(dialog.getByRole('textbox', { name: 'Filter folders' }), 'arch');
+      expect(await folders.findByRole('option', { name: /^archive/ })).toBeTruthy();
+      expect(list).toHaveBeenLastCalledWith('/home/user/projects', false, 'arch');
+    } finally {
+      list.mockRestore();
+    }
   });
 
   test('folders open immediately, filtering preserves browsing, and a selected folder supplies the default project name', async () => {

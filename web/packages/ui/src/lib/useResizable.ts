@@ -47,7 +47,8 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
   const [stored, setStored] = useState(() => read(storageKey) ?? fallback);
   // The effective width is derived, so a viewport change re-clamps without touching state.
   const width = clamp(Math.max(stored, prefer), minWidth, max);
-  const drag = useRef<{ at: number; w: number } | null>(null);
+  // `from` is what had focus before the press moved it to the handle; the drag hands it back.
+  const drag = useRef<{ at: number; w: number; from: Element | null } | null>(null);
   const at = (e: PointerEvent<HTMLElement>) => (y ? e.clientY : e.clientX);
   const cursor = y ? 'cursor-row-resize' : 'cursor-col-resize';
 
@@ -95,7 +96,7 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
     onPointerDown: (e) => {
       if (e.button !== 0) return;
       e.currentTarget.setPointerCapture(e.pointerId);
-      drag.current = { at: at(e), w: width };
+      drag.current = { at: at(e), w: width, from: document.activeElement };
       document.body.classList.add(cursor, 'select-none');
     },
     onPointerMove: (e) => {
@@ -105,12 +106,14 @@ export function useResizable(key: string, fallback: number, minWidth = 320, axis
     onPointerUp: (e) => {
       if (!drag.current) return;
       const w = clamp(drag.current.w + (drag.current.at - at(e)), minWidth, max);
+      restoreFocus(drag.current.from, e.currentTarget);
       drag.current = null;
       document.body.classList.remove(cursor, 'select-none');
       commit(w);
     },
-    onPointerCancel: () => {
+    onPointerCancel: (e) => {
       if (!drag.current) return;
+      restoreFocus(drag.current.from, e.currentTarget);
       drag.current = null;
       document.body.classList.remove(cursor, 'select-none');
       apply(width);
@@ -141,6 +144,11 @@ function maxWidth(min: number, row: HTMLElement | null | undefined): number {
 
 function maxHeight(min: number): number {
   return Math.max(min, window.innerHeight - PANE_MIN);
+}
+
+/** Hands focus back from the handle to what had it before a drag (a terminal keeps its keys), if that is still on screen. */
+function restoreFocus(from: Element | null, handle: HTMLElement) {
+  if (from instanceof HTMLElement && from !== handle && from !== document.body && from.isConnected && document.activeElement === handle) from.focus({ preventScroll: true });
 }
 
 function clamp(v: number, lo: number, hi: number): number {

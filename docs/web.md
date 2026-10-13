@@ -147,8 +147,9 @@ For adding a Project, the API also lists and creates folders on the host, as
 the service user. `GET /api/fs/dirs?path=<absolute path>` returns the
 subdirectories of a directory (your home when `path` is empty), never files:
 `{"path", "parent"?, "entries": [{"name", "path", "git", "hidden", "link"}],
-"truncated"}`, without dot-folders unless `hidden=1` is added, at most 1,000
-entries after that filter; `parent` is absent at `/`. Folders whose names
+"truncated"}`, without dot-folders unless `hidden=1` is added, only the names
+containing `filter=<text>` (ignoring case) when it is given, at most 1,000
+entries after those filters; `parent` is absent at `/`. Folders whose names
 could not be shown as they are (control characters, escape sequences) are
 left out, since a Project cannot be added there either. `POST /api/fs/dirs`
 with `{"parent", "name"}` creates one folder (mode 0755) and returns 201
@@ -336,7 +337,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   selected folder, or the one being shown, to the review step, where you
   name the Project and press **Add project**. With the keyboard: arrows
   move, Enter opens, Backspace goes up, typing jumps to a name, and
-  Ctrl+Enter (Cmd+Enter on a Mac) continues with the folder. A directory
+  Ctrl+Enter (Cmd+Enter on a Mac) continues with the folder. A folder with more than 1,000 folders lists
+  the first 1,000; there **Filter folders** (and typing a name the list does
+  not show) asks the server, which searches every folder in it. A directory
   has one Project; adding it again points you to the existing one. "Edit
   project" (the gear beside the Project in the sidebar's filter list) renames
   it and offers "Previous sessions" and "Remove project". Editing a Project
@@ -1183,7 +1186,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   result with the Thread, so opening it again, in any browser or after a
   restart, asks for nothing more. None shows while the Thread works, waits for
   you, has queued messages, or is read-only. Without a Utility model, or past
-  today's Background AI limit, there is none; a Thread settled or archived,
+  today's Background AI limit or while suggested replies are paused (see
+  Background AI), there is none; a Thread settled or archived,
   or whose folder is gone, is not asked again. Settings → Composer →
   **Suggest replies** turns it off.
 - **Outcome line**: when a turn completes, the Thread gets a one-line summary
@@ -1389,8 +1393,15 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   report, no replies are suggested (and the next look asks again)
   and outcome lines keep the evidence alone. Settings then says Background AI is
   paused until tomorrow; raising the limit resumes it at once.
+  Suggested replies and outcome lines also pause on their own until
+  tomorrow when 4 of their last 10 turns ended with an unusable answer
+  (the answer and its one retry both invalid). Settings → Background AI
+  names the paused purpose and when it resumes, its rail entry and, for
+  suggested replies, Settings → Composer carry a dot and a note, and the
+  log keeps one skipped entry ("repeated unusable answers") per pause, not
+  one per Thread opened meanwhile.
   `GET /api/utility` returns `{"today": {"day", "calls", "limit",
-  "unlimited", "paused", "resets_at"}, "days": [totals per day, newest first], "calls":
+  "unlimited", "paused", "paused_purposes"?, "resets_at"}, "days": [totals per day, newest first], "calls":
   [newest first], "next"}`; pass `next` as `?before=` for the following
   page, and `?limit=` (1 to 200, default 200) to size it.
 - **Custom models (bring your own model)**: Settings → Custom providers
@@ -1746,7 +1757,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   Git and on settled and archived Threads. It opens a shell in the project
   folder, running on the server as the user the service runs as, docked at
   the bottom of the window under the conversation (drag its top edge to
-  resize). It stays open, with its shell, while you switch Threads. Anyone signed in can
+  resize; the keys go back to the shell when the drag ends). It stays open, with its shell, while you switch Threads. Anyone signed in can
   then run commands on the machine without the agent's permission prompts;
   agents do not use it. The panel's header shows the folder and whether the
   shell is connecting, connected, exited (with its exit code) or
