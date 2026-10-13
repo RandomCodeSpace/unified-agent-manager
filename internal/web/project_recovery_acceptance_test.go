@@ -237,6 +237,59 @@ func TestFinalAcceptanceRecentWorkdirsUsesLatestDistinctHistory(t *testing.T) {
 	}
 }
 
+// Concurrent /api/meta calls share store reads instead of queueing one read
+// each on the store lock, and a call still sees every write made before it.
+func TestRecentWorkdirsConcurrentCallsShareReads(t *testing.T) {
+	m, _, st := newTestManager(t)
+	dir := t.TempDir()
+	// A write holding the store lock keeps the first read waiting while the others arrive.
+	held, release, wrote := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		wrote <- st.Update(func(cfg *store.Config) error {
+			close(held)
+			<-release
+			id := mustUUID(t)
+			cfg.Sessions[store.Key("fake", id)] = store.SessionRecord{ID: id, Agent: "fake", Workdir: dir, Mode: store.ModeSafe, Status: store.StatusClosedByUser, CreatedAt: time.Now().UTC()}
+			return nil
+		})
+	}()
+	<-held
+	const callers = 10
+	results := make(chan []string, callers)
+	for range callers {
+		go func() { results <- m.RecentWorkdirs() }()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for m.recent.started.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	for range callers {
+		if got := <-results; !reflect.DeepEqual(got, []string{dir}) {
+			t.Fatalf("recent workdirs = %q, want the write made before the call", got)
+		}
+	}
+	if reads := m.recent.started.Load(); reads > 2 {
+		t.Fatalf("%d concurrent calls read the store %d times, want at most 2", callers, reads)
+	}
+	// A call after another write reads again.
+	other := t.TempDir()
+	if err := st.Update(func(cfg *store.Config) error {
+		id := mustUUID(t)
+		cfg.Sessions[store.Key("fake", id)] = store.SessionRecord{ID: id, Agent: "fake", Workdir: other, Mode: store.ModeSafe, Status: store.StatusClosedByUser, CreatedAt: time.Now().UTC().Add(time.Second)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.RecentWorkdirs(); !reflect.DeepEqual(got, []string{other, dir}) {
+		t.Fatalf("recent workdirs after a write = %q", got)
+	}
+}
+
 func TestFinalAcceptanceCreateInputFailureNeverOpensProvider(t *testing.T) {
 	m, prov, _ := newTestManager(t)
 	project := addProject(t, m, t.TempDir())

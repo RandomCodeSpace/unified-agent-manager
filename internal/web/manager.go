@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -98,6 +99,8 @@ type Manager struct {
 	// settingsMu orders settings changes, so the stored and published
 	// settings match. It is never taken while holding mu.
 	settingsMu sync.Mutex
+	// recent shares RecentWorkdirs' store reads between concurrent callers.
+	recent recentWorkdirsReads
 
 	// imageJobs feeds the one goroutine that stores tool images, so Emit
 	// never writes a file. imageWG counts the jobs not yet finished; tests
@@ -1077,14 +1080,41 @@ func (m *Manager) Providers() []ProviderInfo {
 	return out
 }
 
+// recentWorkdirsReads lets concurrent RecentWorkdirs calls share a store
+// read: the store's lock serializes reads, so each page load's /api/meta
+// would otherwise wait for every read ahead of it. A caller reuses only a
+// read that started after it arrived, so it never misses an earlier write.
+type recentWorkdirsReads struct {
+	started atomic.Uint64 // reads started; written under mu
+	mu      sync.Mutex
+	last    uint64 // which read produced dirs; 0 when none succeeded
+	dirs    []string
+}
+
 // RecentWorkdirs returns distinct workdirs of stored records of any surface,
 // most recently seen first.
 func (m *Manager) RecentWorkdirs() []string {
+	r := &m.recent
+	arrived := r.started.Load()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.last > arrived {
+		return slices.Clone(r.dirs)
+	}
+	read := r.started.Add(1)
+	out, ok := m.readRecentWorkdirs()
+	if ok {
+		r.last, r.dirs = read, out
+	}
+	return slices.Clone(out)
+}
+
+func (m *Manager) readRecentWorkdirs() ([]string, bool) {
 	out := []string{}
 	cfg, err := m.store.Load()
 	if err != nil {
 		log.Warn("load recent workdirs failed", "error", err)
-		return out
+		return out, false
 	}
 	recs := make([]store.SessionRecord, 0, len(cfg.Sessions))
 	for _, rec := range cfg.Sessions {
@@ -1116,7 +1146,7 @@ func (m *Manager) RecentWorkdirs() []string {
 			break
 		}
 	}
-	return out
+	return out, true
 }
 
 func (m *Manager) lookup(id string) (*webSession, error) {

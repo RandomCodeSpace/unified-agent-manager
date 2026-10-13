@@ -642,7 +642,17 @@ export default function App() {
   const late = useLate(state.connection !== 'connected', QUIET_MS);
   const loading = late && state.connection === 'connecting';
   const connection = late && !loading ? state.connection : 'connected';
-  const lateLoad = useLate(!!state.selectedId && !state.detail && !settingsOpen && !routinesFor, QUIET_MS);
+  // A Thread's view first renders in a transition, which yields between rows: a long transcript is not one long task.
+  // Until then the pane shows what it showed while the detail was on its way; later frames of the Thread render at once.
+  const [mountedId, setMountedId] = useState<string | null>(null);
+  const arrivedId = state.detail?.id ?? null;
+  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way.
+  if (!arrivedId && mountedId) setMountedId(null);
+  useEffect(() => {
+    if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
+  }, [arrivedId, mountedId]);
+
+  const lateLoad = useLate(!!state.selectedId && (!state.detail || state.detail.id !== mountedId) && !settingsOpen && !routinesFor, QUIET_MS);
 
   // A refresh with the catalogs on screen keeps them on a failure (checkVersion); without them it is a retry of the first read.
   const refreshMeta = useCallback(() => (meta ? checkVersion(true) : setMetaAttempt((n) => n + 1)), [meta, checkVersion]);
@@ -661,7 +671,7 @@ export default function App() {
   );
 
   // Focus the composer of a Task that was just created or chosen, once its detail is on screen; a read-only Task has nothing to type into.
-  const detailId = state.detail?.id;
+  const detailId = arrivedId === mountedId ? arrivedId : undefined;
   const detailLocked = !!state.detail && readOnly(state.detail);
   useEffect(() => {
     if (!detailId || detailId !== focusTask.current) return;
@@ -1154,40 +1164,46 @@ export default function App() {
     () => m.client.changes(id, 'workspace'),
   ), [askUnsaved, runRemote]);
   const go = federation?.go;
+  // Row actions read their machine when they run: the machines are rebuilt on every streamed frame, and a new
+  // context value would re-render each of that machine's rows.
+  const latestMachines = useRef(machines);
+  useLayoutEffect(() => { latestMachines.current = machines; }, [machines]);
+  const remoteKey = JSON.stringify((machines ?? []).filter((m) => !m.active).map((m) => [m.id, !!(m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1')] as const));
   /** The row actions of each machine not on screen: the same verbs, run against that machine's own client. */
-  const machineActions = useMemo(() => new Map((machines ?? []).filter((m) => !m.active).map((m): [string, TaskActions] => {
-    const c = m.client;
-    const run = (id: string, op: () => Promise<unknown>, verb: string) => void runRemote(m, id, op, verb).catch(() => {});
-    const open = (id: string) => go?.(m.id, `${HASH_PREFIX}${encodeURIComponent(id)}`);
-    return [m.id, {
+  const machineActions = useMemo(() => new Map((JSON.parse(remoteKey) as [string, boolean][]).map(([owner, unarchive]): [string, TaskActions] => {
+    const machine = () => latestMachines.current?.find((m) => m.id === owner);
+    const run = (id: string, op: (m: Machine) => Promise<unknown>, verb: string) => { const m = machine(); if (m) void runRemote(m, id, () => op(m), verb).catch(() => {}); };
+    const open = (id: string) => go?.(owner, `${HASH_PREFIX}${encodeURIComponent(id)}`);
+    return [owner, {
       select: open,
-      startRename: (id, place) => setRenaming({ id, place, owner: m.id }),
-      renaming: renaming?.owner === m.id ? renaming : null,
+      startRename: (id, place) => setRenaming({ id, place, owner }),
+      renaming: renaming?.owner === owner ? renaming : null,
       cancelRename: () => setRenaming(null),
       rename: async (id, name) => {
         setRenaming(null);
-        const current = m.state.sessions.find((s) => s.id === id);
-        if (!current || current.name === name) return;
-        await runRemote(m, id, () => c.rename(id, name), 'rename the thread').catch(() => {});
+        const m = machine();
+        const current = m?.state.sessions.find((s) => s.id === id);
+        if (!m || !current || current.name === name) return;
+        await runRemote(m, id, () => m.client.rename(id, name), 'rename the thread').catch(() => {});
       },
-      settle: (id) => run(id, () => remoteAway(m, id, 'settle'), 'settle the thread'),
-      reopen: (id) => run(id, () => c.stage(id, 'reopen'), 'reopen the thread'),
-      unarchive: (m.connection?.capabilities ?? metaCache?.get(m.id)?.capabilities)?.includes('unarchive-v1') ? (id) => run(id, async () => {
-        await c.stage(id, 'unarchive');
+      settle: (id) => run(id, (m) => remoteAway(m, id, 'settle'), 'settle the thread'),
+      reopen: (id) => run(id, (m) => m.client.stage(id, 'reopen'), 'reopen the thread'),
+      unarchive: unarchive ? (id) => run(id, async (m) => {
+        await m.client.stage(id, 'unarchive');
         open(id);
       }, 'unarchive the thread') : undefined,
       archive: (id) => {
-        const s = m.state.sessions.find((x) => x.id === id);
-        if (s && pendingWork(s)) run(id, () => remoteAway(m, id, 'archive'), 'archive the thread');
-        else openTaskDialog({ kind: 'archive', id, owner: m.id });
+        const s = machine()?.state.sessions.find((x) => x.id === id);
+        if (s && pendingWork(s)) run(id, (m) => remoteAway(m, id, 'archive'), 'archive the thread');
+        else openTaskDialog({ kind: 'archive', id, owner });
       },
-      remove: (id) => openTaskDialog({ kind: 'delete', id, owner: m.id }),
-      close: (id) => openTaskDialog({ kind: 'close', id, owner: m.id }),
-      busy: remoteBusy[m.id] ?? NO_BUSY,
-      runAgain: (id) => run(id, async () => { open((await c.rerun(id, { request_id: newRequestId() })).id); }, 'run the thread again'),
-      exportMarkdown: (id) => run(id, async () => { const f = await c.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread'),
+      remove: (id) => openTaskDialog({ kind: 'delete', id, owner }),
+      close: (id) => openTaskDialog({ kind: 'close', id, owner }),
+      busy: remoteBusy[owner] ?? NO_BUSY,
+      runAgain: (id) => run(id, async (m) => { open((await m.client.rerun(id, { request_id: newRequestId() })).id); }, 'run the thread again'),
+      exportMarkdown: (id) => run(id, async (m) => { const f = await m.client.exportMarkdown(id); saveBlob(f.blob, f.name); }, 'export the thread'),
     }];
-  })), [machines, renaming, remoteBusy, runRemote, go, openTaskDialog, metaCache, remoteAway]);
+  })), [remoteKey, renaming, remoteBusy, runRemote, go, openTaskDialog, remoteAway]);
 
   const actions: WorkspaceActions = useMemo(
     () => ({
@@ -1260,7 +1276,7 @@ export default function App() {
 
   // A cached selected task stays visible through a slow refresh. An unrelated previous task yields to the skeleton after the quiet period.
   let shown: SessionDetail | null = null;
-  if (state.detail && selected) shown = state.detail;
+  if (state.detail && selected && state.detail.id === mountedId) shown = state.detail;
   else if (state.selectedId && selected && (state.previousCached || !lateLoad)) shown = state.previous;
   const stale = !settingsOpen && !mismatched && !routinesFor && !newTask && !!shown && shown !== state.detail;
   const project = shown ? state.projects.find((p) => p.id === shown.project_id) : undefined;

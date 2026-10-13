@@ -4,7 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { install } from '../../src/mock/install';
-import { createApiClient, type ConnectedInstance } from '../../src/api';
+import { createApiClient, type ConnectedInstance, type SessionSummary } from '../../src/api';
+
+// Which Tasks' sidebar rows rendered: each row builds its menu items once per render.
+const rowRenders = vi.hoisted(() => [] as string[]);
+vi.mock('../../src/components/taskActions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/components/taskActions')>();
+  return { ...actual, taskMenuItems: (...args: Parameters<typeof actual.taskMenuItems>) => {
+    if (args[2] === 'row') rowRenders.push(args[0].id);
+    return actual.taskMenuItems(...args);
+  } };
+});
 
 const capabilities = ['workload-grants-v1', 'expected-instance-v1', 'local-workload-v1', 'events-v1', 'files-v1', 'terminal-v1', 'configuration-v1', 'provider-accounts-v1', 'routines-v1', 'usage-v1', 'notices-v1', 'unarchive-v1'];
 const record = (id: string, label: string): ConnectedInstance => ({ id, instance_id: `instance-${id}`, label, base_url: `https://${id}.example`, enabled: true, generation: 1, has_key: true, version: 'test', protocol_major: 1, capabilities, allow_private: false });
@@ -353,6 +363,21 @@ test('task navigation uses machine text initials and removes disabled sources', 
   await user.click(await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Main Server' }));
   await screen.findByRole('region', { name: 'Conversation' });
   expect(window.location.hash).toBe('#task=t3');
+});
+
+test('a streamed update to one Thread re-renders its row alone, though every machine is rebuilt', async () => {
+  const { streams, owners } = federated('', [record('b', 'Workstation B')]);
+  const rows = await taskRows();
+  await rows.findByRole('button', { name: /Doctor: add terminal line/, description: 'Workstation B' });
+  const tasks = await (await owners[0].fetch('/api/sessions')).json() as SessionSummary[];
+  const task = tasks.find((t) => t.id === 't1')!;
+  // Both machines' snapshots and catalogs settle first.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 600)); });
+  rowRenders.length = 0;
+  const stream = streams.filter((s) => s.owner === '' && s.path.startsWith('/api/events?')).at(-1)!.stream;
+  await act(async () => { stream.dispatchEvent(new MessageEvent('session', { data: JSON.stringify({ seq: 1_000_000, session: { ...task, name: 'Renamed on the stream' } }) })); });
+  await rows.findByRole('button', { name: /Renamed on the stream/, description: 'Main Server' });
+  expect(new Set(rowRenders)).toEqual(new Set(['t1']));
 });
 
 test('turning a connection off removes its rows at once, before the registry is read again', async () => {
