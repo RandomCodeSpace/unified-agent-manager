@@ -651,3 +651,51 @@ func TestUpdateCLIRefusesAnArchiveWithAWrongChecksum(t *testing.T) {
 		t.Fatalf("installed copilot changed to %q", v)
 	}
 }
+
+// A binary replaced since the running CLI started, as npm or the install
+// script do outside uam, marks the CLI outdated, so RestartCLI restarts it;
+// an unchanged or unreadable binary does not.
+func TestCLIOutdatedFollowsTheBinaryOnDisk(t *testing.T) {
+	ctx := context.Background()
+	bin := filepath.Join(t.TempDir(), "copilot")
+	writeFile(t, bin, "1.0.95", 0o755)
+	var readErr error
+	p := newWebProvider(func() (sdkClient, error) { return &fakeClient{}, nil }, time.Hour)
+	p.installedCLI = func() (string, os.FileInfo, error) {
+		if readErr != nil {
+			return "", nil, readErr
+		}
+		info, err := os.Stat(bin)
+		return bin, info, err
+	}
+	if p.CLIOutdated() {
+		t.Fatal("outdated with no CLI running")
+	}
+	if _, err := p.ensureStarted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.CLIOutdated() {
+		t.Fatal("outdated with the binary unchanged")
+	}
+	writeFile(t, bin+".new", "1.0.96", 0o755)
+	if err := os.Rename(bin+".new", bin); err != nil {
+		t.Fatal(err)
+	}
+	readErr = errors.New("mid-install")
+	if p.CLIOutdated() {
+		t.Fatal("an unreadable binary taken for a new release")
+	}
+	readErr = nil
+	if !p.CLIOutdated() {
+		t.Fatal("replaced binary not noticed")
+	}
+	if err := p.RestartCLI(ctx, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.ensureStarted(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.CLIOutdated() {
+		t.Fatal("outdated after restarting onto the new binary")
+	}
+}

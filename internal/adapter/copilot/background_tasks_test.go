@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
@@ -112,6 +113,34 @@ func TestWebBackgroundShellChangeWithoutSubagent(t *testing.T) {
 	if got := h.sink.last().BackgroundTasks; got == nil || !got.Known || len(got.Tasks) != 0 {
 		t.Fatalf("removed shell or agent mislabeled as shell: %+v", got)
 	}
+}
+
+// A failed read leaves the shells unknown, which keeps the Thread busy, so
+// the list is read again without waiting for another CLI event.
+func TestWebFailedTaskListIsReadAgain(t *testing.T) {
+	retry := webTasksRetry
+	webTasksRetry = 20 * time.Millisecond
+	t.Cleanup(func() { webTasksRetry = retry })
+	h := openWeb(t)
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "server", Command: "make serve", Status: rpc.TaskStatusRunning})
+	h.fs.onEvent(ev("background", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 1)
+	h.fs.mu.Lock()
+	h.fs.tasksErr = errors.New("task list unavailable")
+	h.fs.mu.Unlock()
+	h.fs.onEvent(ev("unknown", &rpc.SessionBackgroundTasksChangedData{}))
+	settleTasks(t, h, 2)
+	if got := h.sink.last().BackgroundTasks; got == nil || got.Known {
+		t.Fatalf("failed read kept the shells known: %+v", got)
+	}
+	h.fs.mu.Lock()
+	h.fs.tasksErr = nil
+	h.fs.mu.Unlock()
+	h.fs.setTasks(&rpc.TaskShellInfo{ID: "server", Command: "make serve", Status: rpc.TaskStatusCompleted})
+	waitFor(t, "the list read again", func() bool {
+		got := h.sink.last().BackgroundTasks
+		return got != nil && got.Known && len(got.Tasks) == 1 && got.Tasks[0].Status == "completed"
+	})
 }
 
 func TestWebAssistantIdleDuringSendDoesNotRestoreWorking(t *testing.T) {

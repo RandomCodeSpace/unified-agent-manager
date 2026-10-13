@@ -96,6 +96,12 @@ func (p *cliFake) RestartCLI(_ context.Context, quiesce func() error) error {
 	return nil
 }
 
+func (p *cliFake) CLIOutdated() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.outdated
+}
+
 func (p *cliFake) restarted() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -272,6 +278,41 @@ func TestCLIUpdateWhileATaskWorksRestartsOnceItFinishes(t *testing.T) {
 	waitUntil(t, "the running release cleared", func() bool {
 		cli, _ := m.ProviderCLI(context.Background(), "fake", false)
 		return cli.Running == ""
+	})
+	if conv.Closes() != 1 {
+		t.Fatalf("closes after the restart = %d", conv.Closes())
+	}
+}
+
+// A CLI replaced outside uam restarts onto the new release as after an
+// update made here: once no Task works or waits, showing the release it
+// still runs meanwhile.
+func TestCLIReplacedOutsideUamRestartsOnceIdle(t *testing.T) {
+	prov := newCLIFake(agentapi.CLIRelease{Installed: "1.0.80", Latest: "1.0.80"})
+	m, ts, auth := cliServer(t, prov)
+	if code, cli, body := cliCall(t, ts, auth, http.MethodGet, "/api/providers/fake/cli?refresh=1"); code != http.StatusOK || cli.Installed != "1.0.80" {
+		t.Fatalf("GET = %d %s", code, body)
+	}
+	_, conv := createSession(t, m, prov.Provider)
+	conv.EmitTurn(agentapi.TurnWorking, "")
+	// npm install -g run outside uam.
+	prov.setRelease(agentapi.CLIRelease{Installed: "1.0.96", Latest: "1.0.96"}, nil)
+	prov.mu.Lock()
+	prov.outdated = true
+	prov.mu.Unlock()
+	m.followCLI("fake")
+	waitUntil(t, "the replaced release shown", func() bool {
+		cli, _ := m.ProviderCLI(context.Background(), "fake", false)
+		return cli.Installed == "1.0.96" && cli.Running == "1.0.80"
+	})
+	if prov.restarted() != 0 || conv.Closes() != 0 {
+		t.Fatalf("working Task disturbed: restarts %d, closes %d", prov.restarted(), conv.Closes())
+	}
+	conv.EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the restart", func() bool { return prov.restarted() == 1 })
+	waitUntil(t, "the running release cleared", func() bool {
+		cli, _ := m.ProviderCLI(context.Background(), "fake", false)
+		return cli.Running == "" && cli.Installed == "1.0.96"
 	})
 	if conv.Closes() != 1 {
 		t.Fatalf("closes after the restart = %d", conv.Closes())
