@@ -6,6 +6,7 @@
 // not announced (the page tells the service which Task it shows, so no push goes out for it),
 // each notice shows once across tabs, and nothing here surfaces an error beyond the Settings switch.
 import { api, PAGE_ID } from '../api';
+import { openEventStream } from './eventStream';
 
 export const NOTIFY_KEY = 'uam.notify';
 /** The notices a page already showed or skipped, by key, so other tabs skip them (`claimNotice`). */
@@ -278,7 +279,7 @@ export function startNotifications(): () => void {
   };
   container?.addEventListener('message', onMessage);
   container?.startMessages();
-  const stream = typeof EventSource === 'undefined' ? null : new EventSource(`/api/connected-notifications/events?page=${encodeURIComponent(PAGE_ID)}`);
+  const stream = typeof EventSource === 'undefined' ? null : openEventStream(`/api/connected-notifications/events?page=${encodeURIComponent(PAGE_ID)}`);
   stream?.addEventListener('open', () => { reports.remote.open = true; report('remote'); });
   stream?.addEventListener('notify', (event) => {
     try {

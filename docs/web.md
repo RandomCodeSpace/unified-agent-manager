@@ -1890,9 +1890,11 @@ States shown for each session:
 | interrupted | UAM stopped while a turn was running; the turn was not resumed or resent |
 | closed | The conversation was closed from the web interface, or the Thread was imported and has not been sent a message yet |
 
-A prompt is sent at most once per click. Retrying after a network error reuses
-the same request ID, and the service answers a repeated request ID with the
-recorded result instead of sending again. If the provider may or may not have
+A prompt is sent at most once per click. A send the service has not answered
+within 30 seconds shows as failed, with the message kept in the composer; the
+service may still have taken it. Retrying after a network error or that
+timeout reuses the same request ID, and the service answers a repeated
+request ID with the recorded result instead of sending again. If the provider may or may not have
 received a prompt, the page says so and nothing is resent.
 
 ## Terminal
@@ -2232,6 +2234,16 @@ Close the browser, VS Code, or the SSH window whenever you like. The turn
 keeps running on Linux, including when no browser is connected. To come back,
 run the same `ssh -N -L …` command and open the URL; the page loads the
 current state and continues streaming. Reconnecting never sends a prompt.
+A page whose live updates have not started within 20 seconds (a proxy that
+holds them back, a stalled connection) shows the connection as lost and
+opens them again.
+
+Over plain HTTP, the page receives its live updates over WebSockets, because
+browsers allow only six HTTP/1.1 connections per server and each tab keeps
+two or more update streams open; several tabs would otherwise use them all
+and stall every request. Over HTTPS the updates use ordinary event streams.
+If WebSockets cannot reach the service (a proxy that does not pass them), the
+page falls back to event streams.
 
 ## Stop
 

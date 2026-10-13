@@ -305,6 +305,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("POST /api/sessions/{id}/git/message", s.handleCommitMessage)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/events/detail", s.handleDetailEvents)
+	mux.HandleFunc("GET "+eventSocketPath, s.handleEventSocket)
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}", s.handleItemBody)
 	mux.HandleFunc("GET /api/sessions/{id}/items/{item_id}/diff", s.handleItemDiff)
 	mux.HandleFunc("GET /api/sessions/{id}/subagents/{agent_id}/history", s.handleHistoryPage)
@@ -371,7 +372,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.serveFederation(w, r) {
 		return
 	}
-	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && !s.authenticated(r) && !s.fileKeyRequest(r) && !s.connectedFileKeyRequest(r) {
+	// The event socket serves its stream through ServeHTTP, which checks that
+	// request; it carries a refusal as the stream's status, as EventSource
+	// sees it.
+	if api && r.URL.Path != "/api/auth" && r.URL.Path != "/api/login" && r.URL.Path != eventSocketPath && !s.authenticated(r) && !s.fileKeyRequest(r) && !s.connectedFileKeyRequest(r) {
 		s.refuse(w, r, http.StatusUnauthorized, "authentication required")
 		return
 	}

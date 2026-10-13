@@ -5,7 +5,7 @@ import { registerHooks } from 'node:module';
 // The browser resolves extensionless TypeScript imports; node's strip-types runner does not.
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
-    return nextResolve(['../api', './lib/models', './lib/reads', './lib/preview'].includes(specifier) ? `${specifier}.ts` : specifier, context);
+    return nextResolve(['../api', './lib/models', './lib/reads', './lib/preview', './eventStream'].includes(specifier) ? `${specifier}.ts` : specifier, context);
   },
 });
 const { NOTIFY_KEY, claimNotice, needsHomeScreen, parseNotifyMode, parseNotificationTarget, notificationHash } = await import('../src/lib/notify.ts');

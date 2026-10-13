@@ -22,6 +22,7 @@ import { handleNotice, setViewing, startNotifications, streamOpened, type Notice
 import { clearArchive, forgetArchive, retainArchive } from './lib/historyArchive';
 import { RecentTasks } from './lib/recentTasks';
 import { useResizable } from './lib/useResizable';
+import { openEventStream } from './lib/eventStream';
 import { checkDue, decideUpdate } from './lib/update';
 import { NewTaskPane, Task } from './components/Task';
 import { keepAside, rereadAsides } from './components/AskAside';
@@ -64,6 +65,8 @@ const SIDEBAR_KEY = 'uam.sidebar';
 const HASH_PREFIX = '#task=';
 /** A wait shorter than this shows nothing new: no loading veil or placeholder, no connection banner. */
 const QUIET_MS = 600;
+/** An event stream with no snapshot after this long never answered (a proxy holding it, a stalled connection): it is reopened. */
+const STREAM_STALL_MS = 20_000;
 const SETTINGS_HASH = '#settings';
 /** Every Project's routines: `#routines` (or `#routines=all`); one Project's: `#routines=<project id>`. */
 const ROUTINES_HASH = '#routines';
@@ -442,11 +445,21 @@ export default function App() {
   // One EventSource at a time, scoped to the selected session.
   useEffect(() => {
     if (auth !== 'in') return;
-    const es = new EventSource(api.eventsUrl(state.selectedId));
+    const es = openEventStream(api.eventsUrl(state.selectedId));
     let alive = true;
     let retry: number | undefined;
     // Opening a stream is a load; a retry after a failure keeps that failure on screen until the snapshot.
     if (!wasDown.current) { dispatch({ type: 'connection', status: 'connecting' }); onEvent?.({ type: 'connection', status: 'connecting' }); }
+    // A stream that never sends its snapshot would leave the load on screen for good: it is a lost connection, shown and reopened.
+    const stalled = window.setTimeout(() => {
+      if (!alive) return;
+      es.close();
+      sweptMembership.current = null;
+      wasDown.current = true;
+      dispatch({ type: 'connection', status: 'reconnecting' });
+      onEvent?.({ type: 'connection', status: 'reconnecting' });
+      setStreamKey(increment);
+    }, STREAM_STALL_MS);
     es.onopen = () => {
       if (!alive) return;
       // The snapshot confirms this connection; opening TCP alone does not.
@@ -465,6 +478,7 @@ export default function App() {
         onEvent?.({ type: 'connection', status: 'reconnecting' });
         return;
       }
+      window.clearTimeout(stalled);
       // The browser gave up (non-200 response). A selected Task the service does not know (a stale
       // link, one deleted elsewhere) is dropped with a notice; otherwise re-check auth, then reopen.
       const later = () => {
@@ -506,6 +520,7 @@ export default function App() {
     };
     es.addEventListener('snapshot', (e) => {
       if (!alive) return;
+      window.clearTimeout(stalled);
       const data = JSON.parse((e as MessageEvent).data) as SnapshotData;
       flush();
       confirmedDetail.current = null;
@@ -612,6 +627,7 @@ export default function App() {
       alive = false;
       es.close();
       window.clearTimeout(retry);
+      window.clearTimeout(stalled);
       // Deltas still queued belong to this stream; the next one starts with a snapshot.
       cancelAnimationFrame(frame);
     };
