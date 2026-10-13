@@ -52,7 +52,7 @@ describe('MCP servers', () => {
       const dialog = within(await screen.findByRole('dialog', { name: 'MCP servers' }));
       await dialog.findByRole('list', { name: "This thread's MCP servers" });
       fetch.mockClear();
-      await user.click(dialog.getByRole('button', { name: 'Tools', exact: true }));
+      await user.click(dialog.getByRole('button', { name: 'Show tools', exact: true }));
       const tools = within(await dialog.findByRole('list', { name: 'docs-search tools' }));
       expect(tools.getByText('Search the documentation.')).toBeTruthy();
       const reads = fetch.mock.calls.filter(([url]) => String(url).includes('/mcp'));
@@ -142,11 +142,11 @@ describe('MCP servers', () => {
       expect(await dialog.findByText('Starting…')).toBeTruthy();
       send(1_000_002, 'connected');
       expect(await dialog.findByText('Connected')).toBeTruthy();
-      expect(dialog.getByRole('button', { name: 'Tools', exact: true })).toBeTruthy();
+      expect(dialog.getByRole('button', { name: 'Show tools', exact: true })).toBeTruthy();
       expect(fetch.mock.calls.filter(([url]) => String(url).includes('/tools'))).toHaveLength(0);
       await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
       expect(calls()).toHaveLength(initialReads);
-      await user.click(dialog.getByRole('button', { name: 'Tools', exact: true }));
+      await user.click(dialog.getByRole('button', { name: 'Show tools', exact: true }));
       const tools = within(await dialog.findByRole('list', { name: 'docs-search tools' }));
       expect(tools.getByText('Search the documentation.')).toBeTruthy();
       expect(dialog.getByRole('button', { name: '2 tools' })).toBeTruthy();

@@ -6,8 +6,12 @@ import { Button } from './ui/button';
 import { Popover } from './ui/popover';
 import { Tip } from './ui/tooltip';
 
-/** The popover's content (Usage.tsx) loads with its first opening, never with the app. */
-const UsageContent = lazy(() => import('./Usage').then((m) => ({ default: m.UsageContent })));
+// The popover's content (Usage.tsx) loads apart from the app: with its first opening, or once the page is
+// idle. The module, once here, is rendered directly: it never suspends, so an opening never waits for
+// React's fallback throttle (about 300 ms) the lazy wrapper incurs on its first render.
+let usageModule: typeof import('./Usage') | null = null;
+const loadUsage = () => import('./Usage').then((m) => { usageModule = m; return m; });
+const UsageContentLazy = lazy(() => loadUsage().then((m) => ({ default: m.UsageContent })));
 
 export const QUOTA_TONES = { healthy: 'text-success', attention: 'text-warning', danger: 'text-error', muted: 'text-muted' };
 
@@ -49,6 +53,14 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
     const timer = window.setInterval(() => setNow(Date.now()), 60000);
     return () => window.clearInterval(timer);
   }, []);
+  // Fetched once the page is idle, so the first opening is as fast as the next.
+  useEffect(() => {
+    if (usageModule) return;
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1000));
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+    const handle = idle(() => { void loadUsage(); });
+    return () => cancel(handle);
+  }, []);
   const quota = accountQuota(usage?.quotas);
   const pace = quotaPace(quota, now, usage?.stale);
   const known = !!quota && (quota.unlimited || pace.remaining !== null);
@@ -58,7 +70,12 @@ export function UsageButton({ side = 'top', variant = 'rail', className, onAddPr
   const descriptionId = useId();
   const [open, setOpen] = useState(false);
   const popup = useRef<HTMLDivElement>(null);
-  const onOpenChange = (next: boolean) => setOpen(next);
+  // Chosen as it opens: turning from the lazy wrapper to the module while open would remount the content.
+  const [UsageContent, setUsageContent] = useState(() => usageModule?.UsageContent ?? UsageContentLazy);
+  const onOpenChange = (next: boolean) => {
+    if (next) setUsageContent(() => usageModule?.UsageContent ?? UsageContentLazy);
+    setOpen(next);
+  };
   const meter = known && !quota.unlimited;
   return <Popover.Root open={open} onOpenChange={onOpenChange}>
     <Tip label={`Usage · ${description}`} side={side} disabled={open}>

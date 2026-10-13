@@ -192,7 +192,8 @@ describe('evidence inside Changes', () => {
     expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Finished — check the evidence' })).toBeNull();
     const trigger = await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ });
-    expect(trigger.querySelector('.bg-warning')).not.toBeNull();
+    // The count is the folder's (git_pending, with the Thread); the dot waits for Changes to list the Thread's files.
+    await waitFor(() => expect(trigger.querySelector('.bg-warning')).not.toBeNull());
     expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();

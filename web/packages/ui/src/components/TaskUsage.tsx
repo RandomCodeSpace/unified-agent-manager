@@ -64,6 +64,8 @@ function Metrics({ session }: Readonly<{ session: SessionDetail }>) {
     );
     return () => controller.abort();
   }, [api, session.id, session.open, inactive, attempt, live]);
+  // A draft (NewTaskPane) has no id yet: it is not closed, it has not started.
+  if (!session.id) return <p className="text-caption text-muted">Native usage metrics are reported once the Thread starts.</p>;
   if (!session.open || inactive) return <p className="text-caption text-muted">Native usage metrics are unavailable for a closed or inactive Thread.</p>;
   const refresh = () => { setSnapshot(null); setError(''); setAttempt((n) => n + 1); };
   return <>

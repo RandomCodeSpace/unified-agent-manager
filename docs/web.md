@@ -2127,8 +2127,8 @@ HTTP and SSE only and the service refuses a stdio add or edit (`403`).
 Turning a server on or off and removing it need no Terminal.
 
 **In a Thread**, the actions menu (`…`) → **MCP servers…** shows each server
-as that Thread's conversation sees it: Connected (with its tools; tap the
-count to list them), Failed (with the error and **Restart**), Needs
+as that Thread's conversation sees it: Connected (**Show tools** lists its
+tools, and the button then names their count), Failed (with the error and **Restart**), Needs
 sign-in, Starting, or Off for this thread. The switch turns a server off or on
 for this Thread only, until its configuration reloads, its conversation closes,
 or the built-in GitHub server's setting changes. Otherwise a conversation keeps the servers it

@@ -57,7 +57,9 @@ function Breakdown({ session, children }: Readonly<{ session: SessionDetail; chi
   }, [api, session.id, session.open, sources, live]);
   const info = view ? view.attribution ?? view.info : undefined;
   let status = '';
-  if (!session.open) status = 'Context breakdown is unavailable for a closed Thread.';
+  // A draft (NewTaskPane) has no id yet: it is not closed, it has not started.
+  if (!session.id) status = 'Context breakdown is reported once the Thread starts.';
+  else if (!session.open) status = 'Context breakdown is unavailable for a closed Thread.';
   else if (error) status = error;
   else if (!view) status = 'Loading context breakdown…';
   else if (!info) status = 'Context breakdown has not been initialized by this conversation.';

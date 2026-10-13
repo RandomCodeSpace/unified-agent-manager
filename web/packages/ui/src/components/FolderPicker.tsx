@@ -245,7 +245,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
     );
     if (hit >= 0) select(entries[hit].path);
     // Past the listing's cap the name may still be there: the filter asks the server.
-    else if (variant === 'project' && listing?.truncated) {
+    else if (listing?.truncated) {
       setFilter(typed.current.text);
       setSelected(null);
     }
@@ -329,7 +329,8 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
         </Button>
       </div>
 
-      {variant === 'project' && (
+      {/* Inline (Settings), only for a folder past the listing's cap, where it searches them all. */}
+      {(variant === 'project' || listing?.truncated || want.filter) && (
         <Input
           aria-label="Filter folders"
           className="text-ui"
@@ -448,7 +449,7 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
             );
           })}
         </div>
-        {listing?.truncated && <p className={cn(statusClass, 'py-1.5')}>{want.filter ? 'Showing the first 1,000 matches' : variant === 'project' ? 'Showing the first 1,000. Filter folders to search them all.' : 'Showing the first 1,000'}</p>}
+        {listing?.truncated && <p className={cn(statusClass, 'py-1.5')}>{want.filter ? 'Showing the first 1,000 matches' : 'Showing the first 1,000. Filter folders to search them all.'}</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 max-sm:[&>button]:flex-1">

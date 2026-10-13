@@ -201,6 +201,18 @@ describe('native configuration', () => {
     expect(valid.test('good-name-2')).toBe(true);
   });
 
+  test.each([['Agents', 'Add agent'], ['Hooks', 'Add hook file']])('the %s Name field allows what the service allows, and says so', async (kind, add) => {
+    const { user, card } = await open(kind);
+    await user.click(card.getByRole('button', { name: add }));
+    const input = card.getByLabelText('Name') as HTMLInputElement;
+    const valid = new RegExp(`^(?:${input.pattern})$`, 'v');
+    // The service's rule: a letter or digit, then letters, digits, dots, underscores or hyphens, 128 at most, no "..".
+    for (const name of ['Review_Bot.v2', 'a', 'x-1.2_3']) expect(valid.test(name)).toBe(true);
+    for (const name of ['.hidden', '_x', '-x', 'a..b', 'bad name!', 'a/b']) expect(valid.test(name)).toBe(false);
+    expect(input.maxLength).toBe(128);
+    expect(card.getByText(/^Letters, digits, dots, underscores and hyphens/)).toBeTruthy();
+  });
+
   test('a new agent whose name is taken says so without offering to reload a saved version', async () => {
     const { user, card } = await open('Agents');
     const save = vi.spyOn(api, 'saveConfiguration').mockRejectedValueOnce(new ApiError(409, 'another agent is already named "reviewer"; choose another name'));

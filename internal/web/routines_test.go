@@ -273,6 +273,17 @@ func TestRoutineRunStartsATaskAndRecordsItsOutcome(t *testing.T) {
 	}
 }
 
+// A run ends when its Task's turn does, not at the scheduler's next tick.
+func TestRoutineRunEndsWithItsTurn(t *testing.T) {
+	m, prov, _, project := newRoutineManager(t)
+	r := mustRoutine(t, m, project, hourly("Deps check"))
+	run := runNow(t, m, project, r.ID)
+	taskConv(t, prov, run.TaskID).EmitTurn(agentapi.TurnCompleted, "")
+	waitUntil(t, "the run to finish before the next tick", func() bool {
+		return routine(t, m, project, r.ID).Runs[0].Outcome == RunFinished
+	})
+}
+
 // A firing while the previous run's Task still works is recorded as skipped
 // and starts nothing.
 func TestRoutineRunsNeverOverlap(t *testing.T) {

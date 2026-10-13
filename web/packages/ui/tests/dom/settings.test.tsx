@@ -74,6 +74,30 @@ describe('settings', () => {
     expect(input).toHaveProperty('value', '/home/user/projects/client-work');
   });
 
+  test('project location: typing a name past the listing cap asks the server and selects the folder', async () => {
+    const original = api.listDirs;
+    // The cap left archive out of the projects folder's listing.
+    const list = vi.spyOn(api, 'listDirs').mockImplementation(async (path, hidden, filter) => {
+      const listing = await original(path, hidden, filter);
+      return filter || !path?.endsWith('/projects') ? listing : { ...listing, entries: listing.entries.filter((e) => e.name !== 'archive'), truncated: true };
+    });
+    try {
+      const { user } = await openSettings('UAM and access', 'Project folders');
+      const card = await section('Project folders');
+      await user.click(card.getByRole('button', { name: 'Browse' }));
+      const folders = within(await card.findByRole('listbox', { name: 'Folders' }));
+      await user.dblClick(await folders.findByRole('option', { name: /^projects/ }));
+      expect(await card.findByText('Showing the first 1,000. Filter folders to search them all.')).toBeTruthy();
+      expect(folders.queryByRole('option', { name: /^archive/ })).toBeNull();
+      await user.keyboard('arch');
+      expect(await folders.findByRole('option', { name: /^archive/ })).toBeTruthy();
+      expect(list).toHaveBeenLastCalledWith('/home/user/projects', false, 'arch');
+      expect(card.getByRole('textbox', { name: 'Filter folders' })).toHaveProperty('value', 'arch');
+    } finally {
+      list.mockRestore();
+    }
+  });
+
   test('project location keeps a refused folder choice for retry without replacing the saved default', async () => {
     const { user } = await openSettings('UAM and access', 'Project folders');
     const card = await section('Project folders');
