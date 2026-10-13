@@ -35,13 +35,15 @@ func cloneTurnChanges(records []TurnChanges) []TurnChanges {
 	return out
 }
 
-// A read the provider answers busy, or that lands while it runs a turn of its
+// A read the provider answers busy, that lands while it runs a turn of its
 // own (a background subagent still working when the owner's turn ended, then
-// the turn delivering its result), is repeated after these waits. After the
-// last, what the read says is kept.
+// the turn delivering its result), or that a tool result landing while idle
+// may postdate, is repeated after these waits. After the last, what the read
+// says is kept.
 var turnChangeRetryWaits = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, time.Minute, time.Minute, time.Minute}
 
 // turnChangeScope is the conversation a capture belongs to: any change ends it.
+// idleEdits is the count of idle tool results the next read must postdate.
 type turnChangeScope struct {
 	conv      agentapi.Conversation
 	convID    string
@@ -60,7 +62,7 @@ func (m *Manager) kickTurnChangesLocked(s *webSession, timing TurnTiming) {
 	go func() {
 		defer m.wg.Done()
 		for attempt := 0; ; attempt++ {
-			if !m.captureTurnChanges(s, reader, timing, scope, attempt < len(turnChangeRetryWaits)) {
+			if !m.captureTurnChanges(s, reader, timing, &scope, attempt < len(turnChangeRetryWaits)) {
 				return
 			}
 			select {
@@ -73,9 +75,10 @@ func (m *Manager) kickTurnChangesLocked(s *webSession, timing TurnTiming) {
 }
 
 // captureTurnChanges reads the turn's native changes once and keeps them on
-// its timing. True asks for another read later: the provider was busy, or
-// a turn it began on its own was running (`retry` permitting).
-func (m *Manager) captureTurnChanges(s *webSession, reader agentapi.TurnChangeReader, timing TurnTiming, scope turnChangeScope, retry bool) bool {
+// its timing. True asks for another read later: the provider was busy, a turn
+// it began on its own was running, or a tool result landed while idle
+// (`retry` permitting).
+func (m *Manager) captureTurnChanges(s *webSession, reader agentapi.TurnChangeReader, timing TurnTiming, scope *turnChangeScope, retry bool) bool {
 	ctx, cancel := context.WithTimeout(m.ctx, controlTimeout)
 	defer cancel()
 	release, err := m.readSlot(ctx)
@@ -99,12 +102,19 @@ func (m *Manager) captureTurnChanges(s *webSession, reader agentapi.TurnChangeRe
 	// result. Later turns the provider began on its own (no owner prompt) are
 	// this prompt's work: the provider's own proof decides whether the counts
 	// are still this turn's.
-	if m.closed || s.removed || m.sessions[s.id] != s || s.conv != scope.conv || s.convID != scope.convID || s.gen != scope.gen || s.historyGen != scope.history || s.idleToolEdits != scope.idleEdits || i < 0 {
+	if m.closed || s.removed || m.sessions[s.id] != s || s.conv != scope.conv || s.convID != scope.convID || s.gen != scope.gen || s.historyGen != scope.history || i < 0 {
 		return false
 	}
 	submitted := s.activeTiming < 0 && (s.base == StateWorking || s.base == StateStarting)
 	if submitted || s.pendingTimingUser != "" || slices.ContainsFunc(s.turnTimings[i+1:], func(t TurnTiming) bool { return t.UserItemID != "" }) {
 		return false
+	}
+	// A tool result that landed while no turn ran (the CLI hands over a
+	// background subagent's result before its own turn begins) may postdate
+	// this read: read again, or keep the initial unknown after the last read.
+	if s.idleToolEdits != scope.idleEdits {
+		scope.idleEdits = s.idleToolEdits
+		return retry
 	}
 	if retry && (s.activeTiming >= 0 || rec.Counts.Status == "busy") {
 		return true

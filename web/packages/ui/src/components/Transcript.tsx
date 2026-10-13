@@ -1298,7 +1298,8 @@ export function Thinking({ item, streaming, endedAt, className }: Readonly<{ ite
         <span className="tabular-nums">{thinkingLabel(streaming, took)}</span>
       </button>
       <Collapse open={expanded}>
-        <BodyNotice body={body} retry={retry} />
+        {/* A closed thought is not read, so it has no body on its way to tell of. */}
+        {expanded && <BodyNotice body={body} retry={retry} />}
         {fullItem && <Copyable text={text} label="Copy thinking" className="mt-1 pr-6 pl-3 before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:fade-rule-y before:content-['']">
           <Markdown text={text} className="md-quiet" streaming={streaming} />
         </Copyable>}
