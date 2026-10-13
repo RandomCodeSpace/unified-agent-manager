@@ -1592,6 +1592,9 @@ export const UPDATE_EVENTS = [
   'skills_loaded',
 ] as const;
 
+/** How long a prompt waits for the service to take it (it answers once the message is sent or queued). */
+export const PROMPT_TIMEOUT_MS = 30_000;
+
 export class ApiError extends Error {
   status: number;
   /** Parsed JSON error body, when the server sent one (e.g. `project_id` on 409). */
@@ -2213,8 +2216,22 @@ export function createApiClient(connection: ConnectedInstance | null = null, val
     releaseRewind: (id: string, requestId: string) => call<RewindReceipt>('POST', `/api/sessions/${enc(id)}/rewind/release`, { request_id: requestId }),
     /** The whole conversation as a Markdown file. */
     exportMarkdown: (id: string) => download(`/api/sessions/${enc(id)}/export`),
-    prompt: (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) =>
-      call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }),
+    /**
+     * A send that has no answer in PROMPT_TIMEOUT_MS fails, so the composer shows it instead of waiting for good. The service
+     * may still take it; sending again with the same `request_id` returns that outcome instead of a second message.
+     */
+    prompt: async (id: string, text: string, request_id: string, mode: PromptMode = 'send', extras: PromptExtras & { settings?: PromptSettings } = {}) => {
+      const late = new AbortController();
+      const timer = setTimeout(() => late.abort(), PROMPT_TIMEOUT_MS);
+      try {
+        return await call<Submission>('POST', `/api/sessions/${enc(id)}/prompt`, { text, request_id, mode, ...extras }, false, late.signal);
+      } catch (error) {
+        if (late.signal.aborted) throw new ApiError(0, `The server did not answer in ${PROMPT_TIMEOUT_MS / 1000} seconds`);
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     /** Runs a listed command; the rules of a send (409 while a turn runs, no queue or steer). */
     command: (id: string, name: string, args: string, request_id: string, extras: PromptExtras = {}) =>
       call<Submission>('POST', `/api/sessions/${enc(id)}/command`, { request_id, name, arguments: args, ...extras }),

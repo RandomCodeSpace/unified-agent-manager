@@ -11,6 +11,7 @@ import { hasIdentity, identityHash, resolveIdentity } from './lib/instanceIdenti
 import { needsYouCount, newsReader } from './lib/tasks';
 import { handleNotice, setNotificationSource, startNotifications, type Notice } from './lib/notify';
 import { forgetArchive, readMarks } from './lib/historyArchive';
+import { openEventStream } from './lib/eventStream';
 
 interface SourceState { state: State; status: ConnectedStatus }
 interface Registry { instance_id: string; connections: ConnectedInstance[] }
@@ -56,7 +57,7 @@ function SourceStream({ source, initial, onState }: { source: Source; initial: S
     const connect = () => {
       if (!alive) return;
       publish({ status: 'connecting' });
-      try { es = new EventSource(client.eventsUrl(null)); }
+      try { es = openEventStream(client.eventsUrl(null)); }
       catch (error) { publish(connectionFailure(error)); return; }
       const stream = es;
       stream.addEventListener('snapshot', event => {

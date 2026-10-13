@@ -5,6 +5,7 @@ import { bodyKey, detailReducer, emptyDetails, type BodyState, type DetailAction
 import { describeError } from '../api';
 import { itemCursor } from '../lib/historyWindow';
 import { EditDiffCache } from '../lib/edit-diff-cache';
+import { openEventStream } from '../lib/eventStream';
 
 /** Mounted children of a collapsing group retain their preference, but no interest. */
 const Visible = createContext(true);
@@ -148,7 +149,7 @@ export function DetailsProvider({ session, active, generation, versions, onAuthL
         const body = store.value.bodies[bodyKey(ref)];
         return body?.item && body.seq >= 0 ? { ...ref, coveredSeq: body.seq } : ref;
       });
-      es = new EventSource(api.detailEventsUrl(session.id, agent, covered, before, session.epoch, until));
+      es = openEventStream(api.detailEventsUrl(session.id, agent, covered, before, session.epoch, until));
       const current = es;
       for (const name of ['detail_snapshot', 'detail_page', 'body', 'body_delta', 'body_output', 'body_current', 'body_unavailable', 'detail_ready', 'detail_reset', 'item', 'delta', 'items_trimmed'] as const) {
         current.addEventListener(name, event => {
