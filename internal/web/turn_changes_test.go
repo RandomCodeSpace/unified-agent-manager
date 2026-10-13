@@ -153,9 +153,6 @@ func TestTurnChangesInFlightRejectsLaterActivityAndGeneration(t *testing.T) {
 			c.EmitItem(agentapi.Item{ID: "new-owner", Kind: agentapi.ItemUser})
 		}},
 		{"working", func(_ *Manager, _ *webSession, c *agenttest.Conversation) { c.EmitTurn(agentapi.TurnWorking, "") }},
-		{"partial tool", func(_ *Manager, _ *webSession, c *agenttest.Conversation) {
-			c.EmitItem(agentapi.Item{ID: "partial", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolFailed}})
-		}},
 		{"conversation generation", func(m *Manager, s *webSession, _ *agenttest.Conversation) { m.mu.Lock(); s.gen++; m.mu.Unlock() }},
 		{"history generation", func(m *Manager, s *webSession, _ *agenttest.Conversation) { m.mu.Lock(); s.historyGen++; m.mu.Unlock() }},
 		{"close", func(m *Manager, s *webSession, _ *agenttest.Conversation) { _, _ = m.Close(s.id) }},
@@ -324,10 +321,48 @@ func TestTurnChangesBoundsUnknownAndHTTPBinding(t *testing.T) {
 	}
 }
 
+// A tool result landing while no turn runs may postdate a read in flight: that
+// read is never applied, a later one is.
+func TestTurnChangesInFlightReadsAgainAfterIdleToolResult(t *testing.T) {
+	saved := turnChangeRetryWaits
+	turnChangeRetryWaits = []time.Duration{5 * time.Millisecond}
+	t.Cleanup(func() { turnChangeRetryWaits = saved })
+	m, p, _ := newTestManager(t)
+	sum, c := createSession(t, m, p)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var reads atomic.Int64
+	ownTurnChangeReader(m, sum.ID, c, func(ctx context.Context, _ string) (agentapi.NativeTurnChanges, error) {
+		if reads.Add(1) > 1 {
+			return nativeTurnFacts("native", 5), nil
+		}
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return agentapi.NativeTurnChanges{}, ctx.Err()
+		}
+		return nativeTurnFacts("native", 4), nil
+	})
+	c.EmitTurn(agentapi.TurnWorking, "")
+	c.EmitItem(agentapi.Item{ID: "owner", Kind: agentapi.ItemUser})
+	c.EmitTurn(agentapi.TurnCompleted, "")
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("read did not start")
+	}
+	c.EmitItem(agentapi.Item{ID: "partial", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolFailed}})
+	close(release)
+	if got := waitTurnChanges(t, m, sum.ID, "available"); got.Changes.Additions != 5 || reads.Load() != 2 {
+		t.Fatalf("changes=%+v reads=%d", got.Changes, reads.Load())
+	}
+}
+
 // A background subagent still running when the owner's turn ends leaves the
 // provider busy, and its result comes in a turn the provider begins on its own.
-// The capture reads again once that settled; the provider's own turn, with no
-// prompt, has no changes of its own.
+// The capture reads again once that settled, through the subagent's tool
+// results and the CLI's own read of its result landing between the two turns;
+// the provider's own turn, with no prompt, has no changes of its own.
 func TestTurnChangesReadAgainAfterBusyThroughAProviderTurn(t *testing.T) {
 	saved := turnChangeRetryWaits
 	turnChangeRetryWaits = make([]time.Duration, 200)
@@ -349,6 +384,8 @@ func TestTurnChangesReadAgainAfterBusyThroughAProviderTurn(t *testing.T) {
 	c.EmitTurn(agentapi.TurnWorking, "")
 	c.EmitItem(agentapi.Item{ID: "first", Kind: agentapi.ItemUser})
 	c.EmitTurn(agentapi.TurnCompleted, "")
+	c.EmitItem(agentapi.Item{ID: "sub-edit", AgentID: "sub-1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "edit", Status: agentapi.ToolCompleted}})
+	c.EmitItem(agentapi.Item{ID: "handover", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "read_agent", Status: agentapi.ToolCompleted}})
 	c.EmitTurn(agentapi.TurnWorking, "")
 	c.EmitTurn(agentapi.TurnCompleted, "")
 	waitUntil(t, "the provider's own turn", func() bool {

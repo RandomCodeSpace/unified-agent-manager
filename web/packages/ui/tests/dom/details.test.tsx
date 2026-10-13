@@ -3,7 +3,7 @@ import { expect, test } from 'vitest';
 import type { ApiClient, Item, SessionDetail } from '../../src/api';
 import { ApiContext } from '../../src/ApiContext';
 import { DetailsProvider, useItemBody } from '../../src/components/Details';
-import { ToolRow } from '../../src/components/Transcript';
+import { Thinking, ToolRow } from '../../src/components/Transcript';
 
 /** A detail stream the test feeds frames into. */
 class FakeEventSource {
@@ -77,6 +77,31 @@ test('a registered running body stays loaded across a provider re-render after a
     stream.emit('body_output', { ...frame, seq: 7, item_id: 'tool', kind: 'tool', text: '3\n' });
     expect(screen.getByTestId('body').textContent).toBe('loaded:1\n2\n3\n');
     expect(FakeEventSource.opened.length).toBe(1);
+  } finally {
+    window.EventSource = saved;
+  }
+});
+
+// A closed thought reads nothing, so it says nothing about loading: the notice belongs to a body
+// on its way, as for a subagent's Result.
+test('a closed compact thought shows no loading notice and opens no detail stream', async () => {
+  const saved = window.EventSource;
+  window.EventSource = FakeEventSource as unknown as typeof EventSource;
+  FakeEventSource.opened = [];
+  sessionStorage.clear();
+  try {
+    const thought: Item = { id: 'think', kind: 'reasoning', time: '2026-10-08T12:00:00Z', compact: { has_text: false, has_reasoning: true } };
+    const { container } = render(
+      <ApiContext.Provider value={fakeApi}>
+        <DetailsProvider session={session} active generation={0} versions={versions} onAuthLost={() => {}}>
+          <Thinking item={thought} streaming={false} endedAt="2026-10-08T12:00:02Z" />
+        </DetailsProvider>
+      </ApiContext.Provider>,
+    );
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(screen.getByRole('button', { name: 'Thought for 2s' }).getAttribute('aria-expanded')).toBe('false');
+    expect(container.textContent).not.toContain('Details load as you scroll here…');
+    expect(FakeEventSource.opened).toHaveLength(0);
   } finally {
     window.EventSource = saved;
   }

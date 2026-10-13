@@ -522,7 +522,8 @@ type webSession struct {
 	nativeDiffRevision     uint64
 	diffRunning, diffDirty bool
 	// idleToolEdits counts tool results that landed while no turn ran: a
-	// turn's native capture still in flight ends on them (turn_changes.go).
+	// turn's native capture still in flight reads again after them
+	// (turn_changes.go).
 	idleToolEdits uint64
 
 	// rerunOf is the Task whose last message this one ran again (assist.go).
