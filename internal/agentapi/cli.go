@@ -39,10 +39,15 @@ type CLIUpdater interface {
 	// the start of a new one waits while the files are replaced. ctx bounds
 	// the whole update.
 	UpdateCLI(ctx context.Context, version string) error
-	// RestartCLI stops a running runtime whose release UpdateCLI replaced,
-	// so the next use starts the installed one. New starts wait meanwhile,
-	// and quiesce is called first to close idle conversations; its error, or
-	// anything still running on the runtime (ErrCLIBusy), leaves it running
-	// for a later call. With no such runtime it does nothing and returns nil.
+	// RestartCLI stops a running runtime whose release was replaced (see
+	// CLIOutdated), so the next use starts the installed one. New starts
+	// wait meanwhile, and quiesce is called first to close idle
+	// conversations; its error, or anything still running on the runtime
+	// (ErrCLIBusy), leaves it running for a later call. With no such runtime
+	// it does nothing and returns nil.
 	RestartCLI(ctx context.Context, quiesce func() error) error
+	// CLIOutdated reports whether a running runtime runs a release replaced
+	// on disk since it started, by UpdateCLI or by an install made outside
+	// uam; RestartCLI then restarts it like an update's.
+	CLIOutdated() bool
 }

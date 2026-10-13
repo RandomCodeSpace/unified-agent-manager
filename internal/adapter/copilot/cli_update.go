@@ -467,6 +467,29 @@ func (p *webProvider) RestartCLI(ctx context.Context, quiesce func() error) erro
 	return p.stopOutdated(ctx)
 }
 
+// CLIOutdated reports whether the running CLI runs a release replaced since
+// it started. One an install outside uam replaced, with npm or the CLI's
+// install script say, is marked outdated here as UpdateCLI marks its own. A
+// binary that cannot be read, as during an install, is not taken for new.
+func (p *webProvider) CLIOutdated() bool {
+	p.mu.Lock()
+	client, outdated, path, file := p.client, p.outdated, p.cliPath, p.cliFile
+	p.mu.Unlock()
+	if client == nil || outdated || file == nil || p.installedCLI == nil {
+		return client != nil && outdated
+	}
+	now, info, err := p.installedCLI()
+	if err != nil || now == path && os.SameFile(info, file) && info.Size() == file.Size() && info.ModTime().Equal(file.ModTime()) {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.client == client {
+		p.outdated = true
+	}
+	return p.client != nil && p.outdated
+}
+
 // stopOutdated stops the outdated CLI. Ending an open conversation would
 // fail its Task, so it refuses while any is open or a utility prompt runs;
 // the check and the stop share the lock, so none starts between.

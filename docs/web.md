@@ -232,7 +232,9 @@ waiting or opening, UAM closes the idle Copilot conversations (their Threads kee
 state and reopen when next viewed or sent to) and stops Copilot, and the next
 use starts the new version; until then Settings shows the version still
 running. An install whose version cannot be read back still counts as
-installed, so the restart onto it still comes. Before UAM first starts
+installed, so the restart onto it still comes. A Copilot CLI updated outside
+UAM, with npm, its install script or Homebrew, is noticed within a minute,
+and Copilot restarts onto it the same way. Before UAM first starts
 Copilot, it stops any Copilot CLI that a UAM no longer running left behind
 (one that hung when that UAM was killed); it never touches the CLI of a UAM
 that still runs.
@@ -1058,6 +1060,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
+  When the list cannot be read, UAM reads it again every 15 seconds; until
+  it can, a UAM restart waits for the Thread as for a running task.
   A running subagent's Stop sits in its peek and its transcript.
 - **File references**: type `@` at the start of a message or after a space to search the project's
   files: what `git ls-files` sees, including untracked files that are not
@@ -2389,7 +2393,8 @@ private and rotate it if it leaks. See [Sign in](#sign-in).
   Copilot SDK cannot read (still so in SDK 1.0.17), so the Thread's
   background tasks cannot be read either. The chip says Status unavailable
   and lists the shells reported before, or does not appear when none were;
-  nothing can be stopped from it. The shell shows once it ends. Until
+  nothing can be stopped from it. The shell shows within 15 seconds of
+  ending. Until
   then, a subagent's follow-up and an autopilot turn waiting on an
   attached shell may also stay running.
 - **Copilot session diffs.** Copilot does not report per-conversation file

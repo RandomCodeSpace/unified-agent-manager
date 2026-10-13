@@ -366,6 +366,12 @@ type webProvider struct {
 	// the utility prompts running, which it waits for too.
 	outdated  bool
 	utilities int
+	// installedCLI is the binary a start runs now, and its file; nil leaves
+	// CLIOutdated to updates made here. cliPath and cliFile are what it read
+	// before the running client started.
+	installedCLI func() (string, os.FileInfo, error)
+	cliPath      string
+	cliFile      os.FileInfo
 	// swept: CLIs a uam that is gone left running were looked for, once,
 	// before this provider's first CLI.
 	swept bool
@@ -394,7 +400,9 @@ type webProvider struct {
 
 // NewWebProvider returns the Copilot integration for the web service.
 func NewWebProvider() agentapi.Provider {
-	return newWebProvider(newSDKClient, webPingInterval)
+	p := newWebProvider(newSDKClient, webPingInterval)
+	p.installedCLI = installedCLI
+	return p
 }
 
 func newWebProvider(newClient func() (sdkClient, error), pingEvery time.Duration) *webProvider {
@@ -408,6 +416,17 @@ func newSDKClient() (sdkClient, error) {
 		return nil, err
 	}
 	return sdkClientAt(nativeCopilot(path), true), nil
+}
+
+// installedCLI is the CLI binary newSDKClient starts now, and its file.
+func installedCLI() (string, os.FileInfo, error) {
+	path, err := resolveCopilot()
+	if err != nil {
+		return "", nil, err
+	}
+	path = nativeCopilot(path)
+	info, err := os.Stat(path)
+	return path, info, err
 }
 
 // sdkClientAt points the SDK at the CLI at path, retaining the user's login
@@ -1759,6 +1778,14 @@ func (p *webProvider) ensureStarted(ctx context.Context) (sdkClient, error) {
 			log.Warn("stopped copilot CLIs left running by a uam that is gone", "count", n)
 		}
 	}
+	// Read before the start: a file replaced meanwhile reads as replaced,
+	// never the reverse.
+	p.cliPath, p.cliFile = "", nil
+	if p.installedCLI != nil {
+		if path, info, err := p.installedCLI(); err == nil {
+			p.cliPath, p.cliFile = path, info
+		}
+	}
 	c, err := p.newClient()
 	if err != nil {
 		return nil, err
@@ -2048,6 +2075,8 @@ type conversation struct {
 	// asks it for one more.
 	watch           map[string]time.Time
 	listing, relist bool
+	// retryTasks reads the list again webTasksRetry after a failed read.
+	retryTasks *time.Timer
 	// taskRPC orders task-list reads and follow-up sends, so a list read from
 	// before a send never overwrites the follow-up it started.
 	taskRPC sync.Mutex
@@ -3079,6 +3108,10 @@ func (c *conversation) resumeSubagentLocked(agentID string, started time.Time) b
 	return true
 }
 
+// webTasksRetry is how long after a failed task-list read the list is read
+// again. Tests shorten it.
+var webTasksRetry = 15 * time.Second
+
 // checkTasksLocked reads background shells and watched agents on its own
 // goroutine: a request made on the event goroutine stalls the connection its
 // answer arrives on. One read runs at a time; asking during it adds one more.
@@ -3117,6 +3150,16 @@ func (c *conversation) readTasks(sess sdkSession) {
 				snapshot.Known = false
 				c.backgroundTasks = &snapshot
 				c.emitLocked(agentapi.Event{Kind: agentapi.EventBackgroundTasks, BackgroundTasks: &snapshot})
+			}
+			// Unknown shells and unsettled follow-ups keep the Thread busy;
+			// no CLI event may come to read the list again.
+			if !c.closed && c.retryTasks == nil {
+				c.retryTasks = time.AfterFunc(webTasksRetry, func() {
+					c.mu.Lock()
+					defer c.mu.Unlock()
+					c.retryTasks = nil
+					c.checkTasksLocked()
+				})
 			}
 		case !c.closed:
 			c.applyShellTasksLocked(tasks)

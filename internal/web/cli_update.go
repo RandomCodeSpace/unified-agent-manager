@@ -122,21 +122,71 @@ func (m *Manager) cliUpdater(name string) (agentapi.Provider, agentapi.CLIUpdate
 }
 
 // cliLoop reads the releases of each provider's CLI at start and every
-// cliCheckEvery.
+// cliCheckEvery, and looks for a CLI replaced outside uam every
+// cliRestartEvery.
 func (m *Manager) cliLoop(names []string) {
 	defer m.wg.Done()
-	t := time.NewTicker(cliCheckEvery)
-	defer t.Stop()
+	check := time.NewTicker(cliCheckEvery)
+	defer check.Stop()
+	look := time.NewTicker(cliRestartEvery)
+	defer look.Stop()
+	read := true
 	for {
 		for _, name := range names {
-			_, _ = m.ProviderCLI(m.ctx, name, true)
+			if read {
+				_, _ = m.ProviderCLI(m.ctx, name, true)
+			}
+			m.followCLI(name)
 		}
 		select {
 		case <-m.ctx.Done():
 			return
-		case <-t.C:
+		case <-check.C:
+			read = true
+		case <-look.C:
+			read = false
 		}
 	}
+}
+
+// followCLI restarts name's CLI onto a release installed outside uam, such
+// as with npm or the CLI's install script, as an update made here does:
+// once no Task works or waits.
+func (m *Manager) followCLI(name string) {
+	p, u, err := m.cliUpdater(name)
+	if err != nil {
+		return
+	}
+	m.cli.mu.Lock()
+	st := m.cliStatusLocked(name)
+	busy := st.State == cliUpdating || st.restarting
+	m.cli.mu.Unlock()
+	if busy || !u.CLIOutdated() {
+		return
+	}
+	m.cli.mu.Lock()
+	if st.State == cliUpdating || st.restarting {
+		m.cli.mu.Unlock()
+		return
+	}
+	st.restarting = true
+	running := st.Installed
+	m.cli.mu.Unlock()
+	log.Info("web provider CLI was replaced outside uam; it restarts onto it once no thread works or waits", "provider", name)
+	m.wg.Go(func() {
+		m.checkCLI(m.ctx, name, u)
+		m.cli.mu.Lock()
+		if st.Running == "" && st.Installed != running {
+			st.Running = running
+		}
+		m.cli.mu.Unlock()
+		// Try at once rather than at the next tick.
+		select {
+		case m.cliKick <- struct{}{}:
+		default:
+		}
+		m.restartCLIWhenIdle(p, u)
+	})
 }
 
 // ProviderCLI reports the provider CLI's releases and update. It reads the
