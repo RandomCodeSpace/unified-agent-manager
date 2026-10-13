@@ -44,7 +44,8 @@
   "overrides": {
     "eslint-plugin-jsx-a11y": {
       "eslint": "$eslint"
-    }
+    },
+    "katex": "0.18.2"
   },
   "workspaces": [
     "packages/ui"
