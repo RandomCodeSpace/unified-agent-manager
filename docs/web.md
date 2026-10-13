@@ -86,6 +86,12 @@ tunnel. If local port 8260 is taken, change only the first number, for example
 Enter the access token printed by `uam web`. The browser keeps an HttpOnly
 session cookie for 30 days; the token itself is not stored in the browser.
 
+**Log out** (Settings → Server → UAM and access) ends that session on the
+server as well as in the browser: the cookie is recorded as signed out in
+`~/.config/uam/web-signed-out.json` (mode 0600, beside the token) until it
+would have expired, so a copy of it is refused from then on, also after a
+restart. Other browsers stay signed in.
+
 The token lives in `~/.config/uam/web-token` (mode 0600, or
 `$UAM_CONFIG_DIR/web-token`). To revoke every browser session, stop the
 service, delete that file, and run `uam web` again; it creates a new token.

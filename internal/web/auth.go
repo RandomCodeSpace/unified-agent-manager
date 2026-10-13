@@ -163,15 +163,26 @@ func SetToken(path, token string) error {
 // survives service restarts; replacing the token file invalidates every
 // cookie. Binding the host keeps a cookie that leaks to another origin (for
 // example another service on 127.0.0.1) from being replayed at a different
-// one, and the expiry bounds how long a leaked cookie stays usable.
+// one, and the expiry bounds how long a leaked cookie stays usable. The
+// nonce makes each sign-in its own session, so Log out can revoke one
+// cookie (by its MAC, see revokedSessions) and no other.
 func sessionCookie(token, host string, exp int64) string {
 	e := strconv.FormatInt(exp, 10)
-	return e + "." + cookieMAC(token, host, e)
+	nonce := rand.Text()
+	return e + "." + nonce + "." + cookieMAC(token, host, e, nonce)
 }
 
-func cookieMAC(token, host, exp string) string {
+// cookieMAC signs a session cookie. An empty nonce is a cookie issued before
+// the nonce existed; those are still accepted until they expire, so an
+// upgrade signs nobody out. Drop that label once they are all expired
+// (cookieMaxAge after 2026-10-13).
+func cookieMAC(token, host, exp, nonce string) string {
 	mac := hmac.New(sha256.New, []byte(token))
-	mac.Write([]byte("uam-web-session-v3|" + strings.ToLower(host) + "|" + exp))
+	if nonce == "" {
+		mac.Write([]byte("uam-web-session-v3|" + strings.ToLower(host) + "|" + exp))
+	} else {
+		mac.Write([]byte("uam-web-session-v4|" + strings.ToLower(host) + "|" + exp + "|" + nonce))
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -239,19 +250,34 @@ func (s *Server) validFileCookie(r *http.Request, id string) bool {
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
+	mac, _, ok := s.sessionMAC(r)
+	return ok && !s.revoked.revoked(mac)
+}
+
+// sessionMAC verifies r's session cookie and returns its MAC, which names
+// the session, and its expiry (Unix seconds). ok is false for a missing,
+// malformed, expired or forged cookie; revocation is authenticated's check.
+func (s *Server) sessionMAC(r *http.Request) (mac string, exp int64, ok bool) {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
-		return false
+		return "", 0, false
 	}
-	exp, mac, ok := strings.Cut(c.Value, ".")
+	e, rest, ok := strings.Cut(c.Value, ".")
 	if !ok {
-		return false
+		return "", 0, false
 	}
-	until, err := strconv.ParseInt(exp, 10, 64)
-	if err != nil || time.Now().Unix() >= until {
-		return false
+	exp, err = strconv.ParseInt(e, 10, 64)
+	if err != nil || time.Now().Unix() >= exp {
+		return "", 0, false
 	}
-	return subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.token, r.Host, exp))) == 1
+	nonce, mac, ok := strings.Cut(rest, ".")
+	if !ok {
+		nonce, mac = "", rest
+	}
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(cookieMAC(s.token, r.Host, e, nonce))) != 1 {
+		return "", 0, false
+	}
+	return mac, exp, true
 }
 
 func secureRequest(r *http.Request) bool {
