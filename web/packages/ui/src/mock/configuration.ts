@@ -37,6 +37,9 @@ export function configurationMock(terminal: () => boolean) {
         }
         for (const [name, paths] of groups) if (paths.size > 1) data.conflicts.push({ kind, name, paths: [...paths].sort() });
       }
+      // Without bodies: agents and skills carry their frontmatter description instead of their content.
+      const summary = ({ content, ...file }: ConfigurationFile): ConfigurationFile => ({ ...file, description: /^description:[ \t]*(.+)$/m.exec(content ?? '')?.[1].trim() });
+      if (url.searchParams.get('content') === '0') return json(200, { ...data, agents: data.agents.map(summary), skills: data.skills.map(summary) });
       return json(200, data);
     }
     const draft = /^\/api\/configuration\/(agents|skills|hooks)\/draft$/.exec(url.pathname);
@@ -62,6 +65,11 @@ export function configurationMock(terminal: () => boolean) {
     const kind = match[1] as ConfigurationKind;
     const name = decodeURIComponent(match[2]);
     const files = kind === 'instructions' ? data.instruction_files ?? [data.instructions] : data[kind];
+    if (method === 'GET') {
+      const path = url.searchParams.get('path');
+      const found = files.find((file) => file.name === name && (!path || file.path === path));
+      return found ? json(200, found) : json(404, { error: 'configuration file not found' });
+    }
     const existing = files.find((file) => file.name === name && (body.path ? file.path === body.path : !file.disabled));
     if (body.path && !body.revision) return json(409, { error: 'An existing file path requires its saved revision.' });
     if (body.path && !existing) return json(409, { error: 'The selected file is no longer available in this scope. Reload the configuration.' });

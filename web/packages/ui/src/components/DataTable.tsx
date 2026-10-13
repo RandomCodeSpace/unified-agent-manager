@@ -76,7 +76,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
     <div ref={named} className="my-2.5 min-w-0 max-w-full">
       {/* Long cells wrap; a table wider than the message (its headings do not break inside a word) scrolls sideways in this box, never the page. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- The labelled scroll region accepts keyboard scrolling. */}
-      <div role="region" aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal] pointer-coarse:max-h-none">
+      <section aria-label={label ?? `Table: ${heading || columns.slice(0, 3).map(column => column.name).join(', ')}`} tabIndex={0} className="max-h-[32rem] max-w-full overflow-auto [overflow-wrap:normal] pointer-coarse:max-h-none">
         <table className="data-table w-full">
           <thead><tr onKeyDown={roving.onKeyDown}>{columns.map((column, index) => {
             const selected = sort?.column === index;
@@ -120,7 +120,7 @@ export const DataTable = memo(function DataTable({ columns, rows, label, rowHead
           })}</tr>)}</tbody>
         </table>
         {visible.length === 0 && <p className="px-2 py-4 text-center text-caption text-muted">No matching rows</p>}
-      </div>
+      </section>
       {(active.length > 0 || paginated) && <div className="flex items-center gap-2 pt-1 text-caption text-muted">
         <span role="status">{paginated ? `${start + 1}–${Math.min(start + PAGE_SIZE, visible.length)} of ${visible.length} rows` : `${visible.length} of ${rows.length} rows`}{paginated && active.length > 0 ? ` (${rows.length} total)` : ''}</span>
         {active.length > 0 && <Button size="sm" onClick={() => { setFilters({}); setPage(0); }}>Clear filters</Button>}
@@ -157,5 +157,5 @@ export function MarkdownTable({ children, streaming }: Readonly<{ children?: Rea
   if (data) return <VisualBoundary fallback={<DataTable {...data} />}><DataTable {...data} visual /></VisualBoundary>;
   // While streaming, skip indexing, controls and sorting entirely.
   // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard-accessible overflow, as for completed tables.
-  return <div role="region" aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-auto"><table className="!my-0 w-full">{children}</table></div>;
+  return <section aria-label="Table" tabIndex={0} className="my-2.5 max-w-full overflow-auto"><table className="!my-0 w-full">{children}</table></section>;
 }

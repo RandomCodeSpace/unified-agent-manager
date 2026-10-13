@@ -18,6 +18,8 @@ test.each([false, true])('Markdown preserves native table semantics and keyboard
   const region = screen.getByRole('region', { name: streaming ? 'Table' : 'Table: Name, Value' });
   const table = within(region).getByRole('table');
   expect(region.tabIndex).toBe(0);
+  // A labelled section, not a div with the region role.
+  expect(region.tagName).toBe('SECTION');
   await user.tab();
   expect(document.activeElement).toBe(region);
   // It scrolls down and, when the table is wider than the message, sideways in its own box: long cells still wrap.

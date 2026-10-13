@@ -501,7 +501,7 @@ func (r *gitRepo) indexSnapshot(ctx context.Context, paths []string) ([]byte, er
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	out, code, stderr, err := runGit(ctx, r.git, r.top, maxStatusBytes, append([]string{"--literal-pathspecs", "ls-files", "--stage", "-z", "--"}, paths...)...)
+	out, code, stderr, err := runGit(ctx, r.git, r.top, maxStatusBytes, append([]string{literalPathspecs, "ls-files", "--stage", "-z", "--"}, paths...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +748,7 @@ func runGitWriteEnv(ctx context.Context, dir string, stdin io.Reader, env []stri
 	}
 	ctx, cancel := context.WithTimeout(ctx, gitWriteTimeout)
 	defer cancel()
-	argv := append([]string{"-C", dir, "-c", "core.fsmonitor=false", "--literal-pathspecs"}, args...)
+	argv := append([]string{"-C", dir, "-c", "core.fsmonitor=false", literalPathspecs}, args...)
 	cmd := exec.CommandContext(ctx, git, argv...) // #nosec G204 G702 -- resolved git binary, fixed commands, user paths after --, no shell.
 	cmd.Stdin = stdin
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never", "GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
@@ -917,7 +917,7 @@ func (r *gitRepo) draftDiff(ctx context.Context, entries []statusEntry) string {
 	budget := maxDraftDiffBytes
 	var patch string
 	if len(tracked) > 0 {
-		args := append([]string{"--literal-pathspecs", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", "--"}, tracked...)
+		args := append([]string{literalPathspecs, "diff", noExtDiff, noTextconv, noColor, "HEAD", "--"}, tracked...)
 		out, code, _, err := runGit(ctx, r.git, r.top, budget+1, args...)
 		if err == nil && code == 0 {
 			patch = string(out)
@@ -927,7 +927,7 @@ func (r *gitRepo) draftDiff(ctx context.Context, entries []statusEntry) string {
 		if len(patch) >= budget || i >= maxDraftNewFiles {
 			break
 		}
-		out, code, _, err := runGit(ctx, r.git, r.top, budget-len(patch)+1, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-index", "--", "/dev/null", e.path)
+		out, code, _, err := runGit(ctx, r.git, r.top, budget-len(patch)+1, "diff", noExtDiff, noTextconv, noColor, "--no-index", "--", "/dev/null", e.path)
 		if err == nil && (code == 0 || code == 1) {
 			patch += string(out)
 		}

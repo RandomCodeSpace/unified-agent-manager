@@ -17,6 +17,7 @@ func connectedWorkloadPatternAllowed(pattern string) bool {
 		"DELETE /api/sessions/{id}/file-grants/{grant_id}",
 		"DELETE /api/sessions/{id}/queue/{request_id}",
 		"GET /api/configuration",
+		"GET /api/configuration/{kind}/{name}",
 		"GET /api/events",
 		"GET /api/events/detail",
 		"GET /api/fs/dirs",

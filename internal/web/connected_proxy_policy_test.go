@@ -14,6 +14,7 @@ func TestConnectedWorkloadPolicy(t *testing.T) {
 		allowed      bool
 	}{
 		{"GET", "/api/meta", true},
+		{"GET", "/api/configuration/skills/example", true},
 		{"POST", "/api/sessions", true},
 		{"POST", "/api/sessions/task/prompt", true},
 		{"POST", "/api/sessions/task/unarchive", true},

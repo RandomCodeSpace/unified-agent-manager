@@ -213,6 +213,7 @@ func (s *Server) routes() {
 	mux.HandleFunc("PATCH /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/settings/custom-models/discover", s.handleDiscoverModels)
 	mux.HandleFunc("GET /api/configuration", s.handleConfiguration)
+	mux.HandleFunc("GET /api/configuration/{kind}/{name}", s.handleConfigurationFile)
 	mux.HandleFunc("POST /api/configuration/{kind}/draft", s.handleDraftConfiguration)
 	mux.HandleFunc("POST /api/configuration/skills/list", s.handleListSkillSource)
 	mux.HandleFunc("POST /api/configuration/skills/install", s.handleInstallSkills)
