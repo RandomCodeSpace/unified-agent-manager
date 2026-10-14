@@ -275,6 +275,10 @@ func TestGitPushAndPull(t *testing.T) {
 	gitIn(t, clone, "add", ".")
 	gitIn(t, clone, "commit", "-q", "-m", "feat: remote")
 	gitIn(t, clone, "push", "-q")
+	// Only behind: Pull is what resolves a refused push, so it says so.
+	if reply := g.call(http.MethodPost, "/push", "", http.StatusConflict, nil); !strings.Contains(reply["error"].(string), "Pull first, then push") {
+		t.Fatalf("push while behind = %v", reply)
+	}
 	g.call(http.MethodPost, "/pull", "", http.StatusOK, &res)
 	if res.Summary != "Pulled 1 new commit." || gitOutput(t, repo, "log", "-1", "--format=%s") != "feat: remote" {
 		t.Fatalf("pull = %+v", res)
@@ -293,7 +297,8 @@ func TestGitPushAndPull(t *testing.T) {
 	if reply := g.call(http.MethodPost, "/pull", "", http.StatusConflict, nil); !strings.HasPrefix(reply["error"].(string), "Can't fast-forward") {
 		t.Fatalf("diverged pull = %v", reply)
 	}
-	if reply := g.call(http.MethodPost, "/push", "", http.StatusConflict, nil); !strings.Contains(reply["error"].(string), "Pull first, then push") {
+	// Pull only fast-forwards, so a diverged push must not send you to it.
+	if reply := g.call(http.MethodPost, "/push", "", http.StatusConflict, nil); !strings.Contains(reply["error"].(string), "Pull can't fast-forward") || strings.Contains(reply["error"].(string), "Pull first") {
 		t.Fatalf("diverged push = %v", reply)
 	}
 	if gitOutput(t, remote, "log", "-1", "--format=%s", branch) != "feat: remote two" {

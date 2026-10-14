@@ -617,7 +617,11 @@ func (m *Manager) GitPush(ctx context.Context, id string) (GitResult, error) {
 		if errors.As(err, &gerr) {
 			switch {
 			case containsAny(gerr.output, "[rejected]", "non-fast-forward", "fetch first"):
-				return GitResult{}, gitFailed("The remote has commits this branch doesn't. Pull first, then push", err)
+				// Pull only fast-forwards: it resolves this only when the branch has no commits the remote lacks.
+				if repo.behindOnly(ctx, remote, merge) {
+					return GitResult{}, gitFailed("The remote has commits this branch doesn't. Pull first, then push", err)
+				}
+				return GitResult{}, gitFailed("The remote has commits this branch doesn't, and Pull can't fast-forward to them. Merge or rebase onto the remote yourself, then push", err)
 			case containsAny(gerr.output, "Permission denied", "Authentication failed", "could not read Username", "could not read Password", "Host key verification failed", "terminal prompts disabled"):
 				return GitResult{}, gitFailed("Git could not sign in to the remote. The uam service may not have your SSH agent or credentials", err)
 			}
@@ -678,6 +682,18 @@ func (m *Manager) GitPull(ctx context.Context, id string) (GitResult, error) {
 	}
 	log.Info("git pull made from the web", "session", id)
 	return GitResult{Summary: summary, Output: out}, nil
+}
+
+// behindOnly reports whether HEAD is contained in the remote-tracking branch
+// of remote's merge ref (refs/remotes/<remote>/<branch>), so a fast-forward
+// pull brings the branch level. False when that ref is unknown.
+func (r *gitRepo) behindOnly(ctx context.Context, remote, merge string) bool {
+	branch, ok := strings.CutPrefix(merge, "refs/heads/")
+	if !ok || remote == "" || strings.HasPrefix(remote, "-") {
+		return false
+	}
+	_, code, _, err := runGit(ctx, r.git, r.top, 4096, "merge-base", "--is-ancestor", "HEAD", "refs/remotes/"+remote+"/"+branch)
+	return err == nil && code == 0
 }
 
 // currentBranch is the checked-out branch's name; a detached HEAD is refused.

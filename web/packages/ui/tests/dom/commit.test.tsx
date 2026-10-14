@@ -88,9 +88,15 @@ describe('commit panel', () => {
     const { user } = await openIdle('t3');
     const panel = await commitPanel(user);
     await user.click(panel.getByRole('button', { name: /^Commit/ }));
-    const region = screen.getByRole('dialog', { name: 'Changes' }).querySelector('section[aria-label="Commit"]')!;
-    expect([...region.classList]).toEqual(expect.arrayContaining(['min-h-0', 'shrink']));
+    const sheet = screen.getByRole('dialog', { name: 'Changes' });
+    const region = sheet.querySelector('section[aria-label="Commit"]')!;
+    // Open, the form keeps a usable height; the file list and the evidence above give way and scroll instead.
+    await waitFor(() => expect([...region.classList]).toEqual(expect.arrayContaining(['min-h-[min(18rem,45%)]', 'shrink'])));
     expect(region.classList.contains('shrink-0')).toBe(false);
+    for (const above of [sheet.querySelector('ul.overflow-y-auto')!, sheet.querySelector('section[aria-label^="Finished"]')!]) {
+      expect([...above.classList]).toEqual(expect.arrayContaining(['shrink', 'overflow-y-auto']));
+      expect(above.classList.contains('shrink-0')).toBe(false);
+    }
     expect(region.classList.contains('overflow-y-auto')).toBe(false);
     const form = (await panel.findByRole('textbox', { name: 'Commit message' })).closest('.overflow-y-auto')!;
     expect(region.contains(form)).toBe(true);

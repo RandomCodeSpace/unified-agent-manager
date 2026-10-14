@@ -11,7 +11,7 @@ import { Tip } from './ui/tooltip';
 
 /**
  * The Task's background shells in the composer toolbar (DESIGN.md Background tasks): the
- * terminal glyph, `accent` while any runs, and how many run (else how many there were), and on a
+ * terminal glyph, `accent` and how many run while any runs (else the glyph alone), and on a
  * click a popover listing each with its status (a still dot and "Running"), command and Stop.
  */
 /** Why Stop is disabled, or what it does. */
@@ -52,7 +52,8 @@ export function BackgroundTasks({ sessionId, snapshot, locked }: Readonly<{ sess
           <Popover.Trigger render={<Button id="composer-background-tasks" size="sm" variant="subtle" aria-label={`Background tasks: ${status}`} className="px-1.5 text-caption tabular-nums text-muted pointer-coarse:min-w-11" />}>
             {/* The glyph turns `accent` while any runs; the list says which, on demand. */}
             <Terminal aria-hidden="true" className={active ? 'text-accent' : 'text-faint'} />
-            {active ? running : shown.tasks.length}
+            {/* The number is how many run, as the name says; with none running (or none known), the glyph alone. */}
+            {active && running}
           </Popover.Trigger>
         </Tip>
         <Popover.Content className="w-96 max-w-[calc(100vw-16px)] gap-2">

@@ -82,7 +82,10 @@ export function FolderPicker({ id, start, onUse, onClose, variant = 'inline', on
   const pathValue = pathDraft ?? want.path ?? listing?.path ?? '';
   const absolutePath = cleanPath(pathValue).startsWith('/');
   const pathChanged = pathDraft !== null && cleanPath(pathDraft) !== listing?.path;
-  const projectTarget = !loading && !listing?.error && !creating && !createBusy && !pathChanged ? target ?? null : null;
+  // A typed absolute path is the target as typed (the service checks it when the Project is added); otherwise the browsed one, once it has loaded.
+  let projectTarget: string | null = null;
+  if (pathChanged) projectTarget = absolutePath ? cleanPath(pathValue) : null;
+  else if (!loading && !listing?.error && !creating && !createBusy) projectTarget = target ?? null;
 
   useEffect(() => {
     onTargetChange?.(projectTarget);

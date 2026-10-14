@@ -8,6 +8,7 @@ import type { CommandOutput } from './CommandOutput';
 import { useBodyRead } from './Details';
 import { Button } from './ui/button';
 import { Chip } from './ui/chip';
+import { Tip } from './ui/tooltip';
 
 /**
  * "Since you left": one line under the Task header when the Task changed while the owner was
@@ -102,7 +103,7 @@ export function ChangesButton({ label, compact, sheetOpen, changes, pending, evi
   const fileCount = pending ? pending.uncommitted : listed;
   // The dot is this Thread's own news (its default scope's files), not its folder's.
   const needsReview = evidenceAvailable || (listed ?? 0) > 0;
-  return (
+  const button = (
     <Button id="changes-link" size="md" className="px-2 text-muted" aria-label={`Open changes${fileCount === null ? '' : `, ${fileCount} ${pending ? 'not committed' : 'files'}`}${evidenceAvailable ? ', evidence available' : ''}`} aria-pressed={sheetOpen} onClick={onOpen}>
       <FileDiff aria-hidden="true" />
       {label && !compact && <span>Changes</span>}
@@ -111,6 +112,8 @@ export function ChangesButton({ label, compact, sheetOpen, changes, pending, evi
       {needsReview && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />}
     </Button>
   );
+  // The folder's count leaves untracked files out (as the sidebar row's does), so a folder of only new files reads 0: the tip says so.
+  return pending ? <Tip label={`${pending.uncommitted} tracked ${pending.uncommitted === 1 ? 'file' : 'files'} not committed · untracked files are not counted`}>{button}</Tip> : button;
 }
 
 /** Checks, claims and edited files inside Changes. Output opens the existing output panel. */
@@ -136,7 +139,7 @@ export function FinishEvidence({ evidence, error: loadError, items, onShowOutput
     read({ id: c.item_id, kind: 'tool', time: '', compact: { has_reasoning: false, has_text: false } }).then(open).catch((e: unknown) => setOutputError(describeError(e)));
   }
   return (
-    <section aria-label="Finished — check the evidence" className="max-h-[35%] shrink-0 overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
+    <section aria-label="Finished — check the evidence" className="max-h-[35%] min-h-10 shrink overflow-y-auto overflow-x-hidden overscroll-contain border-b border-hairline px-3 py-2">
       <details open>
         <summary className="cursor-pointer text-ui font-medium text-ink">Finished — check the evidence</summary>
         <div className="flex flex-col gap-3 pt-2">

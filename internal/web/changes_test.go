@@ -662,8 +662,20 @@ func TestWorkspaceChangesRenamesDeletionsAndBinaries(t *testing.T) {
 	if f := files["doomed.txt"]; f.Status != "deleted" || f.Deletions != 2 || f.Additions != 0 {
 		t.Fatalf("deleted file = %+v", f)
 	}
-	if f := files["data.bin"]; f.Status != "modified" || f.Additions != 0 || f.Deletions != 0 {
+	// A binary change says so, in the listing and in its diff, rather than
+	// reading as a change with no text.
+	if f := files["data.bin"]; f.Status != "modified" || f.Additions != 0 || f.Deletions != 0 || !f.Binary {
 		t.Fatalf("binary file = %+v", f)
+	}
+	if diff, err := m.FileChange(t.Context(), id, ScopeWorkspace, "data.bin"); err != nil || !diff.Binary {
+		t.Fatalf("binary diff = %+v, %v", diff, err)
+	}
+	writeRepoFile(t, dir, "new.bin", "\x00\x03")
+	if diff, err := m.FileChange(t.Context(), id, ScopeWorkspace, "new.bin"); err != nil || !diff.Binary {
+		t.Fatalf("untracked binary diff = %+v, %v", diff, err)
+	}
+	if diff, _ := m.FileChange(t.Context(), id, ScopeWorkspace, "moved2.txt"); diff.Binary {
+		t.Fatalf("text diff marked binary = %+v", diff)
 	}
 }
 

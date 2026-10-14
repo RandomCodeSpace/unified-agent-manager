@@ -63,6 +63,14 @@ func TestSettleRemovesTheWorktreeAndReopenRecreatesIt(t *testing.T) {
 	if got := gitOutput(t, path, "symbolic-ref", "--short", "HEAD"); got != branch {
 		t.Fatalf("recreated on %q", got)
 	}
+	// Back in use, it is listed once: among the worktrees, not as removed.
+	list, err := ts.m.ListWorktrees(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(list.Worktrees, func(e WorktreeEntry) bool { return e.Path == path }) || slices.ContainsFunc(list.Removed, func(r RemovedWorktree) bool { return r.Path == path }) {
+		t.Fatalf("worktrees = %+v, removed = %+v", list.Worktrees, list.Removed)
+	}
 }
 
 // A worktree with changes is kept on settling and listed with them.

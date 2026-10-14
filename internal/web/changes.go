@@ -286,11 +286,11 @@ func (r *gitRepo) listing(ctx context.Context) (Changes, error) {
 		return out, newError(http.StatusBadGateway, "could not open working tree: %s", shortError(err))
 	}
 	defer func() { _ = root.Close() }()
-	stats := r.numstat(ctx)
+	stats, binary := r.numstat(ctx)
 	renames := r.renameStats(ctx, entries)
 	budget := untrackedBudget
 	for _, e := range entries {
-		file := ChangedFile{Path: e.path, Status: e.status, OldPath: e.orig}
+		file := ChangedFile{Path: e.path, Status: e.status, OldPath: e.orig, Binary: binary[e.path]}
 		if e.untracked || !r.hasHead {
 			file.Additions, budget = countLines(root, e.path, budget)
 		} else if st, ok := renames[e.path]; ok && st.orig == e.orig {
@@ -395,6 +395,8 @@ func workspaceFileDiff(ctx context.Context, workdir, path string) (agentapi.File
 	}
 	diff := agentapi.FileDiff{Path: entry.path, Status: entry.status, OldPath: entry.orig, Patch: clampText(string(patch), maxDiffBytes)}
 	diff.Additions, diff.Deletions = countPatch(diff.Patch)
+	// Without --binary, git names a binary change in one line and no hunk.
+	diff.Binary = binaryPatch(diff.Patch)
 	return diff, nil
 }
 
@@ -456,20 +458,25 @@ func statusName(x, y byte) string {
 	}
 }
 
-// numstat returns additions/deletions per tracked path versus HEAD. Missing
-// entries (binary files, failures) simply show no counts.
-func (r *gitRepo) numstat(ctx context.Context) map[string][2]int {
-	stats := map[string][2]int{}
+// numstat returns additions/deletions per tracked path versus HEAD, and the
+// paths git counts as binary ("-" for both). Missing entries (failures)
+// simply show no counts.
+func (r *gitRepo) numstat(ctx context.Context) (map[string][2]int, map[string]bool) {
+	stats, binary := map[string][2]int{}, map[string]bool{}
 	if !r.hasHead {
-		return stats
+		return stats, binary
 	}
 	out, code, _, err := runGit(ctx, r.git, r.top, maxStatusBytes, "diff", noExtDiff, noTextconv, noColor, "--no-renames", "--numstat", "-z", "HEAD", "--")
 	if err != nil || code != 0 {
-		return stats
+		return stats, binary
 	}
 	for _, rec := range strings.Split(string(out), "\x00") {
 		parts := strings.SplitN(rec, "\t", 3)
 		if len(parts) != 3 {
+			continue
+		}
+		if parts[0] == "-" && parts[1] == "-" {
+			binary[parts[2]] = true
 			continue
 		}
 		add, errA := strconv.Atoi(parts[0])
@@ -479,7 +486,7 @@ func (r *gitRepo) numstat(ctx context.Context) map[string][2]int {
 		}
 		stats[parts[2]] = [2]int{add, del}
 	}
-	return stats
+	return stats, binary
 }
 
 // countLines counts lines of a new file within a shared read budget.
@@ -507,6 +514,20 @@ func countLines(root *os.Root, path string, budget int) (int, int) {
 		lines++
 	}
 	return lines, budget - len(data)
+}
+
+// binaryPatch reports whether git's patch says the file is binary: a
+// "Binary files … differ" line outside any hunk.
+func binaryPatch(patch string) bool {
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "@@ ") {
+			return false
+		}
+		if strings.HasPrefix(line, "Binary files ") && strings.HasSuffix(line, " differ") {
+			return true
+		}
+	}
+	return false
 }
 
 func countPatch(patch string) (additions, deletions int) {

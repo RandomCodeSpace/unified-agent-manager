@@ -322,7 +322,8 @@ export function ChangesSheet({
       {countsKnown && adds + dels > LARGE_CHANGE && (
         <Note tone="warn" className="shrink-0 px-3 pb-1">Large change: {adds + dels} lines. Reviews catch the most under about {LARGE_CHANGE} lines, so go file by file and mark each one viewed.</Note>
       )}
-      <ul className="max-h-[40%] shrink-0 overflow-y-auto overflow-x-hidden p-1" aria-busy={!data && !error ? true : undefined}>
+      {/* The list gives way to an open commit form (down to one row) and scrolls. */}
+      <ul className="max-h-[40%] min-h-10 shrink overflow-y-auto overflow-x-hidden p-1" aria-busy={!data && !error ? true : undefined}>
         {error && (
           <li className="px-2 py-1">
             <Note tone="error" role="alert" className="flex flex-wrap items-center gap-2">
@@ -455,7 +456,7 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
                 </span>
               )}
             </span>
-            {f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">—</span> : (
+            {f.binary || f.counts_unknown ? <span className="text-muted" title="Line counts unavailable">{f.binary ? 'binary' : '—'}</span> : (
               <span className="tabular-nums">
                 <span className={f.additions ? 'text-success' : 'text-muted'}>+{f.additions}</span> <span className={f.deletions ? 'text-error' : 'text-muted'}>−{f.deletions}</span>
               </span>

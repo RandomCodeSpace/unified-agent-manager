@@ -484,6 +484,9 @@ describe('background tasks', () => {
     const confirm = await screen.findByRole('alertdialog');
     await user.click(within(confirm).getByRole('button', { name: /Stop/ }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Background tasks: 1 running' })).toBeNull());
+    // The chip counts running shells, as its name says: with none running it shows the glyph alone.
+    const chip = await screen.findByRole('button', { name: 'Background tasks: 0 running' });
+    expect(chip.textContent).not.toMatch(/\d/);
   });
 });
 

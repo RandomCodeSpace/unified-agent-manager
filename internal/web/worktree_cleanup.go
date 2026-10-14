@@ -153,6 +153,11 @@ func (m *Manager) ListWorktrees(ctx context.Context) (Worktrees, error) {
 	for _, dir := range m.allWorktreeDirs() {
 		out.Worktrees = append(out.Worktrees, WorktreeEntry{Path: dir})
 	}
+	// A worktree recreated since it was removed on settling is listed once,
+	// as it is now.
+	out.Removed = slices.DeleteFunc(out.Removed, func(r RemovedWorktree) bool {
+		return slices.ContainsFunc(out.Worktrees, func(e WorktreeEntry) bool { return e.Path == r.Path })
+	})
 	var wg sync.WaitGroup
 	for i := range out.Worktrees {
 		e := &out.Worktrees[i]

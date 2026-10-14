@@ -424,4 +424,10 @@ test('native binary and truncated changes do not claim zero line changes or an e
     assert.equal(shown.includes('No textual changes'), false);
     row.close(); view.close();
   }
+  // A binary change git counted (workspace scopes) says so rather than +0 −0.
+  const counted = mount(FileRow, { file: { path: 'blob.bin', status: 'modified', additions: 0, deletions: 0, binary: true }, selected: false, viewed: 'unviewed', onOpen() {}, onViewed() {} });
+  const countedTree = await counted.flush();
+  assert.equal(find(countedTree, node => node.props?.title === 'Line counts unavailable')?.props.children?.toString(), 'binary');
+  assert.equal(JSON.stringify(countedTree).includes('+0'), false);
+  counted.close();
 });
