@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -416,5 +418,65 @@ func TestAssistPastTheUtilityLimit(t *testing.T) {
 	}
 	if got, _ := m.SuggestReplies(context.Background(), sum.ID); !slices.Equal(got.Replies, []string{"Commit this"}) {
 		t.Fatalf("suggestions after the limit = %+v", got)
+	}
+}
+
+// A pause is logged once: every look at a Thread asks again while it lasts,
+// and only the first is a line. Calls allowed again end it.
+func TestPausedSuggestionsAreLoggedOnce(t *testing.T) {
+	logs := &lockedBuffer{}
+	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+	prov := newAssistProvider()
+	m, project := assistManager(t, openTestStore(t), prov)
+	prov.SetUtilityHook(func(context.Context, agentapi.UtilityRequest) (string, error) { return "Commit this", nil })
+	zero := 0
+	limit := &zero
+	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
+		t.Fatal(err)
+	}
+	var tasks []string
+	var convs []*agenttest.Conversation
+	for range 2 {
+		sum, err := m.Create(CreateRequest{Provider: "fake", ProjectID: project, Name: "t"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasks = append(tasks, sum.ID)
+		convs = append(convs, prov.Last())
+	}
+	turn := func(user string) {
+		for _, conv := range convs {
+			finishTurn(conv, user, "Fixed.")
+		}
+	}
+	look := func() {
+		for _, id := range tasks {
+			if _, err := m.SuggestReplies(context.Background(), id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	count := func(level string) int {
+		return strings.Count(logs.String(), "level="+level+` msg="replies not suggested"`)
+	}
+	turn("fix")
+	look()
+	look()
+	if info, debug := count("INFO"), count("DEBUG"); info != 1 || debug != 3 {
+		t.Fatalf("four paused looks logged %d at info and %d at debug, want 1 and 3", info, debug)
+	}
+	var unset *int
+	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &unset}); err != nil {
+		t.Fatal(err)
+	}
+	look()
+	if _, err := m.UpdateSettings(SettingsPatch{UtilityLimit: &limit}); err != nil {
+		t.Fatal(err)
+	}
+	turn("fix again")
+	look()
+	if info := count("INFO"); info != 2 {
+		t.Fatalf("the second pause brought the info lines to %d, want 2", info)
 	}
 }

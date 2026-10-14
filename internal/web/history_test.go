@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi/agenttest"
+	uamlog "github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -232,6 +234,35 @@ func TestFailedHistoryReadLeavesTheTaskAsItWas(t *testing.T) {
 	d = waitHistory(t, m, task.ID, HistoryUnavailable)
 	if !strings.Contains(d.HistoryReason, "no longer exists") || d.Stage != StageSettled {
 		t.Fatalf("detail = %+v", d)
+	}
+}
+
+// A conversation the provider no longer has is warned about once per
+// process: the reads after historyRetry are debug lines.
+func TestGoneConversationIsWarnedAboutOnce(t *testing.T) {
+	logs := &lockedBuffer{}
+	previous := uamlog.SetLogger(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { uamlog.SetLogger(previous) })
+	m, prov, _, tasks := closedTasks(t, StageSettled)
+	task := tasks[0]
+	prov.ForgetConversation(task.ConversationID)
+	start := time.Now()
+	for i := range 3 {
+		later := start.Add(time.Duration(i) * (historyRetry + time.Second))
+		m.mu.Lock()
+		m.now = func() time.Time { return later }
+		m.mu.Unlock()
+		detail(t, m, task.ID)
+		waitUntil(t, "the read", func() bool { return len(prov.Reads()) == i+1 })
+		if d := waitHistory(t, m, task.ID, HistoryUnavailable); !strings.Contains(d.HistoryReason, "no longer exists") {
+			t.Fatalf("detail = %+v", d)
+		}
+	}
+	count := func(level string) int {
+		return strings.Count(logs.String(), "level="+level+` msg="read web task transcript failed"`)
+	}
+	if warned, debug := count("WARN"), count("DEBUG"); warned != 1 || debug != 2 {
+		t.Fatalf("three failed reads logged %d at warn and %d at debug, want 1 and 2", warned, debug)
 	}
 }
 

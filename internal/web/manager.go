@@ -218,11 +218,14 @@ type Manager struct {
 	spawns    map[string]string
 	spawnWait time.Duration
 	// utility is the Utility log and today's count of Utility calls
-	// (utility.go).
-	utility   utilityLog
-	tokens    tokenLedger   // guarded by mu; persisted by the existing flush loop
-	harness   *harnessUsage // optional local harness collector; snapshots guarded by mu
-	usageHome string        // set by RunDaemon before Start; empty disables local discovery
+	// (utility.go). suggestPauseLogged is set once a paused suggestion
+	// call is logged: every look at a Thread asks again while the pause
+	// lasts, and only the first is a log line (assist.go).
+	utility            utilityLog
+	suggestPauseLogged atomic.Bool
+	tokens             tokenLedger   // guarded by mu; persisted by the existing flush loop
+	harness            *harnessUsage // optional local harness collector; snapshots guarded by mu
+	usageHome          string        // set by RunDaemon before Start; empty disables local discovery
 	// chartRuns bounds pinned chart refreshes (chart_pins.go).
 	chartRuns chartRuns
 	// routines is the routine scheduler (routines.go).
@@ -480,7 +483,10 @@ type webSession struct {
 	// a viewer asks. historyRead marks a record read without opening the
 	// conversation: only such a record is dropped when idle. historyUsed is
 	// when a viewer last asked for it, historyFailed when a read last failed.
+	// historyLogged is the failure last warned about: the same one again,
+	// as every look at a gone conversation, is a debug line.
 	history, historyReason     string
+	historyLogged              string
 	historyRead                bool
 	historyRecordFailed        bool // the latest live record read failed
 	historyCancel              context.CancelFunc

@@ -80,8 +80,14 @@ func (m *Manager) viewHistoryLocked(s *webSession) {
 			return
 		}
 		if err != nil {
-			log.Warn("read web task transcript failed", "session", s.id, "error", err)
-			m.historyUnavailableLocked(s, historyFailure(err, convID))
+			reason := historyFailure(err, convID)
+			if reason == s.historyLogged {
+				log.Debug("read web task transcript failed", "session", s.id, "error", err)
+			} else {
+				s.historyLogged = reason
+				log.Warn("read web task transcript failed", "session", s.id, "error", err)
+			}
+			m.historyUnavailableLocked(s, reason)
 			return
 		}
 		m.installHistoryLocked(s, h)
