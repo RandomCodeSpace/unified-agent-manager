@@ -1,10 +1,11 @@
 // The Task pane on reopening and after a turn: the "Since you left" strip and branch evidence (mock t20).
 import { act, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { UamApp } from '@uam/ui';
 import { api, newRequestId, type TurnEvidence } from '../../src/api';
 import { install } from '../../src/mock/install';
+import * as data from '../../src/mock/data';
 import { log, openTask, sidebar } from './render';
 
 const before = (minutes: number) => new Date(Date.now() - minutes * 60000).toISOString();
@@ -208,6 +209,43 @@ describe('evidence inside Changes', () => {
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
     expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && look)).toHaveLength(1);
     evidence.mockRestore();
+  });
+
+  test('coming back to a kept Task from another reads its evidence once more, not twice', async () => {
+    // As the service streams it: compact snapshots, so a Task left is kept and shown at once on coming back.
+    const state = data.seed();
+    Object.assign(state.tasks.find((t) => t.id === 't20')!, { representation: 'compact-v1', detail_stream: true });
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    history.replaceState(null, '', '/#task=t20');
+    install();
+    const Source = window.EventSource;
+    onTestFinished(() => { window.EventSource = Source; vi.restoreAllMocks(); });
+    let epoch = '';
+    window.EventSource = class extends Source {
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) {
+        if (type !== 'snapshot' || typeof listener !== 'function') return super.addEventListener(type, listener, options);
+        super.addEventListener(type, (e) => {
+          const snapshot = JSON.parse((e as MessageEvent).data);
+          epoch ||= snapshot.session?.epoch;
+          listener.call(this, new MessageEvent(type, { data: JSON.stringify({ ...snapshot, representation: 'compact-v1', epoch, detail_stream: true }) }));
+        }, options);
+      }
+    };
+    const evidence = vi.spyOn(api, 'evidence');
+    render(<UamApp />);
+    const user = userEvent.setup();
+    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    const aside = await sidebar();
+    await user.click(aside.getByRole('button', { name: /Fix re-attach redraw regression/ }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /evidence available/ })).toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    evidence.mockClear();
+    await user.click(aside.getAllByRole('button', { name: /Replay focus events on re-attach/ })[0]);
+    await screen.findByRole('button', { name: /not committed, evidence available/ });
+    await new Promise((r) => setTimeout(r, 300));
+    // The kept Task is on screen at once and its fresh detail replaces it in place: one view, one read of each.
+    expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && !look)).toHaveLength(1);
+    expect(evidence.mock.calls.filter(([id, look]) => id === 't20' && look)).toHaveLength(1);
   });
 
   test('no card flashes while the evidence loads', async () => {

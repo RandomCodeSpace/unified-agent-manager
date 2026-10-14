@@ -187,6 +187,9 @@ export default function App() {
   // Once opened, the drawer keeps its Thread list while closed (Sheet keepMounted): opening it again renders nothing new.
   const [drawerKept, setDrawerKept] = useState(false);
   if (drawerOpen && !drawerKept) setDrawerKept(true);
+  // The drawer itself takes focus as it opens, not its Hide button: focus moved there after a key press shows the
+  // button's tip, and Esc would close that tip instead of the drawer.
+  const drawer = useRef<HTMLDivElement>(null);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
@@ -654,8 +657,10 @@ export default function App() {
   // Until then the pane shows what it showed while the detail was on its way; later frames of the Thread render at once.
   const [mountedId, setMountedId] = useState<string | null>(null);
   const arrivedId = state.detail?.id ?? null;
-  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way.
-  if (!arrivedId && mountedId) setMountedId(null);
+  // Going back to the same Thread (from Home, or after its detail was dropped) renders it the same way. A cached
+  // revisit is on screen before its detail arrives: the detail then replaces it in place, not in a second mount.
+  const cachedId = state.previousCached && state.previous?.id === state.selectedId ? state.selectedId : null;
+  if (!arrivedId && mountedId !== cachedId) setMountedId(cachedId);
   useEffect(() => {
     if (arrivedId && arrivedId !== mountedId) startTransition(() => setMountedId(arrivedId));
   }, [arrivedId, mountedId]);
@@ -1470,7 +1475,7 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP} keepMounted>
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP} keepMounted ref={drawer} initialFocus={drawer}>
                 {drawerKept && sidebar}
               </Sheet>
             )}
