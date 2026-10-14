@@ -154,6 +154,15 @@ describe('MCP servers', () => {
       expect(toolReads).toHaveLength(1);
       expect(String(toolReads[0][0])).toBe('/api/sessions/t1/mcp/servers/docs-search/tools');
       expect(calls()).toHaveLength(initialReads);
+      // Switched off for this thread, the tools fold away and are forgotten: connected again, Show tools reads them afresh.
+      send(1_000_003, 'disabled');
+      expect(await dialog.findByText('Off for this thread')).toBeTruthy();
+      await waitFor(() => expect(dialog.queryByRole('list', { name: 'docs-search tools', hidden: true })).toBeNull());
+      expect(dialog.queryByRole('button', { name: '2 tools' })).toBeNull();
+      send(1_000_004, 'connected');
+      expect(await dialog.findByRole('button', { name: 'Show tools', exact: true })).toBeTruthy();
+      expect(dialog.queryByRole('list', { name: 'docs-search tools', hidden: true })).toBeNull();
+      expect(fetch.mock.calls.filter(([url]) => String(url).endsWith('/tools'))).toHaveLength(1);
       await user.click(dialog.getByRole('button', { name: 'Refresh', exact: true }));
       await waitFor(() => expect(calls()).toHaveLength(initialReads + 1));
     } finally {

@@ -459,7 +459,7 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connectionsRequest = 0, connections, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; /** Counts requests to show Connected instances (the instance switcher's Connect another instance). */ connectionsRequest?: number; connections?: ReactNode; focusAccount?: string }>) {
+export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connectionsRequest = 0, connections, focusAccount, threadProject }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; /** Counts requests to show Connected instances (the instance switcher's Connect another instance). */ connectionsRequest?: number; connections?: ReactNode; focusAccount?: string; /** The project of the Thread open behind Settings: the Agent toolkit pages start at its scope. */ threadProject?: string }>) {
   const api = useApi();
   const federation = useFederation();
   // Switching the instance on screen keeps the page open (connected instances only).
@@ -540,8 +540,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [pausedPurposes, setPausedPurposes] = useState<{ purposes: string[]; resetsAt: string }>({ purposes: [], resetsAt: '' });
   const onPausedPurposes = useCallback((purposes: string[], resetsAt: string) => setPausedPurposes({ purposes, resetsAt }), []);
   const repliesPaused = settings.suggest_replies !== false && pausedPurposes.purposes.includes('suggest-replies');
-  // Agents, Skills, Hooks and Instructions share one scope; a kind with a form open holds it.
-  const [toolkitScope, setToolkitScope] = useState('');
+  // Agents, Skills, Hooks and Instructions share one scope, the Thread's project to start with; a kind with a form open holds it.
+  const [toolkitScope, setToolkitScope] = useState(() => (threadProject && projects.some((p) => p.id === threadProject) ? threadProject : ''));
   const [held, setHeld] = useState<readonly ConfigurationKind[]>([]);
   const hold = useCallback((kind: ConfigurationKind, on: boolean) => setHeld((before) => (before.includes(kind) === on ? before : on ? [...before, kind] : before.filter((k) => k !== kind))), []);
   // A phone opening a page moves focus to its back button; going back returns it to the page's row.
@@ -661,8 +661,11 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     if (p.id === 'mcp') return !meta || meta.providers.some((provider) => provider.capabilities.mcp);
     return true;
   });
-  const visible = new Set(searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])).map((p) => p.id) : shown ? [shown] : []);
+  const matches = searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])) : [];
+  const visible = new Set(searching && wide ? matches.map((p) => p.id) : shown ? [shown] : []);
   if ([...visible].some((id) => !visited.has(id))) setVisited(new Set([...visited, ...visible]));
+  // The rail's current page while searching: the open page when it is listed, else the first match (what Enter opens).
+  const railCurrent = searching ? (shown && visible.has(shown) ? shown : matches[0]?.id ?? null) : shown;
   // A page's line: its blurb on a phone only (the rail says it on a wide screen), and where it is saved unless that is
   // the server, which the rail's group heading says once.
   const scopeLine = (scope: SettingsScope) => {
@@ -673,8 +676,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const pageLine = (p: (typeof pages)[number]) => [!wide && p.blurb, scopeLine(p.group.scope)].filter(Boolean).join(' ');
   const current = pages.find((p) => p.id === shown);
 
-  // Each page's cards. Token costs, Archived and Connected instances mount only while on screen; Agents, Skills, Hooks
-  // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
+  // Each page's cards. Token costs, Archived, Connected instances, GitLab and Worktrees mount only while on screen;
+  // Background AI from the start (the rail's dot reads it); the rest from their first showing, then stay mounted, hidden.
   const cards: Record<SettingsPage, ReactNode> = {
     gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} mrPrompt={api.supports('gitlab-mr-prompt-v1') && loaded ? { saved: settings.gitlab_mr_prompt ?? '', saving, onSave: (gitlab_mr_prompt) => void save({ gitlab_mr_prompt }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New threads" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
@@ -911,7 +914,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </Tip>
       </header>
       <div className="flex min-h-0 flex-1">
-        {(wide || !shown) && <SettingsRail pages={pages} current={searching ? null : shown} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}
+        {(wide || !shown) && <SettingsRail pages={pages} current={railCurrent} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}
         {/* Mounted under the phone's list too: hidden cards keep their forms, and Background AI keeps reading today's state for the rail. */}
         <div ref={scrollArea} hidden={!shown && !wide} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
           <ScrollSentinel sentinelRef={sentinel} />
@@ -920,7 +923,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             {searching && visible.size === 0 && <Note role="status">No setting matches “{query.trim()}”.</Note>}
             {pages.map((p) => {
               const on = visible.has(p.id);
-              if (!on && (lazy(p.id) || (p.group.label === 'Agent toolkit' && p.id !== 'mcp' && !visited.has(p.id)))) return null;
+              if (!on && (lazy(p.id) || (p.id !== 'background-ai' && !visited.has(p.id)))) return null;
               return <div key={p.id} hidden={!on} className="flex flex-col gap-4">
                 {searching ? <button type="button" className="flex items-center gap-1 self-start rounded-sm px-1 text-caption text-muted hover:text-ink" onClick={() => open(p.id)}>
                   {p.group.label}<ChevronRight aria-hidden="true" className="size-3.5" /><span className="font-medium text-ink">{p.label}</span>

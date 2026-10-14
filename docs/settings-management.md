@@ -1,7 +1,8 @@
 # Configure agents, skills, hooks, and instructions
 
 Open **Settings** and choose a page in the rail on the left, or type in
-**Find a setting** to list the pages that hold those words.
+**Find a setting** to list the pages that hold those words; Enter opens the
+first one listed.
 Field and setting descriptions are available from the info icon beside their
 labels. Hover, focus, or tap the icon to read the help. Errors and reasons an
 action is unavailable stay visible.
@@ -24,7 +25,9 @@ a list showing each page's current values; tap a page to open it.
 Agents, Skills, Hooks, and Instructions edit native Copilot configuration
 on the machine running UAM. Choose **Global** for the service user's
 configuration or select a registered project for that project's files.
-The four pages share one scope: changing it on one changes it on the others.
+Opened from a Thread, the pages start at that Thread's project; otherwise
+at Global. The four pages share one scope: changing it on one changes it on
+the others.
 It cannot change while one of them has an unsaved form open.
 Global changes can also affect Copilot sessions started outside UAM under
 the same user account.

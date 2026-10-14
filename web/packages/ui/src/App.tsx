@@ -1378,7 +1378,7 @@ export default function App() {
   // The terminal dock shows under a Task only; elsewhere it is hidden, its shell kept.
   let taskPane = false;
   if (settingsOpen) {
-    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} />;
+    pane = <SettingsView leading={leading} onClose={closeView} onLogout={authRequired && !api.owner ? logout : undefined} tokenPricesRequest={tokenPricesRequest} connectionsRequest={connectionsRequest} connections={api.owner ? undefined : federation?.connectionsSettings} focusAccount={accountFocus ?? undefined} threadProject={selected?.project_id} />;
   } else if (mismatched) {
     // Every view but Settings lands here until the account is fixed there; the next meta read lifts it.
     pane = (

@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import { useEffect, useState, type ReactNode, type SubmitEvent } from 'react';
 import { describeError, type McpSignIn, type McpServerStatus, type McpStatusSnapshot, type McpTaskStatus, type McpTool } from '../api';
 import { Dot, Note, Skeleton, type Tone } from './common';
-import { Collapse } from './ui/collapse';
+import { Collapse, usePresence } from './ui/collapse';
 import { Dialog } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -76,6 +76,19 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
   const [tools, setTools] = useState<McpTool[] | null>(null);
   const [toolsError, setToolsError] = useState<string | null>(null);
   const state = s.needs_reconnect ? { label: 'Reconnect needed', tone: 'warning' as Tone } : STATE[s.status] ?? { label: s.status, tone: 'muted' as Tone };
+  const connected = s.status === 'connected';
+  // A server switched off (or lost) folds its tools away and forgets them: connected again, Show tools reads them afresh.
+  const [wasConnected, setWasConnected] = useState(connected);
+  if (wasConnected !== connected) {
+    setWasConnected(connected);
+    if (!connected) {
+      setToolsOpen(false);
+      setTools(null);
+      setToolsError(null);
+    }
+  }
+  const toolsShown = toolsOpen && connected;
+  const toolsPresence = usePresence(toolsShown);
   useEffect(() => {
     if (!toolsOpen || s.status !== 'connected') return;
     let current = true;
@@ -129,7 +142,8 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
       </div>
       {s.error && <p className="text-caption break-words text-error">{s.error}</p>}
       {children}
-      <Collapse open={toolsOpen && s.status === 'connected'}>
+      {/* Mounted while listed, through its fold: a closed list leaves the row, rather than staying in it hidden. */}
+      {toolsPresence.mounted && <Collapse open={toolsShown} onClosed={toolsPresence.onClosed}>
         {!tools && !toolsError && <Skeleton label={`Reading ${s.name} tools…`} rows={2} />}
         {toolsError && <Note tone="error" role="alert">{toolsError}</Note>}
         {tools && tools.length === 0 && <Note>This server offers no tools.</Note>}
@@ -143,7 +157,7 @@ function ServerRow({ sessionId, legacyService, s, busy, signingIn, onToggle, onR
             ))}
           </ul>
         )}
-      </Collapse>
+      </Collapse>}
     </li>
   );
 }

@@ -71,6 +71,15 @@ describe('notifications', () => {
     expect(localStorage.getItem(NOTIFY_KEY)).toBeNull();
   });
 
+  test('a dismissed prompt leaves the switch off and says how to allow them', async () => {
+    fakeNotifications('default');
+    const { toggle } = await notifySwitch();
+    toggle.click();
+    expect((await screen.findByRole('alert')).textContent).toMatch(/not allowed.*site settings/);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(localStorage.getItem(NOTIFY_KEY)).toBeNull();
+  });
+
   test('an iPhone tab explains the Home Screen app instead', async () => {
     fakeNotifications('granted');
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1');
