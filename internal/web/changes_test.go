@@ -185,8 +185,8 @@ func TestCountLinesSkipsLinksAndSpecialFiles(t *testing.T) {
 	}
 	done := make(chan [2]int, 1)
 	go func() {
-		a, _ := countLines(root, "link", 1<<20)
-		b, _ := countLines(root, "fifo", 1<<20)
+		a, _, _ := countLines(root, "link", 1<<20)
+		b, _, _ := countLines(root, "fifo", 1<<20)
 		done <- [2]int{a, b}
 	}()
 	select {
@@ -197,7 +197,7 @@ func TestCountLinesSkipsLinksAndSpecialFiles(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("countLines blocked on a FIFO")
 	}
-	if n, _ := countLines(root, "file", 1<<20); n != 2 {
+	if n, _, _ := countLines(root, "file", 1<<20); n != 2 {
 		t.Fatalf("regular file lines = %d, want 2", n)
 	}
 }
@@ -227,7 +227,7 @@ func TestCountLinesRejectsChangedParentSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	const budget = 1024
-	if n, left := countLines(root, "new/file", budget); n != 0 || left != budget {
+	if n, left, _ := countLines(root, "new/file", budget); n != 0 || left != budget {
 		t.Fatalf("read outside repository: lines=%d, remaining budget=%d", n, left)
 	}
 }
@@ -674,6 +674,10 @@ func TestWorkspaceChangesRenamesDeletionsAndBinaries(t *testing.T) {
 	if diff, err := m.FileChange(t.Context(), id, ScopeWorkspace, "new.bin"); err != nil || !diff.Binary {
 		t.Fatalf("untracked binary diff = %+v, %v", diff, err)
 	}
+	writeRepoFile(t, dir, "new.txt", "x\n")
+	if _, files := listWorkspace(t, m, id); !files["new.bin"].Binary || files["new.txt"].Binary || files["new.txt"].Additions != 1 {
+		t.Fatalf("untracked files = %+v, %+v", files["new.bin"], files["new.txt"])
+	}
 	if diff, _ := m.FileChange(t.Context(), id, ScopeWorkspace, "moved2.txt"); diff.Binary {
 		t.Fatalf("text diff marked binary = %+v", diff)
 	}
@@ -726,14 +730,15 @@ func TestCountLinesTextOnlyWithinBudget(t *testing.T) {
 	cases := []struct {
 		name, path          string
 		budget, lines, left int
+		binary              bool
 	}{
-		{"last line without newline", "text", 100, 2, 97},
-		{"binary", "binary", 100, 0, 96},
-		{"budget spent", "text", 0, 0, 0},
+		{"last line without newline", "text", 100, 2, 97, false},
+		{"binary", "binary", 100, 0, 96, true},
+		{"budget spent", "text", 0, 0, 0, false},
 	}
 	for _, tc := range cases {
-		if lines, left := countLines(root, tc.path, tc.budget); lines != tc.lines || left != tc.left {
-			t.Errorf("%s: countLines = %d lines, %d left; want %d, %d", tc.name, lines, left, tc.lines, tc.left)
+		if lines, left, binary := countLines(root, tc.path, tc.budget); lines != tc.lines || left != tc.left || binary != tc.binary {
+			t.Errorf("%s: countLines = %d lines, %d left, binary %t; want %d, %d, %t", tc.name, lines, left, binary, tc.lines, tc.left, tc.binary)
 		}
 	}
 	if os.Geteuid() != 0 {
@@ -741,7 +746,7 @@ func TestCountLinesTextOnlyWithinBudget(t *testing.T) {
 		if err := os.Chmod(filepath.Join(dir, "locked"), 0); err != nil {
 			t.Fatal(err)
 		}
-		if lines, left := countLines(root, "locked", 100); lines != 0 || left != 100 {
+		if lines, left, _ := countLines(root, "locked", 100); lines != 0 || left != 100 {
 			t.Errorf("unreadable: countLines = %d lines, %d left; want 0, 100", lines, left)
 		}
 	}

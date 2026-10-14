@@ -292,7 +292,7 @@ func (r *gitRepo) listing(ctx context.Context) (Changes, error) {
 	for _, e := range entries {
 		file := ChangedFile{Path: e.path, Status: e.status, OldPath: e.orig, Binary: binary[e.path]}
 		if e.untracked || !r.hasHead {
-			file.Additions, budget = countLines(root, e.path, budget)
+			file.Additions, budget, file.Binary = countLines(root, e.path, budget)
 		} else if st, ok := renames[e.path]; ok && st.orig == e.orig {
 			file.Additions, file.Deletions = st.additions, st.deletions
 		} else if st, ok := stats[e.path]; ok {
@@ -489,31 +489,35 @@ func (r *gitRepo) numstat(ctx context.Context) (map[string][2]int, map[string]bo
 	return stats, binary
 }
 
-// countLines counts lines of a new file within a shared read budget.
-func countLines(root *os.Root, path string, budget int) (int, int) {
+// countLines counts lines of a new file within a shared read budget. A file
+// whose read part holds a NUL byte is binary, as git has it, with no lines.
+func countLines(root *os.Root, path string, budget int) (lines, left int, binary bool) {
 	if budget <= 0 {
-		return 0, budget
+		return 0, budget, false
 	}
 	// Root confines parent-directory resolution even when a directory changes
 	// to a symlink after git lists it. Reject final symlinks and special files:
 	// a FIFO could block, and an outside link could disclose its target's size.
 	if info, err := root.Lstat(path); err != nil || !info.Mode().IsRegular() {
-		return 0, budget
+		return 0, budget, false
 	}
 	f, err := root.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return 0, budget
+		return 0, budget, false
 	}
 	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, int64(min(budget, maxUntrackedRead))))
-	if err != nil || bytes.IndexByte(data, 0) >= 0 {
-		return 0, budget - len(data)
+	if err != nil {
+		return 0, budget - len(data), false
 	}
-	lines := bytes.Count(data, []byte{'\n'})
+	if bytes.IndexByte(data, 0) >= 0 {
+		return 0, budget - len(data), true
+	}
+	lines = bytes.Count(data, []byte{'\n'})
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		lines++
 	}
-	return lines, budget - len(data)
+	return lines, budget - len(data), false
 }
 
 // binaryPatch reports whether git's patch says the file is binary: a

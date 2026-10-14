@@ -1905,7 +1905,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     drawer that the button and the shortcut open and close; there is no rail.
     Its first opening shows the first rows at once and the rest a moment
     later; from then on the drawer keeps its list, search and scroll position
-    while closed, so it opens at once.
+    while closed, so it opens at once. The drawer itself takes focus as it
+    opens (Tab reaches its controls); Esc closes it every time and gives focus
+    back to the button that opened it.
   - With no Thread open, the main pane shows the UAM mark, "What are you
     working on?", a **New thread** button and, once there are Threads,
     **Recent threads**: up to six that are not archived, across all Projects,

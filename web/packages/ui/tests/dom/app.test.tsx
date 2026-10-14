@@ -453,4 +453,22 @@ describe('phone drawer', () => {
     expect(await screen.findByRole('dialog', { name: 'Projects' })).toBe(drawer);
     expect(drawer.className).not.toContain('[content-visibility:hidden]');
   });
+
+  test('Esc closes it every time and focus goes back to its toggle', async () => {
+    const width = window.innerWidth;
+    onTestFinished(() => { window.innerWidth = width; });
+    window.innerWidth = 390;
+    const { user } = renderApp();
+    await screen.findByRole('heading', { name: 'What are you working on?' });
+    const toggle = screen.getByRole('button', { name: /^Show sidebar/ });
+    for (let i = 0; i < 3; i++) {
+      await user.click(toggle);
+      const drawer = await screen.findByRole('dialog', { name: 'Projects' });
+      // The drawer holds focus, not its Hide button: a tip shown there would take the first Esc.
+      await waitFor(() => expect(document.activeElement).toBe(drawer));
+      await user.keyboard('{Escape}');
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Projects' })).toBeNull());
+      await waitFor(() => expect(document.activeElement).toBe(toggle));
+    }
+  });
 });
