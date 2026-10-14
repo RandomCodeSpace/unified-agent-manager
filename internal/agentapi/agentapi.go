@@ -1045,6 +1045,10 @@ type Event struct {
 	Execution       *ExecutionState
 	// Error is the sanitized reason for EventExit.
 	Error string
+	// Detached marks an EventExit that ended only this conversation because
+	// its turn did not end after Stop: the provider ended the turn as
+	// cancelled first, nothing was lost, and the next prompt reopens it.
+	Detached bool
 	// Title is the untrusted provider title for EventTitle.
 	Title string
 	// Compacting is the payload of EventCompaction.

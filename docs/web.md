@@ -675,7 +675,21 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   reports the reason as `stop_reason` on the Thread summary (`owner`,
   `time_limit`, `credit_limit`, `remote` or `mcp`, absent when there is
   none); it is saved with the stopped state
-  and cleared when the next turn starts. The running turn's intent and
+  and cleared when the next turn starts. Stop always ends a running turn,
+  within about 20 seconds: a Thread operation stuck in Copilot does not
+  hold it, and when Copilot has not ended the turn 10 seconds after Stop,
+  uam ends it itself. The Thread then reads Stopped (its `state_detail` is
+  "Copilot did not confirm the stop"), its conversation closes, and the
+  next message reopens it on the same Copilot CLI. A Copilot CLI that has
+  exited by then is treated as stopped: every Thread that was running or
+  waiting on it fails, as when it exits, and the next message starts a new
+  one. One that is only slow to answer keeps running for the other Threads
+  until uam's regular check of the CLI finds it gone. A Stop of an
+  autopilot Thread with no turn running, made while another change to that
+  Thread is still in progress, is refused with "try Stop again"; a running
+  autopilot turn that Stop could not switch to interactive at once is
+  switched as soon as that other change ends, unless a mode was chosen or a
+  turn started since. The running turn's intent and
   retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
   (`turn_activity.todos`): uam asks the agents, subagents included, to keep

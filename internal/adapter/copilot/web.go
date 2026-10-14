@@ -350,6 +350,7 @@ type webProvider struct {
 	client            sdkClient
 	stop              chan struct{} // closed to end the current watchdog
 	convs             map[*conversation]struct{}
+	detaching         map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
 	shut              bool
 	importSupported   bool
 	forkUnsupported   bool
@@ -1144,6 +1145,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			InfiniteSessions:      compaction,
 		})
 	} else {
+		p.awaitDetach(ctx, req.ConversationID)
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
 			WorkingDirectory: req.Workdir,
 			Providers:        providers,
@@ -2007,6 +2009,21 @@ type conversation struct {
 	// refuses a prompt while it is: the CLI holds any prompt sent during a
 	// turn until session.idle, which never comes while a background shell runs.
 	turnRunning bool
+	// turnAt is when the running turn started. sending counts prompts on
+	// their way to the CLI, which Stop treats as a running turn.
+	turnAt  time.Time
+	sending int
+	// lastEvent and lastEventAt are the latest session event's kind and
+	// arrival, for the report of a stop the CLI did not confirm.
+	lastEvent   string
+	lastEventAt time.Time
+	// stopping is the running turn's pending stop check, and stopNote the
+	// cancelled turn's note when uam ends the turn itself (stop.go).
+	stopping *stopWatch
+	stopNote string
+	// modeOps counts execution mode choices (ensureExecutionMode), so a
+	// mode reset Stop deferred does not override a later one.
+	modeOps uint64
 	// The latest ordinary main-agent user item and its exact native boundary.
 	turnChangeUser, turnChangeEvent string
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
@@ -2595,6 +2612,9 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	c.mu.Lock()
 	closed, running, idles := c.closed, c.turnRunning, c.idles
 	generation := c.tr.completions.generation
+	if !closed && !running {
+		c.sending++
+	}
 	c.mu.Unlock()
 	if closed {
 		return agentapi.ErrClosed
@@ -2602,6 +2622,12 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	if running {
 		return agentapi.ErrBusy
 	}
+	defer func() {
+		c.mu.Lock()
+		c.sending--
+		c.sendEndedLocked()
+		c.mu.Unlock()
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -2634,6 +2660,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	if c.idles == idles && c.tr.completions.generation == generation {
 		c.startTurnLocked()
 	}
+	c.abortStartedLocked()
 	return nil
 }
 
@@ -2715,30 +2742,56 @@ func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error 
 	return err
 }
 
+// Cancel stops the running turn. Every wait in it is bounded, so another
+// operation stuck in the CLI cannot hold Stop, and a running turn always
+// ends: one the CLI does not end within webStopGrace uam ends itself
+// (stop.go). Its mode change and abort errors are reported only when no
+// turn runs; while one does, the stop check reports them, and a mode it
+// could not reset is reset once control is free. Stop of autopilot with no
+// turn, while another control operation is in progress, fails with ErrBusy.
 func (c *conversation) Cancel(ctx context.Context) error {
-	c.control.Lock()
-	defer c.control.Unlock()
-	if c.isClosed() {
+	// Without control, another mode or agent operation is stuck in the CLI:
+	// Stop aborts without the mode change, which control orders.
+	controlled := lockWithin(&c.control, webStopLockWait)
+	if controlled {
+		defer c.control.Unlock()
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
 		return agentapi.ErrClosed
+	}
+	// With no turn to end, Stop of autopilot only turns it off, which needs
+	// control: it does not claim a stop it did not make.
+	if !controlled && !c.turnRunning && c.sending == 0 && c.execution != nil && c.execution.Mode == string(rpc.SessionModeAutopilot) {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: another operation on the conversation is in progress", agentapi.ErrBusy)
 	}
 	// Stop claims these decisions before any runtime RPC can block. A
 	// concurrent answer must not approve fallback while Abort is in flight.
-	c.mu.Lock()
 	c.expireAutoLocked()
 	c.planStopped = true
 	c.expirePlansLocked()
+	w := c.watchStopLocked()
 	c.mu.Unlock()
 	var modeErr error
-	if runtime, ok := c.sess.(executionSession); ok {
-		modeErr = runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive)
-		c.refreshExecution(ctx)
+	if runtime, ok := c.sess.(executionSession); ok && controlled {
+		modeCtx, cancel := context.WithTimeout(ctx, webStopRPCWait)
+		modeErr = runtime.SetExecutionMode(modeCtx, rpc.SessionModeInteractive)
+		c.refreshExecution(modeCtx)
+		cancel()
 	}
 	// Abort must still run after a partial mode failure, with its own bounded
 	// context if the mode operation used up the original deadline.
-	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	abortCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), webStopRPCWait)
 	defer cancel()
+	began := time.Now()
 	abortErr := c.sess.Abort(abortCtx)
-	if modeErr != nil || abortErr != nil {
+	c.aborted(w, abortErr, time.Since(began))
+	if w != nil && (!controlled || modeErr != nil) {
+		c.leaveAutopilotLater(modeErr)
+	}
+	if (modeErr != nil || abortErr != nil) && w == nil {
 		return fmt.Errorf("copilot stop: %w", errors.Join(modeErr, abortErr))
 	}
 	return nil
@@ -2963,17 +3016,27 @@ func (c *conversation) Close(ctx context.Context) error {
 	perms := c.expireLocked()
 	c.endIdleLocked()
 	c.stopSchedulesLocked()
+	// The detach is due before anything can reopen the conversation.
+	detached := c.p.detachStarted(c.id)
 	c.closed = true
 	clear(c.pending)
 	if c.aside != nil {
 		c.aside()
 	}
 	c.mu.Unlock()
+	return c.release(ctx, perms, detached)
+}
+
+// release lets go of a conversation that has ended locally: it is no
+// longer tracked, its tools stop, the permission requests perms are
+// answered as unavailable, and its SDK session detaches, all within
+// webStopTimeout. detached, from detachStarted before the conversation
+// ended, is called once the detach returns.
+func (c *conversation) release(ctx context.Context, perms []string, detached func()) error {
 	c.p.forget(c)
 	if c.tools != nil {
 		c.tools.stop()
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, webStopTimeout)
 	defer cancel()
 	for _, id := range perms {
@@ -2981,6 +3044,7 @@ func (c *conversation) Close(ctx context.Context) error {
 	}
 	done := make(chan error, 1)
 	go func() {
+		defer detached()
 		err := c.sess.Disconnect()
 		if err == nil {
 			if releaseErr := c.p.recordUsageSession(c.client, c.id, false); releaseErr != nil {
@@ -3000,6 +3064,64 @@ func (c *conversation) Close(ctx context.Context) error {
 	case <-ctx.Done():
 		c.p.poke()
 		return fmt.Errorf("close copilot conversation: %w", ctx.Err())
+	}
+}
+
+// detachWait is one detach of a session in flight: done closes when it
+// returns, and a reopen waits for it until until, when release gives up.
+type detachWait struct {
+	done  chan struct{}
+	until time.Time
+}
+
+// detachStarted records that session id is detaching and returns the
+// function that ends the record once the detach has returned. Callers
+// record it before the conversation ends, so no reopen can come first.
+func (p *webProvider) detachStarted(id string) func() {
+	w := &detachWait{done: make(chan struct{}), until: time.Now().Add(webDetachWait)}
+	p.mu.Lock()
+	if p.detaching == nil {
+		p.detaching = map[string][]*detachWait{}
+	}
+	p.detaching[id] = append(p.detaching[id], w)
+	p.mu.Unlock()
+	return sync.OnceFunc(func() {
+		p.mu.Lock()
+		p.dropDetachesLocked(id, func(x *detachWait) bool { return x == w })
+		p.mu.Unlock()
+		close(w.done)
+	})
+}
+
+func (p *webProvider) dropDetachesLocked(id string, drop func(*detachWait) bool) {
+	if left := slices.DeleteFunc(p.detaching[id], drop); len(left) > 0 {
+		p.detaching[id] = left
+	} else {
+		delete(p.detaching, id)
+	}
+}
+
+// awaitDetach waits for every detach of session id in flight, each until
+// it returns or is due. The SDK detaches by session ID, so one the CLI
+// handled after a resume of the same session could take it from its new
+// owner. A detach past due, which the CLI never answered, is forgotten.
+func (p *webProvider) awaitDetach(ctx context.Context, id string) {
+	now := time.Now()
+	p.mu.Lock()
+	p.dropDetachesLocked(id, func(w *detachWait) bool { return now.After(w.until) })
+	waits := slices.Clone(p.detaching[id])
+	p.mu.Unlock()
+	for _, w := range waits {
+		t := time.NewTimer(time.Until(w.until))
+		select {
+		case <-w.done:
+		case <-t.C:
+		case <-ctx.Done():
+		}
+		t.Stop()
+		if ctx.Err() != nil {
+			return
+		}
 	}
 }
 
@@ -3055,6 +3177,11 @@ func (c *conversation) exit(reason string) {
 }
 
 func (c *conversation) exitLocked(reason string) {
+	c.endLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+}
+
+// endLocked ends the conversation here and reports exit, an EventExit.
+func (c *conversation) endLocked(exit agentapi.Event) {
 	if c.closed {
 		return
 	}
@@ -3062,7 +3189,7 @@ func (c *conversation) exitLocked(reason string) {
 	c.expireLocked()
 	clear(c.pending)
 	c.endIdleLocked()
-	c.emitLocked(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+	c.emitLocked(exit)
 	c.stopSchedulesLocked()
 	c.closed = true
 }
@@ -3376,6 +3503,7 @@ func (c *conversation) onEvent(ev copilot.SessionEvent) {
 	if c.closed {
 		return
 	}
+	c.lastEvent, c.lastEventAt = string(ev.Type()), time.Now()
 	if c.tools != nil {
 		c.tools.observe(ev)
 	}
@@ -3711,6 +3839,7 @@ func (c *conversation) startTurnLocked() {
 	if !c.turnRunning {
 		c.planEpoch++
 		c.planStopped = false
+		c.turnAt = time.Now()
 	}
 	c.startActivityLocked()
 	c.foregroundIdle, c.turnRunning = false, true
@@ -3733,7 +3862,7 @@ func (c *conversation) finishTurnLocked(aborted *bool, at time.Time) {
 	turn := agentapi.Turn{State: agentapi.TurnCompleted, Model: c.turnModel, Completion: c.completion}
 	switch {
 	case aborted != nil && *aborted:
-		turn.State, turn.Reason = agentapi.TurnCancelled, c.act.abortReason
+		turn.State, turn.Reason, turn.Error = agentapi.TurnCancelled, c.act.abortReason, c.stopNote
 		c.expireLocked()
 	case c.turnErr != "":
 		turn.State, turn.Error = agentapi.TurnFailed, c.turnErr

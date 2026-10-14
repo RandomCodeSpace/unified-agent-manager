@@ -324,6 +324,7 @@ func (c *conversation) ensureExecutionMode(ctx context.Context, mode rpc.Session
 	}
 	c.mu.Lock()
 	current := c.execution
+	c.modeOps++
 	c.mu.Unlock()
 	if current != nil && current.Known && current.Mode == string(mode) {
 		return nil
