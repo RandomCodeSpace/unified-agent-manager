@@ -53,6 +53,16 @@ describe('log out', () => {
     await waitFor(() => expect(document.title).toBe('UAM'));
     expect(window.location.hash).toBe('');
   });
+
+  test('a session that ends under an open view shows the sign-in screen with the plain title', async () => {
+    renderApp('#settings');
+    await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    await waitFor(() => expect(document.title).toBe('(7) UAM - Settings'));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{}', { status: 401 }));
+    await api.listDirs().catch(() => {});
+    expect(await screen.findByRole('heading', { name: 'Sign in to UAM' })).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe('UAM'));
+  });
 });
 
 describe('composer attachments', () => {

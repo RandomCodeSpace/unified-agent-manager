@@ -1,5 +1,7 @@
+import { Radio } from '@base-ui/react/radio';
+import { RadioGroup } from '@base-ui/react/radio-group';
 import { useApi } from '../ApiContext';
-import { ArchiveRestore, ArrowUp, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
+import { ArchiveRestore, ArrowUp, Check, ChevronDown, Cpu, Ellipsis, File, Folder, Gauge, ListEnd, Paperclip, RotateCcw, ShieldAlert, ShieldCheck, ShieldHalf, ShieldOff, Square, Undo2, X } from 'lucide-react';
 import { memo, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ACCOUNT_NOT_LINKED, LIVE, SIGNED_OUT, describeError, errorCode, isStatus, modelCatalog, modelName, newRequestId, providerLabel, readOnly, type Command, type CommandResult, type FileEntry, type Interaction, type Model, type PermissionMode, type PromptMode, type PromptSettings, type Question, type RewindMode, type RewindPreview, type QueuedPrompt, type SessionDetail, type SessionSummary, type Submission, type TaskSettings, type ThreadPlace } from '../api';
 import { answerFromComposer, answerPlaceholder, canAnswer, initialChoice } from '../lib/answer';
@@ -22,8 +24,9 @@ import { applyPick, argumentTrigger, commandPending, commandReason, effortLabel,
 import { changeSettings, draftKey, newTaskKey, parseDraft, serializeDraft, type Draft } from '../lib/drafts';
 import { historyEntries, historyKey, lastPrompt, type Browsing } from '../lib/history';
 import { DropOverlay, FileRefChip, QueuedExtras, UploadChip, type Pending } from './Attachments';
-import { Loading, Markdown, Note, useApp } from './common';
+import { Loading, Markdown, Note, useApp, useMedia } from './common';
 import { ExecutionItems } from './ExecutionStatus';
+import { BottomSheet } from './Subagents';
 import { InlinePicker, type PickerItem } from './InlinePicker';
 import { ComposerPlan, ComposerQuestion } from './Interactions';
 import { EditStrip, type Editing } from './EditResend';
@@ -33,6 +36,7 @@ import { Button } from './ui/button';
 import { AlertDialog, useConfirm } from './ui/dialog';
 import { Collapse, usePresence } from './ui/collapse';
 import { Menu, type ActionItem } from './ui/menu';
+import { PanelHead, PanelSection } from './ui/panel';
 import { useTaskActions } from './taskActions';
 import { Tip } from './ui/tooltip';
 
@@ -122,7 +126,7 @@ const SHRINK = 'max-sm:min-w-0 max-sm:shrink in-data-[fold~=more]:min-w-0 in-dat
 
 /**
  * One compact toolbar picker: the current value on a small ghost trigger, a radio menu to
- * change it. When the value cannot be changed the trigger stays visible, disabled, and
+ * change it (a bottom sheet on a phone, as the toolbar's other readers). When the value cannot be changed the trigger stays visible, disabled, and
  * says why on hover and focus, so the rule is visible instead of a missing control.
  * The value truncates no shorter than SQUEEZE_MIN and leaves at the `model` fold (lib/toolbarFold);
  * the glyph, the accessible name, the tooltip and the menu still carry it.
@@ -171,7 +175,15 @@ function Picker({
   const line = (text?: string) => text && <span className="block text-on-primary/70">{text}</span>;
   // The value leads, since the trigger can be a bare glyph.
   const tip = (why?: string) => <>{`${label}: ${display}`}{line(why)}{line(hint)}</>;
+  const groups = [...new Set(choices.flatMap((c) => (c.group ? [c.group] : [])))];
+  const phone = useMedia(PHONE);
+  // The phone's sheet: mounted from its opening until its exit has run.
+  const [sheet, setSheet] = useState<boolean | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const radios = useRef<HTMLDivElement>(null);
   if (disabled) {
+    // A choice locks the picker while it saves, as it closes the menu.
+    if (sheet !== null) setSheet(null);
     const hintSuffix = hint ? ` ${hint}.` : '';
     return (
       <Tip label={tip(reason ?? `${label} cannot change now`)}>
@@ -179,6 +191,45 @@ function Picker({
           {face}
         </Button>
       </Tip>
+    );
+  }
+  if (phone || sheet !== null) {
+    const radio = (c: Choice) => (
+      <Radio.Root key={c.value} value={c.value} disabled={c.disabled} className="group/choice flex min-h-11 w-full cursor-default items-start gap-2 rounded-sm px-2 py-1.5 text-left outline-hidden not-data-disabled:hover:bg-tint-hover focus-visible:bg-tint-hover data-disabled:opacity-45">
+        <Check aria-hidden="true" strokeWidth={2.5} className="invisible mt-0.5 size-3.5 shrink-0 text-accent group-data-checked/choice:visible" />
+        <span className="flex min-w-0 flex-col">
+          <span className="text-ui text-ink">{c.label}</span>
+          {c.description && <span className="text-caption text-muted">{c.description}</span>}
+        </span>
+      </Radio.Root>
+    );
+    return (
+      <>
+        <Tip label={tip()}>
+          <Button ref={trigger} id={id} size="sm" variant="subtle" aria-label={`${label}: ${display}`} aria-haspopup="dialog" aria-expanded={!!sheet} className={cn(SHRINK, 'text-body', className)} onClick={() => setSheet(true)}>{face}</Button>
+        </Tip>
+        {sheet !== null && (
+          <BottomSheet open={sheet} onClose={() => setSheet(false)} onClosed={() => setSheet(null)} label={label} initialFocus={() => radios.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? true} finalFocus={trigger}>
+            <PanelHead className="pt-2 pr-2 pl-4">
+              <div className="flex min-h-7 min-w-0 items-center gap-2 [&_svg]:size-4 [&_svg]:shrink-0">
+                {icon}
+                <h2 className="min-w-0 flex-1 truncate text-title text-ink">{label}</h2>
+                <Button size="icon-sm" aria-label="Close" className="text-muted" onClick={() => setSheet(false)}><X /></Button>
+              </div>
+            </PanelHead>
+            <RadioGroup ref={radios} aria-label={label} value={value} onValueChange={(v) => { setSheet(false); onChange(v as string); }} className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-4 pt-1 pb-4">
+              <PanelSection label={heading ?? label}>
+                <div className="-mx-2 flex flex-col">{choices.filter((c) => !c.group).map(radio)}</div>
+              </PanelSection>
+              {groups.map((group) => (
+                <PanelSection key={group} label={group}>
+                  <div className="-mx-2 flex flex-col">{choices.filter((c) => c.group === group).map(radio)}</div>
+                </PanelSection>
+              ))}
+            </RadioGroup>
+          </BottomSheet>
+        )}
+      </>
     );
   }
   return (
@@ -190,7 +241,7 @@ function Picker({
         <Menu.RadioGroup value={value} onValueChange={(v) => onChange(v as string)}>
           <Menu.Label>{heading ?? label}</Menu.Label>
           {choices.filter((c) => !c.group).map(item)}
-          {[...new Set(choices.flatMap((c) => (c.group ? [c.group] : [])))].map((group) => [
+          {groups.map((group) => [
             <Menu.Separator key={`separator-${group}`} />,
             <Menu.Group key={group}>
               <Menu.Label>{group}</Menu.Label>

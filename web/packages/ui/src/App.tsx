@@ -187,6 +187,15 @@ export default function App() {
   // Once opened, the drawer keeps its Thread list while closed (Sheet keepMounted): opening it again renders nothing new.
   const [drawerKept, setDrawerKept] = useState(false);
   if (drawerOpen && !drawerKept) setDrawerKept(true);
+  // On a narrow screen the list mounts in the closed drawer once the first snapshot is in and the page is idle, in a
+  // transition React renders in slices: the first opening then only slides it in, as later ones do.
+  useEffect(() => {
+    if (!narrow || drawerKept || !state.loaded) return;
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 1000));
+    const cancel = window.cancelIdleCallback ?? window.clearTimeout;
+    const handle = idle(() => startTransition(() => setDrawerKept(true)));
+    return () => cancel(handle);
+  }, [narrow, drawerKept, state.loaded]);
   // The drawer itself takes focus as it opens, not its Hide button: focus moved there after a key press shows the
   // button's tip, and Esc would close that tip instead of the drawer.
   const drawer = useRef<HTMLDivElement>(null);
@@ -1263,8 +1272,10 @@ export default function App() {
   else if (routinesFor) shownName = 'Routines';
   else if (newTask) shownName = '';
   else if (selected) shownName = taskName(selected);
+  // The sign-in screen has the plain title, also when the session ended under an open view.
+  const loggedOut = auth === 'out';
   useEffect(() => {
-    document.title = pageTitle(attention, shownName);
+    document.title = loggedOut ? pageTitle(0, null) : pageTitle(attention, shownName);
     // The badge is this page's count while it is visible; otherwise the service worker sets the service's count with each push (public/sw.js).
     const badge = () => {
       if (document.visibilityState !== 'visible') return;
@@ -1274,7 +1285,7 @@ export default function App() {
     badge();
     document.addEventListener('visibilitychange', badge);
     return () => document.removeEventListener('visibilitychange', badge);
-  }, [attention, shownName]);
+  }, [attention, shownName, loggedOut]);
 
   if (auth === 'checking') {
     return (

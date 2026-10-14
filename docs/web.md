@@ -479,8 +479,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   conversation) and Agent (see **Agent**; shown only when the Project has a
   custom agent or the Thread names one). The open panel reads its counts again
   whenever the Thread reports new usage or context. The arrow keys move
-  between tabs and Esc closes it. A Thread with none of them has no Tools
-  button.
+  between tabs and Esc closes it; on a phone it is a bottom sheet, and so is
+  the Model menu. A Thread with none of them has no Tools button.
   Copilot's usage metrics accumulate over the conversation, its subagents
   included, and are separate from account usage and from the recorded AI
   units. Cache and reasoning counters are reported separately and are not
@@ -1702,7 +1702,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   made to it; a file changed back or committed drops out. Files written by
   shell commands are not attributed to the Thread. Until a Thread's history
   has been read, edits from before it may be missing, and the panel says
-  so. Each file shows its status and `+added −removed` lines; a file
+  so. Each file shows its status and `+added −removed` lines; where its
+  path does not fit, the folders above the file's own folder shorten first,
+  so the file name stays whole (a phone included); a file
   renamed in the index (`git mv`) names the path it came from and counts
   only the lines that changed, not a whole new file. Files that deserve a closer look come
   first with a short reason: CI workflows, lockfiles, Dockerfiles,
@@ -1887,7 +1889,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     is open ("UAM - New thread" for a new Thread or one still waiting for a
     title), and "UAM - Settings"
     or "UAM - Routines" for those views; the count comes
-    first, as in "(9) UAM - Fix redraw".
+    first, as in "(9) UAM - Fix redraw". The sign-in screen reads "UAM",
+    also when a session ends while a view is open.
 
   A Settled row shows the Project badge and title, faded until hovered or
   selected; its tooltip adds the Project name and directory and when the
@@ -1921,9 +1924,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     own button opens. Toggling it keeps the selected Thread and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
-    Its first opening shows the first rows at once and the rest a moment
-    later; from then on the drawer keeps its list, search and scroll position
-    while closed, so it opens at once. The drawer itself takes focus as it
+    Its first rows are ready in the closed drawer once the page has loaded,
+    so the first opening shows them at once and the rest a moment later;
+    from then on the drawer keeps its list, search and scroll position while
+    closed, so it opens at once. The drawer itself takes focus as it
     opens (Tab reaches its controls); Esc closes it every time and gives focus
     back to the button that opened it.
   - With no Thread open, the main pane shows the UAM mark, "What are you

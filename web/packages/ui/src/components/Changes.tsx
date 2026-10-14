@@ -1,13 +1,13 @@
 import { useApi } from '../ApiContext';
 import { Copy, Ellipsis, FileDiff, MessageSquarePlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
-import { memo, useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { memo, startTransition, useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { parsePatch, structuredPatch, type StructuredPatch } from 'diff';
 import { LIVE, defaultScope, describeError, newRequestId, readOnly, type ChangeFile, type Changes as ChangesData, type FileDiff as FileDiffData, type Scope, type SessionSummary } from '../api';
 import { useCopied } from '../lib/clipboard';
 import { cn } from '../lib/cn';
 import { CommitPanel } from './CommitPanel';
 import { LARGE_CHANGE, byRisk, commentsMessage, emptyReview, fileDigest, parseReview, reviewKey, riskOf, serializeReview, statusLetter, turnFile, viewState, type Review, type ReviewComment } from '../lib/review';
-import { Highlighted, InstanceName, Note, Skeleton } from './common';
+import { FilePath, Highlighted, InstanceName, Note, Skeleton } from './common';
 import { PanelHeader, SidePanel } from './Subagents';
 import { Button } from './ui/button';
 import { ContextMenu, Menu, type ActionItem } from './ui/menu';
@@ -281,9 +281,11 @@ export function ChangesSheet({
         <span className="text-title text-ink">Changes</span>
         <InstanceName />
         {data?.supported && (
-          <span className="min-w-0 truncate text-caption tabular-nums text-muted">
-            {files.length} {files.length === 1 ? 'file' : 'files'}{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}{!countsKnown && <> · line counts unavailable</>}
-            {files.length > 0 && <> · {viewedCount} of {files.length} viewed</>}
+          // Two lines where one is too short (a phone), broken only between its parts, rather than cut off.
+          <span className="line-clamp-2 min-w-0 text-caption leading-tight tabular-nums text-muted">
+            <span className="whitespace-nowrap">{files.length} {files.length === 1 ? 'file' : 'files'}{countsKnown && adds > 0 && <> · <span className="text-success">+{adds}</span></>}{countsKnown && dels > 0 && <> <span className="text-error">−{dels}</span></>}</span>
+            {!countsKnown && <> · <span className="whitespace-nowrap">line counts unavailable</span></>}
+            {files.length > 0 && <> · <span className="whitespace-nowrap">{viewedCount} of {files.length} viewed</span></>}
           </span>
         )}
         <span className="flex-1" />
@@ -349,8 +351,10 @@ export function ChangesSheet({
             <Note>{EMPTY[scope]}</Note>
           </li>
         )}
+        {/* Another file's diff replaces the shown one in a transition: taking down a long diff and redrawing the list are
+            then split into short tasks, not one long one under the press. */}
         {files.map((f) => (
-          <FileRow key={f.path} file={f} selected={f.path === shownPath} viewed={viewState(review, f)} onOpen={() => setPath(f.path)} onViewed={(v) => toggleViewed(f, v)} />
+          <FileRow key={f.path} file={f} selected={f.path === shownPath} viewed={viewState(review, f)} onOpen={() => startTransition(() => setPath(f.path))} onViewed={(v) => toggleViewed(f, v)} />
         ))}
       </ul>
       <div className="fade-rule mx-3 shrink-0" aria-hidden="true" />
@@ -447,7 +451,7 @@ function FileRow({ file: f, selected, viewed, onOpen, onViewed }: Readonly<{ fil
           >
             <span className={cn('w-3 text-center font-mono font-semibold', STATUS_TONE[letter] ?? 'text-muted')} title={f.status}>{letter}</span>
             <span className="min-w-0">
-              <span className="block truncate [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
+              <FilePath path={f.path} />
               {(risk || viewed === 'changed' || f.old_path) && (
                 <span className="flex flex-wrap items-center gap-x-2 text-meta">
                   {f.old_path && <span className="min-w-0 truncate text-muted" title={f.old_path}>from {f.old_path}</span>}

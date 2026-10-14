@@ -749,17 +749,19 @@ export const Sidebar = memo(function Sidebar({
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const [settledAll, setSettledAll] = useState(false);
-  // A progressive list first mounts the rows that fill the drawer, then a batch per frame: each row's menu and tip set
-  // themselves up as it mounts, and the whole list at once is a long task on a phone. Mounted rows stay.
+  // A progressive list first mounts the rows that fill the drawer, then a batch per frame while it is on screen: each
+  // row's menu and tip set themselves up as it mounts, and the whole list at once is a long task on a phone. Rows
+  // mounted in the closed drawer would all be styled and laid out at once when it first opens. Mounted rows stay.
   const searching = !!query.trim();
   const listed = searching ? rows : unsettled;
+  const listShown = actions.sidebarOpen;
   const [mountedRows, setMountedRows] = useState(progressive ? ROW_BATCH : Infinity);
   const moreRows = listed.length > mountedRows;
   useEffect(() => {
-    if (!moreRows) return;
+    if (!moreRows || !listShown) return;
     const frame = requestAnimationFrame(() => startTransition(() => setMountedRows((n) => n + ROW_BATCH)));
     return () => cancelAnimationFrame(frame);
-  }, [moreRows, mountedRows]);
+  }, [moreRows, mountedRows, listShown]);
   // The row holding the list's one tab stop: the last focused while it is on screen, else the open Task's, else the first.
   const [focused, setFocused] = useState<string | null>(null);
   const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
@@ -784,7 +786,6 @@ export const Sidebar = memo(function Sidebar({
   // Keep the selected row in view when the selection changes from outside the list, the list comes back on screen
   // (the phone's drawer stays mounted while closed, where measuring a row would lay out the whole skipped list), or
   // a progressive list mounts it.
-  const listShown = actions.sidebarOpen;
   const selectedMounted = listed.findIndex((r) => r.key === selectedKey) < mountedRows;
   useEffect(() => {
     if (!selectedKey || !listShown || !selectedMounted) return;

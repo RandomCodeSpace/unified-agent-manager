@@ -824,6 +824,28 @@ export function Loading({ label = 'Loading…', delay = 300, className }: Readon
   );
 }
 
+/**
+ * A file's path on one line that gives way from the middle of its folder: the file name stays whole, then its own
+ * folder, and the folders above it shorten at their end ("build-now…/fail/fail_test.go"). Assistive tech reads the
+ * path as one word: the parts are laid out as blocks, which a name from content would read apart.
+ */
+export function FilePath({ path, className }: Readonly<{ path: string; className?: string }>) {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const dir = path.slice(0, path.length - name.length);
+  const own = dir.slice(dir.lastIndexOf('/', dir.length - 2) + 1);
+  const above = dir.slice(0, dir.length - own.length);
+  return (
+    <span className={cn('flex min-w-0', className)}>
+      <span className="sr-only">{path}</span>
+      {above && <span aria-hidden="true" className="min-w-0 truncate">{above}</span>}
+      <span aria-hidden="true" className="flex max-w-full shrink-0">
+        {own && <span className="min-w-0 truncate">{own}</span>}
+        <span className="max-w-full shrink-0 truncate">{name}</span>
+      </span>
+    </span>
+  );
+}
+
 /** A `caption` line for feedback: `error` and `warn` are the only coloured ones. */
 export function Note({ tone = 'muted', className, children, role, id }: Readonly<{ tone?: 'muted' | 'error' | 'warn' | 'info'; className?: string; children: ReactNode; role?: 'alert' | 'status'; id?: string }>) {
   return (

@@ -420,7 +420,7 @@ describe('task lifecycle', () => {
 });
 
 describe('phone drawer', () => {
-  test('opens on the first rows, mounts the rest after, then keeps the list while closed: skipped, out of reach and unread', async () => {
+  test('mounts its first rows while closed once the page is idle, the rest once open, then keeps the list while closed: skipped, out of reach and unread', async () => {
     const width = window.innerWidth;
     onTestFinished(() => { window.innerWidth = width; });
     window.innerWidth = 390;
@@ -432,12 +432,15 @@ describe('phone drawer', () => {
     const { user } = renderApp();
     await screen.findByRole('heading', { name: 'What are you working on?' });
     const toggle = screen.getByRole('button', { name: /^Show sidebar/ });
-    // Nothing of the list renders before the drawer first opens.
-    expect(document.querySelector('nav[aria-label="Threads"]')).toBeNull();
+    // Once the page is idle the closed drawer mounts the rows that fill it, so the first opening only slides it in;
+    // the rest wait for it to open, or the opening would style and lay them all out at once.
+    const listed = () => document.querySelectorAll('ul[aria-label="Unsettled threads"] > li').length;
+    await waitFor(() => expect(listed()).toBeGreaterThan(0), { timeout: 3000 });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(listed()).toBeLessThan(60);
     await user.click(toggle);
     const drawer = await screen.findByRole('dialog', { name: 'Projects' });
     const rows = () => drawer.querySelectorAll('ul[aria-label="Unsettled threads"] > li').length;
-    expect(rows()).toBeLessThan(60);
     await waitFor(() => expect(drawer.querySelectorAll('[data-task-row^="more-"]')).toHaveLength(60));
     const all = rows();
     expect(all).toBeGreaterThan(60);
