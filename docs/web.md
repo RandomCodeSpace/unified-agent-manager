@@ -686,7 +686,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   `open`, `in_progress` plus `pending`.
 - **Each turn's todo list**: a turn that changed the list keeps it as it
   left it. Its last reply's foot reads "Todo 4/7 · 1 in progress · 1 blocked
-  · 1 to do" and stays on screen; clicking it opens that list by the same
+  · 1 to do" and stays on screen (the turn has ended, so "in progress" is
+  words alone there, without the stage's glyph or colour); clicking it opens
+  that list by the same
   sections as the live one: the rows the turn changed and the rows still
   open, at most 50. The end of a turn waits up to a second for Copilot's last
   change to the list to be read. The counts are saved with the turn's timing
@@ -1901,6 +1903,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     own button opens. Toggling it keeps the selected Thread and its URL.
     The choice is kept per browser. On a narrow window the sidebar is a
     drawer that the button and the shortcut open and close; there is no rail.
+    Its first opening shows the first rows at once and the rest a moment
+    later; from then on the drawer keeps its list, search and scroll position
+    while closed, so it opens at once.
   - With no Thread open, the main pane shows the UAM mark, "What are you
     working on?", a **New thread** button and, once there are Threads,
     **Recent threads**: up to six that are not archived, across all Projects,

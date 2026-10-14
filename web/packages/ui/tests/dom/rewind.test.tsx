@@ -1,8 +1,8 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api, ApiError, type RewindPreview, type RewindReceipt } from '../../src/api';
 import * as data from '../../src/mock/data';
-import { openTask } from './render';
+import { composer, openTask } from './render';
 
 function fixture(change?: (task: ReturnType<typeof data.seed>['tasks'][number]) => void) {
   const state = data.seed();
@@ -137,5 +137,24 @@ describe('native rewind release', () => {
     await openTask('t3');
     await screen.findByRole('button', { name: 'Reread conversation' });
     expect(screen.queryByRole('button', { name: 'Release thread' })).toBeNull();
+  });
+
+  test('a reread that empties the conversation for a moment leaves a view at its end following it', async () => {
+    const { user } = await openTask('t3');
+    const scroller = screen.getByRole('region', { name: 'Conversation' });
+    let height = 1000;
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => 400 });
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, get: () => height });
+    scroller.scrollTop = 600;
+    fireEvent.scroll(scroller);
+    // The rewind's reread empties the conversation first: the browser moves the view to the top, with nothing above it.
+    height = 400;
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    // The reread history, then the edited prompt and its reply.
+    height = 1200;
+    await user.type(composer(), 'Again{Enter}');
+    await waitFor(() => expect(scroller.scrollTop).toBe(1200));
+    expect(screen.queryByRole('button', { name: 'Jump to bottom' })).toBeNull();
   });
 });

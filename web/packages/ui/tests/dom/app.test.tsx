@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, onTestFinished, test, vi } from 'vitest';
 import { api } from '../../src/api';
+import * as data from '../../src/mock/data';
 import { renderApp, sidebar } from './render';
 
 const header = () => screen.getByRole('heading', { level: 1 });
@@ -415,5 +416,41 @@ describe('task lifecycle', () => {
     expect(within(menu).getByRole('menuitem', { name: /^Settle/ }).getAttribute('aria-disabled')).toBe('true');
     expect(document.querySelector('[data-task-row="t1"] [data-settle]')).toBeNull();
     expect(within(menu).getAllByText(/Stop the turn, answer what is waiting/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('phone drawer', () => {
+  test('opens on the first rows, mounts the rest after, then keeps the list while closed: skipped, out of reach and unread', async () => {
+    const width = window.innerWidth;
+    onTestFinished(() => { window.innerWidth = width; });
+    window.innerWidth = 390;
+    const state = data.seed();
+    const base = state.tasks.find((t) => t.id === 't3')!;
+    for (let i = 0; i < 60; i++) state.tasks.push({ ...structuredClone(base), id: `more-${i}`, name: `More ${i}` });
+    vi.spyOn(data, 'seed').mockReturnValue(state);
+    onTestFinished(() => { vi.restoreAllMocks(); });
+    const { user } = renderApp();
+    await screen.findByRole('heading', { name: 'What are you working on?' });
+    const toggle = screen.getByRole('button', { name: /^Show sidebar/ });
+    // Nothing of the list renders before the drawer first opens.
+    expect(document.querySelector('nav[aria-label="Threads"]')).toBeNull();
+    await user.click(toggle);
+    const drawer = await screen.findByRole('dialog', { name: 'Projects' });
+    const rows = () => drawer.querySelectorAll('ul[aria-label="Unsettled threads"] > li').length;
+    expect(rows()).toBeLessThan(60);
+    await waitFor(() => expect(drawer.querySelectorAll('[data-task-row^="more-"]')).toHaveLength(60));
+    const all = rows();
+    expect(all).toBeGreaterThan(60);
+    await user.click(within(drawer).getByRole('button', { name: /^Hide sidebar/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Projects' })).toBeNull());
+    expect(drawer.isConnected).toBe(true);
+    expect(drawer.getAttribute('aria-hidden')).toBe('true');
+    expect(drawer.className).toContain('[content-visibility:hidden]');
+    // Closed, it is no open popup: the page's shortcuts work again.
+    expect(drawer.hasAttribute('data-popup')).toBe(false);
+    expect(rows()).toBe(all);
+    await user.click(toggle);
+    expect(await screen.findByRole('dialog', { name: 'Projects' })).toBe(drawer);
+    expect(drawer.className).not.toContain('[content-visibility:hidden]');
   });
 });

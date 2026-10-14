@@ -29,6 +29,17 @@ describe('sidebar shelves', () => {
   });
 });
 
+describe('tooltips', () => {
+  test('a tip never takes the pointer: the permissions tip over the message box lets a press through to it', async () => {
+    const { user } = await openTask('t3');
+    await user.hover(screen.getByRole('button', { name: /^Permissions and execution/ }));
+    await waitFor(() => expect(document.querySelector('[data-popup="tooltip"]')).not.toBeNull());
+    const tip = document.querySelector<HTMLElement>('[data-popup="tooltip"]')!;
+    expect(tip.textContent).toContain('Permissions and execution');
+    expect(tip.closest('.pointer-events-none')).not.toBeNull();
+  });
+});
+
 describe('log out', () => {
   test('the sign-in screen has the plain title and no Settings fragment', async () => {
     vi.spyOn(api, 'auth').mockResolvedValue({ authenticated: true, required: true });

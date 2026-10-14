@@ -462,12 +462,15 @@ export function Task({ session, project, agents, agentSteps, snapshotSeq, histor
 
   async function loadEarlier(before = session.history_before, synchronous = false, direction: 'older' | 'newer' = 'older') {
     if (!historyLive.current || historyAbort.current || historyRequest?.loading || Date.now() < historyRetryAt.current) return null;
-    atBottom.current = false;
+    const widen = direction === 'older' && visibleStart > 0 && before === session.history_before;
+    // With nothing earlier, the view stays pinned: a conversation emptied for a moment (a rewind's reread) puts it
+    // at its top, with nothing to read there, and it must still follow what comes next.
+    if (widen || before) atBottom.current = false;
     // Rendering older history may yield between rows (a transition). HistoryAnchor reads the
     // actual visible position immediately before commit and restores it afterward. A parent
     // locate needs its target in the DOM at once, so it commits synchronously.
     const commit: (update: () => void) => void = synchronous ? flushSync : startTransition;
-    if (direction === 'older' && visibleStart > 0 && before === session.history_before) {
+    if (widen) {
       const start = transcriptWindowStart(session.items, visibleStart);
       commit(() => setFirstVisible(session.items[start]?.id));
       return null;

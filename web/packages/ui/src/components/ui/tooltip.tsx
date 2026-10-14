@@ -7,7 +7,8 @@ export const TooltipProvider = BaseTooltip.Provider;
 
 /**
  * A hint for sighted users; the trigger must carry its own accessible name. `label` may
- * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up.
+ * hold a second, muted line (pass a fragment). Opens after 400ms, 0 when another tip is up. It never takes the
+ * pointer: a tip shown on focus may cover a field, and a press there reaches the field.
  */
 export function Tip({ label, children, side = 'top', disabled = false, openOnClick = false }: Readonly<{ label: ReactNode; children: ReactElement; side?: 'top' | 'bottom' | 'left' | 'right'; disabled?: boolean; openOnClick?: boolean }>) {
   const shown = useRef(false);
@@ -42,7 +43,7 @@ export function Tip({ label, children, side = 'top', disabled = false, openOnCli
         } : undefined}
       />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner side={side} sideOffset={6} collisionPadding={8} className="z-60">
+        <BaseTooltip.Positioner side={side} sideOffset={6} collisionPadding={8} className="pointer-events-none z-60">
           <BaseTooltip.Popup
             data-popup="tooltip"
             className="max-w-64 origin-(--transform-origin) rounded-sm bg-ink px-2 py-1 text-caption text-on-primary shadow-float transition-[opacity,scale] duration-100 data-starting-style:scale-[0.97] data-starting-style:opacity-0 data-ending-style:opacity-0 data-instant:transition-none"

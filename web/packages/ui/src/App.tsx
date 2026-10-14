@@ -184,6 +184,9 @@ export default function App() {
   const [terminalTask, setTerminalTask] = useState<string | null>(null);
   const nextTerminalTask = useRef<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Once opened, the drawer keeps its Thread list while closed (Sheet keepMounted): opening it again renders nothing new.
+  const [drawerKept, setDrawerKept] = useState(false);
+  if (drawerOpen && !drawerKept) setDrawerKept(true);
   const [dialog, setDialog] = useState<ProjectDialog>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [taskDialog, setTaskDialog] = useState<TaskDialog>(null);
@@ -1348,6 +1351,7 @@ export default function App() {
       version={meta?.version}
       machineActions={machines ? machineActions : undefined}
       count={needsYouTasks}
+      progressive={narrow}
     />
   );
 
@@ -1466,8 +1470,8 @@ export default function App() {
               </aside>
             )}
             {narrow && (
-              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP}>
-                {sidebar}
+              <Sheet open={drawerOpen} onOpenChange={setDrawerOpen} side="left" label="Projects" className="w-rail" backdropClassName={DRAWER_BACKDROP} keepMounted>
+                {drawerKept && sidebar}
               </Sheet>
             )}
             <main tabIndex={-1} className="relative flex min-h-0 min-w-0 flex-col bg-canvas outline-hidden">

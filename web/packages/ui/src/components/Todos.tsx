@@ -54,20 +54,25 @@ function TodoMark({ status, className }: Readonly<{ status: TodoStatus; classNam
  * The open stages' counts after "2/7", each behind `sep`, its glyph and number in its colour, then
  * its words: "◉ 2 in progress · ⊘ 1 blocked · ○ 3 to do"; counts kept before the split add "1 open".
  * A phone drops the words, never the glyphs (the names say them all), so no count is colour alone.
+ * `stopped`: nothing works on the list any more (a turn that ended), so its rows in progress read in words only,
+ * without the stage's glyph or colour, on a phone too: only the running step turns.
  */
-export function TodoStages({ tally, sep }: Readonly<{ tally: TodoTally; sep: ReactNode }>) {
+export function TodoStages({ tally, sep, stopped = false }: Readonly<{ tally: TodoTally; sep: ReactNode; stopped?: boolean }>) {
   return (
     <>
-      {tally.stages.map(({ status, n }) => (
-        <Fragment key={status}>
-          {sep}
-          <span className={cn('flex shrink-0 items-center gap-1 tabular-nums', TONE[status].text)}>
-            <TodoMark status={status} className="size-3" />
-            {n}
-            <span className="max-sm:hidden"> {todoWord(status).toLowerCase()}</span>
-          </span>
-        </Fragment>
-      ))}
+      {tally.stages.map(({ status, n }) => {
+        const still = stopped && status === 'in_progress';
+        return (
+          <Fragment key={status}>
+            {sep}
+            <span className={cn('flex shrink-0 items-center gap-1 tabular-nums', !still && TONE[status].text)}>
+              {!still && <TodoMark status={status} className="size-3" />}
+              {n}
+              <span className={still ? undefined : 'max-sm:hidden'}> {todoWord(status).toLowerCase()}</span>
+            </span>
+          </Fragment>
+        );
+      })}
       {tally.open > 0 && (
         <>
           {sep}
@@ -326,7 +331,7 @@ export function TurnTodo({ timing }: Readonly<{ timing: TurnTiming }>) {
           <span className="max-sm:sr-only">Todo </span>
           {tally.done}/{tally.total}
         </span>
-        <TodoStages tally={tally} sep={<span className="max-sm:hidden">·</span>} />
+        <TodoStages tally={tally} sep={<span className="max-sm:hidden">·</span>} stopped={timing.state !== 'working'} />
       </button>
       {reader && (
         <Reader id={id} open={reader.open} phone={reader.phone} anchor={button} side="bottom" label="Todo at the end of this turn" parts={parts} onClose={() => setReader((r) => r && { ...r, open: false })} onClosed={() => setReader(null)} />
