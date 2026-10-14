@@ -1,5 +1,5 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, onTestFinished, test } from 'vitest';
 import { UamApp } from '@uam/ui';
 import { api, newRequestId } from '../../src/api';
 import { install } from '../../src/mock/install';
@@ -501,6 +501,28 @@ describe('composer menus and notices', () => {
     await waitFor(() => expect(document.activeElement?.getAttribute('aria-checked')).toBe('true'));
     expect(document.activeElement?.textContent).toMatch(/^Claude Haiku 4\.5/);
     expect(document.activeElement?.hasAttribute('data-highlighted')).toBe(true);
+  });
+
+  test('on a phone the model choices are a bottom sheet, as the other toolbar readers, opened on the current choice', async () => {
+    const width = window.innerWidth;
+    onTestFinished(() => { window.innerWidth = width; });
+    window.innerWidth = 390;
+    const { user } = await openTask('t3');
+    const model = await screen.findByRole('button', { name: 'Model: Auto' });
+    expect(model.getAttribute('aria-haspopup')).toBe('dialog');
+    await user.click(model);
+    const sheet = within(await screen.findByRole('dialog', { name: 'Model' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(sheet.getByText('GitHub Copilot')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.getAttribute('aria-checked')).toBe('true'));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Model' })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(model));
+    // A choice saves and closes the sheet, as it closes the menu.
+    await user.click(model);
+    await user.click(within(await screen.findByRole('dialog', { name: 'Model' })).getByRole('radio', { name: /GPT-5 mini/ }));
+    expect(await screen.findByRole('button', { name: 'Model: GPT-5 mini' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Model' })).toBeNull();
   });
 
   test('the toolbar has no empty Tools menu and Attach has a clean name', async () => {

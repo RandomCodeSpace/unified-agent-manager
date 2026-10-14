@@ -28,6 +28,28 @@ describe('changes', () => {
     await waitFor(() => expect(document.activeElement?.id).toBe('changes-link'));
   });
 
+  test('a long path gives way from the middle of its folder, and the header count wraps rather than clips', async () => {
+    const { user } = await openTask('t1');
+    await user.click(await screen.findByRole('button', { name: /^Open changes.*4 not committed$/ }));
+    const sheet = within(await screen.findByRole('dialog', { name: 'Changes' }));
+    await user.click(sheet.getByRole('radio', { name: 'All changes · 4' }));
+    const row = within(await sheet.findByTitle('internal/vterm/redraw_test.go'));
+    // The file name and its own folder sit in a box that does not shrink; the folders above it shorten at their end.
+    const name = row.getByText('redraw_test.go');
+    const own = row.getByText('vterm/');
+    expect(name.className).toContain('shrink-0');
+    expect(own.parentElement).toBe(name.parentElement);
+    expect(own.parentElement!.className).toContain('shrink-0');
+    expect(own.className).toContain('truncate');
+    expect(row.getByText('internal/').className).toContain('truncate');
+    expect(document.querySelector('[class*="direction:rtl"]')).toBeNull();
+    // Each part of the count stays whole; the count takes a second line instead of cutting one off.
+    const viewed = sheet.getByText(/^\d+ of \d+ viewed$/);
+    expect(viewed.className).toContain('whitespace-nowrap');
+    expect(viewed.parentElement!.className).toContain('line-clamp-2');
+    expect(viewed.parentElement!.className).not.toMatch(/\btruncate\b/);
+  });
+
   test('a file row has actions for its diff and its path', async () => {
     const { user } = await openTask('t8');
     await user.click(await screen.findByRole('button', { name: /^Open changes.*2 files$/ }));

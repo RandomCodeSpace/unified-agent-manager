@@ -3,7 +3,7 @@ import { ArrowDownToLine, ChevronDown, GitBranch, GitCommitHorizontal, RefreshCw
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, describeError, type GitFile, type GitState, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
-import { Note } from './common';
+import { FilePath, Note } from './common';
 import { Button } from './ui/button';
 import { Collapse } from './ui/collapse';
 import { Tip } from './ui/tooltip';
@@ -276,7 +276,7 @@ export function CommitPanel({
                   checked={selected.includes(f.path)}
                   onChange={(e) => setPicked(e.target.checked ? [...selected, f.path] : selected.filter((p) => p !== f.path))}
                 />
-                <span className="min-w-0 truncate font-mono text-code-sm [direction:rtl] text-left [unicode-bidi:plaintext]">{f.path}</span>
+                <FilePath path={f.path} className="font-mono text-code-sm" />
                 {f.other_task && <span className="shrink-0 text-meta text-muted">another thread</span>}
                 {f.status === 'deleted' && <span className="shrink-0 text-meta text-error">deleted</span>}
               </label>
