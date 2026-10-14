@@ -200,7 +200,8 @@ export function CommitPanel({
   if (!blocked && selected.length === 0) commitOff = 'Check a file to commit.';
   else if (!blocked && draft.message.trim() === '') commitOff = 'Write or generate a message to commit.';
   return (
-    <section aria-label="Commit" className={cn('flex shrink-0 flex-col gap-2 px-3 py-2', className)}>
+    // Open, it keeps room for the message and a few files however long the host's other contents are; they give way instead.
+    <section aria-label="Commit" className={cn('flex shrink-0 flex-col gap-2 px-3 py-2', className, formOpen && 'min-h-[min(18rem,45%)]')}>
       <div className="flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"

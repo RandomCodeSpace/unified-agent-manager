@@ -439,7 +439,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     worktrees (free space against a 10% line), every worktree biggest first
     with its Thread,
     stage, what is not committed or not pushed, and **Remove**, and the last
-    20 worktrees removed on settling. Sizes are measured in the background.
+    20 worktrees removed on settling (one recreated since is listed only
+    with the others). Sizes are measured in the background.
     Remove takes a worktree with nothing uncommitted at once and asks first
     when changes would be lost; it is refused while the Thread works.
   - Below 10% free space the Worktrees page in the Settings rail and the
@@ -1071,7 +1072,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   pauses queued follow-ups through the existing cancellation operation. Partial
   cancellation failures remain errors rather than a claimed stopped state.
 - **Background tasks**: a chip in the composer's toolbar counts the Thread's
-  running provider shells; click it to see each shell's status and command
+  running provider shells (once none runs, it shows its glyph alone while
+  the finished ones stay listed); click it to see each shell's status and command
   and to stop one. Stopping one shell does not stop the foreground turn.
   Stop requested means the provider accepted cancellation; the list waits for
   a reported terminal state. Unknown or read-only tasks cannot be stopped.
@@ -1658,7 +1660,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   it.
 - **Changes**: the "Changes" button in the Thread header shows how many
   tracked files in the Thread's repository are not committed (the count on
-  its sidebar row; an older service without that count makes it the
+  its sidebar row, so a folder holding only new, untracked files reads 0, as
+  its tip says; an older service without that count makes it the
   default scope's file count) and opens the changes beside the conversation with the diff (a
   full-screen sheet on a narrow window). The scopes at the top depend on
   the Thread. A Copilot Thread whose conversation records its own file
@@ -1728,7 +1731,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   whose upstream is another local branch is not pushed: Push says there is
   no remote to go to and moves nothing. Pull only
   fast-forwards; when both sides have new commits it says so and changes
-  nothing. The service runs git without a terminal, so a remote that needs a
+  nothing. A push the remote refuses for commits the branch lacks says to
+  pull first only when the branch has no commits of its own; otherwise it
+  says to merge or rebase onto the remote yourself. A binary file's change
+  reads "binary" in the list and says so in place of a diff. The service runs git without a terminal, so a remote that needs a
   password, or an SSH key the service's environment cannot use, fails with
   git's message. While any Thread in the same repository could still be
   writing there (mid-turn, starting, with prompts queued, or with subagents

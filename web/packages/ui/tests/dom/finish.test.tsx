@@ -195,6 +195,9 @@ describe('evidence inside Changes', () => {
     // The count is the folder's (git_pending, with the Thread); the dot waits for Changes to list the Thread's files.
     await waitFor(() => expect(trigger.querySelector('.bg-warning')).not.toBeNull());
     expect(trigger.querySelector('.animate-pulse-dot')).toBeNull();
+    // The folder's count leaves untracked files out, and its tip says so.
+    await user.hover(trigger);
+    expect(await screen.findByText('4 tracked files not committed · untracked files are not counted')).toBeTruthy();
     await user.click(trigger);
     expect(await screen.findByRole('dialog', { name: 'Changes' })).toBeTruthy();
   });
