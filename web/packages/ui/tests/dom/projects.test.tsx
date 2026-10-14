@@ -49,18 +49,6 @@ describe('add project', () => {
     expect(await screen.findByRole('option', { name: /Scratch pad/ })).toBeTruthy();
   });
 
-  test('a typed absolute path enables Continue without opening it first', async () => {
-    const { user } = renderApp();
-    const dialog = await addProjectDialog(user);
-    const path = await dialog.findByRole('textbox', { name: 'Folder path' });
-    await user.clear(path);
-    await user.type(path, '/home/user/projects/scratch');
-    await waitFor(() => expect(dialog.getByRole('button', { name: 'Continue' })).toHaveProperty('disabled', false));
-    await user.click(dialog.getByRole('button', { name: 'Continue' }));
-    await screen.findByRole('dialog', { name: 'Add a project' });
-    expect(dialog.getByText('/home/user/projects/scratch')).toBeTruthy();
-  });
-
   test('a recent directory that already has a project selects that project after review', async () => {
     const { user } = renderApp();
     const dialog = await addProjectDialog(user);

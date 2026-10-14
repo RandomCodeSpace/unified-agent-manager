@@ -333,9 +333,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   (or Enter) to jump to it. Click a segment of the path at the top or **Up**
   to go back, double-click a folder or its arrow to open it, and turn on
   **Show hidden** for dot-folders. **New folder** adds a row where you type
-  a name; Enter creates the folder and selects it. **Continue** takes a
-  path typed in **Folder path** as typed (it need not be opened first), else
-  the selected folder, or the one being shown, to the review step, where you
+  a name; Enter creates the folder and selects it. **Continue** takes the
+  selected folder, or the one being shown, to the review step, where you
   name the Project and press **Add project**. With the keyboard: arrows
   move, Enter opens, Backspace goes up, typing jumps to a name, and
   Ctrl+Enter (Cmd+Enter on a Mac) continues with the folder. A folder with more than 1,000 folders lists
