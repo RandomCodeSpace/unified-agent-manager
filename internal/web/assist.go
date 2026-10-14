@@ -52,9 +52,10 @@ func (s *Server) assistRoutes(mux *http.ServeMux) {
 }
 
 // assistRunnerLocked claims s's provider for one assist Utility call,
-// counted in titles so Shutdown waits for it; runAssist ends the claim. It
-// returns nil when the provider cannot run one or has no Utility model. The
-// caller holds mu.
+// counted in titles so Shutdown waits for it; the caller ends the claim once
+// it is done with the reply, so the wait covers its log lines and state
+// changes too. It returns nil when the provider cannot run one or has no
+// Utility model. The caller holds mu.
 func (m *Manager) assistRunnerLocked(s *webSession) (agentapi.UtilityRunner, string) {
 	runner, ok := m.providers[s.provider].(agentapi.UtilityRunner)
 	info := m.infos[s.provider]
@@ -71,7 +72,6 @@ func (m *Manager) assistRunnerLocked(s *webSession) (agentapi.UtilityRunner, str
 // past today's limit, and returns the model's reply. A call that gets no
 // slot within assistTimeout is dropped: its answer would come too late.
 func (m *Manager) runAssist(ctx context.Context, runner agentapi.UtilityRunner, call UtilityCall, req agentapi.UtilityRequest) (string, error) {
-	defer m.titles.Done()
 	ctx, cancel := m.bound(ctx)
 	defer cancel()
 	wait, stop := context.WithTimeout(ctx, assistTimeout)
@@ -262,6 +262,7 @@ func (m *Manager) SuggestReplies(ctx context.Context, id string) (Suggestions, e
 		m.mu.Unlock()
 		return none, nil
 	}
+	defer m.titles.Done()
 	prompt := s.suggestionPrompt(s.lastMainItem())
 	run := &suggestionRun{itemID: key, done: make(chan struct{})}
 	s.suggesting = run
@@ -441,6 +442,7 @@ func (m *Manager) outcomeTurnLocked(s *webSession, state agentapi.TurnState, com
 	run := s.outcomeRun
 	// Past today's Utility limit the line keeps the evidence alone.
 	go func() {
+		defer m.titles.Done()
 		reply, err := m.runAssist(m.ctx, runner, call, req)
 		verb := cleanGeneratedTitle(reply)
 		if err != nil || verb == "" {
