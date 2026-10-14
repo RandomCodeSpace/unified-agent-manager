@@ -1198,7 +1198,7 @@ func (m *Manager) summaryLocked(s *webSession) SessionSummary {
 		Diff:       s.diff,
 		GitPending: m.gitPending[m.pendingTop[s.workdir]],
 		RerunOf:    s.rerunOf, Outcome: s.outcome, StopReason: s.shownStopReason(),
-		ForkOf: forkOf, ForkUserItemID: forkUser, Rewind: s.rewindSummary(),
+		ForkOf: forkOf, ForkUserItemID: forkUser, NotStarted: s.fork != nil && s.base == StateClosed && len(s.turnTimings) == 0, Rewind: s.rewindSummary(),
 		Branch:       s.branch,
 		TitlePending: s.titling || s.titleWait != nil,
 	}

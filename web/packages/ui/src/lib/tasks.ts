@@ -90,7 +90,7 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Not started' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /** A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished. */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
@@ -136,6 +136,8 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     case 'cancelled':
       return { label: 'Stopped', text: stopWords(s).title, tone: 'muted' };
     case 'closed':
+      // A new branch is closed only until its first message.
+      if (s.not_started) return { label: 'Not started', text: 'Branched; starts with your first message', tone: 'muted' };
       return { label: 'Closed', text: 'Conversation closed', tone: 'muted' };
     default:
       return { label: 'Idle', text: 'Waiting for your message', tone: 'muted' };

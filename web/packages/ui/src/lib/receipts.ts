@@ -76,6 +76,32 @@ const NEGATION = /\b(?:not|no|never|none|nothing|neither|nor|without)\b|n['’]t
 const NO_PROBLEM = /\b(?:no|without|zero)\s+(?:\w+\s+)?(?:issues|warnings|errors|problems|findings|failures|regressions)\b/gi;
 /** After a path, an edit verb that takes it as its subject: "`a.go`: added …", "`a.go` was updated". */
 const EDIT_AFTER = /^[\s:—–-]*(?:(?:is|was|were|are|has|have|been|now|also|got)\s+)*([a-z-]+)/i;
+/** A sentence whose work is not the reply's own: it gives the work to someone else, reports what a text says ("it says I updated …"), or turns a request down ("I can't send that"). */
+const NOT_OWN = /(?:\bnot|n['’]t)\s+(?:mine|ours|my\s+(?:changes?|edits?|work))\b|\b(?:by|from)\s+(?:someone|somebody)\s+else\b|\b(?:someone|somebody)\s+else(?:['’]s\b|\s+(?:\w+\s+)?(?:edited|updated|changed|modified|wrote|added|created|deleted|removed)\b)|\b(?:it|this|that|which)\s+(?:says|said|claims|claimed|states|stated)\s+(?:that\s+)?(?:I|we)\b|\bI\s+(?:can['’]t|cannot|won['’]t|will\s+not)\s+(?:send|say|state|claim|write|repeat|reply|use)\b/i;
+/** A sentence that disowns what the one before it named: "Those aren't mine." */
+const DISOWNS = /^\s*(?:those|these|they|that|it|both|neither)\b[^.!?]*?(?:(?:\bnot|n['’]t)\s+(?:mine|ours|my\s+(?:changes?|edits?|work))|\b(?:someone|somebody)\s+else['’]s)\b/i;
+/** Quoted words ("…", “…”) are what a text says, not what the reply claims; a quoted name with no space ("a.go") stays. A code span is matched first so its own quotes stay its own. */
+const QUOTED = /`[^`\n]*`|"[^"\n]*"|“[^”\n]*”/g;
+
+/** `prose` with what it does not claim as its own blanked, length for length: quoted text, and each sentence that is not its own work or that the next sentence disowns. */
+function ownProse(prose: string): string {
+  const blank = (s: string) => s.replace(/[^\n]/g, ' ');
+  let out = prose.replace(QUOTED, (m) => (m.startsWith('`') || !/[ \t]/.test(m) ? m : blank(m)));
+  const masked = out.replace(CODE_SPAN, (m) => `\`${'_'.repeat(m.length - 2)}\``);
+  // Sentences as sentenceAround cuts them, with where each starts.
+  const parts: { from: number; text: string }[] = [];
+  let from = 0;
+  for (const m of masked.matchAll(/[.!?](?=\s|$)|[;\n]/g)) {
+    parts.push({ from, text: masked.slice(from, m.index + 1) });
+    from = m.index + 1;
+  }
+  parts.push({ from, text: masked.slice(from) });
+  const sentences = parts.filter((p) => p.text.trim());
+  sentences.forEach((p, i) => {
+    if (NOT_OWN.test(p.text) || DISOWNS.test(sentences[i + 1]?.text ?? '')) out = out.slice(0, p.from) + blank(out.slice(p.from, p.from + p.text.length)) + out.slice(p.from + p.text.length);
+  });
+  return out;
+}
 
 /** The verb nearest before a span in its sentence that says what was done with it, if any. */
 function verbBefore(before: string): string | undefined {
@@ -113,8 +139,8 @@ export function claimsOf(text: string): Claim[] {
     seen.set(key, c);
     out.push(c);
   };
-  // Fenced code is the reply's own content, not a claim about the work.
-  const prose = text.replace(/```[\s\S]*?```/g, ' ');
+  // Fenced code is the reply's own content, not a claim about the work; neither is what it quotes, disowns or refuses.
+  const prose = ownProse(text.replace(/```[\s\S]*?```/g, ' '));
   const masked = prose.replace(CODE_SPAN, (m) => `\`${'_'.repeat(m.length - 2)}\``);
   for (const m of prose.matchAll(CODE_SPAN)) {
     const s = m[1].trim();

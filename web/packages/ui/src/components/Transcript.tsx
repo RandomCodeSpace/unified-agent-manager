@@ -1057,11 +1057,14 @@ function NativeEdit({ item, edit }: Readonly<{ item: Item; edit: NativeFileEdit 
   </div>;
 }
 
-/** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. */
+/** The images a tool's result returned, as thumbnails that open the viewer, and its note on any left out. A lone image without a name takes the image file the call named (a view of `shot.png`). */
 function ToolImages({ item, sessionId, className }: Readonly<{ item: Item; sessionId?: string; className?: string }>) {
+  const arg = toolLabel(item.tool).arg;
+  const file = /\.(?:png|jpe?g|gif|webp)$/i.test(arg) ? arg.slice(Math.max(arg.lastIndexOf('/'), arg.lastIndexOf('\\')) + 1) : '';
+  const images = item.images?.length === 1 && !item.images[0].name && file ? [{ ...item.images[0], name: file }] : item.images ?? [];
   return (
     <div className={cn('flex flex-col gap-1', className)}>
-      {sessionId && <ImageThumbs sessionId={sessionId} images={item.images ?? []} />}
+      {sessionId && <ImageThumbs sessionId={sessionId} images={images} />}
       {item.images_note && <p className="text-caption text-muted">{item.images_note}</p>}
     </div>
   );

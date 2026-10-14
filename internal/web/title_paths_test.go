@@ -243,8 +243,8 @@ func TestFallbackTitle(t *testing.T) {
 	}
 }
 
-// A forked Thread starts with its source's name or title, and a Thread
-// whose turn ended untitled takes its first message.
+// A forked Thread starts with its source's name or title, marked as the
+// branch, and a Thread whose turn ended untitled takes its first message.
 func TestForkTakesTheSourceTitle(t *testing.T) {
 	m, p, _, source := taskForkManager(t)
 	if got := summaryOf(t, m, source.ID); got.Title != "original" {
@@ -258,7 +258,7 @@ func TestForkTakesTheSourceTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if branch.Title != "Parser fix" || branch.Name != "" {
+	if branch.Title != "Parser fix (branch)" || branch.Name != "" {
 		t.Fatalf("branch name %q title %q", branch.Name, branch.Title)
 	}
 }

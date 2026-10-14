@@ -10,7 +10,7 @@ function fixture() {
   source.capabilities.fork = true;
   vi.spyOn(data, 'seed').mockReturnValue(state);
   const forked = () => {
-    const target = { ...source, id: 'native-branch', name: 'Native branch', fork_of: source.id, stage: 'active' as const, open: false, state: 'closed' as const, pending: 0, interactions: [], queue: [], items: source.items.map(it => ({ ...it })) };
+    const target = { ...source, id: 'native-branch', name: 'Native branch', fork_of: source.id, stage: 'active' as const, open: false, state: 'closed' as const, not_started: true, pending: 0, interactions: [], queue: [], items: source.items.map(it => ({ ...it })) };
     state.tasks.push(target);
     return target;
   };
@@ -46,8 +46,14 @@ describe('native task branching', () => {
     await user.click(await screen.findByRole('menuitem', { name: 'Branch from here' }));
     const picker = within(await screen.findByRole('dialog', { name: 'Branch from here' }));
     await user.click(picker.getByRole('button', { name: 'Branch thread' }));
-    await screen.findByRole('heading', { level: 1, name: 'Native branch' });
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Native branch' });
     expect(fork).toHaveBeenCalledTimes(1);
+    // A new branch reads not started, not closed, in its header and its row.
+    expect(heading.closest('header')!.textContent).toContain('Not started');
+    expect(heading.closest('header')!.textContent).not.toContain('Closed');
+    const row = document.querySelector('[data-task-row="native-branch"]')!;
+    expect(row.textContent).toContain('Not started');
+    expect(row.textContent).not.toContain('Closed');
     const [sourceId, request] = fork.mock.calls[0];
     expect(sourceId).toBe(source.id);
     expect(source.items.some(it => it.kind === 'user' && !it.delivery && it.id === request.user_item_id)).toBe(true);

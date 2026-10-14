@@ -371,6 +371,7 @@ const STATUS_MARKS = {
   Interrupted: { icon: Pause, tone: 'text-warning' },
   Stopped: { icon: Square, tone: 'text-muted' },
   Closed: { icon: CircleMinus, tone: 'text-muted' },
+  'Not started': { icon: Clock, tone: 'text-muted' },
   Idle: { icon: Clock, tone: 'text-muted' },
   Settled: { icon: CircleCheck, tone: 'text-muted' },
   Archived: { icon: Archive, tone: 'text-muted' },

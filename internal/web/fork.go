@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
+	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/store"
 )
 
@@ -298,10 +303,12 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 	s := newSession(fork.ID, fork.Provider, "", fork.Workdir, fork.ProviderSessionID, fork.CreatedAt)
 	s.projectID, s.model, s.effort, s.contextSize, s.mode, s.agent = fork.ProjectID, fork.Lineage.Model, fork.Effort, fork.ContextSize, fork.Mode, fork.Agent
 	s.base, s.fork = StateClosed, &fork.Lineage
-	// The branch starts with its source's name or title as its title.
+	// The branch starts with its source's name or title as its title, marked
+	// as the branch so the two read apart.
 	m.mu.Lock()
-	if source := m.sessions[fork.Lineage.SourceTaskID]; source != nil {
-		s.title = cleanTitle(firstNonEmpty(source.name, source.title))
+	source := m.sessions[fork.Lineage.SourceTaskID]
+	if source != nil {
+		s.title = branchTitle(firstNonEmpty(source.name, source.title))
 	}
 	m.mu.Unlock()
 	rec := store.SessionRecord{ID: s.id, Agent: s.provider, Workdir: s.workdir, Mode: s.mode, CreatedAt: s.createdAt, LastSeenAt: s.createdAt, Status: store.StatusActive, Surface: store.SurfaceWeb, ProviderSessionID: s.convID,
@@ -334,7 +341,83 @@ func (m *Manager) registerFork(fork store.WebFork) (SessionSummary, error) {
 		}
 		return SessionSummary{}, err
 	}
+	if source != nil {
+		m.copyUploads(source, s)
+	}
 	return m.Summary(s.id)
+}
+
+// branchSuffix marks a branch's title.
+const branchSuffix = " (branch)"
+
+// branchTitle is a branch's first title: its source's, marked once.
+func branchTitle(source string) string {
+	title := strings.TrimSuffix(cleanTitle(source), branchSuffix)
+	if title == "" {
+		return ""
+	}
+	return clipRunes(title, maxNameRunes-utf8.RuneCountInString(branchSuffix)) + branchSuffix
+}
+
+// copyUploads gives a branch its source's kept files, the uploads its
+// prompts carried and the images its tools returned, so the copied history
+// shows them as chips and thumbnails as the source does. Each keeps its ID
+// and record; the bytes are linked where the file system allows, else
+// copied. A file that cannot be copied shows by name only, as before.
+func (m *Manager) copyUploads(source, branch *webSession) {
+	m.mu.Lock()
+	var kept []upload
+	for _, u := range source.uploads {
+		if u.Tool || !u.UsedAt.IsZero() {
+			kept = append(kept, *u)
+		}
+	}
+	m.mu.Unlock()
+	if len(kept) == 0 {
+		return
+	}
+	from, to := m.taskUploadDir(source.id), m.taskUploadDir(branch.id)
+	if err := privateDirs(m.uploadRoot(), to); err != nil {
+		log.Warn("copy branch attachments failed", "session", branch.id, "error", err)
+		return
+	}
+	copied := map[string]*upload{}
+	for i := range kept {
+		u := &kept[i]
+		if err := copyUpload(from, to, u); err != nil {
+			log.Warn("copy branch attachment failed", "session", branch.id, "error", err)
+			continue
+		}
+		copied[u.ID] = u
+	}
+	m.mu.Lock()
+	removed := branch.removed
+	if !removed {
+		if branch.uploads == nil {
+			branch.uploads = map[string]*upload{}
+		}
+		maps.Copy(branch.uploads, copied)
+	}
+	m.mu.Unlock()
+	if removed {
+		removeUploads(to)
+	}
+}
+
+// copyUpload links or copies one stored upload's bytes and writes its record.
+func copyUpload(from, to string, u *upload) error {
+	src, dst := filepath.Join(from, u.ID), filepath.Join(to, u.ID)
+	if err := os.Link(src, dst); err != nil {
+		data, err := os.ReadFile(src) // #nosec G304 -- UAM's own directory; the ID is a stored UUID.
+		if err != nil {
+			return err
+		}
+		if int64(len(data)) != u.Size {
+			return fmt.Errorf("attachment %s changed size", u.ID)
+		}
+		return writeUpload(filepath.Dir(to), to, u, data)
+	}
+	return writeUploadRecord(to, u)
 }
 
 // DismissFork clears the one unresolved reservation for this source, owner

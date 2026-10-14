@@ -337,6 +337,9 @@ type SessionSummary struct {
 	// ForkOf is the source Task whose selected recorded prefix this Task copied.
 	ForkOf         string `json:"fork_of,omitempty"`
 	ForkUserItemID string `json:"fork_user_item_id,omitempty"`
+	// NotStarted is set on a branch that has had no turn of its own: it is
+	// closed only until its first message.
+	NotStarted bool `json:"not_started,omitempty"`
 	// Rewind is a native rewind that still holds the Task until reconciled.
 	Rewind RewindStatus `json:"rewind,omitzero"`
 	// Branch is the branch checked out in Workdir, as last read; omitted

@@ -616,3 +616,19 @@ func TestLivePlanReceiptNamesTheReviewItDecided(t *testing.T) {
 		t.Fatalf("decided receipt = %+v", it.Plan)
 	}
 }
+
+// Leaving planning is recorded as an approval with the exit-only action; its
+// receipt says what happened, not that the plan was approved.
+func TestPlanReceiptForLeavingPlanning(t *testing.T) {
+	for action, want := range map[rpc.ExitPlanModeAction]string{
+		rpc.ExitPlanModeAction(agentapi.PlanExitOnly): "Left planning · Keep data\nPlan not implemented",
+		rpc.ExitPlanModeActionInteractive:             "Plan approved · Keep data\nImplement interactively",
+	} {
+		tr := &transcript{}
+		tr.planItem(ev("request", &rpc.ExitPlanModeRequestedData{RequestID: "r1", Summary: "Keep data", PlanContent: "# Plan", Actions: []rpc.ExitPlanModeAction{action}, RecommendedAction: action}))
+		it, ok := tr.planItem(ev("completed", &rpc.ExitPlanModeCompletedData{RequestID: "r1", Approved: copilot.Bool(true), SelectedAction: &action}))
+		if !ok || it.Text != want {
+			t.Errorf("%s receipt = %q, %v; want %q", action, it.Text, ok, want)
+		}
+	}
+}

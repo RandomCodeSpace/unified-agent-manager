@@ -148,6 +148,10 @@ func (t *transcript) planItem(ev copilot.SessionEvent) (agentapi.Item, bool) {
 	if approved != nil {
 		if *approved {
 			first, second = "Plan approved", planActionLabel(action)
+			// Leaving planning approves nothing: the plan is left as it is.
+			if action == agentapi.PlanExitOnly {
+				first, second = "Left planning", "Plan not implemented"
+			}
 		} else {
 			first, second = "Plan not approved", "Review ended"
 			if strings.TrimSpace(feedback) != "" {
