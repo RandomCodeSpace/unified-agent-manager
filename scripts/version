@@ -1,0 +1,33 @@
+#!/bin/sh
+# Prints the version a source build embeds (the Makefile's VERSION).
+#
+# A release tag marks a generated child of its reviewed source commit, which
+# is never merged back (docs/releasing.md), so no release tag is an ancestor
+# of main and `git describe` would reach back to a tag from before that
+# layout. The version is therefore the newest release tag whose source
+# parent is an ancestor of HEAD, with the commits since that parent and the
+# abbreviated hash as describe prints them: v0.19.10-14-gfbcd6384[-dirty].
+# A checkout of a tagged commit prints its tag alone. Without such a tag the
+# plain describe is printed, and "dev" outside a repository.
+set -eu
+if exact=$(git describe --tags --exact-match --dirty 2>/dev/null); then
+  printf '%s\n' "$exact"
+  exit 0
+fi
+if ! head=$(git describe --always --dirty --exclude='*' 2>/dev/null); then
+  echo dev
+  exit 0
+fi
+# Prerelease suffixes sort before their release: v1.0.0 is newer than v1.0.0-beta.1.
+for tag in $(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname); do
+  if git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+    base=$tag
+  elif git merge-base --is-ancestor "$tag^" HEAD 2>/dev/null; then
+    base=$tag^
+  else
+    continue
+  fi
+  printf '%s-%s-g%s\n' "$tag" "$(git rev-list --count "$base..HEAD")" "$head"
+  exit 0
+done
+git describe --tags --always --dirty 2>/dev/null || echo dev

@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Exercise scripts/version in a disposable repository with the release layout:
+# an annotated tag on a generated child that is not an ancestor of main.
+set -euo pipefail
+script=$(cd "$(dirname "$0")" && pwd)/version
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/uam-version-test.XXXXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+cd "$scratch"
+git init -q -b main
+git config user.name 'Version test'
+git config user.email 'version-test@example.invalid'
+git config commit.gpgsign false
+git config tag.gpgsign false
+expect() {
+  local got want=$1
+  got=$("$script")
+  if [[ $got != "$want" ]]; then
+    echo "version printed $got, want $want" >&2
+    exit 1
+  fi
+}
+
+printf 'one\n' > file
+git add file
+git commit -qm 'c1'
+expect "$(git rev-parse --short HEAD)"
+git commit -q --allow-empty -m 'c2'
+source_commit=$(git rev-parse HEAD)
+# The release child adds only the generated bundle and is tagged, never merged.
+git switch -q --detach "$source_commit"
+mkdir -p internal/web/dist
+printf 'ui\n' > internal/web/dist/index.html
+git add internal/web/dist
+git commit -qm 'build(release): embed web assets for v0.1.0'
+git tag -a v0.1.0 -m v0.1.0
+expect v0.1.0
+printf 'edited\n' > file
+expect v0.1.0-dirty
+git checkout -q -- file
+git switch -q main
+expect "v0.1.0-0-g$(git rev-parse --short HEAD)"
+git commit -q --allow-empty -m 'c3'
+git commit -q --allow-empty -m 'c4'
+head=$(git rev-parse --short HEAD)
+expect "v0.1.0-2-g$head"
+printf 'edited\n' > file
+expect "v0.1.0-2-g$head-dirty"
+git checkout -q -- file
+# A newer prerelease cut from an unmerged branch does not name main's builds.
+git switch -qc feature
+git commit -q --allow-empty -m 'unmerged source'
+git commit -q --allow-empty -m 'build(release): embed web assets for v0.2.0-beta.1'
+git tag -a v0.2.0-beta.1 -m v0.2.0-beta.1
+git switch -q main
+expect "v0.1.0-2-g$head"
+# A newer release whose source is on main does, and its stable tag outranks
+# its own prerelease.
+git switch -q --detach HEAD
+printf 'ui2\n' > index.html
+git add index.html
+git commit -qm 'build(release): embed web assets for v0.2.0'
+git tag -a v0.2.0-beta.2 -m v0.2.0-beta.2
+git tag -a v0.2.0 -m v0.2.0
+git switch -q main
+expect "v0.2.0-0-g$head"
+# A tag on an ancestor counts from the tag itself, as describe does.
+git tag v0.2.1 HEAD
+git commit -q --allow-empty -m 'c5'
+expect "v0.2.1-1-g$(git rev-parse --short HEAD)"
+# Without any tag reaching HEAD the hash alone is printed.
+mkdir "$scratch/plain"
+cd "$scratch/plain"
+git init -q -b main
+git config user.name 'Version test'
+git config user.email 'version-test@example.invalid'
+git config commit.gpgsign false
+git commit -q --allow-empty -m 'only'
+expect "$(git rev-parse --short HEAD)"
+cd /
+expect dev
+printf 'PASS: tagged child, source parent, commits since, dirty, unmerged prerelease, stable over prerelease, ancestor tag, no tag, no repository\n'
