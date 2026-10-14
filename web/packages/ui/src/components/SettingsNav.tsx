@@ -94,12 +94,20 @@ export function SettingsRail({ pages, current, query, onQuery, onOpen, attention
       event.stopPropagation();
       onQuery('');
     }
+    // Enter opens the first page listed.
+    if (event.key === 'Enter' && query.trim() && shown.length) {
+      event.preventDefault();
+      onOpen(shown[0].id);
+    }
   }
   return (
-    <nav aria-label="Settings sections" className={cn('flex min-h-0 shrink-0 flex-col gap-5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pt-2 pb-6', list ? 'w-full' : 'w-64')}>
-      <div className="relative">
-        <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-faint" />
-        <Input type="search" size="md" aria-label="Find a setting" placeholder="Find a setting" spellCheck={false} autoComplete="off" className="w-full pl-8" value={query} onChange={(e) => onQuery(e.target.value)} onKeyDown={onKeyDown} />
+    <nav aria-label="Settings sections" className={cn('flex min-h-0 shrink-0 flex-col gap-5 overflow-y-auto overflow-x-hidden overscroll-contain px-3 pb-6', list ? 'w-full' : 'w-64')}>
+      {/* Stays at the top while the pages scroll; its padding paints over them in place of the gap below it. */}
+      <div className="sticky top-0 z-10 -mb-5 bg-canvas pt-2 pb-5">
+        <div className="relative">
+          <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-faint" />
+          <Input type="search" size="md" aria-label="Find a setting" placeholder="Find a setting" spellCheck={false} autoComplete="off" className="w-full pl-8" value={query} onChange={(e) => onQuery(e.target.value)} onKeyDown={onKeyDown} />
+        </div>
       </div>
       {groups.length === 0 && <Note role="status" className="px-2">No setting matches “{query.trim()}”.</Note>}
       {groups.map(({ group, pages: items }) => (

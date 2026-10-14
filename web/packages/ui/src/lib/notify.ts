@@ -206,7 +206,7 @@ export async function enableNotifications(): Promise<EnableResult> {
     permission = Notification.permission;
   }
   if (permission === 'denied') return { error: 'Notifications are blocked for this site. Allow them in the browser’s site settings, then try again.' };
-  if (permission !== 'granted') return { error: 'Notifications were not allowed.' };
+  if (permission !== 'granted') return { error: 'Notifications were not allowed. Allow them for this site in the browser’s site settings, then try again.' };
   const mode: NotifyMode = (await subscribePush()) ? 'push' : 'page';
   saveNotifyMode(mode);
   return { mode };

@@ -459,7 +459,114 @@ function NotifyRow() {
   );
 }
 
-export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connectionsRequest = 0, connections, focusAccount }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; /** Counts requests to show Connected instances (the instance switcher's Connect another instance). */ connectionsRequest?: number; connections?: ReactNode; focusAccount?: string }>) {
+type Catalog = ReturnType<typeof useApp>['meta'];
+
+/** What needs the user, marked on its page in the rail. */
+function pageAttention({ utilityPaused, pausedPurposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta }: Readonly<{ utilityPaused: boolean; pausedPurposes: string[]; repliesPaused: boolean; missingKeys: CustomProvider[]; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; restart: boolean; meta: Catalog }>): Partial<Record<SettingsPage, PageAttention>> {
+  const attention: Partial<Record<SettingsPage, PageAttention>> = {};
+  if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
+  else if (pausedPurposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.map(purposeLabel).join(', ')}` };
+  if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
+  if (missingKeys.length) attention.providers = { tone: 'error', text: `API key missing: ${missingKeys.map((p) => p.name).join(', ')}` };
+  if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
+  else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
+  if (restart) attention.uam = { tone: 'warning', text: 'Restart available' };
+  if (meta?.disk?.low) attention.worktrees = { tone: 'warning', text: diskLowText(meta.disk) };
+  return attention;
+}
+
+/** The Utility model's name for a provider's choice: None, a model by ID (its name when the catalog lists it), or Cheapest. */
+function utilityModelName(utility: ProviderInfo, choice: string): string {
+  if (choice === UTILITY_NONE) return 'None';
+  if (choice) return utility.models.find((m) => m.id === choice)?.name ?? choice;
+  return cheapestLabel(utility);
+}
+
+/** New threads' line: the default model, effort and mode, once the defaults resolve. */
+function newThreadsSummary(taskDefaults: ReturnType<typeof resolveTaskDefaults>, defaultModel: Model | null | undefined): string | undefined {
+  if (!taskDefaults) return undefined;
+  const mode = taskDefaults.mode === 'yolo' ? 'Yolo' : 'Safe';
+  return [defaultModel?.name ?? 'Provider default', taskDefaults.effort && `${effortLabel(taskDefaults.effort)} effort`, mode].filter(Boolean).join(' · ');
+}
+
+/** GitHub Copilot's line: signed in or out, and a CLI update when one waits; none without an account. */
+function accountSummary(accounts: ProviderInfo[], cliUpdate: ProviderInfo['cli_update']): string | undefined {
+  if (!accounts.length) return undefined;
+  const signed = accounts.some((p) => p.signed_out) ? 'Signed out' : 'Signed in';
+  return [signed, cliUpdate && `CLI ${cliUpdate} available`].filter(Boolean).join(' · ');
+}
+
+/** The current values under each page's name in the phone's list. */
+function pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility, accounts, cliUpdate, configured, theme }: Readonly<{ settings: Settings; meta: Catalog; taskDefaults: ReturnType<typeof resolveTaskDefaults>; defaultModel: Model | null | undefined; menuModels: { owner: string; id: string }[]; utility: ProviderInfo | undefined; accounts: ProviderInfo[]; cliUpdate: ProviderInfo['cli_update']; configured: CustomProvider[]; theme: Theme }>): Partial<Record<SettingsPage, string>> {
+  const utilityChoice = utility ? settings.title_model?.[utility.name] ?? '' : '';
+  const customCount = configured.reduce((n, p) => n + p.models.length, 0);
+  const customNoun = customCount === 1 ? 'model' : 'models';
+  return {
+    'new-tasks': newThreadsSummary(taskDefaults, defaultModel),
+    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
+    models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
+    'background-ai': utility && `Utility model: ${utilityModelName(utility, utilityChoice)}`,
+    copilot: accountSummary(accounts, cliUpdate),
+    providers: configured.length ? `${configured.map((p) => p.name).join(', ')} · ${customCount} ${customNoun}` : 'None added',
+    uam: [meta?.service && `Running ${meta.service.running}`, `Terminal ${settings.terminal ? 'on' : 'off'}`].filter(Boolean).join(' · '),
+    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]}`,
+    worktrees: meta?.disk && `${sizeText(meta.disk.free_bytes)} free · ${percentFree(meta.disk)}%`,
+  };
+}
+
+/** The pages the instance on screen can fill; the others are left out of the rail. */
+function offeredPages(connections: boolean, meta: Catalog, accounts: boolean): readonly (typeof SETTINGS_PAGES)[number][] {
+  return SETTINGS_PAGES.filter((p) => {
+    if (p.id === 'connections') return connections;
+    if (p.id === 'copilot') return !meta || accounts;
+    if (p.id === 'mcp') return !meta || meta.providers.some((provider) => provider.capabilities.mcp);
+    return true;
+  });
+}
+
+/** Where the Agent toolkit pages start: the Thread's project when it is registered, else Global. */
+function initialToolkitScope(threadProject: string | undefined, projects: readonly { id: string }[]): string {
+  if (!threadProject) return '';
+  return projects.some((p) => p.id === threadProject) ? threadProject : '';
+}
+
+/** The rail's current page: while searching, the open page when it is listed, else the first match (what Enter opens). */
+function railCurrentPage(searching: boolean, shown: SettingsPage | null, visible: ReadonlySet<SettingsPage>, matches: readonly { id: SettingsPage }[]): SettingsPage | null {
+  if (!searching) return shown;
+  if (shown && visible.has(shown)) return shown;
+  return matches[0]?.id ?? null;
+}
+
+/** The pages mounted only while on screen. */
+const ON_SCREEN_ONLY: readonly SettingsPage[] = ['token-costs', 'archived', 'connections', 'gitlab', 'worktrees'];
+
+/**
+ * Whether a page's cards are in the tree: on screen, or shown once before and kept (hidden) with its forms and lists;
+ * Background AI from the start, since the rail's dot reads it.
+ */
+function pageMounted(id: SettingsPage, on: boolean, visited: ReadonlySet<SettingsPage>): boolean {
+  if (on) return true;
+  if (ON_SCREEN_ONLY.includes(id)) return false;
+  return id === 'background-ai' || visited.has(id);
+}
+
+/** One page in the scroll area: its breadcrumb while searching (a button to open it), else its line; then its cards. */
+function PageSlot({ page, on, searching, line, onOpen, children }: Readonly<{ page: (typeof SETTINGS_PAGES)[number]; on: boolean; searching: boolean; line: string; onOpen: (id: SettingsPage) => void; children: ReactNode }>) {
+  let head: ReactNode = null;
+  if (searching) {
+    head = <button type="button" className="flex items-center gap-1 self-start rounded-sm px-1 text-caption text-muted hover:text-ink" onClick={() => onOpen(page.id)}>
+      {page.group.label}<ChevronRight aria-hidden="true" className="size-3.5" /><span className="font-medium text-ink">{page.label}</span>
+    </button>;
+  } else if (line) {
+    head = <p className="px-1 text-caption text-muted">{line}</p>;
+  }
+  return <div hidden={!on} className="flex flex-col gap-4">
+    {head}
+    {children}
+  </div>;
+}
+
+export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 0, connectionsRequest = 0, connections, focusAccount, threadProject }: Readonly<{ leading?: ReactNode; onClose: () => void; onLogout?: () => void; tokenPricesRequest?: number; /** Counts requests to show Connected instances (the instance switcher's Connect another instance). */ connectionsRequest?: number; connections?: ReactNode; focusAccount?: string; /** The project of the Thread open behind Settings: the Agent toolkit pages start at its scope. */ threadProject?: string }>) {
   const api = useApi();
   const federation = useFederation();
   // Switching the instance on screen keeps the page open (connected instances only).
@@ -540,8 +647,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const [pausedPurposes, setPausedPurposes] = useState<{ purposes: string[]; resetsAt: string }>({ purposes: [], resetsAt: '' });
   const onPausedPurposes = useCallback((purposes: string[], resetsAt: string) => setPausedPurposes({ purposes, resetsAt }), []);
   const repliesPaused = settings.suggest_replies !== false && pausedPurposes.purposes.includes('suggest-replies');
-  // Agents, Skills, Hooks and Instructions share one scope; a kind with a form open holds it.
-  const [toolkitScope, setToolkitScope] = useState('');
+  // Agents, Skills, Hooks and Instructions share one scope, the Thread's project to start with; a kind with a form open holds it.
+  const [toolkitScope, setToolkitScope] = useState(() => initialToolkitScope(threadProject, projects));
   const [held, setHeld] = useState<readonly ConfigurationKind[]>([]);
   const hold = useCallback((kind: ConfigurationKind, on: boolean) => setHeld((before) => (before.includes(kind) === on ? before : on ? [...before, kind] : before.filter((k) => k !== kind))), []);
   // A phone opening a page moves focus to its back button; going back returns it to the page's row.
@@ -627,42 +734,19 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
 
   const accounts = (meta?.providers ?? []).filter((p) => p.capabilities.account);
   const missingKeys = configured.filter((p) => !p.key_present);
-  // What needs the user, marked on its page in the rail.
-  const attention: Partial<Record<SettingsPage, PageAttention>> = {};
-  if (utilityPaused) attention['background-ai'] = { tone: 'warning', text: 'Background AI is paused for today' };
-  else if (pausedPurposes.purposes.length) attention['background-ai'] = { tone: 'warning', text: `Paused for today: ${pausedPurposes.purposes.map(purposeLabel).join(', ')}` };
-  if (repliesPaused) attention.composer = { tone: 'warning', text: 'Suggested replies are paused for today' };
-  if (missingKeys.length) attention.providers = { tone: 'error', text: `API key missing: ${missingKeys.map((p) => p.name).join(', ')}` };
-  if (accounts.some((p) => p.signed_out)) attention.copilot = { tone: 'error', text: 'Signed out' };
-  else if (cliUpdate) attention.copilot = { tone: 'warning', text: 'Copilot CLI update available' };
-  if (restart) attention.uam = { tone: 'warning', text: 'Restart available' };
-  if (meta?.disk?.low) attention.worktrees = { tone: 'warning', text: diskLowText(meta.disk) };
-  // The current values under each page's name in the phone's list.
+  const attention = pageAttention({ utilityPaused, pausedPurposes: pausedPurposes.purposes, repliesPaused, missingKeys, accounts, cliUpdate, restart, meta });
   const defaultModel = taskDefaults && meta?.providers.find((p) => p.name === taskDefaults.provider)?.models.find((m) => m.id === taskDefaults.model);
   const menuModels = modelGroups.flatMap((g) => g.models.map((m) => ({ owner: g.owner, id: m.id })));
-  const utility = titled[0];
-  const utilityChoice = utility ? settings.title_model?.[utility.name] ?? '' : '';
-  const customCount = configured.reduce((n, p) => n + p.models.length, 0);
-  const summary: Partial<Record<SettingsPage, string>> = {
-    'new-tasks': taskDefaults ? [defaultModel?.name ?? 'Provider default', taskDefaults.effort && `${effortLabel(taskDefaults.effort)} effort`, taskDefaults.mode === 'yolo' ? 'Yolo' : 'Safe'].filter(Boolean).join(' · ') : undefined,
-    composer: `Enter while running: ${settings.send_default === 'steer' ? 'Send now' : 'After this turn'} · Suggested replies ${settings.suggest_replies === false ? 'off' : 'on'}`,
-    models: meta ? `${menuModels.filter((m) => !settings.hidden_models?.[m.owner]?.includes(m.id)).length} of ${menuModels.length} in the menus` : undefined,
-    'background-ai': utility && `Utility model: ${utilityChoice === UTILITY_NONE ? 'None' : utilityChoice ? utility.models.find((m) => m.id === utilityChoice)?.name ?? utilityChoice : cheapestLabel(utility)}`,
-    copilot: accounts.length ? [accounts.some((p) => p.signed_out) ? 'Signed out' : 'Signed in', cliUpdate && `CLI ${cliUpdate} available`].filter(Boolean).join(' · ') : undefined,
-    providers: configured.length ? `${configured.map((p) => p.name).join(', ')} · ${customCount} ${customCount === 1 ? 'model' : 'models'}` : 'None added',
-    uam: [meta?.service && `Running ${meta.service.running}`, `Terminal ${settings.terminal ? 'on' : 'off'}`].filter(Boolean).join(' · '),
-    browser: `Theme: ${{ light: 'Light', dark: 'Dark', system: 'Match system' }[theme]}`,
-    worktrees: meta?.disk && `${sizeText(meta.disk.free_bytes)} free · ${percentFree(meta.disk)}%`,
-  };
-  // A page the instance on screen cannot fill is left out of the rail.
-  const pages = SETTINGS_PAGES.filter((p) => {
-    if (p.id === 'connections') return Boolean(connections);
-    if (p.id === 'copilot') return !meta || accounts.length > 0;
-    if (p.id === 'mcp') return !meta || meta.providers.some((provider) => provider.capabilities.mcp);
-    return true;
-  });
-  const visible = new Set(searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])).map((p) => p.id) : shown ? [shown] : []);
+  const summary = pageSummary({ settings, meta, taskDefaults, defaultModel, menuModels, utility: titled[0], accounts, cliUpdate, configured, theme });
+  const pages = offeredPages(Boolean(connections), meta, accounts.length > 0);
+  // On screen: the matches while searching on a wide screen (stacked), else the page shown.
+  const matches = searching && wide ? pages.filter((p) => pageMatches(p, query, summary[p.id])) : [];
+  let onScreen: SettingsPage[] = [];
+  if (searching && wide) onScreen = matches.map((p) => p.id);
+  else if (shown) onScreen = [shown];
+  const visible = new Set(onScreen);
   if ([...visible].some((id) => !visited.has(id))) setVisited(new Set([...visited, ...visible]));
+  const railCurrent = railCurrentPage(searching, shown, visible, matches);
   // A page's line: its blurb on a phone only (the rail says it on a wide screen), and where it is saved unless that is
   // the server, which the rail's group heading says once.
   const scopeLine = (scope: SettingsScope) => {
@@ -673,8 +757,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
   const pageLine = (p: (typeof pages)[number]) => [!wide && p.blurb, scopeLine(p.group.scope)].filter(Boolean).join(' ');
   const current = pages.find((p) => p.id === shown);
 
-  // Each page's cards. Token costs, Archived and Connected instances mount only while on screen; Agents, Skills, Hooks
-  // and Instructions from their first showing; the rest stay mounted, hidden, from the start.
+  // Each page's cards. Token costs, Archived, Connected instances, GitLab and Worktrees mount only while on screen;
+  // Background AI from the start (the rail's dot reads it); the rest from their first showing, then stay mounted, hidden.
   const cards: Record<SettingsPage, ReactNode> = {
     gitlab: <Section id="gitlab" title="GitLab">{api.supports('gitlab-status-v1') ? <GitLabSettings automatic={api.supports('gitlab-pipelines-v1') && loaded ? { on: !!settings.gitlab_auto_investigate, saving, onChange: (gitlab_auto_investigate) => void save({ gitlab_auto_investigate }) } : undefined} mrPrompt={api.supports('gitlab-mr-prompt-v1') && loaded ? { saved: settings.gitlab_mr_prompt ?? '', saving, onSave: (gitlab_mr_prompt) => void save({ gitlab_mr_prompt }) } : undefined} /> : <Unsupported what="GitLab access checks" />}</Section>,
     'new-tasks': !loaded || catalogPending ? <PendingSection id="new-tasks" title="New threads" label={loaded ? 'Loading the model catalog…' : ''} /> : taskDefaults && (
@@ -886,7 +970,6 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
     </Section>,
   };
   for (const kind of ['agents', 'skills', 'hooks', 'instructions'] as const) cards[kind] = <Section id={kind} title={SETTINGS_PAGES.find((p) => p.id === kind)!.label}>{api.supports('configuration-v1') ? <ConfigurationSettings kind={kind} projects={projects} terminal={!!settings.terminal} scope={toolkitScope} onScope={setToolkitScope} heldBy={held.find((k) => k !== kind)} onHold={hold} /> : <Unsupported what="agents, skills, hooks and instructions" />}</Section>;
-  const lazy = (id: SettingsPage) => id === 'token-costs' || id === 'archived' || id === 'connections' || id === 'gitlab' || id === 'worktrees';
 
   return (
     <FieldHelpProvider><div className={cn('flex min-h-0 flex-1 flex-col', !switched && 'animate-rise')}>
@@ -911,7 +994,7 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
         </Tip>
       </header>
       <div className="flex min-h-0 flex-1">
-        {(wide || !shown) && <SettingsRail pages={pages} current={searching ? null : shown} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}
+        {(wide || !shown) && <SettingsRail pages={pages} current={railCurrent} query={query} onQuery={setQuery} onOpen={open} attention={attention} summary={summary} where={api.owner?.label} list={!wide} />}
         {/* Mounted under the phone's list too: hidden cards keep their forms, and Background AI keeps reading today's state for the rail. */}
         <div ref={scrollArea} hidden={!shown && !wide} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
           <ScrollSentinel sentinelRef={sentinel} />
@@ -920,13 +1003,8 @@ export function SettingsView({ leading, onClose, onLogout, tokenPricesRequest = 
             {searching && visible.size === 0 && <Note role="status">No setting matches “{query.trim()}”.</Note>}
             {pages.map((p) => {
               const on = visible.has(p.id);
-              if (!on && (lazy(p.id) || (p.group.label === 'Agent toolkit' && p.id !== 'mcp' && !visited.has(p.id)))) return null;
-              return <div key={p.id} hidden={!on} className="flex flex-col gap-4">
-                {searching ? <button type="button" className="flex items-center gap-1 self-start rounded-sm px-1 text-caption text-muted hover:text-ink" onClick={() => open(p.id)}>
-                  {p.group.label}<ChevronRight aria-hidden="true" className="size-3.5" /><span className="font-medium text-ink">{p.label}</span>
-                </button> : pageLine(p) && <p className="px-1 text-caption text-muted">{pageLine(p)}</p>}
-                {cards[p.id]}
-              </div>;
+              if (!pageMounted(p.id, on, visited)) return null;
+              return <PageSlot key={p.id} page={p} on={on} searching={searching} line={pageLine(p)} onOpen={open}>{cards[p.id]}</PageSlot>;
             })}
             {error && (
               <Note tone="error" role="alert">

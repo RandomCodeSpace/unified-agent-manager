@@ -20,6 +20,12 @@ async function openSettings(page = 'New threads', card = page, user?: User) {
 /** A page's button in the Settings rail. */
 const page_ = (name: string) => within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name, exact: true });
 
+/** A wide screen (the rail beside the page) until the returned spy is restored. */
+function wide() {
+  const original = window.matchMedia.bind(window);
+  return vi.spyOn(window, 'matchMedia').mockImplementation((query) => (query === '(min-width: 768px)' ? ({ matches: true, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList) : original(query)));
+}
+
 /** A settings card once its content (not the loading skeleton) is on screen. */
 async function section(name: string) {
   const card = await waitFor(() => {
@@ -31,6 +37,39 @@ async function section(name: string) {
 }
 
 describe('settings', () => {
+  test('Find a setting marks the first match current, and Enter opens it', async () => {
+    const media = wide();
+    try {
+      const { user } = await openSettings();
+      const find = screen.getByRole('searchbox', { name: 'Find a setting' });
+      await user.type(find, 'theme');
+      await waitFor(() => expect(page_('Appearance & alerts').getAttribute('aria-current')).toBe('page'));
+      await user.keyboard('{Enter}');
+      expect(find).toHaveProperty('value', '');
+      await section('Appearance & alerts');
+      expect(page_('Appearance & alerts').getAttribute('aria-current')).toBe('page');
+      expect(page_('New threads').getAttribute('aria-current')).toBeNull();
+    } finally {
+      media.mockRestore();
+    }
+  });
+
+  test('a page mounts on its first visit and stays mounted after it; Background AI from the start', async () => {
+    const media = wide();
+    try {
+      const { user } = await openSettings();
+      expect(document.getElementById('background-ai-title')).not.toBeNull();
+      expect(document.getElementById('browser-title')).toBeNull();
+      await user.click(page_('Appearance & alerts'));
+      await section('Appearance & alerts');
+      await user.click(page_('New threads'));
+      await section('New threads');
+      expect(document.getElementById('browser-title')).not.toBeNull();
+    } finally {
+      media.mockRestore();
+    }
+  });
+
   test('project location saves a normalized path and clearing restores home', async () => {
     const { user } = await openSettings('UAM and access', 'Project folders');
     const folders = await section('Project folders');

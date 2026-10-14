@@ -209,10 +209,10 @@ test('Settings of a selected peer read and write only that peer and name it in t
   await user.click(await screen.findByRole('button', { name: 'Settings', exact: true }));
   await screen.findByRole('heading', { name: 'Settings · Main Server', level: 1 });
   expect((await settingsSwitcher()).getAttribute('aria-label')).toBe('Instance: Main Server');
-  // Home's Settings reads its account, CLI and MCP servers once its catalog and settings arrive, which can be after
-  // its heading shows; they go before the switch. From the switch on only B's Settings are mounted: no read or write
-  // may reach home or C.
-  await waitFor(() => expect(['/api/providers/copilot/account', '/api/providers/copilot/cli', '/api/mcp'].every(path => calls.some(call => call.owner === '' && call.path === path))).toBe(true));
+  // Home's Settings mounts Background AI from the start (the rail's dot reads it); its read goes once home's settings
+  // arrive, which can be after its heading shows, so it goes before the switch. The other pages mount on their first
+  // visit. From the switch on only B's Settings are mounted: no read or write may reach home or C.
+  await waitFor(() => expect(calls.some(call => call.owner === '' && call.path.startsWith('/api/utility'))).toBe(true));
   const switched = calls.length;
   await chooseInstance(user, /^Workstation B/);
   await screen.findByRole('heading', { name: 'Settings · Workstation B', level: 1 });
@@ -230,9 +230,11 @@ test('Settings of a selected peer read and write only that peer and name it in t
   expect(await stored(1)).toBe(false);
   expect(await stored(0)).not.toBe(false);
   expect(await stored(2)).not.toBe(false);
+  // Each page reads from B on its first visit: the account too, now that its page mounts when visited.
   await user.click(screen.getByRole('button', { name: 'MCP servers', exact: true }));
   await user.click(screen.getByRole('button', { name: 'Agents', exact: true }));
   await user.click(screen.getByRole('button', { name: 'Token costs', exact: true }));
+  await user.click(screen.getByRole('button', { name: 'GitHub Copilot', exact: true }));
   await waitFor(() => {
     const paths = calls.slice(switched).filter(call => call.owner === 'b').map(call => call.path);
     for (const prefix of ['/api/mcp', '/api/configuration', '/api/usage/prices', '/api/providers/copilot/account']) expect(paths.some(path => path.startsWith(prefix))).toBe(true);

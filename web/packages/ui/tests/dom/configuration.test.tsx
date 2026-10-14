@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { api, ApiError, type ConfigurationFile } from '../../src/api';
-import { renderApp, type User } from './render';
+import { openTask, renderApp, sidebar, type User } from './render';
 
 async function open(kind: string) {
   const rendered = renderApp('#settings');
@@ -322,6 +322,14 @@ describe('native configuration', () => {
     await card.findByText('inherited-reviewer saved. New and reopened threads use the updated file.');
     const content = (await api.configuration()).agents.find((entry) => entry.name === 'inherited-reviewer')!.content;
     expect(content).not.toMatch(/model:|model-policy:|reasoning-effort:/);
+  });
+
+  test("opened from a Thread, the scope starts at the Thread's project", async () => {
+    const { user } = await openTask('t1');
+    await user.click((await sidebar()).getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Skills', exact: true }));
+    const card = within(await screen.findByRole('region', { name: 'Skills', exact: true }));
+    expect((await card.findByRole('combobox', { name: 'Scope' })).textContent).toContain('unified-agent-manager');
   });
 
   test('saves root AGENTS.md separately from project Copilot and global instructions', async () => {
