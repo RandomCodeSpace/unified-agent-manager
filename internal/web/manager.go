@@ -61,6 +61,22 @@ const (
 	historySweep = time.Minute
 )
 
+// stopOpWait bounds how long Stop waits for another operation on the Thread.
+// A var for tests.
+var stopOpWait = 3 * time.Second
+
+// lockWithin takes mu if it can within d, and reports whether it did.
+func lockWithin(mu *sync.Mutex, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for !mu.TryLock() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return true
+}
+
 // idleClose is how long an open conversation stays open with nothing
 // running and no viewer before the sweep closes it; a var for tests.
 var idleClose = 15 * time.Minute
@@ -2570,8 +2586,9 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 		// anything; never replay a prompt or open a replacement on the
 		// user's behalf. A shared runtime ends idle conversations too: those
 		// keep their state, and the next prompt reopens, as after an idle
-		// close.
-		lost := s.runsOrWaitsLocked()
+		// close. So does a conversation the provider detached after a stop
+		// it could not confirm: it ended the turn as cancelled first.
+		lost := !ev.Detached && s.runsOrWaitsLocked()
 		s.conv = nil
 		s.gen++
 		m.expirePendingLocked(s, "the provider runtime exited")
@@ -2619,6 +2636,11 @@ func (m *Manager) applyTurnLocked(s *webSession, turn agentapi.Turn) {
 		m.kickDrainLocked(s)
 	case agentapi.TurnCancelled:
 		code, detail := s.stopCause(turn.Reason)
+		if detail == "" && turn.Error != "" {
+			// Why the provider ended the turn itself, as after a stop it
+			// could not confirm.
+			detail = clipRunes(displaytext.Sanitize(turn.Error), maxDetailRunes)
+		}
 		s.setBase(StateCancelled, detail)
 		s.stopReason, s.stopBy, s.stopCode = "", "", code
 		m.pauseQueueLocked(s)
@@ -3987,13 +4009,20 @@ func (m *Manager) Cancel(id string) (SessionSummary, error) {
 // cancelBecause is Cancel by uam itself: by is the stop reason it reports,
 // and reason says why, as the cancelled Task's detail. An empty reason is
 // the owner's Stop.
+//
+// Stop waits at most stopOpWait for another operation on the Thread, then
+// goes on without it, so an operation stuck in the provider (a send, a
+// steer, an answer) cannot hold it. That is safe: what Stop changes is
+// guarded by m.mu, and those operations check the state again under m.mu
+// once their provider call returns.
 func (m *Manager) cancelBecause(id, by, reason string) (SessionSummary, error) {
 	s, err := m.lookup(id)
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	s.op.Lock()
-	defer s.op.Unlock()
+	if lockWithin(&s.op, stopOpWait) {
+		defer s.op.Unlock()
+	}
 	m.mu.Lock()
 	if err := s.readOnlyLocked(); err != nil {
 		m.mu.Unlock()

@@ -152,8 +152,10 @@ func TestWebCancelFailureDoesNotPretendTheTurnEnded(t *testing.T) {
 	}
 	h.fs.abortErr = errors.New("abort unavailable")
 	before := len(h.sink.all())
-	if err := h.conv.Cancel(ctx); err == nil || !strings.Contains(err.Error(), "abort unavailable") {
-		t.Fatalf("failed Cancel = %v", err)
+	// The stop check ends a running turn either way (stop.go), so a failed
+	// abort is not a failed Stop; the turn has not ended yet, though.
+	if err := h.conv.Cancel(ctx); err != nil {
+		t.Fatalf("failed abort of a running turn = %v", err)
 	}
 	if len(h.sink.all()) != before {
 		t.Fatal("failed Cancel reported a turn transition")
