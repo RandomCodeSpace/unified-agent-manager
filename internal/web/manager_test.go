@@ -419,6 +419,54 @@ func TestInteractionExpiredAndQuestionValidation(t *testing.T) {
 	}
 }
 
+// A shared runtime that dies ends every conversation on it, as the Copilot
+// adapter's fail does. Only Threads that lost work fail; an idle one keeps
+// its state and its next prompt reopens the same conversation.
+func TestRuntimeExitFailsOnlyThreadsThatLostWork(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	working, workingConv := createSession(t, m, prov)
+	asking, askingConv := createSession(t, m, prov)
+	idle, idleConv := createSession(t, m, prov)
+	workingConv.EmitTurn(agentapi.TurnWorking, "")
+	askingConv.EmitTurn(agentapi.TurnWorking, "")
+	question := agentapi.Interaction{ID: "q1", Kind: agentapi.InteractionQuestion, Title: "Pick", Questions: []agentapi.Question{{Text: "Color?", Choices: []string{"red", "blue"}}}}
+	askingConv.EmitInteraction(question)
+	idleConv.EmitTurn(agentapi.TurnWorking, "")
+	idleConv.EmitTurn(agentapi.TurnCompleted, "")
+
+	const reason = "Copilot CLI stopped: CLI process exited unexpectedly"
+	// The adapter expires a pending question before it reports the exit.
+	question.State = agentapi.InteractionExpired
+	askingConv.EmitInteraction(question)
+	for _, conv := range []*agenttest.Conversation{workingConv, askingConv, idleConv} {
+		conv.Emit(agentapi.Event{Kind: agentapi.EventExit, Error: reason})
+	}
+	for _, sum := range []SessionSummary{working, asking} {
+		if d := detail(t, m, sum.ID); d.State != StateFailed || d.StateDetail != "the provider runtime exited: "+reason || d.Open {
+			t.Fatalf("Thread that lost work = %+v", d.SessionSummary)
+		}
+	}
+	if d := detail(t, m, idle.ID); d.State != StateCompleted || d.StateDetail != "" || d.Open {
+		t.Fatalf("idle Thread after the runtime exited = %+v", d.SessionSummary)
+	}
+
+	opens := len(prov.Opens())
+	sub, err := m.Submit(idle.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend})
+	if err != nil || sub.Status != SubmissionAccepted {
+		t.Fatalf("prompt after the runtime exited = %+v, %v", sub, err)
+	}
+	reopened := prov.Last()
+	if len(prov.Opens()) != opens+1 || reopened == idleConv || reopened.ID() != idle.ConversationID {
+		t.Fatalf("opens %d -> %d, reopened %v", opens, len(prov.Opens()), reopened)
+	}
+	if sends := reopened.Sends(); len(sends) != 1 || sends[0] != "next" {
+		t.Fatalf("reopened conversation sends = %q", sends)
+	}
+	if d := detail(t, m, idle.ID); d.State != StateWorking || !d.Open {
+		t.Fatalf("idle Thread after its next prompt = %+v", d.SessionSummary)
+	}
+}
+
 // An interaction's tool call ID reaches the stream and the detail as
 // tool_call_id; one unfit to match a tool item's ID is dropped.
 func TestInteractionToolCallIDReachesStreamAndDetail(t *testing.T) {

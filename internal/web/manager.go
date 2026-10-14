@@ -2566,18 +2566,26 @@ func (m *Manager) handleEvent(s *webSession, gen uint64, ev agentapi.Event) {
 			m.kickPlaceNameLocked(s)
 		}
 	case agentapi.EventExit:
-		// The conversation is gone. Report it; never replay a prompt or open
-		// a replacement on the user's behalf.
-		detail := "the provider runtime exited"
-		if ev.Error != "" {
-			detail = "the provider runtime exited: " + clipRunes(displaytext.Sanitize(ev.Error), maxDetailRunes)
-		}
+		// The conversation is gone. Report it when it ran or waited for
+		// anything; never replay a prompt or open a replacement on the
+		// user's behalf. A shared runtime ends idle conversations too: those
+		// keep their state, and the next prompt reopens, as after an idle
+		// close.
+		lost := s.runsOrWaitsLocked()
 		s.conv = nil
 		s.gen++
 		m.expirePendingLocked(s, "the provider runtime exited")
 		m.endSubagentsLocked(s)
 		m.forgetBackgroundTaskStateLocked(s)
 		m.pauseQueueLocked(s)
+		if !lost {
+			log.Info("idle web provider conversation exited", "session", s.id, "provider", s.provider)
+			break
+		}
+		detail := "the provider runtime exited"
+		if ev.Error != "" {
+			detail = "the provider runtime exited: " + clipRunes(displaytext.Sanitize(ev.Error), maxDetailRunes)
+		}
 		s.setBase(StateFailed, detail)
 		log.Warn("web provider conversation exited", "session", s.id, "provider", s.provider)
 	}

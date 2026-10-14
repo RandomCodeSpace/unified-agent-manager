@@ -433,7 +433,8 @@ func TestConversationExitingBeforeThePromptIsSentRejectsIt(t *testing.T) {
 	if err != nil || sub.Status != SubmissionRejected || sub.Error != "the provider conversation is not open" || reopened == first || len(reopened.CommandRuns()) != 0 {
 		t.Fatalf("command = %+v, %v; runs %v", sub, err, reopened.CommandRuns())
 	}
-	if d := detail(t, m, sum.ID); d.Open || d.State != StateFailed {
+	// Nothing ran: the Thread keeps its state for the next prompt to reopen.
+	if d := detail(t, m, sum.ID); d.Open || d.State != StateIdle || d.StateDetail != "" {
 		t.Fatalf("task after the exit = %+v", d.SessionSummary)
 	}
 }

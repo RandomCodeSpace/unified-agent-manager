@@ -40,6 +40,7 @@ func closedTasks(t *testing.T, stages ...string) (*Manager, *agenttest.Provider,
 		case StageArchived:
 			_, err = m.Archive(sum.ID)
 		default:
+			prov.Last().EmitTurn(agentapi.TurnWorking, "")
 			prov.Last().Emit(agentapi.Event{Kind: agentapi.EventExit, Error: "the CLI died"})
 		}
 		if err != nil {
