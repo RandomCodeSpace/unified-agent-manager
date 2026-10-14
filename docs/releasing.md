@@ -52,6 +52,15 @@ binary's help and version commands work, while `uam web` explains that the UI mu
 built. `internal/web/dist.placeholder` makes that source-only compilation
 intentional without tracking a fake UI.
 
+The version a source build embeds comes from `scripts/version`: the newest
+release tag whose source parent is an ancestor of the checkout, with the
+commits since that parent and the abbreviated hash, as
+`v0.19.10-16-gfbcd6384` (plus `-dirty` for uncommitted changes). Plain
+`git describe` cannot see those tags from `main` because release commits are
+never merged back. A checkout of a tagged release commit prints the tag
+alone; `VERSION=... make build` overrides the script. `scripts/test-version`
+checks it in a disposable repository.
+
 Run `scripts/test-release-packaging` on a committed source checkout to check the
 contract in a disposable repository. It exercises source-only behavior,
 alpha preparation, beta verification, version syntax, source isolation, stable ancestry, duplicate-tag refusal, a real

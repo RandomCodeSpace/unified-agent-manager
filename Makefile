@@ -2,7 +2,9 @@ BINARY := uam
 MODULE := github.com/RandomCodeSpace/unified-agent-manager
 CMD := ./cmd/uam
 GOBIN ?= $(shell go env GOPATH)/bin
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Release tags sit on generated children of main (docs/releasing.md); the
+# script names the newest release whose source is in this checkout.
+VERSION ?= $(shell scripts/version 2>/dev/null || echo dev)
 LDFLAGS := -X $(MODULE)/internal/version.Override=$(VERSION)
 
 .PHONY: all build install run test test-e2e cover lint tidy clean web check-web
