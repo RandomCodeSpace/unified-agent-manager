@@ -177,9 +177,14 @@ func TestCompactDetailOutlinesMessagesAndSubagentCalls(t *testing.T) {
 	sum, conv := createSession(t, m, prov)
 	t0 := time.Now().Add(-time.Hour)
 	conv.EmitItem(agentapi.Item{ID: "u1", Kind: agentapi.ItemUser, Text: "  Audit every package\nthen fix them", Time: t0})
+	// A task call the CLI refused ("name": Required) started no subagent.
+	conv.EmitItem(agentapi.Item{ID: "c0", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolFailed, Output: `"name": Required`}, Time: t0.Add(time.Second / 2)})
 	conv.EmitItem(agentapi.Item{ID: "c1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolCompleted}, Time: t0.Add(time.Second)})
 	conv.EmitItem(agentapi.Item{ID: "b1", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "bash", Status: agentapi.ToolCompleted}, Time: t0.Add(2 * time.Second)})
-	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Done.", Time: t0.Add(3 * time.Second)})
+	// A task call whose subagent ran and failed is still that subagent's call.
+	conv.EmitItem(agentapi.Item{ID: "c2", Kind: agentapi.ItemTool, Tool: &agentapi.ToolCall{Name: "task", Status: agentapi.ToolFailed}, Time: t0.Add(3 * time.Second)})
+	conv.EmitSubagent(agentapi.Subagent{ID: "sa-2", Name: "helper", Status: agentapi.SubagentFailed, ParentToolCallID: "c2"})
+	conv.EmitItem(agentapi.Item{ID: "a1", Kind: agentapi.ItemAssistant, Text: "Done.", Time: t0.Add(4 * time.Second)})
 	d, err := m.CompactDetail(sum.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +193,7 @@ func TestCompactDetailOutlinesMessagesAndSubagentCalls(t *testing.T) {
 	for _, it := range d.Outline {
 		got = append(got, it.ID+":"+string(it.Kind)+":"+it.Text)
 	}
-	if strings.Join(got, ",") != "u1:user:Audit every package,c1:tool:" || d.Outline[1].Tool == nil || d.Outline[1].Tool.Name != "task" {
+	if strings.Join(got, ",") != "u1:user:Audit every package,c1:tool:,c2:tool:" || d.Outline[1].Tool == nil || d.Outline[1].Tool.Name != "task" {
 		t.Fatalf("outline = %+v", d.Outline)
 	}
 }

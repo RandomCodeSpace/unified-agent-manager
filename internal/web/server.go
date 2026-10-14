@@ -1407,6 +1407,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.streamEvents(r.Context(), sub, write)
 }
 
+// keepAliveFrame is the heartbeat of the main and detail streams: an event,
+// not a comment, so an EventSource in the browser sees it too and can tell a
+// silent stream (a half-open connection) from an idle one.
+var keepAliveFrame = []byte("event: keep-alive\ndata: {}\n\n")
+
 // streamEvents sends queued updates and heartbeats after the handler has sent
 // its initial frames. The handler remains responsible for unsubscribing.
 func (s *Server) streamEvents(ctx context.Context, sub *Subscriber, write func([]byte) bool) {
@@ -1422,7 +1427,7 @@ func (s *Server) streamEvents(ctx context.Context, sub *Subscriber, write func([
 		case <-sub.Gone():
 			return
 		case <-ticker.C:
-			if !write([]byte(": keep-alive\n\n")) {
+			if !write(keepAliveFrame) {
 				return
 			}
 		default:
@@ -1436,7 +1441,7 @@ func (s *Server) streamEvents(ctx context.Context, sub *Subscriber, write func([
 				return
 			case frame = <-sub.Frames():
 			case <-ticker.C:
-				if !write([]byte(": keep-alive\n\n")) {
+				if !write(keepAliveFrame) {
 					return
 				}
 				continue

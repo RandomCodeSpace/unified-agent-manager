@@ -53,6 +53,73 @@ func writeFile(t *testing.T, path, text string) {
 	}
 }
 
+// Concurrent charts reads (every Project's charts view opened at once)
+// share store reads instead of queueing one each on the store lock, and a
+// call still sees every pin made before it.
+func TestPinnedChartsConcurrentCallsShareReads(t *testing.T) {
+	m, _, st := newTestManager(t)
+	project := addProject(t, m, t.TempDir())
+	pin := func(title string) store.WebChart {
+		return store.WebChart{ID: mustUUID(t), Title: title, Kind: "line", X: "day", Y: []string{"commits"}, Command: "true", Format: "csv", PinnedAt: time.Now()}
+	}
+	// A write holding the store lock keeps the first read waiting while the others arrive.
+	held, release, wrote := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		wrote <- st.Update(func(cfg *store.Config) error {
+			close(held)
+			<-release
+			p := cfg.WebProjects[project]
+			p.Charts = append(p.Charts, pin("First"))
+			cfg.WebProjects[project] = p
+			return nil
+		})
+	}()
+	<-held
+	const callers = 10
+	results := make(chan []PinnedChart, callers)
+	for range callers {
+		go func() {
+			list, err := m.PinnedCharts(project)
+			if err != nil {
+				t.Error(err)
+			}
+			results <- list
+		}()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for m.pins.started.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	if err := <-wrote; err != nil {
+		t.Fatal(err)
+	}
+	for range callers {
+		if got := <-results; len(got) != 1 || got[0].Title != "First" {
+			t.Fatalf("pinned = %+v, want the pin made before the call", got)
+		}
+	}
+	if reads := m.pins.started.Load(); reads > 2 {
+		t.Fatalf("%d concurrent calls read the store %d times, want at most 2", callers, reads)
+	}
+	// A call after another write reads again; an unknown Project is still refused.
+	if err := st.Update(func(cfg *store.Config) error {
+		p := cfg.WebProjects[project]
+		p.Charts = append(p.Charts, pin("Second"))
+		cfg.WebProjects[project] = p
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := m.PinnedCharts(project); err != nil || len(got) != 2 || got[1].Title != "Second" {
+		t.Fatalf("pinned after a write = %+v, %v", got, err)
+	}
+	if _, err := m.PinnedCharts(mustUUID(t)); err != errProjectNotFound {
+		t.Fatalf("unknown project = %v", err)
+	}
+}
+
 // Stored pins this version cannot show (a hand edit, a newer kind) are not
 // listed, so they neither count nor take a place under the cap.
 func TestUnshownPinsNeitherCountNorFill(t *testing.T) {

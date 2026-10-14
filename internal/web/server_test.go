@@ -645,7 +645,7 @@ func TestEventStreamOverHTTP(t *testing.T) {
 			}
 		}
 		sawItem = sawItem || strings.Contains(ev, "event: item")
-		sawHeartbeat = sawHeartbeat || strings.HasPrefix(ev, ": keep-alive")
+		sawHeartbeat = sawHeartbeat || strings.HasPrefix(ev, "event: keep-alive\n")
 	}
 	cancel() // the browser goes away
 	waitUntil(t, "subscriber removed", func() bool {

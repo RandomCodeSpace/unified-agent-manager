@@ -99,8 +99,10 @@ type Manager struct {
 	// settingsMu orders settings changes, so the stored and published
 	// settings match. It is never taken while holding mu.
 	settingsMu sync.Mutex
-	// recent shares RecentWorkdirs' store reads between concurrent callers.
-	recent recentWorkdirsReads
+	// recent shares RecentWorkdirs' store reads between concurrent callers;
+	// pins the shown pinned charts of every Project, for storedPins.
+	recent sharedReads[[]string]
+	pins   sharedReads[map[string][]store.WebChart]
 
 	// imageJobs feeds the one goroutine that stores tool images, so Emit
 	// never writes a file. imageWG counts the jobs not yet finished; tests
@@ -1081,41 +1083,50 @@ func (m *Manager) Providers() []ProviderInfo {
 	return out
 }
 
-// recentWorkdirsReads lets concurrent RecentWorkdirs calls share a store
-// read: the store's lock serializes reads, so each page load's /api/meta
-// would otherwise wait for every read ahead of it. A caller reuses only a
-// read that started after it arrived, so it never misses an earlier write.
-type recentWorkdirsReads struct {
+// sharedReads lets concurrent callers share a store read: the store's lock
+// serializes reads, so each page load's /api/meta (or each charts view's
+// /api/projects/{id}/charts) would otherwise wait for every read ahead of
+// it. A caller reuses only a read that started after it arrived, so it never
+// misses an earlier write. Callers must not change the value they get.
+type sharedReads[T any] struct {
 	started atomic.Uint64 // reads started; written under mu
 	mu      sync.Mutex
-	last    uint64 // which read produced dirs; 0 when none succeeded
-	dirs    []string
+	last    uint64 // which read produced value; 0 when none succeeded
+	value   T
+}
+
+// read returns a value load read after the call arrived, from load now or
+// from a concurrent caller's call; only a read that succeeded is shared.
+func (r *sharedReads[T]) read(load func() (T, error)) (T, error) {
+	arrived := r.started.Load()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.last > arrived {
+		return r.value, nil
+	}
+	read := r.started.Add(1)
+	out, err := load()
+	if err == nil {
+		r.last, r.value = read, out
+	}
+	return out, err
 }
 
 // RecentWorkdirs returns distinct workdirs of stored records of any surface,
 // most recently seen first.
 func (m *Manager) RecentWorkdirs() []string {
-	r := &m.recent
-	arrived := r.started.Load()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.last > arrived {
-		return slices.Clone(r.dirs)
-	}
-	read := r.started.Add(1)
-	out, ok := m.readRecentWorkdirs()
-	if ok {
-		r.last, r.dirs = read, out
+	out, err := m.recent.read(m.readRecentWorkdirs)
+	if err != nil {
+		log.Warn("load recent workdirs failed", "error", err)
 	}
 	return slices.Clone(out)
 }
 
-func (m *Manager) readRecentWorkdirs() ([]string, bool) {
+func (m *Manager) readRecentWorkdirs() ([]string, error) {
 	out := []string{}
 	cfg, err := m.store.Load()
 	if err != nil {
-		log.Warn("load recent workdirs failed", "error", err)
-		return out, false
+		return out, err
 	}
 	recs := make([]store.SessionRecord, 0, len(cfg.Sessions))
 	for _, rec := range cfg.Sessions {
@@ -1147,7 +1158,7 @@ func (m *Manager) readRecentWorkdirs() ([]string, bool) {
 			break
 		}
 	}
-	return out, true
+	return out, nil
 }
 
 func (m *Manager) lookup(id string) (*webSession, error) {

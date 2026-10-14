@@ -163,6 +163,8 @@ export function replyIndex(index: readonly OutlineItem[], subagents: readonly Su
     }
     const s = item.kind === 'tool' ? byParent.get(item.id) : undefined;
     if (!s && !(item.kind === 'tool' && toolKind(item.tool?.name ?? '') === 'subagent')) continue;
+    // A `task` call that failed before a subagent started (its arguments refused) spawned nothing.
+    if (!s && item.tool?.status === 'failed') continue;
     if (!reply) open('start');
     reply!.calls.push(item.id);
     ofCall.set(item.id, reply!);

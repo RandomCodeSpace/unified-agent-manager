@@ -59,17 +59,31 @@ func (m *Manager) pinRoot() string { return filepath.Join(filepath.Dir(m.store.P
 func (m *Manager) pinFile(id string) string { return filepath.Join(m.pinRoot(), id+".json") }
 
 // storedPins returns the valid charts pinned to the Project id, oldest
-// first.
+// first. Concurrent calls (every charts view opened at once) share one
+// store read.
 func (m *Manager) storedPins(id string) ([]store.WebChart, error) {
+	pins, err := m.pins.read(m.readShownPins)
+	if err != nil {
+		return nil, err
+	}
+	p, ok := pins[id]
+	if !ok {
+		return nil, errProjectNotFound
+	}
+	return slices.Clone(p), nil
+}
+
+// readShownPins reads every Project's shown pins from the store.
+func (m *Manager) readShownPins() (map[string][]store.WebChart, error) {
 	cfg, err := m.store.Load()
 	if err != nil {
 		return nil, err
 	}
-	p, ok := cfg.WebProjects[id]
-	if !ok {
-		return nil, errProjectNotFound
+	out := make(map[string][]store.WebChart, len(cfg.WebProjects))
+	for id, p := range cfg.WebProjects {
+		out[id] = slices.DeleteFunc(p.Charts, func(c store.WebChart) bool { return !shownPin(c) })
 	}
-	return slices.DeleteFunc(p.Charts, func(c store.WebChart) bool { return !shownPin(c) }), nil
+	return out, nil
 }
 
 // shownPin reports whether this version shows the stored pin c. Only shown
