@@ -101,13 +101,8 @@ function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
   return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
 }
 
-/**
- * A compact row label plus the full detail for its hover text and the Home view.
- * Working detail reports quiet time from the provider's last event, never invented activity.
- */
-export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): TaskStatus {
-  if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
-  if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
+/** The status of a Task that waits on you, or null when nothing does. */
+function inputStatus(s: SessionSummary): TaskStatus | null {
   const ask = s.ask;
   if (ask?.kind === 'permission') {
     const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
@@ -117,6 +112,18 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
   if (ask?.kind === 'plan_review') return { label: 'Input', text: 'Plan ready', tone: 'attention' };
   if (s.state === 'awaiting_permission') return { label: 'Input', text: 'Wants your OK to continue', tone: 'attention' };
   if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Input', text: 'Has a question for you', tone: 'attention' };
+  return null;
+}
+
+/**
+ * A compact row label plus the full detail for its hover text and the Home view.
+ * Working detail reports quiet time from the provider's last event, never invented activity.
+ */
+export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): TaskStatus {
+  if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
+  if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
+  const input = inputStatus(s);
+  if (input) return input;
   const state = shownState(s);
   switch (state) {
     case 'starting':

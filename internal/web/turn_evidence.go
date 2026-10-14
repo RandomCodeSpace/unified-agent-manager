@@ -740,30 +740,38 @@ func splitSentences(line string) [][2]int {
 		if c := line[i]; c != '.' && c != '!' && c != '?' {
 			continue
 		}
-		j := i + 1
-		for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
-			j++
+		if j, ok := endsSentence(line, start, i); ok {
+			out = append(out, [2]int{start, i + 1})
+			start = j
 		}
-		if j == i+1 || j == len(line) {
-			continue
-		}
-		next, _ := utf8.DecodeRuneInString(line[j:])
-		if !unicode.IsLetter(next) && !unicode.IsDigit(next) && !strings.ContainsRune("_`\"'(", next) {
-			continue
-		}
-		head := strings.ToLower(line[start : i+1])
-		if strings.HasSuffix(head, "...") || slices.ContainsFunc([]string{"e.g.", "i.e.", "etc.", "vs."}, func(abbr string) bool {
-			return strings.HasSuffix(head, abbr) && (len(head) == len(abbr) || !isWordByte(head[len(head)-len(abbr)-1]))
-		}) {
-			continue
-		}
-		out = append(out, [2]int{start, i + 1})
-		start = j
 	}
 	if rest := strings.TrimRight(line[start:], " \t"); rest != "" {
 		out = append(out, [2]int{start, start + len(rest)})
 	}
 	return out
+}
+
+// endsSentence reports whether the `.`, `!` or `?` at i ends the sentence
+// that began at start, and where the next one begins.
+func endsSentence(line string, start, i int) (int, bool) {
+	j := i + 1
+	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+		j++
+	}
+	if j == i+1 || j == len(line) {
+		return 0, false
+	}
+	next, _ := utf8.DecodeRuneInString(line[j:])
+	if !unicode.IsLetter(next) && !unicode.IsDigit(next) && !strings.ContainsRune("_`\"'(", next) {
+		return 0, false
+	}
+	head := strings.ToLower(line[start : i+1])
+	if strings.HasSuffix(head, "...") || slices.ContainsFunc([]string{"e.g.", "i.e.", "etc.", "vs."}, func(abbr string) bool {
+		return strings.HasSuffix(head, abbr) && (len(head) == len(abbr) || !isWordByte(head[len(head)-len(abbr)-1]))
+	}) {
+		return 0, false
+	}
+	return j, true
 }
 
 func isWordByte(b byte) bool {

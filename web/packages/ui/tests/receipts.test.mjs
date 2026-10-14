@@ -189,3 +189,12 @@ test('a file the reply names as someone else\'s work, a refusal and quoted text 
   assert.deepEqual(claimsOf('I updated "`b.go`" as asked.'), [{ kind: 'path', claim: 'b.go' }]);
   assert.deepEqual(claimsOf('Ran `grep "x" a.go`; all tests pass.'), [{ kind: 'command', claim: 'grep "x" a.go', ran: true }, { kind: 'tests', claim: 'all tests pass' }]);
 });
+
+test('an unclosed quote mark is passed over, and a reply full of them is read in linear time', () => {
+  assert.deepEqual(claimsOf('An unclosed “ mark, then I updated `a.go`; "Updated `b.go` too" is quoted.'), [{ kind: 'path', claim: 'a.go' }]);
+  for (const text of ['“'.repeat(50_000), `${'“ "x '.repeat(10_000)}I updated \`a.go\`.`, '`'.repeat(50_001), `${'it says '.repeat(6_000)}x`, `${'someone else '.repeat(4_000)}x`]) {
+    const started = performance.now();
+    claimsOf(text);
+    assert.ok(performance.now() - started < 500, `${text.slice(0, 12)}… took ${Math.round(performance.now() - started)} ms`);
+  }
+});
