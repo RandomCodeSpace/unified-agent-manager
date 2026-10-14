@@ -122,7 +122,7 @@ test('when no socket ever opened on the page, EventSource takes over for this st
   assert.equal(natives.length, 1);
   assert.equal(natives[0].url, '/api/events?page=p');
   natives[0].readyState = 1;
-  natives[0].dispatchEvent(new Event('open'));
+  natives[0].onopen(new Event('open'));
   natives[0].dispatchEvent(new MessageEvent('snapshot', { data: '{}' }));
   assert.deepEqual(log, ['error@0', 'open@1', 'snapshot:{}']);
   openEventStream('/api/events');
@@ -167,7 +167,7 @@ test('an EventSource stream is watched for silence once it has sent a heartbeat 
   const source = openEventStream('/api/events');
   const log = heard(source, 'snapshot');
   natives[0].readyState = 1;
-  natives[0].dispatchEvent(new Event('open'));
+  natives[0].onopen(new Event('open'));
   natives[0].dispatchEvent(new MessageEvent('snapshot', { data: '{}' }));
   // EventSource never shows a comment: a stream whose heartbeats are comments is never taken for silent.
   t.mock.timers.tick(10 * STREAM_SILENCE_MS);
@@ -184,7 +184,7 @@ test('an EventSource stream is watched for silence once it has sent a heartbeat 
   t.mock.timers.tick(3000);
   assert.equal(natives.length, 2);
   natives[1].readyState = 1;
-  natives[1].dispatchEvent(new Event('open'));
+  natives[1].onopen(new Event('open'));
   natives[1].dispatchEvent(new MessageEvent('snapshot', { data: '{"b":2}' }));
   assert.deepEqual(log, ['open@1', 'snapshot:{}', 'error@0', 'open@1', 'snapshot:{"b":2}']);
   // Closed streams watch nothing.

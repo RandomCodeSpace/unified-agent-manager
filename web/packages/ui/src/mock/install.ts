@@ -110,8 +110,7 @@ class FakeEventSource extends EventTarget {
     later(() => {
       if (this.readyState === 2) return;
       this.readyState = 1;
-      this.onopen?.(new Event('open'));
-      // As in a browser, listeners hear it too (the connected notices stream reports on it).
+      // As in a browser, dispatching reaches `onopen` and the listeners alike (the connected notices stream reports on it).
       this.dispatchEvent(new Event('open'));
       this.detach = hooks.attach(this);
     }, 30);
@@ -432,8 +431,6 @@ export function install(): { received: Received[] } {
       const t = src.session ? find(src.session) : undefined;
       if (src.session && !t) {
         src.onerror?.(new Event('error'));
-        // As in a browser, listeners hear it too (the stream wrapper reads EventSource that way).
-        src.dispatchEvent(new Event('error'));
         return () => sources.delete(src);
       }
       // A detail stream: an open subagent's first window. The mock's items carry their bodies, so no

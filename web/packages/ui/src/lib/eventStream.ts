@@ -40,6 +40,9 @@ const CONNECTING = 0;
 const OPEN = 1;
 const CLOSED = 2;
 
+/** The events an EventSource reports through `onopen` and `onerror`, read from there and never as listeners too. */
+const handled = (type: string) => type === 'open' || type === 'error';
+
 /**
  * The stream at `url` read from the event socket the way EventSource reads it: `open` once the stream's status is
  * 200; an `error` and CLOSED, without retrying, on any other status; an `error` and CONNECTING, then a reconnect after
@@ -80,7 +83,7 @@ export class SocketEventSource extends EventTarget {
 
   override addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void {
     super.addEventListener(type, listener, options);
-    if (this.native && !this.types.has(type)) this.native.addEventListener(type, this.forward);
+    if (this.native && !this.types.has(type) && !handled(type)) this.native.addEventListener(type, this.forward(type));
     this.types.add(type);
   }
 
@@ -130,23 +133,31 @@ export class SocketEventSource extends EventTarget {
     };
   }
 
-  /** The same stream over EventSource, its events passed on as this source's. */
+  /**
+   * The same stream over EventSource, its events passed on as this source's. `open` and `error` come through the
+   * handler properties: a browser fires each once either way, and a stand-in may only call the property.
+   */
   private fallBack(): void {
     const native = new EventSource(this.url);
     this.native = native;
-    for (const type of new Set([...this.types, 'open', 'error', 'message', 'keep-alive'])) native.addEventListener(type, this.forward);
+    native.onopen = this.forward('open');
+    native.onerror = this.forward('error');
+    for (const type of new Set([...this.types, 'message', 'keep-alive'])) if (!handled(type)) native.addEventListener(type, this.forward(type));
   }
 
-  private readonly forward = (event: Event) => {
-    if (this.native === null || this.readyState === CLOSED) return;
-    // EventSource never shows a comment, so the service sends its heartbeats as events; a stream whose heartbeats
-    // are comments (an older service's, another instance's notices) is never taken for silent.
-    if (event.type === 'keep-alive') return this.heard();
-    if (event.type === 'open' || event.type === 'error') {
-      this.readyState = this.native.readyState;
-      this.fire(new Event(event.type));
-    } else if (event instanceof MessageEvent) this.fire(new MessageEvent(event.type, { data: event.data }));
-  };
+  /** The native's events of `type` passed on as this source's (by the name they were listened for, which is the event's). */
+  private forward(type: string): (event: Event) => void {
+    return (event) => {
+      if (this.native === null || this.readyState === CLOSED) return;
+      // EventSource never shows a comment, so the service sends its heartbeats as events; a stream whose heartbeats
+      // are comments (an older service's, another instance's notices) is never taken for silent.
+      if (type === 'keep-alive') return this.heard();
+      if (handled(type)) {
+        this.readyState = this.native.readyState;
+        this.fire(new Event(type));
+      } else this.fire(new MessageEvent(type, { data: (event as MessageEvent).data }));
+    };
+  }
 
   /** The connection is gone: listeners hear an error, and the stream reopens after `delay` unless one closed it. */
   private dropped(delay: number): void {
