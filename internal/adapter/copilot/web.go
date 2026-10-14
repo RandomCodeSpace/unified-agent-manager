@@ -350,7 +350,7 @@ type webProvider struct {
 	client            sdkClient
 	stop              chan struct{} // closed to end the current watchdog
 	convs             map[*conversation]struct{}
-	detaching         map[string]chan struct{} // by session ID, closed when its detach returns (awaitDetach)
+	detaching         map[string][]*detachWait // by session ID, the detaches in flight (awaitDetach)
 	shut              bool
 	importSupported   bool
 	forkUnsupported   bool
@@ -2021,6 +2021,9 @@ type conversation struct {
 	// cancelled turn's note when uam ends the turn itself (stop.go).
 	stopping *stopWatch
 	stopNote string
+	// modeOps counts execution mode choices (ensureExecutionMode), so a
+	// mode reset Stop deferred does not override a later one.
+	modeOps uint64
 	// The latest ordinary main-agent user item and its exact native boundary.
 	turnChangeUser, turnChangeEvent string
 	// idleUnresolved marks a main-agent assistant.idle seen while the mode
@@ -2744,8 +2747,8 @@ func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error 
 // ends: one the CLI does not end within webStopGrace uam ends itself
 // (stop.go). Its mode change and abort errors are reported only when no
 // turn runs; while one does, the stop check reports them, and a mode it
-// could not reset is reset once control is free. With no turn and another
-// control operation in progress it fails with ErrBusy.
+// could not reset is reset once control is free. Stop of autopilot with no
+// turn, while another control operation is in progress, fails with ErrBusy.
 func (c *conversation) Cancel(ctx context.Context) error {
 	// Without control, another mode or agent operation is stuck in the CLI:
 	// Stop aborts without the mode change, which control orders.
@@ -2758,9 +2761,9 @@ func (c *conversation) Cancel(ctx context.Context) error {
 		c.mu.Unlock()
 		return agentapi.ErrClosed
 	}
-	// With no turn to end, Stop only turns autopilot off, which needs
+	// With no turn to end, Stop of autopilot only turns it off, which needs
 	// control: it does not claim a stop it did not make.
-	if !controlled && !c.turnRunning && c.sending == 0 {
+	if !controlled && !c.turnRunning && c.sending == 0 && c.execution != nil && c.execution.Mode == string(rpc.SessionModeAutopilot) {
 		c.mu.Unlock()
 		return fmt.Errorf("%w: another operation on the conversation is in progress", agentapi.ErrBusy)
 	}
@@ -3013,20 +3016,23 @@ func (c *conversation) Close(ctx context.Context) error {
 	perms := c.expireLocked()
 	c.endIdleLocked()
 	c.stopSchedulesLocked()
+	// The detach is due before anything can reopen the conversation.
+	detached := c.p.detachStarted(c.id)
 	c.closed = true
 	clear(c.pending)
 	if c.aside != nil {
 		c.aside()
 	}
 	c.mu.Unlock()
-	return c.release(ctx, perms)
+	return c.release(ctx, perms, detached)
 }
 
 // release lets go of a conversation that has ended locally: it is no
 // longer tracked, its tools stop, the permission requests perms are
 // answered as unavailable, and its SDK session detaches, all within
-// webStopTimeout.
-func (c *conversation) release(ctx context.Context, perms []string) error {
+// webStopTimeout. detached, from detachStarted before the conversation
+// ended, is called once the detach returns.
+func (c *conversation) release(ctx context.Context, perms []string, detached func()) error {
 	c.p.forget(c)
 	if c.tools != nil {
 		c.tools.stop()
@@ -3037,7 +3043,6 @@ func (c *conversation) release(ctx context.Context, perms []string) error {
 		_, _ = c.sess.RespondPermission(ctx, id, &rpc.PermissionDecisionUserNotAvailable{})
 	}
 	done := make(chan error, 1)
-	detached := c.p.detachStarted(c.id)
 	go func() {
 		defer detached()
 		err := c.sess.Disconnect()
@@ -3062,43 +3067,61 @@ func (c *conversation) release(ctx context.Context, perms []string) error {
 	}
 }
 
+// detachWait is one detach of a session in flight: done closes when it
+// returns, and a reopen waits for it until until, when release gives up.
+type detachWait struct {
+	done  chan struct{}
+	until time.Time
+}
+
 // detachStarted records that session id is detaching and returns the
-// function that ends the record once the detach has returned.
+// function that ends the record once the detach has returned. Callers
+// record it before the conversation ends, so no reopen can come first.
 func (p *webProvider) detachStarted(id string) func() {
-	done := make(chan struct{})
+	w := &detachWait{done: make(chan struct{}), until: time.Now().Add(webDetachWait)}
 	p.mu.Lock()
 	if p.detaching == nil {
-		p.detaching = map[string]chan struct{}{}
+		p.detaching = map[string][]*detachWait{}
 	}
-	p.detaching[id] = done
+	p.detaching[id] = append(p.detaching[id], w)
 	p.mu.Unlock()
-	return func() {
+	return sync.OnceFunc(func() {
 		p.mu.Lock()
-		if p.detaching[id] == done {
-			delete(p.detaching, id)
-		}
+		p.dropDetachesLocked(id, func(x *detachWait) bool { return x == w })
 		p.mu.Unlock()
-		close(done)
+		close(w.done)
+	})
+}
+
+func (p *webProvider) dropDetachesLocked(id string, drop func(*detachWait) bool) {
+	if left := slices.DeleteFunc(p.detaching[id], drop); len(left) > 0 {
+		p.detaching[id] = left
+	} else {
+		delete(p.detaching, id)
 	}
 }
 
-// awaitDetach waits, within webStopTimeout, for a detach of session id still
-// in flight, which Close and an unconfirmed Stop stop waiting for. The SDK
-// detaches by session ID, so one the CLI handled after a resume of the same
-// session could take it from its new owner.
+// awaitDetach waits for every detach of session id in flight, each until
+// it returns or is due. The SDK detaches by session ID, so one the CLI
+// handled after a resume of the same session could take it from its new
+// owner. A detach past due, which the CLI never answered, is forgotten.
 func (p *webProvider) awaitDetach(ctx context.Context, id string) {
+	now := time.Now()
 	p.mu.Lock()
-	done := p.detaching[id]
+	p.dropDetachesLocked(id, func(w *detachWait) bool { return now.After(w.until) })
+	waits := slices.Clone(p.detaching[id])
 	p.mu.Unlock()
-	if done == nil {
-		return
-	}
-	t := time.NewTimer(webStopTimeout)
-	defer t.Stop()
-	select {
-	case <-done:
-	case <-t.C:
-	case <-ctx.Done():
+	for _, w := range waits {
+		t := time.NewTimer(time.Until(w.until))
+		select {
+		case <-w.done:
+		case <-t.C:
+		case <-ctx.Done():
+		}
+		t.Stop()
+		if ctx.Err() != nil {
+			return
+		}
 	}
 }
 

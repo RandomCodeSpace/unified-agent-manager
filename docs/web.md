@@ -688,7 +688,8 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   autopilot Thread with no turn running, made while another change to that
   Thread is still in progress, is refused with "try Stop again"; a running
   autopilot turn that Stop could not switch to interactive at once is
-  switched as soon as that other change ends. The running turn's intent and
+  switched as soon as that other change ends, unless a mode was chosen or a
+  turn started since. The running turn's intent and
   retry come as `turn_activity`, in the Thread snapshot and in `turn_activity`
   events; they are live only and never saved. So is the todo list
   (`turn_activity.todos`): uam asks the agents, subagents included, to keep

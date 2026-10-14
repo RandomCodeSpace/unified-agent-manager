@@ -480,3 +480,149 @@ func TestWebReopenWaitsForAPendingDetach(t *testing.T) {
 		t.Fatal("the reopen did not wait for the pending detach")
 	}
 }
+
+// The detach is due from the moment the conversation ends: a reopen while
+// the detach still answers a pending permission waits for it, so the
+// detach never reaches the CLI after the resume.
+func TestWebReopenWaitsForADetachStillAnsweringPermissions(t *testing.T) {
+	shortStop(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("request", shellRequest("p")))
+	answering, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	h.fs.mu.Lock()
+	h.fs.respondHook = func(context.Context, string, rpc.PermissionDecision) (bool, error) {
+		once.Do(func() { close(answering) })
+		<-release
+		return true, nil
+	}
+	h.fs.mu.Unlock()
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-answering
+	opened := make(chan error, 1)
+	go func() {
+		_, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: "s-1", Events: &recSink{}})
+		opened <- err
+	}()
+	select {
+	case err := <-opened:
+		close(release)
+		t.Fatalf("reopened before the detach was sent: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-opened:
+		if err != nil || !h.fs.isDisconnected() {
+			t.Fatalf("reopen = %v, detached %v", err, h.fs.isDisconnected())
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the reopen kept waiting after the detach")
+	}
+}
+
+// A detach that never returns delays a reopen only until it is due: release
+// stops waiting for it then too.
+func TestWebReopenStopsWaitingWhenTheDetachIsDue(t *testing.T) {
+	wait := webDetachWait
+	webDetachWait = 100 * time.Millisecond
+	t.Cleanup(func() { webDetachWait = wait })
+	h := openWeb(t)
+	never := make(chan struct{})
+	t.Cleanup(func() { close(never) })
+	h.fs.mu.Lock()
+	h.fs.disconnectHook = func() error {
+		<-never
+		return nil
+	}
+	h.fs.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := h.conv.Close(ctx); err == nil {
+		t.Fatal("Close did not give up waiting for the detach")
+	}
+	reopen := func() time.Duration {
+		began := time.Now()
+		if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: "s-1", Events: &recSink{}}); err != nil {
+			t.Fatal(err)
+		}
+		return time.Since(began)
+	}
+	if took := reopen(); took > time.Second {
+		t.Fatalf("first reopen waited %v", took)
+	}
+	if took := reopen(); took > 50*time.Millisecond {
+		t.Fatalf("a later reopen waited %v for a detach long due", took)
+	}
+}
+
+// A reopen waits for every detach of the session in flight, not only the
+// latest.
+func TestWebReopenWaitsForEveryDetachInFlight(t *testing.T) {
+	h := openWeb(t)
+	first := h.p.detachStarted("x")
+	second := h.p.detachStarted("x")
+	second()
+	done := make(chan struct{})
+	go func() {
+		h.p.awaitDetach(context.Background(), "x")
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("the reopen did not wait for the earlier detach")
+	case <-time.After(50 * time.Millisecond):
+	}
+	first()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the reopen kept waiting")
+	}
+}
+
+// A mode chosen after Stop, while the reset waited for control, stands.
+func TestWebStopAutopilotResetKeepsALaterModeChoice(t *testing.T) {
+	shortStop(t)
+	webStopGrace = time.Minute
+	h, runtime, c := autopilotHarness(t)
+	startTurn(t, h)
+	c.control.Lock()
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		c.control.Unlock()
+		t.Fatal(err)
+	}
+	// The owner turns autopilot on again; it runs before the reset.
+	if err := c.ensureExecutionMode(context.Background(), rpc.SessionModeAutopilot); err != nil {
+		c.control.Unlock()
+		t.Fatal(err)
+	}
+	c.control.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	c.control.Lock()
+	mode := runtime.mode()
+	c.control.Unlock()
+	if mode != "autopilot" {
+		t.Fatalf("the reset overrode the later choice: mode %s", mode)
+	}
+}
+
+// Outside autopilot, Stop without control and without a turn still aborts,
+// as Stop did before it was bounded: only an idle autopilot Stop is refused.
+func TestWebStopWithoutControlOrTurnAbortsOutsideAutopilot(t *testing.T) {
+	shortStop(t)
+	h := openWeb(t)
+	c := h.conv.(*conversation)
+	c.control.Lock()
+	err := h.conv.Cancel(context.Background())
+	c.control.Unlock()
+	h.fs.mu.Lock()
+	aborts := h.fs.aborts
+	h.fs.mu.Unlock()
+	if err != nil || aborts != 1 {
+		t.Fatalf("Stop = %v, aborts %d", err, aborts)
+	}
+}

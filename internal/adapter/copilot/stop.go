@@ -27,6 +27,9 @@ var (
 	// webStopPingWait bounds the ping that tells a stuck session from a
 	// stuck CLI.
 	webStopPingWait = 5 * time.Second
+	// webDetachWait is how long after a detach starts a reopen of the same
+	// session waits for it; release stops waiting then too.
+	webDetachWait = webStopTimeout
 )
 
 // stopUnconfirmed is the note of a turn uam stopped itself.
@@ -121,12 +124,14 @@ func (c *conversation) aborted(w *stopWatch, err error, took time.Duration) {
 
 // leaveAutopilotLater turns autopilot off once control is free, after a Stop
 // of a running turn that could not: the next turn must not run on its own.
-// A conversation that has ended by then reopens in the mode the CLI kept,
-// which the Thread shows.
+// A mode chosen since, or a turn started since, stands. A conversation that
+// has ended by then reopens in the mode the CLI kept, which the Thread
+// shows.
 func (c *conversation) leaveAutopilotLater(cause error) {
 	runtime, ok := c.sess.(executionSession)
 	c.mu.Lock()
 	interactive := c.execution != nil && c.execution.Known && c.execution.Mode == string(rpc.SessionModeInteractive)
+	ops, idles := c.modeOps, c.idles
 	c.mu.Unlock()
 	if !ok || interactive && cause == nil {
 		return
@@ -134,8 +139,15 @@ func (c *conversation) leaveAutopilotLater(cause error) {
 	go func() {
 		c.control.Lock()
 		defer c.control.Unlock()
-		if c.isClosed() {
+		c.mu.Lock()
+		closed, chosen := c.closed, c.modeOps != ops || c.turnRunning && c.idles != idles
+		c.mu.Unlock()
+		switch {
+		case closed:
 			log.Warn("copilot stop: the conversation ended before its execution mode was reset", "conversation", c.id)
+			return
+		case chosen:
+			log.Info("copilot stop: keeping the execution mode chosen after Stop", "conversation", c.id)
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), webStopTimeout)
@@ -237,6 +249,8 @@ func (c *conversation) detach(w *stopWatch) {
 		return
 	}
 	perms := c.expireLocked()
+	// The detach is due before the exit lets anything reopen it.
+	detached := c.p.detachStarted(c.id)
 	// A prompt still on its way has started no turn here yet: end the one
 	// the Thread shows.
 	aborted := true
@@ -249,7 +263,7 @@ func (c *conversation) detach(w *stopWatch) {
 		c.aside()
 	}
 	c.mu.Unlock()
-	if err := c.release(context.Background(), perms); err != nil {
+	if err := c.release(context.Background(), perms, detached); err != nil {
 		log.Warn("copilot stop: detaching the session failed", "conversation", c.id, "error", err)
 	}
 }
