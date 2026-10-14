@@ -318,6 +318,13 @@ describe('messages', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  test('a tool image without a name takes the image file its call named', () => {
+    const item: Item = { id: 'v1', kind: 'tool', time: '2026-10-05T10:00:00Z', tool: { name: 'view', status: 'completed', input: '{"path":"/tmp/repo/e2e-red.png"}' }, images: [{ id: 'img1', mime: 'image/png', size: 178 }] };
+    const row = render(<ToolRow item={item} live={false} sessionId="s" />);
+    expect(row.getByRole('img', { name: 'e2e-red.png' })).toBeTruthy();
+    expect(row.getByRole('button', { name: 'Open e2e-red.png' })).toBeTruthy();
+  });
+
   test('copying a message confirms it', async () => {
     const { user } = await openTask('t10');
     const copy = log().getAllByRole('button', { name: 'Copy message' })[0];

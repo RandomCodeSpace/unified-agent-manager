@@ -557,3 +557,56 @@ func TestForkFailsClosedWhenTheSourceCustomAgentIsGone(t *testing.T) {
 		}
 	}
 }
+
+// A new branch reads apart from its source by title, says it has not
+// started rather than closed until its first message, and shows the copied
+// prompt's attachments as the source does: its own stored copies.
+func TestForkIsTitledNotStartedAndKeepsItsAttachments(t *testing.T) {
+	m, p, _, source := taskForkManager(t)
+	att, err := m.Upload(source.ID, "note.txt", []byte("branch note"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := m.lookup(source.ID)
+	m.mu.Lock()
+	u := s.uploads[att.ID]
+	m.mu.Unlock()
+	m.markUsed(s, []*upload{u})
+	p.forkHook = func(agentapi.ForkRequest) (string, error) {
+		p.SetHistory("native-copy", agentapi.History{Items: []agentapi.Item{{ID: "u-original", Kind: agentapi.ItemUser, Text: "original", Attachments: []agentapi.Attachment{{Name: "note.txt", MIME: mimeText, SHA256: u.SHA256}}}}})
+		return "native-copy", nil
+	}
+	sourceTitle := summaryOf(t, m, source.ID).Title
+	branch, err := m.Fork(source.ID, ForkRequest{UserItemID: "u-original", Model: "a", RequestID: mustUUID(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceTitle == "" || branch.Title != sourceTitle+" (branch)" || branch.State != StateClosed || !branch.NotStarted {
+		t.Fatalf("branch title %q (source %q), state %q, not started %v", branch.Title, sourceTitle, branch.State, branch.NotStarted)
+	}
+	if got := branchTitle(branch.Title); got != branch.Title {
+		t.Fatalf("a branch of a branch = %q", got)
+	}
+	waitUntil(t, "forked history", func() bool { d, _ := m.Detail(branch.ID); return d.History == HistoryLoaded && len(d.Items) == 1 })
+	d, _ := m.Detail(branch.ID)
+	if got := d.Items[0].Attachments; len(got) != 1 || got[0].ID != att.ID {
+		t.Fatalf("branch attachments = %+v", got)
+	}
+	info, data, _, err := m.Attachment(branch.ID, att.ID)
+	if err != nil || string(data) != "branch note" || info.Name != "note.txt" {
+		t.Fatalf("branch attachment = %+v %q, %v", info, data, err)
+	}
+	// The branch's copy outlives the source's.
+	if err := os.RemoveAll(m.taskUploadDir(source.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, data, _, err := m.Attachment(branch.ID, att.ID); err != nil || string(data) != "branch note" {
+		t.Fatalf("branch attachment after the source went = %q, %v", data, err)
+	}
+	if _, err := m.Submit(branch.ID, PromptRequest{Text: "next", RequestID: mustUUID(t), Mode: ModeSend}); err != nil {
+		t.Fatal(err)
+	}
+	if summaryOf(t, m, branch.ID).NotStarted {
+		t.Fatal("a branch that was sent a message still reads not started")
+	}
+}

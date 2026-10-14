@@ -641,6 +641,16 @@ var (
 	docWordRE   = regexp.MustCompile(`\b(?:readme|changelog|docs?|documentation|[\w-]+\.(?:md|mdx|rst))\b`)
 	docVerbRE   = regexp.MustCompile(`\b(?:updat(?:e|es|ed)|add(?:s|ed)?|document(?:s|ed)?|describ(?:e|es|ed)|mention(?:s|ed)?|not(?:e|es|ed)|wrote|written|rewr(?:ote|itten)|fix(?:es|ed)?|chang(?:e|es|ed)|explain(?:s|ed)?|cover(?:s|ed)?)\b`)
 	docNameRE   = regexp.MustCompile(`(?i)\b(README|CHANGELOG|CONTRIBUTING|[\w./-]+\.(?:md|mdx|rst))\b`)
+	// notOwnRE marks a clause whose work is not the reply's own: someone
+	// else's, what a text says ("it says I updated …"), or a request turned
+	// down ("I can't send that").
+	notOwnRE = regexp.MustCompile(`(?i)(?:\bnot|n['’]t)\s+(?:mine|ours|my\s+(?:changes?|edits?|work))\b|\b(?:by|from)\s+(?:someone|somebody)\s+else\b|\b(?:someone|somebody)\s+else(?:['’]s\b|\s+(?:\w+\s+)?(?:edited|updated|changed|modified|wrote|added|created|deleted|removed)\b)|\b(?:it|this|that|which)\s+(?:says|said|claims|claimed|states|stated)\s+(?:that\s+)?(?:I|we)\b|\bI\s+(?:can['’]t|cannot|won['’]t|will\s+not)\s+(?:send|say|state|claim|write|repeat|reply|use)\b`)
+	// disownsRE is a sentence that disowns what the one before it named:
+	// "Those aren't mine."
+	disownsRE = regexp.MustCompile(`(?i)^(?:those|these|they|that|it|both|neither)\b[^.!?]*?(?:(?:\bnot|n['’]t)\s+(?:mine|ours|my\s+(?:changes?|edits?|work))|\b(?:someone|somebody)\s+else['’]s)\b`)
+	// quotedRE is quoted text. Quoted words are what a text says, not what
+	// the reply claims; a quoted name with no space ("README.md") stays.
+	quotedRE = regexp.MustCompile(`"[^"\n]*"|“[^”\n]*”`)
 )
 
 const claimDocs = "docs"
@@ -648,7 +658,8 @@ const claimDocs = "docs"
 // claimTopics are what a sentence claims went well: tests, the build,
 // linting, vetting, type checks or docs. A topic is claimed only where a
 // clause naming it says nothing negative ("I did not run the tests, but the
-// build passes" claims the build alone).
+// build passes" claims the build alone) and is the reply's own (not "it says
+// I updated the docs" or "someone else's docs").
 func claimTopics(sentence string) []string {
 	s := strings.ToLower(sentence)
 	s = noFailedRE.ReplaceAllString(s, "$1 ok")
@@ -657,7 +668,7 @@ func claimTopics(sentence string) []string {
 	// A topic is claimed when a clause naming it is not negative.
 	named := func(re *regexp.Regexp) bool {
 		for _, c := range clauses {
-			if re.MatchString(c) && !negationRE.MatchString(c) {
+			if re.MatchString(c) && !negationRE.MatchString(c) && !notOwnRE.MatchString(c) {
 				return true
 			}
 		}
@@ -693,55 +704,74 @@ var (
 )
 
 // sentences are a final message's sentences: prose only (code blocks out,
-// inline code marks dropped), list marks and headings stripped.
-func sentences(text string) []string {
+// inline code marks dropped), list marks and headings stripped. own holds
+// each one with its quoted words blanked: what it claims itself.
+func sentences(text string) (out, own []string) {
 	prose := inlineCodeRE.ReplaceAllString(codeFenceRE.ReplaceAllString(text, "\n"), "$1")
-	var out []string
 	for _, line := range strings.Split(prose, "\n") {
 		line = strings.TrimSpace(boldRE.ReplaceAllString(lineMarkRE.ReplaceAllString(line, ""), ""))
-		for _, s := range splitSentences(line) {
-			if n := utf8.RuneCountInString(s); n > 3 && n <= 400 {
+		// Blanked byte for byte inside its quote marks, so a quote never ends
+		// a sentence and both are cut at the same places.
+		quiet := quotedRE.ReplaceAllStringFunc(line, func(q string) string {
+			if !strings.ContainsAny(q, " \t") {
+				return q
+			}
+			_, first := utf8.DecodeRuneInString(q)
+			_, last := utf8.DecodeLastRuneInString(q)
+			return q[:first] + strings.Repeat(" ", len(q)-first-last) + q[len(q)-last:]
+		})
+		for _, r := range splitSentences(quiet) {
+			if s := line[r[0]:r[1]]; utf8.RuneCountInString(s) > 3 && utf8.RuneCountInString(s) <= 400 {
 				out = append(out, s)
+				own = append(own, strings.TrimSpace(quiet[r[0]:r[1]]))
 			}
 		}
 	}
-	return out
+	return out, own
 }
 
 // splitSentences cuts a line after `.`, `!` or `?` followed by space and
 // a word, a quote or a parenthesis, except after "e.g.", "i.e.", "etc.",
-// "vs." and "...".
-func splitSentences(line string) []string {
-	var out []string
+// "vs." and "...". It returns each sentence's byte range.
+func splitSentences(line string) [][2]int {
+	var out [][2]int
 	start := 0
 	for i := 0; i < len(line); i++ {
 		if c := line[i]; c != '.' && c != '!' && c != '?' {
 			continue
 		}
-		j := i + 1
-		for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
-			j++
+		if j, ok := endsSentence(line, start, i); ok {
+			out = append(out, [2]int{start, i + 1})
+			start = j
 		}
-		if j == i+1 || j == len(line) {
-			continue
-		}
-		next, _ := utf8.DecodeRuneInString(line[j:])
-		if !unicode.IsLetter(next) && !unicode.IsDigit(next) && !strings.ContainsRune("_`\"'(", next) {
-			continue
-		}
-		head := strings.ToLower(line[start : i+1])
-		if strings.HasSuffix(head, "...") || slices.ContainsFunc([]string{"e.g.", "i.e.", "etc.", "vs."}, func(abbr string) bool {
-			return strings.HasSuffix(head, abbr) && (len(head) == len(abbr) || !isWordByte(head[len(head)-len(abbr)-1]))
-		}) {
-			continue
-		}
-		out = append(out, strings.TrimSpace(line[start:i+1]))
-		start = j
 	}
-	if rest := strings.TrimSpace(line[start:]); rest != "" {
-		out = append(out, rest)
+	if rest := strings.TrimRight(line[start:], " \t"); rest != "" {
+		out = append(out, [2]int{start, start + len(rest)})
 	}
 	return out
+}
+
+// endsSentence reports whether the `.`, `!` or `?` at i ends the sentence
+// that began at start, and where the next one begins.
+func endsSentence(line string, start, i int) (int, bool) {
+	j := i + 1
+	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+		j++
+	}
+	if j == i+1 || j == len(line) {
+		return 0, false
+	}
+	next, _ := utf8.DecodeRuneInString(line[j:])
+	if !unicode.IsLetter(next) && !unicode.IsDigit(next) && !strings.ContainsRune("_`\"'(", next) {
+		return 0, false
+	}
+	head := strings.ToLower(line[start : i+1])
+	if strings.HasSuffix(head, "...") || slices.ContainsFunc([]string{"e.g.", "i.e.", "etc.", "vs."}, func(abbr string) bool {
+		return strings.HasSuffix(head, abbr) && (len(head) == len(abbr) || !isWordByte(head[len(head)-len(abbr)-1]))
+	}) {
+		return 0, false
+	}
+	return j, true
 }
 
 func isWordByte(b byte) bool {
@@ -779,8 +809,13 @@ func (f turnFacts) judgeClaims(workdir string) []EvidenceClaim {
 			lastEdit = e.at
 		}
 	}
-	for _, sentence := range sentences(f.final) {
-		topics := claimTopics(sentence)
+	shown, own := sentences(f.final)
+	for i, sentence := range shown {
+		// What its next sentence disowns is not the reply's claim.
+		if i+1 < len(own) && disownsRE.MatchString(own[i+1]) {
+			continue
+		}
+		topics := claimTopics(own[i])
 		if len(topics) == 0 {
 			continue
 		}
@@ -794,7 +829,7 @@ func (f turnFacts) judgeClaims(workdir string) []EvidenceClaim {
 		for _, topic := range topics {
 			if topic == claimDocs {
 				var stems []string
-				named := docNameRE.FindAllStringSubmatch(sentence, -1)
+				named := docNameRE.FindAllStringSubmatch(own[i], -1)
 				for _, n := range named {
 					stem := strings.ToLower(n[1][strings.LastIndex(n[1], "/")+1:])
 					stems = append(stems, strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(stem, ".md"), ".mdx"), ".rst"))

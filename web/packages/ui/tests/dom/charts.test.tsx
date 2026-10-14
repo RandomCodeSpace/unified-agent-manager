@@ -163,6 +163,23 @@ describe('charts', () => {
     }
   });
 
+  test('a chart whose read failed says so and reads it again on Retry', async () => {
+    const chart: Chart = { title: 'Sales', kind: 'bar', x: 'region', y: [], at: '2026-10-04T12:00:00Z', labels: ['North'], series: [{ name: 'total', values: [1] }] };
+    const read = vi.spyOn(api, 'chart').mockRejectedValueOnce(new Error('injected failure')).mockResolvedValue(chart);
+    const user = userEvent.setup();
+    try {
+      render(<ChartCard sessionId="chart-task" callId="sales" />);
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('Could not load this chart: injected failure');
+      await user.click(within(alert).getByRole('button', { name: 'Retry' }));
+      expect(await screen.findByRole('figure', { name: 'Chart: Sales' })).toBeTruthy();
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(read.mock.calls[1].slice(0, 2)).toEqual(['chart-task', 'sales']);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   test('series controls toggle the actual drawing and keep their names available to the keyboard', async () => {
     const { user } = await openTask('t-chart');
     const figure = within(await screen.findByRole('figure', { name: 'Chart: Changes per week, by area' }));

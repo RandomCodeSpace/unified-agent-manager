@@ -76,6 +76,91 @@ const NEGATION = /\b(?:not|no|never|none|nothing|neither|nor|without)\b|n['’]t
 const NO_PROBLEM = /\b(?:no|without|zero)\s+(?:\w+\s+)?(?:issues|warnings|errors|problems|findings|failures|regressions)\b/gi;
 /** After a path, an edit verb that takes it as its subject: "`a.go`: added …", "`a.go` was updated". */
 const EDIT_AFTER = /^[\s:—–-]*(?:(?:is|was|were|are|has|have|been|now|also|got)\s+)*([a-z-]+)/i;
+/** Words that give work to someone else: "not mine", "isn't my change", "someone else's". */
+const OTHERS = [/(?:\bnot|n['’]t)\s+(?:mine|ours)\b/i, /(?:\bnot|n['’]t)\s+my\s+(?:changes?|edits?|work)\b/i, /\b(?:someone|somebody)\s+else['’]s\b/i];
+const BY_SOMEONE_ELSE = /\b(?:by|from)\s+(?:someone|somebody)\s+else\b/i;
+/** "someone else edited …", the verb next or one word on. */
+const SOMEONE_ELSE_DID = /\b(?:someone|somebody)\s+else\s+(\w+)(?:\s+(\w+))?/gi;
+const EDITED = new Set(['edited', 'updated', 'changed', 'modified', 'wrote', 'added', 'created', 'deleted', 'removed']);
+/** "it says I …": the reply reports what a text says. */
+const REPORTED = /\b(?:it|this|that|which)\s+(\w+)\s+(?:that\s+)?(?:I|we)\b/gi;
+const REPORT_VERBS = new Set(['says', 'said', 'claims', 'claimed', 'states', 'stated']);
+/** "I can't send that": the reply turns a request down. */
+const REFUSED = /\bI\s+(?:(?:can|won)['’]t|cannot|will\s+not)\s+(\w+)/gi;
+const REFUSE_VERBS = new Set(['send', 'say', 'state', 'claim', 'write', 'repeat', 'reply', 'use']);
+/** A sentence that starts by pointing back: "Those …", "They …". */
+const POINTS_BACK = /^\s*(?:those|these|they|that|it|both|neither)\b/i;
+
+/** Whether a match of `re` in `text` captured one of `words`. */
+const captures = (re: RegExp, text: string, words: ReadonlySet<string>) => [...text.matchAll(re)].some((m) => m.slice(1).some((w) => !!w && words.has(w.toLowerCase())));
+
+/** A sentence whose work is not the reply's own: it gives the work to someone else, reports what a text says ("it says I updated …"), or turns a request down ("I can't send that"). */
+function notOwn(text: string): boolean {
+  return OTHERS.some((re) => re.test(text)) || BY_SOMEONE_ELSE.test(text) || captures(SOMEONE_ELSE_DID, text, EDITED) || captures(REPORTED, text, REPORT_VERBS) || captures(REFUSED, text, REFUSE_VERBS);
+}
+
+/** A sentence that disowns what the one before it named: "Those aren't mine." */
+function disowns(text: string): boolean {
+  const head = text.split(/[.!?]/, 1)[0];
+  return POINTS_BACK.test(head) && OTHERS.some((re) => re.test(head));
+}
+
+/**
+ * Quoted words ("…", “…”) with a space blanked: what a text says, not what the reply claims; a
+ * quoted name with no space ("a.go") stays, and a code span's own quotes stay its own. One pass a
+ * line: a mark with no closing mark on its line is skipped, and that mark is not looked for again
+ * on the line, so unclosed quotes never cost more than another pass.
+ */
+function blankQuotes(prose: string, blank: (s: string) => string): string {
+  return prose.split('\n').map((line) => blankLineQuotes(line, blank)).join('\n');
+}
+
+const CLOSING: { readonly [mark: string]: string } = { '`': '`', '"': '"', '“': '”' };
+
+function blankLineQuotes(line: string, blank: (s: string) => string): string {
+  const shown = (quote: string) => (quote.startsWith('`') || !/[ \t]/.test(quote) ? quote : blank(quote));
+  const dead = new Set<string>();
+  let out = '';
+  let done = 0;
+  let open = -1;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (open < 0) {
+      if (CLOSING[c] && !dead.has(c)) open = i;
+    } else if (c === CLOSING[line[open]]) {
+      out += line.slice(done, open) + shown(line.slice(open, i + 1));
+      done = i + 1;
+      open = -1;
+    }
+    // No closing mark on the line: go on after the opening one, without that mark.
+    if (open >= 0 && i === line.length - 1) {
+      dead.add(line[open]);
+      i = open;
+      open = -1;
+    }
+  }
+  return out + line.slice(done);
+}
+
+/** `prose` with what it does not claim as its own blanked, length for length: quoted text, and each sentence that is not its own work or that the next sentence disowns. */
+function ownProse(prose: string): string {
+  const blank = (s: string) => s.replace(/[^\n]/g, ' ');
+  let out = blankQuotes(prose, blank);
+  const masked = out.replace(CODE_SPAN, (m) => `\`${'_'.repeat(m.length - 2)}\``);
+  // Sentences as sentenceAround cuts them, with where each starts.
+  const parts: { from: number; text: string }[] = [];
+  let from = 0;
+  for (const m of masked.matchAll(/[.!?](?=\s|$)|[;\n]/g)) {
+    parts.push({ from, text: masked.slice(from, m.index + 1) });
+    from = m.index + 1;
+  }
+  parts.push({ from, text: masked.slice(from) });
+  const sentences = parts.filter((p) => p.text.trim());
+  sentences.forEach((p, i) => {
+    if (notOwn(p.text) || disowns(sentences[i + 1]?.text ?? '')) out = out.slice(0, p.from) + blank(out.slice(p.from, p.from + p.text.length)) + out.slice(p.from + p.text.length);
+  });
+  return out;
+}
 
 /** The verb nearest before a span in its sentence that says what was done with it, if any. */
 function verbBefore(before: string): string | undefined {
@@ -113,8 +198,8 @@ export function claimsOf(text: string): Claim[] {
     seen.set(key, c);
     out.push(c);
   };
-  // Fenced code is the reply's own content, not a claim about the work.
-  const prose = text.replace(/```[\s\S]*?```/g, ' ');
+  // Fenced code is the reply's own content, not a claim about the work; neither is what it quotes, disowns or refuses.
+  const prose = ownProse(text.replace(/```[\s\S]*?```/g, ' '));
   const masked = prose.replace(CODE_SPAN, (m) => `\`${'_'.repeat(m.length - 2)}\``);
   for (const m of prose.matchAll(CODE_SPAN)) {
     const s = m[1].trim();

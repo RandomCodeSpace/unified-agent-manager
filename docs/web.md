@@ -454,7 +454,7 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   message of only images or files is titled from its images, or once the
   agent replied. A Thread that still has no title when a turn ends takes
   its first message, else the first line of the agent's reply. A branch
-  (fork) starts with its source's name or title. The provider's own title
+  (fork) starts with its source's name or title followed by "(branch)". The provider's own title
   for the conversation also replaces it. "New thread" shows only while a
   Thread has no title at all, and "Waiting for a title…" only while a title
   is being made or waits for the reply and there is nothing else to show
@@ -858,7 +858,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   keeps its text at the same size at any width. Each series has a fixed
   colour: several series take blue, orange, green and purple in order, and a
   chart of one series takes the colour its name picks, so the same measure
-  keeps its colour across charts and refreshes.
+  keeps its colour across charts and refreshes. When a chart's card cannot
+  be read, it says "Could not load this chart" with the reason and a
+  **Retry** that reads that chart again.
   **Table** uses the same full-width sorting and filtering controls. **Chart**
   returns to the drawing; table filters do not change the chart. Only the selected
   view is mounted. Heatmaps with a single series of Cartesian category/value
@@ -1023,7 +1025,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   is staged, and Enter, **Approve plan**, or a second click sends it. Typing
   feedback clears that choice and asks Copilot to revise the plan. Feedback
   is a review response, not a new Thread message. **Stop** remains available.
-  Plan decisions appear as two-line receipts; their reader uses the recorded
+  Plan decisions appear as two-line receipts ("Plan approved · …" and the
+  chosen action; "Left planning · …" and "Plan not implemented" after
+  **Leave planning**); their reader uses the recorded
   review even after the Thread closes. A supported runtime may offer autopilot,
   subagents, interactive implementation, or leaving without implementation.
   Plan approval does not change Safe/Yolo permissions. During implementation,
@@ -1115,7 +1119,9 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   subagents too. In Compact the thumbnail also stands in the reply at the
   call's place, without the tool call's line. Click it to see it large.
   Kept: png, jpeg, gif and webp up to 5 MiB, at most 50 per Thread, one copy
-  of each distinct image; the tool call notes any it left out and why. They
+  of each distinct image; the tool call notes any it left out and why. A
+  lone image the tool did not name takes the name of the image file the call
+  read (`view` of `shot.png`), as its thumbnail's text alternative too. They
   come back after a reload or a restart of UAM, because Copilot records the
   image's bytes in its session. They are deleted with the Thread, like
   attachments.
@@ -1223,7 +1229,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   copies the conversation through that reply into a new active Thread, without
   sending another message. Choose the same model, another offered model or
   Default; a changed model starts with default effort and context size. The
-  source remains intact, and the new Thread links back to it. Both Threads use the
+  source remains intact, and the new Thread links back to it. Its title is the
+  source's name or title followed by "(branch)", and until its first message
+  its state reads **Not started** rather than Closed. The copied prompts'
+  attachments and the tools' images come with it as its own stored copies, so
+  they show as chips and thumbnails as in the source, also after the source is
+  deleted. Both Threads use the
   same Project and current files. This creates no Git branch or isolated
   workspace. If the native result is uncertain, UAM keeps the request and
   refuses to create another branch automatically. The picker's **Dismiss**
@@ -1486,7 +1497,12 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
   - Words saying the tests pass.
 
   A sentence with a negation ("No files were edited") claims no edit and
-  no run. Each stamp has a glyph and words, never colour alone:
+  no run. Neither do quoted words (a reply text it offers in quotes), a
+  sentence that gives the work to someone else, reports what a text says
+  ("it says I updated `docs/guide.md`") or turns a request down ("I can't
+  send that"), nor a sentence the next one disowns ("Those aren't mine.").
+  A quoted name with no space (`"a.py"`) still counts. Each stamp has a
+  glyph and words, never colour alone:
   - **Matches**: the file was changed, or the command ran and exited 0.
   - **Contradicted**: the file was not changed (or only viewed), a run
     claim's command did not run, the named command failed, no test command
@@ -1539,8 +1555,10 @@ need sign-in like other protected API routes. Sign-ins and sign-outs are logged 
     if it names one) was edited. A part of a sentence with a negation or a
     failure word is not read as a claim ("I did not run the linter, but the
     build passes" claims the build only); "no errors", "no failures" and
-    the like are not negations. A chip at the top counts the claims not
-    verified.
+    the like are not negations. As with receipts, quoted words, a part
+    that reports what a text says or gives the work to someone else, and a
+    sentence the next one disowns are not claims. A chip at the top counts
+    the claims not verified.
     When the turn made claims but ran no check, one line says no tests,
     builds or linters ran.
   - **Changed in this turn**: the files the turn's edit tools changed (the

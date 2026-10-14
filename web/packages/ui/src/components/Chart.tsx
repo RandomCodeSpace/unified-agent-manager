@@ -157,14 +157,21 @@ export const ChartCard = memo(function ChartCard({ sessionId, callId }: Readonly
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const data = useMemo(() => chart ? chartTable(chart) : null, [chart]);
   const [copied, copy] = useCopied();
+  const [gone, setGone] = useState(false);
+  // Bumped by Retry to read the chart again.
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     api.chart(sessionId, callId, controller.signal).then(setChart, (err: unknown) => {
-      if (!controller.signal.aborted) setError(isStatus(err, 404) ? 'This chart is no longer kept.' : describeError(err));
+      if (controller.signal.aborted) return;
+      if (isStatus(err, 404)) setGone(true);
+      else setError(describeError(err));
     });
     return () => controller.abort();
-  }, [sessionId, callId, api]);
-  if (error) return <Note>{error}</Note>;
+  }, [sessionId, callId, api, attempt]);
+  if (gone) return <Note>This chart is no longer kept.</Note>;
+  // A failed read says what failed and reads it again on request.
+  if (error) return <Note tone="error" role="alert">Could not load this chart: {error} <Button size="sm" onClick={() => { setError(''); setAttempt((n) => n + 1); }}>Retry</Button></Note>;
   if (!chart) return <Skeleton label="Loading the chart…" rows={3} className="rounded-lg bg-raised p-4 shadow-raised" />;
   const advanced = chart.kind === 'echarts';
   const Icon = chart.kind === 'line' ? LineChart : BarChart3;

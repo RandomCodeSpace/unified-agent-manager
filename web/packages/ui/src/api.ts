@@ -836,6 +836,8 @@ export interface SessionSummary {
   /** Native recorded-history lineage, separate from a last-message rerun. */
   fork_of?: string;
   fork_user_item_id?: string;
+  /** Set on a branch that has had no turn of its own: closed only until its first message. */
+  not_started?: boolean;
   /** A native rewind that holds the Task until it is reconciled; absent otherwise. */
   rewind?: RewindStatus;
   /** The last completed turn in one line ("Fixed the flaky test; 3 files changed; tests pass"); absent while a turn runs or when there is nothing to say. */

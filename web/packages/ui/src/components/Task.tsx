@@ -1,5 +1,5 @@
 import { useApi } from '../ApiContext';
-import { ArrowDown, ChartLine, CircleAlert, CircleStop, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { ArrowDown, ChartLine, CircleAlert, CircleStop, Clock, Ellipsis, FolderTree, Pencil, Plug, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { Suspense, lazy, memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { LIVE, defaultScope, describeError, isStatus, provider, readOnly, stageLabel, taskName, type Changes as ChangesData, type Interaction, type Item, type Project, type SessionDetail, type SessionState, type SessionSummary, type TaskDefaults, type ThreadPlace } from '../api';
@@ -162,6 +162,11 @@ function HeaderState({ session, state, compacting, failures, label }: Readonly<{
     text = stop.short;
     title = stop.title;
     if (stop.notYours) icon = <CircleStop aria-hidden="true" className="size-3.5 text-warning" />;
+  } else if (state === 'closed' && session.not_started) {
+    // A new branch is closed only until its first message.
+    text = 'Not started';
+    title = 'Branched; starts with your first message';
+    icon = <Clock aria-hidden="true" className="size-3.5 text-muted" />;
   } else {
     if (state !== session.state) title = `${session.subagents_running} ${session.subagents_running === 1 ? 'subagent' : 'subagents'} running`;
     // A finished turn whose own record failed has no check: a warning glyph and the failures in words.

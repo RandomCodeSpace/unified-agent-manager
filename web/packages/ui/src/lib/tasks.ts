@@ -90,7 +90,7 @@ export function outcomeFailures(outcome?: string): string {
   return (outcome ?? '').split('; ').filter((part) => /^(tests fail|\d+ commands? failed)$/i.test(part)).map((part) => part.toLowerCase()).join(', ');
 }
 
-type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
+type TaskStatus = { label: 'Input' | 'Starting' | 'Working' | 'Compacting' | 'Review' | 'Finished' | 'Tests fail' | 'Command failed' | 'Error' | 'Interrupted' | 'Stopped' | 'Closed' | 'Not started' | 'Idle' | 'Settled' | 'Archived'; text: string; tone: 'attention' | 'accent' | 'success' | 'error' | 'warning' | 'muted' };
 
 /** A completed turn's status. The last turn's outcome line ("Fixed the flaky test; 3 files changed; tests pass") says what finished. */
 function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
@@ -101,13 +101,8 @@ function finishedStatus(s: SessionSummary, unread: boolean): TaskStatus {
   return { label: 'Finished', text: s.outcome || 'Finished', tone: 'muted' };
 }
 
-/**
- * A compact row label plus the full detail for its hover text and the Home view.
- * Working detail reports quiet time from the provider's last event, never invented activity.
- */
-export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): TaskStatus {
-  if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
-  if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
+/** The status of a Task that waits on you, or null when nothing does. */
+function inputStatus(s: SessionSummary): TaskStatus | null {
   const ask = s.ask;
   if (ask?.kind === 'permission') {
     const what = PERMISSION_WORDS[ask.title] ?? (ask.title ? ask.title.charAt(0).toLowerCase() + ask.title.slice(1) : 'continue');
@@ -117,6 +112,18 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
   if (ask?.kind === 'plan_review') return { label: 'Input', text: 'Plan ready', tone: 'attention' };
   if (s.state === 'awaiting_permission') return { label: 'Input', text: 'Wants your OK to continue', tone: 'attention' };
   if (s.state === 'awaiting_answer' || hasPending(s)) return { label: 'Input', text: 'Has a question for you', tone: 'attention' };
+  return null;
+}
+
+/**
+ * A compact row label plus the full detail for its hover text and the Home view.
+ * Working detail reports quiet time from the provider's last event, never invented activity.
+ */
+export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now()): TaskStatus {
+  if (s.stage === 'settled') return { label: 'Settled', text: 'Settled', tone: 'muted' };
+  if (s.stage === 'archived') return { label: 'Archived', text: 'Archived', tone: 'muted' };
+  const input = inputStatus(s);
+  if (input) return input;
   const state = shownState(s);
   switch (state) {
     case 'starting':
@@ -136,6 +143,8 @@ export function taskStatus(s: SessionSummary, unread: boolean, now = Date.now())
     case 'cancelled':
       return { label: 'Stopped', text: stopWords(s).title, tone: 'muted' };
     case 'closed':
+      // A new branch is closed only until its first message.
+      if (s.not_started) return { label: 'Not started', text: 'Branched; starts with your first message', tone: 'muted' };
       return { label: 'Closed', text: 'Conversation closed', tone: 'muted' };
     default:
       return { label: 'Idle', text: 'Waiting for your message', tone: 'muted' };

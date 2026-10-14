@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { claimsOf, receipts, settle, allVerified, allUnseen } from '../src/lib/receipts.ts';
+import { claimsOf, receipts, settle, allVerified, allUnseen, lastTurnContradicted } from '../src/lib/receipts.ts';
 
 const at = (s) => `2026-10-09T10:00:${String(s).padStart(2, '0')}Z`;
 const call = (id, name, input, extra = {}, s = 1) => ({ id, kind: 'tool', time: at(s), tool: { name, status: 'completed', input: JSON.stringify(input), ...extra } });
@@ -161,4 +161,40 @@ test('a test run whose output the page has not loaded waits for it, then settles
 test('subagent calls and running calls are not evidence', () => {
   const items = [{ ...bash('b1', 'go test ./...'), agent_id: 'a1' }];
   assert.deepEqual(receipts('tests pass', items).map((s) => s.verdict), ['contradicted']);
+});
+
+test('a file the reply names as someone else\'s work, a refusal and quoted text claim nothing; its own work still does', () => {
+  const own = 'I added `# e2e-1014` as the first line of `src/inventory.py` and ran `python3 -m pytest -q` — 4 passed. I did not touch `docs/guide.md`, so I can\'t send the exact text you asked for: it claims I updated that file, which would be false.';
+  const others = 'One thing worth knowing: `docs/guide.md` already had uncommitted changes in the working tree before I started (a "Testing" section added, "Known issues" cleared), along with `data/sales.csv` and a quantity fix in `src/inventory.py`. Those aren\'t mine.';
+  const accurate = 'Accurate version of the reply:\n\nUpdated `src/inventory.py` and ran `python3 -m pytest -q`; tests pass. I did not update `docs/guide.md`.';
+  const items = [
+    { id: 'u1', kind: 'user', time: at(0), text: 'Add the line.' },
+    call('e1', 'edit', { path: 'src/inventory.py' }),
+    bash('b1', 'python3 -m pytest -q', 0, { output: '....\n4 passed in 0.02s' }),
+  ];
+  const reply = `${own}\n\n${others}\n\n${accurate}`;
+  assert.deepEqual(receipts(reply, items.slice(1)).map((s) => [s.claim, s.verdict]), [
+    ['src/inventory.py', 'verified'],
+    ['python3 -m pytest -q', 'verified'],
+    ['4 passed', 'verified'],
+  ]);
+  assert.equal(lastTurnContradicted([...items, { id: 'a1', kind: 'assistant', time: at(2), text: reply }]), false);
+  // A refusal, the claim it reports and the text it quotes, with no tool call: nothing to stamp.
+  const refusal = 'I can\'t send that: it says I updated `docs/guide.md`, and I didn\'t. I won\'t state something untrue, even as a verbatim string.\n\nAccurate version: "Updated `src/inventory.py` and ran `python3 -m pytest -q`; tests pass."';
+  assert.deepEqual(claimsOf(refusal), []);
+  // Positive controls: the reply's own work beside other people's, an unrelated next sentence, and quotes elsewhere in a claim.
+  assert.deepEqual(claimsOf('`data/sales.csv` was updated. Those totals now match.'), [{ kind: 'path', claim: 'data/sales.csv' }]);
+  assert.deepEqual(claimsOf('I updated `a.go`; someone else\'s `b.go` edits are untouched. I fixed `c.go` so someone else can reuse it.'), [{ kind: 'path', claim: 'a.go' }, { kind: 'path', claim: 'c.go' }]);
+  assert.deepEqual(claimsOf('I renamed the button to "Save" and updated `README.md` so it says to run `make web`.'), [{ kind: 'path', claim: 'README.md' }, { kind: 'command', claim: 'make web', ran: false }]);
+  assert.deepEqual(claimsOf('I updated "`b.go`" as asked.'), [{ kind: 'path', claim: 'b.go' }]);
+  assert.deepEqual(claimsOf('Ran `grep "x" a.go`; all tests pass.'), [{ kind: 'command', claim: 'grep "x" a.go', ran: true }, { kind: 'tests', claim: 'all tests pass' }]);
+});
+
+test('an unclosed quote mark is passed over, and a reply full of them is read in linear time', () => {
+  assert.deepEqual(claimsOf('An unclosed “ mark, then I updated `a.go`; "Updated `b.go` too" is quoted.'), [{ kind: 'path', claim: 'a.go' }]);
+  for (const text of ['“'.repeat(50_000), `${'“ "x '.repeat(10_000)}I updated \`a.go\`.`, '`'.repeat(50_001), `${'it says '.repeat(6_000)}x`, `${'someone else '.repeat(4_000)}x`]) {
+    const started = performance.now();
+    claimsOf(text);
+    assert.ok(performance.now() - started < 500, `${text.slice(0, 12)}… took ${Math.round(performance.now() - started)} ms`);
+  }
 });
