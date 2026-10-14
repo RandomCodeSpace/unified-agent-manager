@@ -275,11 +275,16 @@ func (m *Manager) SuggestReplies(ctx context.Context, id string) (Suggestions, e
 	var webErr *Error
 	paused := errors.As(err, &webErr) && webErr.Code == codeUtilityPaused
 	replies := []string{}
-	if err != nil {
-		log.Info("replies not suggested", "session", id, "provider", provider, "model", model, "error", err)
-	} else {
+	switch {
+	case err == nil:
 		replies = cleanSuggestions(reply)
+		m.suggestPauseLogged.Store(false)
 		log.Info("replies suggested", "session", id, "model", model, "replies", len(replies))
+	case paused && m.suggestPauseLogged.Swap(true):
+		log.Debug("replies not suggested", "session", id, "provider", provider, "model", model, "error", err)
+	default:
+		m.suggestPauseLogged.Store(paused)
+		log.Info("replies not suggested", "session", id, "provider", provider, "model", model, "error", err)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
