@@ -208,12 +208,17 @@ describe('messages', () => {
     expect(button.getAttribute('aria-haspopup')).toBe('dialog');
     expect(button.textContent).toBe('Todo 1/4·1 in progress·1 blocked·1 to do');
     // Each stage in its colour behind its glyph; a phone drops the words, never the glyphs.
-    for (const [word, tone] of [['in progress', 'text-accent'], ['blocked', 'text-warning'], ['to do', 'text-muted']]) {
+    for (const [word, tone] of [['blocked', 'text-warning'], ['to do', 'text-muted']]) {
       const words = within(button).getByText(word);
       expect(words.className).toContain('max-sm:hidden');
       expect(words.parentElement!.className).toContain(tone);
       expect(words.parentElement!.querySelector('svg')).toBeTruthy();
     }
+    // The turn has ended, so nothing is in progress any more: that stage reads in words alone, on a phone too.
+    const stopped = within(button).getByText('in progress');
+    expect(stopped.className).not.toContain('max-sm:hidden');
+    expect(stopped.parentElement!.className).not.toContain('text-accent');
+    expect(stopped.parentElement!.querySelector('svg')).toBeNull();
     // The words beside the tokens, and the foot stays in view without a hover.
     const foot = button.parentElement!;
     expect(foot.textContent).toContain('940 tokens · Todo 1/4');

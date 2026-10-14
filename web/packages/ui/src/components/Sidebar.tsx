@@ -1,6 +1,6 @@
 import { scopedMachine, useFederation, type Machine } from '../FederationContext';
 import { Archive, ArrowUpFromLine, ChevronRight, CircleAlert, CircleCheck, CircleMinus, Clock, FilePen, CloudOff, Eye, FolderPlus, GitBranch, MessageCircleQuestion, Minimize2, Pause, RefreshCw, Settings as SettingsIcon, Search, Square, SquarePen, TriangleAlert } from 'lucide-react';
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { memo, startTransition, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { readOnly, taskName, type Project, type SessionSummary } from '../api';
 import { cn } from '../lib/cn';
 import { diskLowText } from '../lib/worktrees';
@@ -674,6 +674,9 @@ function useSidebarGroups(rows: ListRow[], list: RefObject<HTMLDivElement | null
   return grouped;
 }
 
+/** How many rows a progressive list mounts at first and then per frame: a little more than a phone's drawer shows. */
+const ROW_BATCH = 16;
+
 const machineLabelId = (machine: Machine) => `uam-task-source-${machine.id || 'home'}`;
 
 /* ---------- Sidebar ---------- */
@@ -689,6 +692,7 @@ export const Sidebar = memo(function Sidebar({
   version,
   machineActions,
   count = 0,
+  progressive = false,
 }: {
   /** False until the first snapshot: the list is a skeleton, never "No projects yet". */
   loaded: boolean;
@@ -703,6 +707,8 @@ export const Sidebar = memo(function Sidebar({
   machineActions?: ReadonlyMap<string, TaskActions>;
   /** Tasks that need you (the collapsed rail's count), shown beside the header's wordmark. */
   count?: number;
+  /** Mount the list a batch of rows per frame (the phone's drawer), so no one commit sets up every row. */
+  progressive?: boolean;
 }) {
   const federation = useFederation();
   // With connected instances, every machine's Tasks in one list; the machine on screen is this App's own state.
@@ -742,9 +748,19 @@ export const Sidebar = memo(function Sidebar({
   const shelfScope = chosen ? (filterMachine ? encodeEntity(filterMachine.id || null, chosen.id) : chosen.id) : 'all';
   const settledOpen = !!shelves[`${shelfScope}:settled`];
   const [settledAll, setSettledAll] = useState(false);
+  // A progressive list first mounts the rows that fill the drawer, then a batch per frame: each row's menu and tip set
+  // themselves up as it mounts, and the whole list at once is a long task on a phone. Mounted rows stay.
+  const searching = !!query.trim();
+  const listed = searching ? rows : unsettled;
+  const [mountedRows, setMountedRows] = useState(progressive ? ROW_BATCH : Infinity);
+  const moreRows = listed.length > mountedRows;
+  useEffect(() => {
+    if (!moreRows) return;
+    const frame = requestAnimationFrame(() => startTransition(() => setMountedRows((n) => n + ROW_BATCH)));
+    return () => cancelAnimationFrame(frame);
+  }, [moreRows, mountedRows]);
   // The row holding the list's one tab stop: the last focused while it is on screen, else the open Task's, else the first.
   const [focused, setFocused] = useState<string | null>(null);
-  const searching = !!query.trim();
   const keys = searching ? rows.map((r) => r.key) : [...unsettled.map((r) => r.key), ...shelfKeys('Settled', settled, settledOpen, selectedKey, settledAll)];
   const tabStop = [focused, selectedKey].find((key) => key && keys.includes(key)) ?? keys[0];
   const anyProject = useAnyProject(projects);
@@ -764,11 +780,15 @@ export const Sidebar = memo(function Sidebar({
       return next;
     });
 
-  // Keep the selected row in view when the selection changes from outside the list.
+  // Keep the selected row in view when the selection changes from outside the list, the list comes back on screen
+  // (the phone's drawer stays mounted while closed, where measuring a row would lay out the whole skipped list), or
+  // a progressive list mounts it.
+  const listShown = actions.sidebarOpen;
+  const selectedMounted = listed.findIndex((r) => r.key === selectedKey) < mountedRows;
   useEffect(() => {
-    if (!selectedKey) return;
+    if (!selectedKey || !listShown || !selectedMounted) return;
     list.current?.querySelector<HTMLElement>(`[data-task-row="${CSS.escape(selectedKey)}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [selectedKey]);
+  }, [selectedKey, listShown, selectedMounted]);
   // Switching the machine on screen keeps the list where it was.
   useLayoutEffect(() => {
     if (carry && scroller.current) scroller.current.scrollTop = carry.read().scroll;
@@ -803,14 +823,14 @@ export const Sidebar = memo(function Sidebar({
             </Button>
           </div>
         )}
-        <ul className="flex flex-col gap-1 animate-fade-in">{rows.map((r) => renderRow(r))}</ul>
+        <ul className="flex flex-col gap-1 animate-fade-in">{rows.slice(0, mountedRows).map((r) => renderRow(r))}</ul>
       </>
     );
   } else {
     body = (
       <>
         <ul aria-label="Unsettled threads" className="flex flex-col gap-1 animate-fade-in">
-          {unsettled.map((r) => renderRow(r))}
+          {unsettled.slice(0, mountedRows).map((r) => renderRow(r))}
         </ul>
         {active.length === 0 && <p className="px-2 py-3 text-caption text-muted">No active threads.</p>}
       </>

@@ -279,21 +279,30 @@ export function Sheet({
   label,
   className,
   backdropClassName,
+  keepMounted = false,
   children,
   ...props
-}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; side?: 'left' | 'right'; label: string; backdropClassName?: string }) {
+}: Omit<ComponentProps<typeof BaseDialog.Popup>, 'render'> & { open: boolean; onOpenChange: (open: boolean) => void; onClosed?: () => void; side?: 'left' | 'right'; label: string; backdropClassName?: string; /** Keep the closed sheet's content in the page, skipped but laid out, so opening it only slides it in. */ keepMounted?: boolean }) {
+  // On screen, or on its way out: it counts as an open popup (`popupOpen`) until its exit has run.
+  const [present, setPresent] = useState(open);
+  if (open && !present) setPresent(true);
   return (
-    <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => !o && onClosed?.()}>
-      <BaseDialog.Portal>
+    <BaseDialog.Root open={open} onOpenChange={onOpenChange} onOpenChangeComplete={(o) => { if (o) return; setPresent(false); onClosed?.(); }}>
+      <BaseDialog.Portal keepMounted={keepMounted}>
         <BaseDialog.Backdrop className={cn(backdropClass, backdropClassName)} />
         <BaseDialog.Popup
-          data-popup=""
+          data-popup={present ? '' : undefined}
           aria-label={label}
+          // A kept sheet is never `hidden` (display: none), inert or invisible while closed: showing it again would
+          // restyle all of it. Its content is skipped instead (`content-visibility: hidden`: not drawn, focusable or
+          // read), which keeps the rendering state it had on screen.
+          {...(keepMounted && { hidden: false, 'aria-hidden': !present || undefined })}
           className={cn(
             'fixed inset-y-0 z-50 flex w-drawer max-w-[calc(100vw-44px)] flex-col bg-rail pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] shadow-modal outline-hidden transition-transform duration-240 ease-app',
             side === 'left'
               ? 'left-0 pl-[env(safe-area-inset-left)] data-starting-style:-translate-x-full data-ending-style:-translate-x-full'
               : 'right-0 pr-[env(safe-area-inset-right)] data-starting-style:translate-x-full data-ending-style:translate-x-full',
+            keepMounted && !present && cn('shadow-none', side === 'left' ? '-translate-x-full' : 'translate-x-full', '[content-visibility:hidden]'),
             className,
           )}
           {...props}

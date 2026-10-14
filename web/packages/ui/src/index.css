@@ -729,7 +729,9 @@
     overflow-wrap: normal;
   }
   .data-table tbody th { font-weight: 400; }
-  .data-table tbody tr:last-child > * { border-bottom: 0; }
+  /* Cells by name, not `> *`: a universal subject would make any element that stops being a last child (a popup
+     opened beside it) restyle its whole subtree. */
+  .data-table tbody tr:last-child > :is(th, td) { border-bottom: 0; }
   .md hr {
     margin: 12px 0;
     border: 0;
