@@ -4052,6 +4052,8 @@ func (m *Manager) cancelBecause(id, by, reason string) (SessionSummary, error) {
 		return SessionSummary{}, newError(http.StatusConflict, "this provider does not support cancelling a turn")
 	case errors.Is(err, agentapi.ErrClosed):
 		return SessionSummary{}, newError(http.StatusConflict, msgConversationClosed)
+	case errors.Is(err, agentapi.ErrBusy):
+		return SessionSummary{}, newError(http.StatusConflict, "another operation on the Thread is in progress; try Stop again")
 	default:
 		return SessionSummary{}, newError(http.StatusBadGateway, "cancel failed: %s", shortError(err))
 	}

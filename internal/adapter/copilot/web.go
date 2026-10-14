@@ -350,6 +350,7 @@ type webProvider struct {
 	client            sdkClient
 	stop              chan struct{} // closed to end the current watchdog
 	convs             map[*conversation]struct{}
+	detaching         map[string]chan struct{} // by session ID, closed when its detach returns (awaitDetach)
 	shut              bool
 	importSupported   bool
 	forkUnsupported   bool
@@ -1144,6 +1145,7 @@ func (p *webProvider) Open(ctx context.Context, req agentapi.OpenRequest) (agent
 			InfiniteSessions:      compaction,
 		})
 	} else {
+		p.awaitDetach(ctx, req.ConversationID)
 		sess, err = client.ResumeSession(ctx, req.ConversationID, &copilot.ResumeSessionConfig{
 			WorkingDirectory: req.Workdir,
 			Providers:        providers,
@@ -2620,6 +2622,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	defer func() {
 		c.mu.Lock()
 		c.sending--
+		c.sendEndedLocked()
 		c.mu.Unlock()
 	}()
 	if err := ctx.Err(); err != nil {
@@ -2654,6 +2657,7 @@ func (c *conversation) send(ctx context.Context, msg copilot.MessageOptions) err
 	if c.idles == idles && c.tr.completions.generation == generation {
 		c.startTurnLocked()
 	}
+	c.abortStartedLocked()
 	return nil
 }
 
@@ -2739,7 +2743,9 @@ func (c *conversation) Steer(ctx context.Context, prompt agentapi.Prompt) error 
 // operation stuck in the CLI cannot hold Stop, and a running turn always
 // ends: one the CLI does not end within webStopGrace uam ends itself
 // (stop.go). Its mode change and abort errors are reported only when no
-// turn runs; while one does, the stop check reports them.
+// turn runs; while one does, the stop check reports them, and a mode it
+// could not reset is reset once control is free. With no turn and another
+// control operation in progress it fails with ErrBusy.
 func (c *conversation) Cancel(ctx context.Context) error {
 	// Without control, another mode or agent operation is stuck in the CLI:
 	// Stop aborts without the mode change, which control orders.
@@ -2747,12 +2753,19 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	if controlled {
 		defer c.control.Unlock()
 	}
-	if c.isClosed() {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
 		return agentapi.ErrClosed
+	}
+	// With no turn to end, Stop only turns autopilot off, which needs
+	// control: it does not claim a stop it did not make.
+	if !controlled && !c.turnRunning && c.sending == 0 {
+		c.mu.Unlock()
+		return fmt.Errorf("%w: another operation on the conversation is in progress", agentapi.ErrBusy)
 	}
 	// Stop claims these decisions before any runtime RPC can block. A
 	// concurrent answer must not approve fallback while Abort is in flight.
-	c.mu.Lock()
 	c.expireAutoLocked()
 	c.planStopped = true
 	c.expirePlansLocked()
@@ -2772,6 +2785,9 @@ func (c *conversation) Cancel(ctx context.Context) error {
 	began := time.Now()
 	abortErr := c.sess.Abort(abortCtx)
 	c.aborted(w, abortErr, time.Since(began))
+	if w != nil && (!controlled || modeErr != nil) {
+		c.leaveAutopilotLater(modeErr)
+	}
 	if (modeErr != nil || abortErr != nil) && w == nil {
 		return fmt.Errorf("copilot stop: %w", errors.Join(modeErr, abortErr))
 	}
@@ -3021,7 +3037,9 @@ func (c *conversation) release(ctx context.Context, perms []string) error {
 		_, _ = c.sess.RespondPermission(ctx, id, &rpc.PermissionDecisionUserNotAvailable{})
 	}
 	done := make(chan error, 1)
+	detached := c.p.detachStarted(c.id)
 	go func() {
+		defer detached()
 		err := c.sess.Disconnect()
 		if err == nil {
 			if releaseErr := c.p.recordUsageSession(c.client, c.id, false); releaseErr != nil {
@@ -3041,6 +3059,46 @@ func (c *conversation) release(ctx context.Context, perms []string) error {
 	case <-ctx.Done():
 		c.p.poke()
 		return fmt.Errorf("close copilot conversation: %w", ctx.Err())
+	}
+}
+
+// detachStarted records that session id is detaching and returns the
+// function that ends the record once the detach has returned.
+func (p *webProvider) detachStarted(id string) func() {
+	done := make(chan struct{})
+	p.mu.Lock()
+	if p.detaching == nil {
+		p.detaching = map[string]chan struct{}{}
+	}
+	p.detaching[id] = done
+	p.mu.Unlock()
+	return func() {
+		p.mu.Lock()
+		if p.detaching[id] == done {
+			delete(p.detaching, id)
+		}
+		p.mu.Unlock()
+		close(done)
+	}
+}
+
+// awaitDetach waits, within webStopTimeout, for a detach of session id still
+// in flight, which Close and an unconfirmed Stop stop waiting for. The SDK
+// detaches by session ID, so one the CLI handled after a resume of the same
+// session could take it from its new owner.
+func (p *webProvider) awaitDetach(ctx context.Context, id string) {
+	p.mu.Lock()
+	done := p.detaching[id]
+	p.mu.Unlock()
+	if done == nil {
+		return
+	}
+	t := time.NewTimer(webStopTimeout)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+	case <-ctx.Done():
 	}
 }
 

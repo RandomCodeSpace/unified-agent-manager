@@ -2,9 +2,12 @@ package copilot
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/log"
@@ -33,13 +36,20 @@ const stopUnconfirmed = "Copilot did not confirm the stop"
 type stopWatch struct {
 	at    time.Time
 	idles int
-	ping  time.Duration
+	// ping and call are the ping's and a late abort's bounds.
+	ping, call time.Duration
+	// send is set while the watch waits on a prompt on its way, which has
+	// started no turn yet; ended once that prompt started none.
+	send, ended bool
 	// abort is "pending" until Abort returns, then "ok" or its error.
 	abort    string
 	abortFor time.Duration
 }
 
 // lockWithin takes mu if it can within d, and reports whether it did.
+// TryLock fails while mu is in starvation mode even when it is free, so a
+// contended mu can make the caller wait the whole of d and go on without
+// it: Stop accepts that delay, which d bounds.
 func lockWithin(mu *sync.Mutex, d time.Duration) bool {
 	deadline := time.Now().Add(d)
 	for !mu.TryLock() {
@@ -61,10 +71,39 @@ func (c *conversation) watchStopLocked() *stopWatch {
 	if w := c.stopping; w != nil && w.idles == c.idles {
 		return w
 	}
-	w := &stopWatch{at: time.Now(), idles: c.idles, ping: webStopPingWait, abort: "pending"}
+	w := &stopWatch{at: time.Now(), idles: c.idles, ping: webStopPingWait, call: webStopRPCWait, send: !c.turnRunning, abort: "pending"}
 	c.stopping = w
 	time.AfterFunc(webStopGrace, func() { c.stopUnconfirmed(w) })
 	return w
+}
+
+// sendEndedLocked ends the stop check when the prompts it waited on are all
+// sent or refused and none started a turn: a later prompt's turn is not the
+// one Stop was for.
+func (c *conversation) sendEndedLocked() {
+	if w := c.stopping; w != nil && !c.turnRunning && c.sending == 0 {
+		w.ended = true
+		c.stopping = nil
+	}
+}
+
+// abortStartedLocked aborts, once and on its own goroutine, the turn a
+// prompt started after a Stop overtook it: the Stop's own abort reached the
+// CLI before that turn did.
+func (c *conversation) abortStartedLocked() {
+	w := c.stopping
+	if w == nil || !w.send || !c.turnRunning || c.idles != w.idles {
+		return
+	}
+	w.send = false
+	sess := c.sess
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), w.call)
+		defer cancel()
+		began := time.Now()
+		err := sess.Abort(ctx)
+		c.aborted(w, err, time.Since(began))
+	}()
 }
 
 // aborted records Abort's result for the stop check w.
@@ -80,14 +119,43 @@ func (c *conversation) aborted(w *stopWatch, err error, took time.Duration) {
 	}
 }
 
-// stopEndedLocked reports whether the turn w checks has ended.
-func (c *conversation) stopEndedLocked(w *stopWatch) bool {
-	return c.closed || c.idles != w.idles || !c.turnRunning && c.sending == 0
+// leaveAutopilotLater turns autopilot off once control is free, after a Stop
+// of a running turn that could not: the next turn must not run on its own.
+// A conversation that has ended by then reopens in the mode the CLI kept,
+// which the Thread shows.
+func (c *conversation) leaveAutopilotLater(cause error) {
+	runtime, ok := c.sess.(executionSession)
+	c.mu.Lock()
+	interactive := c.execution != nil && c.execution.Known && c.execution.Mode == string(rpc.SessionModeInteractive)
+	c.mu.Unlock()
+	if !ok || interactive && cause == nil {
+		return
+	}
+	go func() {
+		c.control.Lock()
+		defer c.control.Unlock()
+		if c.isClosed() {
+			log.Warn("copilot stop: the conversation ended before its execution mode was reset", "conversation", c.id)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), webStopTimeout)
+		defer cancel()
+		if err := runtime.SetExecutionMode(ctx, rpc.SessionModeInteractive); err != nil {
+			log.Warn("copilot stop: resetting the execution mode failed", "conversation", c.id, "error", errText(err))
+		}
+		c.refreshExecution(ctx)
+	}()
 }
 
-// stopUnconfirmed ends a turn the CLI did not end after Stop. A CLI that
-// does not answer a ping is gone, as when the watchdog finds it so; one
-// that answers keeps running, and only this conversation ends.
+// stopEndedLocked reports whether the turn w checks has ended.
+func (c *conversation) stopEndedLocked(w *stopWatch) bool {
+	return w.ended || c.closed || c.idles != w.idles || !c.turnRunning && c.sending == 0
+}
+
+// stopUnconfirmed ends a turn the CLI did not end after Stop. A ping that
+// fails proves the CLI gone, as for the watchdog. One that answers, or only
+// times out (a busy CLI can miss one; the watchdog judges it), leaves the
+// CLI running and ends only this conversation.
 func (c *conversation) stopUnconfirmed(w *stopWatch) {
 	c.mu.Lock()
 	if c.stopping == w {
@@ -103,15 +171,22 @@ func (c *conversation) stopUnconfirmed(w *stopWatch) {
 	began := time.Now()
 	err := c.client.Ping(ctx)
 	cancel()
+	gone := err != nil && !errors.Is(err, context.DeadlineExceeded)
 	ping, outcome := "ok", "conversation detached"
-	if err != nil {
+	switch {
+	case gone:
 		ping, outcome = errText(err), "runtime failed"
+	case err != nil:
+		ping = errText(err)
 	}
 	report = append(report, "ping", ping, "ping_ms", time.Since(began).Milliseconds(), "outcome", outcome)
 	log.Warn("copilot did not end the turn after Stop", report...)
-	if err != nil {
+	if gone {
 		c.p.fail(c.client, "Copilot CLI stopped answering: "+exitText(err))
 		return
+	}
+	if err != nil {
+		c.p.poke()
 	}
 	c.detach(w)
 }
@@ -152,13 +227,16 @@ func (c *conversation) stopReportLocked(w *stopWatch) []any {
 
 // detach ends the turn w checks as stopped and this conversation as at an
 // exit of it alone, then detaches its SDK session; the next prompt resumes
-// it. The CLI drops a turn when its session's last owner detaches.
+// it. The CLI drops a turn when its session's last owner detaches. Pending
+// permission requests are answered as unavailable first, as by Close: one
+// may be what the turn waits on.
 func (c *conversation) detach(w *stopWatch) {
 	c.mu.Lock()
 	if c.stopEndedLocked(w) {
 		c.mu.Unlock()
 		return
 	}
+	perms := c.expireLocked()
 	// A prompt still on its way has started no turn here yet: end the one
 	// the Thread shows.
 	aborted := true
@@ -171,7 +249,7 @@ func (c *conversation) detach(w *stopWatch) {
 		c.aside()
 	}
 	c.mu.Unlock()
-	if err := c.release(context.Background(), nil); err != nil {
+	if err := c.release(context.Background(), perms); err != nil {
 		log.Warn("copilot stop: detaching the session failed", "conversation", c.id, "error", err)
 	}
 }

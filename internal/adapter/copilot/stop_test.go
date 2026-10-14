@@ -3,9 +3,11 @@ package copilot
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
+	copilot "github.com/github/copilot-sdk/go"
 	"github.com/github/copilot-sdk/go/rpc"
 
 	"github.com/RandomCodeSpace/unified-agent-manager/internal/agentapi"
@@ -141,9 +143,10 @@ func TestWebStopUnconfirmedDetachesOnlyThisConversation(t *testing.T) {
 	}
 }
 
-// A CLI that does not answer a ping either is gone: every conversation on
-// it ends as at a CLI exit, and the next message starts a new CLI.
-func TestWebStopFailsTheRuntimeWhenTheCLIDoesNotAnswer(t *testing.T) {
+// A ping that fails, rather than times out, proves the CLI gone: every
+// conversation on it ends as at a CLI exit, and the next message starts a
+// new CLI.
+func TestWebStopFailsTheRuntimeWhenThePingFails(t *testing.T) {
 	shortStop(t)
 	h := openWeb(t)
 	otherSink := &recSink{}
@@ -153,7 +156,7 @@ func TestWebStopFailsTheRuntimeWhenTheCLIDoesNotAnswer(t *testing.T) {
 	startTurn(t, h)
 	useSession(h.conv, hangingAbortSession{h.fs})
 	h.fc.mu.Lock()
-	h.fc.pingErr = context.DeadlineExceeded
+	h.fc.pingErr = errors.New("CLI process exited: signal: killed")
 	h.fc.mu.Unlock()
 	if err := h.conv.Cancel(context.Background()); err != nil {
 		t.Fatal(err)
@@ -251,5 +254,229 @@ func TestWebStopDuringASendEndsTheTurnItStarts(t *testing.T) {
 	}
 	if turn := lastTurn(h.sink); turn.State != agentapi.TurnCancelled {
 		t.Fatalf("the late send result restarted the turn: %+v", turn)
+	}
+}
+
+// A ping that times out does not prove the CLI gone, as a busy CLI can miss
+// one: only the stopped conversation ends, and the watchdog pings at once
+// to judge the CLI.
+func TestWebStopPingTimeoutDetachesOnlyTheStoppedConversation(t *testing.T) {
+	shortStop(t)
+	h := openWeb(t)
+	otherSink := &recSink{}
+	other, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "other", Events: otherSink})
+	if err != nil {
+		t.Fatal(err)
+	}
+	startTurn(t, h)
+	h.fc.mu.Lock()
+	h.fc.pingErr = context.DeadlineExceeded
+	h.fc.mu.Unlock()
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the detached exit", func() bool { return exitOf(h.sink) != nil })
+	if exit := exitOf(h.sink); !exit.Detached {
+		t.Fatalf("exit = %+v", exit)
+	}
+	if _, forced := h.fc.counts(); forced != 0 || other.(*conversation).isClosed() || exitOf(otherSink) != nil {
+		t.Fatalf("a ping timeout ended the CLI: forced %d", forced)
+	}
+	waitFor(t, "the watchdog's ping", func() bool { return h.fc.pingCount() == 2 })
+	time.Sleep(20 * time.Millisecond)
+	if _, forced := h.fc.counts(); forced != 0 || exitOf(otherSink) != nil {
+		t.Fatal("one missed watchdog ping ended the CLI")
+	}
+}
+
+// failingSendSession blocks its first Send until release, then fails it;
+// later sends go through.
+type failingSendSession struct {
+	*fakeSession
+	once             sync.Once
+	entered, release chan struct{}
+}
+
+func (s *failingSendSession) Send(ctx context.Context, msg copilot.MessageOptions) (string, error) {
+	first := false
+	s.once.Do(func() { first = true })
+	if first {
+		close(s.entered)
+		<-s.release
+		return "", rejectedError{errors.New("refused")}
+	}
+	return s.fakeSession.Send(ctx, msg)
+}
+
+// A Stop armed for a prompt on its way ends with that prompt when it starts
+// no turn: the next prompt's turn is not stopped by it.
+func TestWebStopForAFailedSendSparesTheNextTurn(t *testing.T) {
+	shortStop(t)
+	h := openWeb(t)
+	sess := &failingSendSession{fakeSession: h.fs, entered: make(chan struct{}), release: make(chan struct{})}
+	useSession(h.conv, sess)
+	sent := make(chan error, 1)
+	go func() { sent <- h.conv.Send(context.Background(), agentapi.Prompt{Text: "first"}) }()
+	<-sess.entered
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(sess.release)
+	if err := <-sent; err == nil {
+		t.Fatal("the first send went through")
+	}
+	startTurn(t, h)
+	time.Sleep(3 * webStopGrace)
+	if exitOf(h.sink) != nil || h.fs.isDisconnected() || h.fc.pingCount() != 0 {
+		t.Fatal("the stop of a failed send ended the next turn")
+	}
+	if turn := lastTurn(h.sink); turn.State != agentapi.TurnWorking {
+		t.Fatalf("turn = %+v", turn)
+	}
+}
+
+// A Stop that overtakes a prompt on its way aborts the turn the prompt
+// starts, once, as soon as it starts.
+func TestWebStopOvertakingASendAbortsTheTurnItStarts(t *testing.T) {
+	shortStop(t)
+	webStopGrace = time.Minute
+	h := openWeb(t)
+	release, entered := make(chan struct{}), make(chan struct{})
+	h.fs.mu.Lock()
+	h.fs.beforeReturn = func(string) {
+		close(entered)
+		<-release
+	}
+	h.fs.mu.Unlock()
+	sent := make(chan error, 1)
+	go func() { sent <- h.conv.Send(context.Background(), agentapi.Prompt{Text: "work"}) }()
+	<-entered
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	aborts := func() int {
+		h.fs.mu.Lock()
+		defer h.fs.mu.Unlock()
+		return h.fs.aborts
+	}
+	waitFor(t, "the abort of the started turn", func() bool { return aborts() == 2 })
+	time.Sleep(20 * time.Millisecond)
+	if n := aborts(); n != 2 {
+		t.Fatalf("aborts = %d", n)
+	}
+}
+
+// A detached conversation answers its pending permission requests as
+// unavailable, so a resumed session is not left waiting on them.
+func TestWebStopDetachAnswersPendingPermissions(t *testing.T) {
+	shortStop(t)
+	h := openWeb(t)
+	startTurn(t, h)
+	h.fs.onEvent(ev("request", shellRequest("p")))
+	if err := h.conv.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the detached exit", func() bool { return exitOf(h.sink) != nil })
+	waitFor(t, "the permission answer", func() bool { return h.fs.answer("p") != nil })
+	if _, ok := h.fs.answer("p").(*rpc.PermissionDecisionUserNotAvailable); !ok {
+		t.Fatalf("answer = %T", h.fs.answer("p"))
+	}
+	if ix := h.sink.interaction("p"); ix.State != agentapi.InteractionExpired {
+		t.Fatalf("permission = %+v", ix)
+	}
+}
+
+func autopilotHarness(t *testing.T) (webHarness, *runtimeSession, *conversation) {
+	t.Helper()
+	h, runtime := runtimeHarness(t)
+	runtime.runtimeMu.Lock()
+	runtime.state.Mode = "autopilot"
+	runtime.runtimeMu.Unlock()
+	c := h.conv.(*conversation)
+	c.refreshExecution(context.Background())
+	return h, runtime, c
+}
+
+func (s *runtimeSession) mode() string {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	return s.state.Mode
+}
+
+// Stop on an autopilot conversation with no turn has nothing to protect, so
+// without control it does not claim a stop it did not make.
+func TestWebStopIdleAutopilotWithoutControlIsRefused(t *testing.T) {
+	shortStop(t)
+	h, runtime, c := autopilotHarness(t)
+	c.control.Lock()
+	err := h.conv.Cancel(context.Background())
+	c.control.Unlock()
+	if !errors.Is(err, agentapi.ErrBusy) {
+		t.Fatalf("Stop = %v", err)
+	}
+	h.fs.mu.Lock()
+	aborts := h.fs.aborts
+	h.fs.mu.Unlock()
+	if aborts != 0 || runtime.mode() != "autopilot" {
+		t.Fatalf("aborts %d, mode %s", aborts, runtime.mode())
+	}
+	if err := h.conv.Cancel(context.Background()); err != nil || runtime.mode() != "interactive" {
+		t.Fatalf("retried Stop = %v, mode %s", err, runtime.mode())
+	}
+}
+
+// Stop of a running autopilot turn without control still aborts at once,
+// and turns autopilot off once control is free.
+func TestWebStopRunningAutopilotLeavesAutopilotAfterControl(t *testing.T) {
+	shortStop(t)
+	webStopGrace = time.Minute
+	h, runtime, c := autopilotHarness(t)
+	startTurn(t, h)
+	c.control.Lock()
+	err := h.conv.Cancel(context.Background())
+	mode := runtime.mode()
+	c.control.Unlock()
+	if err != nil || mode != "autopilot" {
+		t.Fatalf("Stop = %v, mode %s without control", err, mode)
+	}
+	waitFor(t, "autopilot off", func() bool { return runtime.mode() == "interactive" })
+}
+
+// Reopening a conversation waits for its pending detach, so a late detach
+// cannot take the session from its new owner.
+func TestWebReopenWaitsForAPendingDetach(t *testing.T) {
+	h := openWeb(t)
+	release := make(chan struct{})
+	h.fs.mu.Lock()
+	h.fs.disconnectHook = func() error {
+		<-release
+		return nil
+	}
+	h.fs.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := h.conv.Close(ctx); err == nil {
+		t.Fatal("Close did not give up waiting for the detach")
+	}
+	var mu sync.Mutex
+	released := false
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		mu.Lock()
+		released = true
+		mu.Unlock()
+		close(release)
+	}()
+	if _, err := h.p.Open(context.Background(), agentapi.OpenRequest{SessionID: "s-1", ConversationID: "s-1", Events: &recSink{}}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !released {
+		t.Fatal("the reopen did not wait for the pending detach")
 	}
 }

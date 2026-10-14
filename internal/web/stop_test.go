@@ -2,6 +2,9 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,5 +105,19 @@ func TestStopUnconfirmedKeepsTheThreadStoppedAndReopens(t *testing.T) {
 	}
 	if d := detail(t, m, sum.ID); d.State != StateWorking || !d.Open {
 		t.Fatalf("after the next message = %+v", d.SessionSummary)
+	}
+}
+
+// A provider that cannot stop now because another operation holds the
+// conversation (Copilot's idle autopilot without control) is a conflict to
+// retry, not a provider failure.
+func TestStopBusyConversationIsAConflict(t *testing.T) {
+	m, prov, _ := newTestManager(t)
+	sum, conv := busySession(t, m, prov)
+	conv.SetCancelHook(func(context.Context) error {
+		return fmt.Errorf("%w: another operation is in progress", agentapi.ErrBusy)
+	})
+	if _, err := m.Cancel(sum.ID); statusOf(err) != http.StatusConflict || !strings.Contains(err.Error(), "try Stop again") {
+		t.Fatalf("Stop = %v (%d)", err, statusOf(err))
 	}
 }
